@@ -28,6 +28,24 @@ jobs:
       - name: Simulation smoke test
         run: python -m sim.simulate --days 6 --requests 800 --bad-deploy-version 3 --out /tmp/sim.json
 
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit -p .
+      - run: npm run build
+      - name: Built UI is committed and up to date
+        run: git diff --stat --exit-code -- ../ratchet/web/dist || (echo "Run 'make web' and commit ratchet/web/dist" && exit 1)
+
   docker:
     runs-on: ubuntu-latest
     steps:

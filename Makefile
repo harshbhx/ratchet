@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt sim demo day1 docker clean
+.PHONY: install test lint fmt sim demo day1 docker clean web web-dev
 
 install:
 	pip install -e ".[dev]" ruff
@@ -18,7 +18,15 @@ sim:
 	python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 
 demo:
-	RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000
+	RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000
+
+# React app (web/) -> ratchet/web/dist, which the gateway serves at /, /scout and /dashboard.
+web:
+	cd web && npm ci && npm run build
+
+# Hot-reload UI on :5173 against a gateway on :8000 (run `make demo` in another terminal).
+web-dev:
+	cd web && npm ci && npm run dev
 
 day1:
 	python scripts/day1_check.py

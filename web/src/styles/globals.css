@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Ratchet design tokens.
+  Two story colors carry meaning everywhere (charts, badges, diagrams):
+    owned  = the student, the model you own (blue)
+    rented = the teacher you rent per token (orange)
+  Values are the validated categorical slots 1 and 2 (dataviz reference palette),
+  stepped separately for light and dark surfaces. Status colors are distinct from both.
+*/
+:root {
+  color-scheme: light;
+  --bg: #fbfaf7;
+  --bg-sunken: #f3f1ec;
+  --surface: #ffffff;
+  --surface-2: #f7f6f2;
+  --ink: #121212;
+  --ink-2: #3d3c39;
+  --muted: #64625d;
+  --line: #e6e3dc;
+  --line-strong: #d3cfc6;
+  --owned: #2a78d6;
+  --owned-ink: #1c5cab;
+  --owned-soft: #e3eefc;
+  --rented: #eb6834;
+  --rented-ink: #b4461a;
+  --rented-soft: #fdeae1;
+  --good: #1f8f3a;
+  --good-soft: #e3f4e7;
+  --warn: #a86400;
+  --warn-soft: #fbf0dc;
+  --bad: #c92a2a;
+  --bad-soft: #fbe4e4;
+  --focus: #2a78d6;
+  --grid: rgb(18 18 18 / 0.06);
+  --shadow: 0 1px 2px rgb(18 18 18 / 0.04), 0 8px 24px -12px rgb(18 18 18 / 0.12);
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0b0b0c;
+  --bg-sunken: #070708;
+  --surface: #141416;
+  --surface-2: #1a1a1d;
+  --ink: #f2f1ec;
+  --ink-2: #d6d5cf;
+  --muted: #a4a39c;
+  --line: #26262a;
+  --line-strong: #34343a;
+  --owned: #3987e5;
+  --owned-ink: #86b6ef;
+  --owned-soft: rgb(57 135 229 / 0.14);
+  --rented: #d95926;
+  --rented-ink: #f29a72;
+  --rented-soft: rgb(217 89 38 / 0.16);
+  --good: #51cf66;
+  --good-soft: rgb(81 207 102 / 0.14);
+  --warn: #f0b13f;
+  --warn-soft: rgb(240 177 63 / 0.14);
+  --bad: #ff6b6b;
+  --bad-soft: rgb(255 107 107 / 0.14);
+  --focus: #86b6ef;
+  --grid: rgb(242 241 236 / 0.05);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -16px rgb(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-sunken: var(--bg-sunken);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-owned: var(--owned);
+  --color-owned-ink: var(--owned-ink);
+  --color-owned-soft: var(--owned-soft);
+  --color-rented: var(--rented);
+  --color-rented-ink: var(--rented-ink);
+  --color-rented-soft: var(--rented-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-card: var(--shadow);
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--owned-soft);
+    color: var(--ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Faint engineering grid used behind hero and story sections. */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, var(--grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
