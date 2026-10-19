@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import sqlite3
+import threading
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
+
+from . import tasks
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -78,11 +82,24 @@ MIGRATIONS: dict[str, dict[str, str]] = {
 DAY_SECONDS = 86400
 
 
+def _locked(fn):
+    """Serialise ledger access: Scout's agents call the gateway from several threads at once,
+    and they all share one SQLite connection."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Ledger:
     """`day` is set by the caller in simulations. With `auto_day=True` (live mode) it is
     derived from wall-clock time: day 1 starts at the first logged request."""
 
     def __init__(self, path: str = ":memory:", golden_fraction: float = 0.10, auto_day: bool = False):
+        self._lock = threading.RLock()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
@@ -110,6 +127,7 @@ class Ledger:
         self.day = int((ts - self._t0) // DAY_SECONDS) + 1
 
     # ---------- requests ----------
+    @_locked
     def log_request(self, **row: Any) -> int:
         row.setdefault("ts", time.time())
         self._tick_day(row["ts"])
@@ -121,6 +139,7 @@ class Ledger:
         return int(cur.lastrowid)
 
     # ---------- examples (provenance) ----------
+    @_locked
     def add_example(
         self,
         task: str,
@@ -158,6 +177,7 @@ class Ledger:
             self.db.commit()
             return False
 
+    @_locked
     def examples(self, split: str | None = None, task: str | None = None) -> list[sqlite3.Row]:
         q, args = "SELECT * FROM examples WHERE 1=1", []
         if split:
@@ -168,6 +188,7 @@ class Ledger:
             args.append(task)
         return list(self.db.execute(q + " ORDER BY id", args))
 
+    @_locked
     def bill_of_materials(self) -> dict[str, Any]:
         """Model bill of materials: which teachers and licenses produced the training data."""
         rows = self.db.execute(
@@ -184,6 +205,7 @@ class Ledger:
         }
 
     # ---------- versions ----------
+    @_locked
     def create_version(
         self,
         base_model: str,
@@ -201,10 +223,12 @@ class Ledger:
         self.db.commit()
         return int(cur.lastrowid)
 
+    @_locked
     def update_eval(self, vid: int, eval_result: dict[str, Any]) -> None:
         self.db.execute("UPDATE versions SET eval=? WHERE id=?", (json.dumps(eval_result), vid))
         self.db.commit()
 
+    @_locked
     def set_version(self, vid: int, state: str, traffic_pct: int | None = None) -> None:
         since = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM requests").fetchone()[0]
         if traffic_pct is None:
@@ -215,6 +239,7 @@ class Ledger:
             )
         self.db.commit()
 
+    @_locked
     def versions(self, states: Iterable[str] | None = None) -> list[Version]:
         rows = self.db.execute("SELECT * FROM versions ORDER BY id").fetchall()
         out = [
@@ -237,28 +262,34 @@ class Ledger:
             out = [v for v in out if v.state in wanted]
         return out
 
+    @_locked
     def version(self, vid: int) -> Version | None:
         for v in self.versions():
             if v.id == vid:
                 return v
         return None
 
+    @_locked
     def live(self) -> Version | None:
         live = self.versions(["live"])
         return live[-1] if live else None
 
+    @_locked
     def by_state(self, state: str) -> Version | None:
         vs = self.versions([state])
         return vs[-1] if vs else None
 
     # ---------- events + stats ----------
+    @_locked
     def event(self, kind: str, detail: str) -> None:
         self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail))
         self.db.commit()
 
+    @_locked
     def events(self) -> list[dict[str, Any]]:
-        return [dict(r) for r in self.db.execute("SELECT day, kind, detail FROM events ORDER BY id")]
+        return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
 
+    @_locked
     def version_live_quality(self, vid: int, current_stage_only: bool = True) -> tuple[int, float | None]:
         """(audits, audited precision) for a version, from teacher audits of answers it served."""
         since = 0
@@ -272,6 +303,7 @@ class Ledger:
         ).fetchone()
         return int(r["n"]), (None if r["a"] is None else float(r["a"]))
 
+    @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:
         """How a shadow candidate would have done on real traffic, next to the live student."""
         r = self.db.execute(
@@ -291,6 +323,7 @@ class Ledger:
             "live_coverage": float(r["live_cov"]) if r["live_cov"] is not None else None,
         }
 
+    @_locked
     def stats_by_day(self) -> list[dict[str, Any]]:
         rows = self.db.execute(
             """SELECT day, COUNT(*) requests,
@@ -320,6 +353,33 @@ class Ledger:
             )
         return out
 
+    @_locked
+    def stats_by_task(self) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
+                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms
+               FROM requests GROUP BY task ORDER BY COUNT(*) DESC"""
+        ).fetchall()
+        out = []
+        for r in rows:
+            n = r["requests"] or 1
+            cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
+            out.append(
+                {
+                    "task": r["task"],
+                    "pinned": tasks.get(r["task"]).pinned,
+                    "requests": r["requests"],
+                    "student_share": (r["student_served"] or 0) / n,
+                    "escalation_rate": (r["escalated"] or 0) / n,
+                    "cost_usd": cost,
+                    "baseline_usd": base,
+                    "savings_pct": 0.0 if base == 0 else 1 - cost / base,
+                    "avg_latency_ms": r["latency_ms"],
+                }
+            )
+        return out
+
+    @_locked
     def totals(self) -> dict[str, float]:
         r = self.db.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone()
         c, b = r["c"] or 0.0, r["b"] or 0.0

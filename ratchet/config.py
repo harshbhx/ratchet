@@ -68,6 +68,23 @@ class Settings:
     # Extra output tokens the teacher spends on reasoning (billed, not returned).
     teacher_reasoning_tokens: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_TOKENS", "300")))
 
+    # Scout, the multi-agent research demo (docs/SCOUT.md).
+    tavily_api_key: str = field(default_factory=lambda: _env("TAVILY_API_KEY", ""))
+    scout_daily_budget_usd: float = field(default_factory=lambda: float(_env("RATCHET_SCOUT_DAILY_BUDGET_USD", "3.00")))
+    scout_runs_per_hour: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_RUNS_PER_HOUR", "6")))
+    scout_max_runs_per_day: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_MAX_RUNS_PER_DAY", "30")))
+    scout_max_results: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_MAX_RESULTS", "4")))
+    # Behind a reverse proxy (Caddy on the demo VM), take the client IP from X-Forwarded-For.
+    trust_proxy: bool = field(default_factory=lambda: _env("RATCHET_TRUST_PROXY", "0") == "1")
+
+    # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
+    # public demo opens with a trained student instead of a cold start.
+    mock_warmup_days: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_DAYS", "0")))
+    mock_warmup_requests: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_REQUESTS", "1500")))
+    # Mock mode only: Scout's live stream waits this fraction of each call's simulated latency,
+    # so the page shows agents working instead of finishing in 20 ms. 0 = no waiting.
+    mock_pace: float = field(default_factory=lambda: float(_env("RATCHET_MOCK_PACE", "0.25")))
+
     prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
 
     def price(self, model: str) -> Price:

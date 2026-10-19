@@ -76,9 +76,33 @@ class Ratchet:
         cost = self.s.price("student").cost(samples[0].in_tokens, sum(s.out_tokens for s in samples))
         return samples, cost, model
 
+    def _pinned(self, task: tasks.Task, messages: list[dict[str, Any]]) -> Result:
+        """Pinned tasks always go to the teacher. They are logged but never stored as training
+        examples, so they cannot leak into a student that was never meant to do them."""
+        c = self.teacher.complete(messages, self.s.teacher_model)[0]
+        cost = self._cost(self.s.teacher_model, c)
+        self.ledger.log_request(
+            task=task.name,
+            served_by="teacher",
+            student_version=None,
+            confidence=None,
+            escalated=0,
+            audited=0,
+            audit_agree=None,
+            shadow_version=None,
+            shadow_serve=None,
+            shadow_agree=None,
+            latency_ms=c.latency_ms,
+            cost_usd=cost,
+            baseline_cost_usd=cost,
+        )
+        return Result(tasks.strip_reasoning(c.text), "teacher", None, None, False, cost, cost, c.latency_ms, c.model)
+
     # ------------------------------------------------------------------
     def handle(self, messages: list[dict[str, Any]], task_name: str | None = None) -> Result:
         task = tasks.get(task_name)
+        if task.pinned:
+            return self._pinned(task, messages)
         version = self._pick_version()
         cost = 0.0
         latency = 0.0
