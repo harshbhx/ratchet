@@ -5,3 +5,7 @@ __pycache__/
 sim_results.json
 data/
 .env
+
+# Web app
+web/node_modules/
+web/*.tsbuildinfo

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ratchet: own the model your traffic trains</title>
+    <meta name="description" content="Ratchet is an OpenAI-compatible gateway that turns your own AI traffic into a cheaper model you own, distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius." />
+    <meta name="theme-color" content="#0b0b0c" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // Apply the saved or system theme before first paint (no flash).
+      try {
+        var t = localStorage.getItem("ratchet-theme");
+        var dark = t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.classList.toggle("dark", dark);
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,401 @@
+import { useCallback, useRef, useState, type ReactNode } from "react";
+import { motion } from "motion/react";
+import { FlaskConical, Play, Radio, RefreshCw, ServerOff, Terminal, TriangleAlert } from "lucide-react";
+import { ApiError, api, type LedgerEvent, type NightReport, type Stats, type Workload } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Container } from "@/components/ui/section";
+import { WhoBadge } from "@/components/ui/who";
+import { cn, fmtInt, fmtPct } from "@/lib/utils";
+import { CostChart, PrecisionChart, ShareChart } from "./charts";
+import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
+import { KpiSkeleton, Kpis } from "./kpis";
+import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
+import { Pipeline } from "./pipeline";
+import { Provenance } from "./provenance";
+import { ReleaseLog } from "./release-log";
+import { TasksTable, VersionsTable } from "./tables";
+import { DetailText, KindChip } from "./ui";
+import { useDashboardStats, useNow } from "./use-dashboard";
+
+const POLL_MS = 15000;
+const DAY_REQUESTS = 1500;
+const NOTABLE = new Set(["rollback", "alert", "live", "rejected", "canary", "shadow", "student_error"]);
+
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s} s ago`;
+  const m = Math.round(s / 60);
+  return `${m} min ago`;
+}
+
+function nightSentence(night: NightReport, after: Stats | null): string {
+  const prec = night.eval?.precision != null ? `golden precision ${fmtPct(night.eval.precision)}` : null;
+  if (night.trained && night.version != null) {
+    const v = after?.versions.find((x) => x.id === night.version);
+    if (night.admitted) {
+      const where = v ? stateLabel(v).toLowerCase() : "the release pipeline";
+      return `Trained v${night.version}${prec ? `: ${prec}` : ""}, admitted to ${where}.`;
+    }
+    return `Trained v${night.version}${prec ? `: ${prec}` : ""}, rejected at the golden gate.`;
+  }
+  const why: Record<string, string> = {
+    "release in flight": "release in flight",
+    "not enough new data": "not enough new data",
+    "no golden set": "no golden set yet",
+  };
+  return `Skipped training: ${why[night.reason] ?? night.reason}.`;
+}
+
+function sentence(msg: string): string {
+  const t = msg.trim();
+  if (!t) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : ".");
+}
+
+function errorText(e: unknown, what: string): string {
+  if (e instanceof ApiError) {
+    if (e.status === 409) return `${what}. ${sentence(e.message || "another demo action is running; try again in a moment")}`;
+    if (e.status === 429) return `${what}. ${sentence(e.message || "the demo was reset less than 30 seconds ago")}`;
+    if (e.status === 403) return "Demo controls are only available in mock mode.";
+    return `${what}. ${sentence(e.message)}`;
+  }
+  return `${what}. The gateway did not answer.`;
+}
+
+function Unreachable({ error, onRetry, retrying }: { error: string; onRetry: () => void; retrying: boolean }) {
+  return (
+    <div className="mx-auto max-w-xl rounded-2xl border border-line bg-surface p-6 text-center shadow-card sm:p-10">
+      <span className="mx-auto grid size-11 place-items-center rounded-full border border-line bg-surface-2 text-muted">
+        <ServerOff className="size-5" aria-hidden />
+      </span>
+      <h2 className="mt-4 text-[18px] font-semibold tracking-[-0.015em] text-ink">Can't reach the gateway</h2>
+      <p className="mx-auto mt-2 max-w-md text-pretty text-[14px] leading-6 text-muted">
+        The dashboard reads <span className="font-mono text-[13px] text-ink-2">/ratchet/stats</span> from a running Ratchet gateway. Last error: {error}.
+      </p>
+      <div className="mx-auto mt-5 flex max-w-sm items-center gap-2 rounded-xl border border-line bg-bg-sunken px-3 py-2 text-left font-mono text-[12.5px] text-ink-2">
+        <Terminal className="size-3.5 shrink-0 text-muted" aria-hidden />
+        <span className="truncate">make demo</span>
+        <span className="ml-auto text-muted">mock gateway on :8000</span>
+      </div>
+      <Button className="mt-6" onClick={onRetry} disabled={retrying}>
+        <RefreshCw className={cn(retrying && "animate-spin")} aria-hidden /> Retry
+      </Button>
+    </div>
+  );
+}
+
+function Skeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-label="Loading dashboard">
+      <KpiSkeleton />
+      <div className="h-[290px] animate-pulse rounded-2xl border border-line bg-surface" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="h-[330px] animate-pulse rounded-2xl border border-line bg-surface" />
+        <div className="h-[330px] animate-pulse rounded-2xl border border-line bg-surface" />
+      </div>
+    </div>
+  );
+}
+
+function ColdStart({ mock, onRun, busy }: { mock: boolean; onRun: () => void; busy: boolean }) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+      <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:linear-gradient(to_left,black,transparent_70%)]" />
+      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="max-w-2xl">
+          <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">Cold start</p>
+          <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">No traffic yet. Every request will go to the teacher at first.</h2>
+          <p className="mt-1.5 text-pretty text-[14px] leading-6 text-ink-2">
+            {mock ? (
+              <>
+                Run a day to send {fmtInt(DAY_REQUESTS)} simulated requests through the cascade. That night, Night School trains v1 on the teacher's answers and the
+                release gate decides whether it may serve.
+              </>
+            ) : (
+              <>
+                Send requests to <span className="font-mono text-[13px]">/v1/chat/completions</span> with an <span className="font-mono text-[13px]">X-Ratchet-Task</span>{" "}
+                header. The first student is trained after the first night with enough examples.
+              </>
+            )}
+          </p>
+        </div>
+        {mock && (
+          <Button onClick={onRun} disabled={busy} className="shrink-0">
+            <Play aria-hidden /> Run day 1 + night
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Header({
+  stats,
+  updatedAt,
+  refreshing,
+  onRefresh,
+}: {
+  stats: Stats | null;
+  updatedAt: number | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const now = useNow(5000);
+  const mock = stats?.mode !== "live";
+  return (
+    <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-[28px] font-semibold leading-none tracking-[-0.03em] text-ink sm:text-[32px]">Dashboard</h1>
+          {stats &&
+            (mock ? (
+              <Badge tone="outline" className="gap-1.5">
+                <FlaskConical aria-hidden /> Simulation (mock models)
+              </Badge>
+            ) : (
+              <Badge tone="good" className="gap-1.5">
+                <Radio aria-hidden /> Live
+              </Badge>
+            ))}
+        </div>
+        {stats && (
+          <dl className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-muted">
+            <div className="flex min-w-0 items-center gap-2">
+              <dt className="sr-only">Teacher</dt>
+              <WhoBadge servedBy="teacher" />
+              <dd className="min-w-0 truncate font-mono text-[12px] text-ink-2">{stats.teacher}</dd>
+            </div>
+            <div className="flex min-w-0 items-center gap-2">
+              <dt className="sr-only">Student base model</dt>
+              <WhoBadge servedBy="student" />
+              <dd className="min-w-0 truncate font-mono text-[12px] text-ink-2">{stats.student_base}</dd>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <dt>Day</dt>
+              <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <dt className="sr-only">Total requests</dt>
+              <dd className="font-medium text-ink-2 tabular">{fmtInt(stats.totals.requests)}</dd>
+              <span>requests</span>
+            </div>
+          </dl>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 text-[12.5px] text-muted">
+        {updatedAt && (
+          <span title={`Polls every ${POLL_MS / 1000} s`}>
+            Updated <time className="text-ink-2 tabular" dateTime={new Date(updatedAt).toISOString()}>{fmtTime(updatedAt)}</time>
+            <span className="hidden sm:inline"> · {ago(now - updatedAt)}</span>
+          </span>
+        )}
+        {stats && <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing} aria-label="Refresh now" className="h-8 px-2.5">
+          <RefreshCw className={cn(refreshing && "animate-spin")} aria-hidden />
+          <span className="hidden sm:inline">Refresh</span>
+        </Button>}
+      </div>
+    </header>
+  );
+}
+
+function Reveal({ children, className, delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
+  return (
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, delay, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+export default function DashboardPage() {
+  const { stats, error, updatedAt, loading, refreshing, refresh } = useDashboardStats(POLL_MS);
+  const [workload, setWorkload] = useState<Workload>("mixed");
+  const [busy, setBusy] = useState<Busy>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const noticeId = useRef(0);
+  const statsRef = useRef<Stats | null>(null);
+  statsRef.current = stats;
+
+  const say = useCallback((n: Omit<Notice, "id">) => setNotice({ ...n, id: ++noticeId.current }), []);
+
+  const markFresh = (before: LedgerEvent[] | undefined, after: Stats | null): LedgerEvent[] => {
+    if (!after) return [];
+    const added = newEvents(before, after.events);
+    setFresh(new Set(added.map(eventKey)));
+    return added;
+  };
+
+  const runDay = async () => {
+    const before = statsRef.current?.events;
+    setBusy("day");
+    try {
+      const r = await api.demoDay(workload, DAY_REQUESTS);
+      const after = await refresh();
+      const added = markFresh(before, after);
+      const notable = added.filter((e) => NOTABLE.has(e.kind) && e.kind !== "trained");
+      const bad = added.some((e) => e.kind === "rollback" || e.kind === "alert" || e.kind === "student_error");
+      const wl = WORKLOADS.find((w) => w.id === r.workload)?.label ?? r.workload;
+      say({
+        tone: bad ? "warn" : r.night.admitted || added.some((e) => e.kind === "live") ? "good" : "info",
+        title: (
+          <>
+            Day {r.day} done: {fmtInt(DAY_REQUESTS)} requests ({wl}). {nightSentence(r.night, after)}
+          </>
+        ),
+        body:
+          notable.length > 0 ? (
+            <ul className="mt-1 space-y-1">
+              {notable.slice(-4).map((e, i) => (
+                <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <KindChip kind={e.kind} />
+                  <span>
+                    <DetailText text={e.detail} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : undefined,
+      });
+    } catch (e) {
+      say({ tone: e instanceof ApiError && (e.status === 409 || e.status === 429) ? "warn" : "bad", title: errorText(e, "Could not run the day") });
+      void refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const breakNext = async () => {
+    const before = statsRef.current?.events;
+    setBusy("break");
+    try {
+      const r = await api.breakNext();
+      const after = await refresh();
+      markFresh(before, after);
+      const v = /student-v(\d+)/.exec(r.corrupt)?.[1];
+      say({
+        tone: "warn",
+        title: <>Fault armed: v{v ?? "?"} will be served corrupted once it reaches canary.</>,
+        body: "Its billing, refund and security answers will be confidently wrong. Run a day or two and watch the release gate roll it back.",
+      });
+    } catch (e) {
+      say({ tone: "bad", title: errorText(e, "Could not arm the fault") });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const reset = async () => {
+    setBusy("reset");
+    try {
+      await api.reset();
+      await refresh();
+      setFresh(new Set());
+      say({ tone: "info", title: "Demo reset.", body: "New ledger, new mock fleet and fresh traffic streams. Any warm-up days ran again." });
+    } catch (e) {
+      say({ tone: e instanceof ApiError && (e.status === 409 || e.status === 429) ? "warn" : "bad", title: errorText(e, "Could not reset") });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const mock = stats?.mode === "mock";
+  const cold = stats != null && stats.days.length === 0;
+  const fault = stats ? armedFault(stats) : null;
+
+  return (
+    <div className="[--teacher-only:var(--line-strong)]">
+      <Container className="py-8 sm:py-10">
+        <Header stats={stats} updatedAt={updatedAt} refreshing={refreshing} onRefresh={() => void refresh()} />
+
+        <div className="mt-6 space-y-4">
+          {!stats && loading && <Skeleton />}
+          {!stats && !loading && error && <Unreachable error={error} onRetry={() => void refresh()} retrying={refreshing} />}
+
+          {stats && (
+            <>
+              {error && (
+                <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-warn/30 bg-warn-soft/70 px-3 py-2 text-[13px] text-ink-2">
+                  <TriangleAlert className="size-4 text-warn" aria-hidden />
+                  <span>
+                    Can't reach the gateway ({error}). Showing data from {updatedAt ? fmtTime(updatedAt) : "the last poll"}.
+                  </span>
+                  <Button size="sm" variant="outline" className="ml-auto h-7" onClick={() => void refresh()} disabled={refreshing}>
+                    <RefreshCw className={cn(refreshing && "animate-spin")} aria-hidden /> Retry
+                  </Button>
+                </div>
+              )}
+
+              {mock && (
+                <DemoControls
+                  workload={workload}
+                  onWorkload={setWorkload}
+                  busy={busy}
+                  onRunDay={() => void runDay()}
+                  onBreak={() => void breakNext()}
+                  onReset={() => void reset()}
+                  armed={fault?.id ?? null}
+                  armedPending={fault != null && !fault.trained}
+                  nextDay={stats.day + 1}
+                  notice={notice}
+                  onDismiss={() => setNotice(null)}
+                />
+              )}
+
+              <div className={cn("space-y-4 transition-opacity duration-300", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
+                {cold && <ColdStart mock={mock} onRun={() => void runDay()} busy={busy != null} />}
+
+                <Reveal>
+                  <Kpis stats={stats} />
+                </Reveal>
+
+                <Reveal delay={0.05}>
+                  <Pipeline versions={stats.versions} faultId={fault?.id} />
+                </Reveal>
+
+                <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
+                  <CostChart days={stats.days} />
+                  <ShareChart days={stats.days} />
+                </Reveal>
+
+                <Reveal delay={0.12}>
+                  <VersionsTable versions={stats.versions} />
+                </Reveal>
+
+                <Reveal delay={0.14}>
+                  <TasksTable tasks={stats.tasks} />
+                </Reveal>
+
+                <Reveal delay={0.16} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+                  <ReleaseLog events={stats.events} fresh={fresh} />
+                  <div className="flex min-w-0 flex-col gap-4">
+                    <PrecisionChart
+                      days={stats.days}
+                      rollbacks={stats.events
+                        .filter((e) => e.kind === "rollback")
+                        .map((e) => ({ day: e.day, label: `${/\bv\d+\b/.exec(e.detail)?.[0] ?? ""} rolled back`.trim() }))}
+                    />
+                    <Provenance bom={stats.bill_of_materials} />
+                  </div>
+                </Reveal>
+
+                {mock && (
+                  <p className="pt-2 text-center text-[12px] text-muted">
+                    Simulation: mock teacher, student and trainer from <span className="font-mono">sim/</span>. Numbers show how the loop behaves, not real model quality
+                    or prices.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </Container>
+    </div>
+  );
+}
