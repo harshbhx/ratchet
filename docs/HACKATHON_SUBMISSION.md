@@ -1,0 +1,129 @@
+# Devpost submission: Nebius x NVIDIA Global AI Hackathon
+
+Ready to paste. Replace every `[LIVE NUMBER]` with results from the live run before submitting. Keep simulation results labelled as simulation.
+
+- **Deadline:** Oct 30, 2026, 10:00 AM PDT (10:30 PM IST). Target: submit Oct 29.
+- **Track:** Best Apps and Agents
+- **Judging (equal weight):** Technological Implementation, Design, Potential Impact, Quality of the Idea
+
+---
+
+## Project name
+
+Ratchet
+
+## Tagline
+
+License-clean distillation on open models. Rent intelligence today, own it tomorrow.
+
+## Inspiration
+
+Every AI startup we know rents its intelligence. Each request goes to a big model, and the bill grows with every user. Much of that traffic is narrow and repetitive: classifying a ticket, extracting a field, one step inside an agent. A small model could do it, if someone trained it.
+
+Distilling a big model into a small one works, but it is slow manual work. And if the big model is GPT or Claude, their terms forbid using the outputs to train competing models. We wanted a tool that does it automatically, safely, and legally, on open models, so the customer ends up owning the result.
+
+## What it does
+
+Ratchet is an OpenAI-compatible gateway. You change one line, your base URL. Then:
+
+1. A small model you own (NVIDIA Nemotron 3 Nano 4B + LoRA) answers each request first.
+2. If it is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.
+3. Every Ultra answer is saved with its provenance: which teacher wrote it and which license allows training on it.
+4. Every night, Night School fine-tunes a new student on a Nebius Serverless Job and tests it on a held-out golden set.
+5. A new student reaches users only step by step: shadow mode, then 10%, 50%, 100% of traffic. If its audited quality drops, Ratchet rolls it back automatically.
+
+The dashboard shows dollars saved against an all-Ultra baseline, the share of traffic your own model answers, every version and its state, the release log, and a model bill of materials.
+
+## How we built it
+
+- **Gateway and cascade** (FastAPI, Python). The student is sampled 3 times with logprobs. Confidence combines token probability and agreement between samples. Each model version has its own threshold, calibrated on half the golden set to reach 97% precision.
+- **Provenance ledger** (SQLite). Every example records its teacher and license. Closed-model teachers are refused in code.
+- **Night School.** Builds a cumulative dataset from teacher answers only, retrains LoRA from the base model each night (Unsloth on a Nebius Serverless Job), and hot-loads the adapter into vLLM on a Nebius Serverless Endpoint.
+- **Release gate.** Golden gate with champion-vs-challenger rescoring, shadow mode with teacher arbitration, canary with teacher audits, and rollback on a 95% Wilson upper bound.
+- **Simulator.** Synthetic support tickets, mock models with a learning curve and confident mistakes, and fault injection, so the whole loop is testable without GPUs.
+
+## How we use NVIDIA Nemotron, Token Factory and Nebius
+
+| Component | Model / service | Role |
+|---|---|---|
+| Teacher | `nvidia/Nemotron-3-Ultra-550b-a55b` on **Nebius Token Factory** | Answers hard requests; its answers become training data (OpenMDW-1.1 allows this) |
+| Judge | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | Reference-based scoring of free-text answers, JSON mode |
+| Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Keeps the app running when our endpoint is stopped |
+| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA | The model the customer owns |
+| Training | **Nebius Serverless Jobs** (L40S) | Nightly LoRA fine-tune |
+| Serving | **Nebius Serverless Endpoints** (vLLM) | Student inference with runtime LoRA loading |
+| Storage | **Nebius Object Storage** | Datasets and adapters |
+
+Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and fallback; three Nemotron sizes on the same endpoint made routing by difficulty trivial.
+
+## Challenges we ran into
+
+- Token Factory can't fine-tune or serve a tuned Nemotron yet, so we moved training and serving to Nebius AI Cloud Serverless.
+- Our first simulation rejected every new model. Shadow mode judged candidates on all traffic, not just the answers they would actually serve. We redesigned it around precision and coverage, with the teacher breaking ties.
+- Deduplication made the golden set over-represent rare phrasings, and frequent requests were held out forever. Now requests seen 3+ times always go to training.
+- Comparing a new model against the live model's old score, measured on an older and easier golden set, made every newer model look like a regression. Now the live model is re-scored on the same set each night.
+- Tests caught a tie-handling bug in threshold calibration that could promise 95% precision and deliver 94%.
+
+## Accomplishments we're proud of
+
+- A full, tested loop: 34 tests, including end-to-end simulations of cold start, drift and rollback.
+- In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
+- Live run: [LIVE NUMBER]% cost reduction, [LIVE NUMBER]% audited precision, [LIVE NUMBER] ms median student latency vs [LIVE NUMBER] ms for Ultra.
+- License-clean provenance with a model bill of materials.
+
+## What we learned
+
+- For a cascade, raw accuracy is the wrong metric. What matters is the precision of what the model chooses to serve and how much it serves.
+- Release decisions need held-out data and statistical bounds; single numbers on small samples lie.
+- Data licensing is a product feature, not a footnote.
+
+## What's next
+
+PII redaction, gateway auth, streaming, multiple tasks per deployment, signed bills of materials, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing.
+
+## Built with
+
+python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemotron-3-ultra, nemotron-3-super, nemotron-3-nano, nebius-token-factory, nebius-ai-cloud, nebius-serverless-jobs, nebius-serverless-endpoints, nebius-object-storage, lora
+
+---
+
+## Feedback on Nebius and NVIDIA tools (draft)
+
+**What worked well**
+
+- One OpenAI-compatible API for every Nemotron size made routing by difficulty very simple.
+- Nemotron 3 Ultra's OpenMDW-1.1 license is clear that outputs are unrestricted, which made a license-clean distillation product possible.
+- Serverless Jobs and Endpoints billed per second, with stopped endpoints costing nothing, suit a nightly training loop.
+
+**Friction we hit**
+
+1. **No Nemotron fine-tuning on Token Factory.** The post-training model list covers Llama, Qwen, Gemma, gpt-oss and DeepSeek, but no Nemotron. We had to build our own training job.
+2. **Serverless LoRA serving is Llama-only.** Only Llama-3.1-8B and Llama-3.3-70B are accepted as base models for per-token LoRA serving. Supporting Nemotron Nano here would remove the need for a dedicated vLLM endpoint.
+3. **Serverless pricing is hard to find.** We could find on-demand GPU prices but not clear Serverless Jobs/Endpoints rates.
+4. **Terms of Service 5(f).** "Develop a product or service that competes with the Service" is broad. A gateway built entirely on Nebius that reduces token spend could be read either way. A short FAQ for builders would help. (We emailed support on Oct 19, 2026.) [UPDATE WITH REPLY]
+5. **Custom weights on dedicated endpoints** are "beta, on request", with supported architectures undocumented.
+6. [ADD ANY ISSUES FROM THE LIVE RUN: logprobs, JSON mode, CLI flags, cold starts]
+
+**Requests**
+
+- Nemotron Nano in Token Factory fine-tuning and serverless LoRA.
+- Published Serverless rates next to on-demand rates.
+- A builder FAQ on ToS 5(f).
+
+---
+
+## Submission checklist
+
+- [ ] Working project uses NVIDIA Nemotron on Token Factory and Nebius AI Cloud
+- [ ] Track selected: Best Apps and Agents
+- [ ] Project description (this file, sections above)
+- [ ] Working demo URL, tested logged-out, stays live through Dec 15, 2026
+- [ ] Demo video under 3 minutes, public on YouTube, no unlicensed music or third-party trademarks ([DEMO_SCRIPT.md](DEMO_SCRIPT.md))
+- [ ] Public GitHub repo with Apache-2.0 license visible at the top of the repo page
+- [ ] README with setup and run instructions
+- [ ] README explains how Nemotron is used, where Token Factory helped, and other Nebius services used
+- [ ] Feedback section filled in (above)
+- [ ] "Significant updates" note not needed: project created during the submission period (Oct 2026)
+- [ ] City selection: only if a Builders & Brews event was attended
+- [ ] All `[LIVE NUMBER]` placeholders replaced
+- [ ] Re-read the Official Rules once more before submitting
