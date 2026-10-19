@@ -1,0 +1,117 @@
+# Configuration
+
+All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py` and the `deploy/` scripts. Model IDs and prices follow the Nebius Token Factory catalog as of October 2026. Check them on day 1 with `python scripts/day1_check.py` (see [DAY1.md](DAY1.md)).
+
+## Gateway and cascade (`ratchet/config.py`)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_MODE` | `mock` | `mock`: offline demo with mock models and an in-memory ledger. `live`: real Token Factory teacher and a SQLite file |
+| `RATCHET_DB` | `ratchet.db` | SQLite ledger path (live mode only; mock mode always uses `:memory:`) |
+| `RATCHET_TEACHER_BASE` | `https://api.tokenfactory.nebius.com/v1` | OpenAI-compatible base URL for the teacher, judge and fallback student |
+| `NEBIUS_API_KEY` | empty | Token Factory API key (sent as `Authorization: Bearer …`) |
+| `RATCHET_TEACHER_MODEL` | `nvidia/Nemotron-3-Ultra-550b-a55b` | Teacher model. Must be in the license registry and distillable, or startup fails with `LicenseError` |
+| `RATCHET_JUDGE_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Judge for free-text golden evaluation (`LiveEvaluator`) |
+| `RATCHET_FALLBACK_STUDENT` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Hosted, untuned model used for student calls when `RATCHET_STUDENT_BASE` is empty |
+| `RATCHET_STUDENT_BASE` | empty | Base URL of your vLLM endpoint, e.g. `https://<endpoint>/v1` |
+| `RATCHET_STUDENT_KEY` | empty | Token for the student endpoint |
+| `RATCHET_STUDENT_BASE_MODEL` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model that adapters are trained on (also used by the deploy scripts) |
+| `RATCHET_CONFIDENCE_THRESHOLD` | `0.80` | Fallback threshold, used only when a version has no calibrated `threshold` in its eval |
+| `RATCHET_SAMPLES` | `3` | Student samples per request (self-consistency) and per golden row |
+| `RATCHET_AUDIT_RATE` | `0.05` | Probability that a student-served answer is also sent to the teacher. Mock mode raises it to at least `0.10` |
+| `RATCHET_GOLDEN_FRACTION` | `0.10` | Share of new examples assigned to the golden (held-out) split |
+| `RATCHET_TEACHER_REASONING_TOKENS` | `300` | Extra output tokens assumed for the teacher in baseline estimates (and added by the mock teacher) |
+
+## Live Night School (`ratchet/live.py`)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_DATA_DIR` | `data` | Local folder for `night/train.jsonl`, synced to the bucket |
+| `RATCHET_SYNC_CMD` | empty | Command that uploads `RATCHET_DATA_DIR` to the bucket, e.g. `aws s3 sync ./data s3://my-bucket --endpoint-url https://storage.eu-north1.nebius.cloud` (skipped if empty) |
+| `RATCHET_TRAIN_CMD` | `bash deploy/train_job.sh {version}` | Command that runs training and **waits** for it. `{version}` and `{data}` are substituted |
+| `RATCHET_ADAPTER_ROOT` | `/data/adapters` | Adapter folder as the vLLM endpoint sees it (`lora_path` = `<root>/<version>`) |
+
+Commands are split with `shlex.split` and run without a shell, so pipes and `&&` do not work. Wrap them in a script.
+
+## Deploy scripts (`deploy/`)
+
+| Variable | Used by | Default | Meaning |
+|---|---|---|---|
+| `RATCHET_BUCKET_ID` | both | required | Nebius Object Storage bucket ID, mounted at `/data` |
+| `RATCHET_TRAIN_IMAGE` | `train_job.sh` | required | Training image built from `deploy/Dockerfile.train` |
+| `RATCHET_TRAIN_PLATFORM` | `train_job.sh` | `gpu-l40s-a` | Nebius GPU platform |
+| `RATCHET_TRAIN_PRESET` | `train_job.sh` | `1gpu-8vcpu-32gb` | Nebius preset |
+| `RATCHET_BUCKET_S3` | `train_job.sh` | empty | `s3://bucket[/prefix]`. When set, the script polls for `adapters/<version>/adapter_model.safetensors` (every 30 s, up to 2 h) so it can be used as `RATCHET_TRAIN_CMD` |
+| `RATCHET_S3_ENDPOINT` | `train_job.sh` | empty | S3 endpoint URL for Nebius Object Storage |
+| `RATCHET_STUDENT_KEY` | `student_endpoint.sh` | required | Token clients must send to the endpoint |
+| `RATCHET_SERVE_PLATFORM` | `student_endpoint.sh` | `gpu-l40s-a` | GPU platform for vLLM |
+| `RATCHET_SERVE_PRESET` | `student_endpoint.sh` | `1gpu-8vcpu-32gb` | Preset for vLLM |
+| `RATCHET_STUDENT_BASE_MODEL` | both | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model |
+
+## Prices (`DEFAULT_PRICES`)
+
+USD per 1M tokens (input / output). These are Token Factory list prices as of October 2026; verify them in the console.
+
+| Key | Input | Output | Note |
+|---|---|---|---|
+| `nvidia/Nemotron-3-Ultra-550b-a55b` | 1.00 | 3.00 | Teacher |
+| `nvidia/nemotron-3-super-120b-a12b` | 0.30 | 0.90 | Judge |
+| `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | 0.06 | 0.24 | Fallback student |
+| `nvidia/Nemotron-3_5-Lightning` | 0.06 | 0.24 | |
+| `student` | 0.06 | 0.24 | Per-token **proxy** for the self-hosted student; real cost is GPU-hours |
+
+`Settings.price(model)` checks for an exact key first, then uses `student` for any name starting with `student`. Anything else gets the teacher's price (or 1.00 / 3.00). To change prices, pass `Settings(prices={...})` in code; there are no price environment variables.
+
+## Release policy (`ratchet/release.py`)
+
+`ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with `RATCHET_<FIELD>` in upper case, e.g. `RATCHET_MIN_AUDITS=30` or `RATCHET_LIVE_FLOOR=0.9` (`ReleasePolicy.from_env()`). Mock mode uses `min_audits=15`.
+
+| Field | Default | Used in |
+|---|---|---|
+| `min_precision` | 0.95 | Golden gate and shadow: minimum precision of answers the candidate would serve |
+| `min_coverage` | 0.25 | Golden gate: minimum share of golden traffic it would serve |
+| `tolerance` | 0.02 | Max allowed drop vs live (precision and coverage) in the golden gate, and coverage vs live in shadow |
+| `min_shadow` | 100 | Would-serve shadow answers needed before a shadow decision |
+| `min_audits` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert (`RATCHET_MIN_AUDITS`) |
+| `live_floor` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it |
+
+Other constants:
+
+| Constant | Where | Value |
+|---|---|---|
+| `CANARY_STEPS` | `release.py` | `[10, 50]` then 100 |
+| `FREQUENT` | `nightschool/dataset.py` | 3: requests seen this often always go to training |
+| `min_new_examples` | `run_night()` | 50 new train rows needed to train |
+| `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration |
+| `floor` | `cascade_eval()` | 0.5: lowest allowed threshold |
+| Confidence weights | `confidence.score()` | 0.4 × token probability + 0.6 × agreement |
+| Student sampling | `router._sample` | `temperature=0.7`, `logprobs=True` |
+
+## Tasks
+
+A task tells Ratchet when two answers "agree" (`ratchet/tasks.py`):
+
+| Task | `compare_keys` | Agreement rule |
+|---|---|---|
+| `default` | none | Whole text equal after removing `<think>` blocks, lower-casing and collapsing whitespace |
+| `ticket-triage` | `category`, `priority` | Parse JSON (tolerates code fences and surrounding text), compare only those fields, case-insensitive. Free-text fields such as `reply` are ignored |
+
+Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name creates a `default`-style task with that name, so its data stays separate.
+
+### Adding a task
+
+1. Register it in `ratchet/tasks.py`:
+
+   ```python
+   REGISTRY["invoice-extract"] = Task("invoice-extract", compare_keys=["vendor", "total", "currency", "due_date"])
+   ```
+
+2. Make the system prompt ask for JSON with those keys.
+3. Send traffic with `X-Ratchet-Task: invoice-extract`.
+4. Optional: for free-text tasks (no `compare_keys`), `LiveEvaluator` adds a judge score (`judge_pass_rate`) using the judge model. The release gate does not use that score yet.
+
+Choose keys that are verifiable (labels, IDs, numbers). Exact comparison on these fields is what keeps evaluation free of judge bias.
+
+## Teacher licenses
+
+Edit `ratchet/licenses.py` to add a teacher. `REGISTRY` holds known distillable teachers; `CLOSED` holds ID prefixes that are always refused (`gpt`, `o1`, `o3`, `o4`, `claude`, `gemini`). Unknown teachers are refused until registered. See [ADR 0001](adr/0001-open-teacher-only.md).
