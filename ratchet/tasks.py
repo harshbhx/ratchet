@@ -17,6 +17,9 @@ from typing import Any
 class Task:
     name: str
     compare_keys: list[str] = field(default_factory=list)  # empty = compare whole normalized text
+    # Pinned tasks always go to the teacher and are never stored as training examples:
+    # open-ended work (planning, writing) is where the big model earns its price.
+    pinned: bool = False
 
     def canonical(self, text: str) -> str:
         if self.compare_keys:
@@ -61,6 +64,11 @@ def parse_json(text: str) -> dict[str, Any] | None:
 REGISTRY: dict[str, Task] = {
     "default": Task("default"),
     "ticket-triage": Task("ticket-triage", compare_keys=["category", "priority"]),
+    # Scout, the multi-agent research demo (docs/SCOUT.md).
+    "source-triage": Task("source-triage", compare_keys=["relevant", "source_type"]),
+    "page-read": Task("page-read", compare_keys=["answers_question", "fact_type"]),
+    "research-plan": Task("research-plan", pinned=True),
+    "research-write": Task("research-write", pinned=True),
 }
 
 
