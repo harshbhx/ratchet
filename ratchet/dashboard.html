@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ratchet</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e4e3de;
+    --accent: #3b5bdb; --teacher: #c2410c; --good: #2f9e44; --warn: #e8590c; --bad: #c92a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #a3a29b; --line: #2f2f2c;
+            --accent: #7b96ff; --teacher: #f08c4b; --good: #51cf66; --warn: #ffa94d; --bad: #ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h1 small { font-weight: 400; color: var(--muted); font-size: 14px; margin-left: 8px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0; }
+  .tile, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .tile .v { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }
+  .tile .l { color: var(--muted); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .panel { margin-bottom: 12px; overflow: hidden; }
+  svg { width: 100%; height: auto; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  .scroll { overflow-x: auto; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid currentColor; }
+  .s-live { color: var(--good); } .s-canary, .s-shadow { color: var(--accent); }
+  .s-rejected, .s-rolled_back { color: var(--bad); } .s-retired, .s-candidate { color: var(--muted); }
+  .events { max-height: 300px; overflow: auto; font-size: 13px; }
+  .events div { padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .events b { font-weight: 600; margin-right: 6px; }
+  .k-rollback b, .k-rejected b, .k-fault b { color: var(--bad); } .k-live b { color: var(--good); }
+  .k-canary b, .k-shadow b { color: var(--accent); } .k-skip b, .k-retired b { color: var(--muted); }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0b1020; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Ratchet <small>rent intelligence today, own it tomorrow</small></h1>
+    <div class="controls" id="controls" hidden>
+      <button class="primary" id="runDay">Run 1 day + night</button>
+      <button id="breakNext">Break next deploy</button>
+      <button id="reset">Reset</button>
+    </div>
+  </header>
+  <p class="muted" id="sub">Loading...</p>
+
+  <section class="tiles">
+    <div class="tile"><div class="v" id="tSaved">$0</div><div class="l">saved vs all-teacher</div></div>
+    <div class="tile"><div class="v" id="tPct">0%</div><div class="l">cost reduction (latest day)</div></div>
+    <div class="tile"><div class="v" id="tShare">0%</div><div class="l">answered by your model (latest day)</div></div>
+    <div class="tile"><div class="v" id="tLive">none</div><div class="l">live student version</div></div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Cost per 1,000 requests</h2>
+      <svg id="costChart" viewBox="0 0 520 240" role="img" aria-label="Cost per 1,000 requests by day"></svg>
+      <div class="legend"><span><i style="background:var(--teacher)"></i>All-teacher baseline</span><span><i style="background:var(--accent)"></i>Ratchet</span></div>
+    </div>
+    <div class="panel">
+      <h2>Share answered by your model</h2>
+      <svg id="shareChart" viewBox="0 0 520 240" role="img" aria-label="Share of requests answered by the student by day"></svg>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Student</span><span><i style="background:var(--teacher)"></i>Escalated to teacher</span></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Model versions</h2>
+    <div class="scroll"><table id="versions"><thead><tr>
+      <th>Version</th><th>Trained</th><th>Examples</th><th>Golden precision</th><th>Coverage</th><th>Threshold</th><th>State</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Release log</h2>
+      <div class="events" id="events"></div>
+    </div>
+    <div class="panel">
+      <h2>Provenance (model bill of materials)</h2>
+      <div class="scroll"><table id="bom"><thead><tr><th>Teacher</th><th>License</th><th>Split</th><th>Examples</th></tr></thead><tbody></tbody></table></div>
+      <p class="note" id="bomHash"></p>
+      <p class="note">Every training example records the teacher that wrote it and the license that permits training on it. Closed models whose terms forbid this are refused as teachers.</p>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const pct = (x) => (x == null ? "-" : Math.round(x * 100) + "%");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function axes(svg, xs, yMax, fmt) {
+  const W = 520, H = 240, L = 48, R = 30, T = 12, B = 28;
+  const x = (i) => L + (xs.length <= 1 ? (W - L - R) / 2 : i * (W - L - R) / (xs.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - v / (yMax || 1));
+  let g = "";
+  for (let k = 0; k <= 4; k++) {
+    const v = yMax * k / 4, yy = y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--line)"/>`;
+    g += `<text x="${L - 6}" y="${yy + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmt(v)}</text>`;
+  }
+  xs.forEach((d, i) => { g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">day ${d}</text>`; });
+  return { g, x, y };
+}
+function line(pts, color, dashed) {
+  if (!pts.length) return "";
+  const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
+  return `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.25" ${dashed ? 'stroke-dasharray="5 4"' : ""}/>` +
+    pts.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${color}"/>`).join("");
+}
+function drawCost(days) {
+  const svg = $("costChart");
+  if (!days.length) { svg.innerHTML = `<text x="260" y="120" text-anchor="middle" fill="var(--muted)">No traffic yet</text>`; return; }
+  const max = Math.max(...days.map((d) => d.baseline_per_1k)) * 1.1;
+  const a = axes(svg, days.map((d) => d.day), max, (v) => "$" + v.toFixed(2));
+  svg.innerHTML = a.g +
+    line(days.map((d, i) => [a.x(i), a.y(d.baseline_per_1k)]), "var(--teacher)", true) +
+    line(days.map((d, i) => [a.x(i), a.y(d.cost_per_1k)]), "var(--accent)");
+}
+function drawShare(days) {
+  const svg = $("shareChart");
+  if (!days.length) { svg.innerHTML = `<text x="260" y="120" text-anchor="middle" fill="var(--muted)">No traffic yet</text>`; return; }
+  const a = axes(svg, days.map((d) => d.day), 1, (v) => Math.round(v * 100) + "%");
+  const bw = Math.min(36, 360 / days.length);
+  let g = a.g;
+  days.forEach((d, i) => {
+    const s = d.student_share, e = d.escalation_rate, x0 = a.x(i) - bw / 2;
+    g += `<rect x="${x0}" y="${a.y(s)}" width="${bw}" height="${a.y(0) - a.y(s)}" rx="3" fill="var(--accent)"/>`;
+    g += `<rect x="${x0}" y="${a.y(s + e)}" width="${bw}" height="${a.y(s) - a.y(s + e)}" rx="3" fill="var(--teacher)" opacity=".75"/>`;
+  });
+  svg.innerHTML = g;
+}
+function render(s) {
+  const days = s.days, last = days[days.length - 1];
+  $("sub").textContent = `${s.mode === "mock" ? "Simulation (mock models)" : "Live"} · teacher ${s.teacher} · student base ${s.student_base} · ${s.totals.requests} requests`;
+  $("tSaved").textContent = "$" + (s.totals.saved_usd || 0).toFixed(2);
+  $("tPct").textContent = last ? pct(last.savings_pct) : "0%";
+  $("tShare").textContent = last ? pct(last.student_share) : "0%";
+  const live = s.versions.filter((v) => v.state === "live").pop();
+  $("tLive").textContent = live ? "v" + live.id : "none";
+  drawCost(days); drawShare(days);
+  $("versions").querySelector("tbody").innerHTML = s.versions.slice().reverse().map((v) =>
+    `<tr><td>v${v.id}</td><td>day ${v.day}</td><td>${v.train_examples}</td><td>${pct(v.eval.precision)}</td>` +
+    `<td>${pct(v.eval.coverage)}</td><td>${v.eval.threshold == null ? "-" : v.eval.threshold.toFixed(2)}</td>` +
+    `<td><span class="chip s-${esc(v.state)}">${esc(v.state.replace("_", " "))}${v.state === "canary" ? " " + v.traffic_pct + "%" : ""}</span></td></tr>`
+  ).join("") || `<tr><td colspan="7" class="muted">No versions yet: day 1 is all teacher (cold start).</td></tr>`;
+  $("events").innerHTML = s.events.slice().reverse().map((e) =>
+    `<div class="k-${esc(e.kind)}"><b>day ${e.day} · ${esc(e.kind)}</b>${esc(e.detail)}</div>`).join("") || `<div class="muted">Nothing yet.</div>`;
+  $("bom").querySelector("tbody").innerHTML = s.bill_of_materials.sources.map((r) =>
+    `<tr><td>${esc(r.teacher_model)}</td><td>${r.license_url ? `<a href="${esc(r.license_url)}" target="_blank" rel="noopener">${esc(r.license)}</a>` : esc(r.license)}</td><td>${esc(r.split)}</td><td>${r.n}</td></tr>`
+  ).join("") || `<tr><td colspan="4" class="muted">No training data yet.</td></tr>`;
+  $("bomHash").textContent = "Dataset fingerprint (SHA-256): " + s.bill_of_materials.examples_sha256.slice(0, 32) + "...";
+  $("controls").hidden = s.mode !== "mock";
+}
+async function refresh() { const r = await fetch("ratchet/stats"); render(await r.json()); }
+async function act(path, btn) {
+  document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try { await fetch(path, { method: "POST" }); await refresh(); }
+  finally { document.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
+}
+$("runDay").onclick = () => act("ratchet/demo/day");
+$("breakNext").onclick = () => act("ratchet/demo/break-next");
+$("reset").onclick = () => act("ratchet/demo/reset");
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>
