@@ -1,0 +1,13 @@
+Ratchet
+Copyright 2026 Harsh Bhanushali and Ratchet contributors
+
+This product includes software developed by Harsh Bhanushali (DualMind Labs),
+licensed under the Apache License, Version 2.0.
+
+Third-party models used with this software are NOT distributed with it and are
+governed by their own licenses:
+- NVIDIA Nemotron 3 Nano models: NVIDIA Nemotron Open Model License
+  https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/
+- NVIDIA Nemotron 3 Ultra: OpenMDW-1.1
+  https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+If you distribute LoRA adapters trained with Ratchet, include the base model's license.
