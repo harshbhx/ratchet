@@ -1,0 +1,181 @@
+#cloud-config
+# First-boot setup for the Ratchet demo VM (Ubuntu 24.04, image family ubuntu24.04-driverless).
+# create_vm.sh fills in four placeholders (the names below wrapped in double underscores) and
+# passes this file as --cloud-init-user-data. To use it by hand, replace them yourself.
+#
+#   SSH_USER        admin login (not root or admin: Nebius reserves those)
+#   SSH_PUBLIC_KEY  one OpenSSH public key line
+#   REPO_URL        https://github.com/harshbhx/ratchet.git (the repo must be public), or a
+#                   one-time URL with a read-only token for a private repo:
+#                   https://x-access-token:<token>@github.com/harshbhx/ratchet.git
+#                   The token is removed from the git remote after cloning, but it stays in this
+#                   user-data on the VM. Revoke it after first boot.
+#   RATCHET_DOMAIN  DNS name for HTTPS, or empty to use <public-ip>.sslip.io
+#
+# Progress on the VM: sudo tail -f /var/log/ratchet-bootstrap.log   (also: cloud-init status --wait)
+
+users:
+  - name: __SSH_USER__
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+  # Owns /opt/ratchet and runs Docker Compose and cron jobs. No password, no SSH login.
+  - name: ratchet
+    system: true
+    shell: /usr/sbin/nologin
+    homedir: /var/lib/ratchet
+    lock_passwd: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - sqlite3
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  # Daily package lists + unattended security upgrades (Ubuntu's default origins: security only).
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  # Cron jobs. Only the backup is on by default.
+  - path: /etc/cron.d/ratchet
+    permissions: "0644"
+    content: |
+      # Ratchet demo jobs. Format: minute hour day month weekday user command
+      SHELL=/bin/bash
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+      # Daily ledger backup at 03:10 UTC (does nothing in mock mode, where the ledger is in memory).
+      10 3 * * * ratchet /opt/ratchet/deploy/vm/backup.sh >> /var/log/ratchet/backup.log 2>&1
+
+      # Live Night School. Off by default. Turn on only when ALL of these are true:
+      #  1. RATCHET_MODE=live and the keys in deploy/vm/.env are set;
+      #  2. the student endpoint and training job work by hand (docs/DEPLOYMENT.md steps 1-5);
+      #  3. the gateway image contains the nebius and aws CLIs and their credentials, and the
+      #     deploy/ scripts, because `night` runs RATCHET_TRAIN_CMD (deploy/train_job.sh) inside
+      #     the container. The stock Dockerfile does not include them yet.
+      # Night School at 02:30 UTC: build the dataset, train, evaluate, gate.
+      # 30 2 * * * ratchet cd /opt/ratchet/deploy/vm && docker compose exec -T ratchet python -m ratchet.live night >> /var/log/ratchet/night.log 2>&1
+      # Release gate every 5 minutes (the gateway also ticks on every request).
+      # */5 * * * * ratchet cd /opt/ratchet/deploy/vm && docker compose exec -T ratchet python -m ratchet.live tick >> /var/log/ratchet/tick.log 2>&1
+
+  - path: /etc/logrotate.d/ratchet
+    permissions: "0644"
+    content: |
+      /var/log/ratchet/*.log {
+        weekly
+        rotate 8
+        compress
+        missingok
+        notifempty
+        su ratchet ratchet
+        create 0640 ratchet ratchet
+      }
+
+  - path: /usr/local/sbin/ratchet-bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Runs once from cloud-init. Safe to re-run by hand: sudo /usr/local/sbin/ratchet-bootstrap.sh
+      set -euo pipefail
+      exec > >(tee -a /var/log/ratchet-bootstrap.log) 2>&1
+      echo "== ratchet bootstrap $(date -u +%FT%TZ)"
+
+      REPO_URL='__REPO_URL__'
+      DOMAIN_IN='__RATCHET_DOMAIN__'
+      ADMIN_USER='__SSH_USER__'
+      APP_DIR=/opt/ratchet
+      VM_DIR="$APP_DIR/deploy/vm"
+      # A placeholder that was never filled in counts as empty.
+      [[ "$DOMAIN_IN" == __*__ ]] && DOMAIN_IN=""
+
+      # 1. Docker Engine + Compose plugin from Docker's official apt repository
+      #    (https://docs.docker.com/engine/install/ubuntu/).
+      if ! command -v docker >/dev/null 2>&1; then
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        printf '%s\n' \
+          "Types: deb" \
+          "URIs: https://download.docker.com/linux/ubuntu" \
+          "Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}" \
+          "Components: stable" \
+          "Signed-By: /etc/apt/keyrings/docker.asc" > /etc/apt/sources.list.d/docker.sources
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      fi
+      systemctl enable --now docker
+      usermod -aG docker ratchet
+      usermod -aG docker "$ADMIN_USER" || true
+
+      # 2. Unattended security upgrades.
+      systemctl enable --now unattended-upgrades
+
+      # 3. Host firewall: SSH, HTTP, HTTPS (and HTTP/3). The default Nebius security group
+      #    allows all traffic, so this is the real filter for host services.
+      #    Docker publishes 80/443 through its own iptables rules, which bypass ufw; only
+      #    Caddy's ports are published, so nothing else is exposed.
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp
+      ufw allow 80/tcp
+      ufw allow 443/tcp
+      ufw allow 443/udp
+      ufw --force enable
+
+      # 4. Code.
+      if [[ ! -d "$APP_DIR/.git" ]]; then
+        git clone "$REPO_URL" "$APP_DIR"
+        # Drop any token from the saved remote URL. Later `git pull` needs a public repo
+        # (or a credential you add by hand).
+        git -C "$APP_DIR" remote set-url origin "$(printf '%s' "$REPO_URL" | sed -E 's#^https://[^@/]+@#https://#')"
+      fi
+      install -d -o ratchet -g ratchet -m 0750 /var/lib/ratchet /var/log/ratchet /var/backups/ratchet
+      chown -R ratchet:ratchet "$APP_DIR"
+
+      # 5. Settings: .env from the example, if missing.
+      if [[ ! -f "$VM_DIR/.env" ]]; then
+        install -o ratchet -g ratchet -m 0600 "$VM_DIR/.env.vm.example" "$VM_DIR/.env"
+      fi
+      current="$(grep -E '^RATCHET_DOMAIN=' "$VM_DIR/.env" | tail -n1 | cut -d= -f2- || true)"
+      if [[ -n "$DOMAIN_IN" ]]; then
+        domain="$DOMAIN_IN"
+      elif [[ -z "$current" || "$current" == "ratchet.example.com" ]]; then
+        # The VM only sees its private address, so ask an outside service for the public one.
+        # VERIFY ON DAY 1: if this fails, set RATCHET_DOMAIN in .env by hand and run
+        #   cd /opt/ratchet/deploy/vm && sudo -u ratchet docker compose up -d
+        ip="$(curl -fsS --max-time 10 https://api.ipify.org || curl -fsS --max-time 10 https://ifconfig.me || true)"
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          domain="${ip}.sslip.io"
+        else
+          echo "Could not detect the public IP; leaving RATCHET_DOMAIN=$current"
+          domain="$current"
+        fi
+      else
+        domain="$current"
+      fi
+      sed -i -E "s|^RATCHET_DOMAIN=.*|RATCHET_DOMAIN=${domain}|" "$VM_DIR/.env"
+      echo "RATCHET_DOMAIN=${domain}"
+
+      # 6. Start. The first build takes a few minutes on 2 vCPUs.
+      cd "$VM_DIR"
+      runuser -u ratchet -- docker compose up -d --build
+      echo "== done. Open https://${domain}/ in a few minutes (certificate + mock warm-up)."
+
+runcmd:
+  - [bash, /usr/local/sbin/ratchet-bootstrap.sh]
+
+final_message: "Ratchet bootstrap finished after $UPTIME seconds. Log: /var/log/ratchet-bootstrap.log"
