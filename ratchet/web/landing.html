@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ratchet</title>
+<meta name="description" content="Ratchet is an open-source, OpenAI-compatible gateway that turns your own AI traffic into a cheaper model you own, distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.">
+<meta name="color-scheme" content="light dark">
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e4e3de;
+    --accent: #3b5bdb; --teacher: #c2410c; --good: #2f9e44; --warn: #e8590c; --bad: #c92a2a;
+    /* Text-safe variants for small labels (AA contrast on --panel). */
+    --good-ink: #237a35; --code-bg: #f1f0ec; --hl: rgba(59, 91, 219, .12); --on-accent: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #a3a29b; --line: #2f2f2c;
+            --accent: #7b96ff; --teacher: #f08c4b; --good: #51cf66; --warn: #ffa94d; --bad: #ff6b6b;
+            --good-ink: #51cf66; --code-bg: #171716; --hl: rgba(123, 150, 255, .16); --on-accent: #0b1020; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  code, pre { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  :not(pre) > code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; font-size: .88em; }
+  .muted { color: var(--muted); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .skip { position: absolute; left: -9999px; top: 8px; }
+  .skip:focus { left: 16px; background: var(--panel); padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; z-index: 10; }
+
+  /* Nav */
+  .top { border-bottom: 1px solid var(--line); background: var(--bg); }
+  .top .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 20px; padding-top: 14px; padding-bottom: 14px; }
+  .brand { font-weight: 700; font-size: 19px; letter-spacing: -0.01em; color: var(--ink); text-decoration: none; }
+  .top ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 18px; font-size: 14.5px; }
+  .top ul a { color: var(--muted); text-decoration: none; }
+  .top ul a:hover { color: var(--ink); text-decoration: underline; }
+
+  /* Sections */
+  section { padding: 56px 0 8px; }
+  h1, h2, h3 { letter-spacing: -0.015em; line-height: 1.2; }
+  h2 { font-size: 26px; margin: 0 0 8px; }
+  h3 { font-size: 17px; margin: 0 0 6px; }
+  .eyebrow { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .lead { color: var(--muted); max-width: 68ch; margin: 0 0 20px; }
+  .panel, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .card { padding: 16px 18px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  /* Hero */
+  .hero { padding-top: 48px; display: grid; grid-template-columns: 1.05fr 1fr; gap: 32px; align-items: center; }
+  .hero h1 { font-size: clamp(34px, 6vw, 52px); margin: 0 0 16px; letter-spacing: -0.025em; }
+  .hero .sub { font-size: 18px; color: var(--muted); margin: 0 0 24px; max-width: 46ch; }
+  .hero .sub strong { color: var(--ink); font-weight: 600; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn { display: inline-block; font: inherit; font-size: 15px; font-weight: 550; text-decoration: none; padding: 9px 16px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .codecard { overflow: hidden; }
+  .codecard .cap { display: flex; justify-content: space-between; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+  pre { margin: 0; padding: 14px; overflow-x: auto; background: var(--code-bg); color: var(--ink); }
+  pre .hl { display: inline-block; min-width: 100%; background: var(--hl); box-shadow: -14px 0 0 var(--hl), 14px 0 0 var(--hl); }
+  pre .c { color: var(--muted); }
+  pre .s { color: var(--teacher); }
+  pre .k { color: var(--accent); }
+
+  /* Live strip */
+  #live { padding-top: 40px; }
+  .strip-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+  .strip-head h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
+  .chip { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12.5px; border: 1px solid currentColor; font-weight: 550; }
+  .chip.sim { color: var(--teacher); }
+  .chip.live { color: var(--good-ink); }
+  .chip.acc { color: var(--accent); }
+  .chip.bad { color: var(--bad); }
+  .chip.mut { color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .tile .v { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile .l { color: var(--muted); font-size: 13px; }
+  .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  .simbox { margin-top: 16px; padding: 16px 18px; }
+  .simbox h3 { font-size: 15px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .simrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 10px; }
+  .simrow .v { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
+  .simrow .l { color: var(--muted); font-size: 14px; }
+
+  /* How it works */
+  .how { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .diagram { padding: 14px; }
+  .diagram svg { width: 100%; height: auto; display: block; }
+  .d-box { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+  .d-app { fill: var(--code-bg); }
+  .d-acc { stroke: var(--accent); stroke-width: 2; }
+  .d-tch { stroke: var(--teacher); stroke-width: 2; }
+  .d-t { fill: var(--ink); font: 600 15px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .d-s { fill: var(--muted); font: 13px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .d-lab { fill: var(--muted); font: 600 12.5px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .d-lab.acc { fill: var(--accent); } .d-lab.tch { fill: var(--teacher); } .d-lab.bad { fill: var(--bad); }
+  .d-line { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+  .d-line.acc { stroke: var(--accent); } .d-line.tch { stroke: var(--teacher); }
+  .d-loop { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .d-head { fill: var(--muted); } .d-head.acc { fill: var(--accent); } .d-head.tch { fill: var(--teacher); }
+  .d-pill { fill: var(--bg); stroke: var(--accent); stroke-width: 1.25; }
+  .d-pt { fill: var(--accent); font: 600 12px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  ol.steps { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: 12px; }
+  ol.steps li { counter-increment: s; position: relative; padding: 14px 16px 14px 56px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 16px; top: 14px; width: 26px; height: 26px; border-radius: 50%;
+                        background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+  ol.steps h3 { margin-bottom: 4px; }
+  ol.steps p { margin: 0; color: var(--muted); font-size: 15px; }
+  .after { margin: 14px 0 0; font-size: 15px; }
+
+  /* Grids */
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .four { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .five { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .card .tag { margin-bottom: 8px; }
+  .card h3 { font-size: 16px; }
+  .card ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 15px; }
+  .card ul li + li { margin-top: 6px; }
+  .legal { font-size: 13.5px; color: var(--muted); margin: 12px 0 0; }
+  .agent code { font-size: 12.5px; }
+  .agent .calls { font-size: 13.5px; margin-top: 8px; }
+  .scout-cta { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--muted); font-weight: 550; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  td .muted { font-size: 14px; }
+
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding: 24px 0 40px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+  footer p { margin: 0; }
+
+  @media (max-width: 940px) {
+    .five { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+    .four { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 820px) {
+    .hero { grid-template-columns: 1fr; gap: 28px; padding-top: 36px; }
+    .how { grid-template-columns: 1fr; }
+    .diagram { max-width: 460px; }
+  }
+  @media (max-width: 640px) {
+    section { padding-top: 44px; }
+    .two, .four { grid-template-columns: 1fr; }
+    .simrow { grid-template-columns: 1fr; gap: 10px; }
+    .hero .sub { font-size: 17px; }
+    h2 { font-size: 23px; }
+    th, td { padding: 9px 10px; }
+    td:first-child { white-space: normal; }
+    .diagram { padding: 6px; }
+  }
+  @media (max-width: 420px) {
+    pre, pre code { font-size: 12px; }
+    .tile .v { font-size: 23px; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Ratchet home">Ratchet</a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="#how">How it works</a></li>
+        <li><a href="/scout">Scout demo</a></li>
+        <li><a href="/dashboard">Dashboard</a></li>
+        <li><a href="https://github.com/harshbhx/ratchet/tree/main/docs">Docs</a></li>
+        <li><a href="https://github.com/harshbhx/ratchet">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <!-- Hero -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div>
+        <p class="eyebrow">Open source · Apache-2.0</p>
+        <h1 id="hero-title">Rent intelligence today. Own it tomorrow.</h1>
+        <p class="sub">An <strong>OpenAI-compatible gateway</strong> that turns your own AI traffic into a cheaper model <strong>you own</strong>, distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.</p>
+        <div class="ctas">
+          <a class="btn primary" href="/scout">Try the Scout demo</a>
+          <a class="btn" href="/dashboard">Open the dashboard</a>
+          <a class="btn" href="https://github.com/harshbhx/ratchet">View on GitHub</a>
+        </div>
+      </div>
+      <div class="panel codecard">
+        <div class="cap"><span>Python, OpenAI SDK</span><span>change one line</span></div>
+<pre tabindex="0" aria-label="Example: point the OpenAI Python SDK at Ratchet"><code><span class="k">from</span> openai <span class="k">import</span> OpenAI
+
+client = OpenAI(
+<span class="hl">    base_url=<span class="s">"https://&lt;your-ratchet&gt;/v1"</span>,</span>
+    api_key=<span class="s">"unused"</span>,
+)
+r = client.chat.completions.create(
+    model=<span class="s">"ratchet"</span>,
+    messages=messages,
+    <span class="c"># names the task to learn</span>
+    extra_headers={<span class="s">"X-Ratchet-Task"</span>:
+                   <span class="s">"ticket-triage"</span>},
+)
+<span class="k">print</span>(r.ratchet)  <span class="c"># served_by, cost</span></code></pre>
+      </div>
+    </section>
+
+    <!-- Live strip: shown only when /ratchet/stats answers -->
+    <section id="live" aria-labelledby="live-title" hidden>
+      <div class="strip-head">
+        <h2 id="live-title">From this gateway, right now</h2>
+        <span class="chip sim" id="modeChip">Simulation (mock models)</span>
+        <span class="muted" style="font-size:13px" id="updated" aria-live="polite"></span>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="v" id="sSaved">-</div><div class="l">saved vs all-teacher</div></div>
+        <div class="tile"><div class="v" id="sPct">-</div><div class="l">cost reduction, all traffic</div></div>
+        <div class="tile"><div class="v" id="sShare">-</div><div class="l">answered by your model (latest day)</div></div>
+        <div class="tile"><div class="v" id="sLive">-</div><div class="l">live student version</div></div>
+        <div class="tile"><div class="v" id="sReq">-</div><div class="l">requests</div></div>
+      </div>
+      <p class="note" id="liveNote">Read from <code>GET /ratchet/stats</code>, refreshed every 15 seconds. Details on the <a href="/dashboard">dashboard</a>.</p>
+    </section>
+
+    <div class="panel simbox" role="group" aria-labelledby="sim-title">
+      <h3 id="sim-title"><span class="chip sim">Simulation</span> What the 10-day simulation shows</h3>
+      <div class="simrow">
+        <div><div class="v">98%</div><div class="l">of requests answered by the student by day 3</div></div>
+        <div><div class="v">85–87%</div><div class="l">cost saved vs all-teacher at steady state</div></div>
+        <div><div class="v">41%</div><div class="l">audited precision of a corrupted v3 deploy, which was rolled back automatically</div></div>
+      </div>
+      <p class="note">Source: README simulation table (seed 7, 2,000 tickets a day, corrupted deploy of v3). Mock models show how the loop behaves, not real model quality.</p>
+    </div>
+
+    <!-- How it works -->
+    <section id="how" aria-labelledby="how-title">
+      <p class="eyebrow">How it works</p>
+      <h2 id="how-title">Your traffic trains your model</h2>
+      <p class="lead">Ratchet sits between your app and the models. A small model you own answers what it can. A large open model answers the rest, and those answers become tomorrow's training data.</p>
+      <div class="how">
+        <div class="panel diagram">
+          <svg viewBox="0 0 400 612" role="img" aria-labelledby="dg-title dg-desc">
+            <title id="dg-title">Ratchet request and training loop</title>
+            <desc id="dg-desc">Your app calls the Ratchet gateway. The gateway tries the student first: Nemotron 3 Nano 4B with a LoRA adapter, which you own. When the student is unsure, the teacher, Nemotron 3 Ultra on Nebius Token Factory, answers. Teacher answers go to the provenance ledger with their license. Each night Night School, a Nebius Serverless Job, trains a new student. The release gate moves it through shadow, canary 10%, 50% and 100%, with rollback, and the new version becomes the student.</desc>
+            <defs>
+              <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head" d="M0 0 L10 5 L0 10 z"/></marker>
+              <marker id="ahA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head acc" d="M0 0 L10 5 L0 10 z"/></marker>
+              <marker id="ahT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head tch" d="M0 0 L10 5 L0 10 z"/></marker>
+            </defs>
+
+            <!-- Your app -->
+            <rect class="d-box d-app" x="110" y="6" width="180" height="52" rx="10"/>
+            <text class="d-t" x="200" y="28" text-anchor="middle">Your app</text>
+            <text class="d-s" x="200" y="46" text-anchor="middle">any OpenAI SDK</text>
+            <path class="d-line" d="M200 58 V82" marker-end="url(#ah)"/>
+
+            <!-- Gateway -->
+            <rect class="d-box d-acc" x="70" y="84" width="260" height="56" rx="10"/>
+            <text class="d-t" x="200" y="107" text-anchor="middle">Ratchet gateway</text>
+            <text class="d-s" x="200" y="126" text-anchor="middle">scores the student's confidence</text>
+
+            <!-- Split -->
+            <path class="d-line acc" d="M180 140 V156 H122 V190" marker-end="url(#ahA)"/>
+            <path class="d-line tch" d="M220 140 V156 H298 V190" marker-end="url(#ahT)"/>
+            <text class="d-lab acc" x="128" y="178">tries first</text>
+            <text class="d-lab tch" x="290" y="178" text-anchor="end">when unsure</text>
+
+            <!-- Student -->
+            <rect class="d-box d-acc" x="44" y="192" width="156" height="78" rx="10"/>
+            <text class="d-t" x="122" y="214" text-anchor="middle">Student (yours)</text>
+            <text class="d-s" x="122" y="234" text-anchor="middle">Nemotron 3 Nano 4B</text>
+            <text class="d-s" x="122" y="252" text-anchor="middle">+ LoRA, on vLLM</text>
+
+            <!-- Teacher -->
+            <rect class="d-box d-tch" x="212" y="192" width="174" height="78" rx="10"/>
+            <text class="d-t" x="299" y="214" text-anchor="middle">Teacher</text>
+            <text class="d-s" x="299" y="234" text-anchor="middle">Nemotron 3 Ultra</text>
+            <text class="d-s" x="299" y="252" text-anchor="middle">on Token Factory</text>
+            <path class="d-line tch" d="M299 270 V298" marker-end="url(#ahT)"/>
+
+            <!-- Ledger -->
+            <rect class="d-box" x="212" y="300" width="174" height="66" rx="10"/>
+            <text class="d-t" x="299" y="324" text-anchor="middle">Provenance ledger</text>
+            <text class="d-s" x="299" y="344" text-anchor="middle">who wrote it + license</text>
+            <path class="d-line" d="M299 366 V394" marker-end="url(#ah)"/>
+
+            <!-- Loop label (empty column beside the ledger) -->
+            <text class="d-lab acc" x="40" y="322">new student,</text>
+            <text class="d-lab acc" x="40" y="339">every night</text>
+
+            <!-- Night School -->
+            <rect class="d-box" x="86" y="396" width="300" height="72" rx="10"/>
+            <text class="d-t" x="236" y="419" text-anchor="middle">Night School</text>
+            <text class="d-s" x="236" y="438" text-anchor="middle">Nebius Serverless Job: trains a LoRA,</text>
+            <text class="d-s" x="236" y="455" text-anchor="middle">tests it on a held-out golden set</text>
+            <path class="d-line" d="M236 468 V496" marker-end="url(#ah)"/>
+
+            <!-- Release gate -->
+            <rect class="d-box d-acc" x="86" y="498" width="300" height="108" rx="10"/>
+            <text class="d-t" x="236" y="521" text-anchor="middle">Release gate</text>
+            <rect class="d-pill" x="96" y="534" width="60" height="24" rx="12"/>
+            <text class="d-pt" x="126" y="550" text-anchor="middle">shadow</text>
+            <path class="d-line acc" d="M159 546 H169" marker-end="url(#ahA)"/>
+            <rect class="d-pill" x="172" y="534" width="84" height="24" rx="12"/>
+            <text class="d-pt" x="214" y="550" text-anchor="middle">canary 10%</text>
+            <path class="d-line acc" d="M259 546 H269" marker-end="url(#ahA)"/>
+            <rect class="d-pill" x="272" y="534" width="44" height="24" rx="12"/>
+            <text class="d-pt" x="294" y="550" text-anchor="middle">50%</text>
+            <path class="d-line acc" d="M319 546 H329" marker-end="url(#ahA)"/>
+            <rect class="d-pill" x="332" y="534" width="46" height="24" rx="12"/>
+            <text class="d-pt" x="355" y="550" text-anchor="middle">100%</text>
+            <text class="d-lab bad" x="236" y="588" text-anchor="middle">rollback if audited precision drops</text>
+
+            <!-- Loop back to the student -->
+            <path class="d-loop" d="M86 552 H22 V231 H42" marker-end="url(#ahA)"/>
+          </svg>
+        </div>
+
+        <div>
+          <ol class="steps">
+            <li><h3>Your model answers first</h3><p>A small model you own tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter, served by vLLM on a Nebius Serverless Endpoint.</p></li>
+            <li><h3>The teacher answers when it is unsure</h3><p>If the student is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.</p></li>
+            <li><h3>Every teacher answer keeps its provenance</h3><p>The ledger records which teacher wrote it and the license that permits training on it.</p></li>
+            <li><h3>Night School trains and releases a new student</h3><p>Each night a Nebius Serverless Job fine-tunes a new student and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
+          </ol>
+          <p class="after">Your bill only goes down, and at the end you own the model weights.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- License-clean -->
+    <section aria-labelledby="lic-title">
+      <p class="eyebrow">Why license-clean</p>
+      <h2 id="lic-title">Learn only from teachers that allow it</h2>
+      <p class="lead">Most distillation tools learn from whatever model you already call. With closed models, that can break their terms.</p>
+      <div class="two">
+        <div class="card">
+          <div class="tag"><span class="chip bad">Not allowed</span></div>
+          <h3>Closed models forbid it</h3>
+          <ul>
+            <li>OpenAI <a href="https://openai.com/policies/business-terms/">Business Terms §3.3(e)</a> forbids using outputs to train competing models.</li>
+            <li>Anthropic <a href="https://www.anthropic.com/legal/commercial-terms">Commercial Terms §D.4(a)</a> says the same.</li>
+            <li>A tool that learns from GPT or Claude traffic puts its users at risk.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="tag"><span class="chip live">Allowed</span></div>
+          <h3>Ratchet uses open teachers only</h3>
+          <ul>
+            <li>Nemotron 3 Ultra is under <a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16">OpenMDW-1.1</a>, which puts no restrictions on outputs.</li>
+            <li>Closed teachers are refused in code (<code>ratchet/licenses.py</code>), so a bad config fails at startup.</li>
+            <li><code>GET /ratchet/bom</code> exports a model bill of materials: every training source, its license, and a SHA-256 fingerprint of the dataset.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="legal">Not legal advice. Check the licenses yourself.</p>
+    </section>
+
+    <!-- Safe releases -->
+    <section aria-labelledby="safe-title">
+      <p class="eyebrow">Safe releases</p>
+      <h2 id="safe-title">Nothing ships unless it holds up</h2>
+      <p class="lead">A new student has to earn traffic. It can lose it again at any stage.</p>
+      <div class="four">
+        <div class="card"><h3>Golden gate</h3><p>Precision must reach 95% on a held-out golden set. The live model is re-scored on the same set the same night: champion vs challenger.</p></div>
+        <div class="card"><h3>Shadow mode</h3><p>The candidate runs silently on real traffic. When it disagrees with the live student, the teacher decides, and that ruling becomes training data.</p></div>
+        <div class="card"><h3>Canary</h3><p>Traffic moves 10% → 50% → 100%. Each step waits for enough teacher audits of what the candidate served.</p></div>
+        <div class="card"><h3>Rollback</h3><p>If the 95% Wilson upper bound of audited precision falls below 92%, traffic goes back to the previous version automatically.</p></div>
+      </div>
+    </section>
+
+    <!-- Scout -->
+    <section aria-labelledby="scout-title">
+      <p class="eyebrow">Scout, a multi-agent demo</p>
+      <h2 id="scout-title">Ratchet on real agent traffic</h2>
+      <p class="lead">Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two agents make many narrow, repeated calls, so Ratchet moves them to the student. The open-ended planning and writing stay on Ultra.</p>
+      <div class="five">
+        <div class="card agent"><div class="tag"><span class="chip sim">Pinned to Ultra</span></div><h3>Planner</h3><p>Turns the question into three search queries.</p><p class="calls muted"><code>research-plan</code></p></div>
+        <div class="card agent"><div class="tag"><span class="chip mut">Tool</span></div><h3>Searcher</h3><p>Runs each query on the Tavily Search API.</p><p class="calls muted">no model call</p></div>
+        <div class="card agent"><div class="tag"><span class="chip acc">Distilled to student</span></div><h3>Triage</h3><p>Labels each result: relevant or not, and what kind of source.</p><p class="calls muted"><code>source-triage</code></p></div>
+        <div class="card agent"><div class="tag"><span class="chip acc">Distilled to student</span></div><h3>Reader</h3><p>Checks if a relevant page answers the question and pulls out the key fact.</p><p class="calls muted"><code>page-read</code></p></div>
+        <div class="card agent"><div class="tag"><span class="chip sim">Pinned to Ultra</span></div><h3>Writer</h3><p>Writes the final answer with citations.</p><p class="calls muted"><code>research-write</code></p></div>
+      </div>
+      <div class="scout-cta">
+        <a class="btn primary" href="/scout">Try the Scout demo</a>
+        <span class="muted" style="font-size:14px">Without API keys, Scout runs on mock models and simulated search results, and says so.</span>
+      </div>
+    </section>
+
+    <!-- Built on -->
+    <section aria-labelledby="stack-title">
+      <p class="eyebrow">Built on Nebius and NVIDIA</p>
+      <h2 id="stack-title">Open models on Nebius infrastructure</h2>
+      <p class="lead">Every model in the loop is an NVIDIA Nemotron model. Training and serving run on Nebius.</p>
+      <div class="panel">
+        <table>
+          <caption class="sr-only">Models and services Ratchet uses, by role</caption>
+          <thead><tr><th scope="col">Role</th><th scope="col">Model or service</th></tr></thead>
+          <tbody>
+            <tr><td>Teacher</td><td>Nemotron 3 Ultra on Nebius Token Factory</td></tr>
+            <tr><td>Judge</td><td>Nemotron 3 Super on Token Factory <span class="muted">(scores free-text answers)</span></td></tr>
+            <tr><td>Fallback</td><td>Nemotron 3 Nano 30B on Token Factory <span class="muted">(used when your endpoint is stopped)</span></td></tr>
+            <tr><td>Student</td><td>Nemotron 3 Nano 4B + LoRA on a Nebius Serverless Endpoint with vLLM</td></tr>
+            <tr><td>Night School</td><td>Nebius Serverless Jobs <span class="muted">(pay only while training)</span></td></tr>
+            <tr><td>Storage</td><td>Nebius Object Storage <span class="muted">(dataset and adapters)</span></td></tr>
+            <tr><td>Search</td><td>Tavily <span class="muted">(Scout demo only)</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Quick start -->
+    <section aria-labelledby="qs-title">
+      <p class="eyebrow">Quick start</p>
+      <h2 id="qs-title">Run the whole loop locally</h2>
+      <p class="lead">No API keys. About a minute. It uses mock models, so it shows how the loop behaves, not real model quality.</p>
+      <div class="panel codecard">
+        <div class="cap"><span>bash</span><span>from the repo root</span></div>
+<pre tabindex="0" aria-label="Quick start commands"><code>pip install -e ".[dev]"
+python -m sim.simulate --days 10 \
+    --requests 2000 --bad-deploy-version 3
+RATCHET_MODE=mock uvicorn \
+    ratchet.gateway:app --port 8000
+pytest -q</code></pre>
+      </div>
+      <p class="note">The second command runs the full loop with a corrupted deploy. The third serves this page, the dashboard and Scout at <code>http://localhost:8000</code>. Live mode on Token Factory and Nebius is in the <a href="https://github.com/harshbhx/ratchet/tree/main/docs">docs</a>.</p>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Built by Harsh Bhanushali (DualMind Labs) for the Nebius x NVIDIA Global AI Hackathon.</p>
+    <p>Code under Apache-2.0 · <a href="https://github.com/harshbhx/ratchet">GitHub</a></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const strip = $("live");
+  const pct = (x) => (x == null || isNaN(x) ? "-" : Math.round(Number(x) * 100) + "%");
+  function usd(v) {
+    v = Number(v) || 0;
+    const a = Math.abs(v);
+    return "$" + v.toFixed(a >= 1 || a === 0 ? 2 : a >= 0.01 ? 3 : 4);
+  }
+  function render(s) {
+    const t = s.totals || {};
+    const days = Array.isArray(s.days) ? s.days : [];
+    const last = days[days.length - 1];
+    const live = (s.versions || []).filter((v) => v.state === "live").pop();
+    $("sSaved").textContent = usd(t.saved_usd);
+    $("sPct").textContent = pct(t.savings_pct || 0);
+    $("sShare").textContent = last ? pct(last.student_share) : "0%";
+    $("sLive").textContent = live ? "v" + live.id : "none yet (cold start)";
+    $("sLive").style.fontSize = live ? "" : "18px";
+    $("sReq").textContent = (Number(t.requests) || 0).toLocaleString("en-US");
+    const chip = $("modeChip");
+    if (s.mode === "mock") { chip.textContent = "Simulation (mock models)"; chip.className = "chip sim"; }
+    else { chip.textContent = "Live traffic"; chip.className = "chip live"; }
+    $("updated").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    strip.hidden = false;
+  }
+  async function refresh() {
+    const ctl = "AbortController" in window ? new AbortController() : null;
+    const timer = ctl && setTimeout(() => ctl.abort(), 8000);
+    try {
+      const r = await fetch("/ratchet/stats", { cache: "no-store", signal: ctl ? ctl.signal : undefined });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const s = await r.json();
+      if (!s || typeof s !== "object" || !s.totals) throw new Error("bad shape");
+      render(s);
+    } catch (e) {
+      strip.hidden = true;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  refresh();
+  setInterval(refresh, 15000);
+})();
+</script>
+</body>
+</html>
