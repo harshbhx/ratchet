@@ -1,0 +1,27 @@
+name: Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, mode (mock/live), env vars (no keys!).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant events or logs
+      description: Output of /ratchet/stats events, gateway logs.
+  - type: input
+    id: version
+    attributes:
+      label: Ratchet version / commit
