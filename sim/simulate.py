@@ -1,6 +1,7 @@
 """Offline simulation of Ratchet over several days and nights.
 
     python -m sim.simulate --days 8 --requests 2000 --bad-deploy-version 3
+    python -m sim.simulate --workload research   # Scout's triage + read calls
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -19,7 +20,7 @@ from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
 
 from .mock_models import MockFleet, MockTeacher
-from .tickets import TicketStream
+from .world import WORKLOADS, make_stream, night_task
 
 
 def build(args: argparse.Namespace, db: str = ":memory:"):
@@ -40,18 +41,19 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
 
 def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
     settings, ledger, fleet, ratchet, gate = build(args, db)
-    stream = TicketStream(seed=args.seed, drift_day=args.drift_day)
+    workload = getattr(args, "workload", "tickets")
+    stream = make_stream(workload, seed=args.seed, drift_day=args.drift_day)
     nights = []
     for day in range(1, args.days + 1):
         ledger.day = day
         ticks = max(1, args.requests // 10)
         for i in range(args.requests):
             t = stream.sample(day)
-            ratchet.handle(t.messages(), "ticket-triage")
+            ratchet.handle(t.messages(), t.task)
             if (i + 1) % ticks == 0:
                 gate.tick()
         rep = run_night(
-            ledger, fleet, fleet, gate, settings.student_base_model, min_new_examples=args.min_new, task="ticket-triage"
+            ledger, fleet, fleet, gate, settings.student_base_model, min_new_examples=args.min_new, task=night_task(workload)
         )
         nights.append({"night": day, "trained": rep.trained, "version": rep.version, "admitted": rep.admitted, "eval": rep.eval})
     return {
@@ -98,6 +100,7 @@ def parser() -> argparse.ArgumentParser:
         default=0,
         help="fault injection: this student version is pushed corrupted to production",
     )
+    ap.add_argument("--workload", choices=WORKLOADS, default="tickets", help="tickets, Scout research calls, or both")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out", default="sim_results.json")
     return ap
