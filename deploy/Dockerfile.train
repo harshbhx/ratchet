@@ -1,0 +1,15 @@
+# Training image for Night School (Nebius Serverless Job).
+# Nemotron 3 Nano is a hybrid Mamba-Transformer model: the Mamba kernels must build against
+# the image's CUDA + torch. Pin versions once the day-1 test passes.
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip git && rm -rf /var/lib/apt/lists/*
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128
+RUN pip install --no-cache-dir "unsloth" "trl>=0.19" peft datasets transformers accelerate
+# Mamba kernels for Nemotron-H layers (verify they are required for the 4B model).
+RUN pip install --no-cache-dir causal-conv1d mamba-ssm --no-build-isolation || true
+
+WORKDIR /app
+COPY ratchet /app/ratchet
+ENV PYTHONPATH=/app
