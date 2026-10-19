@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ratchet-distill"
+version = "0.1.1"
+description = "License-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a cheaper model you own."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27", "pydantic>=2"]
+
+[project.optional-dependencies]
+train = ["unsloth", "trl>=0.19", "peft", "datasets", "transformers"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["ratchet*", "sim*"]
+
+[tool.setuptools.package-data]
+ratchet = ["dashboard.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008"]  # FastAPI's Body()/Header() defaults are the documented pattern
+
+[tool.ruff.lint.per-file-ignores]
+"sim/tickets.py" = ["E501"]  # template sentences read better on one line
