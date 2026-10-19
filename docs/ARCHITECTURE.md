@@ -2,7 +2,7 @@
 
 Ratchet is a gateway that sits between your app and a large "teacher" model. A small "student" model you own answers each request first. If it is unsure, the request goes to the teacher. Every teacher answer is stored with its license, and every night a new student is trained on those answers and released through a series of safety gates.
 
-This page describes v0.1.0 exactly as implemented in `ratchet/`. Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
+This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
 
 ## 1. Components
 
@@ -17,7 +17,8 @@ This page describes v0.1.0 exactly as implemented in `ratchet/`. Product context
 │ Your app │ ───────────────────────▶ │ Gateway  (ratchet/gateway.py)  │──── SQLite ledger (ratchet/ledger.py)
 └──────────┘ ◀─────────────────────── │  Ratchet router (router.py)    │      requests · examples · versions · events
                                       │  ReleaseGate.tick (release.py) │
-                                      │  Dashboard (dashboard.html)    │
+                                      │  Pages: /, /scout, /dashboard  │
+                                      │  Scout agents (scout/)  ───────┼──── Tavily Search API (live Scout only)
                                       └─┬──────────────────────────────┘
                                         │ OpenAI-compatible HTTPS (model = adapter name)
                          ┌──────────────▼──── Nebius AI Cloud ─────────────────────────────┐
@@ -45,13 +46,19 @@ This page describes v0.1.0 exactly as implemented in `ratchet/`. Product context
 | `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold |
 | `ratchet/nightschool/orchestrate.py` | `run_night()`: one night of training and release |
 | `ratchet/live.py` | Live Night School on Nebius (`NebiusTrainer`, `load_adapter`, CLI) |
-| `ratchet/gateway.py` | FastAPI app: OpenAI-compatible API, stats, dashboard, mock-only demo controls |
-| `sim/` | Synthetic tickets and mock teacher/student for the offline simulation and tests |
+| `ratchet/gateway.py` | FastAPI app: OpenAI-compatible API, stats, pages (`/`, `/scout`, `/dashboard`), mock-only demo controls, Scout endpoints |
+| `ratchet/scout/agents.py` | `Scout`: planner → searcher → triage (parallel) → reader (parallel) → writer; `Call`, `http_caller` |
+| `ratchet/scout/prompts.py` | System prompts, message builders and example questions, shared with the simulator |
+| `ratchet/scout/search.py` | `TavilySearch` (live) and `MockSearch` (simulated results from `sim/research.py`) |
+| `ratchet/scout/guard.py` | `Guard`: daily spend cap, daily run cap, per-IP hourly limit for the public demo |
+| `ratchet/scout/__main__.py` | CLI: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` |
+| `ratchet/web/` | `landing.html` and `scout.html`: static pages, no build step |
+| `sim/` | Synthetic tickets, the mock research world (`research.py`), workloads (`world.py`), mock teacher/student for the offline simulation and tests |
 
 There are two runtime modes, chosen by `RATCHET_MODE`:
 
-- **mock** (default): in-memory ledger, mock teacher and students from `sim/`, demo controls enabled. No network or keys.
-- **live**: SQLite file at `RATCHET_DB`, real teacher on Token Factory, student on your vLLM endpoint (or the hosted fallback model when `RATCHET_STUDENT_BASE` is empty).
+- **mock** (default): in-memory ledger, mock teacher and students from `sim/`, demo controls enabled, simulated search for Scout. No network or keys. `RATCHET_MOCK_WARMUP_DAYS` runs simulated days at startup.
+- **live**: SQLite file at `RATCHET_DB`, real teacher on Token Factory, student on your vLLM endpoint (or the hosted fallback model when `RATCHET_STUDENT_BASE` is empty), Tavily for Scout when `TAVILY_API_KEY` is set.
 
 ## 2. Request path
 
@@ -66,6 +73,11 @@ sequenceDiagram
     participant SH as Shadow candidate
     participant L as Ledger
     App->>GW: POST /v1/chat/completions (X-Ratchet-Task)
+    opt task is pinned
+        GW->>T: teacher answers (NOT stored as training data)
+        GW->>L: log_request(served_by=teacher)
+        GW-->>App: chat.completion
+    end
     GW->>GW: pick version: canary with prob traffic_pct%, else live, else none
     alt a version was picked
         GW->>S: n=3 samples, temperature 0.7, logprobs
@@ -94,6 +106,7 @@ sequenceDiagram
 
 Details that matter:
 
+0. **Pinned tasks** (`Task.pinned`, `_pinned`): checked first. The teacher answers, the request is logged with `served_by=teacher`, no student version, and `cost_usd = baseline_cost_usd`. The answer is **not** passed to `add_example`, so it never becomes training data. No student, audit or shadow call is made. Scout's planner and writer (`research-plan`, `research-write`) are pinned; see [§10](#10-scout-multi-agent-demo).
 1. **Version choice** (`_pick_version`): if a version is in `canary`, it is chosen with probability `traffic_pct / 100`; otherwise the `live` version is used. With no live version (cold start) and the canary not picked, the request goes straight to the teacher.
 2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3), `temperature=0.7`, `logprobs=True`. The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name.
 3. **Threshold**: `Ratchet.threshold(version)` returns `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80).
@@ -101,7 +114,7 @@ Details that matter:
 5. **Teacher calls** (`_call_teacher`): the teacher answer is stripped of `<think>…</think>` and stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url)`. The license comes from `licenses.require_distillable(settings.teacher_model)`, checked once when `Ratchet` is constructed. A closed teacher raises `LicenseError` at startup.
 6. **Shadow**: see [state machine](#5-version-state-machine). The shadow candidate never serves.
 7. **Logging**: one row in `requests` per call (columns below).
-8. **Gate tick**: the gateway calls `rt.gate.tick()` after every request. In live mode, `python -m ratchet.live tick` can also be run from cron.
+8. **Gate tick**: the gateway calls `rt.tick()` (which runs `gate.tick()` under a lock) after every `/v1/chat/completions` request and after every Scout run. In live mode, `python -m ratchet.live tick` can also be run from cron.
 
 The response text is the served answer with reasoning tags removed.
 
@@ -191,7 +204,9 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert` and `fault` (demo only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+
+> Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
 > Note on `day`: the simulator and the mock demo endpoint set `Ledger.day` themselves. In live mode the ledger is opened with `auto_day=True`: day 1 starts at the first logged request and a new day begins every 24 hours. Existing database files are migrated on open (`Ledger._migrate()` adds columns introduced after v0.1).
 
@@ -299,7 +314,7 @@ Rollback requires the **upper** bound to be below the floor, which means strong 
 - **Shadow:** the candidate's sampling cost, plus any arbitration, is added to `cost_usd`. Shadowing is not free.
 - **Baseline:** if the teacher was called, the baseline is that call's cost. Otherwise it is estimated as `teacher price × (student in_tokens, student out_tokens + teacher_reasoning_tokens)` (default 300 reasoning tokens).
 
-`stats_by_day()` derives `cost_per_1k`, `baseline_per_1k` and `savings_pct = 1 − cost/baseline`; `totals()` gives `saved_usd`. The student price is a **per-token proxy** set to the hosted Nano price. Real self-hosted cost is GPU-hours, so live savings should be computed from the Nebius bill too.
+`stats_by_day()` derives `cost_per_1k`, `baseline_per_1k` and `savings_pct = 1 − cost/baseline`; `stats_by_task()` gives the same per task over all days; `totals()` gives `saved_usd`. Pinned requests have cost equal to baseline, so they count fully in both and save nothing. The student price is a **per-token proxy** set to the hosted Nano price. Real self-hosted cost is GPU-hours, so live savings should be computed from the Nebius bill too.
 
 ## 8. Provenance
 
@@ -318,3 +333,22 @@ Rollback requires the **upper** bound to be below the floor, which means strong 
 | [0005](adr/0005-shadow-canary-rollback-with-wilson-bounds.md) | Shadow → canary → live with Wilson-bound rollback |
 | [0006](adr/0006-sqlite-ledger-for-v0.md) | SQLite ledger for v0 |
 | [0007](adr/0007-golden-set-split-and-frequent-requests.md) | Hash-based golden split; frequent requests always train |
+| [0008](adr/0008-pinned-tasks.md) | Pinned tasks stay on the teacher and are never training data |
+
+## 10. Scout (multi-agent demo)
+
+Scout shows Ratchet on agent traffic. The full description and event contract are in [SCOUT.md](SCOUT.md).
+
+```
+question ─▶ Planner (research-plan, pinned) ─▶ 3 queries
+          ─▶ Searcher (Tavily or MockSearch, a tool) ─▶ up to 12 results
+          ─▶ Triage × results (source-triage, distillable, thread pool of 6)
+          ─▶ Reader × relevant results, up to 6 (page-read, distillable, thread pool of 6)
+          ─▶ Writer (research-write, pinned) ─▶ answer with citations
+```
+
+- Every agent call is `call(messages, task)`. In the gateway it is `Ratchet.handle` in-process (`Runtime.scout()`). From outside it is `http_caller`, a plain HTTP client for `/v1/chat/completions` with an `X-Ratchet-Task` header.
+- Scout emits events (`start`, `step`, `done`, or `error`) through a callback. `/scout/stream` runs it in a worker thread and forwards events as Server-Sent Events; `/scout/run` collects them.
+- Before a run, `Guard.admit(ip)` applies the daily budget, the daily run cap and the per-IP hourly limit. After it, `Guard.add_spend` adds the summed `cost_usd` of the steps that finished, even if the run failed.
+- In mock mode, `MockSearch` returns simulated results from `sim/research.py`, and `MockTeacher` answers the planner and writer prompts by recognising their system prompts. The triage and reader requests are built with the same `prompts.py` functions the simulator uses, so the mock models can look each one up by its text.
+- The demo controls (`/ratchet/demo/day?workload=tickets|research|mixed`) let the dashboard train the student on Scout's calls without running Scout itself.

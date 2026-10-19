@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Owner | Harsh Bhanushali (DualMind Labs) |
-| Status | v0.1 built (hackathon MVP); live Nebius run pending |
-| Last updated | 2026-10-19 |
+| Status | v0.2.0 built (hackathon MVP plus Scout demo, landing page, demo VM kit); live Nebius run pending |
+| Last updated | 2026-10-20 |
 | Related | [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Research summary](RESEARCH_SUMMARY.md) · [Roadmap](ROADMAP.md) |
 
 ## 1. Overview
@@ -136,7 +136,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 
 ## 6. Functional requirements
 
-Status: **Done (v0.1)** means built and covered by tests in simulation. **Planned** means not built yet.
+Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in simulation, in that release. **Planned** means not built yet.
 
 ### 6.1 Gateway
 
@@ -149,7 +149,8 @@ Status: **Done (v0.1)** means built and covered by tests in simulation. **Planne
 | FR-1.5 | Reject missing or empty `messages` with HTTP 400 | Done (v0.1) |
 | FR-1.6 | Streaming responses | Planned |
 | FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors return HTTP 502 | Done (v0.1.1) |
-| FR-1.7 | API keys / auth on the gateway | Planned |
+| FR-1.7 | API keys / auth on the gateway | Planned (v0.2 demo VM has an opt-in edge guard in Caddy for `/v1/*`) |
+| FR-1.9 | Web pages: landing page at `/`, Scout at `/scout`, dashboard at `/dashboard` | Done (v0.2) |
 
 ### 6.2 Cascade and confidence
 
@@ -163,6 +164,7 @@ Status: **Done (v0.1)** means built and covered by tests in simulation. **Planne
 | FR-2.6 | Task definitions compare structured fields exactly (e.g. `category`, `priority`); free-text fields ignored for agreement | Done (v0.1) |
 | FR-2.7 | Strip `<think>` reasoning and code fences before comparing or storing | Done (v0.1) |
 | FR-2.8 | Canary traffic split by `traffic_pct` | Done (v0.1) |
+| FR-2.9 | Pinned tasks: always answered by the teacher, logged, never stored as training examples | Done (v0.2) |
 
 ### 6.3 Provenance and licensing
 
@@ -220,6 +222,8 @@ Status: **Done (v0.1)** means built and covered by tests in simulation. **Planne
 | FR-7.4 | Release log and provenance panel | Done (v0.1) |
 | FR-7.5 | Mock-mode controls: run a day, break next deploy, reset | Done (v0.1) |
 | FR-7.6 | Light and dark mode; works at phone width | Done (v0.1) |
+| FR-7.7 | **By task** table (requests, student share, escalations, savings, route) from `tasks` in `/ratchet/stats` | Done (v0.2) |
+| FR-7.8 | Traffic selector for **Run 1 day + night** (tickets, Scout research calls, both); demo controls run one at a time (409) and reset has a 30 s cooldown (429) | Done (v0.2) |
 
 ### 6.8 Live operations on Nebius
 
@@ -239,6 +243,26 @@ Status: **Done (v0.1)** means built and covered by tests in simulation. **Planne
 | FR-9.2 | Mock teacher, mock student with learning curve and confidently-wrong failures | Done (v0.1) |
 | FR-9.3 | Fault injection: corrupted deploy of a chosen version | Done (v0.1) |
 | FR-9.4 | CLI `python -m sim.simulate` with table output and JSON results | Done (v0.1) |
+| FR-9.5 | Mock research world for Scout (8 questions, simulated results on `example.org`) and `--workload tickets\|research\|mixed` | Done (v0.2) |
+| FR-9.6 | Mock warm-up: `RATCHET_MOCK_WARMUP_DAYS` simulated days at startup | Done (v0.2) |
+
+### 6.10 Scout (multi-agent demo)
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-10.1 | Five agents (planner, searcher, triage, reader, writer); every LLM call goes through Ratchet with a task name | Done (v0.2) |
+| FR-10.2 | Planner and writer pinned to the teacher; triage and reader distillable | Done (v0.2) |
+| FR-10.3 | Live search with the Tavily Search API; simulated search in mock mode, labelled in the UI | Done (v0.2), Tavily untested live |
+| FR-10.4 | Streaming run events to the page (Server-Sent Events) and a JSON endpoint (`/scout/run`) | Done (v0.2) |
+| FR-10.5 | Budget guard: daily spend cap, daily run cap, per-IP hourly limit; spend counted per step | Done (v0.2) |
+| FR-10.6 | CLI client: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` | Done (v0.2) |
+
+### 6.11 Demo hosting
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-11.1 | One-command Nebius CPU VM setup (cloud-init, Docker Compose, Caddy HTTPS, firewall) | Done (v0.2), untested on Nebius |
+| FR-11.2 | Daily ledger backups, update script with health checks | Done (v0.2), untested on Nebius |
 
 ## 7. Non-functional requirements
 
@@ -288,9 +312,10 @@ Status: **Done (v0.1)** means built and covered by tests in simulation. **Planne
 
 | Release | Scope | Status |
 |---|---|---|
-| v0.1 (hackathon MVP) | Everything marked Done above; 34 tests passing; simulation and mock dashboard working | Built Oct 19, 2026 |
+| v0.1 (hackathon MVP) | Everything marked Done (v0.1) above; 34 tests passing; simulation and mock dashboard working | Built Oct 19, 2026 |
+| v0.2.0 (demo layer) | Scout, pinned tasks, landing page, By task table, workloads, mock warm-up, Nebius VM deploy kit; 49 tests passing | Built Oct 20, 2026 |
 | v0.1 live | Day-1 checks; Nano 4B trained on a Serverless Job; vLLM endpoint; real numbers | Oct 20–28, 2026 |
-| v0.2 | PII redaction, gateway auth, streaming, Postgres ledger, multiple tasks per deployment, signed BOM | After hackathon |
+| v0.3 | PII redaction, gateway auth, streaming, Postgres ledger, multiple tasks per deployment, signed BOM | After hackathon |
 | v1.0 | Managed Ratchet Cloud, multi-tenant, savings-based billing, region choice (EU, India) | Startup track |
 
 See [Roadmap](ROADMAP.md) for dates and exit criteria.

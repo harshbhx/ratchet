@@ -2,14 +2,23 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 34 tests (test_core, test_system, test_hardening), ~10 s
+pytest -q                     # 49 tests (test_core, test_system, test_hardening, test_scout), ~10 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
+python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 ```
+
+| File | Tests |
+|---|---|
+| `tests/test_core.py` | 19 (15 functions; one has 5 cases) |
+| `tests/test_system.py` | 7 |
+| `tests/test_hardening.py` | 8 |
+| `tests/test_scout.py` | 15 |
+| **Total** | **49** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`): the pure logic of each module.
-2. **System tests** (`tests/test_system.py`): the whole loop over simulated days, plus the gateway API and the HTTP client.
+2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`): the whole loop over simulated days, the gateway API, the HTTP clients, and Scout end to end.
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 None of these touch Token Factory or a GPU. Live behaviour is checked with `scripts/day1_check.py` and the steps in [DEPLOYMENT.md](DEPLOYMENT.md#5-verification-after-deploy).
@@ -44,13 +53,43 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_bad_deploy_is_rolled_back_and_users_return_to_live` | Fault-injects `student-v3`; v3 ends `rolled_back` and v1 stays `live` (skips if v3 was rejected before deploy for that seed) |
 | `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
-| `test_gateway_openai_shape_and_demo_flow` | Mock gateway: dashboard returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
+| `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
 | `test_gateway_rejects_bad_requests` | Empty `messages` and `stream: true` both return 400 |
 | `test_openai_compat_provider_parses_logprobs_and_usage` | `OpenAICompatProvider` against an `httpx.MockTransport`: sends `logprobs` and `n`, sends the bearer header, parses logprobs per choice, splits completion tokens across choices, computes `mean_prob` |
 
+### `tests/test_hardening.py`
+
+Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`.
+
+### `tests/test_scout.py`
+
+The `gw` fixture reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0`.
+
+| Test | Covers |
+|---|---|
+| `test_examples_match_the_research_world` | `research.EXAMPLES` equals the UI's `EXAMPLE_QUESTIONS`; every planned query returns simulated results |
+| `test_scout_run_emits_the_documented_events` | A run emits `start` … `done`; steps have exactly the documented keys; planner first, writer last, all five agents present; one reader step per relevant triage; `llm_calls` excludes searcher steps; `cost_usd` equals the sum of the steps |
+| `test_pinned_tasks_go_to_teacher_and_are_never_training_data` | `research-plan` and `research-write` are pinned, `source-triage` is not; after a run the only stored example tasks are `source-triage` and `page-read`; `stats_by_task` shows 0% student share for the planner and one writer request |
+| `test_student_learns_scout_calls_over_simulated_days` | After 4 simulated days of `mixed` traffic a version is live, and a Scout run has at least 60% student calls and more than 30% savings |
+| `test_research_workload_simulation_learns` | `--workload research`, 6 days × 1,200: day 1 is 0% student; the last day is above 80% student and above 60% savings |
+| `test_gateway_scout_routes` | `/`, `/scout`, `/dashboard` return 200; `/scout/examples` in mock mode; `/scout/run` returns events ending in `done`; non-example and blank questions get 400; `/scout/stream` streams `start` … `done` with HTTP 200, and a bad question gives HTTP 200 with a single `error` event; `/scout/status`; `tasks` in `/ratchet/stats`; `/ratchet/demo/day?workload=research` works and an unknown workload gets 400 |
+| `test_rate_limit_returns_429` | With a guard of 2 runs per hour, the third `/scout/run` gets 429 |
+| `test_guard_budget_and_hourly_window` | Per-IP hourly limit, the window rolling over after an hour, the budget refusing new runs once spent, and a new UTC day resetting it (fake clock) |
+| `test_tavily_search_sends_bearer_and_parses_results` | `TavilySearch` against `httpx.MockTransport`: bearer header, `search_depth: basic`, `max_results`; results without a URL are skipped; a missing title falls back to the URL; snippet ≤ 500 and excerpt ≤ 1,500 characters with whitespace collapsed; an empty key raises |
+| `test_scout_survives_bad_json_from_models` | When every model call returns non-JSON, nothing is judged relevant, nothing is read, and the writer's raw text becomes the answer |
+| `test_guard_caps_runs_per_day` | `max_runs_per_day=2` refuses the third run of the day and resets the next UTC day |
+| `test_demo_controls_are_serialised_and_reset_has_a_cooldown` | A demo action while another holds `_demo_lock` gets 409; a second reset within 30 s gets 429 |
+| `test_failed_run_returns_502_and_its_spend_still_counts` | When the writer's call fails, `/scout/run` returns 502 and the planner, triage and reader spend is still added to the budget |
+| `test_stats_mark_pinned_tasks` | `/ratchet/stats` `tasks` reports `pinned` for the planner and writer tasks only |
+| `test_react_app_is_served_with_lite_fallback` | With the committed build, `/`, `/scout` and `/dashboard` return the React shell and `/assets/*` is served; `/lite*` return the hand-written pages; without a build `/` falls back to the lite page |
+
+The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
+
+Not covered by tests yet: `RATCHET_TRUST_PROXY` and the mock warm-up at startup (it runs the same `simulate_day` the tests exercise).
+
 ## Simulation methodology
 
-`sim/simulate.py` runs `--days` days. Each day sends `--requests` tickets through `Ratchet.handle()`, calls `ReleaseGate.tick()` ten times, then runs `run_night()`. It prints a day table and the event log, and writes JSON (`--out`, default `sim_results.json`).
+`sim/simulate.py` runs `--days` days. Each day sends `--requests` requests from the chosen `--workload` through `Ratchet.handle()`, calls `ReleaseGate.tick()` ten times, then runs `run_night()`. It prints a day table and the event log, and writes JSON (`--out`, default `sim_results.json`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -63,6 +102,7 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `--min-new` | 50 | `run_night(min_new_examples=…)` |
 | `--drift-day` | 5 | Product launch day (0 = never) |
 | `--bad-deploy-version` | 0 | Fault injection: this version is served corrupted once in canary/live |
+| `--workload` | `tickets` | `tickets` (support tickets), `research` (Scout's triage and reader calls), `mixed` (half each). With `tickets` the night trains on `ticket-triage` only; otherwise on every task |
 | `--seed` | 7 | Seed for traffic and routing |
 | `--out` | `sim_results.json` | Results file |
 
@@ -73,6 +113,13 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 - 20 templates across 6 categories (billing, technical, account, shipping, refund, security) and 4 priorities. 6 of them are marked `hard`.
 - Names, products and order numbers vary, so some templates produce many distinct texts and others very few (frequent repeats).
 - From `--drift-day`, 20% of traffic comes from 3 new "Ratchet Watch" templates the student has never seen (1 of them hard).
+
+**Research traffic** (`sim/research.py`, `--workload research`):
+
+- 8 questions about well-known ML ideas, each phrased 4 ways, each with a pool of 72 simulated search results (12 templates × 6 variants). 60% of requests are `source-triage` calls, 40% `page-read` calls.
+- Each template has fixed labels. 6 of the 12 are `hard` (for example a good forum answer next to an off-topic one, or a broad survey paper).
+- From `--drift-day`, 20% of traffic comes from questions 7 and 8, which the student has not seen.
+- `mixed` alternates between the ticket and research streams at random (50/50, its own seed), so both keep their own sequences.
 
 **Mock teacher:**
 
@@ -92,10 +139,12 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 - **Doesn't know, confidently wrong** (15% of unknown cases): all samples give the same wrong labels with probability 0.62–0.92. This deliberately overlaps with correct answers, so calibration cannot separate them perfectly. That is the case audits and shadow exist for.
 - **Doesn't know, otherwise:** random labels, probability 0.35–0.65.
 
+Research items use the same skill model, per result template. Scout's pinned planner and writer prompts are answered by the mock teacher only.
+
 **Fault injection:**
 
 - The corrupted version is fine on the staging copy, which golden eval and shadow use.
-- Once it reaches canary or live, its billing, refund and security answers become confidently wrong. This models pushing the wrong adapter file to production.
+- Once it reaches canary or live, its "fragile" slices become confidently wrong: billing, refund and security tickets; `paper` and `docs` triage results; `date` reads. This models pushing the wrong adapter file to production.
 
 **Costs:** Ultra $1/$3 per 1M tokens. The student uses the $0.06/$0.24 proxy, with 3 samples billed.
 
@@ -126,6 +175,42 @@ total saved 69%
 | 11 | 98% | 85% | 66% | 92% | rolled back |
 
 "Total" includes the cold-start days, when all traffic goes to the teacher.
+
+The ticket numbers above are the same as in v0.1. Adding the research world did not change the random draws for tickets ([sim/CLAUDE.md](../sim/CLAUDE.md)).
+
+### Workloads: research and mixed
+
+Simulation, mock models. 8 days × 1,500 requests/day, drift day 5, no fault injection (selected days shown):
+
+```
+python -m sim.simulate --workload research --days 8 --requests 1500     (seed 7)
+day  student  escal. audit ok     $/1k all-Ultra  saved
+  1       0%      0%        -    1.133     1.133     0%
+  2      16%      2%     100%    0.979     1.131    13%
+  3      82%     14%      99%    0.319     1.132    72%
+  4      95%      5%      99%    0.190     1.132    83%
+  5      95%      5%      96%    0.194     1.132    83%
+  8      96%      4%      99%    0.172     1.132    85%
+total: 12000 requests, $4.98 vs $13.58 all-Ultra -> saved 63%
+
+python -m sim.simulate --workload mixed --days 8 --requests 1500        (seed 7)
+day  student  escal. audit ok     $/1k all-Ultra  saved
+  1       0%      0%        -    1.112     1.112     0%
+  3      21%      0%     100%    0.912     1.112    18%
+  4      97%      3%      98%    0.174     1.111    84%
+  5      92%      8%      97%    0.205     1.111    82%
+  8      98%      2%      99%    0.159     1.112    86%
+total: 12000 requests, $6.12 vs $13.34 all-Ultra -> saved 54%
+```
+
+Seeds 1, 2, 3, 7, 11 (same settings):
+
+| Workload | Final student share | Final-day savings | Total savings | Lowest daily audit agreement | First version live |
+|---|---|---|---|---|---|
+| research | 96–98% | 85–86% | 57–65% | 96–98% | day 2–3 |
+| mixed | 92–98% | 79–86% | 54–63% | 93–96% | day 2–3 |
+
+On mixed traffic the first student comes a night later with seed 7 (v1 was rejected at 94.3% golden precision), so total savings are lower.
 
 ## Bugs the simulation found (and the fixes)
 
@@ -164,5 +249,6 @@ Still open: `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` run without a shell, so p
 ## Adding tests
 
 - Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`). Use `_version()` and `_audit()` to set up release states.
+- Scout, the research world and the guard go in `test_scout.py`. Use the `gw` fixture (mock gateway, no warm-up) and fake clocks for the guard.
 - Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests.
 - Never call real APIs in tests. Use `httpx.MockTransport` as in `test_openai_compat_provider_parses_logprobs_and_usage`.

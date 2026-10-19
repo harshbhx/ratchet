@@ -12,7 +12,9 @@
 | **Calibration** | Picking the lowest threshold whose served answers reach a target precision (97%) on held-out data. |
 | **Self-consistency / agreement** | How many of the student's n samples (default 3) give the same answer. |
 | **Logprobs** | The model's log-probabilities for each generated token. Used to estimate how sure it is. |
-| **Task** | A named workload (for example `ticket-triage`) that defines which answer fields must match for two answers to agree. |
+| **Task** | A named kind of call (for example `ticket-triage`) that defines which answer fields must match for two answers to agree, and whether it is pinned. Chosen with the `X-Ratchet-Task` header. |
+| **Distillable task** | A task whose teacher answers become training data, so the student can take it over. Example: `source-triage`. Every task is distillable unless it is pinned. |
+| **Pinned task** | A task that always goes to the teacher and is never stored as training data (`Task.pinned`). Used for open-ended work such as planning and writing. Examples: `research-plan`, `research-write`. |
 | **Audit** | The teacher re-answers a random share of student-served requests (`audit_rate`) to measure live quality. |
 | **Precision** | Of the answers a student serves (or would serve), the share that agree with the teacher. |
 | **Coverage** | The share of requests a student serves (or would serve). Higher coverage = more savings. |
@@ -37,7 +39,12 @@
 | **License-clean distillation** | Distilling only from teachers whose licenses allow training on their outputs. Closed models whose terms forbid it are refused. |
 | **OpenMDW-1.1** | The license of Nemotron 3 Ultra. It places no restrictions on outputs. |
 | **Baseline cost** | What a request would have cost if the teacher answered it alone. Used for savings receipts. |
-| **Mock mode** | Running with simulated models and synthetic tickets. No keys or GPUs needed. Numbers show loop behavior, not real model quality. |
+| **Mock mode** | Running with simulated models, synthetic tickets and simulated search results. No keys or GPUs needed. Numbers show loop behavior, not real model quality. |
+| **Workload** | The kind of simulated traffic in mock mode and the simulator: `tickets` (support tickets), `research` (Scout's triage and reader calls) or `mixed` (half each). Set with `--workload` or `?workload=`. |
+| **Warm-up** | In mock mode, simulated days and nights run at startup (`RATCHET_MOCK_WARMUP_DAYS`), so the demo opens with a trained student instead of a cold start. |
+| **Scout** | The multi-agent research demo. Five agents (planner, searcher, triage, reader, writer) answer a question from the web, and every LLM call goes through Ratchet. Triage and reader calls are distilled; planner and writer calls are pinned. See [SCOUT.md](SCOUT.md). |
+| **Budget guard** | The limits that protect the public Scout demo in live mode: a daily spend cap, a daily run cap and a per-IP hourly run limit (`ratchet/scout/guard.py`). |
+| **Tavily** | The web search API Scout's searcher uses in live mode. |
 | **Live mode** | Running against real Token Factory and Nebius AI Cloud. |
 | **Token Factory** | Nebius's OpenAI-compatible inference service for open models. |
 | **Serverless Jobs / Endpoints** | Nebius AI Cloud services that run a container to completion (jobs) or serve it at a URL (endpoints), billed per second. |

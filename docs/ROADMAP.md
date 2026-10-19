@@ -1,6 +1,6 @@
 # Roadmap
 
-As of 2026-10-19. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST)**. Target submission: **Oct 29, 2026**.
+As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST)**. Target submission: **Oct 29, 2026**.
 
 ## Milestone 0: v0.1 built (done, Oct 19)
 
@@ -10,6 +10,15 @@ As of 2026-10-19. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 - Market research and stress test written.
 - Token Factory ToS 5(f) question emailed to tokenfactory-support@nebius.com.
 
+## Milestone 0.5: v0.2 demo layer (done, Oct 20)
+
+- **Scout**, a multi-agent research demo ([SCOUT.md](SCOUT.md)): five agents whose calls all go through Ratchet. Triage and reader calls are distilled; planner and writer calls are pinned to the teacher. Tavily search in live mode, a mock research world in mock mode. Budget guard for the public demo.
+- **Pinned tasks** in the task registry: always the teacher, never training data.
+- **Landing page** (`/`), Scout page (`/scout`), dashboard moved to `/dashboard` with a **By task** table and a traffic selector.
+- Simulator workloads: `tickets`, `research`, `mixed`. Mock warm-up at startup.
+- **Nebius VM deploy kit** (`deploy/vm/`, [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): cloud-init, Docker Compose, Caddy with HTTPS and an opt-in API guard, backups, updates.
+- 49 tests passing.
+
 ## Milestone 1: hackathon submission (Oct 19–29, 2026)
 
 | Dates | Work | Exit criteria |
@@ -18,12 +27,14 @@ As of 2026-10-19. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 | Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs |
 | Oct 23–24 | Live Night School: dataset → Serverless Job → hot-load adapter → golden eval → release gate | At least one version trained and evaluated live |
 | Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" | At least 3 versions; real cost and precision numbers |
-| Oct 26–27 | Dashboard polish; public demo URL with Token Factory fallback | Demo URL works logged-out; stays up when the student endpoint is stopped |
+| Oct 26–27 | Public demo on the Nebius VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): mock first, then live Scout with Tavily and the budget guard, Token Factory fallback student | Demo URL works logged-out over HTTPS; `/`, `/scout`, `/dashboard` load; stays up when the student endpoint is stopped |
 | Oct 28 | README with live numbers, feedback section, video recorded ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) | Video under 3 minutes on YouTube (public) |
 | Oct 29 | Submit on Devpost ([HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md)) | Every checklist item ticked |
-| Dec 1–15 | Judging | Demo URL live the whole window |
+| Dec 1–15 | Judging | Demo URL live the whole window (VM runs Oct 29 – Dec 15) |
 
-## Milestone 2: v0.2 hardening (Nov–Dec 2026)
+## Milestone 2: hardening (Nov–Dec 2026)
+
+Called "v0.2 hardening" in earlier drafts. The v0.2.0 version number went to the demo layer above, so these items now target v0.3.
 
 | Item | Why |
 |---|---|
@@ -37,7 +48,7 @@ As of 2026-10-19. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 | Nemotron 3 Nano 30B student on H100/H200 | Harder tasks |
 | GitHub Actions CI with coverage; PyPI package | Open-source adoption |
 
-Exit criteria: two design partners running v0.2 on one task each; zero bad deploys at 100%.
+Exit criteria: two design partners running v0.3 on one task each; zero bad deploys at 100%.
 
 ## Milestone 3: v1.0 Ratchet Cloud (Q1–Q2 2027)
 

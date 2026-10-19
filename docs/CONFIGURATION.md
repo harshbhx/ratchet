@@ -1,6 +1,6 @@
 # Configuration
 
-All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py` and the `deploy/` scripts. Model IDs and prices follow the Nebius Token Factory catalog as of October 2026. Check them on day 1 with `python scripts/day1_check.py` (see [DAY1.md](DAY1.md)).
+All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py`, the `deploy/` scripts and `deploy/vm/`. Model IDs and prices follow the Nebius Token Factory catalog as of October 2026. Check them on day 1 with `python scripts/day1_check.py` (see [DAY1.md](DAY1.md)).
 
 ## Gateway and cascade (`ratchet/config.py`)
 
@@ -21,6 +21,43 @@ All settings come from environment variables. Defaults live in `ratchet/config.p
 | `RATCHET_AUDIT_RATE` | `0.05` | Probability that a student-served answer is also sent to the teacher. Mock mode raises it to at least `0.10` |
 | `RATCHET_GOLDEN_FRACTION` | `0.10` | Share of new examples assigned to the golden (held-out) split |
 | `RATCHET_TEACHER_REASONING_TOKENS` | `300` | Extra output tokens assumed for the teacher in baseline estimates (and added by the mock teacher) |
+
+## Scout, the multi-agent demo
+
+Read in `ratchet/config.py`; used by `ratchet/gateway.py` and `ratchet/scout/guard.py`. Details in [SCOUT.md](SCOUT.md).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TAVILY_API_KEY` | empty | Tavily Search key for Scout's searcher. In live mode without it, Scout returns 503. The Scout CLI (`python -m ratchet.scout`) also reads it; without it the CLI uses simulated results |
+| `RATCHET_SCOUT_DAILY_BUDGET_USD` | `3.00` | Live mode: most Ratchet spend on Scout runs per UTC day. Once reached, new runs get 429. Mock mode has no budget |
+| `RATCHET_SCOUT_RUNS_PER_HOUR` | `6` | Runs per client IP per rolling hour. Mock mode allows 10 × this value |
+| `RATCHET_SCOUT_MAX_RUNS_PER_DAY` | `30` | Live mode: most runs per UTC day, for all clients together. Caps Tavily credits (about 3 searches per run, so 90 credits a day). Mock mode has no cap |
+| `RATCHET_SCOUT_MAX_RESULTS` | `4` | Tavily results per query. With 3 queries, at most 12 results are triaged |
+| `RATCHET_TRUST_PROXY` | `0` | `1`: take the client IP for the per-IP limit from the first `X-Forwarded-For` entry. Only set it when a proxy you control overwrites that header; otherwise clients can fake their IP. Not needed on the demo VM, where uvicorn runs with `--proxy-headers` |
+
+The budget counts the `cost_usd` of every Scout step, including audits and shadow calls. It does not cover `/v1/chat/completions`. Counters are in memory and reset at 00:00 UTC and on restart.
+
+## Mock-mode demo
+
+Read in `ratchet/config.py`. Ignored in live mode.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_MOCK_WARMUP_DAYS` | `0` | Simulated days of `mixed` traffic, each followed by a night, run at startup and on every demo reset, so the demo opens with a trained student. `4` takes about 2 s and leaves a live student that answers about 80–90% of Scout's LLM calls (simulation). Writes a `warmup` event |
+| `RATCHET_MOCK_WARMUP_REQUESTS` | `1500` | Requests per warm-up day |
+| `RATCHET_MOCK_PACE` | `0.25` | `/scout/stream` waits this share of each call's simulated latency (mock Ultra 2.4 s → 0.6 s), so the page shows agents working. `0` = no waiting. `/scout/run` never waits |
+
+## Demo VM: Caddy (`deploy/vm/`)
+
+Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)), from `deploy/vm/.env`. The gateway does not read them.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_DOMAIN` | required | Site name Caddy serves and gets a certificate for, e.g. `ratchet.dualmindlab.tech` or `<public-ip>.sslip.io`. First boot fills in the sslip.io name if it is still the placeholder |
+| `RATCHET_API_GUARD` | `open` | `open`: every path is public. `guarded`: `/v1/*` and `/ratchet/demo/*` return 403 unless the request has a matching `X-Ratchet-Admin-Token` header. Pages, `/scout*`, `/ratchet/stats` and `/ratchet/bom` stay public. In mock mode, `guarded` also disables the dashboard's demo buttons |
+| `RATCHET_ADMIN_TOKEN` | empty | Token for `guarded`. Hex, at least 32 characters (`openssl rand -hex 32`). Shorter or empty blocks the guarded paths for everyone. Caddy strips the header before it reaches the gateway |
+
+`deploy/vm/create_vm.sh` and `deploy/vm/backup.sh` have their own settings (VM name, platform, preset, disk size, SSH user, repo URL, backup folder and retention). They are listed at the top of each script and in [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md).
 
 ## Live Night School (`ratchet/live.py`)
 
@@ -91,12 +128,18 @@ Other constants:
 
 A task tells Ratchet when two answers "agree" (`ratchet/tasks.py`):
 
-| Task | `compare_keys` | Agreement rule |
-|---|---|---|
-| `default` | none | Whole text equal after removing `<think>` blocks, lower-casing and collapsing whitespace |
-| `ticket-triage` | `category`, `priority` | Parse JSON (tolerates code fences and surrounding text), compare only those fields, case-insensitive. Free-text fields such as `reply` are ignored |
+| Task | `compare_keys` | `pinned` | Agreement rule |
+|---|---|---|---|
+| `default` | none | no | Whole text equal after removing `<think>` blocks, lower-casing and collapsing whitespace |
+| `ticket-triage` | `category`, `priority` | no | Parse JSON (tolerates code fences and surrounding text), compare only those fields, case-insensitive. Free-text fields such as `reply` are ignored |
+| `source-triage` | `relevant`, `source_type` | no | Scout's triage agent. Same JSON rule; `reason` is ignored |
+| `page-read` | `answers_question`, `fact_type` | no | Scout's reader agent. Same JSON rule; `key_fact` is ignored |
+| `research-plan` | none | **yes** | Scout's planner. Always answered by the teacher |
+| `research-write` | none | **yes** | Scout's writer. Always answered by the teacher |
 
-Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name creates a `default`-style task with that name, so its data stays separate.
+**Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data.
+
+Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name gets a temporary `default`-style task with that name (not added to the registry), so its data stays separate. Names must match `[A-Za-z0-9_.-]{1,64}`; anything else becomes `default`.
 
 ### Adding a task
 
@@ -104,6 +147,8 @@ Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`.
 
    ```python
    REGISTRY["invoice-extract"] = Task("invoice-extract", compare_keys=["vendor", "total", "currency", "due_date"])
+   # or, for a task that must always stay on the teacher:
+   REGISTRY["contract-summary"] = Task("contract-summary", pinned=True)
    ```
 
 2. Make the system prompt ask for JSON with those keys.
