@@ -1,0 +1,84 @@
+# Ratchet public demo on one Nebius CPU VM: the gateway plus Caddy for automatic HTTPS.
+#   cd /opt/ratchet/deploy/vm && docker compose up -d --build
+# Guide: docs/DEPLOY_NEBIUS_VM.md
+#
+# Settings come from deploy/vm/.env (copy .env.vm.example; never commit .env).
+# Compose also reads that file for ${...} interpolation below, because it sits next to this file.
+
+name: ratchet
+
+services:
+  ratchet:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ratchet-gateway:local
+    env_file: .env
+    # One worker only: the ledger is a single SQLite connection (ADR 0006).
+    # --proxy-headers lets the per-IP Scout rate limit see the real client IP that Caddy sends in
+    # X-Forwarded-For. Trusting every forwarder is safe here only because port 8000 is not
+    # published: the only thing that can reach it is Caddy on the internal network.
+    command:
+      - uvicorn
+      - ratchet.gateway:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "1"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    expose:
+      - "8000"
+    volumes:
+      - ratchet-data:/data
+    restart: unless-stopped
+    healthcheck:
+      # python:3.12-slim has no curl, so use the standard library.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Mock warm-up (RATCHET_MOCK_WARMUP_DAYS) runs simulated days before the app answers.
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    depends_on:
+      - ratchet
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      RATCHET_DOMAIN: ${RATCHET_DOMAIN:?set RATCHET_DOMAIN in deploy/vm/.env}
+      # "open" (default) or "guarded": guarded blocks /v1/* and /ratchet/demo/* unless the
+      # X-Ratchet-Admin-Token header matches RATCHET_ADMIN_TOKEN. See the Caddyfile.
+      RATCHET_API_GUARD: ${RATCHET_API_GUARD:-open}
+      RATCHET_ADMIN_TOKEN: ${RATCHET_ADMIN_TOKEN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # certificates and ACME account: keep it, or you hit Let's Encrypt rate limits
+      - caddy-config:/config
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  ratchet-data:
+  caddy-data:
+  caddy-config:

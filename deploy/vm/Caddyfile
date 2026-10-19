@@ -1,0 +1,66 @@
+# Caddy in front of the Ratchet gateway: automatic HTTPS, streaming for Scout, basic headers.
+# Environment (set in deploy/vm/.env, passed in by docker-compose.yml):
+#   RATCHET_DOMAIN       e.g. ratchet.dualmindlab.tech, or 203.0.113.7.sslip.io
+#   RATCHET_API_GUARD    open (default) | guarded
+#   RATCHET_ADMIN_TOKEN  required when guarded; send it as the X-Ratchet-Admin-Token header
+#
+# Check after editing:  docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+# Reload without downtime: docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+# "open": no extra restriction. Everything, including /v1/chat/completions, is public.
+(open) {
+}
+
+# "guarded": the gateway has no auth in v0.1, so keep the paid API and the demo controls
+# behind a shared token. The UI stays public: /, /scout*, /dashboard, /ratchet/stats, /ratchet/bom.
+# Note: the mock dashboard's "Run day", "Break next deploy" and "Reset" buttons call
+# /ratchet/demo/*, so they stop working for visitors in this mode.
+#
+# The expression also refuses everyone when the token is unset or shorter than 32 characters,
+# so a forgotten token cannot open the API (an empty header would otherwise match an empty token).
+# Use a hex token (openssl rand -hex 32): quotes or backslashes would break the expression.
+(guarded) {
+	@protected {
+		path /v1/* /ratchet/demo/*
+		not expression `size("{$RATCHET_ADMIN_TOKEN}") >= 32 && {header.X-Ratchet-Admin-Token} == "{$RATCHET_ADMIN_TOKEN}"`
+	}
+	handle @protected {
+		respond "Forbidden: this path needs X-Ratchet-Admin-Token" 403
+	}
+}
+
+{$RATCHET_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	import {$RATCHET_API_GUARD:open}
+
+	# Server-Sent Events: no compression and no buffering, so each event reaches the browser at once.
+	@stream path /scout/stream /scout/stream/*
+	handle @stream {
+		reverse_proxy ratchet:8000 {
+			flush_interval -1
+			header_up -X-Ratchet-Admin-Token
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy ratchet:8000 {
+			flush_interval -1
+			# The token is checked here at the edge; never pass it on to the app.
+			header_up -X-Ratchet-Admin-Token
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
