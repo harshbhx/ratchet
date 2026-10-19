@@ -11,7 +11,7 @@ This page describes v0.1.0 exactly as implemented in `ratchet/`. Product context
                          │  Teacher: nvidia/Nemotron-3-Ultra-550b-a55b                   │
                          │  Judge:   nvidia/nemotron-3-super-120b-a12b (free-text eval)  │
                          │  Fallback student: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B      │
-                         └──────────────▲──────────────────────────────────────────────┘
+                         └──────────────▲────────────────────────────────────────────────┘
                                         │ OpenAI-compatible HTTPS
 ┌──────────┐   /v1/chat/completions   ┌─┴──────────────────────────────┐
 │ Your app │ ───────────────────────▶ │ Gateway  (ratchet/gateway.py)  │──── SQLite ledger (ratchet/ledger.py)
