@@ -9,7 +9,7 @@ git clone <repo> && cd ratchet
 make install
 make lint test      # must pass before every commit
 make sim            # see the whole loop run with mock models
-make demo           # dashboard at http://localhost:8000
+make demo           # http://localhost:8000: / landing, /scout, /dashboard
 ```
 
 No API keys or GPUs are needed for development. Live mode needs a Nebius Token Factory key; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

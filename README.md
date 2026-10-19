@@ -11,7 +11,33 @@ Ratchet is an OpenAI-compatible gateway. Change one line (your base URL) and:
 
 Your bill only goes down, and at the end you own the model weights.
 
-![Ratchet dashboard (simulation)](docs/img/dashboard.jpg)
+![Ratchet: the story page](docs/img/landing.jpg)
+
+The gateway serves a React web app ([web/](web/CLAUDE.md)):
+
+- `/`: the story. How Ratchet works, why it is license-clean and why releases are safe, with an interactive replay of the reference simulation.
+- `/scout`: the Scout multi-agent demo (below). Watch each call get answered by your model or by Ultra.
+- `/dashboard`: savings, the release pipeline, versions, per-task routing, release log and provenance, with demo controls in mock mode.
+
+The original no-build pages stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
+
+| Scout | Dashboard |
+|---|---|
+| ![Scout run (simulation)](docs/img/scout.jpg) | ![Dashboard (simulation)](docs/img/dashboard.jpg) |
+
+## Scout: Ratchet on agent traffic
+
+[Scout](docs/SCOUT.md) is a small multi-agent research demo. It answers a question from the web, and every one of its LLM calls goes through Ratchet with a task name:
+
+| Agent | Task | Route |
+|---|---|---|
+| Planner | `research-plan` | **Pinned** to Nemotron 3 Ultra (open-ended) |
+| Searcher | none (a tool) | [Tavily Search API](https://docs.tavily.com) in live mode, simulated results in mock mode |
+| Triage | `source-triage` | **Distilled**: one short labelling call per search result |
+| Reader | `page-read` | **Distilled**: one call per relevant result, pulls out the key fact |
+| Writer | `research-write` | **Pinned** to Nemotron 3 Ultra (open-ended) |
+
+Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit.
 
 ## Why "license-clean"
 
@@ -29,6 +55,8 @@ Ratchet only distills from teachers whose licenses allow it. Nemotron 3 Ultra is
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA on a **Nebius Serverless Endpoint** (vLLM) | Cheap, fast, yours |
 | Night School | **Nebius Serverless Jobs** (L40S) with Unsloth | Pay only while training |
 | Dataset / adapters | **Nebius Object Storage** bucket mounted in jobs and endpoints | |
+| Public demo host | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
+| Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
 
 Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is trained and served on Nebius AI Cloud.
 
@@ -37,9 +65,14 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2
 ```bash
 pip install -e ".[dev]"            # or: make install
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3   # full loop, mock models
-RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # dashboard at http://localhost:8000
-pytest -q                                                                # 34 tests
+RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http://localhost:8000 (/, /scout, /dashboard)
+make web                                                                 # optional: rebuild the React UI (Node 22)
+RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
+python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
+pytest -q                                                                # 49 tests
 ```
+
+`RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
 
 The simulation uses **mock models**: it shows how the loop behaves (cold start, drift, rollback), not real model quality. Typical run (seed 7, 2,000 tickets/day, product launch on day 5, corrupted deploy of v3):
 
@@ -52,6 +85,8 @@ day  student  escal. audit ok     $/1k all-Ultra  saved
   9      98%      2%      97%    0.162     1.093    85%     <- learned overnight
  10      98%      2%      99%    0.147     1.093    87%
 ```
+
+`--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 96% of research calls on day 8 (85% saved that day, 63% over all 8 days), and 98% of mixed calls (86% saved that day, 54% overall). See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed).
 
 ## Live mode (real Token Factory + Nebius)
 
@@ -81,6 +116,10 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd ...
 
 See [docs/DAY1.md](docs/DAY1.md) for the checks to run before relying on live mode.
 
+## Hosting the demo
+
+The public demo runs on one small Nebius CPU VM with Docker Compose and Caddy (automatic HTTPS). The gateway does no inference, so 2 vCPU / 8 GB is enough. Scripts are in `deploy/vm/`; the guide, with costs (estimate: about $72 for Oct 29 – Dec 15, 2026, before live-mode usage), security notes and teardown, is [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md).
+
 ## How the safety works
 
 - **Confidence** = token probability (vLLM logprobs) + agreement across 3 samples + format validity. Small models are poorly calibrated, so no single signal is trusted.
@@ -96,8 +135,8 @@ See [docs/DAY1.md](docs/DAY1.md) for the checks to run before relying on live mo
 Start at [docs/README.md](docs/README.md). Highlights:
 
 - [PRD](docs/PRD.md): problem, users, requirements, metrics, release plan
-- [Architecture](docs/ARCHITECTURE.md), [API](docs/API.md), [Configuration](docs/CONFIGURATION.md)
-- [Deployment on Nebius](docs/DEPLOYMENT.md), [Runbook](docs/RUNBOOK.md), [Threat model](docs/THREAT_MODEL.md)
+- [Architecture](docs/ARCHITECTURE.md), [API](docs/API.md), [Configuration](docs/CONFIGURATION.md), [Scout](docs/SCOUT.md)
+- [Deployment on Nebius](docs/DEPLOYMENT.md), [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md), [Runbook](docs/RUNBOOK.md), [Threat model](docs/THREAT_MODEL.md)
 - [Testing and simulation](docs/TESTING.md), [Architecture decisions](docs/adr/README.md)
 - [Business](docs/BUSINESS.md), [Competitive analysis](docs/COMPETITIVE_ANALYSIS.md), [Roadmap](docs/ROADMAP.md)
 - [Devpost submission draft](docs/HACKATHON_SUBMISSION.md), [Demo script](docs/DEMO_SCRIPT.md), [Day-1 checklist](docs/DAY1.md)
@@ -107,16 +146,22 @@ Working with Claude? Read [CLAUDE.md](CLAUDE.md). Contributing: [CONTRIBUTING.md
 ## Repo map
 
 ```
-ratchet/gateway.py      OpenAI-compatible API + dashboard + demo controls
-ratchet/router.py       the cascade, audits, shadow arbitration, cost accounting
+ratchet/gateway.py      OpenAI-compatible API, pages, demo controls, Scout endpoints
+ratchet/router.py       the cascade, pinned tasks, audits, shadow arbitration, cost accounting
 ratchet/confidence.py   confidence score + threshold calibration
 ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds)
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/nightschool/    dataset build, LoRA training (Unsloth), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
+ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI
+web/                    React app: story, Scout, dashboard (Vite, Tailwind, motion, recharts)
+ratchet/web/dist/       committed build of web/, served by the gateway
+ratchet/web/*.html      lite pages without a build step (/lite*)
 deploy/                 Serverless Job / Endpoint scripts, training Dockerfile
+deploy/vm/              demo VM on Nebius: cloud-init, Docker Compose, Caddy, update and backup scripts
 sim/                    synthetic tickets + mock models for demos and tests
+sim/research.py         mock research world for Scout (8 questions, simulated search results)
 ```
 
 ## License

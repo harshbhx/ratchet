@@ -4,7 +4,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 
 ## Daily checks (5 minutes)
 
-1. **Dashboard** (`/`) or `GET /ratchet/stats`:
+1. **Dashboard** (`/dashboard`) or `GET /ratchet/stats`:
    - **Answered by your model** should be stable or rising. A sudden drop means drift (new kinds of requests) or a student problem.
    - **Cost reduction** should track student share. If share is high but savings are low, audits or shadow are costing more than expected.
    - **Release log**: read every event since yesterday (meanings below).
@@ -36,9 +36,11 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `retired` | `admit` | An in-flight shadow or canary was replaced by a newer candidate | None |
 | `rollback` | `tick` | Canary audited precision has a Wilson upper bound below 0.92; traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
 | `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
+| `student_error` | `Ratchet.handle` | A student call raised; the request fell back to the teacher. Logged on the 1st, 10th, 100th and 1000th failure | See [Student endpoint down](#student-endpoint-down-or-restarted) |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` | Mock mode only |
+| `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
-The `alert` event is written on every tick while the condition holds, so it can repeat many times.
+The `alert` event is written once per live version per process (a restart can write it again), not on every tick.
 
 ## Manual interventions
 
@@ -85,7 +87,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 2. Short outage: tell your app to retry. Long outage: set `RATCHET_AUDIT_RATE=0` and restart the gateway, so confident student answers stop calling the teacher. Escalations will still fail.
 3. Don't run Night School during the outage.
 
-**Planned fix (v0.2):** when the student has a confident answer and only the audit failed, serve the student answer and skip the audit instead of returning 502.
+**Planned fix (v0.3):** when the student has a confident answer and only the audit failed, serve the student answer and skip the audit instead of returning 502.
 
 ### Student endpoint down or restarted
 

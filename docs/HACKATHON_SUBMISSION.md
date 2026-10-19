@@ -4,7 +4,9 @@ Ready to paste. Replace every `[LIVE NUMBER]` with results from the live run bef
 
 - **Deadline:** Oct 30, 2026, 10:00 AM PDT (10:30 PM IST). Target: submit Oct 29.
 - **Track:** Best Apps and Agents
+- **Also eligible for:** Best Use of Tavily (Scout's searcher uses the Tavily Search API). Confirm this prize and its rules on the Devpost page before submitting.
 - **Judging (equal weight):** Technological Implementation, Design, Potential Impact, Quality of the Idea
+- **Demo URL:** [DEMO URL], hosted on a Nebius VM (see [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Pages: `/` landing, `/scout` Scout demo, `/dashboard` dashboard.
 
 ---
 
@@ -32,7 +34,15 @@ Ratchet is an OpenAI-compatible gateway. You change one line, your base URL. The
 4. Every night, Night School fine-tunes a new student on a Nebius Serverless Job and tests it on a held-out golden set.
 5. A new student reaches users only step by step: shadow mode, then 10%, 50%, 100% of traffic. If its audited quality drops, Ratchet rolls it back automatically.
 
-The dashboard shows dollars saved against an all-Ultra baseline, the share of traffic your own model answers, every version and its state, the release log, and a model bill of materials.
+The dashboard shows dollars saved against an all-Ultra baseline, the share of traffic your own model answers, results by task, every version and its state, the release log, and a model bill of materials.
+
+**Scout** shows Ratchet on agent traffic. It is a team of five research agents that answers a question from the web, and every LLM call goes through Ratchet:
+
+- The **planner** writes three search queries and the **writer** writes the cited answer. These open-ended calls are **pinned** to Nemotron 3 Ultra and never become training data.
+- The **searcher** runs the queries on the **Tavily Search API**.
+- The **triage** agent labels each result (relevant? what kind of source?) and the **reader** pulls the key fact from each relevant page. These are many short, repetitive calls, and the student learns to take them over.
+
+The Scout page shows each call as it happens, with a badge for who answered it (your model or Ultra), its cost against Ultra alone, and a savings bar for the whole run.
 
 ## How we built it
 
@@ -40,7 +50,10 @@ The dashboard shows dollars saved against an all-Ultra baseline, the share of tr
 - **Provenance ledger** (SQLite). Every example records its teacher and license. Closed-model teachers are refused in code.
 - **Night School.** Builds a cumulative dataset from teacher answers only, retrains LoRA from the base model each night (Unsloth on a Nebius Serverless Job), and hot-loads the adapter into vLLM on a Nebius Serverless Endpoint.
 - **Release gate.** Golden gate with champion-vs-challenger rescoring, shadow mode with teacher arbitration, canary with teacher audits, and rollback on a 95% Wilson upper bound.
-- **Simulator.** Synthetic support tickets, mock models with a learning curve and confident mistakes, and fault injection, so the whole loop is testable without GPUs.
+- **Simulator.** Synthetic support tickets, mock models with a learning curve and confident mistakes, and fault injection, so the whole loop is testable without GPUs. A mock research world (8 questions, simulated search results on `example.org`) lets Scout run with no keys.
+- **Scout.** Five agents in Python. Each is a plain OpenAI client pointed at Ratchet, with a task name per call. Triage and reader calls run in parallel threads; the ledger is guarded by a lock. Two tasks are pinned to the teacher in Ratchet's task registry, so open-ended work never trains the student. Events stream to the page with Server-Sent Events. A budget guard (daily spend cap, daily run cap, per-IP hourly limit) protects the public demo.
+- **Web pages.** A landing page, the Scout page and the dashboard: static HTML, no build step, light and dark mode.
+- **Hosting.** One Nebius CPU VM running the gateway and Caddy (automatic HTTPS) with Docker Compose, set up by a cloud-init script.
 
 ## How we use NVIDIA Nemotron, Token Factory and Nebius
 
@@ -53,6 +66,8 @@ The dashboard shows dollars saved against an all-Ultra baseline, the share of tr
 | Training | **Nebius Serverless Jobs** (L40S) | Nightly LoRA fine-tune |
 | Serving | **Nebius Serverless Endpoints** (vLLM) | Student inference with runtime LoRA loading |
 | Storage | **Nebius Object Storage** | Datasets and adapters |
+| Demo hosting | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | Runs the gateway, the pages and Scout for judges |
+| Web search | **Tavily Search API** (not NVIDIA or Nebius) | Scout's searcher agent (`search_depth: basic`, 1 credit per query) |
 
 Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and fallback; three Nemotron sizes on the same endpoint made routing by difficulty trivial.
 
@@ -66,8 +81,10 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 34 tests, including end-to-end simulations of cold start, drift and rollback.
+- A full, tested loop: 49 tests, including end-to-end simulations of cold start, drift and rollback, and Scout end to end.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
+- In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
+- Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
 - Live run: [LIVE NUMBER]% cost reduction, [LIVE NUMBER]% audited precision, [LIVE NUMBER] ms median student latency vs [LIVE NUMBER] ms for Ultra.
 - License-clean provenance with a model bill of materials.
 
@@ -83,7 +100,7 @@ PII redaction, gateway auth, streaming, multiple tasks per deployment, signed bi
 
 ## Built with
 
-python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemotron-3-ultra, nemotron-3-super, nemotron-3-nano, nebius-token-factory, nebius-ai-cloud, nebius-serverless-jobs, nebius-serverless-endpoints, nebius-object-storage, lora
+python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemotron-3-ultra, nemotron-3-super, nemotron-3-nano, nebius-token-factory, nebius-ai-cloud, nebius-serverless-jobs, nebius-serverless-endpoints, nebius-object-storage, nebius-compute, lora, tavily, caddy, docker
 
 ---
 
@@ -118,6 +135,8 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 - [ ] Track selected: Best Apps and Agents
 - [ ] Project description (this file, sections above)
 - [ ] Working demo URL, tested logged-out, stays live through Dec 15, 2026
+- [ ] Demo VM on Nebius up and checked ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#4-check-it-works)): `/`, `/scout`, `/dashboard` load over HTTPS; budget guard set; `RATCHET_API_GUARD=guarded` if in live mode
+- [ ] Best Use of Tavily: prize confirmed on Devpost, selected if it needs opting in, and Tavily use described (Scout's searcher)
 - [ ] Demo video under 3 minutes, public on YouTube, no unlicensed music or third-party trademarks ([DEMO_SCRIPT.md](DEMO_SCRIPT.md))
 - [ ] Public GitHub repo with Apache-2.0 license visible at the top of the repo page
 - [ ] README with setup and run instructions
@@ -125,5 +144,5 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 - [ ] Feedback section filled in (above)
 - [ ] "Significant updates" note not needed: project created during the submission period (Oct 2026)
 - [ ] City selection: only if a Builders & Brews event was attended
-- [ ] All `[LIVE NUMBER]` placeholders replaced
+- [ ] All `[LIVE NUMBER]` placeholders and `[DEMO URL]` replaced
 - [ ] Re-read the Official Rules once more before submitting
