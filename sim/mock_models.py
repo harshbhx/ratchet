@@ -1,8 +1,8 @@
 """Mock teacher, student, trainer and evaluator for the offline simulation.
 
-The mock student's skill on a ticket template grows with the number of teacher examples
+The mock student's skill on a request template (a ticket or a Scout research call) grows with the number of teacher examples
 it was trained on (a saturating learning curve), capped lower for "hard" templates.
-When it does not know a ticket, its samples sometimes agree on the same wrong answer
+When it does not know a request, its samples sometimes agree on the same wrong answer
 with high confidence: the dangerous case that audits and shadow mode exist to catch.
 
 This is a simulation for demos and tests. Real numbers come from live mode.
@@ -20,26 +20,26 @@ from typing import Any
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
 from ratchet.providers import Completion, approx_tokens
+from ratchet.scout.prompts import PLAN_SYSTEM, WRITE_SYSTEM
 
-from .tickets import CATEGORIES, PRIORITIES, Ticket, lookup
-
-REPLIES = {
-    "billing": "Sorry about the billing trouble, I'm checking your charges now.",
-    "technical": "Thanks for reporting this, our engineers are looking into it.",
-    "account": "I'll help you get back into your account right away.",
-    "shipping": "Let me check where your order is and get back to you shortly.",
-    "refund": "I've started looking at your refund request.",
-    "security": "We're securing your account now; please don't share any codes.",
-}
-
-
-def _answer(category: str, priority: str) -> str:
-    return json.dumps({"category": category, "priority": priority, "reply": REPLIES[category]})
+from . import research
+from .world import Item, lookup
 
 
 def _rng(*parts: Any) -> random.Random:
     h = hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()
     return random.Random(int(h[:16], 16))
+
+
+def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
+    """Scout's planner and writer prompts (pinned to the teacher)."""
+    system = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
+    user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    if system == PLAN_SYSTEM:
+        return research.plan_answer(user.removeprefix("Question: ").strip())
+    if system == WRITE_SYSTEM:
+        return research.write_answer(json.loads(user).get("facts", []))
+    return None
 
 
 class MockTeacher:
@@ -50,8 +50,10 @@ class MockTeacher:
         self.latency_ms = latency_ms
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
-        t = lookup(messages)
-        text = _answer(t.category, t.priority)
+        text = _pinned_answer(messages)
+        if text is None:
+            item = lookup(messages)
+            text = item.answer(item.labels)
         return [
             Completion(
                 text=text,
@@ -76,7 +78,7 @@ class MockStudent:
         self.corrupted = corrupted
         self.calls = 0
 
-    def skill(self, t: Ticket) -> float:
+    def skill(self, t: Item) -> float:
         if t.text in self.knowledge["texts"]:
             return self.CEIL["easy"]  # trained on this exact request
         n = self.knowledge["templates"].get(t.template, 0)
@@ -86,28 +88,28 @@ class MockStudent:
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
         t = lookup(messages)
         self.calls += 1
-        r = _rng(self.name, t.text)  # same ticket -> same "understanding"
+        r = _rng(self.name, t.text)  # same request -> same "understanding"
         knows = r.random() < self.skill(t)
-        if self.corrupted and t.category in ("refund", "security", "billing"):
-            knows = False  # bad deploy: whole categories broken
-        wrong_cat = r.choice([c for c in CATEGORIES if c != t.category])
-        wrong_pri = r.choice([p for p in PRIORITIES if p != t.priority])
+        if self.corrupted and t.fragile:
+            knows = False  # bad deploy: whole slices broken
+        right, space = t.labels, t.label_space
+        keys = list(space)
+        wrong = {k: r.choice([v for v in space[k] if v != right[k]]) for k in keys}
         confidently_wrong = (not knows) and (self.corrupted or r.random() < 0.15)
         out = []
         for i in range(n):
             s = _rng(self.name, t.text, i, self.calls if temperature > 0 else 0)
             if knows:
                 ok = s.random() < 0.97
-                cat, pri = (t.category, t.priority) if ok else (wrong_cat, t.priority)
+                labels = dict(right) if ok else {**right, keys[0]: wrong[keys[0]]}
                 prob = 0.80 + 0.17 * s.random()
             elif confidently_wrong:
-                cat, pri = wrong_cat, wrong_pri
+                labels = dict(wrong)
                 prob = 0.62 + 0.3 * s.random()  # overlaps with correct answers: calibration can't fully separate
             else:
-                cat = s.choice(CATEGORIES)
-                pri = s.choice(PRIORITIES)
+                labels = {k: s.choice(space[k]) for k in keys}
                 prob = 0.35 + 0.3 * s.random()
-            text = _answer(cat, pri)
+            text = t.answer(labels)
             toks = approx_tokens(text)
             out.append(
                 Completion(

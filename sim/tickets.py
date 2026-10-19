@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import dataclass
+from typing import Any
 
 CATEGORIES = ["billing", "technical", "account", "shipping", "refund", "security"]
 PRIORITIES = ["low", "medium", "high", "urgent"]
@@ -88,6 +89,16 @@ DRIFT_TEMPLATES: list[tuple[str, str, str, str, str]] = [
 ]
 
 
+REPLIES = {
+    "billing": "Sorry about the billing trouble, I'm checking your charges now.",
+    "technical": "Thanks for reporting this, our engineers are looking into it.",
+    "account": "I'll help you get back into your account right away.",
+    "shipping": "Let me check where your order is and get back to you shortly.",
+    "refund": "I've started looking at your refund request.",
+    "security": "We're securing your account now; please don't share any codes.",
+}
+
+
 @dataclass(frozen=True)
 class Ticket:
     text: str
@@ -96,8 +107,27 @@ class Ticket:
     priority: str
     difficulty: str
 
+    task = "ticket-triage"
+
     def messages(self) -> list[dict[str, str]]:
         return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": self.text}]
+
+    # Generic item interface used by the mock models (see sim/world.py).
+    @property
+    def labels(self) -> dict[str, Any]:
+        return {"category": self.category, "priority": self.priority}
+
+    @property
+    def label_space(self) -> dict[str, list[Any]]:
+        return {"category": CATEGORIES, "priority": PRIORITIES}
+
+    @property
+    def fragile(self) -> bool:
+        """Slices a corrupted deploy breaks (fault injection)."""
+        return self.category in ("refund", "security", "billing")
+
+    def answer(self, labels: dict[str, Any]) -> str:
+        return json.dumps({"category": labels["category"], "priority": labels["priority"], "reply": REPLIES[labels["category"]]})
 
 
 REGISTRY: dict[str, Ticket] = {}
