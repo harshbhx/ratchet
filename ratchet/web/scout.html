@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scout · Ratchet</title>
+<meta name="description" content="Scout is a team of research agents that answers a question from the web. Every call goes through Ratchet, and the narrow ones move from Nemotron 3 Ultra to a small model you own.">
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e4e3de;
+    --accent: #3b5bdb; --teacher: #c2410c; --good: #2f9e44; --warn: #e8590c; --bad: #c92a2a;
+    --soft: #f1f1ee;
+    /* darker text variants so small green/orange labels pass WCAG AA on light panels */
+    --good-ink: #237a34; --warn-ink: #b54708;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #a3a29b; --line: #2f2f2c;
+            --accent: #7b96ff; --teacher: #f08c4b; --good: #51cf66; --warn: #ffa94d; --bad: #ff6b6b;
+            --soft: #252523; --good-ink: var(--good); --warn-ink: var(--warn); }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+             clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+
+  /* Header */
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px; }
+  nav { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+  .lede { margin: 6px 0 18px; color: var(--muted); max-width: 680px; }
+  .sim { display: inline-block; font-size: 12px; font-weight: 500; letter-spacing: 0; padding: 1px 8px;
+         border-radius: 999px; border: 1px solid var(--warn-ink); color: var(--warn-ink); }
+
+  /* Ask */
+  .ask { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .ask label { display: block; font-weight: 600; margin-bottom: 6px; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--bg);
+               border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .row input[readonly] { background: var(--soft); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 8px 16px; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chips button { font-size: 13px; border-radius: 999px; padding: 4px 11px; text-align: left; }
+  .chips button:hover:not(:disabled) { border-color: var(--accent); }
+  .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  .status { margin: 10px 0 0; font-size: 13px; min-height: 1.45em; }
+
+  .alert { margin-top: 12px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: 8px;
+           padding: 10px 12px; background: var(--panel); }
+  .alert b { color: var(--bad); }
+
+  /* Totals bar */
+  .totals { position: sticky; top: 0; z-index: 5; margin: 14px 0 12px; background: var(--panel);
+            border: 1px solid var(--line); border-radius: 12px; padding: 10px 16px;
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px;
+            box-shadow: 0 4px 12px -8px rgba(0,0,0,.25); }
+  .totals .v { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .totals .l { color: var(--muted); font-size: 12px; }
+  .totals .v.yours { color: var(--good-ink); }
+  .share { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; display: flex; }
+  .share i { display: block; height: 100%; transition: width .2s; }
+  .share .s { background: var(--good); } .share .t { background: var(--teacher); }
+  @media (max-width: 640px) {
+    .totals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; padding: 8px 12px; }
+    .totals .v { font-size: 16px; } .totals .l { font-size: 11px; } .share { margin-top: 4px; }
+  }
+
+  /* Pipeline */
+  .pipeline { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+  #lane-planner, #lane-searcher, #lane-writer { grid-column: 1 / -1; }
+  @media (max-width: 760px) { .pipeline { grid-template-columns: minmax(0, 1fr); } }
+  .lane { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .lane-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; }
+  .lane-h h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink); margin: 0; }
+  .num { width: 20px; height: 20px; border-radius: 999px; background: var(--soft); border: 1px solid var(--line);
+         font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+  .lane-h code { font-size: 12px; color: var(--muted); }
+  .lstate { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .lane[data-state="working"] .num { border-color: var(--accent); color: var(--accent); }
+  .lane[data-state="done"] .num { background: var(--good); border-color: var(--good); color: var(--panel); }
+  .pin { font-size: 12px; color: var(--teacher); margin: -2px 0 8px; }
+  .empty { color: var(--muted); font-size: 13px; margin: 0; }
+
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--muted);
+          font-variant-numeric: tabular-nums; }
+  .who { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+  .who.s { color: var(--good-ink); } .who.t { color: var(--teacher); } .who.tool { color: var(--muted); }
+  .who.esc { color: var(--warn-ink); font-weight: 500; }
+  .chip { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line);
+          color: var(--muted); background: var(--soft); }
+  .yes { color: var(--good-ink); font-weight: 600; } .no { color: var(--muted); font-weight: 600; }
+
+  .queries { margin: 0; padding-left: 22px; }
+  .queries li { margin: 2px 0; }
+
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .group { min-width: 0; }
+  .group h3 { font-size: 13px; margin: 0 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+  .results { list-style: none; margin: 6px 0 0; padding: 0; }
+  .results li { padding: 6px 0; border-top: 1px solid var(--line); min-width: 0; }
+  .results a, .card a { font-weight: 500; overflow-wrap: anywhere; }
+  .dom { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .snip { font-size: 13px; color: var(--muted); margin: 2px 0 0; overflow-wrap: anywhere;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  .cards { display: grid; gap: 8px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; background: var(--panel); }
+  .card.wait { border-style: dashed; color: var(--muted); }
+  .card.skip { opacity: .72; }
+  .card .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-bottom: 2px; }
+  .card .title { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+  .card .fact { margin: 4px 0; overflow-wrap: anywhere; }
+  .card .why { font-size: 12px; color: var(--muted); margin: 2px 0 4px; overflow-wrap: anywhere; }
+  @keyframes in { from { background: var(--soft); } to { background: var(--panel); } }
+  .card.fresh { animation: in .8s ease-out; }
+  @media (prefers-reduced-motion: reduce) { .card.fresh { animation: none; } .share i { transition: none; } }
+
+  .answer { font-size: 15px; line-height: 1.55; overflow-wrap: anywhere; }
+  .answer p { margin: 8px 0; }
+  .answer ul { margin: 8px 0; padding-left: 22px; }
+  .answer code { font-size: 13px; background: var(--soft); padding: 0 4px; border-radius: 4px; }
+  .answer a.cite { text-decoration: none; font-size: 12px; vertical-align: super; line-height: 0; padding: 0 1px; }
+  .answer a.cite:hover { text-decoration: underline; }
+  .sources { margin: 10px 0 0; padding-left: 22px; font-size: 13px; }
+  .sources li { margin: 3px 0; overflow-wrap: anywhere; }
+  .sources-h { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 0 0; }
+
+  .explain { margin-top: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .explain h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px; }
+  .explain p { margin: 6px 0; max-width: 720px; }
+  .explain ul { margin: 6px 0; padding-left: 20px; max-width: 720px; }
+
+  @media (max-width: 420px) {
+    .row { flex-direction: column; }
+    .row button { width: 100%; }
+    .lane, .ask, .explain { padding: 12px; }
+  }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0b1020; } .totals { box-shadow: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Scout <span class="sim" id="simBadge" hidden>Simulation</span></h1>
+    <nav aria-label="Ratchet">
+      <a href="/">Ratchet home</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="https://github.com/harshbhx/ratchet" rel="noopener noreferrer" target="_blank">GitHub</a>
+    </nav>
+  </header>
+  <p class="lede">A team of research agents. Every call goes through Ratchet; the narrow ones move from Nemotron 3 Ultra to a small model you own.</p>
+
+  <form class="ask" id="askForm" novalidate>
+    <label for="q">Question</label>
+    <div class="row">
+      <input id="q" name="q" type="text" maxlength="300" autocomplete="off" placeholder="Ask a question" aria-describedby="modeNote budget">
+      <button class="primary" id="askBtn" type="submit">Ask</button>
+    </div>
+    <div class="chips" id="examples" role="group" aria-label="Example questions"></div>
+    <p class="note" id="modeNote" hidden>Mock mode: pick an example question. Search results are simulated.</p>
+    <p class="note" id="budget"></p>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <div class="alert" id="alert" role="alert" hidden></div>
+  </form>
+
+  <section class="totals" aria-label="Run totals">
+    <div><div class="v" id="tCalls">0</div><div class="l">LLM calls</div></div>
+    <div><div class="v yours" id="tYours">0</div><div class="l">answered by your model</div></div>
+    <div><div class="v" id="tCost">$0</div><div class="l" id="tBase">vs $0 all-Ultra</div></div>
+    <div><div class="v" id="tSave">0%</div><div class="l">saved</div></div>
+    <div class="share" aria-hidden="true"><i class="s" id="barS" style="width:0"></i><i class="t" id="barT" style="width:0"></i></div>
+  </section>
+
+  <div class="pipeline" id="pipeline">
+    <section class="lane" id="lane-planner" data-state="idle" aria-labelledby="h-planner">
+      <div class="lane-h"><span class="num" aria-hidden="true">1</span><h2 id="h-planner">Planner</h2><code>research-plan</code><span class="lstate" id="st-planner">waiting</span></div>
+      <p class="pin">Pinned to Ultra (open-ended)</p>
+      <div id="planner"><p class="empty">Writes three search queries for the question.</p></div>
+    </section>
+
+    <section class="lane" id="lane-searcher" data-state="idle" aria-labelledby="h-searcher">
+      <div class="lane-h"><span class="num" aria-hidden="true">2</span><h2 id="h-searcher">Searcher</h2><code id="searchTool">Tavily</code><span class="lstate" id="st-searcher">waiting</span></div>
+      <p class="note" id="simResults" hidden style="margin:-2px 0 8px">Simulated search results (example.org pages).</p>
+      <div id="searcher"><p class="empty">Runs each query on the web. A tool call, not an LLM call.</p></div>
+    </section>
+
+    <section class="lane" id="lane-triage" data-state="idle" aria-labelledby="h-triage">
+      <div class="lane-h"><span class="num" aria-hidden="true">3</span><h2 id="h-triage">Triage</h2><code>source-triage</code><span class="lstate" id="st-triage">waiting</span></div>
+      <div class="cards" id="triage"><p class="empty">One call per result: is it relevant, and what kind of source is it?</p></div>
+    </section>
+
+    <section class="lane" id="lane-reader" data-state="idle" aria-labelledby="h-reader">
+      <div class="lane-h"><span class="num" aria-hidden="true">4</span><h2 id="h-reader">Reader</h2><code>page-read</code><span class="lstate" id="st-reader">waiting</span></div>
+      <div class="cards" id="reader"><p class="empty">One call per relevant result: does it answer the question, and what is the key fact?</p></div>
+    </section>
+
+    <section class="lane" id="lane-writer" data-state="idle" aria-labelledby="h-writer">
+      <div class="lane-h"><span class="num" aria-hidden="true">5</span><h2 id="h-writer">Writer</h2><code>research-write</code><span class="lstate" id="st-writer">waiting</span></div>
+      <p class="pin">Pinned to Ultra (open-ended)</p>
+      <div id="writer"><p class="empty">Writes the answer from the key facts, with citations.</p></div>
+    </section>
+  </div>
+
+  <section class="explain" aria-labelledby="h-explain">
+    <h2 id="h-explain">What moves to your model, and why</h2>
+    <p>Scout's agents are plain OpenAI clients pointed at Ratchet. Each call carries a task name, and Ratchet routes by task.</p>
+    <ul>
+      <li><b>Triage</b> and <b>Reader</b> make many short calls with a fixed answer shape (a few labels and one fact). Ratchet logs Ultra's answers to them, trains a small Nemotron Nano model on those answers each night, and lets it answer when it is confident. When it is not, the call is <span style="color:var(--warn-ink)">escalated</span> to Ultra.</li>
+      <li><b>Planner</b> and <b>Writer</b> are open-ended. They are pinned to Ultra, are never used as training data, and never move.</li>
+    </ul>
+    <p>The cost line on each step compares what the call cost with what it would have cost on Ultra alone. To watch Night School train new versions and release them (shadow, canary, rollback), open the <a href="/dashboard">dashboard</a>.</p>
+  </section>
+</main>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const num = (x) => (typeof x === "number" && isFinite(x) ? x : 0);
+  function safeUrl(u) {
+    try { const x = new URL(String(u), location.href); return x.protocol === "http:" || x.protocol === "https:" ? x.href : null; }
+    catch (e) { return null; }
+  }
+  function domain(u) {
+    try { return new URL(String(u)).hostname.replace(/^www\./, ""); } catch (e) { return ""; }
+  }
+  function link(url, text, cls) {
+    const u = safeUrl(url);
+    const t = esc(text || url || "untitled");
+    return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer"${cls ? ` class="${cls}"` : ""}>${t}</a>` : `<span>${t}</span>`;
+  }
+  function usd(x) {
+    x = num(x);
+    if (x === 0) return "$0";
+    if (x < 0.001) return "$" + x.toFixed(5).replace(/0+$/, "");
+    if (x < 1) return "$" + x.toFixed(4);
+    return "$" + x.toFixed(2);
+  }
+  const ms = (x) => (x == null ? "" : x >= 1000 ? (x / 1000).toFixed(1) + " s" : Math.round(x) + " ms");
+  const pct = (x) => Math.round(num(x) * 100) + "%";
+  const TEACHER_SHORT = "Ultra";
+
+  // ---------- state ----------
+  let mode = null, freeText = true, running = false, runToken = 0;
+  let S;
+  function fresh() {
+    return { queries: [], groups: {}, results: {}, order: [], triage: {}, reader: {}, steps: [], totals: null,
+             phase: "", writer: null, done: false };
+  }
+
+  // ---------- step meta (who answered, cost, latency) ----------
+  function who(st) {
+    if (st.served_by === "tool") return `<span class="who tool">${st.model === "tavily" ? "Tavily" : "Simulated search"}</span>`;
+    if (st.served_by === "student") {
+      const conf = st.confidence == null ? "" : ` · conf ${num(st.confidence).toFixed(2)}`;
+      return `<span class="who s">Nano · yours</span><span>${esc(st.model || "student")}${conf}</span>`;
+    }
+    let h = `<span class="who t" title="${esc(st.model || "")}">${TEACHER_SHORT}</span>`;
+    if (st.escalated) {
+      h += `<span class="who esc">escalated</span>`;
+      if (st.confidence != null) h += `<span>student conf ${num(st.confidence).toFixed(2)}</span>`;
+    }
+    return h;
+  }
+  function meta(st) {
+    let h = who(st);
+    if (st.served_by !== "tool") {
+      const same = Math.abs(num(st.cost_usd) - num(st.baseline_usd)) < 1e-9;
+      h += `<span>${usd(st.cost_usd)}${same ? "" : ` vs ${usd(st.baseline_usd)} on Ultra`}</span>`;
+    }
+    if (st.latency_ms != null) h += `<span>${ms(st.latency_ms)}</span>`;
+    return `<div class="meta">${h}</div>`;
+  }
+
+  // ---------- rendering ----------
+  function laneState(name, state, label) {
+    $("lane-" + name).dataset.state = state;
+    $("st-" + name).textContent = label;
+  }
+  function resetUI() {
+    S = fresh();
+    $("alert").hidden = true; $("alert").innerHTML = "";
+    $("planner").innerHTML = `<p class="empty">Planning...</p>`;
+    $("searcher").innerHTML = `<p class="empty">Waiting for the planner.</p>`;
+    $("triage").innerHTML = `<p class="empty">Waiting for search results.</p>`;
+    $("reader").innerHTML = `<p class="empty">Waiting for triage.</p>`;
+    $("writer").innerHTML = `<p class="empty">Waiting for the reader.</p>`;
+    laneState("planner", "working", "working");
+    ["searcher", "triage", "reader", "writer"].forEach((n) => laneState(n, "idle", "waiting"));
+    renderTotals();
+  }
+
+  function renderPlanner(st) {
+    const q = Array.isArray(st.detail && st.detail.queries) ? st.detail.queries : [];
+    S.queries = q.map(String);
+    $("planner").innerHTML = meta(st) +
+      (q.length ? `<ol class="queries">${q.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : `<p class="empty">No queries.</p>`);
+    laneState("planner", "done", "done");
+    S.queries.forEach((x) => ensureGroup(x));
+    laneState("searcher", "working", `0 of ${S.queries.length} queries`);
+  }
+
+  function ensureGroup(query) {
+    if (S.groups[query]) return S.groups[query];
+    const box = $("searcher");
+    if (!box.querySelector(".groups")) box.innerHTML = `<div class="groups"></div>`;
+    const el = document.createElement("div");
+    el.className = "group";
+    el.innerHTML = `<h3>${esc(query)}</h3><div class="body"><p class="empty">Searching...</p></div>`;
+    box.querySelector(".groups").appendChild(el);
+    S.groups[query] = { el, done: false };
+    return S.groups[query];
+  }
+
+  function renderSearch(st) {
+    const d = st.detail || {};
+    const g = ensureGroup(String(d.query || ""));
+    g.done = true;
+    const rs = Array.isArray(d.results) ? d.results : [];
+    rs.forEach((r) => {
+      const k = String(r.id);
+      if (!S.results[k]) S.order.push(k);
+      S.results[k] = Object.assign(S.results[k] || {}, { id: r.id, title: r.title, url: r.url, snippet: r.snippet, query: d.query });
+    });
+    g.el.querySelector(".body").innerHTML = meta(st) + (rs.length
+      ? `<ul class="results">${rs.map((r) => `<li>${link(r.url, r.title)}<div class="dom">${esc(domain(r.url))}</div>` +
+          (r.snippet ? `<p class="snip">${esc(r.snippet)}</p>` : "") + `</li>`).join("")}</ul>`
+      : `<p class="empty">No results.</p>`);
+    const all = Object.values(S.groups), n = all.filter((x) => x.done).length;
+    laneState("searcher", n >= all.length ? "done" : "working", n >= all.length ? `${S.order.length} results` : `${n} of ${all.length} queries`);
+    rs.forEach((r) => drawTriage(String(r.id)));
+  }
+
+  function cardEl(container, id, prefix) {
+    let el = document.getElementById(prefix + id);
+    if (!el) {
+      const box = $(container);
+      const empty = box.querySelector(".empty"); if (empty) empty.remove();
+      el = document.createElement("article");
+      el.id = prefix + id;
+      el.className = "card";
+      // keep cards in search-result order so out-of-order arrivals fill in place
+      const pos = S.order.indexOf(id);
+      const next = Array.from(box.children).find((c) => S.order.indexOf(c.dataset.rid) > pos);
+      el.dataset.rid = id;
+      box.insertBefore(el, next || null);
+    }
+    return el;
+  }
+  function titleOf(id, d) {
+    const r = S.results[id] || {};
+    const url = r.url || (d && d.url), title = r.title || (d && d.title) || url;
+    return `<span class="title">${link(url, title)} <span class="dom">${esc(domain(url))}</span></span>`;
+  }
+
+  function drawTriage(id) {
+    const el = cardEl("triage", id, "tr-");
+    const st = S.triage[id];
+    if (!st) { el.className = "card wait"; el.innerHTML = `<div class="top">${titleOf(id)}</div><div class="small">waiting for triage</div>`; return; }
+    const d = st.detail || {};
+    el.className = "card fresh" + (d.relevant ? "" : " skip");
+    el.innerHTML = `<div class="top">${d.relevant ? `<span class="yes" aria-label="relevant">✓</span>` : `<span class="no" aria-label="not relevant">✗</span>`}` +
+      `${titleOf(id, d)}<span class="chip">${esc(d.source_type || "other")}</span></div>` +
+      (d.reason ? `<p class="why">${esc(d.reason)}</p>` : "") + meta(st);
+  }
+
+  function drawReader(id) {
+    const el = cardEl("reader", id, "rd-");
+    const st = S.reader[id];
+    if (!st) { el.className = "card wait"; el.innerHTML = `<div class="top">${titleOf(id)}</div><div class="small">reading</div>`; return; }
+    const d = st.detail || {};
+    el.className = "card fresh" + (d.answers_question ? "" : " skip");
+    el.innerHTML = `<div class="top">${d.answers_question ? `<span class="yes">✓ answers</span>` : `<span class="no">✗ does not answer</span>`}` +
+      `<span class="chip">${esc(d.fact_type || "none")}</span></div><div class="top">${titleOf(id, d)}</div>` +
+      (d.key_fact ? `<p class="fact">${esc(d.key_fact)}</p>` : "") + meta(st);
+  }
+
+  function renderTriage(st) {
+    const d = st.detail || {}, id = String(d.id);
+    if (!S.results[id]) { S.order.push(id); S.results[id] = { id: d.id, title: d.title, url: d.url }; }
+    S.triage[id] = st;
+    drawTriage(id);
+    if (d.relevant && !S.reader[id]) drawReader(id);
+    updateMid();
+  }
+  function renderReader(st) {
+    const d = st.detail || {}, id = String(d.id);
+    if (!S.results[id]) { S.order.push(id); S.results[id] = { id: d.id, title: d.title, url: d.url }; }
+    S.reader[id] = st;
+    drawReader(id);
+    updateMid();
+  }
+  function updateMid() {
+    const nRes = S.order.length, nTri = Object.keys(S.triage).length;
+    const yt = Object.values(S.triage).filter((s) => s.served_by === "student").length;
+    laneState("triage", nTri >= nRes && nRes ? "done" : "working", `${nTri} of ${nRes} · ${yt} by your model`);
+    const relevant = Object.values(S.triage).filter((s) => s.detail && s.detail.relevant).length;
+    const nRd = Object.keys(S.reader).length;
+    const yr = Object.values(S.reader).filter((s) => s.served_by === "student").length;
+    const triDone = nTri >= nRes && nRes > 0;
+    laneState("reader", triDone && nRd >= relevant ? "done" : "working", `${nRd} of ${relevant}${triDone ? "" : "+"} · ${yr} by your model`);
+    if (triDone && nRd >= Math.min(relevant, 6) && !S.writer) laneState("writer", "working", "working");
+  }
+
+  function renderAnswer(text, citations) {
+    const cites = {};
+    (Array.isArray(citations) ? citations : []).forEach((c) => { cites[String(c.n)] = c; });
+    const inline = (s) => esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m, list) => list.split(/\s*,\s*/).map((n) => {
+        const c = cites[n], u = c && safeUrl(c.url);
+        return u ? `<a class="cite" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(c.title || u)}">[${n}]</a>` : `[${n}]`;
+      }).join(""));
+    const blocks = String(text || "").trim().split(/\n\s*\n/);
+    let h = blocks.map((b) => {
+      const lines = b.split("\n");
+      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) return `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*]\s+/, ""))}</li>`).join("")}</ul>`;
+      return `<p>${lines.map(inline).join("<br>")}</p>`;
+    }).join("");
+    const list = Object.values(cites).sort((a, b) => num(a.n) - num(b.n));
+    if (list.length) h += `<p class="sources-h">Sources</p><ol class="sources">${list.map((c) =>
+      `<li value="${esc(num(c.n))}">${link(c.url, c.title)} <span class="dom">${esc(domain(c.url))}</span></li>`).join("")}</ol>`;
+    return `<div class="answer">${h}</div>`;
+  }
+  function renderWriter(st) {
+    S.writer = st;
+    const d = st.detail || {};
+    $("writer").innerHTML = meta(st) + renderAnswer(d.answer, d.citations);
+    laneState("writer", "done", "done");
+  }
+
+  function renderTotals() {
+    let t;
+    if (S.totals) t = S.totals;
+    else {
+      const llm = S.steps.filter((s) => s.served_by === "student" || s.served_by === "teacher");
+      const cost = llm.reduce((a, s) => a + num(s.cost_usd), 0), base = llm.reduce((a, s) => a + num(s.baseline_usd), 0);
+      t = { llm_calls: llm.length, student_calls: llm.filter((s) => s.served_by === "student").length,
+            cost_usd: cost, baseline_usd: base, savings_pct: base > 0 ? 1 - cost / base : 0 };
+    }
+    const n = num(t.llm_calls), s = num(t.student_calls);
+    const tc = t.teacher_calls != null ? num(t.teacher_calls) : n - s;
+    $("tCalls").textContent = n;
+    $("tYours").textContent = n ? `${s} · ${Math.round((s / n) * 100)}%` : "0";
+    $("tCost").textContent = usd(t.cost_usd);
+    $("tBase").textContent = `vs ${usd(t.baseline_usd)} all-Ultra`;
+    $("tSave").textContent = pct(Math.max(0, num(t.savings_pct)));
+    $("barS").style.width = n ? (s / n) * 100 + "%" : "0";
+    $("barT").style.width = n ? (tc / n) * 100 + "%" : "0";
+  }
+
+  function setStatus(text) { if ($("status").textContent !== text) $("status").textContent = text; }
+  function phase() {
+    if (S.done) return;
+    if (!S.steps.some((s) => s.agent === "planner")) return setStatus("Planning searches...");
+    const groups = Object.values(S.groups);
+    if (groups.some((g) => !g.done)) return setStatus(`Searching the web (${groups.length} queries)...`);
+    if (!S.writer) {
+      const st = $("lane-writer").dataset.state;
+      return setStatus(st === "working" ? "Writing the answer..." : "Checking and reading sources...");
+    }
+  }
+
+  function showError(msg) {
+    let m = String(msg || "Something went wrong.");
+    m = m.charAt(0).toUpperCase() + m.slice(1);
+    $("alert").innerHTML = `<b>Scout stopped.</b> ${esc(m)}`;
+    $("alert").hidden = false;
+  }
+
+  function handle(ev) {
+    if (!ev || typeof ev !== "object") return;
+    if (ev.type === "start") {
+      if (ev.mode) setMode(ev.mode);
+      setStatus("Planning searches...");
+      return;
+    }
+    if (ev.type === "step") {
+      S.steps.push(ev);
+      if (ev.agent === "planner") renderPlanner(ev);
+      else if (ev.agent === "searcher") renderSearch(ev);
+      else if (ev.agent === "triage") renderTriage(ev);
+      else if (ev.agent === "reader") renderReader(ev);
+      else if (ev.agent === "writer") renderWriter(ev);
+      renderTotals();
+      phase();
+      return;
+    }
+    if (ev.type === "done") {
+      S.done = true;
+      if (ev.totals) S.totals = ev.totals;
+      if (!S.writer && ev.answer) {
+        $("writer").innerHTML = renderAnswer(ev.answer, ev.citations);
+        laneState("writer", "done", "done");
+      }
+      // Reader has a per-question cap, so some relevant results may never get a reader step.
+      $("reader").querySelectorAll(".card.wait").forEach((el) => {
+        el.className = "card skip";
+        el.querySelector(".small").textContent = "not read (reader limit per question)";
+      });
+      const nRd = Object.keys(S.reader).length;
+      if (S.order.length) $("st-reader").textContent = `${nRd} read · ${Object.values(S.reader).filter((s) => s.served_by === "student").length} by your model`;
+      ["planner", "searcher", "triage", "reader"].forEach((n) => { if ($("lane-" + n).dataset.state === "working") $("lane-" + n).dataset.state = "done"; });
+      renderTotals();
+      const t = S.totals || {};
+      const n = num(t.llm_calls), s = num(t.student_calls);
+      setStatus(`Done${t.wall_ms ? " in " + ms(t.wall_ms) : ""}. ${s} of ${n} LLM calls answered by your model; ${pct(t.savings_pct)} cheaper than all-Ultra.`);
+      return;
+    }
+    if (ev.type === "error") {
+      S.done = true;
+      showError(ev.message);
+      setStatus("Stopped.");
+      document.querySelectorAll(".card.wait").forEach((el) => {
+        el.className = "card skip";
+        const n = el.querySelector(".small"); if (n) n.textContent = "not run";
+      });
+      ["planner", "searcher", "triage", "reader", "writer"].forEach((n) => {
+        const st = $("lane-" + n).dataset.state;
+        if (st === "working") laneState(n, "idle", "stopped");
+        else if (st === "idle") {
+          laneState(n, "idle", "not run");
+          const e = $(n).querySelector(".empty"); if (e) e.textContent = "Not run.";
+        }
+      });
+    }
+  }
+
+  // ---------- running ----------
+  function setRunning(on) {
+    running = on;
+    $("askBtn").disabled = on;
+    $("askBtn").textContent = on ? "Running..." : "Ask";
+    $("examples").querySelectorAll("button").forEach((b) => (b.disabled = on));
+    $("pipeline").setAttribute("aria-busy", on ? "true" : "false");
+  }
+  function finish(token) {
+    if (token !== runToken) return;
+    setRunning(false);
+    loadStatus();
+  }
+
+  function run(q) {
+    q = String(q || "").trim();
+    if (running) return;
+    if (!q) { showError(freeText ? "Type a question first." : "Pick an example question first."); return; }
+    const token = ++runToken;
+    resetUI();
+    setRunning(true);
+    setStatus("Starting...");
+    if (!("EventSource" in window)) { fallback(q, token); return; }
+    let started = false, ended = false, es;
+    try { es = new EventSource("/scout/stream?q=" + encodeURIComponent(q)); }
+    catch (e) { fallback(q, token); return; }
+    es.onmessage = (m) => {
+      let ev; try { ev = JSON.parse(m.data); } catch (e) { return; }
+      if (ev.type === "start") started = true;
+      handle(ev);
+      if (ev.type === "done" || ev.type === "error") { ended = true; es.close(); finish(token); }
+    };
+    es.onerror = () => {
+      es.close();
+      if (ended) return;
+      ended = true;
+      if (!started) { fallback(q, token); return; }
+      if (!S.done) { showError("The connection dropped before Scout finished. Try again in a moment."); setStatus("Stopped."); }
+      finish(token);
+    };
+  }
+
+  const sleep = (t) => new Promise((r) => setTimeout(r, t));
+  async function fallback(q, token) {
+    setStatus("Running (the full run appears when it finishes)...");
+    try {
+      const r = await fetch("/scout/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q }) });
+      let body = null; try { body = await r.json(); } catch (e) { /* not JSON */ }
+      if (!r.ok) {
+        const detail = body && (body.message || body.detail || body.error);
+        const why = { 400: freeText ? "That question could not be run." : "In mock mode only the example questions work.",
+                      429: "The demo limit is reached for now (runs per hour or the daily budget). Try again later.",
+                      503: "Live search is not configured on this server." }[r.status] || `The server answered ${r.status}.`;
+        handle({ type: "error", message: typeof detail === "string" ? `${why} (${detail})` : why });
+        return finish(token);
+      }
+      const events = (body && Array.isArray(body.events)) ? body.events : [];
+      for (const ev of events) {
+        if (token !== runToken) return;
+        handle(ev);
+        if (ev.type === "step") await sleep(110);
+      }
+      if (!S.done) handle({ type: "error", message: "The run ended without an answer." });
+    } catch (e) {
+      handle({ type: "error", message: "Could not reach the Scout server. Check your connection and try again." });
+    }
+    finish(token);
+  }
+
+  // ---------- setup ----------
+  function setMode(m) {
+    mode = m;
+    $("searchTool").textContent = m === "mock" ? "simulated search" : "Tavily";
+    const mock = m === "mock";
+    $("simBadge").hidden = !mock;
+    $("simResults").hidden = !mock;
+  }
+  function renderExamples(list) {
+    const box = $("examples");
+    box.innerHTML = "";
+    list.forEach((x) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = String(x);
+      b.addEventListener("click", () => { $("q").value = String(x); run(String(x)); });
+      box.appendChild(b);
+    });
+  }
+  async function loadExamples() {
+    try {
+      const r = await fetch("/scout/examples");
+      if (!r.ok) throw new Error(String(r.status));
+      const d = await r.json();
+      setMode(d.mode);
+      freeText = d.free_text !== false;
+      const inp = $("q");
+      inp.readOnly = !freeText;
+      inp.placeholder = freeText ? "Ask a question about a topic on the web" : "Pick an example question below";
+      $("modeNote").hidden = freeText;
+      renderExamples(Array.isArray(d.examples) ? d.examples : []);
+    } catch (e) {
+      showError("Could not load example questions. Is the Scout server running?");
+    }
+  }
+  async function loadStatus() {
+    try {
+      const r = await fetch("/scout/status");
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.mode === "live") {
+        const left = Math.max(0, num(d.budget_usd) - num(d.spent_today_usd));
+        $("budget").textContent = `Demo budget left today: $${left.toFixed(2)} of $${num(d.budget_usd).toFixed(2)}` +
+          (d.runs_per_hour_per_ip ? ` · up to ${num(d.runs_per_hour_per_ip)} runs per hour per visitor` : "");
+      } else {
+        $("budget").textContent = "";
+      }
+    } catch (e) { /* status is optional */ }
+  }
+
+  $("askForm").addEventListener("submit", (e) => { e.preventDefault(); run($("q").value); });
+  S = fresh();
+  loadExamples();
+  loadStatus();
+})();
+</script>
+</body>
+</html>

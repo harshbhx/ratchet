@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ratchet</title>
+<title>Ratchet dashboard</title>
 <style>
   :root {
     --bg: #f7f7f5; --panel: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e4e3de;
@@ -51,6 +51,10 @@
   .muted { color: var(--muted); }
   a { color: var(--accent); }
   .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .nav { display: flex; gap: 14px; font-size: 13px; }
+  .controls { align-items: center; }
+  select { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 8px; border-radius: 8px; }
+  #msg:empty { display: none; }
   @media (prefers-color-scheme: dark) { button.primary { color: #0b1020; } }
 </style>
 </head>
@@ -58,13 +62,19 @@
 <main>
   <header>
     <h1>Ratchet <small>rent intelligence today, own it tomorrow</small></h1>
+    <nav class="nav"><a href="/">Home</a><a href="/scout">Scout demo</a><a href="https://github.com/harshbhx/ratchet" target="_blank" rel="noopener">GitHub</a></nav>
     <div class="controls" id="controls" hidden>
+      <label class="muted" for="workload">Traffic</label>
+      <select id="workload" aria-label="Simulated traffic for the next day">
+        <option value="mixed">Tickets + Scout</option><option value="tickets">Support tickets</option><option value="research">Scout research calls</option>
+      </select>
       <button class="primary" id="runDay">Run 1 day + night</button>
       <button id="breakNext">Break next deploy</button>
       <button id="reset">Reset</button>
     </div>
   </header>
   <p class="muted" id="sub">Loading...</p>
+  <p class="note" id="msg" role="status" aria-live="polite"></p>
 
   <section class="tiles">
     <div class="tile"><div class="v" id="tSaved">$0</div><div class="l">saved vs all-teacher</div></div>
@@ -84,6 +94,14 @@
       <svg id="shareChart" viewBox="0 0 520 240" role="img" aria-label="Share of requests answered by the student by day"></svg>
       <div class="legend"><span><i style="background:var(--accent)"></i>Student</span><span><i style="background:var(--teacher)"></i>Escalated to teacher</span></div>
     </div>
+  </section>
+
+  <section class="panel">
+    <h2>By task</h2>
+    <div class="scroll"><table id="tasks"><thead><tr>
+      <th>Task</th><th>Requests</th><th>Answered by your model</th><th>Escalated</th><th>Cost reduction</th><th>Route</th>
+    </tr></thead><tbody></tbody></table></div>
+    <p class="note">Pinned tasks (open-ended planning and writing for Scout) always go to the teacher and are never trained on.</p>
   </section>
 
   <section class="panel">
@@ -172,15 +190,24 @@ function render(s) {
     `<tr><td>${esc(r.teacher_model)}</td><td>${r.license_url ? `<a href="${esc(r.license_url)}" target="_blank" rel="noopener">${esc(r.license)}</a>` : esc(r.license)}</td><td>${esc(r.split)}</td><td>${r.n}</td></tr>`
   ).join("") || `<tr><td colspan="4" class="muted">No training data yet.</td></tr>`;
   $("bomHash").textContent = "Dataset fingerprint (SHA-256): " + s.bill_of_materials.examples_sha256.slice(0, 32) + "...";
+  $("tasks").querySelector("tbody").innerHTML = (s.tasks || []).map((t) =>
+    `<tr><td>${esc(t.task)}</td><td>${t.requests}</td><td>${pct(t.student_share)}</td><td>${pct(t.escalation_rate)}</td>` +
+    `<td>${pct(t.savings_pct)}</td><td>${t.pinned ? "pinned to teacher" : "distilled"}</td></tr>`
+  ).join("") || `<tr><td colspan="6" class="muted">No traffic yet.</td></tr>`;
   $("controls").hidden = s.mode !== "mock";
 }
 async function refresh() { const r = await fetch("ratchet/stats"); render(await r.json()); }
 async function act(path, btn) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
-  try { await fetch(path, { method: "POST" }); await refresh(); }
+  $("msg").textContent = "";
+  try {
+    const r = await fetch(path, { method: "POST" });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); $("msg").textContent = j.detail || ("Request failed (" + r.status + ")"); }
+    await refresh();
+  }
   finally { document.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
 }
-$("runDay").onclick = () => act("ratchet/demo/day");
+$("runDay").onclick = () => act("ratchet/demo/day?workload=" + encodeURIComponent($("workload").value));
 $("breakNext").onclick = () => act("ratchet/demo/break-next");
 $("reset").onclick = () => act("ratchet/demo/reset");
 refresh();
