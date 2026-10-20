@@ -285,6 +285,10 @@ def test_threshold_reads_malformed_records_safely():
     for ev, want in cases:
         assert calibration.threshold(ev, task, 0.8) == want, ev
     assert calibration.entries(None) == {} and calibration.entry({"tasks": []}, "A") is None
+    # A record that cannot say what it was scored under is not current: the task shows as recalibrating, and a night
+    # re-scores the version.
+    assert calibration.spec_changed({"tasks": {"A": {"threshold": 0.5}}}, task)
+    assert not calibration.spec_changed({"tasks": {"B": {"threshold": 0.5}}, "spec_hashes": {"A": task.spec_hash}}, task)
     # A hand-edited global threshold that is not a number never fails a request: the student serves nothing (INV-7).
     led = Ledger(":memory:")
     vid = _version(led, "live", {"threshold": "high"})
@@ -296,6 +300,8 @@ def test_threshold_reads_malformed_records_safely():
     )
     assert r.threshold(led.version(vid), "student-v1") == r.threshold(led.version(vid), "student-v1", "A") == SERVE_NOTHING
     assert r.handle(_ask(1), "A").route == "confidence"
+    hashless = _version(led, "retired", {"threshold": 0.8, "tasks": {"A": {"threshold": 0.5}}})
+    assert stale_tasks(led.version(hashless), {"A": task.spec_hash}) == ["A"] and r.spec_changed(led.version(hashless), "A")
 
 
 # ---------- the release gate ----------
@@ -442,9 +448,22 @@ def test_per_task_live_alert_once():
     ]
     ReleaseGate(led, ReleasePolicy()).tick()  # a new gate (a new `ratchet.live tick` process) reads the ledger
     assert len([e for e in led.events() if e["kind"] == "alert"]) == 1
+    # `tick` runs after every gateway request: the grouped query runs again only after a new audit.
+    queries = []
+    real = led.task_live_quality
+    led.task_live_quality = lambda vid, current_stage_only=True: queries.append(vid) or real(vid, current_stage_only)  # type: ignore[method-assign]
+    gate.tick()
+    led.log_request(task="badxtask", served_by="teacher", student_version=live, escalated=1)  # not an audit
+    gate.tick()
+    assert queries == [] and led.last_audit_id(live) == 220
+    _audits(led, live, "badxtask", 1, 1)
+    gate.tick()
+    gate.tick()
+    assert queries == [live]
+    led.task_live_quality = real  # type: ignore[method-assign]
     assert led.has_event("alert", f"v{live} task bad_task:") and not led.has_event("alert", f"v{live} task bad?task:")
     assert led.version_live_quality(live, task="bad_task") == (20, 0.6)
-    assert led.task_live_quality(live) == {"bad_task": (20, 0.6), "badxtask": (200, 1.0)}
+    assert led.task_live_quality(live) == {"bad_task": (20, 0.6), "badxtask": (201, 1.0)}
 
     # The canary gets its own per-task alerts, in its current stage.
     canary = _version(led, "canary", {"threshold": 0.8})

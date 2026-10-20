@@ -170,6 +170,9 @@ class ReleaseGate:
         # (version, task) pairs known to have their per-task alert in the ledger: a cache of `Ledger.has_event`, which is
         # what makes the alert once-only across gates and processes (FR-14.1).
         self._task_alerted: set[tuple[int, str]] = set()
+        # version -> the newest audited request its per-task check has seen: the grouped query runs only after a new audit
+        # (`tick` runs after every gateway request).
+        self._task_checked: dict[int, int] = {}
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
@@ -307,6 +310,10 @@ class ReleaseGate:
         for v in (live, self.ledger.by_state("canary")):
             if v is None:
                 continue
+            last = self.ledger.last_audit_id(v.id)
+            if last is None or self._task_checked.get(v.id) == last:
+                continue  # no audit since the last check: nothing can have changed
+            self._task_checked[v.id] = last
             quality = self.ledger.task_live_quality(v.id)
             if len(quality) < 2:
                 continue
