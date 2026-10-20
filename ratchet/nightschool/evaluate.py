@@ -7,8 +7,13 @@ correct) pairs we pick the lowest threshold whose served answers reach the targe
 precision, then report:
   precision = agreement with the teacher among answers it would serve
   coverage  = share of golden requests it would serve (= expected savings)
-Structured fields are compared exactly against the teacher's answer, so there is no judge
-bias on labels. Free-text tasks can add a reference-based judge score.
+Structured fields are compared with the task's field comparators against the teacher's answer
+(`Task.agree`, FR-2.14), so there is no judge bias on labels. Free-text tasks can add a
+reference-based judge score.
+
+A golden row whose reference (the stored teacher answer) is not valid under the task's current
+spec is skipped and counted (`golden_invalid_refs`): the spec may have tightened since the
+answer was stored, and a reference the task refuses cannot grade the student.
 
 A row the student endpoint refuses (`REFUSED`: a stored condition it cannot serve, such as
 `tools` on a vLLM without a tool parser or a schema its guided decoding cannot compile, or a
@@ -54,13 +59,20 @@ def cascade_eval(
     """Calibrate the threshold on one half of the golden set and measure on the other half,
     so the reported precision is not graded on the data the threshold was tuned on. A row the
     student endpoint refuses (`refused`) counts as confidence 0 and wrong, as production would
-    escalate it; `refused_n` says how many there were."""
+    escalate it; `refused_n` says how many there were. A row whose reference is not valid under
+    its task's spec is skipped before the student is sampled (`golden_invalid_refs`); the halves
+    alternate over the rows that are scored, so they stay the same size."""
     calib: list[tuple[float, bool]] = []
     test: list[tuple[float, bool]] = []
-    n_refused = 0
-    for i, row in enumerate(golden_rows):
-        task = tasks.get(row["task"])
+    n_refused = n_invalid = 0
+    specs: dict[str, tasks.Task] = {}
+    i = 0  # index among the scored rows: even calibrates, odd measures
+    for row in golden_rows:
+        task = specs.get(row["task"]) or specs.setdefault(row["task"], tasks.get(row["task"]))
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
+        if not task.valid(ref):
+            n_invalid += 1
+            continue
         try:
             got = sample(prompt, samples, row.get("params"))
         except UpstreamError as e:
@@ -72,6 +84,7 @@ def cascade_eval(
             sc = score(task, got)
             point = (sc.confidence, task.agree(sc.answer.text, ref))
         (calib if i % 2 == 0 else test).append(point)
+        i += 1
     thr = min(1.01, max(floor, calibrate_threshold(calib, target_precision)))  # 1.01 = serve nothing
     served = [ok for c, ok in test if c >= thr]
     allpts = calib + test
@@ -83,6 +96,7 @@ def cascade_eval(
         "precision": sum(served) / len(served) if served else 0.0,
         "test_n": len(test),
         "refused_n": n_refused,
+        "golden_invalid_refs": n_invalid,
     }
 
 
@@ -125,7 +139,7 @@ class LiveEvaluator:
             return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
         res = cascade_eval(sample, golden_rows, self.samples, self.target_precision)
-        free_text = [r for r in golden_rows if not tasks.get(r["task"]).compare_keys]
+        free_text = [r for r in golden_rows if not tasks.get(r["task"]).fields]
         if self.judge and free_text:
             ok = 0
             for row in free_text:

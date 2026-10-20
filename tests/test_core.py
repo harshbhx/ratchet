@@ -115,12 +115,12 @@ def test_answers_that_mention_think_tags_keep_their_text():
     page Scout read about reasoning models) truncated, structured ones as broken JSON, and stored none of them. A JSON
     object can hold a tag only inside a string, so a structured answer that is one object, before or after its reasoning
     and in a fence or not, is kept whole."""
-    opening = '{"category": "bug", "priority": "high", "reply": "Your model output shows a stray <think> tag; we fix it."}'
-    closing = '{"category":"bug","priority":"high","reply":"Strip everything up to the </think> tag before parsing."}'
+    opening = '{"category": "technical", "priority": "high", "reply": "Your model output shows a stray <think> tag; we fix it."}'
+    closing = '{"category":"technical","priority":"high","reply":"Strip everything up to the </think> tag before parsing."}'
     for answer in (opening, closing):
         for said in (answer, f"```json\n{answer}\n```", f"<think>bug, high</think>\n{answer}", f"bug, high</think>{answer}"):
             assert tasks.clean_answer(TRIAGE, said) == answer, said
-            assert TRIAGE.canonical(said) == '{"category": "bug", "priority": "high"}', said
+            assert TRIAGE.canonical(said) == '{"category": "technical", "priority": "high"}', said
             assert tasks.parse_json(said) == json.loads(answer), said
         assert tasks.clean_answer(TRIAGE, answer) == answer  # cleaning twice changes nothing
     free = tasks.get("default")

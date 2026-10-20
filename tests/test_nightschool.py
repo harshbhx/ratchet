@@ -52,9 +52,10 @@ def test_training_targets_are_teacher_answers_only():
     led = Ledger(":memory:")
     live = _version(led, "live", {"threshold": 0.5})
     shadow = _version(led, "shadow", {"threshold": 0.5})
-    # Valid for both tasks used below ('ticket-triage' wants JSON), so every teacher answer can be stored (INV-16).
+    # Valid for both tasks used below ('ticket-triage' wants JSON with a known category and priority), so every teacher
+    # answer can be stored (INV-16).
     teacher = RecordingProvider(
-        lambda msgs, model: json.dumps({"category": "teacher", "priority": "high", "reply": f"to {msgs[-1]['content']}"})
+        lambda msgs, model: json.dumps({"category": "billing", "priority": "high", "reply": f"to {msgs[-1]['content']}"})
     )
     student = RecordingProvider(STUDENT_MARKER)  # unanimous at p≈0.95: confident enough to serve
     settings = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=1.0, confidence_threshold=0.8, redact_pii=True)

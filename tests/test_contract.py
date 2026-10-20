@@ -726,13 +726,10 @@ def test_concurrent_requests_keep_the_ledger_consistent():
     assert led.totals()["cost_usd"] == pytest.approx(sum(row["cost_usd"] for row in rows))
 
 
-@pytest.mark.req("FR-2.2", "FR-2.6")
-@pytest.mark.xfail(
-    strict=True,
-    reason="known bug: '{}' is a valid object, so every compare key is None == None and three '{}' samples score 0.98 "
-    "and are served; fixed by TASK-COMPARATORS (required fields)",
-)
+@pytest.mark.req("FR-2.2", "FR-2.6", "FR-2.14")
 def test_empty_json_answer_scores_zero():
+    """Was a known bug until field comparators: '{}' is a valid object, so every compare key was None == None and three
+    '{}' samples scored 0.98 and were served. The built-in fields are required now, so '{}' is invalid."""
     triage = tasks.get(TRIAGE)
     assert score(triage, [Completion("{}", "m", 10, 2, 1.0, [math.log(0.95)] * 2)] * 3).confidence == 0.0
     assert not triage.agree("{}", "{}")

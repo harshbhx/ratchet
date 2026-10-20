@@ -84,15 +84,12 @@ CLIENT_FINISH = ("stop", "length", "content_filter")
 def answer_problem(task: tasks.Task, c: Completion) -> str | None:
     """Why a teacher answer can be neither a training example nor a reference for the student (INV-16), or None when it
     can: it did not end by itself (`finish_reason length`, ...), nothing is left once reasoning is stripped (`empty
-    answer`), or a structured task's answer is not valid JSON (`invalid answer`). String operations only."""
+    answer`), a JSON task's answer does not parse (`invalid answer`), or a field of the task's spec is missing or does
+    not normalise, such as a label outside its vocabulary (`invalid field category`; `Task.check`, FR-2.14). String
+    operations only."""
     if c.finish_reason not in COMPLETE:
         return f"finish_reason {c.finish_reason if c.finish_reason in _FINISH_NAMED else 'other'}"
-    clean = tasks.clean_answer(task, c.text)
-    if not clean:
-        return "empty answer"
-    if task.structured and task.canonical(clean) == tasks.INVALID:
-        return "invalid answer"
-    return None
+    return task.check(c.text)
 
 
 # Added to a student call's longest time before its probe is presumed lost: the call starts a moment after allow().
@@ -565,8 +562,11 @@ class Ratchet:
         learns (threat model T2). Returns True when an example was inserted or a duplicate's `seen` bumped; False, with a
         throttled `skip_example` event, when not. A request whose `meta.storable` is False stores nothing and is not a
         skip. A `fallback` teacher's answer is stored only with RATCHET_STORE_FALLBACK_TEACHER=1 (so the golden labels
-        stay the primary teacher's), and then with its own model and license (INV-1)."""
-        if meta is not None and not meta.storable:
+        stay the primary teacher's), and then with its own model and license (INV-1). A task with `store=False` stores
+        nothing either, and that is not a skip. An answer that is not valid under the task's spec (`Task.check`: a
+        required field missing, a label outside its vocabulary) is served but skipped, with the field's path as the
+        reason (FR-2.14)."""
+        if (meta is not None and not meta.storable) or not task.store:
             return False
         if fallback and not self.s.store_fallback_teacher:
             return False
@@ -581,8 +581,9 @@ class Ratchet:
             stored, clean = redact_messages(messages, found), redact(clean, found)
             if conditions:
                 conditions = redact_json(conditions, found)
-            # A placeholder can break a structured answer (a card-like number outside quotes): never store that.
-            if found and task.structured and task.canonical(clean) == tasks.INVALID:
+            # A placeholder can break a structured answer (a card-like number outside quotes, an identifier inside a
+            # field the spec checks): never store that.
+            if found and task.check(clean) is not None:
                 self._skip_example(task, "invalid after redaction")
                 return False
         model = self._teacher_model(fallback)

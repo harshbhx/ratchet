@@ -12,6 +12,10 @@
   wrote under a client's `stop` is held out of training: it ends where that stop cut it, and the
   student would learn to stop there on the bare prompt. It still serves the golden eval, which
   samples the student under the same stop.
+- A train row whose answer is not valid under its task's current spec (`Task.valid`, FR-2.14) is
+  left out and counted (`skipped_invalid` in manifest.json): the spec may have tightened since the
+  answer was stored (a smaller vocabulary, a field that became required). Golden rows stay, and
+  `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`).
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .. import licenses
+from .. import licenses, tasks
 from ..ledger import Ledger, example_hash
 
 FREQUENT = 3
@@ -34,8 +38,11 @@ def _prompt_key(r: Any) -> str:
     return example_hash(r["task"], json.loads(r["messages"])) if r["params"] else r["hash"]
 
 
-def rows(ledger: Ledger, split: str, task: str | None = None) -> list[dict[str, Any]]:
+def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
+    gains `skipped_invalid`: train rows left out because the answer is not valid under the task's current spec."""
     out = []
+    specs: dict[str, tasks.Task] = {}
     examples = ledger.examples(task=task)
     keys = [_prompt_key(r) for r in examples]
     seen: Counter[str] = Counter()
@@ -52,6 +59,11 @@ def rows(ledger: Ledger, split: str, task: str | None = None) -> list[dict[str, 
         lic = licenses.lookup(r["teacher_model"])
         if lic is None or not lic.distill_ok:
             continue
+        spec = specs.get(r["task"]) or specs.setdefault(r["task"], tasks.get(r["task"]))
+        if effective == "train" and not spec.valid(r["completion"]):
+            if counts is not None:
+                counts["skipped_invalid"] = counts.get("skipped_invalid", 0) + 1
+            continue  # the spec tightened since it was stored: never a training target
         msgs = json.loads(r["messages"])
         out.append(
             {
@@ -89,7 +101,8 @@ def write_jsonl(items: list[dict[str, Any]], path: str | Path) -> Path:
 
 
 def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[str, Any]:
-    train = rows(ledger, "train", task)
+    counts: dict[str, int] = {}
+    train = rows(ledger, "train", task, counts)
     golden = rows(ledger, "golden", task)
     out = Path(out_dir)
     write_jsonl(train, out / "train.jsonl")
@@ -98,6 +111,7 @@ def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[
         "train_examples": len(train),
         "golden_examples": len(golden),
         "dataset_sha256": dataset_hash(train),
+        "skipped_invalid": counts.get("skipped_invalid", 0),
         "bill_of_materials": ledger.bill_of_materials(),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
