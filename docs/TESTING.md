@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 430 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 434 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -14,16 +14,16 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 |---|---|
 | `tests/test_core.py` | 37 (19 functions; one has 15 cases, one has 5) |
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
-| `tests/test_release.py` | 10 (9 functions; one has 2 cases) |
+| `tests/test_release.py` | 11 (10 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
 | `tests/test_hardening.py` | 54 (42 functions; one has 9 cases, one has 4, one has 2) |
-| `tests/test_resilience.py` | 72 (34 functions; one has 20 cases, two have 7, one has 6, one has 3) |
+| `tests/test_resilience.py` | 75 (37 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 130 (24 functions; one has 86 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **430** |
+| **Total** | **434** |
 
 There are three layers:
 
@@ -89,6 +89,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_gate_tolerance_boundary` (2 cases) | For precision and for coverage: a candidate exactly `tolerance` worse than live is admitted to shadow; a hair more is rejected as a regression |
 | `test_admit_retires_older_inflight` | A rejected candidate leaves the shadow and canary in flight alone; an admitted one retires both (traffic 0, one `retired` event each) and is the only version in flight |
 | `test_shadow_promotes_and_both_rejections` | 99 would-serve answers hold; at 100, precision exactly 95% and live's coverage it moves to canary 10%. The count is would-serve answers, not shadowed requests: 150 requests with 75 would-serve answers hold, 200 with 100 promote. 90% precision is rejected; 50% coverage against a live student at 100% is rejected, but passes against a live student that also serves 50% |
+| `test_shadow_coverage_is_not_compared_with_requests_the_live_student_never_answered` | FR-6.4, FR-2.11 (regression): rows where the live student never answered (route `student_breaker` or `student_error`) stay in the shadow's `n` and coverage but not in `live_coverage`, so a shadow serving 50% is rejected against a live student that served all it answered; the same pattern with the live student unsure (route `confidence`) is live coverage of 50% and promotes |
 | `test_shadow_gate_counts_unarbitrated_disagreements_against_the_candidate` | FR-6.4, FR-2.10: 100 would-serve answers whose arbitrated ones all agree, but 10 of which the teacher could not arbitrate (`shadow_agree` NULL), give precision 90%, not 100%, and are rejected with "(10 unarbitrated counted as disagreements)"; 2 of 100 give 98% and promote, and the event says so; 50 rows without a shadow verdict (`shadow_serve` NULL) change neither `n`, coverage, the evidence count nor precision |
 | `test_canary_holds_without_strong_evidence` | 18 of 20 audits (90%, under the 92% floor, Wilson upper bound above it) neither roll back nor advance, over several ticks; 20 more agreeing audits move it to 50%. The rollback boundary (FR-6.6): 16 of 20 (Wilson upper bound 91.9%, just under the floor) rolls back to live, 17 of 20 (94.8%) only holds |
 | `test_rollback_without_live_returns_traffic_to_teacher` | A cold-start canary at 50% audited precision is rolled back with "traffic back to the teacher"; afterwards 50 requests are all answered by the teacher and the student is never called |
@@ -179,8 +180,11 @@ Upstream failures: around a request the student already answered (FR-2.10, INV-1
 | `test_sdk_sends_an_exhausted_quota_once` | The real OpenAI SDK with its default two retries sends the quota-exhausted request once and raises `RateLimitError` with the type and code |
 | `test_sdk_sends_an_upstream_client_error_once` | The SDK raises `BadRequestError` with the teacher's `context_length_exceeded` and `param` after one request, and `InternalServerError` 502 `upstream_auth_error` without retrying |
 | `test_scout_error_event_names_the_upstream_status` | A failed Scout run says `a model or search call failed: upstream 503 service_unavailable` (or `upstream 502 upstream_unreachable`, `upstream 504 upstream_timeout`), never the URL |
-| `test_breaker_opens_probes_backs_off_and_closes` | `Breaker` on a fake clock: 4 failures and a success stay closed, 5 in a row open it (`open_until` 30 s on); exactly one probe after the wait; failed probes wait 60, 120, 240, 300, 300 s; a successful probe closes it and resets the wait; a released probe and a lost one (no report within the wait) let the next caller probe; a late result from another thread in half_open, and results while open, change nothing; threshold 0 never opens; a failing listener is swallowed; bad arguments and bad `RATCHET_STUDENT_BREAKER_*` settings raise `ValueError` when the cascade is built |
+| `test_breaker_opens_probes_backs_off_and_closes` | `Breaker` on a fake clock: 4 failures and a success stay closed, 5 in a row open it (`open_until` 30 s on); exactly one probe after the wait; failed probes wait 60, 120, 240, 300, 300 s (at 300 s only the 1st probe's transitions are reported); a successful probe closes it and resets the wait; a released probe and a lost one (no report within the wait) let the next caller probe; a late result from another thread in half_open, and results while open, change nothing; threshold 0 never opens; a failing listener is swallowed; bad arguments and bad `RATCHET_STUDENT_BREAKER_*` settings raise `ValueError` when the cascade is built |
 | `test_half_open_lets_exactly_one_probe_through` | 25 rounds of 16 threads released by a barrier at the end of the cooldown: exactly one `allow()` is True each time |
+| `test_a_probe_slower_than_the_cooldown_still_counts_and_backs_the_breaker_off` | Regression (review of FR-2.11): a probe held past the cooldown on a hung endpoint used to be replaced and its failure dropped, so the breaker stayed half-open for the whole outage. Now a lost probe's failure reopens the breaker and doubles the wait (and its success closes it), and with `probe_timeout_s` nobody else probes while the probe can still be running. A 900 s hung-endpoint run (a request a second, calls held 15, 17 or 60 s, cooldowns 5 and 30 s) backs off to 300 s every time, with one probe in flight at most when `probe_timeout_s` is set; a bad `probe_timeout_s` raises |
+| `test_router_never_replaces_a_probe_that_can_still_be_running` | The router gives a breaker the student call's longest time (`OpenAICompatProvider.longest_call_s()`: pool, connect, write and read timeouts, 32 s by default, plus 5 s): with a 5 s cooldown, requests 5, 10 and 36.9 s into a probe that hangs on a `MockTransport` student skip the student (route `student_breaker`), and the probe's timeout reopens the breaker for 10 s |
+| `test_circuit_events_at_the_longest_wait_are_throttled` | 120 failed probes at 300 s report only the 1st, 10th and 100th pair of `circuit` transitions (each says which), every probe still counts in `failures`, closing is always reported, and the count starts again after the breaker closes |
 | `test_endpoint_failures_are_told_from_request_errors` | Timeouts, connection and protocol errors, 5xx, 408, 429 and an unreadable answer count as the endpoint down; 400, 401, 404 and `AdapterMissing` as the endpoint answering; a `KeyError` or `ValueError` as neither. `CircuitOpen` is a 503 `circuit_open` |
 | `test_open_student_breaker_sends_requests_straight_to_the_teacher` | A student that times out: 5 `student_error`s and `student: closed->open after 5 failures (ReadTimeout)`; the 6th request never reaches the student (call counter), is served by the teacher with route `student_breaker`, `escalated=1`, `confidence` NULL and only the teacher's cost, and is not another student error; a failed probe after 30 s waits 60 s; once the student is back the probe serves and closes it; the five `circuit` events in order |
 | `test_shadow_breaker_is_its_own` | A shadow that times out opens the `shadow` breaker after 5 calls; the live student serves all 10 requests and its breaker stays closed; skipped shadow calls are not counted as errors and leave no shadow record |

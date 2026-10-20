@@ -369,13 +369,15 @@ def _shadow(
     live_escalate_every: int = 0,
     unarbitrated_every: int = 0,
     task: str = "t",
+    live_route: str = "confidence",
 ) -> None:
     """Log `n` requests that shadow version `vid` scored silently.
 
     Every `serve_every`-th request, starting with the first, is one the shadow would have escalated (0 = it would
     serve all). Among the answers it would serve, every `agree_every`-th disagrees with the reference (0 = all agree),
     counted over served answers only so the two patterns never line up by accident. The live student (`live_vid`)
-    serves every request except every `live_escalate_every`-th, which goes to the teacher (0 = it serves all).
+    serves every request except every `live_escalate_every`-th, which goes to the teacher (0 = it serves all) by
+    `live_route`: `confidence` (unsure), or `student_breaker` / `student_error` (never answered).
     Among the answers it would serve, every `unarbitrated_every`-th is a disagreement the teacher could not arbitrate
     (`shadow_agree` NULL; 0 = none); it takes precedence over `agree_every` on the same answer."""
     served = 0
@@ -390,8 +392,9 @@ def _shadow(
             task=task,
             served_by="teacher" if escalate else "student",
             student_version=live_vid,
-            confidence=0.5 if escalate else 0.95,
+            confidence=(0.5 if live_route == "confidence" else None) if escalate else 0.95,
             escalated=int(escalate),
+            route=live_route if escalate else "student",
             audited=0,
             shadow_version=vid,
             shadow_serve=int(serve),

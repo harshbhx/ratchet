@@ -15,9 +15,10 @@ goes back to the caller at once rather than holding the request for a retry that
 
 A `Breaker` keeps a failing endpoint from holding every request for its whole timeout (ADR 0015): after
 `failure_threshold` endpoint failures in a row it refuses calls (`CircuitOpen`) for `open_s` seconds, then lets one probe
-through; a failed probe doubles the wait, up to `max_open_s`, and a successful one closes it. `endpoint_down` decides
-what counts: a timeout, no connection, a 5xx, 408 or 429 does; another 4xx is the endpoint answering (about this request),
-and an error that is not an HTTP failure says nothing either way.
+through; a failed probe doubles the wait, up to `max_open_s`, and a successful one closes it. A probe still running when
+its call could have timed out (`probe_timeout_s`) is presumed lost and the next caller probes, but its result still
+counts. `endpoint_down` decides what counts: a timeout, no connection, a 5xx, 408 or 429 does; another 4xx is the
+endpoint answering (about this request), and an error that is not an HTTP failure says nothing either way.
 
 httpx is the only import outside the standard library (for its exception types); no retry library is needed.
 """
@@ -284,6 +285,9 @@ def describe_failure(e: BaseException) -> str:
 # ---------- circuit breaker (ADR 0015) ----------
 CLOSED, OPEN, HALF_OPEN = "closed", "open", "half_open"
 MAX_OPEN_S = 300.0  # the longest an open breaker waits before its next probe, however many probes failed
+# Once the wait is at max_open_s, an outage repeats the same open<->half_open pair every max_open_s (24 events an hour at
+# 300 s), which would push everything else out of the dashboard's release log. Only these repeats are reported.
+REPORTED_REPEATS = frozenset({1, 10, 100, 1000})
 
 
 class CircuitOpen(UpstreamError):
@@ -326,7 +330,7 @@ def endpoint_down(e: BaseException) -> bool | None:
     return status >= 500 or status in (408, 429)
 
 
-def _breaker_args(failure_threshold: int, open_s: float, max_open_s: float) -> None:
+def _breaker_args(failure_threshold: int, open_s: float, max_open_s: float, probe_timeout_s: float = 0.0) -> None:
     if isinstance(failure_threshold, bool) or not isinstance(failure_threshold, int) or failure_threshold < 0:
         raise ValueError(f"failure_threshold must be 0 (no breaker) or more, not {failure_threshold!r}")
     for name, value in (("open_s", open_s), ("max_open_s", max_open_s)):
@@ -334,6 +338,9 @@ def _breaker_args(failure_threshold: int, open_s: float, max_open_s: float) -> N
             raise ValueError(f"{name} must be a positive number of seconds, not {value!r}")
     if max_open_s < open_s:
         raise ValueError(f"max_open_s ({max_open_s!r}) must be at least open_s ({open_s!r})")
+    p = probe_timeout_s
+    if isinstance(p, bool) or not isinstance(p, (int, float)) or not (math.isfinite(p) and p >= 0):
+        raise ValueError(f"probe_timeout_s must be a finite number of seconds, 0 or more, not {p!r}")
 
 
 @dataclass(frozen=True)
@@ -356,6 +363,11 @@ def _seconds(value: float) -> str:
     return f"{value:g}"
 
 
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 class Breaker:
     """A circuit breaker for one endpoint, safe to share between threads.
 
@@ -365,13 +377,20 @@ class Breaker:
     - half_open: after that, exactly one caller gets `allow()` True: the probe. Everyone else sees it as open until the
       probe's outcome is recorded. A success closes the breaker and resets `open_s`; a failure opens it again for twice
       as long, up to `max_open_s`. `release()` hands the probe back undecided (its error said nothing about the
-      endpoint), and a probe that has not reported back within `open_s` is presumed lost, so the next caller probes.
+      endpoint).
 
-    A thread records the outcome of the call it was allowed to make. In half_open only the probe's thread decides: a
-    late result from a call that began before the breaker opened is ignored, as it is while open. `on_change(breaker,
-    old, new, reason)` runs after each transition, outside the lock; an exception from it is swallowed, because a
-    failing listener (the ledger) must never fail the call the breaker guards. When closed, `allow()` and a successful
-    `record()` read attributes only: no lock on the hot path."""
+    A probe that has not reported back within the longer of the current wait and `probe_timeout_s` (the longest the
+    guarded call can take before its own timeouts end it; 0 when unknown) is presumed lost, so the next caller probes and
+    the breaker never stays half-open with nobody probing. A lost probe still counts when it does report while the
+    breaker is half-open: a slow failure reopens it and doubles the wait, as a timely one would.
+
+    A thread records the outcome of the call it was allowed to make. In half_open only a probe's thread decides: a late
+    result from a call that began before the breaker opened is ignored, as it is while open. `on_change(breaker, old,
+    new, reason)` runs after each transition, outside the lock; an exception from it is swallowed, because a failing
+    listener (the ledger) must never fail the call the breaker guards. Once the wait is at `max_open_s`, the repeated
+    open<->half_open pair is reported only for the 1st, 10th, 100th and 1000th probe at that wait (`REPORTED_REPEATS`),
+    so a long outage cannot flood the listener. When closed, `allow()` and a successful `record()` read attributes
+    only: no lock on the hot path."""
 
     def __init__(
         self,
@@ -381,12 +400,15 @@ class Breaker:
         max_open_s: float = MAX_OPEN_S,
         clock: Callable[[], float] = time.monotonic,
         on_change: ChangeListener | None = None,
+        *,
+        probe_timeout_s: float = 0.0,
     ) -> None:
-        _breaker_args(failure_threshold, open_s, max_open_s)
+        _breaker_args(failure_threshold, open_s, max_open_s, probe_timeout_s)
         self.name = name
         self.failure_threshold = failure_threshold
         self.base_open_s = float(open_s)
         self.max_open_s = float(max_open_s)
+        self.probe_timeout_s = float(probe_timeout_s)
         self.clock = clock
         self.on_change = on_change
         self._lock = threading.Lock()
@@ -396,6 +418,8 @@ class Breaker:
         self._open_until: float | None = None  # on `clock`: when an open breaker lets the next probe through
         self._probe: int | None = None  # the thread making the half-open probe
         self._probe_since = 0.0
+        self._lost: set[int] = set()  # threads of probes presumed lost in this half-open spell, still able to report
+        self._repeats = 0  # probes in a row that began with the wait already at max_open_s
 
     @property
     def state(self) -> str:
@@ -415,11 +439,19 @@ class Breaker:
                 if now < self._open_until:
                     return False
                 self._state = HALF_OPEN
-                change = (OPEN, HALF_OPEN, f"after {_seconds(self._open_s)} s; one probe")
-            elif self._probe is not None and now - self._probe_since < self._open_s:
-                return False  # the probe is in flight
+                reason = f"after {_seconds(self._open_s)} s; one probe"
+                if self._open_s >= self.max_open_s:
+                    self._repeats += 1
+                    nth = _ordinal(self._repeats)
+                    reason += f" (the {nth} at the longest wait; only the 1st, 10th, 100th and 1000th are logged)"
+                change = (OPEN, HALF_OPEN, reason)
+            elif self._probe is not None:
+                if now - self._probe_since < max(self._open_s, self.probe_timeout_s):
+                    return False  # the probe is in flight
+                self._lost.add(self._probe)  # presumed lost; it still decides if it reports while half-open
             self._probe, self._probe_since = threading.get_ident(), now
-        if change is not None:
+            quiet = self._quiet()
+        if change is not None and not quiet:
             self._notify(*change)
         return True
 
@@ -430,19 +462,25 @@ class Breaker:
             return
         why = f" ({cause})" if cause else ""
         change = None
+        quiet = False
         with self._lock:
             if self._state == HALF_OPEN:
-                if self._probe != threading.get_ident():
-                    return  # a call from before the breaker opened: only the probe decides
+                me = threading.get_ident()
+                if me != self._probe and me not in self._lost:
+                    return  # a call from before the breaker opened: only a probe decides
                 self._probe = None
+                self._lost.clear()
                 if ok:
                     self._state, self._failures, self._open_s, self._open_until = CLOSED, 0, self.base_open_s, None
+                    self._repeats = 0
                     change = (HALF_OPEN, CLOSED, "after a successful probe")
                 else:
+                    quiet = self._quiet()
+                    repeat = f", the {_ordinal(self._repeats)} at the longest wait" if self._repeats else ""
                     self._failures += 1
                     self._open_s = min(self._open_s * 2, self.max_open_s)
                     self._state, self._open_until = OPEN, self.clock() + self._open_s
-                    change = (HALF_OPEN, OPEN, f"for {_seconds(self._open_s)} s after a failed probe{why}")
+                    change = (HALF_OPEN, OPEN, f"for {_seconds(self._open_s)} s after a failed probe{why}{repeat}")
             elif self._state == CLOSED:
                 if ok:
                     self._failures = 0
@@ -451,8 +489,8 @@ class Breaker:
                     if self._failures >= self.failure_threshold:
                         self._state, self._open_until = OPEN, self.clock() + self._open_s
                         change = (CLOSED, OPEN, f"after {self._failures} failures{why}")
-            # open: a call that began before the breaker opened; the wait stands
-        if change is not None:
+            # open: a call that began before the breaker opened (or a lost probe after another reopened it); the wait stands
+        if change is not None and not quiet:
             self._notify(*change)
 
     def release(self) -> None:
@@ -460,8 +498,16 @@ class Breaker:
         if self._state != HALF_OPEN:
             return
         with self._lock:
-            if self._state == HALF_OPEN and self._probe == threading.get_ident():
-                self._probe = None
+            if self._state == HALF_OPEN:
+                me = threading.get_ident()
+                self._lost.discard(me)
+                if self._probe == me:
+                    self._probe = None
+
+    def _quiet(self) -> bool:
+        """Whether the current probe's transitions go unreported: a repeat at the longest wait not in REPORTED_REPEATS.
+        Called with the lock held."""
+        return self._repeats > 0 and self._repeats not in REPORTED_REPEATS
 
     def snapshot(self) -> dict[str, Any]:
         """`state`, `failures` in a row, `open_until` (on the breaker's clock; None while closed) and the current wait
