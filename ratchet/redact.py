@@ -165,3 +165,33 @@ def redact_messages(messages: list[dict[str, Any]], counts: Counter[str] | None 
             m["function_call"] = _redact_function(m["function_call"], counts)
         out.append(m)
     return out
+
+
+def redact_json(value: Any, counts: Counter[str] | None = None) -> Any:
+    """A copy of a JSON value with every string value redacted: the generation conditions stored with an example (a
+    tool's description, a schema's enum, a stop string can carry what a user typed). Object keys are kept: they are
+    field names a schema needs. Iterative, so any nesting the request validation let through is fine."""
+    if isinstance(value, str):
+        return redact(value, counts)
+    if not isinstance(value, (dict, list, tuple)):
+        return value
+    root: Any = {} if isinstance(value, dict) else []
+    stack: list[tuple[Any, Any]] = [(value, root)]
+    while stack:
+        src, dst = stack.pop()
+        for key, item in src.items() if isinstance(src, dict) else enumerate(src):
+            if isinstance(item, str):
+                out: Any = redact(item, counts)
+            elif isinstance(item, dict):
+                out = {}
+                stack.append((item, out))
+            elif isinstance(item, (list, tuple)):
+                out = []
+                stack.append((item, out))
+            else:
+                out = item
+            if isinstance(dst, dict):
+                dst[key] = out
+            else:
+                dst.append(out)
+    return root

@@ -1,13 +1,25 @@
 import json
 import math
+from collections import Counter
 
 import pytest
 from fakes import _audit, _version
 
 from ratchet import licenses, tasks
 from ratchet.confidence import calibrate_threshold, score
-from ratchet.ledger import Ledger
-from ratchet.providers import Completion
+from ratchet.ledger import STORED_PARAM_KEYS, Ledger, example_hash, target_params
+from ratchet.openai_compat import validate_chat_request
+from ratchet.providers import (
+    CHECK_DROPS,
+    DEFAULT_STUDENT_PARAMS,
+    DEFAULT_TEACHER_PARAMS,
+    PARAM_FIELDS,
+    Completion,
+    GenParams,
+    GenPolicy,
+    parse_param_allowlist,
+)
+from ratchet.redact import redact_json
 from ratchet.release import ReleaseGate, ReleasePolicy, wilson
 
 
@@ -246,3 +258,218 @@ def test_canary_rolls_back_on_strong_evidence():
     assert led.version(v).state == "rolled_back"
     assert led.live().id == live
     assert any(e["kind"] == "rollback" for e in led.events())
+
+
+# ---------- generation parameters (FR-1.13, ADR 0017) ----------
+FULL_PARAMS = {
+    "max_completion_tokens": 50,
+    "max_tokens": 900,  # max_completion_tokens wins
+    "temperature": 0.9,
+    "top_p": 0.8,
+    "stop": "\n\n",
+    "seed": 7,
+    "presence_penalty": 0.5,
+    "frequency_penalty": -0.5,
+    "logit_bias": {"50256": -100},
+    "logprobs": True,
+    "top_logprobs": 2,
+    "response_format": {"type": "json_object"},
+    "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
+    "tool_choice": "auto",
+    "parallel_tool_calls": False,
+    "reasoning_effort": "low",
+    "user": "end-user-7",
+    "safety_identifier": "hashed-user",
+    "store": False,
+    "metadata": {"ratchet_task": "default"},
+    "top_k": 20,  # a vLLM field: kept in `extra`
+}
+
+
+@pytest.mark.req("FR-1.13")
+def test_gen_params_from_a_validated_request():
+    req = validate_chat_request({"messages": [{"role": "user", "content": "hi"}], **FULL_PARAMS})
+    p = GenParams.from_request(req)
+    assert (p.max_tokens, p.temperature, p.stop, p.seed, p.extra) == (50, 0.9, ("\n\n",), 7, {"top_k": 20})
+    body = p.to_body()
+    # Every standard field, `max_completion_tokens` sent as `max_tokens`, `stop` as a list; never the end user's
+    # identity, the storage choice or the metadata (they are not generation parameters at all).
+    assert set(body) == set(PARAM_FIELDS) | {"top_k"}
+    assert body["max_tokens"] == 50 and body["stop"] == ["\n\n"] and "max_completion_tokens" not in body
+    assert not {"user", "safety_identifier", "store", "metadata", "model", "messages", "n"} & set(body)
+    assert p.to_body(frozenset({"seed", "top_k"})) == {"seed": 7, "top_k": 20}
+    # A request without parameters has none; empty lists and objects count as not sent.
+    bare = GenParams.from_request(validate_chat_request({"messages": [{"role": "user", "content": "hi"}]}))
+    assert bare == GenParams() and bare.to_body() == {}
+    empty = validate_chat_request({"messages": [{"role": "user", "content": "hi"}], "tools": [], "logit_bias": {}})
+    assert GenParams.from_request(empty) == GenParams()
+    # `only` keeps the object when nothing is dropped (the request path allocates nothing for it).
+    assert p.only(frozenset(PARAM_FIELDS) | {"top_k"}) is p
+    assert p.only({"stop"}) == GenParams(stop=("\n\n",))
+    # An extra key never replaces a standard field or sets one Ratchet controls.
+    odd = GenParams(seed=1, extra={"seed": 2, "model": "gpt-4o", "n": 9, "messages": []})
+    assert odd.to_body() == {"seed": 1}
+
+
+@pytest.mark.req("FR-1.13", "INV-1")
+def test_param_allowlists_parse_and_refuse_what_ratchet_never_forwards():
+    default = frozenset({"stop"})
+    assert parse_param_allowlist("", default) is default and parse_param_allowlist("  ", default) is default
+    assert parse_param_allowlist("none", default) == frozenset() and parse_param_allowlist("NONE", default) == frozenset()
+    assert parse_param_allowlist("all", default) == frozenset(PARAM_FIELDS)
+    assert parse_param_allowlist("all, top_k", default) == frozenset(PARAM_FIELDS) | {"top_k"}
+    assert parse_param_allowlist("stop, max_completion_tokens,,seed", default) == {"stop", "max_tokens", "seed"}
+    # The model is always Settings.teacher_model (INV-1), and the end user, storage and metadata never go upstream.
+    for bad in ("model", "messages", "n", "stream", "user", "safety_identifier", "store", "metadata", "functions", "none,stop"):
+        with pytest.raises(ValueError, match="cannot be forwarded"):
+            parse_param_allowlist(bad, default, "RATCHET_TEACHER_PARAMS")
+    for bad in ("max tokens", "stop;seed", "9lives", "x" * 65):
+        with pytest.raises(ValueError):
+            parse_param_allowlist(bad, default)
+    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS)
+    assert DEFAULT_STUDENT_PARAMS == {
+        "max_tokens",
+        "stop",
+        "seed",
+        "response_format",
+        "tools",
+        "tool_choice",
+        "logit_bias",
+        "top_logprobs",
+    }
+
+
+@pytest.mark.req("FR-1.13", "NFR-3")
+def test_gen_policy_gives_each_role_its_parameters_and_caps():
+    client = GenParams.from_request(validate_chat_request({"messages": [{"role": "user", "content": "hi"}], **FULL_PARAMS}))
+    policy = GenPolicy()
+
+    # Student: what shapes the answer, capped; never the client's temperature or logprobs (STUDENT_SAMPLING fixes them).
+    st = policy.student(client)
+    assert st.to_body() == {
+        "max_tokens": 50,
+        "stop": ["\n\n"],
+        "seed": 7,
+        "logit_bias": {"50256": -100},
+        "response_format": {"type": "json_object"},
+        "tools": client.tools,
+        "tool_choice": "auto",
+        "top_logprobs": 2,
+    }
+    assert policy.student(None) == policy.student(GenParams()) == GenParams(max_tokens=1024)
+    assert policy.student(GenParams(max_tokens=10**6)).max_tokens == 1024
+
+    # Teacher serving the answer: every standard field as sent (a vendor field only when listed); temperature 0 when
+    # the client set none.
+    serve = policy.teacher(client, "serve")
+    assert serve.to_body() == {k: v for k, v in client.to_body().items() if k != "top_k"}
+    vendor = GenPolicy(teacher_allow=parse_param_allowlist("all,top_k", frozenset()))
+    assert vendor.teacher(client).extra == vendor.teacher(client, "audit").extra == {"top_k": 20}
+    assert policy.teacher(None).to_body() == {"max_tokens": 8192, "temperature": 0.0}
+    assert policy.teacher(GenParams(max_tokens=10**6)).max_tokens == 8192  # capped
+
+    # Audit and arbitration: deterministic, under the same conditions (length, stops, format, tools, effort).
+    for role in ("audit", "arbitrate"):
+        check = policy.teacher(client, role)
+        assert check.temperature == 0.0 and check.max_tokens == 50
+        assert (check.stop, check.response_format, check.tools, check.tool_choice) == (
+            ("\n\n",),
+            {"type": "json_object"},
+            client.tools,
+            "auto",
+        )
+        assert all(getattr(check, name) is None for name in CHECK_DROPS)
+        assert check.reasoning_effort == "low" and check.extra == {}
+    with pytest.raises(ValueError, match="role"):
+        policy.teacher(client, "student")
+
+    # The reasoning headroom: the teacher may write past the client's budget; visible_limit says how far it may show.
+    roomy = GenPolicy(reasoning_headroom=300)
+    assert roomy.teacher(GenParams(max_tokens=50)).max_tokens == 350
+    assert roomy.teacher(GenParams(max_tokens=8000)).max_tokens == 8192  # still capped
+    assert (roomy.visible_limit(GenParams(max_tokens=50)), roomy.visible_limit(GenParams(max_tokens=8000))) == (50, 8000)
+    assert roomy.visible_limit(GenParams(max_tokens=9000)) is None  # the cap is below the client's budget anyway
+    assert roomy.visible_limit(None) is None and roomy.teacher(None).max_tokens == 8192  # no budget: the cap alone
+    assert policy.visible_limit(GenParams(max_tokens=50)) is None  # no headroom: the teacher stops at the budget itself
+    plan = roomy.plan(GenParams(max_tokens=50))
+    assert (plan.student.max_tokens, plan.serve.max_tokens, plan.check.max_tokens, plan.visible_max) == (50, 350, 350, 50)
+
+    # Allowlists: a field outside one is never sent, but the caps still apply. 0 = no cap.
+    narrow = GenPolicy(teacher_allow=frozenset({"stop"}), student_allow=frozenset())
+    assert narrow.teacher(client).to_body() == {"stop": ["\n\n"], "max_tokens": 8192, "temperature": 0.0}
+    assert narrow.student(client) == GenParams(max_tokens=1024)
+    assert narrow.visible_limit(GenParams(max_tokens=50)) is None
+    uncapped = GenPolicy(teacher_max_tokens=0, student_max_tokens=0)
+    assert uncapped.teacher(None).max_tokens is None and uncapped.student(None).max_tokens is None
+    assert uncapped.teacher(GenParams(max_tokens=10**6)).max_tokens == 10**6
+    for bad in ({"teacher_max_tokens": -1}, {"student_max_tokens": 1.5}, {"reasoning_headroom": True}):
+        with pytest.raises(ValueError, match="whole number of tokens"):
+            GenPolicy(**bad)
+
+
+@pytest.mark.req("FR-1.13", "FR-4.3")
+def test_stored_conditions_join_the_hash_only_when_set():
+    msgs = [{"role": "user", "content": "Where is my refund?"}]
+    assert STORED_PARAM_KEYS == ("response_format", "tools", "tool_choice", "stop")
+    plain = example_hash("default", msgs)
+    # No conditions, or only ones that do not define the target (or the default text format): the v0.4 hash.
+    for params in (None, {}, {"temperature": 0.9, "seed": 7, "max_tokens": 5}, {"response_format": {"type": "text"}}):
+        assert target_params(params) is None
+        assert example_hash("default", msgs, params) == plain
+    assert target_params({"stop": ("a",), "tools": [], "tool_choice": None, "seed": 1}) == {"stop": ["a"]}
+    as_json = example_hash("default", msgs, {"response_format": {"type": "json_object"}})
+    assert as_json != plain
+    assert example_hash("default", msgs, {"stop": ["\n"]}) not in (plain, as_json)
+    # The stored form decides the hash: a tuple and a list of the same stops are one example.
+    assert example_hash("default", msgs, {"stop": ("\n",)}) == example_hash("default", msgs, {"stop": ["\n"]})
+    # Read back for the golden eval; a value of the wrong shape (a hand-edited row) is left out, never an error.
+    assert GenParams.from_stored(None) is None and GenParams.from_stored({}) is None
+    stored = {"stop": ["\n"], "response_format": {"type": "json_object"}, "tools": [{"type": "function"}], "tool_choice": "auto"}
+    assert GenParams.from_stored(stored) == GenParams(
+        stop=("\n",), response_format={"type": "json_object"}, tools=[{"type": "function"}], tool_choice="auto"
+    )
+    junk = {"stop": "\n", "response_format": "json", "tools": [], "tool_choice": 5, "seed": 7}
+    assert GenParams.from_stored(junk) == GenParams() and GenParams.from_stored({"stop": [1]}) == GenParams()
+
+
+@pytest.mark.req("FR-1.13", "FR-4.3")
+def test_v04_example_hash_unchanged():
+    """Literals computed with the v0.4 code before generation parameters existed: an example stored without conditions
+    keeps its hash, so its dedup identity and its golden or train split never move."""
+    msgs = [
+        {"role": "system", "content": "Classify the ticket."},
+        {"role": "user", "content": "I was charged twice. Café ☕ bob"},
+    ]
+    assert example_hash("ticket-triage", msgs) == "dc8a3597e61c73429b47697e27835bd9002d602a5d51739e0ceceb85cdcbc902"
+    assert example_hash("default", [{"role": "user", "content": "hi"}]) == (
+        "1cddc5c783b70139db37cd7910a027d4a3a74c7ab5001eb4345b9fd462265ab5"
+    )
+    led = Ledger(":memory:")
+    led.add_example("ticket-triage", msgs, "{}", "t", "l", "u", params={"seed": 7})  # not a stored condition
+    (row,) = led.examples()
+    assert row["hash"] == "dc8a3597e61c73429b47697e27835bd9002d602a5d51739e0ceceb85cdcbc902" and row["params"] is None
+
+
+@pytest.mark.req("FR-1.13", "INV-12")
+def test_redact_json_redacts_string_values_and_keeps_keys():
+    found: Counter[str] = Counter()
+    value = {
+        "stop": ["write to bob@example.com", "\n"],
+        "tools": [{"type": "function", "function": {"name": "mail", "description": "Mail alice@example.com", "x": 1}}],
+        "bob@example.com": None,  # a key is a field name: kept
+    }
+    out = redact_json(value, found)
+    assert out == {
+        "stop": ["write to [EMAIL]", "\n"],
+        "tools": [{"type": "function", "function": {"name": "mail", "description": "Mail [EMAIL]", "x": 1}}],
+        "bob@example.com": None,
+    }
+    assert found == {"EMAIL": 2} and value["stop"][0] == "write to bob@example.com"  # a copy; the input is untouched
+    assert redact_json("call +44 20 7946 0958") == "call [PHONE]" and redact_json(5) == 5
+    deep: object = "bob@example.com"
+    for _ in range(5000):  # deeper than the recursion limit
+        deep = [deep]
+    out = redact_json(deep)
+    for _ in range(5000):
+        out = out[0]
+    assert out == "[EMAIL]"

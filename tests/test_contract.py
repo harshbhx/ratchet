@@ -5,7 +5,9 @@
   `/ratchet/stats` keys the dashboard reads (tests/fixtures/stats_keys.json: add keys, never remove them) and the demo
   controls refusing live mode.
 - Cascade: one student call per request with the production sampling parameters, the confidence formula, the threshold
-  boundary, the audit rate, cost accounting to the token, and a consistent ledger under concurrent requests.
+  boundary, the audit rate, cost accounting to the token, and a consistent ledger under concurrent requests. The
+  client's generation parameters as each call receives them (student, serving teacher, audit, arbitration, pinned),
+  the conditions stored with an example, the reasoning headroom, and `RequestMeta.storable`.
 - Licensing: closed teachers refused at startup (OpenAI's o-series too), examples recording their license, and every
   priced model licensed and on the day-1 check list.
 
@@ -33,9 +35,9 @@ from ratchet import licenses, tasks
 from ratchet.confidence import score
 from ratchet.config import DEFAULT_PRICES, Settings
 from ratchet.ledger import Ledger, example_hash
-from ratchet.providers import Completion
+from ratchet.providers import Completion, GenParams, GenPolicy
 from ratchet.release import wilson
-from ratchet.router import ROUTES, Ratchet
+from ratchet.router import ROUTES, Ratchet, RequestMeta
 
 STATS_KEYS = Path(__file__).resolve().parent / "fixtures" / "stats_keys.json"
 CHAT = "/v1/chat/completions"
@@ -67,6 +69,11 @@ def _settings(**overrides: Any) -> Settings:
         "confidence_threshold": 0.8,
         "teacher_reasoning_tokens": 300,
         "redact_pii": True,
+        "teacher_params": "",
+        "student_params": "",
+        "teacher_max_tokens": 8192,
+        "student_max_tokens": 1024,
+        "teacher_reasoning_headroom": 0,
     }
     return Settings(**{**base, **overrides})
 
@@ -619,6 +626,172 @@ def test_empty_json_answer_scores_zero():
     triage = tasks.get(TRIAGE)
     assert score(triage, [Completion("{}", "m", 10, 2, 1.0, [math.log(0.95)] * 2)] * 3).confidence == 0.0
     assert not triage.agree("{}", "{}")
+
+
+# ---------- cascade: generation parameters (FR-1.13, ADR 0017) ----------
+CLIENT = GenParams(
+    max_tokens=50,
+    temperature=0.9,
+    top_p=0.5,
+    stop=("\n\n",),
+    seed=7,
+    presence_penalty=0.4,
+    logit_bias={"11": 5},
+    response_format={"type": "json_object"},
+    logprobs=True,
+    top_logprobs=3,
+)
+# What each call gets of CLIENT under the default policy.
+STUDENT_GETS = GenParams(
+    max_tokens=50, stop=("\n\n",), seed=7, logit_bias={"11": 5}, response_format={"type": "json_object"}, top_logprobs=3
+)
+SERVE_GETS = CLIENT  # every standard field as sent (max_tokens already under the 8,192 cap)
+CHECK_GETS = GenParams(max_tokens=50, temperature=0.0, stop=("\n\n",), response_format={"type": "json_object"})
+
+
+def _teacher_calls(teacher: RecordingProvider) -> list[tuple[float, bool, GenParams]]:
+    return [(c.kwargs["temperature"], c.kwargs["logprobs"], c.kwargs["params"]) for c in teacher.calls]
+
+
+@pytest.mark.req("FR-1.13", "FR-2.1", "FR-2.5", "FR-2.9", "INV-1")
+def test_each_call_gets_the_parameters_its_role_allows():
+    # A confident student, audited: the student samples as in production under the client's shaping fields; the audit
+    # is deterministic under the same conditions.
+    student = RecordingProvider(A)
+    led, vid, r, teacher = _cascade(student, audit_rate=1.0)
+    assert r.handle(_ask(), TRIAGE, params=CLIENT).served_by == "student"
+    (call,) = student.calls
+    assert call.kwargs == {"n": 3, "temperature": 0.7, "logprobs": True, "params": STUDENT_GETS}
+    assert [c.model for c in teacher.calls] == [OPEN_TEACHER]  # whatever the client asked for (INV-1)
+    assert _teacher_calls(teacher) == [(0.0, False, CHECK_GETS)]
+
+    # Escalated: the teacher's answer is served, so it gets everything the client sent, at the client's temperature.
+    student, teacher = RecordingProvider(A), RecordingProvider(A)
+    _, _, r, _ = _cascade(student, teacher, threshold=0.99)
+    assert r.handle(_ask(), TRIAGE, params=CLIENT).route == "confidence"
+    assert _teacher_calls(teacher) == [(0.9, True, SERVE_GETS)]
+
+    # Cold start, a pinned task and a teacher-only request serve the teacher's answer the same way.
+    teacher = RecordingProvider(A)
+    r = Ratchet(_settings(), Ledger(":memory:"), teacher, lambda v: (RecordingProvider(A), v.adapter_uri))
+    assert r.handle(_ask(), TRIAGE, params=CLIENT).route == "cold_start"
+    assert r.handle(_ask(), "research-plan", params=CLIENT).route == "pinned"
+    assert r.teacher_only(_ask(), TRIAGE, params=CLIENT).route == "pinned"
+    assert _teacher_calls(teacher) == [(0.9, True, SERVE_GETS)] * 3
+
+    # The shadow samples like the live student; the arbitration of its disagreement is a check.
+    led = Ledger(":memory:")
+    _version(led, "live", {"threshold": 0.5})
+    _version(led, "shadow", {"threshold": 0.5})
+    live_student, shadow_student, teacher = RecordingProvider(A), RecordingProvider(B), RecordingProvider(A)
+    students = {"student-v1": live_student, "student-v2": shadow_student}
+    r = Ratchet(_settings(), led, teacher, lambda v: (students[v.adapter_uri], v.adapter_uri))
+    r.handle(_ask(), TRIAGE, params=CLIENT)
+    assert live_student.calls[0].kwargs["params"] == shadow_student.calls[0].kwargs["params"] == STUDENT_GETS
+    assert _teacher_calls(teacher) == [(0.0, False, CHECK_GETS)]
+
+    # Scout and the simulator send no parameters: the caps alone, the teacher at temperature 0.
+    student = RecordingProvider(A)
+    _, _, r, teacher = _cascade(student, threshold=0.99)
+    r.handle(_ask(), tasks.get(TRIAGE))  # a Task object works as well as its name
+    assert student.calls[0].kwargs["params"] == GenParams(max_tokens=1024)
+    assert _teacher_calls(teacher) == [(0.0, False, GenParams(max_tokens=8192, temperature=0.0))]
+
+
+@pytest.mark.req("FR-1.13", "FR-4.3", "INV-2", "INV-12")
+def test_examples_store_the_conditions_the_teacher_answered_under():
+    student = RecordingProvider(A)
+    led, _, r, teacher = _cascade(student, threshold=0.99)
+    shaped = GenParams(
+        stop=("\n\nbob@example.com",), seed=7, temperature=0.9, max_tokens=500, response_format={"type": "json_object"}
+    )
+    r.handle(_ask(), TRIAGE, params=shaped)
+    (ex,) = led.examples()
+    conditions = {"response_format": {"type": "json_object"}, "stop": ["\n\n[EMAIL]"]}  # redacted like the messages
+    assert json.loads(ex["params"]) == conditions and ex["redactions"] == 1
+    assert ex["hash"] == example_hash(TRIAGE, _ask(), conditions) != example_hash(TRIAGE, _ask())
+    assert ex["completion"] == teacher.answer(_ask(), OPEN_TEACHER)  # the teacher's answer, never the student's (INV-2)
+
+    # The same messages without conditions are another example; sampling parameters alone change nothing stored.
+    r.handle(_ask(), TRIAGE)
+    r.handle(_ask(), TRIAGE, params=GenParams(temperature=1.5, seed=3, presence_penalty=1.0, max_tokens=900))
+    rows = led.examples()
+    assert [(json.loads(e["params"]) if e["params"] else None, e["seen"]) for e in rows] == [(conditions, 1), (None, 2)]
+
+    # An audit stores what the audit was asked under: the check parameters.
+    student = RecordingProvider(A)
+    led, _, r, _ = _cascade(student, audit_rate=1.0)
+    r.handle(_ask("audited"), TRIAGE, params=CLIENT)
+    (ex,) = led.examples()
+    assert json.loads(ex["params"]) == {"response_format": {"type": "json_object"}, "stop": ["\n\n"]}
+
+
+@pytest.mark.req("FR-1.13", "FR-2.13", "INV-16")
+def test_reasoning_headroom_marks_answers_over_the_clients_budget():
+    """With RATCHET_TEACHER_REASONING_HEADROOM, the teacher may write past the client's max_tokens to finish its
+    reasoning; a visible answer longer than the budget (by approx_tokens) is then `length`: served, not stored."""
+    long_answer = json.dumps({"category": "billing", "priority": "high", "reply": "x" * 80})  # ~25 tokens
+    short_answer = json.dumps({"category": "billing", "priority": "high"})  # ~11 tokens
+    teacher = RecordingProvider(f"<think>{'r' * 2000}</think>{long_answer}")
+    led = Ledger(":memory:")
+    r = Ratchet(_settings(teacher_reasoning_headroom=600), led, teacher, lambda v: (RecordingProvider(A), v.adapter_uri))
+    out = r.handle(_ask(), TRIAGE, params=GenParams(max_tokens=20))
+    assert teacher.calls[0].kwargs["params"].max_tokens == 620
+    assert (out.text, out.finish_reason) == (long_answer, "length")  # not cut: the count is an estimate
+    assert led.examples() == [] and _rows(led)[0]["stored"] == 0
+    assert [e["detail"] for e in led.events() if e["kind"] == "skip_example"] == [f"{TRIAGE}: finish_reason length"]
+
+    teacher.text = f"<think>{'r' * 2000}</think>{short_answer}"  # the reasoning is not part of the budget
+    out = r.handle(_ask(), TRIAGE, params=GenParams(max_tokens=20))
+    assert out.finish_reason == "stop" and len(led.examples()) == 1
+
+    # An over-budget audit answer is not an audit (INV-16).
+    student = RecordingProvider(A)
+    led, _, r, teacher = _cascade(student, RecordingProvider(long_answer), audit_rate=1.0, teacher_reasoning_headroom=600)
+    out = r.handle(_ask(), TRIAGE, params=GenParams(max_tokens=20))
+    assert (out.served_by, out.finish_reason) == ("student", "stop")
+    assert _rows(led)[0]["audited"] == 0 and led.examples() == []
+
+    # Without headroom the teacher stopped at the budget itself: its own finish_reason stands, whatever the estimate.
+    led = Ledger(":memory:")
+    r = Ratchet(_settings(), led, RecordingProvider(long_answer), lambda v: (RecordingProvider(A), v.adapter_uri))
+    out = r.handle(_ask(), TRIAGE, params=GenParams(max_tokens=20))
+    assert out.finish_reason == "stop" and len(led.examples()) == 1
+
+
+@pytest.mark.req("FR-1.13", "FR-2.13", "INV-2")
+def test_a_request_that_is_not_storable_stores_nothing():
+    """`RequestMeta(storable=False)`: answered, audited and logged as usual; no example is inserted or bumped."""
+    meta = RequestMeta(storable=False)
+    student = RecordingProvider(A)
+    led, _, r, _ = _cascade(student, audit_rate=1.0)
+    out = r.handle(_ask(), TRIAGE, meta=meta)
+    assert out.served_by == "student"
+    assert (_rows(led)[0]["audited"], _rows(led)[0]["audit_agree"], _rows(led)[0]["stored"]) == (1, 1, 0)
+    led2, _, r2, teacher = _cascade(RecordingProvider(A), threshold=0.99)
+    out = r2.handle(_ask(), TRIAGE, meta=meta)
+    assert (out.served_by, out.route) == ("teacher", "confidence") and len(teacher.calls) == 1
+    r2.handle(_ask(), TRIAGE)  # a storable request stores the same answer
+    r2.handle(_ask(), TRIAGE, meta=meta)  # and an opted-out duplicate does not bump it
+    assert led.examples() == [] and [e["seen"] for e in led2.examples()] == [1]
+    assert [row["stored"] for row in _rows(led2)] == [0, 1, 0]
+    assert not [e for e in led2.events() if e["kind"] == "skip_example"]  # not a hygiene skip
+
+
+@pytest.mark.req("FR-1.13")
+def test_bad_generation_settings_stop_startup():
+    led = Ledger(":memory:")
+    for bad in (
+        {"teacher_params": "model"},
+        {"student_params": "user,stop"},
+        {"teacher_params": "max tokens"},
+        {"teacher_max_tokens": -1},
+        {"student_max_tokens": -5},
+        {"teacher_reasoning_headroom": -1},
+    ):
+        with pytest.raises(ValueError):
+            Ratchet(_settings(**bad), led, RecordingProvider(A), lambda v: (None, ""))
+    assert _settings(teacher_params="stop,seed").gen_policy() == GenPolicy(teacher_allow=frozenset({"stop", "seed"}))
 
 
 # ---------- licensing ----------

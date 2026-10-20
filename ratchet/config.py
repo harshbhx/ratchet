@@ -11,6 +11,14 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .providers import (
+    DEFAULT_STUDENT_MAX_TOKENS,
+    DEFAULT_STUDENT_PARAMS,
+    DEFAULT_TEACHER_MAX_TOKENS,
+    DEFAULT_TEACHER_PARAMS,
+    GenPolicy,
+    parse_param_allowlist,
+)
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
 
 
@@ -87,6 +95,19 @@ class Settings:
     # Extra output tokens the teacher spends on reasoning (billed, not returned).
     teacher_reasoning_tokens: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_TOKENS", "300")))
 
+    # Generation parameters (ADR 0017). Which of a client's request fields each role forwards (comma-separated; empty =
+    # the default list, 'none' = nothing, 'all' = every standard field), and the token caps (0 = no cap). The teacher
+    # serving an answer gets the client's max_tokens plus the headroom, for reasoning it writes before the answer.
+    teacher_params: str = field(default_factory=lambda: _env("RATCHET_TEACHER_PARAMS", ""))
+    student_params: str = field(default_factory=lambda: _env("RATCHET_STUDENT_PARAMS", ""))
+    teacher_max_tokens: int = field(
+        default_factory=lambda: int(_env("RATCHET_TEACHER_MAX_TOKENS", str(DEFAULT_TEACHER_MAX_TOKENS)))
+    )
+    student_max_tokens: int = field(
+        default_factory=lambda: int(_env("RATCHET_STUDENT_MAX_TOKENS", str(DEFAULT_STUDENT_MAX_TOKENS)))
+    )
+    teacher_reasoning_headroom: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_HEADROOM", "0")))
+
     # Scout, the multi-agent research demo (docs/SCOUT.md).
     tavily_api_key: str = field(default_factory=lambda: _env("TAVILY_API_KEY", ""))
     scout_daily_budget_usd: float = field(default_factory=lambda: float(_env("RATCHET_SCOUT_DAILY_BUDGET_USD", "3.00")))
@@ -155,6 +176,24 @@ class Settings:
         if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not (0 < cooldown < float("inf")):
             raise ValueError(f"RATCHET_STUDENT_BREAKER_COOLDOWN_S must be a positive number of seconds, not {cooldown!r}")
         return BreakerPolicy(failures, float(cooldown), max(MAX_OPEN_S, float(cooldown)))
+
+    def gen_policy(self) -> GenPolicy:
+        """What each role forwards of a client's generation parameters, and the token caps. A bad value raises
+        ValueError, so the gateway fails at startup."""
+        for env, value in (
+            ("RATCHET_TEACHER_MAX_TOKENS", self.teacher_max_tokens),
+            ("RATCHET_STUDENT_MAX_TOKENS", self.student_max_tokens),
+            ("RATCHET_TEACHER_REASONING_HEADROOM", self.teacher_reasoning_headroom),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{env} must be a whole number of tokens, 0 or more, not {value!r}")
+        return GenPolicy(
+            teacher_allow=parse_param_allowlist(self.teacher_params, DEFAULT_TEACHER_PARAMS, "RATCHET_TEACHER_PARAMS"),
+            student_allow=parse_param_allowlist(self.student_params, DEFAULT_STUDENT_PARAMS, "RATCHET_STUDENT_PARAMS"),
+            teacher_max_tokens=self.teacher_max_tokens,
+            student_max_tokens=self.student_max_tokens,
+            reasoning_headroom=self.teacher_reasoning_headroom,
+        )
 
     def price(self, model: str) -> Price:
         if model in self.prices:

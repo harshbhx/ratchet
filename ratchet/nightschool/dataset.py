@@ -37,6 +37,9 @@ def rows(ledger: Ledger, split: str, task: str | None = None) -> list[dict[str, 
             {
                 "task": r["task"],
                 "messages": msgs + [{"role": "assistant", "content": r["completion"]}],
+                # The conditions the teacher answered under (ledger.STORED_PARAM_KEYS), or None: the golden eval samples
+                # the student under them, as production does (FR-5.1).
+                "params": json.loads(r["params"]) if r["params"] else None,
                 "seen": int(r["seen"] or 1),
                 "provenance": {
                     "teacher": r["teacher_model"],

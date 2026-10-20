@@ -8,6 +8,10 @@ with high confidence: the dangerous case that audits and shadow mode exist to ca
 The fleet can also take the production endpoint down for a while (`MockFleet.student_outage`, the demo's
 `POST /ratchet/demo/student-outage`), so the student circuit breaker can be shown opening and closing again.
 
+The mock models honour `n`, `stop` (the answer ends before the first stop string) and `max_tokens` (cut at about 4
+characters per token, `finish_reason` `length`). Ticket and research answers are short and contain no stop string, so
+the simulation is unaffected.
+
 This is a simulation for demos and tests. Real numbers come from live mode.
 """
 
@@ -27,7 +31,7 @@ import httpx
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
-from ratchet.providers import Completion, approx_tokens
+from ratchet.providers import Completion, GenParams, GenPolicy, approx_tokens
 from ratchet.scout.prompts import PLAN_SYSTEM, WRITE_SYSTEM
 
 from . import research
@@ -41,6 +45,20 @@ STAGING = "mock://staging"  # shadow candidates and the golden eval
 def _rng(*parts: Any) -> random.Random:
     h = hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()
     return random.Random(int(h[:16], 16))
+
+
+def _generate(text: str, params: GenParams | None) -> tuple[str, str]:
+    """What a model under `params` returns of the answer it would write, and why it stopped: the text before the first
+    stop string (`stop`), then at most `max_tokens` tokens at about 4 characters each (`length`)."""
+    if params is None:
+        return text, "stop"
+    if params.stop:
+        cuts = [i for i in (text.find(s) for s in params.stop if s) if i >= 0]
+        if cuts:
+            text = text[: min(cuts)]
+    if params.max_tokens is not None and approx_tokens(text) > params.max_tokens:
+        return text[: params.max_tokens * 4], "length"
+    return text, "stop"
 
 
 def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
@@ -68,11 +86,12 @@ class MockTeacher:
         self.reasoning_tokens = reasoning_tokens
         self.latency_ms = latency_ms
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         text = _pinned_answer(messages)
         if text is None:
             item = lookup(messages)
             text = item.answer(item.labels)
+        text, finish = _generate(text, params)
         return [
             Completion(
                 text=text,
@@ -80,6 +99,7 @@ class MockTeacher:
                 in_tokens=approx_tokens(json.dumps(messages)),
                 out_tokens=approx_tokens(text) + self.reasoning_tokens,
                 latency_ms=self.latency_ms,
+                finish_reason=finish,
             )
         ] * n
 
@@ -105,7 +125,7 @@ class MockStudent:
         learned = self.CEIL[t.difficulty] * (1 - math.exp(-n / self.CURVE))
         return max(self.PRIOR, learned)
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         t = lookup(messages)
         self.calls += 1
         r = _rng(self.name, t.text)  # same request -> same "understanding"
@@ -129,7 +149,7 @@ class MockStudent:
             else:
                 labels = {k: s.choice(space[k]) for k in keys}
                 prob = 0.35 + 0.3 * s.random()
-            text = t.answer(labels)
+            text, finish = _generate(t.answer(labels), params)
             toks = approx_tokens(text)
             out.append(
                 Completion(
@@ -139,6 +159,7 @@ class MockStudent:
                     out_tokens=toks,
                     latency_ms=280 + 60 * s.random(),
                     token_logprobs=[math.log(prob)] * toks,
+                    finish_reason=finish,
                 )
             )
         return out
@@ -149,17 +170,24 @@ class DownStudent:
 
     base_url = PRODUCTION
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         raise httpx.ConnectError("the mock student endpoint is down (demo outage)")
 
 
 class MockFleet:
-    """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages."""
+    """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages;
+    `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would."""
 
-    def __init__(self, corrupt_on_deploy: set[str] | None = None, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        corrupt_on_deploy: set[str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        policy: GenPolicy | None = None,
+    ):
         self.knowledge: dict[str, dict[str, Any]] = {}
         self.corrupt_on_deploy = corrupt_on_deploy or set()
         self.clock = clock
+        self.policy = policy or GenPolicy()
         self.outage_until: float | None = None  # on `clock`; None = never down
 
     def student_outage(self, seconds: float) -> float:
@@ -183,8 +211,9 @@ class MockFleet:
     def evaluate(self, adapter_uri: str, golden_rows: list[dict[str, Any]]) -> dict[str, Any]:
         student = MockStudent(adapter_uri, self.knowledge[adapter_uri])
 
-        def sample(prompt, n):
-            return student.complete(prompt, adapter_uri, n=n, **STUDENT_SAMPLING)
+        def sample(prompt, n, params=None):
+            gen = self.policy.student(GenParams.from_stored(params))
+            return student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
         return cascade_eval(sample, golden_rows, samples=3, target_precision=0.97)
 

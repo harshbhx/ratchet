@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (434 tests, ~35 s, no network, no GPU)
+make test           # pytest -q (453 tests, ~40 s, no network, no GPU)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -61,7 +61,7 @@ Always run `make lint test` before committing.
 | `ratchet/openai_compat.py` | OpenAI request contract (standard library only): `validate_chat_request` → `ChatRequest`, `normalize_messages` (developer → system, text parts → string), `APIError` and the error envelope, `Limits`. See [ADR 0012](docs/adr/0012-openai-request-validation-and-error-envelope.md) |
 | `ratchet/bom.py` | Per-adapter bill of materials, Ed25519 signing and verification, `python -m ratchet.bom` |
 | `ratchet/tasks.py` | Task registry: answer comparison (`compare_keys`) and `pinned` |
-| `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs); every failure raises `UpstreamError` |
+| `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs); every failure raises `UpstreamError`. `GenParams` (a request's generation parameters) and `GenPolicy` (what each role sends, the token caps) |
 | `ratchet/resilience.py` | `RetryPolicy`, `retry_call` (full-jitter backoff, `Retry-After`, deadline, a read timeout retried once), `UpstreamError`, per-role `timeouts` ([ADR 0014](docs/adr/0014-upstream-failure-semantics.md)) |
 | `ratchet/nightschool/` | Dataset build, LoRA training script, golden eval, nightly orchestration |
 | `ratchet/live.py` | Live Night School on Nebius: `python -m ratchet.live night|tick|reload` |
@@ -91,7 +91,7 @@ Always run `make lint test` before committing.
 9. Model IDs and prices in `config.py` are **unverified until `scripts/day1_check.py` passes** with a real key.
 10. **Pinned tasks never become training examples.** `Ratchet._pinned` must not call `add_example`, and pinned tasks never reach the student. See [docs/SCOUT.md](docs/SCOUT.md).
 11. **The demo budget guard must stay on in live mode.** Every Scout run goes through `Guard.admit` before it starts and `Guard.add_spend` after it ends (also on failure). Never pass `daily_budget_usd=None` or skip `_scout_precheck` in live mode. See [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md#switching-from-mock-to-live).
-12. **Redact before storing.** Everything passed to `Ledger.add_example` goes through `redact_messages` / `redact` first when `Settings.redact_pii` is on (the default). Never store raw request text anywhere else (`requests` holds metadata only). See [ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md).
+12. **Redact before storing.** Everything passed to `Ledger.add_example` goes through `redact_messages` / `redact` (`redact_json` for the stored generation conditions) first when `Settings.redact_pii` is on (the default). Never store raw request text anywhere else (`requests` holds metadata only). See [ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md).
 13. **API keys are never stored or logged.** The ledger and `/ratchet/stats` see the key's *name* only; compare keys with `KeyRing.identify` (constant-time digests). `/healthz` stays public.
 14. **A BOM is written once, at training time,** from the exact train and golden rows (`run_night` → `bom.manifest`). Never rewrite a stored BOM; a signature covers the canonical JSON (`bom.canonical`), so any change must produce a new document. See [ADR 0010](docs/adr/0010-signed-adapter-bom.md).
 15. **Optional teacher calls (audit, shadow arbitration) never fail a request the student already answered.** Neither do the shadow's own samples. A failure is counted (`Ratchet.health()`), logged as a throttled `audit_error` or `shadow_error` event naming the exception class (never its message), and the student's answer is served; a failed audit is not an audit, and an unarbitrated shadow disagreement counts against the shadow. A teacher failure on the escalation path still returns an upstream error. See [ADR 0013](docs/adr/0013-optional-teacher-calls-fail-open.md).
@@ -112,6 +112,7 @@ Always run `make lint test` before committing.
 
 ## Current status (Oct 20, 2026)
 
+- Unreleased: generation parameters by role (FR-1.13): the client's `max_tokens`, `stop`, `seed`, `temperature`, `response_format`, `tools` and the rest reach the serving teacher, the student (shaping fields only, its own sampling kept) and audits (temperature 0) through allowlists, with per-call output caps and an optional reasoning headroom; examples store the conditions that define the target without changing any v0.4 hash; the golden eval samples under them; the response's `finish_reason` is real; `RequestMeta` for later items ([ADR 0017](docs/adr/0017-generation-parameters-by-role.md)).
 - Unreleased: answer hygiene (INV-16, FR-2.7, FR-2.13): reasoning is stripped also before a lone `</think>` and from an unterminated `<think>`, a structured answer loses a code fence around it, and only complete, valid teacher answers are stored (`finish_reason` read per choice; `skip_example` events; `requests.stored`); a cut-off student sample gets no vote ([ADR 0016](docs/adr/0016-store-only-complete-valid-teacher-answers.md)).
 - Unreleased: requirements traceability. Every PRD row and invariant maps to code and tests in the generated [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), checked by `make lint` and CI; done requirements without a test are listed there as known gaps (none left).
 - Unreleased: the live entry points are tested offline (`tests/test_live.py`): `ratchet.live`, the gateway's live `Runtime`, `LiveEvaluator`, `train.py`'s arguments, the Scout and simulator CLIs, the mock warm-up, `RATCHET_TRUST_PROXY`, the day-1 check and the deploy scripts. The student's sampling is one constant, `confidence.STUDENT_SAMPLING`.

@@ -8,7 +8,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS examples (
     teacher_model TEXT, license TEXT, license_url TEXT,
     split TEXT,                -- 'train' | 'golden'
     seen INTEGER DEFAULT 1,    -- how often this exact request occurred (drives the frequent-request rule)
-    redactions INTEGER DEFAULT 0  -- PII placeholders inserted before storing (ratchet/redact.py)
+    redactions INTEGER DEFAULT 0, -- PII placeholders inserted before storing (ratchet/redact.py)
+    params TEXT                -- JSON: the conditions the teacher answered under (STORED_PARAM_KEYS); NULL when none
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,8 +59,36 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 
-def example_hash(task: str, messages: list[dict[str, Any]]) -> str:
-    blob = json.dumps({"task": task, "messages": messages}, sort_keys=True, ensure_ascii=False)
+# The generation parameters stored with an example: the ones that define what a right answer is (its format, the tools
+# it may call, where it stops). Temperature, seed and penalties change how an answer is sampled, not what it should be,
+# so they are neither stored nor part of the hash.
+STORED_PARAM_KEYS = ("response_format", "tools", "tool_choice", "stop")
+
+
+def target_params(params: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The STORED_PARAM_KEYS of `params` that are set, or None when there are none. `{"type": "text"}` is the default
+    format and counts as not set, so a request that sends it stores and hashes like one that does not."""
+    if not params:
+        return None
+    out: dict[str, Any] = {}
+    for key in STORED_PARAM_KEYS:
+        value = params.get(key)
+        if value is None or (isinstance(value, (list, tuple, dict, str)) and not value):
+            continue
+        if key == "response_format" and isinstance(value, dict) and value.get("type") == "text":
+            continue
+        out[key] = list(value) if isinstance(value, tuple) else value
+    return out or None
+
+
+def example_hash(task: str, messages: list[dict[str, Any]], params: Mapping[str, Any] | None = None) -> str:
+    """The example's identity: its task, messages and stored conditions (`target_params`). The conditions join the hashed
+    object only when there are some, so every v0.4 hash, and with it every golden or train split, stays the same."""
+    obj: dict[str, Any] = {"task": task, "messages": messages}
+    target = target_params(params)
+    if target:
+        obj["params"] = target
+    blob = json.dumps(obj, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -80,7 +109,7 @@ class Version:
 # Columns added after v0.1's first schema; existing database files are migrated on open.
 MIGRATIONS: dict[str, dict[str, str]] = {
     "requests": {"shadow_serve": "INTEGER", "client": "TEXT", "route": "TEXT", "stored": "INTEGER"},
-    "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0"},
+    "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0", "params": "TEXT"},
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }
 # Created after migrations, because they index columns that old files only get from MIGRATIONS.
@@ -165,16 +194,20 @@ class Ledger:
         license_name: str,
         license_url: str,
         redactions: int = 0,
+        params: Mapping[str, Any] | None = None,
     ) -> bool:
         """Store a teacher-labelled example. Returns False if it was a duplicate.
-        `messages` and `completion` arrive already redacted; `redactions` counts the placeholders."""
-        h = example_hash(task, messages)
+        `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
+        are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
+        under other conditions are another example."""
+        target = target_params(params)
+        h = example_hash(task, messages, target)
         # Deterministic split from the hash, so an example never moves between sets.
         split = "golden" if int(h[:8], 16) / 0xFFFFFFFF < self.golden_fraction else "train"
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model,"
-                " license, license_url, split, redactions) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " license, license_url, split, redactions, params) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     time.time(),
                     self.day,
@@ -187,6 +220,7 @@ class Ledger:
                     license_url,
                     split,
                     redactions,
+                    json.dumps(target, ensure_ascii=False) if target else None,
                 ),
             )
             self.db.commit()

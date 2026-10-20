@@ -66,8 +66,9 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 | `stream` | bool | no | `true` returns Server-Sent Events in the OpenAI chunk format ([Streaming](#streaming)) |
 | `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent |
 | `n` | integer | no | Must be 1 (one choice per request for now); 2 or more is a 400 `unsupported_value` |
-| `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `logprobs`, `top_logprobs`, `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `functions`, `function_call`, `user`, `safety_identifier`, `store`, `reasoning_effort`, `stream_options` | | no | Checked against OpenAI's rules ([Request validation](#request-validation)), so a malformed value is a 400 rather than a surprise later, but not forwarded to the models yet. `max_completion_tokens` wins over `max_tokens`; a string `stop` counts as a one-item list |
-| any other field | | no | Ignored on purpose: unknown fields are kept and ignored, not refused, so newer OpenAI SDKs and third-party clients that send fields Ratchet does not know (`service_tier`, `prompt_cache_key`, …) keep working |
+| `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `logprobs`, `top_logprobs`, `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `reasoning_effort` | | no | Checked against OpenAI's rules ([Request validation](#request-validation)), then sent to each model as its role allows ([Generation parameters](#generation-parameters)). `max_completion_tokens` wins over `max_tokens`; a string `stop` counts as a one-item list |
+| `functions`, `function_call`, `user`, `safety_identifier`, `store`, `stream_options` | | no | Checked, not forwarded: the end user's identity and the storage choice never go upstream, and the legacy function fields are not mapped to `tools` yet |
+| any other field | | no | Ignored on purpose: unknown fields are kept, not refused, so newer OpenAI SDKs and third-party clients that send fields Ratchet does not know (`service_tier`, `prompt_cache_key`, …) keep working. One is forwarded only when `RATCHET_TEACHER_PARAMS` or `RATCHET_STUDENT_PARAMS` names it (vLLM's `top_k`, for example) |
 
 `null` for any optional field means it is not set.
 
@@ -90,6 +91,30 @@ A message keeps `role`, `content` and `name`, plus `refusal`, `tool_calls` and `
 Content parts: `{"type": "text", "text": "..."}` in any message, and `{"type": "refusal", "refusal": "..."}` in assistant messages. A message made only of text parts is turned into one string, the parts joined by newlines, before anything else happens, so it is answered, deduplicated and stored exactly like the same text sent as a string. Messages already in the plain form pass through unchanged. Other part types (`image_url`, `input_audio`, `file`) get **400** `unsupported_content_type`, unless `RATCHET_TEACHER_MODALITIES` lists them ([CONFIGURATION.md](CONFIGURATION.md#request-limits-and-openai-compatibility)): then the request goes to the teacher only, with the parts as sent, and nothing is stored as a training example. `RATCHET_MERGE_SYSTEM=1` merges consecutive leading system messages into one.
 
 The task decides how answers are compared. `ticket-triage` compares only the JSON fields `category` and `priority`; `default` compares the whole normalised text. Pinned tasks (`research-plan`, `research-write`) skip the student and always go to the teacher; their answers are not stored as training examples. The full list is in [CONFIGURATION.md](CONFIGURATION.md#tasks).
+
+#### Generation parameters
+
+Each model call gets the client's parameters as its role allows ([ADR 0017](adr/0017-generation-parameters-by-role.md)). The allowlists and caps are environment variables ([CONFIGURATION.md](CONFIGURATION.md#generation-parameters-and-token-caps)); the table shows the defaults.
+
+| Field | Teacher, serving the answer (escalation, cold start, pinned, teacher-only) | Student (its samples, and a shadow's) | Teacher audit and arbitration |
+|---|---|---|---|
+| `max_tokens` / `max_completion_tokens` | The client's + `RATCHET_TEACHER_REASONING_HEADROOM` (0), at most `RATCHET_TEACHER_MAX_TOKENS` (8,192); the cap when not sent | The client's, at most `RATCHET_STUDENT_MAX_TOKENS` (1,024); the cap when not sent | As when serving |
+| `temperature` | The client's; 0 when not sent | 0.7, always | 0 |
+| `n` | 1 | `RATCHET_SAMPLES` (3), always | 1 |
+| `logprobs` | The client's | On, always | Off |
+| `top_logprobs` | The client's (with `logprobs`) | The client's | No |
+| `stop`, `response_format`, `tools`, `tool_choice` | The client's | The client's | The client's |
+| `seed`, `logit_bias` | The client's | The client's | No |
+| `top_p`, `presence_penalty`, `frequency_penalty` | The client's | No | No |
+| `parallel_tool_calls`, `reasoning_effort` | The client's | No | The client's |
+| `model` | `RATCHET_TEACHER_MODEL`, always (invariant 1) | The version's adapter | `RATCHET_TEACHER_MODEL` |
+| an unknown field | Only when `RATCHET_TEACHER_PARAMS` names it | Only when `RATCHET_STUDENT_PARAMS` names it | As when serving |
+
+- The student's `n`, temperature and logprobs never change: its confidence is scored over those samples and its threshold was calibrated that way. A sample cut off by its token limit gets no vote, so a tight `max_tokens` can send a request to the teacher.
+- `max_tokens` above a cap is capped, not refused.
+- When the reasoning headroom gives the teacher more than the client asked for, an answer whose visible part (reasoning removed) is longer than the client's `max_tokens` (about 4 characters a token) comes back whole with `finish_reason: "length"`, and is not stored.
+- `stop`, `response_format`, `tools` and `tool_choice` are stored with the example, redacted like the messages: the same messages under other conditions are another example, and the nightly golden eval samples the student under them. Temperature, seed, penalties and `max_tokens` are not stored.
+- A teacher that answers a request with `tools` with a tool call returns no text for now: the content is empty and nothing is stored, until tool calls are passed through.
 
 #### Request validation
 
@@ -164,13 +189,15 @@ Standard `chat.completion` plus a `ratchet` block:
 
 `model` is the model that produced the served answer: the adapter name (`student-vN`) or the teacher model ID. `usage` is not returned yet.
 
-`message.content` is the served answer after `tasks.clean_answer`: model reasoning is never returned (a `<think>…</think>` block, anything before a lone `</think>`, an unterminated `<think>` and what follows), and for a structured task such as `ticket-triage` a code fence around the whole JSON answer is removed, so the content is bare JSON. A free-text answer keeps its code blocks. A teacher answer that was cut off by its token limit is still returned (and is not stored as training data); `finish_reason` in the response is always `stop` for now.
+`message.content` is the served answer after `tasks.clean_answer`: model reasoning is never returned (a `<think>…</think>` block, anything before a lone `</think>`, an unterminated `<think>` and what follows), and for a structured task such as `ticket-triage` a code fence around the whole JSON answer is removed, so the content is bare JSON. A free-text answer keeps its code blocks. A teacher answer that was cut off by its token limit is still returned (and is not stored as training data), with `finish_reason: "length"`.
+
+`finish_reason` is the served answer's: `stop`, `length` (cut off by `max_tokens` or a cap, or over the client's `max_tokens` with the reasoning headroom), `tool_calls` or `content_filter`; any other value an upstream model reports is returned as `stop`. A student answer is always one that ended by itself.
 
 Response headers: `X-Ratchet-Served-By: student|teacher`, plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
 
 ### Streaming
 
-With `"stream": true` the response is `text/event-stream` in the format OpenAI SDKs expect: a first chunk with `delta.role`, content chunks of a few words each, a last chunk with `finish_reason: "stop"` and the same `ratchet` block as above, then `data: [DONE]`.
+With `"stream": true` the response is `text/event-stream` in the format OpenAI SDKs expect: a first chunk with `delta.role`, content chunks of a few words each, a last chunk with the answer's `finish_reason` (`"stop"`, or `"length"` as above) and the same `ratchet` block as above, then `data: [DONE]`.
 
 ```text
 data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1792400000,"model":"student-v5","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
@@ -583,7 +610,16 @@ gate = ReleaseGate(ledger)
 result = r.handle([{"role": "user", "content": "..."}], "ticket-triage")
 gate.tick()
 print(result.served_by, result.text, result.cost_usd)
+
+# With the client's generation parameters (what the gateway passes) and what else the caller knows:
+from ratchet.providers import GenParams
+from ratchet.router import RequestMeta
+
+result = r.handle(msgs, "ticket-triage", client="acme", params=GenParams(max_tokens=200, stop=("\n\n",)), meta=RequestMeta())
+print(result.finish_reason)  # "stop", or "length" when the answer was cut off
 ```
+
+`handle(messages, task=None, client=None, params=None, meta=None)`: `task` is a task name or a `tasks.Task`; `params` (`providers.GenParams`, `GenParams.from_request(chat_request)` in the gateway) are sent to each call as `Settings.gen_policy()` allows ([Generation parameters](#generation-parameters)); `meta` (`router.RequestMeta`) carries what else the caller knows, and `RequestMeta(storable=False)` keeps the request's teacher answers out of the training set. A provider's `complete(messages, model, n, temperature, logprobs, response_format, params=None, **_)` receives the role's `GenParams`; the explicit arguments win over the same fields in it.
 
 `result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)); `result.text` is the answer after `tasks.clean_answer`. Each `Completion` a provider returns carries `finish_reason` (`stop` when the server leaves it out) and `reasoning_tokens`; only a teacher answer with `finish_reason` `stop` or `tool_calls` that is non-empty and valid for its task is stored (invariant 16), and `requests.stored` says whether a request stored one. `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`) and `breakers`: each student breaker's state by name (`student`, `shadow`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
 

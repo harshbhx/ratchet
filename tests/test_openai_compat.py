@@ -30,6 +30,7 @@ from ratchet.openai_compat import (
     parse_modalities,
     validate_chat_request,
 )
+from ratchet.providers import DEFAULT_TEACHER_PARAMS
 from ratchet.scout.prompts import WRITE_SYSTEM
 from sim import research, tickets
 
@@ -49,6 +50,11 @@ PINNED_ENV = {
     "RATCHET_MAX_INPUT_CHARS": "120000",
     "RATCHET_MERGE_SYSTEM": "0",
     "RATCHET_TEACHER_MODALITIES": "text",
+    "RATCHET_TEACHER_PARAMS": "",
+    "RATCHET_STUDENT_PARAMS": "",
+    "RATCHET_TEACHER_MAX_TOKENS": "8192",
+    "RATCHET_STUDENT_MAX_TOKENS": "1024",
+    "RATCHET_TEACHER_REASONING_HEADROOM": "0",
 }
 
 
@@ -601,6 +607,183 @@ def test_multimodal_parts_go_to_the_teacher_only(gw_env):
     gw.rt.reset()
     r = c.post(CHAT, json={"messages": [image]})
     assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"]
+
+
+# ---------- generation parameters reach each model (FR-1.13, ADR 0017) ----------
+def _gen_runtime(gw: Any, tmp_path: Any, teacher: FakeOpenAIServer, **overrides: Any) -> tuple[Any, FakeOpenAIServer]:
+    """A live Runtime with every generation setting pinned; the teacher and the student behind MockTransport."""
+    student = FakeOpenAIServer(A)
+    base: dict[str, Any] = {
+        "mode": "live",
+        "db_path": str(tmp_path / f"gen{len(list(tmp_path.iterdir()))}.db"),
+        "teacher_base": "https://teacher.test/v1",
+        "teacher_api_key": "tf-teacher-api-key",
+        "teacher_model": OPEN_TEACHER,
+        "student_base": "https://student.test/v1",
+        "student_api_key": "sk-student-endpoint-token",
+        "samples": 3,
+        "audit_rate": 0.0,
+        "redact_pii": True,
+        "teacher_params": "",
+        "student_params": "",
+        "teacher_max_tokens": 8192,
+        "student_max_tokens": 1024,
+        "teacher_reasoning_headroom": 0,
+        "api_keys": "",
+        "api_key_daily_requests": 0,
+        "bom_signing_key": "",
+        "mock_warmup_days": 0,
+    }
+    rt = gw.Runtime(Settings(**{**base, **overrides}), transports={"teacher": teacher.transport, "student": student.transport})
+    return rt, student
+
+
+def _bodies(server: FakeOpenAIServer) -> list[dict[str, Any]]:
+    return [c.json for c in server.calls_to("/chat/completions")]
+
+
+@pytest.mark.req("FR-1.13", "FR-2.1", "FR-2.5", "INV-1")
+def test_generation_parameters_reach_teacher_student_and_audit(gw_env, tmp_path, monkeypatch):
+    """The client's max_completion_tokens, stop, seed and temperature, as each call sends them over HTTP: the teacher
+    serving an answer gets them all; the student gets the shaping ones under its own sampling; an audit runs at
+    temperature 0 under the same limit and stops. A vendor field goes nowhere unless an allowlist names it."""
+    gw = _gateway(gw_env)
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    vid = _version(rt.ledger, "live", {"threshold": 0.99})  # unsure of everything: the teacher answers
+    c = TestClient(gw.app)
+    sent = {"model": "gpt-4o", "max_completion_tokens": 50, "stop": ["\n\n"], "seed": 7, "temperature": 0.9, "top_k": 40}
+    r = c.post(CHAT, json={"messages": HI, **sent})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    (sampled,) = _bodies(student)
+    assert sampled == {
+        "model": "student-v1",
+        "messages": HI,
+        "n": 3,
+        "temperature": 0.7,
+        "logprobs": True,
+        "max_tokens": 50,
+        "stop": ["\n\n"],
+        "seed": 7,
+    }
+    # The model is always the configured teacher (INV-1); max_completion_tokens goes up as max_tokens.
+    assert _bodies(teacher) == [
+        {"model": OPEN_TEACHER, "messages": HI, "n": 1, "temperature": 0.9, "max_tokens": 50, "stop": ["\n\n"], "seed": 7}
+    ]
+
+    # A forced audit of a confident student: temperature 0, the same stop and limit, no seed.
+    rt.ledger.update_eval(vid, {"threshold": 0.5})
+    rt.settings.audit_rate = 1.0
+    hello = [{"role": "user", "content": "hello"}]
+    r = c.post(CHAT, json={"messages": hello, **sent})
+    assert r.json()["ratchet"]["served_by"] == "student" and r.json()["choices"][0]["finish_reason"] == "stop"
+    assert _bodies(teacher)[-1] == {
+        "model": OPEN_TEACHER,
+        "messages": hello,
+        "n": 1,
+        "temperature": 0.0,
+        "max_tokens": 50,
+        "stop": ["\n\n"],
+    }
+
+    # An operator who allows the vendor field gets it forwarded to the teacher (and only there).
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_params="all,top_k")
+    monkeypatch.setattr(gw, "rt", rt)
+    assert c.post(CHAT, json={"messages": HI, **sent}).status_code == 200
+    assert _bodies(teacher)[0]["top_k"] == 40 and student.calls == []  # cold start: no student yet
+
+
+@pytest.mark.req("FR-1.13", "NFR-3")
+def test_allowlists_and_token_caps_through_the_gateway(gw_env, tmp_path, monkeypatch):
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    sent = {"max_tokens": 10**6, "logit_bias": {"50256": -100}, "presence_penalty": 0.5}
+
+    # Defaults: every standard field to the teacher, capped at 8,192 output tokens; the student at 1,024.
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    assert c.post(CHAT, json={"messages": HI, **sent}).status_code == 200
+    (tbody,) = _bodies(teacher)
+    (sbody,) = _bodies(student)
+    assert (tbody["max_tokens"], tbody["logit_bias"], tbody["presence_penalty"]) == (8192, {"50256": -100}, 0.5)
+    assert (sbody["max_tokens"], sbody["logit_bias"]) == (1024, {"50256": -100}) and "presence_penalty" not in sbody
+
+    # RATCHET_TEACHER_PARAMS without logit_bias: not forwarded; RATCHET_STUDENT_PARAMS=none: the cap alone.
+    allowed = ",".join(f for f in sorted(DEFAULT_TEACHER_PARAMS) if f != "logit_bias")
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_params=allowed, student_params="none", teacher_max_tokens=0)
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    assert c.post(CHAT, json={"messages": HI, **sent}).status_code == 200
+    (tbody,) = _bodies(teacher)
+    (sbody,) = _bodies(student)
+    assert "logit_bias" not in tbody and tbody["presence_penalty"] == 0.5
+    assert tbody["max_tokens"] == 10**6  # RATCHET_TEACHER_MAX_TOKENS=0: no cap
+    assert sbody["max_tokens"] == 1024 and "logit_bias" not in sbody
+
+    # A request without parameters still carries both caps.
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    assert c.post(CHAT, json={"messages": HI}).status_code == 200
+    assert (_bodies(teacher)[0]["max_tokens"], _bodies(student)[0]["max_tokens"]) == (8192, 1024)
+    assert "stop" not in _bodies(teacher)[0] and "seed" not in _bodies(student)[0]
+
+    # A bad setting stops the gateway at startup.
+    with pytest.raises(ValueError, match="RATCHET_TEACHER_PARAMS"):
+        _gen_runtime(gw, tmp_path, FakeOpenAIServer(A), teacher_params="metadata")
+    with pytest.raises(ValueError, match="RATCHET_STUDENT_MAX_TOKENS"):
+        _gen_runtime(gw, tmp_path, FakeOpenAIServer(A), student_max_tokens=-1)
+
+
+@pytest.mark.req("FR-1.13", "FR-2.13", "FR-1.6")
+def test_a_cut_off_teacher_answer_reaches_the_client_as_length(gw_env, tmp_path, monkeypatch):
+    gw = _gateway(gw_env)
+    teacher = FakeOpenAIServer(A, finish_reason="length")
+    rt, _ = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    c = TestClient(gw.app)
+    r = c.post(CHAT, json={"messages": HI, "max_tokens": 5})
+    assert r.json()["choices"][0]["finish_reason"] == "length" and rt.ledger.examples() == []
+    with c.stream("POST", CHAT, json={"messages": HI, "max_tokens": 5, "stream": True}) as resp:
+        chunks = [json.loads(line[6:]) for line in resp.iter_lines() if line.startswith("data: {")]
+    assert [ch["choices"][0]["finish_reason"] for ch in chunks][-1] == "length"
+    assert all(ch["choices"][0]["finish_reason"] is None for ch in chunks[:-1])
+    teacher.finish_reason = "eos"  # a value OpenAI clients do not know is reported as stop
+    assert c.post(CHAT, json={"messages": HI}).json()["choices"][0]["finish_reason"] == "stop"
+
+
+@pytest.mark.req("FR-1.13", "FR-2.13", "FR-9.2")
+def test_mock_models_honour_max_tokens_and_stop(gw_env):
+    """In mock mode the mock teacher stops at a stop string and cuts at max_tokens (about 4 characters a token): a cut
+    answer is `length` and is not stored; an answer that ended at a stop is stored with that stop as its condition."""
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    msgs = gw.rt.stream.sample(1).messages()
+    full = c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "default"}).json()
+    answer = full["choices"][0]["message"]["content"]
+    assert full["choices"][0]["finish_reason"] == "stop" and len(gw.rt.ledger.examples()) == 1
+    gw.rt.reset()
+
+    r = c.post(CHAT, json={"messages": msgs, "max_completion_tokens": 3}, headers={"X-Ratchet-Task": "default"}).json()
+    assert (r["choices"][0]["message"]["content"], r["choices"][0]["finish_reason"]) == (answer[:12], "length")
+    assert gw.rt.ledger.examples() == []
+
+    r = c.post(CHAT, json={"messages": msgs, "stop": ', "priority"'}, headers={"X-Ratchet-Task": "default"}).json()
+    assert (r["choices"][0]["message"]["content"], r["choices"][0]["finish_reason"]) == (answer.split(', "priority"')[0], "stop")
+    (ex,) = gw.rt.ledger.examples()
+    assert json.loads(ex["params"]) == {"stop": [', "priority"']} and ex["completion"] == r["choices"][0]["message"]["content"]
+
+    # The real OpenAI SDK reads the cut-off answer's finish_reason.
+    sdk()
+    client = make_openai_client(gw.app)
+    resp = client.chat.completions.create(model="ratchet", messages=msgs, max_tokens=3)
+    assert resp.choices[0].finish_reason == "length"
 
 
 # ---------- the OpenAI SDK ----------

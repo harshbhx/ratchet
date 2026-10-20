@@ -29,10 +29,13 @@ from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.nightschool import dataset
 from ratchet.nightschool.dataset import FREQUENT
-from ratchet.nightschool.evaluate import cascade_eval
+from ratchet.nightschool.evaluate import LiveEvaluator, cascade_eval
 from ratchet.nightschool.orchestrate import run_night
+from ratchet.providers import GenParams
 from ratchet.release import CANARY_STEPS, ReleaseGate
 from ratchet.router import Ratchet
+from sim import mock_models
+from sim.world import make_stream
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDENT_MARKER = "STUDENT-ONLY"
@@ -356,7 +359,7 @@ def test_cascade_eval_measures_on_held_out_half():
     # separate right from wrong, and only the choice of rows decides the reported precision.
     right_on_even = RecordingProvider(lambda msgs, model: RIGHT if int(msgs[-1]["content"].split()[-1]) % 2 == 0 else WRONG)
 
-    def sample(prompt, k):
+    def sample(prompt, k, params=None):
         return right_on_even.complete(prompt, "student-v1", n=k, temperature=0.7, logprobs=True)
 
     res = cascade_eval(sample, _golden(n), samples=3, target_precision=0.97)
@@ -369,7 +372,7 @@ def test_cascade_eval_measures_on_held_out_half():
 
     # Mirror image: calibrated on wrong answers, it serves nothing (threshold 1.01) instead of guessing.
     right_on_odd = RecordingProvider(lambda msgs, model: WRONG if int(msgs[-1]["content"].split()[-1]) % 2 == 0 else RIGHT)
-    res = cascade_eval(lambda p, k: right_on_odd.complete(p, "m", n=k, logprobs=True), _golden(n), samples=3)
+    res = cascade_eval(lambda p, k, params: right_on_odd.complete(p, "m", n=k, logprobs=True), _golden(n), samples=3)
     assert (res["threshold"], res["coverage"], res["precision"], res["golden_agreement"]) == (1.01, 0.0, 0.0, 0.5)
 
 
@@ -402,3 +405,76 @@ def test_champion_rescored_on_same_golden_set():
     # The challenger starts from the base model, not from the champion it is compared with (FR-4.2).
     assert [c.base_model for c in trainer.calls] == [BASE_MODEL]
     assert led.version(rep.version).base_model == BASE_MODEL
+
+
+# ---------- FR-5.1: the golden eval samples under the conditions stored with each example ----------
+@pytest.mark.req("FR-5.1", "FR-1.13", "INV-6")
+def test_cascade_eval_passes_row_params_to_sample():
+    rows = _golden(4)
+    rows[1]["params"] = {"stop": ["\n\n"]}
+    rows[2]["params"] = {"response_format": {"type": "json_object"}}
+    seen = []
+
+    def sample(prompt, k, params):
+        seen.append((prompt[-1]["content"], k, params))
+        return RecordingProvider(RIGHT).complete(prompt, "m", n=k, logprobs=True)
+
+    cascade_eval(sample, rows, samples=3)
+    assert seen == [
+        ("ticket 0", 3, None),  # a row from before v0.5, or stored without conditions
+        ("ticket 1", 3, {"stop": ["\n\n"]}),
+        ("ticket 2", 3, {"response_format": {"type": "json_object"}}),
+        ("ticket 3", 3, None),
+    ]
+
+
+@pytest.mark.req("FR-5.1", "FR-1.13", "FR-4.1")
+def test_golden_eval_runs_under_production_conditions(monkeypatch):
+    """An example stored with conditions comes back from `dataset.rows` with them, and both evaluators send the student
+    exactly what the router sends for that request: the conditions, under the same GenPolicy and its cap."""
+    led = Ledger(":memory:", golden_fraction=1.0)  # every example golden
+    conditions = {"stop": ["\n\n"], "response_format": {"type": "json_object"}}
+    item = make_stream("tickets", seed=7).sample(1)  # a request the mock world knows
+    led.add_example(item.task, item.messages(), RIGHT, OPEN_TEACHER, "l", "u", params=conditions)
+    led.add_example(item.task, [{"role": "user", "content": "ticket 2"}], RIGHT, OPEN_TEACHER, "l", "u")
+    rows = dataset.rows(led, "golden")
+    assert [r["params"] for r in rows] == [conditions, None]
+
+    settings = Settings(
+        teacher_model=OPEN_TEACHER,
+        samples=3,
+        audit_rate=0.0,
+        student_params="",
+        teacher_params="",
+        student_max_tokens=256,
+        teacher_max_tokens=8192,
+        teacher_reasoning_headroom=0,
+    )
+    served = Ledger(":memory:")
+    _version(served, "live", {"threshold": 0.5})
+    router_student = RecordingProvider(RIGHT)
+    router = Ratchet(settings, served, RecordingProvider(RIGHT), lambda v: (router_student, v.adapter_uri))
+    for row in rows:  # the same requests in production, the client sending those conditions
+        router.handle(row["messages"][:-1], row["task"], params=GenParams.from_stored(row["params"]))
+    production = [c.kwargs for c in router_student.calls]
+    assert [k["params"] for k in production] == [
+        GenParams(max_tokens=256, stop=("\n\n",), response_format={"type": "json_object"}),
+        GenParams(max_tokens=256),
+    ]
+
+    live_student = RecordingProvider(RIGHT)
+    LiveEvaluator(live_student, None, samples=3, policy=settings.gen_policy()).evaluate("student-v1", rows)
+    assert [c.kwargs for c in live_student.calls] == production
+
+    seen = []
+    real = mock_models.MockStudent.complete
+
+    def spy(self, messages, model, *args, **kwargs):
+        seen.append(kwargs)
+        return real(self, messages, model, *args, **kwargs)
+
+    monkeypatch.setattr(mock_models.MockStudent, "complete", spy)
+    fleet = mock_models.MockFleet(policy=settings.gen_policy())
+    fleet.train(rows[:1], BASE_MODEL, "student-v1")
+    fleet.evaluate("student-v1", rows[:1])
+    assert seen == production[:1]

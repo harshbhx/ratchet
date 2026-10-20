@@ -20,5 +20,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0014](0014-upstream-failure-semantics.md) | Upstream failure semantics: bounded retries, one error type, and statuses a client can act on | Accepted | 2026-10-20 |
 | [0015](0015-student-circuit-breaker-and-adapter-reload.md) | A circuit breaker per student endpoint, automatic adapter reloads, and a route on every request | Accepted | 2026-10-20 |
 | [0016](0016-store-only-complete-valid-teacher-answers.md) | Store only complete, valid teacher answers | Accepted | 2026-10-20 |
+| [0017](0017-generation-parameters-by-role.md) | Generation parameters by role, token caps, and the conditions stored with an example | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.
