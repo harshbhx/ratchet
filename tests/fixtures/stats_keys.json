@@ -16,7 +16,8 @@
       "cost_usd": "number",
       "baseline_usd": "number",
       "saved_usd": "number",
-      "savings_pct": "number"
+      "savings_pct": "number",
+      "cost_model": "string"
     },
     "days[]": {
       "day": "number",
@@ -93,6 +94,13 @@
       "daily_requests_per_key": "number|null",
       "bom_signing": "bool",
       "bom_key_id": "string|null"
+    },
+    "cost": {
+      "model": "string",
+      "endpoint_hours": "number",
+      "gpu_hours_savings_pct": "number|null",
+      "break_even_student_requests_per_gpu_hour": "number|null",
+      "recommendation": "string"
     }
   }
 }

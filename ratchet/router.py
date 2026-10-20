@@ -157,7 +157,11 @@ class Result:
 
     `choices` are the response's choices, as many as the client's `n` (FR-1.14; fewer only when a teacher returned
     fewer); `text` and `finish_reason` are choice 0's, and the token fields add up every choice's completion (the prompt
-    once), as OpenAI counts them. A Result built without choices gets one from `text` and `finish_reason`."""
+    once), as OpenAI counts them. A Result built without choices gets one from `text` and `finish_reason`.
+
+    `student_cost_usd` and `teacher_cost_usd` split `cost_usd` (FR-15.1): the student's samples (live and shadow) and the
+    teacher's calls (escalation, audit, arbitration, pinned). `cost_usd` is still summed call by call as before, so it
+    equals their sum up to float rounding."""
 
     text: str
     served_by: str
@@ -178,6 +182,8 @@ class Result:
     usage_breakdown: dict[str, dict[str, int] | None] = field(default_factory=dict)  # USAGE_PARTS -> {"in", "out"}
     degraded: str | None = None  # TEACHER_UNAVAILABLE when the student's below-threshold answer stood in for the teacher
     choices: list[Choice] = field(default_factory=list)
+    student_cost_usd: float = 0.0  # cost_usd's student part (FR-15.1)
+    teacher_cost_usd: float = 0.0  # cost_usd's teacher part
 
     def __post_init__(self) -> None:
         if not self.choices:
@@ -744,6 +750,10 @@ class Ratchet:
             latency_ms=c.latency_ms,
             cost_usd=cost,
             baseline_cost_usd=baseline,
+            student_cost_usd=0.0,  # the student is never sampled here: every cent is the teacher's (FR-15.1)
+            teacher_cost_usd=cost,
+            student_in_tokens=0,
+            student_out_tokens=0,
             client=client,
             route=route,
             stored=0,
@@ -765,6 +775,7 @@ class Ratchet:
             fingerprint=fingerprint("teacher", model),
             usage_breakdown=_breakdown(served),
             choices=choices,
+            teacher_cost_usd=cost,
         )
 
     def teacher_only(
@@ -846,6 +857,10 @@ class Ratchet:
             return self._teacher_only(task, messages, client, plan, params)
         version = self._pick_version()
         cost = 0.0
+        # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
+        # student calls' tokens, which price the hosted fallback student in the cost report (ratchet/cost.py).
+        student_cost = teacher_cost = 0.0
+        student_in = student_out = 0
         latency = 0.0
         confidence = None
         escalated = False
@@ -881,6 +896,9 @@ class Ratchet:
             else:
                 latency += max(s.latency_ms for s in samples)
                 cost += c
+                student_cost += c
+                student_in += samples[0].in_tokens
+                student_out += sum(s.out_tokens for s in samples)
                 # Scored on the calibrated number of samples; the rest are drawn only to fill n choices (ADR 0020).
                 sc = score(task, samples[: max(1, self.s.samples)])
                 picked = majority(task, sc, samples, plan.n)
@@ -903,7 +921,9 @@ class Ratchet:
                     else:
                         teacher_c, stored = audit.completion, audit.stored
                         audit_c = teacher_c
-                        cost += self._cost(self.s.teacher_model, teacher_c)
+                        t = self._cost(self.s.teacher_model, teacher_c)
+                        cost += t
+                        teacher_cost += t
                         # A cut-off, empty or invalid teacher answer measures nothing: not an audit (INV-16).
                         if answer_problem(task, teacher_c) is None:
                             audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
@@ -928,7 +948,9 @@ class Ratchet:
             else:
                 teacher_c, stored = answer.completion, answer.stored
                 served_choices = list(answer.choices)
-                cost += self._call_cost(answer.model, served_choices)
+                t = self._call_cost(answer.model, served_choices)
+                cost += t
+                teacher_cost += t
                 latency += teacher_c.latency_ms
                 served = teacher_c
                 fp = fingerprint("teacher", answer.model)
@@ -968,6 +990,9 @@ class Ratchet:
                 self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} sampling: {describe_failure(e)}")
         if shadow is not None and s_samples is not None:
             cost += c
+            student_cost += c
+            student_in += s_samples[0].in_tokens
+            student_out += sum(s.out_tokens for s in s_samples)
             s_sc = score(task, s_samples)
             shadow_vid = shadow.id
             shadow_serve = int(s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model, task))
@@ -980,7 +1005,9 @@ class Ratchet:
                 else:
                     reference, stored = ruling
                     arbitration_c = reference
-                    cost += self._cost(self.s.teacher_model, reference)
+                    t = self._cost(self.s.teacher_model, reference)
+                    cost += t
+                    teacher_cost += t
             if reference is not None and answer_problem(task, reference) is not None:
                 arbitrated = False  # a cut-off, empty or invalid teacher answer settles nothing (INV-16)
             if arbitrated:
@@ -1001,6 +1028,10 @@ class Ratchet:
             latency_ms=latency,
             cost_usd=cost,
             baseline_cost_usd=baseline,
+            student_cost_usd=student_cost,
+            teacher_cost_usd=teacher_cost,
+            student_in_tokens=student_in,
+            student_out_tokens=student_out,
             client=client,
             route=route,
             stored=int(stored),
@@ -1023,6 +1054,8 @@ class Ratchet:
             usage_breakdown=_breakdown(served_choices, samples, audit_c, s_samples, arbitration_c),
             degraded=degraded,
             choices=choices,
+            student_cost_usd=student_cost,
+            teacher_cost_usd=teacher_cost,
         )
 
     def _may_degrade(

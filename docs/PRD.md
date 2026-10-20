@@ -303,10 +303,10 @@ A self-hosted student is billed by the GPU-hour while its endpoint runs, not per
 
 | ID | Requirement | Status |
 |---|---|---|
-| FR-15.1 | Each request's cost is split into student and teacher spend; the existing `cost_usd` stays exactly their sum and unchanged | Planned |
-| FR-15.2 | Compute-time ledger: student endpoint uptime and training-job GPU-hours, recorded by a CLI, an authenticated endpoint, the deploy script and the simulator; overlapping intervals never double-count | Planned |
-| FR-15.3 | Cost report (`GET /ratchet/cost`, `python -m ratchet.cost report`): savings per token and by GPU-hours paid (negative when self-hosting does not pay, never clamped), break-even student-served requests per GPU-hour, the crossover with the hosted fallback, and observed utilization | Planned |
-| FR-15.4 | Self-host recommendation (self-host, hosted fallback, scale to zero, or not enough data) with a plain-English explanation and the numbers behind it | Planned |
+| FR-15.1 | Each request's cost is split into student and teacher spend (`requests.student_cost_usd`, `teacher_cost_usd`, with the student calls' tokens); the existing `cost_usd` stays their sum, summed call by call exactly as before, so history and the reference simulation never move ([ADR 0023](adr/0023-utilization-aware-cost-accounting.md)) | Done (v0.5) |
+| FR-15.2 | Compute-time ledger: student endpoint uptime and training-job GPU-hours (`compute_intervals`), recorded by a CLI (`python -m ratchet.cost endpoint up\|down`), an authenticated endpoint (`POST /ratchet/cost/endpoint`, admin key), the deploy script, Night School (the training job's wall-clock time) and the simulator (a synthetic clock); overlapping intervals never double-count | Done (v0.5), untested (on Nebius) |
+| FR-15.3 | Cost report (`GET /ratchet/cost`, `python -m ratchet.cost report`): savings per token and by GPU-hours paid (negative when self-hosting does not pay, never clamped), break-even student-served requests per GPU-hour, the crossover with the hosted fallback, and observed utilization; a compact `cost` block in `/ratchet/stats` | Done (v0.5) |
+| FR-15.4 | Self-host recommendation (self-host, hosted fallback, scale to zero, or not enough data) with a plain-English explanation and the numbers behind it | Done (v0.5) |
 | FR-15.5 | Verified savings receipts per API client: an audit-calibrated baseline with a confidence bound, both cost views, signed | Planned |
 
 ### 6.16 Verifiable evidence
@@ -341,7 +341,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | NFR-8 | Correctness | Release decisions use held-out data and statistical bounds, not single numbers. | Done (v0.1) |
 | NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter. | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet |
 | NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
-| NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass. | Planned |
+| NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass (`RATCHET_PRICES_VERIFIED`). | Done (v0.5) |
 
 ## 8. Success metrics
 

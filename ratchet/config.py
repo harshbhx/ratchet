@@ -6,6 +6,7 @@ day 1 with `GET https://api.tokenfactory.nebius.com/v1/models?verbose=true`.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 
@@ -27,12 +28,35 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def _float(name: str, default: str) -> float:
+    """A number from the environment; ValueError names the variable, so a typo stops startup with a message that says
+    which setting is wrong."""
+    raw = _env(name, default)
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, not {raw!r}") from None
+
+
+def _int(name: str, default: str) -> int:
+    """A whole number from the environment; ValueError names the variable."""
+    raw = _env(name, default)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a whole number, not {raw!r}") from None
+
+
 # RATCHET_ON_TEACHER_FAILURE: what a request whose teacher call failed gets (ADR 0019).
 TEACHER_FAILURE_MODES = ("error", "serve_student")
 # RATCHET_UNKNOWN_TASKS: what a request naming a task that is not registered gets (ADR 0022). `distill`: a task without
 # fields made up for the name, distilled like any other (v0.4); `teacher`: the teacher answers and nothing is stored;
 # `reject`: a 400 that lists the registered tasks.
 UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
+# RATCHET_STUDENT_COST_MODEL: which student cost the cost report's headline savings use (ratchet/cost.py, ADR 0023).
+# `per_token`: the hosted Nano price per token, as every savings figure since v0.1; `gpu_hours`: the GPU-hours the student
+# endpoint and the training jobs ran. Each request's `cost_usd` keeps the per-token price in both, so history never moves.
+COST_MODELS = ("per_token", "gpu_hours")
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -54,6 +78,33 @@ class Price:
 
     def cost(self, in_tokens: int, out_tokens: int) -> float:
         return (in_tokens * self.input + out_tokens * self.output) / 1_000_000
+
+
+@dataclass(frozen=True)
+class GpuRate:
+    """What a GPU deployment costs while it runs: USD per GPU-hour for `gpus` GPUs. List prices are unverified until the
+    day-1 checks pass (INV-9)."""
+
+    usd_per_gpu_hour: float
+    gpus: int
+
+    @property
+    def usd_per_hour(self) -> float:
+        """The whole deployment's price per hour."""
+        return self.usd_per_gpu_hour * self.gpus
+
+
+@dataclass(frozen=True)
+class CostPolicy:
+    """The cost settings, checked (`Settings.cost_policy()`): the headline cost model (COST_MODELS), the student endpoint's
+    and the training jobs' GPU rates, the hours a day a simulated endpoint runs, and whether an operator confirmed the
+    prices (RATCHET_PRICES_VERIFIED)."""
+
+    model: str
+    student: GpuRate
+    train: GpuRate
+    mock_endpoint_hours: float
+    prices_verified: bool
 
 
 DEFAULT_PRICES: dict[str, Price] = {
@@ -191,6 +242,20 @@ class Settings:
     # Generate one with `python -m ratchet.bom keygen`. Empty = manifests are stored unsigned.
     bom_signing_key: str = field(default_factory=lambda: _env("RATCHET_BOM_SIGNING_KEY", ""))
 
+    # Cost accounting (ratchet/cost.py, ADR 0023). The self-hosted student endpoint and the training jobs bill GPU-hours
+    # while they run; these rates (USD per GPU-hour, the L40S list price, unverified until the day-1 checks pass) price
+    # the compute intervals the ledger records, and RATCHET_STUDENT_COST_MODEL picks the headline view.
+    student_cost_model: str = field(default_factory=lambda: _env("RATCHET_STUDENT_COST_MODEL", "per_token"))
+    student_gpu_usd_per_hour: float = field(default_factory=lambda: _float("RATCHET_STUDENT_GPU_USD_PER_HOUR", "1.55"))
+    student_gpus: int = field(default_factory=lambda: _int("RATCHET_STUDENT_GPUS", "1"))
+    train_gpu_usd_per_hour: float = field(default_factory=lambda: _float("RATCHET_TRAIN_GPU_USD_PER_HOUR", "1.55"))
+    train_gpus: int = field(default_factory=lambda: _int("RATCHET_TRAIN_GPUS", "1"))
+    # 1 once scripts/day1_check.py passed and the GPU rates match the Nebius bill; until then every report says the
+    # prices are unverified list prices.
+    prices_verified: bool = field(default_factory=lambda: _env("RATCHET_PRICES_VERIFIED", "0") == "1")
+    # Mock mode only: hours a day the simulated student endpoint runs (each simulated day records one interval).
+    mock_endpoint_hours: float = field(default_factory=lambda: _float("RATCHET_MOCK_ENDPOINT_HOURS", "24"))
+
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
     mock_warmup_days: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_DAYS", "0")))
@@ -270,6 +335,35 @@ class Settings:
             teacher_max_tokens=self.teacher_max_tokens,
             student_max_tokens=self.student_max_tokens,
             reasoning_headroom=self.teacher_reasoning_headroom,
+        )
+
+    def cost_policy(self) -> CostPolicy:
+        """The cost settings, checked. A bad value raises ValueError naming the variable, so the gateway, the simulator,
+        `python -m ratchet.live` and `python -m ratchet.cost` stop at startup instead of reporting a wrong bill."""
+        raw = self.student_cost_model
+        model = raw.strip().lower() if isinstance(raw, str) else None
+        if model == "":  # set but empty, as in an .env file: the default
+            model = "per_token"
+        if model not in COST_MODELS:
+            raise ValueError(f"RATCHET_STUDENT_COST_MODEL must be {' or '.join(COST_MODELS)}, not {raw!r}")
+        for env, value in (
+            ("RATCHET_STUDENT_GPU_USD_PER_HOUR", self.student_gpu_usd_per_hour),
+            ("RATCHET_TRAIN_GPU_USD_PER_HOUR", self.train_gpu_usd_per_hour),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{env} must be a price in USD per GPU-hour, 0 or more, not {value!r}")
+        for env, value in (("RATCHET_STUDENT_GPUS", self.student_gpus), ("RATCHET_TRAIN_GPUS", self.train_gpus)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{env} must be a whole number of GPUs, 0 or more, not {value!r}")
+        hours = self.mock_endpoint_hours
+        if isinstance(hours, bool) or not isinstance(hours, (int, float)) or not (0 <= hours <= 24):
+            raise ValueError(f"RATCHET_MOCK_ENDPOINT_HOURS must be 0 to 24 hours a day, not {hours!r}")
+        return CostPolicy(
+            model=model,
+            student=GpuRate(float(self.student_gpu_usd_per_hour), self.student_gpus),
+            train=GpuRate(float(self.train_gpu_usd_per_hour), self.train_gpus),
+            mock_endpoint_hours=float(hours),
+            prices_verified=bool(self.prices_verified),
         )
 
     def price(self, model: str) -> Price:

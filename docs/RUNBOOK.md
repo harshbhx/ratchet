@@ -9,7 +9,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
    - **Cost reduction** should track student share. If share is high but savings are low, audits or shadow are costing more than expected.
    - **Release log**: read every event since yesterday (meanings below).
 2. **Night School log** (`/var/log/ratchet-night.log`): exactly one of `trained` or `skip` per night.
-3. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it.
+3. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
 4. **Ledger backup** exists for today (see [Backups](#backups)).
 
 ## Reading the dashboard
@@ -22,6 +22,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Model versions | `versions` | Exactly one `live` once past cold start; at most one `shadow` or `canary` |
 | Release log | last 40 `events` | See below |
 | Provenance | `bill_of_materials` | Only distillable teachers and licenses; fingerprint changes as data grows |
+| (not on the dashboard yet) | `cost` | The GPU-hour view and the recommendation; `GET /ratchet/cost` has the full report. The panels above price the student per token (`totals.cost_model`) |
 
 ## Event kinds
 
@@ -50,6 +51,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `task_skipped` | gateway startup | A task stored through the admin API was not registered: its spec no longer parses (detail: the first error), or `RATCHET_TASKS_FILE` or a built-in task now has its name. The gateway started anyway; requests naming it follow `RATCHET_UNKNOWN_TASKS` | Fix it with `PUT /ratchet/tasks/<name>` or remove it with `DELETE`; for a name the file now owns, delete the stored one |
 | `rescored` | `run_night` | A night without enough new data to train re-scored the live version, because a golden task's spec changed since it was scored. The task's student traffic resumes under the new threshold | None |
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
+| `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -82,6 +84,8 @@ for v in led.versions():
 | Add, change or remove a task | Edit `RATCHET_TASKS_FILE` and restart, or use the admin API with a key from `RATCHET_ADMIN_KEYS`: `curl -X PUT $GATEWAY/ratchet/tasks/<name> -H "Authorization: Bearer $ADMIN_KEY" -d @spec.json` (check it first with `POST /ratchet/tasks/validate`). [CONFIGURATION.md](CONFIGURATION.md#adding-a-task) has the spec format |
 | Keep a task on the teacher | Set `"pinned": true` in its spec (file or API). Its stored examples stay in the ledger but leave training and the golden eval from the next night on (`excluded_pinned` in the manifest) |
 | Stop distilling task names nobody registered | `RATCHET_UNKNOWN_TASKS=teacher` (teacher only, nothing stored) or `reject` (a 400 that lists the registered tasks); `GET /ratchet/tasks` lists the unregistered names requests used |
+| Record the student endpoint going up or down | `python -m ratchet.cost endpoint up` / `down` where the ledger is (`--db`, default `RATCHET_DB`; `--at "2026-10-20T08:00:00Z"` for a time other than now, `--usd-per-hour`, `--gpus`), or `POST /ratchet/cost/endpoint` with an admin key. `deploy/student_endpoint.sh` and `... stop` do it for you when they run next to the ledger. `up` while up and `down` while down change nothing |
+| Close a training job whose end was lost (the night process died) | `python -m ratchet.cost close training_job --at <end time from the Nebius console>`; until then the report counts it up to now and warns |
 | Rotate the BOM signing key | `python -m ratchet.bom keygen`, set the new `RATCHET_BOM_SIGNING_KEY`, restart, publish the new public key. Old BOMs keep their old key id and still verify against the old public key, so keep it listed |
 
 Never keep two versions in `live`. `Ledger.live()` returns the newest one, and the other would never be retired automatically.
@@ -207,10 +211,27 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 1. Is `escalation_rate` up? That means drift, or a broken student.
 2. Is shadow running? Shadow adds student sampling and arbitration calls to every request.
 3. Is `RATCHET_AUDIT_RATE` too high?
-4. Is the vLLM endpoint left running (GPU-hours)?
+4. Is the vLLM endpoint left running (GPU-hours)? `python -m ratchet.cost report --days 1` shows today's endpoint hours and whether they paid for themselves.
 5. Are teacher outputs long because of reasoning? Look at token usage on Token Factory.
 
 **Mitigations:** lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
+
+### Cost and the self-host recommendation
+
+`python -m ratchet.cost report [--days 7]` (or `GET /ratchet/cost?days=7`) prints savings two ways: per token (the student at the hosted Nano price, as on the dashboard) and by the GPU-hours actually paid for the student endpoint and the training jobs. Below break-even the GPU-hour savings are negative; that is the honest number, not a bug. The prices are list prices, labelled unverified until `RATCHET_PRICES_VERIFIED=1` ([CONFIGURATION.md](CONFIGURATION.md#cost-accounting)).
+
+**Keep the uptime records complete.** The report knows only the endpoint hours that were recorded: run `bash deploy/student_endpoint.sh` / `stop` next to the ledger, or record `python -m ratchet.cost endpoint up` / `down` yourself (see [Manual interventions](#manual-interventions)). A warning counts student answers on days with no recorded uptime, which are priced per token. Compare `endpoint_hours` with the Nebius bill weekly.
+
+**Reading the recommendation:**
+
+| `recommendation` | Means | Do |
+|---|---|---|
+| `self_host` | The endpoint served at least the break-even volume of student answers per hour it ran, and more than the volume at which the hosted fallback would be cheaper | Keep it. If the explanation says it was idle much of the time, scale it to zero between bursts |
+| `hosted_fallback` | Below the hosted fallback's crossover (and usually far below break-even): the endpoint costs more than it saves | Leave `RATCHET_STUDENT_BASE` empty so the untuned hosted Nano on Token Factory serves the student role per token, or run the endpoint only while traffic arrives. Night School still needs the endpoint while it loads and evaluates a new adapter: start it for the night run (with `RATCHET_STUDENT_BASE` set in the night job's environment) and stop it after; each start and stop is recorded |
+| `scale_to_zero` | More than half of the endpoint's hours fell on days when no request reached the student, or neither the endpoint nor the hosted fallback pays at this volume | Stop the endpoint when idle (`bash deploy/student_endpoint.sh stop`) and start it for busy periods |
+| `insufficient_data` | No endpoint uptime recorded in the window, or the student has not served a request yet | Record uptime; wait for a trained version |
+
+`break_even_student_requests_per_gpu_hour` is the volume to aim for; `observed_student_requests_per_endpoint_hour` is where you are. More traffic per GPU (more tasks or customers as LoRA adapters on one vLLM endpoint) moves observed up; scale-to-zero moves endpoint hours down.
 
 ### PII leak
 

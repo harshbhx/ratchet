@@ -26,5 +26,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0020](0020-n-choices-and-token-logprobs.md) | `n` choices and token logprobs without moving the calibration or the training set | Accepted | 2026-10-20 |
 | [0021](0021-field-comparators-and-task-specs.md) | Field comparators and task specs: typed fields, required by default, pairwise confidence | Accepted | 2026-10-20 |
 | [0022](0022-task-registry.md) | A task registry: specs as data, operator-only pinning, an unknown-task policy and admin keys | Accepted | 2026-10-20 |
+| [0023](0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

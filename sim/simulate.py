@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 from ratchet.config import Settings
+from ratchet.cost import cost_report, record_simulated_day
 from ratchet.ledger import Ledger
 from ratchet.nightschool.orchestrate import run_night
 from ratchet.release import ReleaseGate, ReleasePolicy
@@ -41,6 +42,7 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
 
 def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
     settings, ledger, fleet, ratchet, gate = build(args, db)
+    policy = settings.cost_policy()  # GPU rates and the simulated endpoint's hours a day (RATCHET_MOCK_ENDPOINT_HOURS)
     workload = getattr(args, "workload", "tickets")
     stream = make_stream(workload, seed=args.seed, drift_day=args.drift_day)
     nights = []
@@ -55,6 +57,9 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         rep = run_night(
             ledger, fleet, fleet, gate, settings.student_base_model, min_new_examples=args.min_new, task=night_task(workload)
         )
+        # The day's simulated compute on the synthetic clock: writes compute intervals only, so no other number moves.
+        trained = ledger.version(rep.version) if rep.trained and rep.version is not None else None
+        record_simulated_day(ledger, policy, day, trained)
         nights.append({"night": day, "trained": rep.trained, "version": rep.version, "admitted": rep.admitted, "eval": rep.eval})
     return {
         "days": ledger.stats_by_day(),
@@ -63,6 +68,7 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "events": ledger.events(),
         "totals": ledger.totals(),
         "bill_of_materials": ledger.bill_of_materials(),
+        "cost": cost_report(ledger, settings),
     }
 
 
@@ -79,6 +85,15 @@ def table(res: dict) -> str:
         f"\ntotal: {t['requests']} requests, ${t['cost_usd']:.2f} vs ${t['baseline_usd']:.2f} "
         f"all-Ultra -> saved {t['savings_pct']:.0%}"
     )
+    c = res.get("cost")
+    if c:  # the same run with the student priced by the GPU-hours it ran (ADR 0023), labelled as simulation
+        gpu = c["views"]["gpu_hours"]
+        pct = "-" if gpu["savings_pct"] is None else f"{gpu['savings_pct']:.0%}"
+        lines.append(
+            f"by GPU-hours (simulation, {c['prices']['label']}): ${gpu['total_usd']:.2f} -> saved {pct} "
+            f"({c['endpoint_hours']:.0f} endpoint hours, {c['training_hours']:.2f} training hours); "
+            f"recommendation: {c['recommendation']}"
+        )
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
     return "\n".join(lines)
