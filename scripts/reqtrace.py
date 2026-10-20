@@ -683,6 +683,17 @@ CODE: dict[str, tuple[str, ...]] = {
         "web/src/pages/dashboard/resilience-model.ts",
         "ratchet.gateway:demo_student_outage",
     ),
+    "FR-7.23": (
+        "web/src/pages/landing/sections/bill.tsx",
+        "web/src/pages/landing/bill-model.ts",
+        "web/src/lib/sim.ts",
+        "ratchet.gateway:cost",
+    ),
+    "FR-7.24": (
+        "web/src/pages/landing/sections/checked.tsx",
+        "web/src/pages/landing/trust-model.ts",
+        "ratchet.bom:verify",
+    ),
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),

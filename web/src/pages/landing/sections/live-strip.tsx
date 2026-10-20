@@ -2,12 +2,11 @@ import { Link } from "react-router";
 import { ArrowRight, FlaskConical, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Container } from "@/components/ui/section";
-import { useStats } from "@/lib/hooks";
+import type { Stats } from "@/lib/api";
 import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 
 /** The gateway's real numbers right now. Hidden when the API is unreachable (static preview). */
-export function LiveStrip() {
-  const { stats } = useStats(15000);
+export function LiveStrip({ stats }: { stats: Stats | null }) {
   if (!stats) return null;
   const latest = stats.days.length ? stats.days[stats.days.length - 1] : null;
   const live = [...stats.versions].reverse().find((v) => v.state === "live");

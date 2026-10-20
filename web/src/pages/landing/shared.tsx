@@ -14,9 +14,11 @@ export const CHAPTERS = [
   { id: "how", index: "03", label: "How it turns" },
   { id: "safety", index: "04", label: "One way only" },
   { id: "learn", index: "05", label: "Watch it learn" },
-  { id: "scout", index: "06", label: "Agent traffic" },
-  { id: "stack", index: "07", label: "Nebius + NVIDIA" },
-  { id: "run", index: "08", label: "Run it" },
+  { id: "bill", index: "06", label: "The honest bill" },
+  { id: "trust", index: "07", label: "Built to be checked" },
+  { id: "scout", index: "08", label: "Agent traffic" },
+  { id: "stack", index: "09", label: "Nebius + NVIDIA" },
+  { id: "run", index: "10", label: "Run it" },
 ] as const;
 
 export type ChapterId = (typeof CHAPTERS)[number]["id"];
@@ -28,6 +30,7 @@ export const LINKS = {
   nvidiaSlm: "https://arxiv.org/html/2506.02153v1",
   menlo: "https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/",
   gemini: "https://ai.google.dev/gemini-api/terms",
+  nebiusChallenge: "https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners",
 };
 
 /** Fade + rise once, when scrolled into view. */

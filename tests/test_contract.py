@@ -819,6 +819,220 @@ def test_dashboard_admin_key_stays_in_memory():
     assert api_ts.count("adminKey") == api_ts.count("adminHeaders(adminKey)") * 2, "the admin key goes anywhere but the header"
 
 
+# ---------- web: the story page ----------
+SIM_TS = WEB / "src" / "lib" / "sim.ts"
+STORY = WEB / "src" / "pages" / "landing"
+REPO = WEB.parent
+# web/src/lib/sim.ts names -> the reference run's keys (`sim.simulate.run`: `days` and `totals`).
+SIM_DAY_KEYS = {
+    "student": "student_share",
+    "escalated": "escalation_rate",
+    "audit": "audit_agreement",
+    "costPer1k": "cost_per_1k",
+    "baselinePer1k": "baseline_per_1k",
+    "saved": "savings_pct",
+}
+SIM_TOTAL_KEYS = {"requests": "requests", "cost": "cost_usd", "baseline": "baseline_usd", "saved": "savings_pct"}
+
+
+def _ts_json(path: Path, name: str) -> Any:
+    """`export const <name>: T = {...};` up to its `// end <name>` line, read as strict JSON with every number kept as
+    ("int" | "float", its source text), so a check can hold it to the precision it is written with."""
+    src = path.read_text(encoding="utf-8")
+    m = re.search(rf"^export const {name}(?:: [^=]+)? = (\{{.*?^\}});\n// end {name}$", src, re.M | re.S)
+    assert m, f"{path.name} has no `export const {name} = {{...}};` followed by `// end {name}`"
+    return json.loads(m.group(1), parse_float=lambda s: ("float", s), parse_int=lambda s: ("int", s))
+
+
+def _number_off(literal: tuple[str, str], have: Any) -> bool:
+    """True unless `have` rounds to the literal at the literal's own precision (an int literal: the nearest whole)."""
+    kind, text = literal
+    if have is None or isinstance(have, bool) or not isinstance(have, (int, float)):
+        return True
+    if kind == "int" and isinstance(have, int):
+        return have != int(text)
+    decimals = len(text.split(".")[1]) if kind == "float" and "." in text and "e" not in text.lower() else 0
+    return abs(have - float(text)) > 0.5 * 10**-decimals + 1e-9 * max(1.0, abs(have))
+
+
+def _page_vs_run(page: Any, run: Any, where: str = "") -> list[str]:
+    """Every leaf the page holds that the run does not have, or has with another value."""
+    if isinstance(page, dict):
+        if not isinstance(run, dict):
+            return [f"{where}: the run has {run!r}, not an object"]
+        out = []
+        for k, v in page.items():
+            path = f"{where}.{k}" if where else k
+            out += _page_vs_run(v, run[k], path) if k in run else [f"{path}: not in the run's report"]
+        return out
+    if isinstance(page, tuple):
+        return [f"{where}: the page says {page[1]}, the run has {run!r}"] if _number_off(page, run) else []
+    return [] if page == run else [f"{where}: the page says {page!r}, the run has {run!r}"]
+
+
+def _ts_numbers(text: str) -> dict[str, tuple[str, str]]:
+    """`key: 0.44` pairs of a one-line TypeScript object, numbers as ("float" | "int", text); null as ("null", "null")."""
+    pairs = re.findall(r"(\w+): (null|-?\d+(?:\.\d+)?)\b", text)
+    return {k: ("null", v) if v == "null" else ("float" if "." in v else "int", v) for k, v in pairs}
+
+
+@pytest.mark.req("FR-7.23", "NFR-11")
+def test_story_simulation_numbers_match_reference_run(reference_run, sim_reference):
+    """Every simulation number the story page prints (web/src/lib/sim.ts) is the reference run's, at the precision it
+    is written with: the honest bill's cost report (`SIM_COST_REPORT`, the student priced per token and by GPU-hours,
+    the break-even, the crossover, the recommendation and its explanation word for word), "Watch it learn"'s days and
+    totals, the command the page says reproduces them, and the GPU-hour line that command prints. A change to the
+    simulator or the cost report that moves any of them fails here instead of leaving the page stale."""
+    import os
+    import shlex
+
+    from sim.simulate import parser, table
+
+    report = _ts_json(SIM_TS, "SIM_COST_REPORT")
+    assert report["recommendation"] == "hosted_fallback" and report["views"]["gpu_hours"]["savings_usd"][1].startswith("-")
+    assert _page_vs_run(report, reference_run["cost"]) == []
+
+    src = SIM_TS.read_text(encoding="utf-8")
+    days = [_ts_numbers(line) for line in src.splitlines() if line.strip().startswith("{ day:")]
+    assert [int(d["day"][1]) for d in days] == [d["day"] for d in reference_run["days"]]
+    bad = [
+        f"day {d['day'][1]} {k}: page {d[k][1]}, run {run[want]!r}"
+        for d, run in zip(days, reference_run["days"], strict=True)
+        for k, want in SIM_DAY_KEYS.items()
+        if ((run[want] is not None) if d[k][0] == "null" else _number_off(d[k], run[want]))
+    ]
+    assert bad == []
+    totals = _ts_numbers(_ts_literal(SIM_TS, "SIM_TOTAL"))
+    assert sorted(totals) == sorted(SIM_TOTAL_KEYS)
+    assert [k for k, want in SIM_TOTAL_KEYS.items() if _number_off(totals[k], reference_run["totals"][want])] == []
+
+    # The command the page prints reproduces exactly the reference run's inputs.
+    argv = shlex.split(json.loads(_ts_literal(SIM_TS, "SIM_COMMAND")))
+    assert argv[:3] == ["python", "-m", "sim.simulate"]
+    assert vars(parser().parse_args([*argv[3:], "--out", os.devnull])) == vars(sim_reference.reference_args())
+    # The line it prints is the one web/tests/story-model.test.mjs pins `simulateLine` to.
+    line = next(x for x in table(reference_run).splitlines() if x.startswith("by GPU-hours"))
+    assert f'"{line}"' in (WEB / "tests" / "story-model.test.mjs").read_text(encoding="utf-8"), line
+
+    # The four answers the chapter lists are the report's, in its order, and "more than half" idle is its threshold.
+    from ratchet.cost import IDLE_SHARE, RECOMMENDATIONS
+
+    model = (STORY / "bill-model.ts").read_text(encoding="utf-8")
+    listed = re.findall(r'^  \{ key: "(\w+)", when: "([^"]+)" \},$', model, re.M)
+    assert tuple(k for k, _ in listed) == RECOMMENDATIONS
+    assert IDLE_SHARE == 0.5 and "idle more than half" in dict(listed)["scale_to_zero"]
+
+
+@pytest.mark.req("FR-7.23", "FR-7.24")
+@pytest.mark.skipif(not _node_strips_types(), reason="needs Node 22.6 or later (the CI web job runs npm test)")
+@pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")
+def test_story_page_helpers():
+    """The story page's pure helpers under Node's test runner (web/tests/story-model.test.mjs, `npm test`): the honest
+    bill renders the reference report and a live one through the same code, keeps a missing field unknown rather than
+    zero, prints the break-even and crossover formulas with numbers that satisfy them, and rebuilds the simulator's
+    GPU-hour line exactly; the trust chapter's redaction list and event text read correctly."""
+    r = subprocess.run(
+        [NODE, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/story-model.test.mjs"],
+        cwd=WEB,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert re.search(r"^# fail 0$", r.stdout, re.M) and not re.search(r"^# pass 0$", r.stdout, re.M), r.stdout[-2000:]
+
+
+def _invariants() -> dict[int, str]:
+    """CLAUDE.md's numbered invariants: number -> its text."""
+    text = (REPO / "CLAUDE.md").read_text(encoding="utf-8").split("## Invariants", 1)[1].split("\n## ", 1)[0]
+    return {int(n): body for n, body in re.findall(r"^(\d+)\. (.+)$", text, re.M)}
+
+
+@pytest.mark.req("FR-7.24", "INV-14")
+def test_story_trust_claims_match_code(gw_env, tmp_path, capsys, monkeypatch):
+    """The story's "Built to be checked" chapter claims only what the code does (web/src/pages/landing/trust-model.ts and
+    sections/checked.tsx): the files it names exist; it lists exactly the redaction rules; its gate numbers are
+    `ReleasePolicy`'s defaults; the invariants it cites say what it says; the routes it names exist; its BOM commands
+    work as printed (a signed adapter BOM fetched from a mock gateway verifies offline with the published key and prints
+    the line the page shows, and an edited one prints the failure it shows); CI runs the traceability command it prints;
+    its link lands on the dashboard's redactor; and it mentions v0.5 work only where the code and the PRD have it."""
+    from ratchet import bom, redact
+    from ratchet.release import ReleasePolicy
+
+    model = STORY / "trust-model.ts"
+    chapter = (STORY / "sections" / "checked.tsx").read_text(encoding="utf-8")
+    files = json.loads(_ts_literal(model, "TRUST_FILES"))
+    assert files and [f for f in files if not (REPO / f).is_file()] == []
+    assert json.loads(_ts_literal(model, "TRUST_REDACTS")) == [label for label, _, _ in redact.PATTERNS]
+    # "With redaction on, as it is by default": the setting's default, with nothing in the environment.
+    monkeypatch.delenv("RATCHET_REDACT_PII", raising=False)
+    assert "as it is by default" in chapter and Settings().redact_pii is True
+    gate = json.loads(_ts_literal(model, "TRUST_GATE"))
+    assert set(gate) == {"min_precision", "tolerance", "min_audits", "live_floor"}
+    assert gate == {k: getattr(ReleasePolicy(), k) for k in gate}
+
+    # Each invariant the chapter cites is the one it means.
+    inv = _invariants()
+    cited = {int(n) for group in re.findall(r'"invariants? ([\d and,]+)"', chapter) for n in re.findall(r"\d+", group)}
+    meant = {
+        4: "Champion vs challenger",
+        6: "Precision is measured on held-out data",
+        12: "Redact before storing",
+        14: "A BOM is written once",
+    }
+    assert cited == set(meant)
+    assert all(meant[n] in inv[n] for n in cited), {n: inv[n][:60] for n in cited}
+
+    # Every route the chapter names is served (path parameters compared by position).
+    gw = gw_env(RATCHET_BOM_SIGNING_KEY=bom.keygen()[0])
+    shape = {(m, re.sub(r"\{[^}]+\}", "{}", r.path)) for r in gw.app.routes if hasattr(r, "methods") for m in r.methods}
+    named = re.findall(r'"(GET|POST) (/[^"]+)"', chapter)
+    assert named and [n for n in named if (n[0], re.sub(r"\{[^}]+\}", "{}", n[1])) not in shape] == []
+    assert ("GET", "/dashboard") in shape and 'to="/dashboard#redactor"' in chapter
+    assert 'id="redactor"' in (DASHBOARD / "trust.tsx").read_text(encoding="utf-8")
+
+    # The BOM commands, as printed: fetch an adapter's BOM, then verify it offline with the published public key.
+    c = TestClient(gw.app)
+    gw.rt.simulate_day(600, "tickets")
+    fetch = json.loads(_ts_literal(model, "BOM_FETCH"))
+    m = re.fullmatch(r"curl -s localhost:\d+(/\S+) > (\S+)", fetch)
+    assert m, fetch
+    doc = c.get(m[1])
+    assert doc.status_code == 200, doc.text
+    public = c.get("/ratchet/bom/public-key").json()
+    path = tmp_path / m[2]
+    path.write_text(doc.text, encoding="utf-8")
+    argv = json.loads(_ts_literal(model, "BOM_VERIFY")).replace("<published key>", public["public_key"]).split()
+    assert argv[:3] == ["python", "-m", "ratchet.bom"] and argv[4] == m[2]
+    argv[4] = str(path)
+    capsys.readouterr()
+    assert bom.main(argv[3:]) == 0
+    ok = json.loads(_ts_literal(model, "BOM_OK")).replace("<key id>", public["key_id"])
+    assert capsys.readouterr().out == ok + "\n"
+    edited = doc.json()
+    edited["manifest"]["training"]["examples"] += 1
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    assert bom.main(argv[3:]) == 1
+    assert capsys.readouterr().out == json.loads(_ts_literal(model, "BOM_TAMPERED")) + "\n"
+
+    # CI runs the traceability check the chapter prints, and the gate tests it points to exist.
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f"run: {json.loads(_ts_literal(model, 'REQTRACE_CHECK'))}\n" in ci
+    gate_tests = json.loads(_ts_literal(model, "GATE_TESTS")).split()
+    assert gate_tests[:4] == ["python", "-m", "pytest", "-q"] and (REPO / gate_tests[4]).is_file()
+
+    # "In v0.5" only for work the PRD plans for v0.5 and whose foundations are in the code; no evidence tour before
+    # ratchet/tour.py exists.
+    prd = (REPO / "docs" / "PRD.md").read_text(encoding="utf-8")
+    planned = (("FR-16.3", "Certified precision"), ("FR-16.4", "Committed training sets"), ("FR-15.5", "savings receipts"))
+    for rid, words in planned:
+        assert re.search(rf"^\| {re.escape(rid)} \| [^|]*{words}", prd, re.M), rid
+    foundations = ("ratchet/stats.py", "ratchet/merkle.py", "tests/test_stats.py", "tests/test_provenance.py")
+    assert all((REPO / f).is_file() for f in foundations)
+    assert "tour" not in chapter.lower() or (REPO / "ratchet" / "tour.py").is_file()
+
+
 # ---------- gateway: mock-only controls ----------
 @pytest.mark.req("INV-8")
 def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
