@@ -4,6 +4,9 @@
   and for any OpenAI-compatible model. Each records every call, so a test can assert on exactly what crossed the
   boundary (which rows reached the trainer, which golden rows were scored, what the teacher was asked).
 - `FakeClock`: a clock the test moves by hand (`Guard(..., clock=FakeClock())`), never `time.sleep`.
+- `FakeOpenAIServer`, `RecordingRun`, `AppTransport`: the live-mode boundary without the network. An OpenAI-compatible
+  server (Token Factory, or vLLM with runtime LoRA loading) behind `httpx.MockTransport`; a stand-in for
+  `subprocess.run`; and a transport that sends an `httpx.Client`'s requests to the gateway app in-process.
 - `_version`, `_audit`, `_shadow`, `_examples`, `_repeat`: put versions, teacher audits, shadow answers and teacher
   examples into a ledger through its public writers (`create_version` + `set_version`, `log_request`, `add_example`),
   the way the router and the release gate write them, so tests exercise the real queries.
@@ -14,12 +17,15 @@ Import with `from fakes import ...`: pytest puts tests/ on `sys.path` because it
 from __future__ import annotations
 
 import copy
+import json
+import subprocess
 import threading
 from collections.abc import Callable, Collection, Mapping
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
 import httpx
+from fastapi.testclient import TestClient
 
 from ratchet import licenses
 from ratchet.ledger import Ledger
@@ -149,6 +155,114 @@ class RecordingProvider:
 def _nth(value: Any, i: int) -> Any:
     """Item i of a scripted list (cycling), or the value itself for every choice."""
     return value[i % len(value)] if isinstance(value, list) else value
+
+
+# ---------- the live-mode boundary: HTTP endpoints and commands ----------
+class HttpCall(NamedTuple):
+    method: str
+    url: str
+    headers: dict[str, str]  # lower-case names
+    json: Any  # the parsed JSON body, or None
+
+
+class FakeOpenAIServer:
+    """An OpenAI-compatible server behind `httpx.MockTransport`: Token Factory, or vLLM with runtime LoRA loading.
+
+    `POST .../chat/completions` returns `n` choices with `text` (or `text(body)`), token logprobs only when the body
+    asks for them (`logprob=None` plays a server that never returns them), and usage of `in_tokens` and `out_tokens`
+    per choice. `POST .../load_lora_adapter` answers `load(body)` as `(status, text)`, 200 by default. `GET .../models`
+    lists `models`. Anything else is a 404, as on a server without that route. Every request is recorded as an
+    `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
+    Pass `server.transport` to `OpenAICompatProvider(transport=...)`, `Runtime(transports=...)` or `httpx.Client`."""
+
+    def __init__(
+        self,
+        text: str | Callable[[dict[str, Any]], str] = "ok",
+        logprob: float | None = -0.05,
+        *,
+        in_tokens: int = 10,
+        out_tokens: int = 5,
+        load: Callable[[dict[str, Any]], tuple[int, str]] | None = None,
+        models: Collection[str] = (),
+    ) -> None:
+        self.text = text
+        self.logprob = logprob
+        self.in_tokens = in_tokens
+        self.out_tokens = out_tokens
+        self.load = load or (lambda body: (200, ""))
+        self.models = list(models)
+        self.calls: list[HttpCall] = []
+        self._lock = threading.Lock()
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self)
+
+    def calls_to(self, suffix: str) -> list[HttpCall]:
+        with self._lock:
+            return [c for c in self.calls if httpx.URL(c.url).path.endswith(suffix)]
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        with self._lock:
+            self.calls.append(HttpCall(request.method, str(request.url), dict(request.headers), body))
+        path = request.url.path
+        if request.method == "POST" and path.endswith("/chat/completions"):
+            return httpx.Response(200, json=self.completion(body))
+        if request.method == "POST" and path.endswith("/load_lora_adapter"):
+            status, text = self.load(body)
+            return httpx.Response(status, text=text)
+        if request.method == "GET" and path.endswith("/models"):
+            return httpx.Response(200, json={"object": "list", "data": [{"id": m, "object": "model"} for m in self.models]})
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    def completion(self, body: dict[str, Any]) -> dict[str, Any]:
+        text = self.text(body) if callable(self.text) else self.text
+        n = int(body.get("n") or 1)
+        lp = None
+        if body.get("logprobs") and self.logprob is not None:
+            lp = {"content": [{"token": "t", "logprob": self.logprob}] * self.out_tokens}
+        choice = {"message": {"role": "assistant", "content": text}, "logprobs": lp, "finish_reason": "stop"}
+        return {
+            "object": "chat.completion",
+            "model": body["model"],
+            "choices": [{"index": i, **choice} for i in range(n)],
+            "usage": {"prompt_tokens": self.in_tokens, "completion_tokens": self.out_tokens * n},
+        }
+
+
+class RecordingRun:
+    """Stands in for `subprocess.run`: records each command (argv list) and its keyword arguments and runs nothing.
+    `on_call(argv)` runs first, to look at the world at that moment or to raise as a failing command would."""
+
+    def __init__(self, on_call: Callable[[list[str]], None] | None = None) -> None:
+        self.on_call = on_call
+        self.calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    @property
+    def commands(self) -> list[str]:
+        return [" ".join(argv) for argv, _ in self.calls]
+
+    def __call__(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        self.calls.append((list(args), dict(kwargs)))
+        if self.on_call is not None:
+            self.on_call(list(args))
+        return subprocess.CompletedProcess(list(args), 0)
+
+
+class AppTransport(httpx.BaseTransport):
+    """Sends each request of an `httpx.Client` to an ASGI app in-process, through Starlette's `TestClient`, so code
+    that takes an `httpx.Client` (the Scout CLI's `http_caller`) talks to the real gateway with no network. Recent
+    Starlette builds `TestClient` on its httpx fork (httpx2) when installed, so it is not always an `httpx.Client`."""
+
+    def __init__(self, app: Any) -> None:
+        self.client = TestClient(app)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+        r = self.client.request(request.method, str(request.url), headers=headers, content=request.read())
+        keep = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-length", "content-encoding")]
+        return httpx.Response(r.status_code, headers=keep, content=r.content, request=request)
 
 
 class FakeClock:

@@ -1,12 +1,14 @@
-"""Regression tests for issues found while documenting v0.1, and the v0.4 hardening (privacy, auth, streaming, BOMs)."""
+"""Regression tests for issues found while documenting v0.1, the v0.4 hardening (privacy, auth, streaming, BOMs), and
+issues found while testing the live entry points offline (v0.5)."""
 
 import hashlib
 import sqlite3
 
 import httpx
 import pytest
+from fakes import FakeOpenAIServer, RecordingRun, _version
 
-from ratchet import tasks
+from ratchet import live, tasks
 from ratchet.config import Settings
 from ratchet.ledger import DAY_SECONDS, Ledger
 from ratchet.providers import Completion
@@ -386,3 +388,25 @@ def test_redact_preview_endpoint(gw_env):
     assert r == {"text": "I'm [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": True}
     assert c.post("/ratchet/redact", json={"text": "x" * 5001}).status_code == 400
     assert c.post("/ratchet/redact", json={}).status_code == 400
+
+
+@pytest.mark.req("FR-4.6", "NFR-2")
+def test_live_night_checks_the_student_endpoint_before_paid_work(tmp_path, monkeypatch):
+    """Without RATCHET_STUDENT_BASE, `NebiusTrainer` used to sync the data and run the GPU job before finding it had no
+    endpoint to load the adapter into, and `ratchet.live reload` failed on an empty URL. Both now stop first, clearly."""
+    monkeypatch.setenv("RATCHET_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("RATCHET_SYNC_CMD", "aws s3 sync ./data s3://bucket/ratchet")
+    s = Settings(mode="live", student_base="", student_api_key="")
+    run, vllm = RecordingRun(), FakeOpenAIServer()
+    trainer = live.NebiusTrainer(s, run=run, http=httpx.Client(transport=vllm.transport))
+    rows = [{"task": "default", "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}]
+    with pytest.raises(RuntimeError, match="RATCHET_STUDENT_BASE is not set"):
+        trainer.train(rows, "base-model", "student-v1")
+    assert run.calls == [] and vllm.calls == [] and not (tmp_path / "data").exists()  # no sync, no job, nothing written
+
+    led = Ledger(":memory:")
+    assert live.reload_adapters(s, led) == []  # nothing to load: not an error
+    _version(led, "live")
+    with pytest.raises(RuntimeError, match="RATCHET_STUDENT_BASE is not set"):
+        live.reload_adapters(s, led, http=httpx.Client(transport=vllm.transport))
+    assert vllm.calls == []

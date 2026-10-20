@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 164 tests, ~27 s
+pytest -q                                                          # 179 tests, ~30 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -137,7 +137,7 @@ Use **one worker**. The ledger is a single SQLite connection inside the process,
 */5 * * * * cd /opt/ratchet && . ./.env && python -m ratchet.live tick  >> /var/log/ratchet-tick.log 2>&1
 ```
 
-`python -m ratchet.live night` runs `run_night` with `NebiusTrainer` and `LiveEvaluator` (judge = `RATCHET_JUDGE_MODEL`), then prints the last 10 events. `tick` runs `ReleaseGate.tick()` once.
+`python -m ratchet.live night` runs `run_night` with `NebiusTrainer` and `LiveEvaluator` (judge = `RATCHET_JUDGE_MODEL`), then prints the last 10 events. `tick` runs `ReleaseGate.tick()` once. Without `RATCHET_STUDENT_BASE`, `night` stops before syncing or starting the training job, and `reload` stops with the same message (nothing to reload is not an error). The same commands run offline in `tests/test_live.py`, against fake endpoints, before they run here.
 
 ## 3. Keeping the demo alive for judging (Dec 1–15, 2026)
 

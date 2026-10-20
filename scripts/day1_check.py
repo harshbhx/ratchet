@@ -29,14 +29,16 @@ PROMPT = [
 ]
 
 
-def main() -> int:
+def main(client: httpx.Client | None = None) -> int:
+    """Returns the exit code: 0 all good, 1 a check failed, 2 no key. `client` replaces the network (tests only)."""
     if not KEY:
         print("Set NEBIUS_API_KEY first.")
         return 2
-    c = httpx.Client(timeout=120, headers={"Authorization": f"Bearer {KEY}"})
+    c = client if client is not None else httpx.Client(timeout=120)
+    auth = {"Authorization": f"Bearer {KEY}"}
     ok = True
 
-    ids = {m["id"] for m in c.get(f"{BASE}/models").json().get("data", [])}
+    ids = {m["id"] for m in c.get(f"{BASE}/models", headers=auth).json().get("data", [])}
     for m in WANT:
         found = m in ids
         ok &= found
@@ -49,6 +51,7 @@ def main() -> int:
             continue
         r = c.post(
             f"{BASE}/chat/completions",
+            headers=auth,
             json={
                 "model": model,
                 "messages": PROMPT,

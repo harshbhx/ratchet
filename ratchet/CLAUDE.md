@@ -6,7 +6,7 @@
 
 0. Pinned task (`tasks.get(name).pinned`) → `_pinned()`: teacher answers, request logged, **no** `add_example`, no student/audit/shadow. Return.
 1. `_pick_version()`: canary gets `traffic_pct`% of requests, otherwise live; `None` on cold start → teacher.
-2. Student: `n = Settings.samples` samples at temperature 0.7 with logprobs → `confidence.score()`.
+2. Student: `n = Settings.samples` samples with `confidence.STUDENT_SAMPLING` (temperature 0.7, logprobs on) → `confidence.score()`. The golden eval (`LiveEvaluator`, `MockFleet`) uses the same constant; change sampling in that constant, never inline.
 3. Serve the student if `confidence >= threshold(version, model)`. The threshold comes from the version's eval (calibrated); the untuned fallback model uses `Settings.confidence_threshold`.
 4. With probability `audit_rate`, the teacher also answers a served request (quality signal + free training data).
 5. Otherwise, or if the student call raised, escalate: teacher answers, and `_call_teacher` stores the example with its license, after `redact_messages` / `redact` replace identifiers (when `Settings.redact_pii`) and with the placeholder count.
@@ -51,6 +51,8 @@ To add a teacher, add it to `REGISTRY` with its real license name and URL. `CLOS
 ## Gateway (`gateway.py`)
 
 `Runtime` wires everything; `Runtime.reset()` rebuilds it (mock reset endpoint) and runs the mock warm-up (`RATCHET_MOCK_WARMUP_DAYS`) if set. Mock mode imports from `sim/` and keeps three seeded streams (`tickets`, `research`, `mixed`). Live mode uses `Ledger(auto_day=True)` and `ReleasePolicy.from_env()`. `rt.tick()` runs `gate.tick()` under `gate_lock`.
+
+`Runtime(settings, transports={"teacher": ..., "student": ...})` puts an `httpx.BaseTransport` under the live providers, so tests (and later items) run live mode offline; any other key raises, and mock mode ignores it. The other live entry points take their network and commands the same way, as default arguments that production code never passes: `OpenAICompatProvider(transport=)`, `live.load_adapter(client=)`, `NebiusTrainer(run=, http=)`, `live.reload_adapters(http=)`, `live.main(argv, provider_factory=, run=, http=)`, `scout.agents.http_caller(client=)` and the Scout CLI's `main(argv, client)`. `tests/test_live.py` uses them; keep new live code testable the same way.
 
 Pages: the React build in `web/dist` (source in `/web`, see [web/CLAUDE.md](../web/CLAUDE.md)) at `/`, `/scout` and `/dashboard`. The hand-written static pages (`web/landing.html`, `web/scout.html`, `dashboard.html`) are served at `/lite*` and as a fallback when the build is missing. Both are package data (`pyproject.toml`).
 

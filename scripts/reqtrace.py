@@ -499,7 +499,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-1.8": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat"),
     "FR-1.9": ("ratchet.gateway:landing", "ratchet.gateway:scout_page", "ratchet.gateway:dashboard"),
     # 6.2 Cascade and confidence
-    "FR-2.1": ("ratchet.router:Ratchet._sample",),
+    "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),
     "FR-2.2": ("ratchet.confidence:score",),
     "FR-2.3": ("ratchet.router:Ratchet.threshold", "ratchet.nightschool.evaluate:cascade_eval"),
     "FR-2.4": ("ratchet.router:Ratchet.handle",),
@@ -520,11 +520,21 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-4.2": ("ratchet.nightschool.orchestrate:run_night",),
     "FR-4.3": ("ratchet.ledger:Ledger.add_example", "ratchet.nightschool.dataset:rows"),
     "FR-4.4": ("ratchet.nightschool.orchestrate:run_night",),
-    "FR-4.5": ("ratchet.nightschool.train:main", "deploy/Dockerfile.train"),
+    "FR-4.5": (
+        "ratchet.nightschool.train:main",
+        "ratchet.nightschool.train:parse_args",
+        "ratchet.nightschool.train:manifest",
+        "deploy/Dockerfile.train",
+    ),
     "FR-4.6": ("ratchet.live:NebiusTrainer", "deploy/train_job.sh"),
     "FR-4.7": ("ratchet.redact:redact", "ratchet.redact:redact_messages", "ratchet.router:Ratchet._call_teacher"),
     # 6.5 Evaluation
-    "FR-5.1": ("ratchet.nightschool.evaluate:cascade_eval", "ratchet.nightschool.evaluate:LiveEvaluator.evaluate"),
+    "FR-5.1": (
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.nightschool.evaluate:LiveEvaluator.evaluate",
+        "ratchet.confidence:STUDENT_SAMPLING",
+        "sim.mock_models:MockFleet.evaluate",
+    ),
     "FR-5.2": ("ratchet.nightschool.evaluate:cascade_eval", "ratchet.confidence:calibrate_threshold"),
     "FR-5.3": ("ratchet.nightschool.evaluate:cascade_eval",),
     "FR-5.4": ("ratchet.nightschool.orchestrate:run_night",),
@@ -548,7 +558,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-7.7": ("ratchet.ledger:Ledger.stats_by_task", "web/src/pages/dashboard/tables.tsx"),
     "FR-7.8": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_reset", "web/src/pages/dashboard/controls.tsx"),
     # 6.8 Live operations on Nebius
-    "FR-8.1": ("ratchet.providers:OpenAICompatProvider",),
+    "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
     "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold"),
     "FR-8.4": ("ratchet.live:main",),
@@ -608,7 +618,6 @@ EXEMPT: dict[str, Exempt] = {
     "FR-8.2": Exempt("live", "deploy/student_endpoint.sh", "needs a vLLM Serverless Endpoint with runtime LoRA loading"),
     "FR-8.4": Exempt("live", "docs/RUNBOOK.md", "runs against the live ledger, a Serverless Job and the student endpoint"),
     "FR-8.5": Exempt("live", "docs/DAY1.md", "the script is the live check; it needs NEBIUS_API_KEY"),
-    "FR-9.4": Exempt("manual", ".github/workflows/ci.yml", "CI runs `python -m sim.simulate` as a smoke test on every push"),
     "FR-10.3": Exempt(
         "live", "docs/DEPLOY_NEBIUS_VM.md", "Tavily needs TAVILY_API_KEY; checked when the demo VM switches to live"
     ),
@@ -627,13 +636,8 @@ INITIAL_KNOWN_GAPS: frozenset[str] = frozenset(
         "FR-11.1", "FR-11.2", "NFR-1", "NFR-3", "INV-2", "INV-3", "INV-4", "INV-5", "INV-6", "INV-8",
     }
 )  # fmt: skip
-# The gaps still open. Remove an id when a test marks it; the check fails until you do.
-KNOWN_GAPS: frozenset[str] = frozenset(
-    {
-        "FR-4.5", "FR-4.6", "FR-5.1", "FR-5.5", "FR-8.2", "FR-8.4", "FR-8.5", "FR-9.6", "FR-10.6", "FR-11.1",
-        "FR-11.2",
-    }
-)  # fmt: skip
+# The gaps still open. Remove an id when a test marks it; the check fails until you do. All closed: keep it empty.
+KNOWN_GAPS: frozenset[str] = frozenset()
 
 
 # ---------------------------------------------------------------------------

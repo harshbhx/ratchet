@@ -44,13 +44,16 @@ class Provider(Protocol):
 
 
 class OpenAICompatProvider:
-    """Minimal OpenAI-compatible client (Token Factory, vLLM)."""
+    """Minimal OpenAI-compatible client (Token Factory, vLLM).
 
-    def __init__(self, base_url: str, api_key: str, timeout: float = 120.0):
+    `transport` replaces the network (tests pass `httpx.MockTransport`); the default sends real requests."""
+
+    def __init__(self, base_url: str, api_key: str, timeout: float = 120.0, transport: httpx.BaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
         self.client = httpx.Client(
             timeout=timeout,
             headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            transport=transport,
         )
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):

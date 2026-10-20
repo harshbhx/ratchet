@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 164 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_contract, test_traceability), ~27 s
+pytest -q                     # 179 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_contract, test_traceability, test_live), ~30 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -16,25 +16,26 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_release.py` | 9 (8 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 23 |
+| `tests/test_hardening.py` | 24 |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| **Total** | **164** |
+| `tests/test_live.py` | 14 |
+| **Total** | **179** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`): the whole loop over simulated days, the gateway API, the HTTP clients, and Scout end to end. One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`, `tests/test_live.py`): the whole loop over simulated days, the gateway API, the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
 
-Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) are in `tests/conftest.py`; the recording provider, trainer and evaluator, `FakeClock` and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
+Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) are in `tests/conftest.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
 
 Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
-None of these touch Token Factory or a GPU. Live behaviour is checked with `scripts/day1_check.py` and the steps in [DEPLOYMENT.md](DEPLOYMENT.md#5-verification-after-deploy).
+None of these touch Token Factory or a GPU. Live behaviour is checked with `scripts/day1_check.py` and the steps in [DEPLOYMENT.md](DEPLOYMENT.md#5-verification-after-deploy); `tests/test_live.py` runs the same code paths offline first.
 
 ## What each test covers
 
@@ -102,7 +103,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 
 ### `tests/test_hardening.py`
 
-Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`.
+Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)).
 
 The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
 
@@ -123,6 +124,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_v03_database_gets_v04_columns` | A v0.3 database file gets `client`, `redactions` and `bom` on open |
 | `test_healthz_stays_public_when_keys_are_on` | `/healthz` answers 200 while `/v1/models` needs a key |
 | `test_redact_preview_endpoint` | `POST /ratchet/redact` returns the redacted text and counts; over-long or missing text gets 400 |
+| `test_live_night_checks_the_student_endpoint_before_paid_work` | Without `RATCHET_STUDENT_BASE`, `NebiusTrainer.train` raises before the sync, the training job or any file write; `reload` with adapters to load raises the same clear error (and with none, returns an empty list) |
 
 ### `tests/test_scout.py`
 
@@ -204,11 +206,49 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_invariants_keep_their_list_numbers` | INV-n is the list number; a gap in the numbering is one error; continuation lines join the item |
 | `test_clip_keeps_table_cells_valid` | Matrix text is at most 100 characters, ends in an ellipsis, never leaves an open code span or half an escaped pipe |
 
+### `tests/test_live.py`
+
+The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: model endpoints are `FakeOpenAIServer` behind `httpx.MockTransport`, commands go to `RecordingRun`, and the Scout CLI reaches the gateway through `AppTransport`.
+
+| Test | Covers |
+|---|---|
+| `test_nebius_trainer_writes_syncs_trains_and_hot_loads` | FR-4.6, FR-8.2, US-10: commands in order (`RATCHET_SYNC_CMD`, then `bash deploy/train_job.sh student-v1`, each with `check=True`); `night/train.jsonl` holds exactly the rows and is on disk before the sync; then `POST {root}/v1/load_lora_adapter` with `lora_name`, `lora_path` under `/data/adapters` and the endpoint's bearer token. `{version}` and `{data}` are substituted, `RATCHET_ADAPTER_ROOT` moves the path, no sync command means no sync, a failed job stops before loading, and an empty `student_base` raises. `deploy/train_job.sh` mounts the bucket at `/data`, reads `/data/night/train.jsonl` and writes `/data/adapters/${VERSION}`, the paths the trainer uses |
+| `test_load_adapter_tolerates_already_loaded_and_raises_otherwise` | FR-8.2: the vLLM root is the base URL without `/v1` (with or without a trailing slash, or no `/v1` at all); no token, no header; a 400 saying "already" (any case) is tolerated; any other 400, a 401, a 404 (runtime LoRA loading off) and a 500 raise |
+| `test_reload_adapters_loads_live_canary_shadow` | NFR-2: only `live`, `canary` and `shadow` adapters are reloaded, in version order, from `RATCHET_ADAPTER_ROOT`, with the bearer token; one already loaded is skipped over; nothing to reload makes no request; a 503 raises |
+| `test_live_main_tick_reload_night_offline` | FR-8.4, FR-3.6: `python -m ratchet.live tick`, `reload` and `night` against a ledger file with 60 train and 6 golden examples. `night` builds the student and judge clients with the configured bases and keys, runs the training command, hot-loads `student-v1`, samples it on every golden row as in production, asks the judge in JSON mode, admits it to canary and writes `data/boms/student-v1.json`, equal to the stored BOM and signed with `RATCHET_BOM_SIGNING_KEY`. `reload` then loads the canary; no command means `night`, which skips while the release is in flight; an unknown command exits with a message |
+| `test_live_runtime_wiring` | FR-8.1, FR-8.3, FR-1.8, INV-7: the gateway's live `Runtime` with `transports`, over HTTP. A confident student answers from the adapter named by the version, with the endpoint token and `STUDENT_SAMPLING`; an unsure one escalates to the teacher with the Token Factory key and model, and the answer is stored. A 500 from the student falls back to the teacher (`student_error` event); a 500 from the teacher is a 502. Without `student_base`, the hosted Nano on Token Factory answers under the global threshold, not the version's. The mock warm-up never runs in live mode, and an unknown transport key is refused |
+| `test_live_evaluator_uses_production_sampling` | FR-5.1, FR-5.5: one cascade call per golden row with `n = samples` and exactly `STUDENT_SAMPLING`, which is read-only; the judge grades free-text rows only, in JSON mode, with request, reference and candidate; its pass rate is reported; a judge answer that is not a clear `{"score": 1}` (not JSON, a list, a string or 2, no score) scores 0, while fences and reasoning around valid JSON are fine; no judge or no free-text rows means no judge calls |
+| `test_production_and_both_evaluators_share_student_sampling` | FR-5.1, FR-2.1: `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate` send the same sampling arguments, `{"n": 3, **STUDENT_SAMPLING}` |
+| `test_train_parse_args_defaults_and_row_contract` | FR-4.5: `train.py` defaults (epochs, learning rate, rank, sequence length, batch, Mamba projections in the targets), required `--data` and `--out`, the same base model in `config.py`, `train_job.sh` and `student_endpoint.sh`; rows written by Night School load back unchanged (blank lines skipped), end with the teacher's stored answer and carry teacher and license; `train.manifest` (saved as `ratchet_manifest.json`) names the base model and the licenses |
+| `test_scout_cli_over_http` | FR-10.6, FR-1.7: `python -m ratchet.scout` against the mock gateway in-process, with an API key: every agent prints a line, `--max-results` reaches search, citations and the cost summary print, every call is logged under the key's name with its task header (one planner and one writer request); the key also comes from `RATCHET_API_KEY`; a wrong key exits 1 with the 401 on stderr |
+| `test_sim_cli_writes_json_and_table` | FR-9.4: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals and every event, and writes the JSON results with the documented keys |
+| `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
+| `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
+| `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported; an HTTP 500 fails the check (exit 1); every request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; all present exits 0 with "All good." |
+| `test_deploy_scripts_parse_and_dry_run` | FR-11.1, FR-11.2: `bash -n` on every `deploy/**/*.sh`; `DRY_RUN=1 bash deploy/vm/create_vm.sh` prints the subnet, disk and instance `nebius` commands with the project id and `<cloud-init.yaml>` in place of the user data, never the private-repo token; a given subnet skips the lookup; a missing project, missing key file, reserved user name or bad preset stops before any command; `backup.sh` exits 0 in mock mode. Skipped where bash is missing |
+
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
-Not covered by tests yet: `RATCHET_TRUST_PROXY`, the mock warm-up at startup (it runs the same `simulate_day` the tests exercise), and the live-mode BOM file written by `python -m ratchet.live night`.
-
 During development the v0.4 features were also checked end to end against a running gateway with the official OpenAI Python SDK (401 on a wrong key, streaming text identical to the non-streaming answer, the quota cutting one key off at its limit while another kept working, a signed BOM verifying with `python -m ratchet.bom verify` and failing once edited), and the dashboard's Trust and privacy panel with Playwright in light and dark mode at desktop and phone widths.
+
+## Live-path tests
+
+Live mode, the training job, the day-1 check, the Scout CLI and the deploy scripts would otherwise run for the first time on paid Nebius resources. `tests/test_live.py` runs each of them offline first, through seams that are default arguments, so production code passes nothing and talks to the real services:
+
+| Seam | Where | Test double |
+|---|---|---|
+| `transport=` | `OpenAICompatProvider(base_url, api_key, timeout, transport)` | `FakeOpenAIServer(...).transport` (an `httpx.MockTransport`) |
+| `transports=` | `Runtime(settings, transports={"teacher": ..., "student": ...})`, live mode only (other keys raise) | the same; later items drive live mode offline through it |
+| `client=` / `http=` | `load_adapter`, `NebiusTrainer`, `reload_adapters`, `live.main`, `http_caller`, the Scout CLI's `main(argv, client)`, `day1_check.main(client)` | an `httpx.Client` on a fake server, or on `AppTransport(gateway.app)` |
+| `run=` | `NebiusTrainer`, `live.main` (in place of `subprocess.run`) | `RecordingRun` |
+| `provider_factory=` | `live.main` (builds the student and judge clients) | a factory returning providers on fake servers |
+| `argv=` | `sim.simulate.main(argv)`, the Scout CLI | a list |
+
+The student's sampling parameters are one read-only constant, `confidence.STUDENT_SAMPLING` (`temperature` 0.7, `logprobs` on), used by `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate`, so the golden eval samples exactly as production does (FR-5.1) and a test fails if one of them drifts. The judge's free-text candidate is still sampled greedily (TASK-FREE-TEXT-SIMILARITY changes that).
+
+These tests prove the wiring, the order of operations and the failure handling. They do not prove that the real services accept the requests: model ids, `nebius` CLI flags, vLLM's runtime LoRA loading and GPU training stay `untested (live)` in the PRD until the day-1 checks ([DAY1.md](DAY1.md)) and a live run pass.
+
+Found while writing them: without `RATCHET_STUDENT_BASE`, `NebiusTrainer` ran the sync and the paid training job before noticing there was no endpoint to load the adapter into. It now checks first, and `python -m ratchet.live reload` gives the same clear error instead of an httpx URL error (`test_live_night_checks_the_student_endpoint_before_paid_work` in `test_hardening.py`).
 
 ## Contract tests
 
@@ -373,14 +413,14 @@ Writing these docs turned up ten gaps in v0.1. Each one is fixed in v0.1.1 and c
 |---|---|---|---|
 | 1 | Live gateway never advanced `Ledger.day`, so every request landed in one bucket | `Ledger(auto_day=True)` in live mode: day 1 starts at the first logged request, one day per 24 hours | `test_auto_day_counts_days_from_first_request` |
 | 2 | A student HTTP error became a 500 | Student errors fall back to the teacher and log a `student_error` event (1st, 10th, 100th, 1000th). A teacher error returns **502** | `test_student_failure_falls_back_to_teacher`, `test_teacher_failure_returns_502` |
-| 3 | Runtime-loaded LoRA adapters are lost when the endpoint restarts | New command `python -m ratchet.live reload` re-loads live, canary and shadow adapters | Manual (needs a vLLM endpoint); see [RUNBOOK.md](RUNBOOK.md) |
+| 3 | Runtime-loaded LoRA adapters are lost when the endpoint restarts | New command `python -m ratchet.live reload` re-loads live, canary and shadow adapters | `test_reload_adapters_loads_live_canary_shadow` (in `test_live.py`, against a fake vLLM); on a real endpoint, see [RUNBOOK.md](RUNBOOK.md) |
 | 4 | The untuned fallback model was judged with the tuned version's threshold | `Ratchet.threshold(version, model)` uses the global default for `RATCHET_FALLBACK_STUDENT` | `test_fallback_model_uses_default_threshold` |
 | 5 | `alert` events repeated on every tick | One alert per live version | `test_live_alert_fires_once_per_version` |
 | 6 | No schema migration for existing database files | `Ledger._migrate()` adds missing columns on open (`MIGRATIONS` table in `ledger.py`) | `test_old_database_file_is_migrated` |
 | 7 | Stale docstring and column comment | Fixed | n/a |
 | 8 | Unknown `X-Ratchet-Task` values were stored forever in `tasks.REGISTRY` | Unknown names get a temporary whole-text task; names must match `[A-Za-z0-9_.-]{1,64}` | `test_unknown_tasks_do_not_grow_registry` |
 | 9 | `ReleasePolicy` could only be changed in code | `ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` (e.g. `RATCHET_MIN_AUDITS`) | `test_policy_from_env` |
-| 10 | Unsloth LoRA targets might miss Nemotron-H Mamba layers | `train.py --targets` (default adds `in_proj,out_proj`); confirm names on day 1 | Manual (GPU) |
+| 10 | Unsloth LoRA targets might miss Nemotron-H Mamba layers | `train.py --targets` (default adds `in_proj,out_proj`); confirm names on day 1 | The default: `test_train_parse_args_defaults_and_row_contract`; the module names: manual (GPU) |
 
 Still open: `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` run without a shell, so pipes and `&&` do not work; wrap them in a script.
 
@@ -433,6 +473,7 @@ To change behaviour:
 - Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`); Night School rules in `test_nightschool.py`; release-gate and router release behaviour in `test_release.py`. Set up states with the builders in `tests/fakes.py` (`_version`, `_audit`, `_shadow`, `_examples`) and fake models with `RecordingProvider`, `RecordingTrainer` and `RecordingEvaluator`, rather than new local helpers.
 - A change to what clients or the dashboard see (a status code, a `/ratchet/stats` key, cost accounting) goes in `test_contract.py`. New stats keys also go in `tests/fixtures/stats_keys.json`; existing ones stay.
 - Scout, the research world and the guard go in `test_scout.py`. Use the `gw` fixture (mock gateway, no warm-up) and fake clocks for the guard.
+- Live mode, CLIs and deploy scripts go in `test_live.py`. Pass the seams ([Live-path tests](#live-path-tests)) instead of monkeypatching `httpx` or `subprocess`, and set every `Settings` value and environment variable the test depends on.
 - Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests. The exception is the pinned reference run; reuse the `reference_run` fixture instead of starting another 10-day simulation.
 - A new `Ledger.add_example` call under `ratchet/` needs a reviewed edit to `ALLOWED_ADD_EXAMPLE_CALLERS` in `test_nightschool.py`.
 - Never call real APIs in tests. Use `httpx.MockTransport` as in `test_openai_compat_provider_parses_logprobs_and_usage`.

@@ -56,11 +56,22 @@ MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
 
 
-class Runtime:
-    """Wires settings, ledger, providers and the release gate together."""
+TRANSPORT_KEYS = ("teacher", "student")
 
-    def __init__(self, settings: Settings | None = None):
+
+class Runtime:
+    """Wires settings, ledger, providers and the release gate together.
+
+    `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ...}, each an
+    `httpx.BaseTransport` such as `httpx.MockTransport`), so live mode can run offline in tests. Mock mode has no HTTP
+    providers and ignores it."""
+
+    def __init__(self, settings: Settings | None = None, transports: dict[str, httpx.BaseTransport] | None = None):
+        unknown = set(transports or {}) - set(TRANSPORT_KEYS)
+        if unknown:
+            raise ValueError(f"unknown transport keys {sorted(unknown)}; use {list(TRANSPORT_KEYS)}")
         self.settings = settings or Settings()
+        self.transports = dict(transports or {})
         self.reset()
 
     def reset(self) -> None:
@@ -81,9 +92,9 @@ class Runtime:
             self.guard = Guard(None, 10 * s.scout_runs_per_hour)
         else:
             self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True)
-            teacher = OpenAICompatProvider(s.teacher_base, s.teacher_api_key)
+            teacher = OpenAICompatProvider(s.teacher_base, s.teacher_api_key, transport=self.transports.get("teacher"))
             if s.student_base:
-                student = OpenAICompatProvider(s.student_base, s.student_api_key)
+                student = OpenAICompatProvider(s.student_base, s.student_api_key, transport=self.transports.get("student"))
 
                 def resolver(v: Version):
                     return student, v.adapter_uri  # vLLM serves each LoRA adapter under its own name

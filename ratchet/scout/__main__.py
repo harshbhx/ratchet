@@ -13,21 +13,24 @@ import argparse
 import os
 import sys
 
+import httpx
+
 from .agents import Scout, http_caller
 from .search import MockSearch, TavilySearch
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, client: httpx.Client | None = None) -> int:
+    """Returns the exit code. `client` replaces the HTTP client that talks to the gateway (tests only)."""
     ap = argparse.ArgumentParser(description="Scout: multi-agent research through Ratchet")
     ap.add_argument("question")
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--api-key", default=os.environ.get("RATCHET_API_KEY", "unused"))
     ap.add_argument("--max-results", type=int, default=4)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     key = os.environ.get("TAVILY_API_KEY", "")
     search = TavilySearch(key) if key else MockSearch()
-    scout = Scout(http_caller(args.base_url, args.api_key), search, max_results=args.max_results)
+    scout = Scout(http_caller(args.base_url, args.api_key, client=client), search, max_results=args.max_results)
 
     def show(ev: dict) -> None:
         if ev["type"] == "start":
@@ -57,8 +60,9 @@ def main() -> None:
         scout.run(args.question, show, mode="client")
     except Exception as e:  # noqa: BLE001
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
-        sys.exit(1)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

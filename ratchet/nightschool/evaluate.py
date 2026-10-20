@@ -1,8 +1,9 @@
 """Golden-set evaluation and per-version threshold calibration.
 
 For each held-out golden example the student is sampled exactly as in production
-(n samples + confidence score). From the (confidence, correct) pairs we pick the lowest
-threshold whose served answers reach the target precision, then report:
+(n samples with `confidence.STUDENT_SAMPLING` + confidence score). From the (confidence,
+correct) pairs we pick the lowest threshold whose served answers reach the target
+precision, then report:
   precision = agreement with the teacher among answers it would serve
   coverage  = share of golden requests it would serve (= expected savings)
 Structured fields are compared exactly against the teacher's answer, so there is no judge
@@ -16,7 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .. import tasks
-from ..confidence import calibrate_threshold, score
+from ..confidence import STUDENT_SAMPLING, calibrate_threshold, score
 from ..providers import Completion, Provider
 
 SampleFn = Callable[[list[dict[str, Any]], int], list[Completion]]
@@ -85,7 +86,7 @@ class LiveEvaluator:
 
     def evaluate(self, adapter_uri: str, golden_rows: list[dict[str, Any]]) -> dict[str, Any]:
         def sample(prompt, n):
-            return self.student.complete(prompt, adapter_uri, n=n, temperature=0.7, logprobs=True)
+            return self.student.complete(prompt, adapter_uri, n=n, **STUDENT_SAMPLING)
 
         res = cascade_eval(sample, golden_rows, self.samples, self.target_precision)
         free_text = [r for r in golden_rows if not tasks.get(r["task"]).compare_keys]

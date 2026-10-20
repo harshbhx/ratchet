@@ -106,8 +106,8 @@ def parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main() -> None:
-    args = parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parser().parse_args(argv)
     if args.drift_day == 0:
         args.drift_day = None
     res = run(args)

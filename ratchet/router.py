@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import licenses, tasks
-from .confidence import score
+from .confidence import STUDENT_SAMPLING, score
 from .config import Settings
 from .ledger import Ledger, Version
 from .providers import Completion, Provider, approx_tokens
@@ -81,7 +81,7 @@ class Ratchet:
 
     def _sample(self, version: Version, messages: list[dict[str, Any]]) -> tuple[list[Completion], float, str]:
         provider, model = self.resolve_student(version)
-        samples = provider.complete(messages, model, n=self.s.samples, temperature=0.7, logprobs=True)
+        samples = provider.complete(messages, model, n=self.s.samples, **STUDENT_SAMPLING)
         if not samples:
             raise RuntimeError("student returned no choices")
         cost = self.s.price("student").cost(samples[0].in_tokens, sum(s.out_tokens for s in samples))
