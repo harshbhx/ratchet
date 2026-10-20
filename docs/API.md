@@ -615,6 +615,7 @@ The cost report for every ledger day, or for the last `days` days (1 to 36,500; 
 - `recommendation` is `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data` (rules in [ARCHITECTURE.md](ARCHITECTURE.md#the-report-costpy)), with a plain-English `explanation`.
 - `split_unknown_requests`: rows from before v0.5 have no student/teacher split; their whole cost counts as teacher spend in the GPU-hour view (`split_unknown_usd`), and a warning says so. `warnings` also names a training job open for more than 12 hours, which counts up to now until it is closed.
 - `daily`: one row per day with requests or compute, the latest 731 days at most (`daily_truncated`); the totals always cover the whole window.
+- The dashboard's **Economics** panel draws this report. The keys it reads are listed with their JSON types in `tests/fixtures/cost_keys.json` and checked by `test_cost_report_contract`; like `/ratchet/stats`, the report adds keys and never removes or retypes one.
 
 ### POST `/ratchet/cost/endpoint`
 

@@ -155,10 +155,14 @@ export function Empty({ icon: Icon, title, children, action, className }: { icon
   );
 }
 
-/** Compact data table used by the chart table views and the panels. Scrolls inside its card. */
+/**
+ * Compact data table used by the chart table views and the panels. Scrolls inside its card. `relative` makes the
+ * scroller the containing block of absolutely positioned cells' content (`sr-only` labels), which would otherwise
+ * escape the clip and widen the page on phones.
+ */
 export function DataTable({ children, minWidth = 0, className, caption }: { children: ReactNode; minWidth?: number; className?: string; caption?: string }) {
   return (
-    <div className={cn("-mx-4 overflow-x-auto sm:-mx-5", className)}>
+    <div className={cn("relative -mx-4 overflow-x-auto sm:-mx-5", className)}>
       <table className="w-full border-collapse text-[13px] tabular" style={minWidth ? { minWidth } : undefined}>
         {caption && <caption className="sr-only">{caption}</caption>}
         {children}

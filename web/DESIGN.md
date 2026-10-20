@@ -40,7 +40,7 @@ These are CSS variables (see `src/styles/globals.css`) exposed as Tailwind color
 - `@/components/ui/badge`: `Badge` with `tone` `neutral | owned | rented | good | warn | bad | outline`.
 - `@/components/ui/who`: `WhoBadge servedBy="student|teacher|tool"`: the one vocabulary for who answered.
 - `@/components/ui/card`, `@/components/ui/section` (`Container`, `Eyebrow`, `H2`, `Lead`), `@/components/ui/code-block` (`CodeBlock`, `tok`), `@/components/ui/stat` (`Stat`, `CountUp`), `@/components/ui/logo`.
-- `@/lib/api`: typed client (`api.stats()`, `api.demoDay()`, `api.breakNext()`, `api.reset()`, `api.scoutExamples()`, `api.scoutStatus()`, `streamScout()`), and all response types.
+- `@/lib/api`: typed client (`api.stats()`, `api.cost()`, `api.demoDay()`, `api.breakNext()`, `api.reset()`, `api.scoutExamples()`, `api.scoutStatus()`, `streamScout()`), and all response types.
 - `@/lib/hooks`: `useStats(intervalMs)`, `useTheme()`, `useCountUp()`, `useInterval()`.
 - `@/lib/utils`: `cn`, `fmtUsd`, `fmtPct`, `fmtInt`, `fmtMs`, `domainOf`, `safeHref`, `REPO_URL`, `DOCS_URL`.
 - `@/lib/sim`: the seed-7 simulation table (`SIM_DAYS`, `SIM_TOTAL`, `SIM_SOURCE`).

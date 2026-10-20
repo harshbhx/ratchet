@@ -111,12 +111,120 @@ export interface Stats {
   tasks: TaskStats[];
   versions: Version[];
   events: LedgerEvent[];
-  totals: { requests: number; cost_usd: number; baseline_usd: number; saved_usd: number; savings_pct: number };
+  /** `cost_model` (v0.5) is always `per_token`: these totals price the student per token. */
+  totals: { requests: number; cost_usd: number; baseline_usd: number; saved_usd: number; savings_pct: number; cost_model?: CostModel };
   bill_of_materials: { generated_at: number; examples_sha256: string; sources: BomSource[] };
   // v0.4: optional so the UI still renders against an older gateway.
   clients?: ClientStats[];
   privacy?: PrivacyStats;
   security?: SecurityStats;
+  // v0.5: the cost report's headline numbers (the full report is GET /ratchet/cost).
+  cost?: CostSummary;
+}
+
+// ---------- cost accounting (GET /ratchet/cost, docs/API.md#cost, ADR 0023) ----------
+export type CostModel = "per_token" | "gpu_hours";
+/** `string` too: a newer gateway may add a recommendation this build does not know yet. */
+export type Recommendation = "self_host" | "hosted_fallback" | "scale_to_zero" | "insufficient_data" | (string & {});
+
+/** One way of pricing the student. `savings_usd` is negative when Ratchet cost more than all-teacher (never clamped). */
+export interface CostView {
+  total_usd: number;
+  savings_usd: number;
+  /** null without an all-teacher baseline (no requests in the window). */
+  savings_pct: number | null;
+}
+
+export interface TokenPrice {
+  input: number;
+  output: number;
+}
+
+/** The list prices the report used. Unverified until the day-1 checks pass (`verified`, RATCHET_PRICES_VERIFIED). */
+export interface CostPrices {
+  verified: boolean;
+  label?: string;
+  student_gpu_usd_per_hour?: number;
+  student_gpus?: number;
+  student_endpoint_usd_per_hour?: number;
+  train_gpu_usd_per_hour?: number;
+  train_gpus?: number;
+  teacher_model?: string;
+  teacher_usd_per_m_tokens?: TokenPrice;
+  student_usd_per_m_tokens?: TokenPrice;
+  fallback_student_model?: string;
+  fallback_student_usd_per_m_tokens?: TokenPrice;
+}
+
+/** One ledger day with requests or compute. The savings shares are null on a day without requests. */
+export interface CostDay {
+  day: number;
+  requests: number;
+  student_served: number;
+  teacher_usd: number;
+  student_per_token_usd: number;
+  endpoint_hours: number;
+  endpoint_usd: number;
+  training_usd: number;
+  baseline_usd: number;
+  savings_pct_per_token: number | null;
+  savings_pct_gpu_hours: number | null;
+}
+
+export interface CostOpenInterval {
+  id: number;
+  kind: string;
+  start_ts: number;
+  hours: number;
+}
+
+/**
+ * GET /ratchet/cost. `views` and `recommendation` are what the dashboard needs; everything else is optional so a
+ * gateway that sends less still renders.
+ */
+export interface CostReport {
+  window?: { since_day: number | null; until_day: number; now: number };
+  model?: CostModel;
+  headline?: CostView & { model: CostModel };
+  prices?: CostPrices;
+  requests?: number;
+  student_served?: number;
+  teacher_served?: number;
+  teacher_usd?: number;
+  student_per_token_usd?: number;
+  hosted_student_usd?: number;
+  student_served_off_endpoint?: number;
+  baseline_usd?: number;
+  split_unknown_requests?: number;
+  split_unknown_usd?: number;
+  endpoint_hours?: number;
+  endpoint_usd?: number;
+  idle_hours?: number;
+  idle_share?: number | null;
+  training_hours?: number;
+  training_usd?: number;
+  views: { per_token: CostView; gpu_hours: CostView };
+  avoided_teacher_usd_per_student_request?: number | null;
+  break_even_student_requests_per_gpu_hour?: number | null;
+  hosted_fallback_usd_per_request?: number | null;
+  self_host_beats_hosted_above_requests_per_hour?: number | null;
+  observed_student_requests_per_endpoint_hour?: number | null;
+  utilization_vs_break_even?: number | null;
+  recommendation: Recommendation;
+  explanation?: string;
+  open_intervals?: CostOpenInterval[];
+  warnings?: string[];
+  daily?: CostDay[];
+  daily_truncated?: boolean;
+}
+
+/** The `cost` block of /ratchet/stats: the report's headline numbers for all days. */
+export interface CostSummary {
+  model: CostModel;
+  endpoint_hours: number;
+  gpu_hours_savings_pct: number | null;
+  break_even_student_requests_per_gpu_hour: number | null;
+  recommendation: Recommendation;
 }
 
 export type Workload = "tickets" | "research" | "mixed";
@@ -228,6 +336,8 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   stats: () => json<Stats>("/ratchet/stats"),
+  /** 404 on a gateway older than v0.5 (the dashboard then hides its Economics panel). */
+  cost: (days?: number) => json<CostReport>(days == null ? "/ratchet/cost" : `/ratchet/cost?days=${encodeURIComponent(days)}`),
   demoDay: (workload: Workload, requests = 1500) =>
     json<{ day: number; workload: Workload; night: NightReport }>(
       `/ratchet/demo/day?workload=${encodeURIComponent(workload)}&requests=${requests}`,

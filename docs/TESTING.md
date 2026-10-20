@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 706 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 707 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -23,14 +23,14 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_hardening.py` | 80 (54 functions; one has 11 cases, one has 8, one has 6, one has 4, one has 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
-| `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
+| `tests/test_contract.py` | 46 (35 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
-| **Total** | **706** |
+| **Total** | **707** |
 
 There are three layers:
 
@@ -359,6 +359,7 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 | `test_bad_metadata_is_400` | FR-1.3: `metadata` as a string, a list, or with a non-string `ratchet_task` gets 400 and logs nothing |
 | `test_text_content_parts_answered_in_mock` | FR-1.1: a demo ticket sent as OpenAI text content parts gets the same answer as the string form and the same stored example (`seen` 2) |
 | `test_bom_endpoint_counts_by_split_and_fingerprint_changes` | FR-3.5, US-7: `/ratchet/bom` counts per split equal the ledger's; every source names the configured teacher and its license; `examples_sha256` is the documented SHA-256 over the sorted example hashes, stable between reads and equal to the stats block; a repeated request changes nothing, a new one changes the fingerprint and adds one |
+| `test_cost_report_contract` | FR-7.20, FR-15.3: every key in `tests/fixtures/cost_keys.json` (what the dashboard's Economics panel reads from `GET /ratchet/cost`), with its JSON type, on a fresh gateway (an empty report: no requests, hours or days) and after two simulated days and nights plus a training job left open for 13 hours (open intervals and warnings have items, each checked); the fixture still holds the keys this item named; each view's breakdown adds up to its total and savings are the baseline less the total; each day's dollars, as the panel derives them, match the report's daily shares; the `/ratchet/stats` `cost` summary matches the report |
 | `test_stats_contract` | FR-7.1 to FR-7.4, FR-7.7, US-9: every key in `tests/fixtures/stats_keys.json`, with its JSON type, on a fresh gateway (lists empty) and after two simulated days and nights plus a keyed request (every list has items, each item checked); the fixture still holds the keys this item named; totals, days, tasks and clients add up to the same requests and dollars, and the savings are positive; each task's `routes` add up to its requests and use only known routes |
 | `test_demo_endpoints_are_403_in_live_mode` | INV-8: in live mode `POST /ratchet/demo/day` (also with bad arguments), `break-next`, `student-outage` and `reset` get 403 and change nothing in the ledger |
 | `test_student_sampled_once_with_production_params` | FR-2.1, NFR-1: one student call per request with `n = Settings.samples` (3 and 5), temperature 0.7 and logprobs on, to the version's adapter with the request as sent; an escalated or audited request adds exactly one teacher call |
@@ -483,7 +484,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
-During development the v0.4 features were also checked end to end against a running gateway with the official OpenAI Python SDK (401 on a wrong key, streaming text identical to the non-streaming answer, the quota cutting one key off at its limit while another kept working, a signed BOM verifying with `python -m ratchet.bom verify` and failing once edited), and the dashboard's Trust and privacy panel with Playwright in light and dark mode at desktop and phone widths.
+During development the v0.4 features were also checked end to end against a running gateway with the official OpenAI Python SDK (401 on a wrong key, streaming text identical to the non-streaming answer, the quota cutting one key off at its limit while another kept working, a signed BOM verifying with `python -m ratchet.bom verify` and failing once edited), and the dashboard's Trust and privacy panel with Playwright in light and dark mode at desktop and phone widths. The dashboard's Economics panel (FR-7.20) was checked the same way at 1360 and 375 px against the mock gateway, and against crafted `/ratchet/cost` bodies routed in the browser (self-host with 90 days, scale to zero with warnings and an open job, not enough data in live mode, an empty report, a 404 that hides the panel, a 500 and a malformed body that fall back to the `/ratchet/stats` summary), with no horizontal scroll on phones; a refresh that fails keeps the last report with a notice, and a demo day updates it.
 
 ### `tests/test_cost.py`
 
@@ -586,6 +587,7 @@ Found while writing them: without `RATCHET_STUDENT_BASE`, `NebiusTrainer` ran th
 Rules:
 
 - **The stats keys only grow.** `tests/fixtures/stats_keys.json` lists every key the dashboard reads from `/ratchet/stats` (it mirrors `Stats` in `web/src/lib/api.ts`) with its JSON type; a `[]` key is a list whose every item is checked. A change may add keys to the payload and to the fixture. It must not remove or retype one, so the React dashboard and other clients keep working. The test also fails if the fixture loses one of the keys this contract started with.
+- **The cost report keys only grow.** `tests/fixtures/cost_keys.json` does the same for `GET /ratchet/cost` and the dashboard's Economics panel (it mirrors `CostReport` in `web/src/lib/api.ts`), checked by `test_cost_report_contract`.
 - **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (none today: `API-VALIDATE-NORMALIZE` removed its four and `TASK-COMPARATORS` its one). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
 - Cost assertions are token-exact: each model gets distinct token counts, and the expected cost is built from `Settings.price(...)`, so a term billed with the wrong tokens, price or multiplicity fails.
 - The dashboard's rendering is still checked by hand ([web/CLAUDE.md](../web/CLAUDE.md)); `test_stats_contract` proves the data it renders. FR-7.6 (light and dark mode, phone width) stays a manual check.
@@ -806,7 +808,7 @@ To change behaviour:
 ## Adding tests
 
 - Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`); Night School rules in `test_nightschool.py`; release-gate and router release behaviour in `test_release.py`. Set up states with the builders in `tests/fakes.py` (`_version`, `_audit`, `_shadow`, `_examples`) and fake models with `RecordingProvider`, `RecordingTrainer` and `RecordingEvaluator`, rather than new local helpers.
-- A change to what clients or the dashboard see (a status code, a `/ratchet/stats` key, cost accounting) goes in `test_contract.py`. New stats keys also go in `tests/fixtures/stats_keys.json`; existing ones stay.
+- A change to what clients or the dashboard see (a status code, a `/ratchet/stats` key, cost accounting) goes in `test_contract.py`. New stats keys also go in `tests/fixtures/stats_keys.json`, and new cost report keys the dashboard reads in `tests/fixtures/cost_keys.json`; existing ones stay.
 - Scout, the research world and the guard go in `test_scout.py`. Use the `gw` fixture (mock gateway, no warm-up) and fake clocks for the guard.
 - Live mode, CLIs and deploy scripts go in `test_live.py`. Pass the seams ([Live-path tests](#live-path-tests)) instead of monkeypatching `httpx` or `subprocess`, and set every `Settings` value and environment variable the test depends on.
 - Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests. The exception is the pinned reference run; reuse the `reference_run` fixture instead of starting another 10-day simulation.

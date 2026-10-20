@@ -245,6 +245,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-7.6 | Light and dark mode; works at phone width | Done (v0.1) |
 | FR-7.7 | **By task** table (requests, student share, escalations, savings, route) from `tasks` in `/ratchet/stats` | Done (v0.2) |
 | FR-7.8 | Traffic selector for **Run 1 day + night** (tickets, Scout research calls, both); demo controls run one at a time (409) and reset has a 30 s cooldown (429) | Done (v0.2) |
+| FR-7.20 | **Economics** panel from `GET /ratchet/cost`: savings per token and by GPU-hours paid side by side against the all-teacher baseline (a loss shown as a loss, with a word, never clamped), a break-even meter (observed student answers per endpoint-hour against break-even and the hosted-fallback crossover, on a log scale when they are far apart), the recommendation as a status chip with its explanation and the prices used (labelled unverified list prices until the operator confirms them), and savings by day as a chart or a table; the `/ratchet/stats` `cost` summary when the report does not load, nothing on a gateway without either | Done (v0.5) |
 
 ### 6.8 Live operations on Nebius
 
