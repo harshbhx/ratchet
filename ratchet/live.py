@@ -4,6 +4,8 @@
     python -m ratchet.live tick         # advance the release gate (run every few minutes via cron)
     python -m ratchet.live reload       # re-load live/canary/shadow adapters after an endpoint restart (the gateway
                                         # also does this by itself when vLLM answers 404 for an adapter: AdapterReloader)
+    python -m ratchet.live purge [--client NAME] [--older-than-days N] [--dry-run]
+                                        # apply the retention windows now (FR-13.4); the gateway does it hourly
 
 Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
@@ -16,6 +18,7 @@ Environment (in addition to ratchet.config):
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import queue
@@ -30,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from . import bom, taskspec
+from . import bom, privacy, taskspec
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset
@@ -215,6 +218,41 @@ def adapter_reloader(
     return AdapterReloader(load, led, clock=clock)
 
 
+def purge_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="python -m ratchet.live purge",
+        description="Apply the retention windows now (FR-13.4): purge the text of examples not seen for "
+        "RATCHET_EXAMPLE_RETENTION_DAYS and fold request rows older than RATCHET_REQUEST_RETENTION_DAYS into daily sums.",
+    )
+    ap.add_argument("--client", help="only this API client's examples and request rows")
+    ap.add_argument(
+        "--older-than-days", type=int, help="this window, in whole days, for both examples and requests (instead of the settings)"
+    )
+    ap.add_argument("--dry-run", action="store_true", help="count what would go and change nothing")
+    return ap
+
+
+def purge(led: Ledger, s: Settings, argv: list[str]) -> dict[str, Any]:
+    """`python -m ratchet.live purge`: the retention windows applied once, as the gateway does hourly. With
+    `--older-than-days N`, N days for both windows; with neither that nor a setting, nothing to do (the summary says so)."""
+    args = purge_parser().parse_args(argv)
+    days = args.older_than_days
+    if days is not None and days < 1:
+        raise SystemExit("--older-than-days must be 1 or more")
+    out = privacy.apply_retention(
+        led, s.retention(), client=args.client, example_days=days, request_days=days, dry_run=args.dry_run
+    )
+    verb = "would purge" if args.dry_run else "purged"
+    if not out["example_days"] and not out["request_days"]:
+        print("nothing to purge: RATCHET_EXAMPLE_RETENTION_DAYS and RATCHET_REQUEST_RETENTION_DAYS are 0 (keep forever)")
+    else:
+        print(
+            f"{verb}: {out['examples_purged']} examples (window {out['example_days'] or 'off'} days), "
+            f"{out['requests_folded']} request rows folded (window {out['request_days'] or 'off'} days)"
+        )
+    return out
+
+
 def main(
     argv: list[str],
     provider_factory: ProviderFactory = OpenAICompatProvider,
@@ -224,6 +262,7 @@ def main(
     s = Settings(mode="live")
     s.check_reserved()  # a setting reserved for a feature not built yet stops here (ADR 0024)
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
+    retention = s.retention()  # a bad retention window stops here too, before anything is deleted or trained
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -232,6 +271,8 @@ def main(
     cmd = argv[0] if argv else "night"
     if cmd == "tick":
         gate.tick()
+    elif cmd == "purge":
+        purge(led, s, argv[1:])
     elif cmd == "reload":
         print("reloaded:", reload_adapters(s, led, http))
     elif cmd == "night":
@@ -252,6 +293,7 @@ def main(
             train_gpu=policy.train,
             redact_pii=s.redact_pii,
             store_examples=s.store_examples,
+            retention=retention,  # expired text is purged before the night reads the ledger (FR-13.4)
         )
         if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
             doc = led.version_bom(rep.version)
@@ -261,7 +303,7 @@ def main(
             print(f"bill of materials: {out}")
         print(rep)
     else:
-        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick' or 'reload'")
+        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick', 'reload' or 'purge'")
     for e in led.events()[-10:]:
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
 

@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 728 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy), ~75 s
+pytest -q                     # 776 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -31,12 +31,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
 | `tests/test_privacy.py` | 22 |
-| **Total** | **728** |
+| `tests/test_erasure.py` | 48 (31 functions; one has 12 cases, one has 4, three have 2) |
+| **Total** | **776** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -589,6 +590,44 @@ Data governance: storage opt-outs and pseudonymous end users (FR-13.1, FR-13.2, 
 | `test_key_limits_parse_and_refuse_typos` | FR-13.1, INV-13: `RATCHET_KEY_LIMITS` parsing (spaces, empty fields, several keys); an unknown name (not quoted, in case it is a key), an unknown field, a bad `store`, a key or field twice and malformed entries raise; with keys off every name is unknown |
 | `test_storage_settings_refuse_typos` | FR-13.1, FR-13.2: `RATCHET_STORE_EXAMPLES` accepts 1/0, true/false, yes/no, on/off in any case (empty is the default) and refuses anything else; a non-bool in code stops `Ratchet`; a short `RATCHET_END_USER_KEY` and `RATCHET_KEY_LIMITS` without API keys stop the gateway |
 | `test_ledger_from_before_opt_outs_gains_the_columns_and_tables` | FR-13.2: a file from before this change gains `requests.end_user` and `store_opt_out`, `examples.client` and `end_user`, `example_clients`, `no_train` and the `(end_user, ts)` index (used by the query planner), twice without change; old rows read NULL |
+
+### `tests/test_erasure.py`
+
+Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr/0081-retention-tombstones-erasure-and-export.md)). The proposed invariants "erasure is final and leaves hashes only" and "retention never cuts a release in flight" and their proving tests are listed in [docs/lanes/e-invariants.md](lanes/e-invariants.md). Time is injected (`now=`, aged `ts` and `last_seen_ts`, a `FakeClock` for the gateway's schedule).
+
+| Test | Covers |
+|---|---|
+| `test_erase_a_client_purges_its_examples_and_shared_ones_by_policy` | FR-13.3, NFR-4 (`delete`, `keep`): erasing `acme` purges its own examples and leaves globex's; under `delete` an example both sent is purged, under `keep` it stays with globex promoted to first sender (no end user) and acme unlinked, and a second erasure finds nothing; the `erasures` row and the `erase` event |
+| `test_erasure_records_hold_hashes_and_no_text` | FR-13.3, NFR-4: an erasure by client, end user and text purges one example and unlinks one request row; no table holds the text, the raw end user or the email in the reason (stored as `[EMAIL]`); the scope holds the HMAC and the SHA-256 of `contains`; `erasure_items` and `tombstones` hold the hash; events hold neither hash |
+| `test_dry_run_reports_and_writes_nothing` | FR-13.3: a dry run returns the counts and the affected version and changes no table or event |
+| `test_affected_versions_are_reported_and_their_signed_boms_stay_unchanged` | FR-13.3, INV-14: two signed nights; erasing an early train row, an early golden row and a later train row reports v1 with 1 and v2 with 2 (`tainted`, status `pending`); both BOMs are unchanged and verify; a golden-only erasure reports none (`complete`) |
+| `test_affected_versions_use_committed_training_sets_when_a_version_has_them` | FR-13.3: a version with `version_leaves` is counted by membership, one without by time; leaves win over the time rule |
+| `test_bom_fingerprint_covers_kept_examples_and_counts_purged_ones` | FR-13.3, FR-3.5: `/ratchet/bom` changes its fingerprint (the SHA-256 over the kept hashes), counts `purged_examples` and leaves the purged row out of `sources`; `/ratchet/stats` privacy counts |
+| `test_an_erased_hash_is_never_stored_again_and_a_retention_purged_one_is_restored` | FR-13.3, FR-13.4: `add_example` refuses an erased hash from another client (None; nothing bumped; `suppressed` 1); a duplicate of a retention-purged one restores the text with its own teacher and license, clears the purge and records the client; `dataset.rows` sees it again |
+| `test_the_cascade_skips_a_tombstoned_answer_as_erased` | FR-13.3, INV-16: after an erasure the same request is answered by the teacher and logged `stored` 0 with a `skip_example` `erased` event |
+| `test_erasure_makes_a_retention_tombstone_final` | FR-13.3: a retention tombstone keeps its end user, an erasure by that end user makes it final (reason `erasure`, end user cleared, purge time kept) and refused |
+| `test_contains_matches_the_stored_text_literally` | FR-13.3: `%`, `_`, quotes and backslashes are literal (look-alike rows do not match); ASCII case folds, `É` does not; the answer and the conditions are searched too |
+| `test_erase_refuses_a_bad_scope_without_quoting_it` | FR-13.3 (12 cases): no selector, bad hashes (format, a string, a non-string, none), blank `contains`, a bad client name, a blank reason or actor, an end user without the key or over 128 characters, a bad `shared`; never quotes the end user; nothing recorded |
+| `test_erasure_holds_under_concurrent_stores` | FR-13.3: three threads storing duplicates while 150 examples are erased: no error, every row erased, none revived |
+| `test_admin_erase_endpoint_needs_an_admin_key_and_is_a_dry_run_by_default` | FR-13.3: 401 without a key, 403 for an API key; a dry run by default; eight bad bodies are 400s that never quote the end user; an end user without a client is erased in every key's scope and the keyless one; events |
+| `test_a_client_erases_its_own_end_users_examples` | FR-13.3: `DELETE /v1/ratchet/examples` erases the caller's end user's examples and unlinks its request rows, not another client's same identifier; 401 without a key; an `end_user` in the URL is a 400 that does not echo it; 403 for another client's scope; dry run; bad bodies; the actor and default reason; an admin erases across clients |
+| `test_retention_purges_examples_not_seen_within_the_window_golden_included` | FR-13.4, NFR-4: train and golden rows not seen for 30 days lose their text (reason `retention`), a recently seen duplicate keeps its row, one `purge` event; a second run purges nothing |
+| `test_request_rollup_keeps_every_stat_identical` | FR-13.4 (chunks of 20,000 and 7): folding half the rows (a day split across the cut), then the rest, leaves `stats_by_day`, `stats_by_task`, `stats_by_client` (but `end_users`), `totals`, the opt-out counts and `cost_by_day` (also a day window) equal within 1e-9 |
+| `test_fold_dry_run_counts_and_writes_nothing` | FR-13.4: a dry fold counts and writes nothing |
+| `test_retention_never_folds_rows_of_a_release_in_flight` | FR-13.4: a canary's rows older than the window stay (its audited precision unchanged) until it is promoted |
+| `test_day_numbers_survive_folding_the_rows_that_defined_day_one` | FR-13.4: a live file ledger keeps its day numbers and day 1's start after folding the oldest rows, and after folding all of them |
+| `test_run_night_applies_retention_before_reading_the_ledger` | FR-13.4, FR-4.4: `run_night(retention=)` purges expired rows before the dataset is built: the trainer gets 60 of 70 |
+| `test_live_gateway_purges_hourly_off_the_request_path` | FR-13.4: a live `Runtime` purges on its first tick on a background thread, not again within the hour, again after it; a failure is a `purge_failed` event with the class only; mock mode and zero windows never purge |
+| `test_bad_retention_settings_stop_startup` | FR-13.4 (4 cases): a negative or too large window, a bool, or an unknown `RATCHET_ERASURE_SHARED` stop `Settings.retention()` and the `Runtime`; spaces and case are forgiven, empty is the default |
+| `test_retention_days_must_be_whole_numbers_in_the_environment` | A non-number in `RATCHET_REQUEST_RETENTION_DAYS` stops startup naming it |
+| `test_live_purge_cli` | FR-13.4: `python -m ratchet.live purge` with `--dry-run`, `--client`, `--older-than-days`, a bad window and no windows |
+| `test_run_night_trains_again_after_deletions_once_50_new_examples_arrive` | FR-4.4, FR-13.3, FR-13.4 (`erasure`, `retention`): after 60 of v1's 100 rows are purged, 49 new rows skip (`only 49 new examples`) and 50 train on 90 rows without the purged ones (v0.4's rule said -11) |
+| `test_a_purged_variant_still_counts_toward_its_requests_frequency` | INV-3, FR-13.4: a golden prompt seen three times over a bare and a stop variant trains; purging the stop variant keeps its prompt key and its count, so the bare variant stays in training |
+| `test_export_round_trips_with_provenance_and_holds_no_keys` | FR-13.5, NFR-4, INV-13: every kind streams NDJSON as an attachment; examples equal the ledger's kept rows with their provenance and clients; requests have no end user; versions, erasures (items) and events; no API key, admin key, end-user key, end-user hash or raw end user in any line |
+| `test_export_filters_and_refusals` | FR-13.5: `split`, `task`, `client` and `since` (ISO date, epoch, date-time) filters; 401 and 403; an unknown kind, a filter the kind does not take, a bad `since`, `split` or client name are 400s |
+| `test_export_pages_through_large_tables` | FR-13.5: pages of 5 give all 23 rows in order, one line each |
+| `test_admin_cli_erases_and_exports` | FR-13.3, FR-13.5: `python -m ratchet.admin erase` (a dry run, then `--apply` with the end user from stdin across every scope), its errors, and `export` to a file and to stdout, with a refused filter |
+| `test_a_ledger_from_before_retention_gains_its_columns_and_tables` | FR-13.3, FR-13.4: a file with the old `erasures` table gains the new columns and tables twice without change; `last_seen_ts` is backfilled from `ts`, and retention works on it |
 
 ## Live-path tests
 

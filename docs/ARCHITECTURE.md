@@ -197,6 +197,17 @@ The response text is the served answer after `tasks.clean_answer`: no reasoning,
 
 The response has every field of OpenAI's ([ADR 0018](adr/0018-usage-reports-the-served-answer.md), FR-1.12). `usage` is the served answer's, as if its model had answered alone: the chosen student sample's tokens, or the teacher's call with its reasoning tokens (part of `completion_tokens`) and cached prompt tokens; a count the model did not report is estimated at about 4 characters a token. `ratchet.usage_breakdown` lists every call of the request (`student_samples`, `served`, `audit`, `shadow`, `arbitration`), which `cost_usd` prices. `system_fingerprint` is a hash of what decides the answer (`router.fingerprint`: the student's adapter, version, training-set hash and threshold, or the teacher's model), so it changes when a promotion or rollback puts another version in front. The router computes all of it in `Result` from the completions it already holds; the gateway only shapes it (`openai_compat.usage_object`, `gateway._envelope`). With `stream_options.include_usage` the stream ends with a chunk that has no choices, the usage and the `ratchet` block.
 
+### Retention and erasure
+
+FR-13.3 to FR-13.5, [ADR 0081](adr/0081-retention-tombstones-erasure-and-export.md). Stored data can be removed without stopping anything, and without breaking Night School's rules.
+
+- **Tombstones.** `Ledger.purge_examples` removes an example's `messages`, `completion` and `params` and keeps the row: hash, task, split, seen count, teacher, license and client stay, with `purged_ts`, `purge_reason` and `purged_train`. A row with conditions keeps its prompt key (`prompt_hash`), so `dataset.rows` still adds its `seen` to its request's frequency (INV-3: a purge never moves another variant of a frequent request back to golden) while leaving the row out of both sets.
+- **Erasure** (`privacy.erase`; `POST /ratchet/admin/privacy/erase`, `DELETE /v1/ratchet/examples`, `python -m ratchet.admin erase`). Selects by `client` (first sender or `example_clients`), end user (HMACs in the key's scope), `hashes` and `contains` (LIKE on the stored text, wildcards escaped), each narrowing the scope; under the ledger's lock it computes, per row, whether it counted as a training row (`dataset.counts_as_train`) and whether it is shared with another client (`RATCHET_ERASURE_SHARED`: `delete` purges, `keep` unlinks the erased party), then `Ledger.record_erasure` writes everything in one transaction: the purge (also clearing `end_user`), `tombstones`, `erasure_items`, the unlinking, the erased end users' request rows (`end_user` cleared) and the `erasures` row. `add_example` refuses a tombstoned hash from then on (returns None; the router skips it as `erased`). A dry run computes the same counts and writes nothing.
+- **Affected versions** (`Ledger.affected_versions`): a version with a committed training set (`version_leaves`) by membership; otherwise every version created after the example was stored, for examples that counted as training rows. Reported in the result, the `erasures.tainted` column and the `erase` event; versions and their signed BOMs are never changed (INV-14).
+- **Retention** (`privacy.apply_retention`). Examples whose `last_seen_ts` is older than `RATCHET_EXAMPLE_RETENTION_DAYS` are purged with reason `retention` (a later storable duplicate restores the text with its own provenance, `add_example`). Request rows older than `RATCHET_REQUEST_RETENTION_DAYS` are folded by `Ledger.fold_requests` into `daily_rollup` and deleted, `FOLD_CHUNK` rows per transaction, never past the `stage_since` of a version in shadow or canary. `stats_by_day`, `stats_by_task`, `stats_by_client`, `totals`, `opt_out_stats` and `cost_by_day` add the folded sums back (`_merge`), and run their old queries unchanged while `daily_rollup` is empty. Runs hourly in the live gateway (`Runtime.maybe_purge`, on its own thread, started from the tick a request runs), at the start of every live night (`run_night(retention=)`), and from `python -m ratchet.live purge`.
+- **Night School after deletions.** `run_night` counts new data as the training rows now, less the largest version's, plus `Ledger.train_rows_purged_since` (rows with `purged_train` stored before that version and purged after it): a deletion no longer stops training (FR-4.4), and without purges the count is v0.4's.
+- **Export** (`Ledger.export_page`, `privacy.export_lines`): NDJSON per table, a page of 500 rows per ledger call; examples with their provenance and clients, without end-user hashes.
+
 ### PII redaction
 
 `ratchet/redact.py` ([ADR 0009](adr/0009-pattern-based-pii-redaction.md)) replaces identifiers with `[LABEL]` placeholders before anything is stored as training data. Patterns run in a fixed order, so specific formats win over the broad phone pattern:
@@ -217,14 +228,15 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
 
 ## 3. Nightly loop (Night School)
 
-`run_night(ledger, trainer, evaluator, gate, base_model, min_new_examples=50, task=None)` in `nightschool/orchestrate.py`:
+`run_night(ledger, trainer, evaluator, gate, base_model, min_new_examples=50, task=None, retention=None)` in `nightschool/orchestrate.py`:
 
 ```
- ┌─ storage disabled? (RATCHET_STORE_EXAMPLES=0, zero retention) ── yes ──▶ event "skip", stop ("storage disabled")
+ ┌─ retention windows set? (live mode) ── yes ──▶ apply them first (privacy.apply_retention): event "purge"
+ ├─ storage disabled? (RATCHET_STORE_EXAMPLES=0, zero retention) ── yes ──▶ event "skip", stop ("storage disabled")
  ├─ release in flight? (any version in shadow or canary) ── yes ──▶ event "skip", stop
  │ no
  ├─ dataset.build(): train rows + golden rows (license-checked)
- ├─ new = train_examples − max(train_examples of all previous versions)
+ ├─ new = train_examples − max(train_examples of all previous versions) + its training rows purged since
  │     new < min_new_examples (50) ───────────────────────────────▶ event "skip" (re-score the live
  │                                       version first when a golden task's spec changed: "rescored"), stop
  │     no golden rows ────────────────────────────────────────────▶ event "skip", stop
@@ -247,6 +259,7 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
 - Rows whose teacher is unknown or not distillable (per `licenses.lookup`) are dropped.
 - Rows of a task that is pinned **now** are dropped from both sets and counted (`excluded_pinned` in `manifest.json`), and `cascade_eval` skips any it is handed (invariant 10 at read time): a task pinned after it had data neither trains the student nor calibrates its threshold. Unpinning brings the rows back.
 - Train rows whose answer is not valid under the task's current spec (`Task.valid`: a vocabulary shrank, a field became required) are dropped and counted (`skipped_invalid` in `manifest.json`); the ledger keeps them, so loosening the spec brings them back. Golden rows stay in the set, and `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`).
+- Purged rows (retention or erasure) have no text and are in neither set; their `seen` still counts toward their request's frequency ([Retention and erasure](#retention-and-erasure)).
 - Training is cumulative: each night trains from the **base model** on every train row so far ([ADR 0004](adr/0004-retrain-from-base-cumulative.md)).
 - `build()` also writes `manifest.json`: train and golden counts, `dataset_sha256` (a hash of the train rows' example hashes), `skipped_invalid`, `excluded_pinned`, and the bill of materials.
 
@@ -302,6 +315,10 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `origin`, `job` | TEXT | Where the example came from (`escalation`, `audit`, `arbitration`, `backfill`; NULL: not recorded, read as `live`) and the backfill job that wrote it (FR-16.8). NULL until that feature writes them |
 | `contested`, `checked_epoch` | INTEGER | The teacher watch (FR-16.7): 1 when a later teacher label of the same request disagreed (quarantined from training), and the epoch of its last self-consistency check; 0 by default and in older rows |
 | `client`, `end_user` | TEXT | The API key name and the end user's hash of the request it was first stored from; NULL for internal calls (Scout, the simulator) and in older rows. Later senders from other clients are in `example_clients` (FR-13.2) |
+| `last_seen_ts` | REAL | When it was stored or last seen again (a duplicate moves it); retention counts from it. Older rows get their `ts` on migration (FR-13.4) |
+| `purged_ts`, `purge_reason` | REAL, TEXT | When its text was removed, and why: `retention` (a later duplicate that may be stored brings it back) or `erasure` (never stored again); NULL while it is kept ([Retention and erasure](#retention-and-erasure)) |
+| `purged_train` | INTEGER | 1 when it counted as a training row as it was purged (`dataset.counts_as_train`); Night School's new-data count and an erasure's affected versions read it after the text is gone |
+| `prompt_hash` | TEXT | A purged row's prompt key (`ledger.prompt_key`: its task and messages without conditions), written by the purge for rows with conditions, so its `seen` still counts toward its request's frequency (INV-3) |
 
 ### `versions`: student models
 
@@ -339,8 +356,8 @@ Created by `SCHEMA` for the evidence features, so later items change no migratio
 | `receipts` | `period` (ledger day), `client` (`''` for the whole gateway), `created_ts`, `doc` (the signed JSON); primary key (period, client) | Savings receipts (FR-15.5) |
 | `spend` | `id`, `ts`, `day`, `kind`, `ref`, `usd`, `realtime_usd`, `in_tokens`, `out_tokens`, `detail` | Money spent outside requests, e.g. backfill labelling (FR-16.8) |
 | `backfill_jobs` | `job`, `ts`, `backend`, `teacher`, `license`, `prompts`, `unique_prompts`, `outputs_discarded`, `source_models` (JSON), `status`, `usd`, `realtime_usd` | Clean-room backfill (FR-16.8) |
-| `tombstones` | `key`, `erasure_id`, `ts`, `suppressed` | Provable erasure (FR-16.9): keys never stored again |
-| `erasures` | `id` (never reused), `ts`, `day`, `key`, `tainted` (JSON version ids), `status` (`pending`, `complete`), `replacement`, `certificate` (JSON); indexed by `status` | Provable erasure (FR-16.9) |
+| `tombstones` | `key`, `erasure_id`, `ts`, `suppressed` | Example hashes an erasure removed, never stored again; `suppressed` counts the refusals (written by FR-13.3; FR-16.9 proves their absence) |
+| `erasures` | `id` (never reused), `ts`, `day`, `key`, `tainted` (JSON version ids that may hold the data), `status` (`pending` while there are some, else `complete`), `replacement`, `certificate` (JSON), and FR-13.3's `actor`, `reason` (redacted), `scope` (JSON: end users as HMACs, `contains` as its SHA-256), `purged`, `kept`; indexed by `status` | Erasure requests (FR-13.3); `key`, `replacement` and `certificate` are for provable erasure (FR-16.9) |
 
 `version_leaves` and `receipts` are **append-only** (INV-17): triggers refuse UPDATE, DELETE and an INSERT that would replace a row, on every connection, because the signed roots and receipt chains are built from those rows. Their key columns are NOT NULL.
 
@@ -354,12 +371,18 @@ New tables, so older files gain them on open ([ADR 0080](adr/0080-storage-opt-ou
 |---|---|---|
 | `example_clients` | `hash` (`examples.hash`), `client` (API key name); primary key (hash, client) | Other clients whose requests matched a stored example; `examples.client` holds the first and is never listed here (`Ledger.example_clients(hash)` returns all of them) |
 | `no_train` | `end_user_hash` (primary key), `ts`, `client` (the key name the hash is scoped to; NULL for keyless requests), `admin` (the admin's name when an admin registered it) | End users whose requests are never stored (`POST /v1/ratchet/no-train`). A row an admin made can only be removed by an admin |
+| `erasure_items` | `erasure_id`, `hash`, `task`, `split`; primary key (erasure, hash) | The examples each erasure purged: hashes, never text (FR-13.3) |
+| `daily_rollup` | `day`, `task`, `client`, `route`, `store_opt_out` and the sums of the request rows folded by retention: `requests`, `student_served`, `teacher_served`, `escalated`, `cost`, `baseline`, `teacher_cost`, `student_cost`, `split_unknown`, `split_unknown_cost`, `sampled`, `avoided`, the student tokens, `served_with_tokens`, `audited`, `audit_agree_sum`, `audit_n`, `wall_ms_sum`, `latency_n`, `stored_sum`, `stored_n`, `folded_ts`; indexed by `day` | Request rows older than `RATCHET_REQUEST_RETENTION_DAYS` (FR-13.4). A fold may leave several rows per key; readers sum them. No end user is kept |
+
+Indexes for retention and erasure: `requests(ts)`, `examples(last_seen_ts)`, `examples(client)`, `examples(end_user)` and `example_clients(client)`.
+
+The `meta` table also holds `day_origin` once request retention first folds rows: when day 1 started, so day numbers do not shift when the oldest rows go.
 
 The `meta` table also holds `end_user_key` (the generated HMAC key, hex, when `RATCHET_END_USER_KEY` is not set) and `end_user_key_id` (an HMAC of a fixed label under the key last used, to notice a change).
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `no_train`, `end_user_key`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `no_train`, `end_user_key`, `erase`, `purge`, `purge_failed`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 

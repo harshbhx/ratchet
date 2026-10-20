@@ -172,6 +172,27 @@ class CostPolicy:
     prices_verified: bool
 
 
+# RATCHET_ERASURE_SHARED: what an erasure of a client or an end user does with an example another client also sent
+# (FR-13.3, ADR 0081). `delete`: purge it too; `keep`: keep it for the other client and unlink the erased party.
+ERASURE_SHARED = ("delete", "keep")
+MAX_RETENTION_DAYS = 36500  # RATCHET_EXAMPLE_RETENTION_DAYS and RATCHET_REQUEST_RETENTION_DAYS: 0 (forever) to this
+
+
+@dataclass(frozen=True)
+class Retention:
+    """The retention and erasure settings, checked (`Settings.retention()`, FR-13.3, FR-13.4): whole days examples and
+    request rows are kept after they were last seen or logged (0 = forever), and ERASURE_SHARED's choice."""
+
+    example_days: int = 0
+    request_days: int = 0
+    erasure_shared: str = "delete"
+
+    @property
+    def enabled(self) -> bool:
+        """Whether there is anything for a scheduled purge to do."""
+        return self.example_days > 0 or self.request_days > 0
+
+
 DEFAULT_PRICES: dict[str, Price] = {
     # Token Factory list prices (USD / 1M tokens), Oct 2026. Verify in the console.
     "nvidia/Nemotron-3-Ultra-550b-a55b": Price(1.00, 3.00),
@@ -280,6 +301,12 @@ class Settings:
     end_user_key: str = field(default_factory=lambda: _env("RATCHET_END_USER_KEY", ""))
     # Per-key settings for API keys: "name:field=value,...;name:field=value". Only `store` (1 or 0) is built so far.
     key_limits: str = field(default_factory=lambda: _env("RATCHET_KEY_LIMITS", ""))
+    # Retention and erasure (FR-13.3, FR-13.4, ADR 0081): whole days a stored example is kept after it was last seen, and a
+    # request row after it was logged (its sums are kept in daily_rollup), 0 = forever; and whether erasing a client or
+    # an end user also purges an example another client sent too (`delete`) or keeps it for that client (`keep`).
+    example_retention_days: int = field(default_factory=lambda: _int("RATCHET_EXAMPLE_RETENTION_DAYS", "0"))
+    request_retention_days: int = field(default_factory=lambda: _int("RATCHET_REQUEST_RETENTION_DAYS", "0"))
+    erasure_shared: str = field(default_factory=lambda: _env("RATCHET_ERASURE_SHARED", "delete"))
 
     # Gateway API keys for /v1/*: "name:key,name:key". Empty = no authentication (v0.3 behaviour).
     api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
@@ -425,6 +452,24 @@ class Settings:
                     "separate names with commas)"
                 )
         return frozenset(names)
+
+    def retention(self) -> Retention:
+        """RATCHET_EXAMPLE_RETENTION_DAYS, RATCHET_REQUEST_RETENTION_DAYS and RATCHET_ERASURE_SHARED, checked. A bad
+        value raises ValueError naming the variable, so the gateway and `python -m ratchet.live` stop at startup instead
+        of keeping data longer, or deleting more, than the operator meant."""
+        for env, days in (
+            ("RATCHET_EXAMPLE_RETENTION_DAYS", self.example_retention_days),
+            ("RATCHET_REQUEST_RETENTION_DAYS", self.request_retention_days),
+        ):
+            if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= MAX_RETENTION_DAYS:
+                raise ValueError(f"{env} must be a whole number of days, 0 (keep forever) to {MAX_RETENTION_DAYS}, not {days!r}")
+        raw = self.erasure_shared
+        shared = raw.strip().lower() if isinstance(raw, str) else None
+        if shared == "":  # set but empty, as in an .env file: the default
+            shared = "delete"
+        if shared not in ERASURE_SHARED:
+            raise ValueError(f"RATCHET_ERASURE_SHARED must be {' or '.join(ERASURE_SHARED)}, not {raw!r}")
+        return Retention(self.example_retention_days, self.request_retention_days, shared)
 
     def limits(self) -> Limits:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,
