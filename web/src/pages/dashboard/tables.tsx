@@ -1,10 +1,29 @@
 import { motion } from "motion/react";
-import { Boxes, Cpu, ListTree, Lock } from "lucide-react";
+import { Boxes, Cpu, FileCheck2, ListTree, Lock, ShieldCheck } from "lucide-react";
 import type { TaskStats, Version } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { isPinned } from "./model";
 import { DataTable, Empty, Panel, StateChip, td, tdNum, th, thNum } from "./ui";
+
+function BomLink({ v }: { v: Version }) {
+  if (!v.bom) return <span className="text-muted">–</span>;
+  const signed = v.bom === "signed";
+  return (
+    <a
+      href={`/ratchet/versions/${v.id}/bom`}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={signed ? "Bill of materials, signed with Ed25519" : "Bill of materials with a SHA-256, not signed"}
+      className="rounded-full focus-visible:outline-offset-2"
+    >
+      <Badge tone={signed ? "good" : "outline"} className="transition-colors hover:border-line-strong">
+        {signed ? <ShieldCheck aria-hidden /> : <FileCheck2 aria-hidden />} {signed ? "Signed" : "Unsigned"}
+        <span className="sr-only">bill of materials for v{v.id} (opens in a new tab)</span>
+      </Badge>
+    </a>
+  );
+}
 
 function TrafficBar({ pct, live }: { pct: number; live: boolean }) {
   return (
@@ -36,7 +55,7 @@ export function VersionsTable({ versions }: { versions: Version[] }) {
           Day 1 is all teacher (cold start). Night School trains v1 on the teacher's answers that night.
         </Empty>
       ) : (
-        <DataTable caption="Model versions" minWidth={780}>
+        <DataTable caption="Model versions" minWidth={860}>
           <thead>
             <tr>
               <th className={th}>Version</th>
@@ -47,6 +66,7 @@ export function VersionsTable({ versions }: { versions: Version[] }) {
               <th className={thNum}>Threshold</th>
               <th className={th}>State</th>
               <th className={thNum}>Traffic</th>
+              <th className={th}>BOM</th>
             </tr>
           </thead>
           <tbody>
@@ -72,6 +92,9 @@ export function VersionsTable({ versions }: { versions: Version[] }) {
                   <td className={tdNum}>
                     <TrafficBar pct={v.traffic_pct} live={v.state === "live"} />
                   </td>
+                  <td className={td}>
+                    <BomLink v={v} />
+                  </td>
                 </tr>
               );
             })}
@@ -82,7 +105,7 @@ export function VersionsTable({ versions }: { versions: Version[] }) {
   );
 }
 
-function ShareBar({ share, esc }: { share: number; esc: number }) {
+export function ShareBar({ share, esc }: { share: number; esc: number }) {
   return (
     <span className="inline-flex items-center justify-end gap-2.5">
       <span className="w-9 text-right font-medium text-ink tabular">{fmtPct(share)}</span>

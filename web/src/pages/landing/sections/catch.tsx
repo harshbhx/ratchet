@@ -70,6 +70,7 @@ const BOM = [
   ["Split", "train", true],
   ["Examples", "2,085", true],
   ["Dataset SHA-256", "07ac2ca35bac7895…", true],
+  ["Signature", "Ed25519, per adapter", false],
 ] as const;
 
 function BomCard() {
@@ -82,7 +83,8 @@ function BomCard() {
         <ExampleBadge />
       </div>
       <p className="px-4 pt-4 text-[13.5px] leading-relaxed text-ink-2 sm:px-5">
-        Every training source, the license that permits it, and a fingerprint of the exact dataset. Exported on request.
+        Every training source, the license that permits it, and a fingerprint of the exact dataset. Each adapter gets its own copy at training
+        time, signed so anyone with the public key can check it.
       </p>
       <dl className="flex flex-1 flex-col justify-center space-y-3 px-4 py-5 sm:px-5">
         {BOM.map(([k, v, mono]) => (
@@ -94,7 +96,7 @@ function BomCard() {
         ))}
       </dl>
       <div className="border-t border-line bg-bg-sunken px-4 py-3 font-mono text-[12px] text-muted sm:px-5">
-        <span className="text-owned-ink">GET</span> /ratchet/bom
+        <span className="text-owned-ink">GET</span> /ratchet/versions/<span className="text-ink-2">{"{id}"}</span>/bom
       </div>
     </div>
   );
