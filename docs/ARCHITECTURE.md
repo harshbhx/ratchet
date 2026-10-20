@@ -43,13 +43,14 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/licenses.py` | Teacher license registry; refuses teachers that forbid distillation |
 | `ratchet/redact.py` | `redact()`, `redact_messages()`: PII placeholders before examples are stored |
 | `ratchet/auth.py` | `KeyRing` (named gateway API keys) and `bearer()` |
+| `ratchet/openai_compat.py` | `validate_chat_request()` (typed `ChatRequest`), `normalize_messages()`, `APIError` and OpenAI's error envelope; standard library only |
 | `ratchet/bom.py` | Per-adapter bill of materials: `manifest()`, `document()`, Ed25519 `Signer`, `verify()`, CLI (`keygen`, `verify`) |
 | `ratchet/nightschool/dataset.py` | Builds train and golden sets from the ledger |
 | `ratchet/nightschool/train.py` | LoRA fine-tune script, run inside the Serverless Job |
 | `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold |
 | `ratchet/nightschool/orchestrate.py` | `run_night()`: one night of training and release |
 | `ratchet/live.py` | Live Night School on Nebius (`NebiusTrainer`, `load_adapter`, CLI) |
-| `ratchet/gateway.py` | FastAPI app: OpenAI-compatible API (with API keys, quotas and streaming), stats, BOM and redaction endpoints, pages (`/`, `/scout`, `/dashboard`), mock-only demo controls, Scout endpoints |
+| `ratchet/gateway.py` | FastAPI app: OpenAI-compatible API (with API keys, quotas, request validation, body limit, OpenAI error envelope and streaming), stats, BOM and redaction endpoints, pages (`/`, `/scout`, `/dashboard`), mock-only demo controls, Scout endpoints |
 | `ratchet/scout/agents.py` | `Scout`: planner → searcher → triage (parallel) → reader (parallel) → writer; `Call`, `http_caller` |
 | `ratchet/scout/prompts.py` | System prompts, message builders and example questions, shared with the simulator |
 | `ratchet/scout/search.py` | `TavilySearch` (live) and `MockSearch` (simulated results from `sim/research.py`) |
@@ -65,7 +66,7 @@ There are two runtime modes, chosen by `RATCHET_MODE`:
 
 ## 2. Request path
 
-`Ratchet.handle(messages, task_name, client)` in `router.py`. Before it runs, the gateway checks the API key (when `RATCHET_API_KEYS` is set) and the key's daily quota, and passes the key's name as `client`:
+`Ratchet.handle(messages, task_name, client)` in `router.py`. Before it runs, the gateway checks the body size, the API key (when `RATCHET_API_KEYS` is set), validates and normalises the request (`openai_compat.py`), and checks the key's daily quota, in that order; it passes the key's name as `client`. A request refused by any of these is not logged and costs nothing:
 
 ```mermaid
 sequenceDiagram
@@ -76,7 +77,7 @@ sequenceDiagram
     participant SH as Shadow candidate
     participant L as Ledger
     App->>GW: POST /v1/chat/completions (X-Ratchet-Task, Bearer key)
-    GW->>GW: API key → client name (401), daily quota (429)
+    GW->>GW: body size (413), API key → client name (401), validate + normalise (400), daily quota (429)
     opt task is pinned
         GW->>T: teacher answers (NOT stored as training data)
         GW->>L: log_request(served_by=teacher)
@@ -110,6 +111,7 @@ sequenceDiagram
 
 Details that matter:
 
+- **Validation and normalisation** (`openai_compat.py`, [ADR 0012](adr/0012-openai-request-validation-and-error-envelope.md)): a malformed request gets a 400 in OpenAI's error envelope before any model call. `developer` becomes `system` and text content parts become one string, so the cascade, the mock models and the ledger see the same plain messages as before; plain messages pass through as the same objects, so example hashes do not change. A request with a non-text part listed in `RATCHET_TEACHER_MODALITIES` takes the pinned path below (`Ratchet.teacher_only`): teacher only, never stored. Validation, the quota check and the cascade run in a worker thread.
 0. **Pinned tasks** (`Task.pinned`, `_pinned`): checked first. The teacher answers, the request is logged with `served_by=teacher`, no student version, and `cost_usd = baseline_cost_usd`. The answer is **not** passed to `add_example`, so it never becomes training data. No student, audit or shadow call is made. Scout's planner and writer (`research-plan`, `research-write`) are pinned; see [§10](#10-scout-multi-agent-demo).
 1. **Version choice** (`_pick_version`): if a version is in `canary`, it is chosen with probability `traffic_pct / 100`; otherwise the `live` version is used. With no live version (cold start) and the canary not picked, the request goes straight to the teacher.
 2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3) and `confidence.STUDENT_SAMPLING` (`temperature=0.7`, `logprobs=True`), the constant the golden eval also uses. The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name.
@@ -363,6 +365,8 @@ Rollback requires the **upper** bound to be below the floor, which means strong 
 | [0008](adr/0008-pinned-tasks.md) | Pinned tasks stay on the teacher and are never training data |
 | [0009](adr/0009-pattern-based-pii-redaction.md) | Pattern-based PII redaction before examples are stored |
 | [0010](adr/0010-signed-adapter-bom.md) | A signed bill of materials per adapter |
+| [0011](adr/0011-requirements-traceability.md) | Requirements traceability from PRD rows and test markers, checked in CI |
+| [0012](adr/0012-openai-request-validation-and-error-envelope.md) | Validate and normalise OpenAI requests at the gateway; OpenAI's error envelope on `/v1/*` |
 
 ## 10. Scout (multi-agent demo)
 

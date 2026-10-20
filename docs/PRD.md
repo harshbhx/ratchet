@@ -154,13 +154,14 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 |---|---|---|
 | FR-1.1 | `POST /v1/chat/completions` accepts OpenAI-format requests and returns a `chat.completion` object plus a `ratchet` metadata block (served_by, student_version, confidence, escalated, cost_usd, all_teacher_cost_usd, latency_ms) | Done (v0.1) |
 | FR-1.2 | `GET /v1/models` lists a `ratchet` model | Done (v0.1) |
-| FR-1.3 | Task selection via `X-Ratchet-Task` header or `metadata.ratchet_task` | Done (v0.1) |
+| FR-1.3 | Task selection via `X-Ratchet-Task` header or `metadata.ratchet_task`; the header wins when both are set | Done (v0.1) |
 | FR-1.4 | Reject `stream: true` with HTTP 400 (until v0.4) | Replaced by FR-1.6 |
 | FR-1.5 | Reject missing or empty `messages` with HTTP 400 | Done (v0.1) |
 | FR-1.6 | Streaming responses: `stream: true` returns OpenAI `chat.completion.chunk` events and `[DONE]`, sent once the cascade has decided | Done (v0.4) |
 | FR-1.7 | API keys / auth on the gateway: named keys (`RATCHET_API_KEYS`), per-key daily quota, cost and savings per client. The demo VM also has an opt-in edge guard in Caddy | Done (v0.4) |
 | FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors return HTTP 502 | Done (v0.1.1) |
 | FR-1.9 | Web pages: landing page at `/`, Scout at `/scout`, dashboard at `/dashboard` | Done (v0.2) |
+| FR-1.10 | Strict request validation and normalisation on `/v1/chat/completions`: a malformed request (wrong types, unknown role, bad `metadata`, out-of-range parameters, bad JSON) gets HTTP 400 before any model call, never a 500, and is neither logged nor counted against a quota; errors on `/v1/*` use OpenAI's envelope (`error.message`, `type`, `param`, `code`), so SDKs raise typed exceptions; limits on body size (413), messages per request and input characters; the `developer` role and text content parts are accepted and normalised to the plain form, so they match plain requests in the ledger; other content parts are refused unless the teacher takes them (`RATCHET_TEACHER_MODALITIES`), and then the request goes to the teacher only and is never stored; unknown top-level fields are ignored | Done (v0.5) |
 
 ### 6.2 Cascade and confidence
 

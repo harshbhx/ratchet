@@ -72,13 +72,18 @@ REGISTRY: dict[str, Task] = {
 }
 
 
-_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
+def valid_name(name: str) -> bool:
+    """1 to 64 letters, digits, '_', '.' or '-', matched in full (a trailing newline is not a valid name)."""
+    return _NAME.fullmatch(name) is not None
 
 
 def get(name: str | None) -> Task:
     """Known tasks come from REGISTRY. Unknown names get a whole-text comparison task that is
     NOT stored, so arbitrary client headers cannot grow the registry. Invalid names fall back
     to 'default'."""
-    if not name or not _NAME.match(name):
+    if not name or not valid_name(name):
         return REGISTRY["default"]
     return REGISTRY.get(name) or Task(name)

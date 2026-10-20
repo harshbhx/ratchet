@@ -30,7 +30,10 @@ class Item(Protocol):
 
 
 def lookup(messages: list[dict[str, str]]) -> Item:
-    user = next(m["content"] for m in reversed(messages) if m["role"] == "user")
+    """The mock item for the last user message. KeyError for anything else (the gateway's 400 in mock mode)."""
+    user = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+    if not isinstance(user, str):  # no user message, or content parts only a multimodal teacher would read
+        raise KeyError("no plain-text user message")
     if user in tickets.REGISTRY:
         return tickets.REGISTRY[user]
     if user in research.REGISTRY:

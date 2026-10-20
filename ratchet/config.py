@@ -86,6 +86,17 @@ class Settings:
     # Requests per key per UTC day on /v1/chat/completions. 0 = unlimited.
     api_key_daily_requests: int = field(default_factory=lambda: int(_env("RATCHET_API_KEY_DAILY_REQUESTS", "0")))
 
+    # Request limits on the OpenAI-compatible API (ratchet/openai_compat.py), checked before any model call. 0 = no limit.
+    # The body limit applies to every POST, PUT and PATCH; the other two to /v1/chat/completions.
+    max_body_bytes: int = field(default_factory=lambda: int(_env("RATCHET_MAX_BODY_BYTES", "2097152")))
+    max_messages: int = field(default_factory=lambda: int(_env("RATCHET_MAX_MESSAGES", "256")))
+    max_input_chars: int = field(default_factory=lambda: int(_env("RATCHET_MAX_INPUT_CHARS", "120000")))
+    # Merge consecutive leading system (and developer) messages into one, for models that accept only one.
+    merge_system: bool = field(default_factory=lambda: _env("RATCHET_MERGE_SYSTEM", "0") == "1")
+    # Content part types besides text that the teacher accepts ("text,image_url"). Such requests go to the teacher
+    # only and are never stored; any other non-text part is a 400.
+    teacher_modalities: str = field(default_factory=lambda: _env("RATCHET_TEACHER_MODALITIES", "text"))
+
     # Ed25519 private key (base64 of the 32-byte seed) that signs each adapter's bill of materials.
     # Generate one with `python -m ratchet.bom keygen`. Empty = manifests are stored unsigned.
     bom_signing_key: str = field(default_factory=lambda: _env("RATCHET_BOM_SIGNING_KEY", ""))

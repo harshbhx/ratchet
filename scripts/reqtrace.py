@@ -488,7 +488,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-1.1": ("ratchet.gateway:chat",),
     "FR-1.2": ("ratchet.gateway:models",),
     "FR-1.3": ("ratchet.gateway:chat", "ratchet.tasks:get"),
-    "FR-1.5": ("ratchet.gateway:chat",),
+    "FR-1.5": ("ratchet.gateway:chat", "ratchet.openai_compat:validate_chat_request"),
     "FR-1.6": ("ratchet.gateway:chat", "ratchet.gateway:_chunks"),
     "FR-1.7": (
         "ratchet.auth:KeyRing",
@@ -498,6 +498,16 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "FR-1.8": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat"),
     "FR-1.9": ("ratchet.gateway:landing", "ratchet.gateway:scout_page", "ratchet.gateway:dashboard"),
+    "FR-1.10": (
+        "ratchet.openai_compat:validate_chat_request",
+        "ratchet.openai_compat:normalize_messages",
+        "ratchet.openai_compat:APIError",
+        "ratchet.gateway:chat",
+        "ratchet.gateway:BodyLimitMiddleware",
+        "ratchet.gateway:_http_error",
+        "ratchet.gateway:_unhandled_error",
+        "ratchet.router:Ratchet.teacher_only",
+    ),
     # 6.2 Cascade and confidence
     "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),
     "FR-2.2": ("ratchet.confidence:score",),
