@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import random
 import threading
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from . import licenses, tasks
@@ -86,8 +88,19 @@ class RequestMeta:
     idempotency_key: str | None = None
 
 
+# The model calls of one request, as `Result.usage_breakdown` names them: the student's samples (one call, n choices),
+# the served answer (one of those samples, or the teacher's call), the teacher's audit, the shadow's samples and the
+# teacher's arbitration. A call that was not made, or that failed, is None.
+USAGE_PARTS = ("student_samples", "served", "audit", "shadow", "arbitration")
+
+
 @dataclass
 class Result:
+    """One answered request. The token fields are what the response's `usage` reports (FR-1.12): the served answer as
+    if its model had answered alone, so a client's own accounting matches what one model call would have cost it.
+    Ratchet's own overhead (the other samples, audits, shadows, arbitrations) is in `usage_breakdown`, by call, and in
+    `cost_usd`. `fingerprint` is the response's `system_fingerprint` (`fingerprint()`)."""
+
     text: str
     served_by: str
     version: int | None
@@ -99,10 +112,71 @@ class Result:
     model: str
     route: str = ""  # one of ROUTES
     finish_reason: str = "stop"  # the served answer's, one of CLIENT_FINISH ("length": cut off, or over max_tokens)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0  # reasoning tokens included, as OpenAI counts them for its reasoning models
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0  # the part of prompt_tokens the served model read from its prompt cache
+    fingerprint: str = ""
+    usage_breakdown: dict[str, dict[str, int] | None] = field(default_factory=dict)  # USAGE_PARTS -> {"in", "out"}
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
 
 
 def _client_finish(c: Completion) -> str:
     return c.finish_reason if c.finish_reason in CLIENT_FINISH else "stop"
+
+
+def fingerprint(*parts: object) -> str:
+    """A `system_fingerprint`: 'fp_' and the first 12 hex digits of SHA-256 over the parts joined by '|'. The router
+    passes what decides an answer: for the student its role, model (adapter), version, training-set hash and threshold;
+    for the teacher its role and model. So it stays the same within a version and changes when another version serves
+    (a promotion, a rollback) or a version's threshold changes, as OpenAI's changes with its backend configuration."""
+    return "fp_" + hashlib.sha256("|".join(map(str, parts)).encode("utf-8", "replace")).hexdigest()[:12]
+
+
+def _usage(messages: list[dict[str, Any]], served: Completion, text: str) -> dict[str, int]:
+    """`Result`'s token fields for the served answer (FR-1.12). The counts are the served model's own; a count it did
+    not report (0) is estimated at about 4 characters a token, from the messages as JSON and from the answer as served.
+    Reasoning tokens are part of the completion and cached tokens part of the prompt, so neither exceeds its total. No
+    I/O; the JSON is built only when the prompt count is missing."""
+    prompt = served.in_tokens or approx_tokens(json.dumps(messages, ensure_ascii=False, default=str))
+    completion = served.out_tokens or (approx_tokens(text) if text else 0)
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "reasoning_tokens": min(served.reasoning_tokens, completion),
+        "cached_tokens": min(served.cached_tokens, prompt),
+    }
+
+
+def _tokens(c: Completion | None) -> dict[str, int] | None:
+    """One call's tokens as its model reported them."""
+    return None if c is None else {"in": c.in_tokens, "out": c.out_tokens}
+
+
+def _sampled(samples: list[Completion] | None) -> dict[str, int] | None:
+    """One sampling call's tokens: the prompt once (the choices share it) and the output of every choice."""
+    return None if not samples else {"in": samples[0].in_tokens, "out": sum(s.out_tokens for s in samples)}
+
+
+def _breakdown(
+    served: Completion,
+    samples: list[Completion] | None = None,
+    audit: Completion | None = None,
+    shadow: list[Completion] | None = None,
+    arbitration: Completion | None = None,
+) -> dict[str, dict[str, int] | None]:
+    """`Result.usage_breakdown`: every model call of the request by `USAGE_PARTS`. When the student served, `served` is
+    one of `student_samples`; when the teacher did, it is its own call."""
+    return {
+        "student_samples": _sampled(samples),
+        "served": _tokens(served),
+        "audit": _tokens(audit),
+        "shadow": _sampled(shadow),
+        "arbitration": _tokens(arbitration),
+    }
 
 
 def _task(task: str | tasks.Task | None) -> tasks.Task:
@@ -388,7 +462,22 @@ class Ratchet:
             stored=0,
         )
         text = tasks.clean_answer(task, c.text)
-        return Result(text, "teacher", None, None, False, cost, cost, c.latency_ms, c.model, "pinned", _client_finish(c))
+        return Result(
+            text=text,
+            served_by="teacher",
+            version=None,
+            confidence=None,
+            escalated=False,
+            cost_usd=cost,
+            baseline_usd=cost,
+            latency_ms=c.latency_ms,
+            model=c.model,
+            route="pinned",
+            finish_reason=_client_finish(c),
+            **_usage(messages, c, text),
+            fingerprint=fingerprint("teacher", self.s.teacher_model),
+            usage_breakdown=_breakdown(c),
+        )
 
     def teacher_only(
         self,
@@ -433,6 +522,11 @@ class Ratchet:
         teacher_failed = False  # an audit already failed: arbitration would only wait out the same outage
         route = "cold_start"
         stored = False  # a teacher answer became (or bumped) a training example in this request
+        samples: list[Completion] | None = None  # the student's, when it answered
+        audit_c: Completion | None = None
+        s_samples: list[Completion] | None = None  # the shadow's, when it answered
+        arbitration_c: Completion | None = None
+        fp = ""
 
         sc = None
         if version is not None:
@@ -453,9 +547,11 @@ class Ratchet:
                 confidence = sc.confidence
                 student_c = sc.answer
         if version is not None and sc is not None:
+            threshold = self.threshold(version, model_used)
             # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid).
-            if sc.valid and sc.confidence >= self.threshold(version, model_used):
+            if sc.valid and sc.confidence >= threshold:
                 served, served_by, route = sc.answer, "student", "student"
+                fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
                 if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
                     try:
                         teacher_c, stored = self._call_teacher(task, messages, plan, "audit", meta)
@@ -463,6 +559,7 @@ class Ratchet:
                         teacher_failed = True
                         self._count_failure("audit_errors", "audit_error", f"{task.name}: {describe_failure(e)}")
                     else:
+                        audit_c = teacher_c
                         cost += self._cost(self.s.teacher_model, teacher_c)
                         # A cut-off, empty or invalid teacher answer measures nothing: not an audit (INV-16).
                         if answer_problem(task, teacher_c) is None:
@@ -474,6 +571,7 @@ class Ratchet:
             cost += self._cost(self.s.teacher_model, teacher_c)
             latency += teacher_c.latency_ms
             served = teacher_c
+            fp = fingerprint("teacher", self.s.teacher_model)
 
         # Baseline = what this request would have cost with the teacher alone.
         if teacher_c is not None:
@@ -498,9 +596,8 @@ class Ratchet:
             try:
                 s_samples, c, s_model = self._sample(shadow, messages, role="shadow", gen=plan.student)
             except CircuitOpen:  # the shadow's breaker is open: no shadow record, nothing counted again
-                s_samples = None
+                pass
             except Exception as e:  # optional call: count it, never fail the request
-                s_samples = None
                 if isinstance(e, AdapterMissing):
                     self._request_reload(shadow)
                 self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} sampling: {describe_failure(e)}")
@@ -517,6 +614,7 @@ class Ratchet:
                     arbitrated = False
                 else:
                     reference, stored = ruling
+                    arbitration_c = reference
                     cost += self._cost(self.s.teacher_model, reference)
             if reference is not None and answer_problem(task, reference) is not None:
                 arbitrated = False  # a cut-off, empty or invalid teacher answer settles nothing (INV-16)
@@ -542,8 +640,9 @@ class Ratchet:
             route=route,
             stored=int(stored),
         )
+        text = tasks.clean_answer(task, served.text)
         return Result(
-            text=tasks.clean_answer(task, served.text),
+            text=text,
             served_by=served_by,
             version=version.id if (version and served_by == "student") else None,
             confidence=confidence,
@@ -554,4 +653,7 @@ class Ratchet:
             model=served.model,
             route=route,
             finish_reason=_client_finish(served),
+            **_usage(messages, served, text),
+            fingerprint=fp,
+            usage_breakdown=_breakdown(served, samples, audit_c, s_samples, arbitration_c),
         )

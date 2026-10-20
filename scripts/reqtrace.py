@@ -516,6 +516,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_map_upstream",
         "ratchet.gateway:_quota",
     ),
+    "FR-1.12": (
+        "ratchet.router:Result",
+        "ratchet.router:fingerprint",
+        "ratchet.router:_usage",
+        "ratchet.router:_breakdown",
+        "ratchet.providers:Completion",
+        "ratchet.openai_compat:usage_object",
+        "ratchet.openai_compat:ChatRequest.include_usage",
+        "ratchet.gateway:_complete",
+        "ratchet.gateway:_envelope",
+        "sim.mock_models:MockTeacher",
+    ),
     "FR-1.13": (
         "ratchet.providers:GenParams",
         "ratchet.providers:GenPolicy",
