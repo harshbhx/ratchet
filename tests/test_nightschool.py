@@ -18,8 +18,10 @@ from fakes import (
     RecordingEvaluator,
     RecordingProvider,
     RecordingTrainer,
+    _audit,
     _examples,
     _repeat,
+    _shadow,
     _version,
 )
 
@@ -29,7 +31,7 @@ from ratchet.nightschool import dataset
 from ratchet.nightschool.dataset import FREQUENT
 from ratchet.nightschool.evaluate import cascade_eval
 from ratchet.nightschool.orchestrate import run_night
-from ratchet.release import ReleaseGate
+from ratchet.release import CANARY_STEPS, ReleaseGate
 from ratchet.router import Ratchet
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +93,10 @@ def test_training_targets_are_teacher_answers_only():
 
 
 # Every place under ratchet/ that may store a training example. Change this set only in a reviewed edit: a new caller
-# must store teacher answers only (INV-2) and never a pinned task (INV-10).
+# must store teacher answers only (INV-2) and never a pinned task (INV-10). The set must match the code exactly, so
+# moving a call site means replacing its old entry, not adding the new one beside it. For example, when the
+# answer-hygiene item moves storing into Ratchet._store_example (called from _call_teacher), the entry
+# "ratchet.router:Ratchet._call_teacher" becomes "ratchet.router:Ratchet._store_example".
 ALLOWED_ADD_EXAMPLE_CALLERS = {"ratchet.router:Ratchet._call_teacher"}
 
 
@@ -149,11 +154,12 @@ def test_add_example_called_only_from_allowed_callers():
         "answers only (INV-2) and never pinned tasks (INV-10). If the new caller keeps both rules, add it to "
         "ALLOWED_ADD_EXAMPLE_CALLERS in a reviewed change."
     )
-    assert {caller for caller, _ in sites} == ALLOWED_ADD_EXAMPLE_CALLERS, "an allowed caller no longer stores examples"
+    stale = sorted(ALLOWED_ADD_EXAMPLE_CALLERS - {caller for caller, _ in sites})
+    assert not stale, f"{stale} no longer use add_example: if the call moved, replace the entry instead of adding beside it"
 
 
-@pytest.mark.req("INV-2")
 def test_add_example_guard_sees_indirect_uses(tmp_path):
+    """Checks the scanner behind the INV-2 guard, not the invariant itself, so it carries no requirement marker."""
     pkg = tmp_path / "ratchet"
     (pkg / "sub").mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
@@ -279,25 +285,51 @@ def test_night_skips_with_reason(case, reason, detail):
 
 
 # ---------- FR-4.2: retrain from the base model on cumulative data ----------
+def _release(led: Ledger, gate: ReleaseGate, vid: int) -> None:
+    """Take an admitted candidate all the way to live through the gate, on clean shadow and canary evidence."""
+    p = gate.policy
+    if led.version(vid).state == "shadow":
+        _shadow(led, vid, p.min_shadow, live_vid=led.live().id)
+        gate.tick()
+    for _ in CANARY_STEPS:  # 10% -> 50% -> live, each stage on its own audits
+        assert led.version(vid).state == "canary"
+        _audit(led, vid, p.min_audits)
+        gate.tick()
+    assert led.live().id == vid
+
+
 @pytest.mark.req("FR-4.2")
 def test_retrain_from_base_on_cumulative_data():
     led = Ledger(":memory:", golden_fraction=0.3)
-    trainer, evaluator = RecordingTrainer(), RecordingEvaluator(REJECTED_EVAL)  # rejected: nothing left in flight
+    # Every candidate passes and goes live, so nights 2 and 3 train while the previous night's adapter is the champion:
+    # the moment a trainer could stack the new adapter on it instead of starting from the base model.
+    trainer, evaluator = RecordingTrainer(), RecordingEvaluator({"precision": 0.97, "coverage": 0.60, "threshold": 0.5})
     gate = ReleaseGate(led)
+    live_when_trained = []
     for night, new in enumerate((50, 50, 75), start=1):  # night 1 has exactly min_new_examples
         led.day = night
         _examples(led, train=new, golden=5, prefix=f"night {night}")
+        live = led.live()
+        live_when_trained.append(live.adapter_uri if live else None)
         rep = run_night(led, trainer, evaluator, gate, BASE_MODEL)
-        assert rep.trained, rep.reason
+        assert rep.trained and rep.admitted, rep.reason
+        _release(led, gate, rep.version)
 
-    assert [c.base_model for c in trainer.calls] == [BASE_MODEL] * 3  # never the previous adapter
+    assert live_when_trained == [None, "student-v1", "student-v2"]
+    assert [c.adapter_uri for c in evaluator.calls] == ["student-v1", "student-v1", "student-v2", "student-v2", "student-v3"]
+    assert [c.base_model for c in trainer.calls] == [BASE_MODEL] * 3  # never the champion's adapter
+    assert [v.base_model for v in led.versions()] == [BASE_MODEL] * 3
     assert [c.name for c in trainer.calls] == ["student-v1", "student-v2", "student-v3"]
+    assert [(v.adapter_uri, v.state) for v in led.versions()] == [
+        ("student-v1", "retired"),
+        ("student-v2", "retired"),
+        ("student-v3", "live"),
+    ]
     sizes = [len(c.rows) for c in trainer.calls]
     assert sizes == [50, 100, 175] and sizes == sorted(sizes)
     assert sizes == [v.train_examples for v in led.versions()]
     nights = [_hashes(c.rows) for c in trainer.calls]
     assert nights[0] < nights[1] < nights[2]  # every night replays everything earlier nights saw
-    assert {v.base_model for v in led.versions()} == {BASE_MODEL}
 
 
 # ---------- INV-6: precision is measured on held-out rows ----------
@@ -340,7 +372,7 @@ def test_cascade_eval_measures_on_held_out_half():
 
 
 # ---------- INV-4: champion vs challenger on the same golden set ----------
-@pytest.mark.req("INV-4", "FR-5.4")
+@pytest.mark.req("INV-4", "FR-5.4", "FR-4.2")
 def test_champion_rescored_on_same_golden_set():
     led = Ledger(":memory:", golden_fraction=0.3)
     # The live version's stored eval is from an older, easier golden set. Against it the candidate below would be
@@ -365,3 +397,6 @@ def test_champion_rescored_on_same_golden_set():
     assert led.day == 7
     assert rep.admitted and led.version(rep.version).state == "shadow"
     assert led.live().id == live
+    # The challenger starts from the base model, not from the champion it is compared with (FR-4.2).
+    assert [c.base_model for c in trainer.calls] == [BASE_MODEL]
+    assert led.version(rep.version).base_model == BASE_MODEL

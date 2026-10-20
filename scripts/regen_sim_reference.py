@@ -19,7 +19,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +50,26 @@ def reference_args() -> argparse.Namespace:
 def inputs() -> dict[str, Any]:
     """Every simulator input, defaults included, so a changed default shows up as an input change, not a mystery."""
     return {k: v for k, v in sorted(vars(reference_args()).items()) if k != "out"}
+
+
+MISSING = "<missing>"
+
+
+def pinned_inputs(pinned: Mapping[str, Any], fresh: Mapping[str, Any]) -> dict[str, Any]:
+    """The fresh value of every input the fixture pins (MISSING for a flag that is gone).
+
+    Equal to `pinned` when no pinned input changed. A flag added after the fixture was made is not compared, so a new
+    option whose default keeps the old behaviour does not force a regeneration; a changed or removed default does."""
+    return {k: fresh.get(k, MISSING) for k in pinned}
+
+
+def matches(want: Mapping[str, Any], have: Mapping[str, Any]) -> bool:
+    """The rule `test_reference_simulation_unchanged` applies: same pinned inputs, days, events and versions."""
+    return (
+        set(have) == set(want)
+        and pinned_inputs(want["inputs"], have["inputs"]) == want["inputs"]
+        and all(have[k] == want[k] for k in ("days", "events", "versions"))
+    )
 
 
 @contextlib.contextmanager
@@ -119,12 +139,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Regenerate (or check) the pinned reference simulation fixture.")
     ap.add_argument("--check", action="store_true", help="compare a fresh run with the fixture and write nothing")
     args = ap.parse_args(argv)
-    text = render(snapshot(run_reference()))
+    snap = snapshot(run_reference())
     rel = FIXTURE.relative_to(ROOT).as_posix()
     if args.check:
-        same = FIXTURE.exists() and FIXTURE.read_text(encoding="utf-8") == text
+        same = FIXTURE.exists() and matches(load(), snap)
         print(f"regen_sim_reference: {rel} {'matches a fresh run' if same else 'differs from a fresh run'}")
         return 0 if same else 1
+    text = render(snap)
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(text, encoding="utf-8")
     print(f"regen_sim_reference: wrote {rel}; add a CHANGELOG line that says why the reference moved")

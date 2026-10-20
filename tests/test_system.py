@@ -56,11 +56,18 @@ def test_reference_simulation_unchanged(reference_run, sim_reference):
     must reproduce tests/fixtures/sim_reference_seed7.json, so a change can show it leaves legacy behaviour
     byte-identical. If a change is meant to move it, run scripts/regen_sim_reference.py and add a CHANGELOG line."""
     want, have = sim_reference.load(), sim_reference.snapshot(reference_run)
-    assert have["inputs"] == want["inputs"]  # a changed simulator default, not a behaviour change
+    # A changed or removed simulator default, not a behaviour change. A flag added later is not compared, so an option
+    # whose default keeps the old behaviour does not force a regeneration.
+    pinned = want["inputs"]
+    assert sim_reference.pinned_inputs(pinned, have["inputs"]) == pinned
+    assert sim_reference.pinned_inputs(pinned, {**have["inputs"], "a_new_flag": "default"}) == pinned
+    assert sim_reference.pinned_inputs(pinned, {**pinned, "seed": 8}) != pinned
+    assert sim_reference.pinned_inputs(pinned, {k: v for k, v in pinned.items() if k != "workload"}) != pinned
     assert have["events"] == want["events"]
     assert have["versions"] == want["versions"]
     assert have["days"] == want["days"]
     assert set(have) == set(want)
+    assert sim_reference.matches(want, have)  # the same rule `regen_sim_reference.py --check` applies
 
 
 @pytest.mark.req("FR-3.3", "US-7", "INV-1")

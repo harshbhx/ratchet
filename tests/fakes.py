@@ -97,8 +97,8 @@ class RecordingProvider:
     asked (`logprobs=True`); `logprob=None` plays an endpoint that never returns them. A list for `text` or `logprob`
     scripts the choices instead: choice i gets item i (cycling), so `RecordingProvider([A, A, B], [log(.6), log(.9),
     log(.99)])` is a 2-of-3 majority with known token probabilities. Calls to a model in `raise_on` are recorded and
-    then raise `httpx.ConnectError`, the way an unreachable endpoint fails. Thread-safe, because Scout calls the router
-    from several threads."""
+    then raise `exc(message)`: `httpx.ConnectError` by default, the way an unreachable endpoint fails, or another error
+    such as `exc=httpx.ReadTimeout` for a slow one. Thread-safe, because Scout calls the router from several threads."""
 
     def __init__(
         self,
@@ -108,6 +108,7 @@ class RecordingProvider:
         out_tokens: int = 5,
         raise_on: Collection[str] = frozenset(),
         latency_ms: float = 1.0,
+        exc: Callable[[str], BaseException] = httpx.ConnectError,
     ) -> None:
         if (isinstance(text, list) and not text) or (isinstance(logprob, list) and not logprob):
             raise ValueError("a scripted text or logprob list needs at least one item")
@@ -117,6 +118,7 @@ class RecordingProvider:
         self.out_tokens = out_tokens
         self.raise_on = set(raise_on)
         self.latency_ms = latency_ms
+        self.exc = exc
         self.calls: list[ProviderCall] = []
         self._lock = threading.Lock()
 
@@ -134,7 +136,7 @@ class RecordingProvider:
         with self._lock:
             self.calls.append(ProviderCall(copy.deepcopy(messages), model, dict(kwargs)))
         if model in self.raise_on:
-            raise httpx.ConnectError(f"{model} is down")
+            raise self.exc(f"{model} is down")
         said = self.text(messages, model) if callable(self.text) else self.text
         out = []
         for i in range(int(kwargs.get("n") or 1)):
@@ -179,8 +181,9 @@ def _version(
 ) -> int:
     """Create a version and move it to `state` with `set_version`, as the gate does (which also starts its stage).
 
-    `pct` defaults to what the gate sets: 100 for live, the first canary step for canary, 0 otherwise. The adapter is
-    named `student-v<id>`, like Night School names them, unless `adapter_uri` is given."""
+    `pct` defaults to what the gate sets: 100 for live, the first canary step for canary, 0 otherwise. Unless
+    `adapter_uri` is given, the adapter is `student-v<n>` with n = the number of versions so far + 1, the rule Night
+    School uses; n is the new id only while no version row has been deleted."""
     uri = adapter_uri or f"student-v{len(led.versions()) + 1}"
     vid = led.create_version(base_model, uri, train_examples, f"dataset-{uri}", dict(eval or {}), state="candidate")
     led.set_version(vid, state, _STAGE_PCT.get(state, 0) if pct is None else pct)
