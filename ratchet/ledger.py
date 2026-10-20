@@ -241,6 +241,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS requests_version_audited ON requests (student_version, audited, id)",
     "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
+    # The tasks requests named and when (recent_tasks, for GET /v1/models; FR-1.50): an index-only scan.
+    "CREATE INDEX IF NOT EXISTS requests_task_ts ON requests (task, ts)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
@@ -399,6 +401,24 @@ class Ledger:
             q += " AND day <= ?"
             args.append(until)
         return [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
+
+    @_locked
+    def recent_tasks(self, days: float, client: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        """The tasks requests named in the last `days` days of wall-clock time, most recently used first, at most `limit`:
+        each as {task, first_ts, last_ts}, `first_ts` being its first request ever. With `client` (an API key name) only
+        that key's requests count, so one client's ad hoc task names are never listed to another. For GET /v1/models
+        (FR-1.50); one aggregate over the (task, ts) index."""
+        if isinstance(days, bool) or not isinstance(days, (int, float)) or not 0 < days < math.inf:
+            raise ValueError(f"days must be a positive number, not {days!r}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError(f"limit must be a whole number, 1 or more, not {limit!r}")
+        where, args = ("WHERE task IS NOT NULL", []) if client is None else ("WHERE task IS NOT NULL AND client=?", [client])
+        rows = self.db.execute(
+            f"""SELECT task, MIN(ts) first_ts, MAX(ts) last_ts FROM requests {where}
+                GROUP BY task HAVING MAX(ts) >= ? ORDER BY last_ts DESC, task LIMIT ?""",
+            [*args, time.time() - days * DAY_SECONDS, limit],
+        )
+        return [{"task": r["task"], "first_ts": float(r["first_ts"]), "last_ts": float(r["last_ts"])} for r in rows]
 
     # ---------- compute time (ADR 0023) ----------
     def now(self) -> float:

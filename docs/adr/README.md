@@ -30,5 +30,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0024](0024-evidence-foundations.md) | Foundations for the evidence features: exact statistics, Merkle trees, one schema change with append-only tables, reserved settings and three pinned workloads | Accepted | 2026-10-20 |
 | [0040](0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate, and per-task alerts | Accepted | 2026-10-20 |
 | [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
+| [0048](0048-model-field-routing.md) | The model field names a task, never an upstream model; `/v1/models` lists the tasks; an Azure-style route | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

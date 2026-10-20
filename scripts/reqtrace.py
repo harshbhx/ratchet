@@ -486,8 +486,13 @@ class Exempt:
 CODE: dict[str, tuple[str, ...]] = {
     # 6.1 Gateway
     "FR-1.1": ("ratchet.gateway:chat",),
-    "FR-1.2": ("ratchet.gateway:models",),
-    "FR-1.3": ("ratchet.gateway:chat", "ratchet.tasks:get", "ratchet.router:Ratchet.task_for"),
+    "FR-1.2": ("ratchet.gateway:models", "ratchet.gateway:retrieve_model", "ratchet.gateway:_models"),
+    "FR-1.3": (
+        "ratchet.gateway:chat",
+        "ratchet.tasks:get",
+        "ratchet.router:Ratchet.task_for",
+        "ratchet.openai_compat:resolve_task",
+    ),
     "FR-1.5": ("ratchet.gateway:chat", "ratchet.openai_compat:validate_chat_request"),
     "FR-1.6": ("ratchet.gateway:chat", "ratchet.gateway:_chunks"),
     "FR-1.7": (
@@ -551,6 +556,20 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_complete",
         "ratchet.gateway:_stream_pieces",
         "sim.mock_models:MockStudent",
+    ),
+    "FR-1.50": (
+        "ratchet.openai_compat:resolve_task",
+        "ratchet.openai_compat:check_model",
+        "ratchet.openai_compat:match_task",
+        "ratchet.openai_compat:system_prompt_task",
+        "ratchet.openai_compat:ModelRouting",
+        "ratchet.config:Settings.model_routing",
+        "ratchet.auth:bearer",
+        "ratchet.ledger:Ledger.recent_tasks",
+        "ratchet.gateway:_complete",
+        "ratchet.gateway:azure_chat",
+        "ratchet.gateway:Runtime.keep_auto_task",
+        "ratchet.gateway:_models",
     ),
     # 6.2 Cascade and confidence
     "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),

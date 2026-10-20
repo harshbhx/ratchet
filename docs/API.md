@@ -19,8 +19,10 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/assets/*` | both | Built JavaScript, CSS and fonts of the React app |
 | GET | `/lite`, `/lite/scout`, `/lite/dashboard` | both | The hand-written pages (no build step, no JavaScript framework) |
 | GET | `/healthz` | both | Liveness check; always public |
-| GET | `/v1/models` | both | OpenAI-style model list (API key when keys are on) |
+| GET | `/v1/models` | both | OpenAI-style model list: `ratchet`, `ratchet/<task>` per task, the model aliases (API key when keys are on) |
+| GET | `/v1/models/{id}` | both | One model of the list, or 404 `model_not_found` (API key when keys are on) |
 | POST | `/v1/chat/completions` | both | The cascade; `stream: true` supported (API key when keys are on) |
+| POST | `/openai/deployments/{deployment}/chat/completions` | both | Azure OpenAI's URL for the same cascade, the deployment naming the task ([Azure-style route](#azure-style-route)) |
 | GET | `/ratchet/stats` | both | Everything the dashboard shows |
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
@@ -52,7 +54,7 @@ Off by default, so the mock demo and local runs need no key. Set `RATCHET_API_KE
 RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" uvicorn ratchet.gateway:app
 ```
 
-- Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`) or as `X-API-Key: <key>`.
+- Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`), as `X-API-Key: <key>`, or as `api-key: <key>` (what Azure OpenAI SDKs send), checked in that order.
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
 - `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
@@ -70,7 +72,7 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `messages` | array of message objects | yes | 1 to `RATCHET_MAX_MESSAGES` (256) messages ([Messages](#messages)) |
-| `model` | string | no | Ignored; Ratchet chooses the model. Use `"ratchet"` |
+| `model` | string | no | Names the task, never an upstream model: `"ratchet"` (the task comes from the header, metadata or the other rules), `"ratchet/<task>"` (or `"ratchet:<task>"`) for that task, or a model alias (`RATCHET_MODEL_ALIASES`). Any other id is served as `ratchet` with `X-Ratchet-Model-Alias` (`RATCHET_MODEL_POLICY=lenient`, the default) or is a 404 `model_not_found` (`strict`). See [Task resolution](#task-resolution) |
 | `stream` | bool | no | `true` returns Server-Sent Events in the OpenAI chunk format ([Streaming](#streaming)) |
 | `stream_options` | object | no | With `stream: true`, `{"include_usage": true}` ends the stream with a chunk that carries `usage` ([Streaming](#streaming)). Other keys are ignored, and so is the object without a stream. Never forwarded |
 | `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent |
@@ -83,7 +85,25 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 
 | Header | Meaning |
 |---|---|
-| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. A name that is not registered ([Tasks](#tasks)) follows `RATCHET_UNKNOWN_TASKS`: by default it creates a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); with `teacher` the teacher answers and nothing is stored; with `reject` it is a 400 `unknown_task`. A task with `clients` answers 403 `task_not_allowed` to any other key. A header that is not a valid name means `default` under `distill`, and is a 400 `unknown_task` under `teacher` and `reject`. Missing means `metadata.ratchet_task`, else `default`. No header, metadata key or other field can pin a task: only an operator's spec does |
+| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. A name that is not registered ([Tasks](#tasks)) follows `RATCHET_UNKNOWN_TASKS`: by default it creates a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); with `teacher` the teacher answers and nothing is stored; with `reject` it is a 400 `unknown_task`. A task with `clients` answers 403 `task_not_allowed` to any other key. A header that is not a valid name means `default` under `distill`, and is a 400 `unknown_task` under `teacher` and `reject`. Missing means `metadata.ratchet_task`, else the `model` field and the rules below ([Task resolution](#task-resolution)), else `default`. No header, metadata key or other field can pin a task: only an operator's spec does |
+| `Authorization`, `X-API-Key`, `api-key` | The API key, when keys are on ([Authentication](#authentication)) |
+
+#### Task resolution
+
+The task is the first of these that names one ([ADR 0048](adr/0048-model-field-routing.md)); the response says which in `ratchet.task_source`:
+
+| # | Rule | `task_source` |
+|---|---|---|
+| 1 | `X-Ratchet-Task` | `header` |
+| 2 | `metadata.ratchet_task` | `metadata` |
+| 3 | `model` of `ratchet/<task>` or `ratchet:<task>`; on the [Azure-style route](#azure-style-route), the deployment in the URL instead (the body's `model` is not read there) | `model`, `deployment` |
+| 4 | A model alias (`RATCHET_MODEL_ALIASES`: `gpt-4o-mini=ticket-triage`), for the `model` or a deployment | `alias` |
+| 5 | The first registered task whose `match` rules all hold ([CONFIGURATION.md](CONFIGURATION.md#task-options): `system_prefix`, `schema_name`, `tools`), in registry order, among the tasks the key may use | `match` |
+| 6 | (Reserved for an auto task from a `response_format` json_schema, a later item) | |
+| 7 | With `RATCHET_AUTO_TASK=system_prompt`: `auto-sys-` and 10 hex digits of the SHA-256 of the first system message, an auto task made on its first admitted request (at most `RATCHET_MAX_AUTO_TASKS`, then `default`) | `auto_system` |
+| 8 | `default` | `default` |
+
+A name from rules 1 to 4 that is not registered follows `RATCHET_UNKNOWN_TASKS` (the 400's `param` is `model` when the name came from the model field or an alias). The `model` field never selects an upstream model: the teacher always gets `RATCHET_TEACHER_MODEL` (or the fallback teacher's model) and the student its adapter name, and the response's `model` is the model that served. A client that can set only a model name (LangChain's `ChatOpenAI(model=...)`, a no-code tool) uses `model="ratchet/ticket-triage"` or an alias.
 
 #### Messages
 
@@ -201,7 +221,10 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
       "served": {"in": 104, "out": 31},
       "audit": null, "shadow": null, "arbitration": null
     },
-    "degraded": null
+    "degraded": null,
+    "task": "ticket-triage",
+    "task_source": "header",
+    "requested_model": "ratchet"
   }
 }
 ```
@@ -216,6 +239,9 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `all_teacher_cost_usd` | Estimated cost if the teacher had answered alone |
 | `latency_ms` | Student latency plus teacher latency when the teacher answered |
 | `degraded` | `null`, or `"teacher_unavailable"` when the teacher (and the fallback teacher, if set) could not answer an escalated request and, with `RATCHET_ON_TEACHER_FAILURE=serve_student`, the student's own answer was served although it was below the version's threshold ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)). Such an answer is never stored, audited or shadowed; `served_by` is `student` and `escalated` is `true` |
+| `task` | The task the request was answered as ([Task resolution](#task-resolution)); also the `X-Ratchet-Task` response header |
+| `task_source` | The rule that chose it: `header`, `metadata`, `deployment`, `model`, `alias`, `match`, `auto_system` or `default` |
+| `requested_model` | The request's `model` as sent (`null` when it sent none); `model` above is the model that served |
 | `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call; every choice, for `n` > 1), `audit`, `shadow` (the candidate's samples) and `arbitration` ([Usage](#usage)) |
 
 `model` is the model that produced the served answer: the adapter name (`student-vN`), the teacher model ID, or the fallback teacher's (`RATCHET_TEACHER_FALLBACK_MODEL`) when it answered for an unavailable teacher.
@@ -226,7 +252,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 
 `finish_reason` is the served answer's: `stop`, `length` (cut off by `max_tokens` or a cap, or over the client's `max_tokens` with the reasoning headroom) or `content_filter`; any other value an upstream model reports is returned as `stop`. It is never `tool_calls`, because `message.tool_calls` is not returned yet ([Generation parameters](#generation-parameters)). A student answer is always one that ended by itself.
 
-Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
+Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Task: <task>`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then), `X-Ratchet-Model-Alias: <model>` when `RATCHET_MODEL_POLICY=lenient` served a `model` Ratchet does not know as `ratchet` (percent-encoded when it is not printable ASCII, at most 256 characters), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set. Streamed responses carry them too.
 
 #### Usage
 
@@ -325,6 +351,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
 | 403 | `permission_error` | `task_not_allowed` | The task's `clients` do not name this key, or the request has no key (`task not allowed for this key`). Checked before the quota, so it uses none | No |
 | 404 | `not_found_error` | `unknown_url` | No such route: `Unknown request URL: POST /v1/foo.` | No |
+| 404 | `invalid_request_error` | `model_not_found` | `RATCHET_MODEL_POLICY=strict` and the `model` is not `ratchet`, `ratchet/<task>` or an alias (`The model 'gpt-4o' does not exist.`, `param` `model`); under either policy, `ratchet/` with a name that is not a task name; on the Azure-style route, a deployment that is not a task name (`param` null). Checked before the quota, so it uses none and nothing is logged | No |
 | 405 | `invalid_request_error` | `null` | A route called with the wrong method (`Allow` names the right one) | No |
 | 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
 | 400 | `invalid_request_error` | the teacher's (`context_length_exceeded`, ...), `request_too_large` for an upstream 413 without one, or `null` | Live mode: the teacher refused the request with 400, 413 or 422, so it cannot succeed as sent (too long for the model, a content part it cannot read). `message` and `param` are the teacher's; `X-Should-Retry: false` | No |
@@ -379,6 +406,14 @@ print(resp.choices[0].message.content)
 print(resp.model_extra["ratchet"])  # served_by, confidence, cost_usd, ...
 ```
 
+A client that can set only the model name (LangChain, a no-code tool) names the task there:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(base_url="http://localhost:8000/v1", api_key="unused", model="ratchet/ticket-triage")
+```
+
 OpenAI Node SDK:
 
 ```js
@@ -416,10 +451,40 @@ Always public, also when API keys are on. The demo VM's Docker health check uses
 
 ## GET `/v1/models`
 
-Needs a key when `RATCHET_API_KEYS` is set.
+The model ids a client can send ([Task resolution](#task-resolution)), each a `model` object the OpenAI SDK's `Model` accepts. Needs a key when `RATCHET_API_KEYS` is set.
+
+- `ratchet` first (its task comes from each request);
+- `ratchet/<task>` for every registered task the key may use (a task whose `clients` do not name it is left out), in registry order;
+- unless `RATCHET_UNKNOWN_TASKS=reject`, `ratchet/<name>` for every unregistered name the key's own requests named in the last 30 days (with keys off, any request's), at most 500, the most recently used first;
+- every model alias whose task the key may use, with `alias_of`.
 
 ```json
-{"object": "list", "data": [{"id": "ratchet", "object": "model", "owned_by": "you"}]}
+{"object": "list", "data": [
+  {"id": "ratchet", "object": "model", "created": 1792400000, "owned_by": "ratchet",
+   "ratchet": {"task": null, "pinned": false, "format": null, "compare_keys": [], "live_version": 5}},
+  {"id": "ratchet/ticket-triage", "object": "model", "created": 1792310000, "owned_by": "ratchet",
+   "ratchet": {"task": "ticket-triage", "pinned": false, "format": "json", "compare_keys": ["category", "priority"], "live_version": 5}},
+  {"id": "gpt-4o-mini", "object": "model", "created": 1792310000, "owned_by": "ratchet",
+   "ratchet": {"task": "ticket-triage", "pinned": false, "format": "json", "compare_keys": ["category", "priority"], "live_version": 5,
+               "alias_of": "ratchet/ticket-triage"}}
+]}
+```
+
+`created` is when a request (this key's, with keys on) first named the task, else when the gateway process started. In `ratchet`: the task, whether it is pinned, its answer format, the answer fields that must agree, and the live version that serves it (`null` when the student never does: no live version, a pinned task, or an unregistered task under `RATCHET_UNKNOWN_TASKS=teacher`).
+
+## GET `/v1/models/{id}`
+
+One object of the list above (`client.models.retrieve("ratchet/ticket-triage")`; the SDK sends the slash as `%2F`, which is fine; `ratchet:<task>` finds `ratchet/<task>`). An id not in the list is a 404 `model_not_found`: `{"error": {"message": "The model 'gpt-4o' does not exist.", "type": "invalid_request_error", "param": null, "code": "model_not_found"}}`. Needs a key when `RATCHET_API_KEYS` is set.
+
+## Azure-style route
+
+`POST /openai/deployments/{deployment}/chat/completions?api-version=...` runs the same handler as `/v1/chat/completions` (the same validation, checks, quota, envelope, streaming and `ratchet` block) for clients written against Azure OpenAI. The deployment names the task: a model alias's task, `ratchet` (the other rules decide), `ratchet:<task>`, or a task name, which follows `RATCHET_UNKNOWN_TASKS` when it is not registered; anything else is a 404 `model_not_found`. The body's `model` is not read (so `RATCHET_MODEL_POLICY=strict` does not refuse it), the header and `metadata.ratchet_task` still win, and `api-version` is accepted and ignored. The key may come in Azure's `api-key` header.
+
+```python
+from openai import AzureOpenAI
+
+client = AzureOpenAI(azure_endpoint="http://localhost:8000", api_key="unused", api_version="2024-10-21")
+resp = client.chat.completions.create(model="ticket-triage", messages=[{"role": "user", "content": "I was charged twice."}])
 ```
 
 ## GET `/ratchet/stats`
