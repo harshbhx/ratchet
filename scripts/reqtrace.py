@@ -518,6 +518,12 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-2.7": ("ratchet.tasks:strip_reasoning", "ratchet.tasks:parse_json"),
     "FR-2.8": ("ratchet.router:Ratchet._pick_version",),
     "FR-2.9": ("ratchet.router:Ratchet._pinned", "ratchet.tasks:Task"),
+    "FR-2.10": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._arbitrate",
+        "ratchet.router:Ratchet.health",
+        "ratchet.ledger:Ledger.shadow_quality",
+    ),
     # 6.3 Provenance and licensing
     "FR-3.1": ("ratchet.licenses:REGISTRY", "ratchet.licenses:require_distillable"),
     "FR-3.2": ("ratchet.licenses:CLOSED", "ratchet.licenses:require_distillable"),
@@ -616,6 +622,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "INV-12": ("ratchet.redact:redact_messages", "ratchet.router:Ratchet._call_teacher"),
     "INV-13": ("ratchet.auth:KeyRing.identify",),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
+    "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
 }
 
 _UI = "dashboard UI: checked in light and dark mode at 1440 and 390 px with Playwright; CI typechecks and builds it"

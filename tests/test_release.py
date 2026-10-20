@@ -136,6 +136,54 @@ def test_shadow_promotes_and_both_rejections():
     assert led.version(cand).state == "canary"
 
 
+@pytest.mark.req("FR-6.4", "FR-2.10", "NFR-8")
+def test_shadow_gate_counts_unarbitrated_disagreements_against_the_candidate():
+    """Arbitration only runs when the shadow disagrees with the served answer, so a failed one is a disagreement whose
+    outcome is unknown. Dropping those rows would raise the precision of the candidate that disagrees most."""
+    p = ReleasePolicy()
+
+    # Every arbitrated answer agrees, but the teacher could not arbitrate 10 of the 100: 90%, not 100%, and rejected.
+    led, gate, live, cand = _shadowing()
+    _shadow(led, cand, p.min_shadow, unarbitrated_every=10, live_vid=live)
+    s = led.shadow_quality(cand)
+    assert (s["n"], s["served"], s["unarbitrated"], s["precision"], s["coverage"]) == (100, 100, 10, 0.9, 1.0)
+    gate.tick()
+    assert led.version(cand).state == "rejected"
+    assert led.events()[-1]["detail"] == f"v{cand}: shadow precision 90.0% < 95% (10 unarbitrated counted as disagreements)"
+
+    # Two of 100 still leave 98%: promoted, and the event says what the number includes.
+    led, gate, live, cand = _shadowing()
+    _shadow(led, cand, p.min_shadow, unarbitrated_every=50, live_vid=live)
+    assert led.shadow_quality(cand)["unarbitrated"] == 2
+    gate.tick()
+    assert led.version(cand).state == "canary"
+    assert _kinds(led, "canary")[-1]["detail"].startswith(
+        f"v{cand} shadow precision 98.0% (2 unarbitrated counted as disagreements), coverage 100.0%"
+    )
+
+    # A row with no verdict (shadow_serve NULL) counts toward nothing: not n, coverage, the evidence count or precision.
+    led, gate, live, cand = _shadowing()
+    _shadow(led, cand, p.min_shadow - 1, live_vid=live)
+    for _ in range(50):
+        led.log_request(
+            task="t",
+            served_by="teacher",
+            student_version=live,
+            escalated=1,
+            audited=0,
+            shadow_version=cand,
+            shadow_serve=None,
+            shadow_agree=None,
+            cost_usd=0.0,
+            baseline_cost_usd=0.0,
+            latency_ms=1.0,
+        )
+    s = led.shadow_quality(cand)
+    assert s == {"n": 99, "served": 99, "precision": 1.0, "coverage": 1.0, "live_coverage": 1.0, "unarbitrated": 0}
+    gate.tick()
+    assert led.version(cand).state == "shadow"  # 99 would-serve answers: still not enough evidence
+
+
 # ---------- canary ----------
 @pytest.mark.req("FR-6.5", "FR-6.6")
 def test_canary_holds_without_strong_evidence():

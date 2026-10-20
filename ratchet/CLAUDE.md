@@ -8,12 +8,14 @@
 1. `_pick_version()`: canary gets `traffic_pct`% of requests, otherwise live; `None` on cold start → teacher.
 2. Student: `n = Settings.samples` samples with `confidence.STUDENT_SAMPLING` (temperature 0.7, logprobs on) → `confidence.score()`. The golden eval (`LiveEvaluator`, `MockFleet`) uses the same constant; change sampling in that constant, never inline.
 3. Serve the student if `confidence >= threshold(version, model)`. The threshold comes from the version's eval (calibrated); the untuned fallback model uses `Settings.confidence_threshold`.
-4. With probability `audit_rate`, the teacher also answers a served request (quality signal + free training data).
+4. With probability `audit_rate`, the teacher also answers a served request (quality signal + free training data). If that call raises, the student's answer is served anyway: `audited=0`, `audit_errors` + 1, a throttled `audit_error` event (INV-15).
 5. Otherwise, or if the student call raised, escalate: teacher answers, and `_call_teacher` stores the example with its license, after `redact_messages` / `redact` replace identifiers (when `Settings.redact_pii`) and with the placeholder count.
-6. Shadow: if a version is in `shadow`, it runs the same cascade silently. A would-serve answer that disagrees with a live-student answer is arbitrated by the teacher.
+6. Shadow: if a version is in `shadow`, it runs the same cascade silently. A would-serve answer that disagrees with a live-student answer is arbitrated by the teacher (`_arbitrate`). Neither can fail the request (INV-15): a failed shadow sample leaves no shadow record, a failed arbitration (or one skipped because the audit already failed) leaves `shadow_agree` NULL, which `Ledger.shadow_quality` counts as a disagreement. Both add to `shadow_errors` and write a throttled `shadow_error` event.
 7. `ledger.log_request(...)` with `cost_usd` and `baseline_cost_usd` (= the all-teacher cost of this request).
 
 Keep `handle` free of I/O beyond the providers and the ledger. Anything slow belongs in Night School.
+
+Failures. Only a teacher call whose answer is needed may fail a request: escalation, cold start, pinned and teacher-only (the gateway's 502, INV-7). Every other upstream call (the student, the audit, the shadow's samples, the arbitration) is wrapped, counted under `_errors_lock` (`student_errors`, `audit_errors`, `shadow_errors`; `Ratchet.health()` returns them) and logged by `_count_failure` on the 1st, 10th, 100th and 1000th occurrence. Optional-call events name the exception class and HTTP status (`_failure`), never the message, which can hold the endpoint URL. A new optional call must follow the same pattern ([ADR 0013](../docs/adr/0013-optional-teacher-calls-fail-open.md)).
 
 `teacher_only(messages, task, client)` is the pinned path (`_pinned`) for a request the student cannot take (a multimodal part, `RATCHET_TEACHER_MODALITIES`): the teacher answers, the request is logged, nothing is stored.
 
@@ -22,7 +24,7 @@ Keep `handle` free of I/O beyond the providers and the ledger. Anything slow bel
 States: `candidate → rejected | shadow | canary(10) → canary(50) → live`; `canary → rolled_back`; old versions → `retired`.
 
 - `admit(vid)` runs after training: precision ≥ `min_precision`, coverage ≥ `min_coverage`, no regression vs live beyond `tolerance`. Cold start (no live version) goes straight to canary 10%.
-- `tick()` runs periodically: shadow decisions, canary advance (needs `min_audits` audits **in the current stage**, tracked via `stage_since`), rollback when the Wilson upper bound < `live_floor`.
+- `tick()` runs periodically: shadow decisions (unarbitrated disagreements count against the shadow; the event says how many), canary advance (needs `min_audits` audits **in the current stage**, tracked via `stage_since`), rollback when the Wilson upper bound < `live_floor`.
 - Change thresholds through `ReleasePolicy` (or `RATCHET_<FIELD>` env vars), never inline.
 
 ## Ledger (`ledger.py`)

@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 296 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 305 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -14,20 +14,21 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 |---|---|
 | `tests/test_core.py` | 19 (15 functions; one has 5 cases) |
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
-| `tests/test_release.py` | 9 (8 functions; one has 2 cases) |
+| `tests/test_release.py` | 10 (9 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
 | `tests/test_hardening.py` | 25 |
+| `tests/test_resilience.py` | 8 (6 functions; one has 3 cases) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 116 (22 functions; one has 76 cases, one has 20) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **296** |
+| **Total** | **305** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -84,6 +85,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_gate_tolerance_boundary` (2 cases) | For precision and for coverage: a candidate exactly `tolerance` worse than live is admitted to shadow; a hair more is rejected as a regression |
 | `test_admit_retires_older_inflight` | A rejected candidate leaves the shadow and canary in flight alone; an admitted one retires both (traffic 0, one `retired` event each) and is the only version in flight |
 | `test_shadow_promotes_and_both_rejections` | 99 would-serve answers hold; at 100, precision exactly 95% and live's coverage it moves to canary 10%. The count is would-serve answers, not shadowed requests: 150 requests with 75 would-serve answers hold, 200 with 100 promote. 90% precision is rejected; 50% coverage against a live student at 100% is rejected, but passes against a live student that also serves 50% |
+| `test_shadow_gate_counts_unarbitrated_disagreements_against_the_candidate` | FR-6.4, FR-2.10: 100 would-serve answers whose arbitrated ones all agree, but 10 of which the teacher could not arbitrate (`shadow_agree` NULL), give precision 90%, not 100%, and are rejected with "(10 unarbitrated counted as disagreements)"; 2 of 100 give 98% and promote, and the event says so; 50 rows without a shadow verdict (`shadow_serve` NULL) change neither `n`, coverage, the evidence count nor precision |
 | `test_canary_holds_without_strong_evidence` | 18 of 20 audits (90%, under the 92% floor, Wilson upper bound above it) neither roll back nor advance, over several ticks; 20 more agreeing audits move it to 50%. The rollback boundary (FR-6.6): 16 of 20 (Wilson upper bound 91.9%, just under the floor) rolls back to live, 17 of 20 (94.8%) only holds |
 | `test_rollback_without_live_returns_traffic_to_teacher` | A cold-start canary at 50% audited precision is rolled back with "traffic back to the teacher"; afterwards 50 requests are all answered by the teacher and the student is never called |
 | `test_shadow_arbitration_calls_teacher_once_and_stores_example` | A shadow that would serve a different answer than the live student triggers exactly one teacher call, whose answer is stored as the example, while the user keeps the live answer; agreeing or unsure shadows trigger none; with an audit, the audit is the reference and no second call is made; a shadow whose endpoint is down (`raise_on`) leaves the request untouched, with no shadow record and no extra cost (INV-7). Reported cost includes the shadow's samples, the arbitration and the audit (NFR-3) |
@@ -127,6 +129,19 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_redact_preview_endpoint` | `POST /ratchet/redact` returns the redacted text and counts; over-long or missing text gets 400 |
 | `test_live_night_checks_the_student_endpoint_before_paid_work` | Without `RATCHET_STUDENT_BASE`, `NebiusTrainer.train` raises before the sync, the training job or any file write; `reload` with adapters to load raises the same clear error (and with none, returns an empty list) |
 | `test_task_names_match_in_full` | `tasks.valid_name` matches the whole name: a trailing newline, 65 characters, an empty string, a space or a tab is not a name, and `tasks.get` falls back to `default` for each |
+
+### `tests/test_resilience.py`
+
+Upstream failures around a request the student already answered (FR-2.10, INV-15, [ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)); the student falling back to the teacher is in `test_hardening.py`. The failing teacher puts its URL, with a query token, in each message, and every test checks the events never repeat it.
+
+| Test | Covers |
+|---|---|
+| `test_audit_failure_still_serves_the_student` (3 cases) | With `audit_rate=1`, a teacher that times out, answers 503 or returns an unreadable body: the confident student's answer is served, the row has `audited=0` and `audit_agree` NULL, nothing is billed for the failed call, the baseline is the no-audit estimate, nothing is stored, one `audit_error` event (`ticket-triage: ReadTimeout`, `HTTPStatusError 503`, `ValueError`; never the URL), and `health()` counts one audit error |
+| `test_audit_errors_are_counted_and_throttled_and_escalation_still_fails` | 12 failed audits: 12 counted, events on the 1st and 10th only, no row counted as audited. The teacher comes back: audits and their training examples resume. An unsure student with the teacher down still raises (INV-7, the gateway's 502) and is not counted as an optional failure |
+| `test_failure_counters_are_exact_under_threads` | 8 threads, 200 failed audits: every request served by the student, exactly 200 counted, exactly three events (1st, 10th, 100th) |
+| `test_shadow_arbitration_failure_is_silent` | The shadow disagrees with the live student and the teacher times out only on that request: the user gets the live answer, the row keeps `shadow_serve=1` with `shadow_agree` NULL, no teacher cost and no example, one `shadow_error` (`v2 arbitration: ReadTimeout`); `shadow_quality` counts the row in `n` and coverage and as a disagreement (precision 1.0 → 0.5, `unarbitrated` 1) |
+| `test_shadow_sampling_error_counted` | A shadow endpoint that times out on 10 requests: all served by the live student at the samples' cost, no shadow record and no teacher call, events on the 1st and 10th, `shadow_errors` 10 |
+| `test_optional_teacher_failures_through_the_gateway` | Live `Runtime` with the real HTTP provider and a Token Factory that times out: audited requests (plain and streamed) are 200 with the student's answer, and the shadow's disagreement is not sent to the teacher again after the audit failed (one teacher call per request); unaudited, the failed arbitration is still a 200; an escalation is a 502 `teacher unavailable: ReadTimeout` |
 
 ### `tests/test_scout.py`
 

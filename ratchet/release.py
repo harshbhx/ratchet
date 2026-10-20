@@ -10,7 +10,8 @@ Rules, in order:
      on the held-out golden set, using the version's own calibrated threshold, and no
      regression against the live version on either number.
   2. Shadow: it scores real traffic silently. Disagreements with the live student are
-     arbitrated by the teacher. Promote when precision and coverage hold on real traffic.
+     arbitrated by the teacher; one the teacher could not arbitrate counts as a disagreement.
+     Promote when precision and coverage hold on real traffic.
   3. Canary 10% -> 50% -> 100%: the teacher audits a sample of what it serves.
   4. Rollback: if the 95% upper confidence bound of audited precision falls below the
      floor (strong evidence it is worse), traffic returns to the previous live version.
@@ -121,15 +122,17 @@ class ReleaseGate:
             s = self.ledger.shadow_quality(shadow.id)
             if s["served"] >= p.min_shadow:
                 live_cov = s["live_coverage"] if s["live_coverage"] is not None else 0.0
+                # Disagreements the teacher could not arbitrate already count against the candidate; say so.
+                unarbitrated = f" ({s['unarbitrated']} unarbitrated counted as disagreements)" if s["unarbitrated"] else ""
                 if s["precision"] < p.min_precision:
-                    self._reject(shadow, f"shadow precision {s['precision']:.1%} < {p.min_precision:.0%}")
+                    self._reject(shadow, f"shadow precision {s['precision']:.1%} < {p.min_precision:.0%}{unarbitrated}")
                 elif s["coverage"] < live_cov - p.tolerance:
                     self._reject(shadow, f"shadow coverage {s['coverage']:.1%} < live {live_cov:.1%}")
                 else:
                     self.ledger.set_version(shadow.id, "canary", CANARY_STEPS[0])
                     self.ledger.event(
                         "canary",
-                        f"v{shadow.id} shadow precision {s['precision']:.1%}, coverage "
+                        f"v{shadow.id} shadow precision {s['precision']:.1%}{unarbitrated}, coverage "
                         f"{s['coverage']:.1%} (live {live_cov:.1%}); canary {CANARY_STEPS[0]}%",
                     )
 
