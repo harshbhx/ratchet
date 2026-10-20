@@ -110,6 +110,18 @@ class OpenAICompatProvider:
             pool=_at_most(t.pool, remaining),
         )
 
+    def longest_call_s(self) -> float | None:
+        """How long one `complete` call can run before its own timeouts end it: the pool, connect, write and read
+        timeouts for every attempt, plus the longest wait between attempts (`cap_s`). None when a phase has no timeout. A
+        student breaker waits this long before it takes a probe for lost (ADR 0015). A body that trickles in can take
+        longer, because httpx's read timeout applies to each read."""
+        t = self.timeout
+        phases = (t.pool, t.connect, t.write, t.read)
+        if any(p is None for p in phases):
+            return None
+        attempts = self.retry.max_attempts
+        return sum(phases) * attempts + self.retry.cap_s * (attempts - 1)
+
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
         body: dict[str, Any] = {"model": model, "messages": messages, "n": n, "temperature": temperature}
         if logprobs:

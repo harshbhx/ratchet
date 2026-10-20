@@ -930,9 +930,13 @@ def test_breaker_opens_probes_backs_off_and_closes():
     b.record(True)
     assert b.snapshot() == {"state": "closed", "failures": 0, "open_until": None, "open_s": 30.0}
     assert changes[-1] == ("half_open", "closed", "after a successful probe")
-    assert _transitions(changes) == ["closed->open"] + ["open->half_open", "half_open->open"] * 6 + [
-        "open->half_open",
-        "half_open->closed",
+    # At the longest wait only the 1st, 10th, 100th and 1000th probe are reported (the 2nd and the 3rd, which closed it,
+    # are not); closing always is.
+    assert _transitions(changes) == ["closed->open"] + ["open->half_open", "half_open->open"] * 5 + ["half_open->closed"]
+    logged = "only the 1st, 10th, 100th and 1000th are logged"
+    assert changes[9:11] == [
+        ("open", "half_open", f"after 300 s; one probe (the 1st at the longest wait; {logged})"),
+        ("half_open", "open", "for 300 s after a failed probe (ReadTimeout), the 1st at the longest wait"),
     ]
 
     # A probe whose error says nothing about the endpoint is handed back; a lost probe expires after open_s.
@@ -1023,6 +1027,227 @@ def _race_for_the_probe(callers: int) -> list[bool]:
 def test_half_open_lets_exactly_one_probe_through():
     for _ in range(25):
         assert sorted(_race_for_the_probe(16)) == [False] * 15 + [True]
+
+
+class _HeldCall:
+    """One call through a breaker on its own thread (a breaker tells probes apart by thread): `allow()` at once, and the
+    outcome when `finish(ok)` is called (`None` hands the probe back with `release()`)."""
+
+    def __init__(self, b: Breaker) -> None:
+        self._go = threading.Event()
+        self._asked = threading.Event()
+        self._ok: bool | None = None
+        self.allowed = False
+        self._thread = threading.Thread(target=self._run, args=(b,))
+        self._thread.start()
+        assert self._asked.wait(10)
+
+    def _run(self, b: Breaker) -> None:
+        self.allowed = b.allow()
+        self._asked.set()
+        if self.allowed:
+            assert self._go.wait(10)
+            if self._ok is None:
+                b.release()
+            else:
+                b.record(self._ok, "" if self._ok else "ReadTimeout")
+
+    def finish(self, ok: bool | None) -> None:
+        self._ok = ok
+        self._go.set()
+        self._thread.join(10)
+
+
+def _hung_endpoint(cooldown: float, call_s: int, probe_timeout_s: float, seconds: int = 900) -> tuple[int, list[str], int]:
+    """A dead endpoint on which every call hangs for `call_s` seconds before it times out, one request a second for
+    `seconds` seconds. Returns the probes made (calls allowed while the breaker was not closed), the breaker's
+    transitions, and the most probes ever in flight at once."""
+    clock = FakeClock(0.0)
+    changes: list[str] = []
+    b = Breaker(
+        "student",
+        5,
+        cooldown,
+        300,
+        clock=clock,
+        on_change=lambda br, old, new, why: changes.append(f"{old}->{new} {why}"),
+        probe_timeout_s=probe_timeout_s,
+    )
+    in_flight: list[tuple[int, _HeldCall, bool]] = []  # (ends at, call, is a probe)
+    probes = most_probes = 0
+    for t in range(seconds):
+        clock.now = float(t)
+        for item in [x for x in in_flight if x[0] <= t]:
+            item[1].finish(False)
+            in_flight.remove(item)
+        call = _HeldCall(b)
+        if call.allowed:
+            is_probe = b.state != "closed"
+            probes += is_probe
+            in_flight.append((t + call_s, call, is_probe))
+            most_probes = max(most_probes, sum(1 for _, _, probe in in_flight if probe))
+    for _, call, _ in in_flight:
+        call.finish(False)
+    return probes, changes, most_probes
+
+
+@pytest.mark.req("FR-2.11", "NFR-2")
+def test_a_probe_slower_than_the_cooldown_still_counts_and_backs_the_breaker_off():
+    """Regression: a probe that outlived the cooldown was replaced, its failure was dropped, and the breaker stayed
+    half-open for the whole outage, putting a request on the dead endpoint every cooldown without ever backing off."""
+    # A 5 s cooldown, below the student's 15 s read timeout. Without probe_timeout_s a probe is presumed lost after one
+    # wait and the next caller probes, but the lost probe's failure still reopens the breaker and doubles the wait.
+    clock = FakeClock(0.0)
+    b = Breaker("student", 1, 5, 300, clock=clock)
+    b.record(False, "ReadTimeout")
+    clock.advance(5)
+    first = _HeldCall(b)
+    assert first.allowed and b.state == "half_open"
+    clock.advance(5)
+    second = _HeldCall(b)  # the first is still waiting on its read timeout
+    assert second.allowed
+    clock.advance(5)
+    first.finish(False)
+    assert b.snapshot() == {"state": "open", "failures": 2, "open_until": 25.0, "open_s": 10.0}
+    second.finish(False)  # arrives while open: the wait stands
+    assert b.snapshot()["open_until"] == 25.0
+    # A lost probe's success closes it too; the replacing probe's later result then counts like any other call.
+    clock.now = 25.0
+    first = _HeldCall(b)
+    clock.advance(10)
+    second = _HeldCall(b)
+    assert first.allowed and second.allowed
+    first.finish(True)
+    assert b.snapshot() == {"state": "closed", "failures": 0, "open_until": None, "open_s": 5.0}
+    second.finish(None)
+    assert b.state == "closed"
+
+    # With probe_timeout_s (the router sets the call's own longest time) nobody else probes while the probe can still
+    # be running: exactly one probe, and its failure doubles the wait.
+    clock = FakeClock(0.0)
+    b = Breaker("student", 1, 5, 300, clock=clock, probe_timeout_s=37)
+    b.record(False, "ReadTimeout")
+    clock.advance(5)
+    probe = _HeldCall(b)
+    assert probe.allowed
+    for wait in (5, 10, 31):
+        clock.now = 5.0 + wait
+        assert not _HeldCall(b).allowed
+    probe.finish(False)
+    assert b.snapshot() == {"state": "open", "failures": 2, "open_until": 46.0, "open_s": 10.0}
+    clock.now = 46.0
+    probe = _HeldCall(b)
+    clock.advance(37)  # never reported back within its own longest time: lost, so the next caller probes
+    replacement = _HeldCall(b)
+    assert probe.allowed and replacement.allowed
+    replacement.finish(None)
+    probe.finish(False)  # the lost probe reports at last, still half-open: it counts
+    assert b.snapshot()["state"] == "open" and b.snapshot()["open_s"] == 20.0
+    for bad in (-1, math.inf, math.nan, True):
+        with pytest.raises(ValueError, match="probe_timeout_s"):
+            Breaker("bad", 5, 30, 300, probe_timeout_s=bad)
+
+    # The reviewer's outage: 900 s of a hung endpoint, a request every second, every call held for its timeout. The
+    # waits double to 300 s however long a call takes, and with probe_timeout_s only one probe is ever out at once.
+    backing_off = [
+        "closed->open after 5 failures (ReadTimeout)",
+        "open->half_open after 30 s; one probe",
+        "half_open->open for 60 s after a failed probe (ReadTimeout)",
+        "open->half_open after 60 s; one probe",
+        "half_open->open for 120 s after a failed probe (ReadTimeout)",
+    ]
+    for cooldown, call_s, probe_timeout_s in ((30, 17, 0), (30, 17, 39), (30, 60, 0), (30, 60, 82), (5, 15, 0), (5, 15, 37)):
+        probes, changes, most_probes = _hung_endpoint(cooldown, call_s, probe_timeout_s)
+        assert changes[-1].startswith("half_open->open for 300 s"), (cooldown, call_s, changes)
+        if cooldown == 30:
+            assert changes[:5] == backing_off
+        spells = sum(1 for c in changes if c.startswith("open->half_open"))
+        assert 4 <= spells <= 8 and spells <= probes <= 2 * spells, (cooldown, call_s, probes, changes)
+        if probe_timeout_s:
+            assert most_probes == 1 and probes == spells
+
+
+@pytest.mark.req("FR-2.11", "NFR-2")
+def test_router_never_replaces_a_probe_that_can_still_be_running():
+    """The router gives each breaker the student call's longest time (connect, write, read and pool timeouts, plus 5 s),
+    so a request that arrives while the probe waits on a hung endpoint skips the student instead of probing again."""
+    clock = FakeClock()
+    entered, release = threading.Event(), threading.Event()
+    hang = threading.Event()
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content)["model"])
+        if hang.is_set():
+            entered.set()
+            assert release.wait(10)
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    s = Settings(student_timeout_s=15.0, student_connect_timeout_s=2.0)
+    transport = httpx.MockTransport(handler)
+    student = OpenAICompatProvider("https://student.test/v1", "", timeout=s.student_timeout(), transport=transport)
+    assert student.longest_call_s() == 5 + 2 + 10 + 15  # pool, connect, write, read
+    led, _, teacher, r = _breaker_cascade(student, clock, student_breaker_cooldown_s=5.0)
+    for i in range(5):
+        assert r.handle(_ask(i), TRIAGE).route == "student_error"
+    timeout = "UpstreamError 504 upstream_timeout"  # the provider's ReadTimeout, as an event names it
+    assert _circuits(led) == [f"student: closed->open after 5 failures ({timeout})"]
+
+    clock.advance(5)
+    hang.set()
+    started = clock.now
+    with ThreadPoolExecutor(1) as pool:
+        probe = pool.submit(r.handle, _ask("probe"), TRIAGE)
+        assert entered.wait(10)
+        for wait in (5, 10, 36.9):  # past the cooldown, but the probe's own timeouts (32 s + 5 s) have not run out
+            clock.now = started + wait
+            assert r.handle(_ask(f"during {wait}"), TRIAGE).route == "student_breaker"
+        assert len(seen) == 6
+        release.set()
+        assert probe.result(10).route == "student_error"
+    assert _circuits(led)[-2:] == [
+        "student: open->half_open after 5 s; one probe",
+        f"student: half_open->open for 10 s after a failed probe ({timeout})",
+    ]
+    assert r.health()["breakers"]["student"]["open_s"] == 10.0 and len(teacher.calls) == 9
+
+
+@pytest.mark.req("FR-2.11")
+def test_circuit_events_at_the_longest_wait_are_throttled():
+    """A long outage repeats the same probe every 300 s; only the 1st, 10th, 100th and 1000th of those are reported, so
+    the dashboard's release log (the last 40 events) keeps the release history. Closing is always reported."""
+    clock = FakeClock(0.0)
+    changes: list[str] = []
+    b = Breaker("student", 5, 30, 300, clock=clock, on_change=lambda br, old, new, why: changes.append(f"{old}->{new} {why}"))
+
+    def outage(failed_probes: int) -> None:
+        for _ in range(5):
+            b.record(False, "ConnectError")
+        for _ in range(failed_probes):
+            clock.now = b.snapshot()["open_until"]
+            assert b.allow()
+            b.record(False, "ConnectError")
+
+    outage(4 + 120)  # 30 -> 60 -> 120 -> 240 -> 300 s, then 120 probes at 300 s (10 hours)
+    assert len(changes) == 1 + 2 * 4 + 2 * 3
+    assert changes[9:] == [
+        "open->half_open after 300 s; one probe (the 1st at the longest wait; only the 1st, 10th, 100th and 1000th are logged)",
+        "half_open->open for 300 s after a failed probe (ConnectError), the 1st at the longest wait",
+        "open->half_open after 300 s; one probe (the 10th at the longest wait; only the 1st, 10th, 100th and 1000th are logged)",
+        "half_open->open for 300 s after a failed probe (ConnectError), the 10th at the longest wait",
+        "open->half_open after 300 s; one probe (the 100th at the longest wait; only the 1st, 10th, 100th and 1000th are logged)",
+        "half_open->open for 300 s after a failed probe (ConnectError), the 100th at the longest wait",
+    ]
+    assert b.snapshot()["failures"] == 5 + 124  # every probe still counts
+    clock.now = b.snapshot()["open_until"]
+    assert b.allow()  # the 121st probe at 300 s: not reported
+    b.record(True)
+    assert changes[-1] == "half_open->closed after a successful probe" and len(changes) == 16
+
+    # Closing starts the count again: the next outage's first probe at the longest wait is reported.
+    changes.clear()
+    outage(5)
+    assert len(changes) == 1 + 2 * 5 and "(the 1st at the longest wait;" in changes[-2]
 
 
 @pytest.mark.req("FR-2.11", "NFR-2")

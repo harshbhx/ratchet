@@ -136,6 +136,28 @@ def test_shadow_promotes_and_both_rejections():
     assert led.version(cand).state == "canary"
 
 
+@pytest.mark.req("FR-6.4", "FR-2.11")
+def test_shadow_coverage_is_not_compared_with_requests_the_live_student_never_answered():
+    """Regression: while the live student's breaker was open (or its call failed) and the shadow's was not, those rows
+    counted as the live student escalating, which lowered the coverage bar the candidate had to clear."""
+    for skipped in ("student_breaker", "student_error"):
+        led, gate, live, cand = _shadowing()
+        _shadow(led, cand, 400, serve_every=2, live_vid=live, live_escalate_every=2, live_route=skipped)
+        s = led.shadow_quality(cand)
+        # Live answered 200 requests and served them all; the 200 it never answered stay in n and the shadow's coverage.
+        assert (s["n"], s["served"], s["coverage"], s["live_coverage"]) == (400, 200, 0.5, 1.0)
+        gate.tick()
+        assert led.version(cand).state == "rejected"
+        assert "shadow coverage 50.0% < live 100.0%" in led.events()[-1]["detail"]
+
+    # The same pattern with the live student unsure (route confidence) is real live coverage of 50%: promoted.
+    led, gate, live, cand = _shadowing()
+    _shadow(led, cand, 400, serve_every=2, live_vid=live, live_escalate_every=2)
+    assert led.shadow_quality(cand)["live_coverage"] == 0.5
+    gate.tick()
+    assert led.version(cand).state == "canary"
+
+
 @pytest.mark.req("FR-6.4", "FR-2.10", "NFR-8")
 def test_shadow_gate_counts_unarbitrated_disagreements_against_the_candidate():
     """Arbitration only runs when the shadow disagrees with the served answer, so a failed one is a disagreement whose

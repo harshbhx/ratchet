@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import threading
 import time
@@ -45,6 +46,21 @@ def answer_problem(task: tasks.Task, c: Completion) -> str | None:
     if task.structured and task.canonical(clean) == tasks.INVALID:
         return "invalid answer"
     return None
+
+
+# Added to a student call's longest time before its probe is presumed lost: the call starts a moment after allow().
+PROBE_MARGIN_S = 5.0
+
+
+def _probe_timeout(provider: Provider) -> float:
+    """How long a breaker on `provider`'s endpoint waits before it takes an unanswered probe for lost: the provider's
+    `longest_call_s()` plus PROBE_MARGIN_S, or 0 (one wait) when the provider cannot say. A probe still inside its own
+    timeouts is never replaced, so a slow failing endpoint is probed once per wait and the wait doubles (ADR 0015)."""
+    longest = getattr(provider, "longest_call_s", None)
+    seconds = longest() if callable(longest) else None
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < 0:
+        return 0.0
+    return float(seconds) + PROBE_MARGIN_S
 
 
 def _endpoint(provider: Provider) -> str:
@@ -135,6 +151,7 @@ class Ratchet:
                         p.max_open_s,
                         clock=self.clock,
                         on_change=self._circuit_event,
+                        probe_timeout_s=_probe_timeout(provider),
                     )
                     self._breakers[key] = breaker
         return breaker

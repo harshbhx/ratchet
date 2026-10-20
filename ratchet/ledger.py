@@ -353,12 +353,16 @@ class Ledger:
 
         A row without a verdict (`shadow_serve` NULL) counts toward nothing. A would-serve answer whose arbitration
         failed (`shadow_agree` NULL, `unarbitrated`) counts as a disagreement: arbitration only runs on disagreements,
-        so leaving those rows out would raise the precision of the candidate that disagrees most (ADR 0013)."""
+        so leaving those rows out would raise the precision of the candidate that disagrees most (ADR 0013).
+        `live_coverage` leaves out requests the live student never answered (route `student_breaker` or
+        `student_error`): its endpoint being down says nothing about how much it would serve, and counting them as
+        escalations would lower the bar the shadow's coverage is held to (ADR 0015). They stay in `n` and `coverage`."""
         r = self.db.execute(
             """SELECT COUNT(*) n, SUM(shadow_serve) served,
                       AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
                       SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
-                      AVG(served_by='student') live_cov
+                      AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
+                               ELSE served_by='student' END) live_cov
                FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL""",
             (vid,),
         ).fetchone()
