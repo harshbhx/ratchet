@@ -8,11 +8,11 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Status | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Done | 0 | 73 | 6 | 0 | 0 | 79 |
+| Done | 0 | 75 | 6 | 0 | 0 | 81 |
 | Done, untested live | 0 | 11 | 1 | 0 | 0 | 12 |
 | Done, more planned | 0 | 1 | 2 | 0 | 0 | 3 |
 | Partial | 0 | 0 | 2 | 0 | 0 | 2 |
-| Planned | 0 | 12 | 0 | 0 | 0 | 12 |
+| Planned | 0 | 10 | 0 | 0 | 0 | 10 |
 | Replaced | 0 | 1 | 0 | 0 | 0 | 1 |
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
@@ -21,9 +21,9 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 84 | 11 | 0 | 17 | 123 |
+| Tested | 11 | 86 | 11 | 0 | 17 | 125 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
-| No check needed | 0 | 13 | 0 | 5 | 0 | 18 |
+| No check needed | 0 | 11 | 0 | 5 | 0 | 16 |
 | **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
 
 ## 5. User stories and acceptance criteria
@@ -37,7 +37,7 @@ From [PRD §5](PRD.md#5-user-stories-and-acceptance-criteria).
 | US-3 | Cheaper answers when safe. As Priya, I want confident student answers served and unsure ones escala… | — | — | `tests/test_contract.py::test_threshold_boundary_serves_at_equality_and_escalates_below`<br>`tests/test_system.py::test_loop_learns_and_saves_money` | tested |
 | US-4 | Quality monitoring. As Marco, I want ongoing checks on what the student serves. | — | — | `tests/test_contract.py::test_audit_rate_zero_and_one`<br>`tests/test_contract.py::test_audit_rate_is_respected_statistically`<br>`tests/test_system.py::test_loop_learns_and_saves_money` | tested |
 | US-5 | Safe release. As Marco, I want a new model to reach users only after it proves itself. | — | — | `tests/test_core.py::test_cold_start_goes_to_canary_and_bad_candidates_rejected`<br>`tests/test_core.py::test_regression_vs_live_is_rejected_and_good_one_shadows`<br>`tests/test_core.py::test_canary_advances_then_goes_live`<br>`tests/test_release.py::test_shadow_promotes_and_both_rejections` | tested |
-| US-6 | Automatic rollback. As Marco, I want a bad model pulled automatically. | — | — | `tests/test_core.py::test_canary_rolls_back_on_strong_evidence`<br>`tests/test_release.py::test_rollback_without_live_returns_traffic_to_teacher`<br>`tests/test_system.py::test_bad_deploy_is_rolled_back_and_users_return_to_live` | tested |
+| US-6 | Automatic rollback. As Marco, I want a bad model pulled automatically. | — | — | `tests/test_core.py::test_canary_rolls_back_on_strong_evidence`<br>`tests/test_release.py::test_rollback_without_live_returns_traffic_to_teacher`<br>`tests/test_release.py::test_sequential_canary_rolls_back_after_two_failures`<br>`tests/test_release.py::test_sequential_rollback_at_cold_start_returns_traffic_to_the_teacher`<br>`tests/test_system.py::test_bad_deploy_is_rolled_back_and_users_return_to_live` | tested |
 | US-7 | Provable data provenance. As Anjali, I want to prove where training data came from. | — | — | `tests/test_contract.py::test_bom_endpoint_counts_by_split_and_fingerprint_changes`<br>`tests/test_core.py::test_bill_of_materials_lists_licenses`<br>`tests/test_hardening.py::test_signed_bom_per_adapter_verifies_and_detects_tampering`<br>`tests/test_system.py::test_provenance_only_lists_distillable_teachers` | tested |
 | US-8 | Closed teachers refused. As Anjali, I want Ratchet to refuse unlicensed teachers. | — | — | `tests/test_contract.py::test_o_series_prefixes_refused`<br>`tests/test_core.py::test_closed_teachers_are_refused`<br>`tests/test_core.py::test_open_teacher_allowed_and_unknown_refused` | tested |
 | US-9 | Savings receipts. As Priya, I want to see dollars saved against an all-teacher baseline. | — | — | `tests/test_contract.py::test_stats_contract`<br>`tests/test_system.py::test_loop_learns_and_saves_money` | tested |
@@ -136,9 +136,9 @@ From [PRD §6.6](PRD.md#66-release-gate).
 | FR-6.2 | Cold start (no live): first passing candidate goes straight to canary 10% | Done (v0.1) | `ratchet.release:ReleaseGate.admit` | `tests/test_core.py::test_cold_start_goes_to_canary_and_bad_candidates_rejected` | tested |
 | FR-6.3 | Shadow mode: candidate scores real traffic silently; teacher arbitrates disagreements with the live… | Done (v0.1) | `ratchet.router:Ratchet.handle`<br>`ratchet.ledger:Ledger.shadow_quality` | `tests/test_hardening.py::test_invalid_shadow_reference_leaves_shadow_agree_null`<br>`tests/test_hardening.py::test_unusable_audit_answer_is_no_shadow_reference`<br>`tests/test_release.py::test_shadow_arbitration_calls_teacher_once_and_stores_example`<br>`tests/test_resilience.py::test_shadow_arbitration_failure_is_silent`<br>`tests/test_resilience.py::test_shadow_sampling_error_counted`<br>`tests/test_resilience.py::test_serve_student_mode_answers_degraded_with_a_flag_and_a_header` | tested |
 | FR-6.4 | Shadow promotion: ≥ 100 would-serve answers, precision ≥ 95%, coverage ≥ live − 2 points | Done (v0.1) | `ratchet.release:ReleaseGate.tick` | `tests/test_release.py::test_shadow_promotes_and_both_rejections`<br>`tests/test_release.py::test_shadow_coverage_is_not_compared_with_requests_the_live_student_never_answered`<br>`tests/test_release.py::test_shadow_coverage_counts_an_n_choices_escalation_as_live_served`<br>`tests/test_release.py::test_shadow_gate_counts_unarbitrated_disagreements_against_the_candidate` | tested |
-| FR-6.5 | Canary 10% → 50% → 100%, each step needs ≥ 20 audits in that stage and precision ≥ 92% | Done (v0.1) | `ratchet.release:ReleaseGate.tick`<br>`ratchet.release:CANARY_STEPS` | `tests/test_core.py::test_canary_advances_then_goes_live`<br>`tests/test_release.py::test_canary_holds_without_strong_evidence` | tested |
+| FR-6.5 | Canary 10% → 50% → 100%, each step needs ≥ 20 audits in that stage and precision ≥ 92% | Done (v0.1) | `ratchet.release:ReleaseGate.tick`<br>`ratchet.release:CANARY_STEPS` | `tests/test_core.py::test_canary_advances_then_goes_live`<br>`tests/test_release.py::test_canary_holds_without_strong_evidence`<br>`tests/test_release.py::test_sequential_promotion_needs_evidence`<br>`tests/test_release.py::test_canary_audit_rate_focuses_audits_on_the_canary` | tested |
 | FR-6.6 | Rollback when Wilson 95% upper bound of audited precision < 92% | Done (v0.1) | `ratchet.release:wilson`<br>`ratchet.release:ReleaseGate.tick` | `tests/test_core.py::test_wilson_bounds`<br>`tests/test_core.py::test_canary_rolls_back_on_strong_evidence`<br>`tests/test_release.py::test_canary_holds_without_strong_evidence`<br>`tests/test_release.py::test_rollback_without_live_returns_traffic_to_teacher` | tested |
-| FR-6.7 | Live alert when live version's audited precision upper bound < 92% | Done (v0.1) | `ratchet.release:ReleaseGate.tick` | `tests/test_hardening.py::test_live_alert_fires_once_per_version` | tested |
+| FR-6.7 | Live alert when live version's audited precision upper bound < 92% | Done (v0.1) | `ratchet.release:ReleaseGate.tick` | `tests/test_hardening.py::test_live_alert_fires_once_per_version`<br>`tests/test_release.py::test_live_alert_uses_the_e_process` | tested |
 | FR-6.8 | Only one candidate in flight; older shadow/canary retired | Done (v0.1) | `ratchet.release:ReleaseGate.admit` | `tests/test_release.py::test_admit_retires_older_inflight` | tested |
 
 ## 6.7 Dashboard
@@ -177,7 +177,7 @@ From [PRD §6.9](PRD.md#69-simulation).
 | FR-9.1 | Synthetic support tickets (6 categories, 4 priorities, 20 templates, 3 drift templates) | Done (v0.1) | `sim.tickets:TicketStream` | `tests/test_system.py::test_drift_raises_escalations_then_recovers` | tested |
 | FR-9.2 | Mock teacher, mock student with learning curve and confidently-wrong failures | Done (v0.1) | `sim.mock_models:MockTeacher`<br>`sim.mock_models:MockStudent` | `tests/test_openai_compat.py::test_mock_models_honour_max_tokens_and_stop`<br>`tests/test_openai_compat.py::test_mock_teacher_reports_its_reasoning_tokens`<br>`tests/test_system.py::test_loop_learns_and_saves_money` | tested |
 | FR-9.3 | Fault injection: corrupted deploy of a chosen version | Done (v0.1) | `sim.mock_models:MockFleet` | `tests/test_system.py::test_bad_deploy_is_rolled_back_and_users_return_to_live` | tested |
-| FR-9.4 | CLI `python -m sim.simulate` with table output and JSON results | Done (v0.1) | `sim.simulate:main` | `tests/test_cost.py::test_simulated_endpoint_hours_follow_the_setting`<br>`tests/test_live.py::test_sim_cli_writes_json_and_table` | tested |
+| FR-9.4 | CLI `python -m sim.simulate` with table output and JSON results | Done (v0.1) | `sim.simulate:main` | `tests/test_cost.py::test_simulated_endpoint_hours_follow_the_setting`<br>`tests/test_live.py::test_sim_cli_writes_json_and_table`<br>`tests/test_live.py::test_sim_cli_compares_release_rules`<br>`tests/test_system.py::test_sequential_gate_reduces_bad_deploy_exposure` | tested |
 | FR-9.5 | Mock research world for Scout (8 questions, simulated results on `example.org`) and… | Done (v0.2) | `sim.research:ResearchStream`<br>`sim.world:make_stream` | `tests/test_scout.py::test_examples_match_the_research_world`<br>`tests/test_scout.py::test_student_learns_scout_calls_over_simulated_days`<br>`tests/test_scout.py::test_research_workload_simulation_learns` | tested |
 | FR-9.6 | Mock warm-up: `RATCHET_MOCK_WARMUP_DAYS` simulated days at startup | Done (v0.2) | `ratchet.gateway:Runtime.warm_up` | `tests/test_live.py::test_mock_warmup_trains_a_student` | tested |
 
@@ -239,8 +239,8 @@ From [PRD §6.16](PRD.md#616-verifiable-evidence).
 
 | ID | Requirement | Status | Code | Tests | Verification/notes |
 |---|---|---|---|---|---|
-| FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence… | Planned | — | — | not built yet |
-| FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert… | Planned | — | — | not built yet |
+| FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence… | Done (v0.5) | `ratchet.release:ReleaseGate._sequential_canary`<br>`ratchet.release:ReleaseGate.evidence`<br>`ratchet.release:ReleasePolicy._check_sequential`<br>`ratchet.ledger:Ledger.audit_counts`<br>`ratchet.ledger:Ledger.served_counts`<br>`ratchet.stats:log_e_bernoulli`<br>`ratchet.stats:confidence_sequence`<br>`ratchet.config:Settings.checked_canary_audit_rate`<br>`ratchet.router:Ratchet.handle`<br>`ratchet.gateway:stats`<br>`sim.simulate:compare_release` | `tests/test_core.py::test_audit_counts_and_served_counts`<br>`tests/test_hardening.py::test_anytime_valid_settings_parse`<br>`tests/test_live.py::test_sim_cli_compares_release_rules`<br>`tests/test_release.py::test_sequential_canary_rolls_back_after_two_failures`<br>`tests/test_release.py::test_sequential_rollback_at_cold_start_returns_traffic_to_the_teacher`<br>`tests/test_release.py::test_sequential_rollback_counts_every_audit_of_the_canarys_life`<br>`tests/test_release.py::test_sequential_promotion_needs_evidence`<br>`tests/test_release.py::test_futility_retires_inconclusive_canary`<br>`tests/test_release.py::test_futility_counts_audits_not_time`<br>`tests/test_release.py::test_sequential_policy_refuses_settings_that_decide_nothing`<br>`tests/test_release.py::test_evidence_is_recomputed_from_the_counts`<br>`tests/test_release.py::test_canary_audit_rate_focuses_audits_on_the_canary`<br>`tests/test_release.py::test_label_p_is_the_designed_labelling_probability`<br>`tests/test_release.py::test_stats_versions_carry_the_gates_evidence`<br>`tests/test_stats.py::test_e_value_oracles_and_confidence_sequence_oracles`<br>`tests/test_stats.py::test_alt_grid_components_are_supermartingales`<br>`tests/test_stats.py::test_e_process_false_rollback_rate_and_wilson_peeking`<br>`tests/test_stats.py::test_confidence_sequence_covers_the_truth_at_every_step`<br>`tests/test_system.py::test_sequential_gate_reduces_bad_deploy_exposure` | tested |
+| FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert… | Done (v0.5) | `ratchet.release:ReleaseGate._tick_live`<br>`ratchet.stats:log_e_bernoulli` | `tests/test_hardening.py::test_live_alert_fires_once_per_version`<br>`tests/test_hardening.py::test_anytime_valid_settings_parse`<br>`tests/test_release.py::test_live_alert_uses_the_e_process`<br>`tests/test_release.py::test_evidence_is_recomputed_from_the_counts`<br>`tests/test_release.py::test_stats_versions_carry_the_gates_evidence`<br>`tests/test_stats.py::test_alt_grid_components_are_supermartingales`<br>`tests/test_stats.py::test_e_process_false_rollback_rate_and_wilson_peeking` | tested |
 | FR-16.3 | Certified precision: each candidate carries a Clopper–Pearson lower bound on precision at its thres… | Planned | — | — | not built yet |
 | FR-16.4 | Committed training sets: each adapter's BOM commits to its training and golden examples with Merkle… | Planned | — | — | not built yet |
 | FR-16.5 | Ledger time machine: replay past traffic under a different threshold or audit rate from logged prop… | Planned | — | — | not built yet |

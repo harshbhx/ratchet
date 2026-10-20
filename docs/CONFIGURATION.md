@@ -19,6 +19,7 @@ All settings come from environment variables. Defaults live in `ratchet/config.p
 | `RATCHET_CONFIDENCE_THRESHOLD` | `0.80` | Fallback threshold, used only when a version has no calibrated `threshold` in its eval |
 | `RATCHET_SAMPLES` | `3` | Student samples per request (self-consistency) and per golden row. A request for more choices (`n`) draws `n` samples, but its confidence is still scored on the first `RATCHET_SAMPLES` of them |
 | `RATCHET_AUDIT_RATE` | `0.05` | Probability that a student-served answer is also sent to the teacher. Mock mode raises it to at least `0.10` |
+| `RATCHET_CANARY_AUDIT_RATE` | unset | Audit focusing ([ADR 0025](adr/0025-anytime-valid-release-gate.md)): the audit probability for answers a **canary** serves, so its release evidence arrives sooner; live answers keep `RATCHET_AUDIT_RATE`. More than 0 and at most 1 (0 would leave a canary without audits, so it could never be promoted, rolled back or retired); anything else stops startup. Unset or empty: the canary is audited at `RATCHET_AUDIT_RATE`. Still one random draw per served answer; the rate used is logged as `requests.label_p` |
 | `RATCHET_GOLDEN_FRACTION` | `0.10` | Share of new examples assigned to the golden (held-out) split |
 | `RATCHET_TEACHER_REASONING_TOKENS` | `300` | Extra output tokens assumed for the teacher in baseline estimates (and added by the mock teacher) |
 
@@ -186,7 +187,7 @@ The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mo
 
 ## Release policy (`ratchet/release.py`)
 
-`ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode ignores them and uses `min_audits=15`.
+`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`).
 
 | Field | Variable | Default | Used in |
 |---|---|---|---|
@@ -194,12 +195,19 @@ The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mo
 | `min_coverage` | `RATCHET_MIN_COVERAGE` | 0.25 | Golden gate: minimum share of golden traffic it would serve |
 | `tolerance` | `RATCHET_TOLERANCE` | 0.02 | Max allowed drop vs live (precision and coverage) in the golden gate, and coverage vs live in shadow |
 | `min_shadow` | `RATCHET_MIN_SHADOW` | 100 | Would-serve shadow answers needed before a shadow decision |
-| `min_audits` | `RATCHET_MIN_AUDITS` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert |
-| `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it. Strictly between 0 and 1 |
+| `min_audits` | `RATCHET_MIN_AUDITS` | 20 | Teacher audits needed in a canary stage before it is promoted, and before the Wilson rules roll back or alert. The anytime-valid rules have no minimum for a rollback or an alert |
+| `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor. The Wilson rule rolls back when the Wilson upper bound is below it; the e-processes test "precision at or above the floor". Strictly between 0 and 1 |
+| `sequential` | `RATCHET_SEQUENTIAL` | 0 | 1 switches the canary to the anytime-valid rule ([ADR 0025](adr/0025-anytime-valid-release-gate.md)): rollback when the e-value over every audit the canary has had reaches 1/`alpha_rollback`, with no minimum count; promotion on this stage's audits (point estimate, or evidence with `promote_evidence`); retirement at `max_stage_audits`. 0: the Wilson rule above. 0 or 1 |
+| `alpha_rollback` | `RATCHET_ALPHA_ROLLBACK` | 0.05 | Sequential rule: the chance of ever rolling back a version whose precision stays at or above the floor (threshold 1/alpha: 20). Strictly between 0 and 1 |
+| `promote_evidence` | `RATCHET_PROMOTE_EVIDENCE` | 0 | 1 promotes a canary stage only when the e-value that precision is above the floor reaches 1/`alpha_promote` (56 audits that all agree at a 0.92 floor and 5%), instead of on the point estimate. Needs `sequential=1`. 0 or 1 |
+| `alpha_promote` | `RATCHET_ALPHA_PROMOTE` | 0.05 | Sequential rule with `promote_evidence`: the chance that a version at or below the floor reaches live. Strictly between 0 and 1 |
+| `max_stage_audits` | `RATCHET_MAX_STAGE_AUDITS` | 400 | Sequential rule: a canary stage with this many audits and no decision is retired (event `inconclusive`); 0 = never. It counts audits, not time. Must be at least `min_audits`, and with `promote_evidence` at least the audits a promotion needs (startup says how many) |
+| `alert_eprocess` | `RATCHET_ALERT_EPROCESS` | 1 | 1: the live alert fires when the e-value against "precision at or above the floor" over the audits since the version went live reaches 1/`alpha_alert`, with no minimum count. 0: the Wilson rule (at least `min_audits` audits and the upper bound below the floor). 0 or 1 |
+| `alpha_alert` | `RATCHET_ALPHA_ALERT` | 0.01 | The live alert's error rate: a live version at or above the floor is alerted on with probability at most this (threshold 1/alpha: 100). Strictly between 0 and 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1.
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed).
 
-A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features are in [Reserved settings](#reserved-settings).
+A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features not built yet are in [Reserved settings](#reserved-settings).
 
 Other constants:
 
@@ -222,7 +230,6 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 
 | Variable | Default | Feature that will read it |
 |---|---|---|
-| `RATCHET_CANARY_AUDIT_RATE` | unset (the audit rate) | Anytime-valid release gate (FR-16.1): the canary's own audit rate |
 | `RATCHET_CALIBRATION` | `point` | Certified precision (FR-16.3): `point` (today's threshold rule) or `ltt` (Learn-then-Test) |
 | `RATCHET_CERT_TARGET` | `0.95` | Certified precision (FR-16.3): the precision a certificate tests for |
 | `RATCHET_CERT_DELTA` | `0.05` | Certified precision (FR-16.3): the certificate's error rate |
@@ -240,13 +247,6 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 
 | Field | Variable | Default | Feature that will read it |
 |---|---|---|---|
-| `sequential` | `RATCHET_SEQUENTIAL` | 0 | Anytime-valid release gate (FR-16.1): 1 rolls a canary back by an e-process, with no minimum audit count |
-| `alpha_rollback` | `RATCHET_ALPHA_ROLLBACK` | 0.05 | FR-16.1: the chance of ever rolling back a version at or above the floor |
-| `promote_evidence` | `RATCHET_PROMOTE_EVIDENCE` | 0 | FR-16.1: 1 promotes a canary stage only on evidence that precision is above the floor |
-| `alpha_promote` | `RATCHET_ALPHA_PROMOTE` | 0.05 | FR-16.1: the promotion test's error rate |
-| `max_stage_audits` | `RATCHET_MAX_STAGE_AUDITS` | 400 | FR-16.1: audits after which an undecided canary stage is retired |
-| `alert_eprocess` | `RATCHET_ALERT_EPROCESS` | 0 | Anytime-valid live alert (FR-16.2): 1 alerts on the live version by the e-process instead of Wilson's bound |
-| `alpha_alert` | `RATCHET_ALPHA_ALERT` | 0.01 | FR-16.2: the live alert's error rate |
 | `min_certified_precision` | `RATCHET_MIN_CERTIFIED_PRECISION` | 0.0 | Certified precision (FR-16.3): a floor on the certified lower bound (0: off) |
 | `paired_gate` | `RATCHET_PAIRED_GATE` | 0 | FR-16.3: 1 compares candidate and live version on the same golden rows (McNemar) |
 | `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | FR-16.3: the paired gate's error rate |

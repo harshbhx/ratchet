@@ -1,6 +1,6 @@
 # ADR 0005: Release through shadow and canary, roll back on Wilson upper bound
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR 0025](0025-anytime-valid-release-gate.md) (the live watch uses an e-process by default, and an opt-in sequential canary rule replaces the Wilson bound when switched on)
 - **Date:** 2026-10-19
 
 ## Context

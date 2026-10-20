@@ -315,8 +315,8 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 
 | ID | Requirement | Status |
 |---|---|---|
-| FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence-based promotion, and confidence sequences, valid however often the gate runs | Planned |
-| FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert per version at the stated rate | Planned |
+| FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence-based promotion, and confidence sequences, valid however often the gate runs; with a futility cap (`inconclusive` → `retired`), an optional canary audit rate (logged as `label_p`), each canary and live version's evidence in `/ratchet/stats`, and `python -m sim.simulate --compare-release` ([ADR 0025](adr/0025-anytime-valid-release-gate.md)) | Done (v0.5) |
+| FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert per version at the stated rate (the default; `RATCHET_ALERT_EPROCESS=0` keeps the Wilson rule) | Done (v0.5) |
 | FR-16.3 | Certified precision: each candidate carries a Clopper–Pearson lower bound on precision at its threshold, recorded in its signed BOM; opt-in Learn-then-Test calibration | Planned |
 | FR-16.4 | Committed training sets: each adapter's BOM commits to its training and golden examples with Merkle roots, with membership and non-membership proofs | Planned |
 | FR-16.5 | Ledger time machine: replay past traffic under a different threshold or audit rate from logged propensities, with unbiased estimates | Planned |

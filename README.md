@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 717 tests
+pytest -q                                                                # 735 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -182,7 +182,7 @@ ratchet/tasks.py        task specs: typed fields, valid answers, answer cleaning
 ratchet/taskspec.py     task specs as data: RATCHET_TASKS_FILE and the admin API, every error with its path
 ratchet/compare.py      field comparators (label, number, date, set, records, ...)
 ratchet/confidence.py   confidence score (pairwise agreement) + threshold calibration
-ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds)
+ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds, or an anytime-valid e-process)
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/redact.py       PII placeholders before examples are stored

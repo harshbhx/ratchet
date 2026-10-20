@@ -562,7 +562,10 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     simulate.main(["--days", "2", "--requests", "200", "--drift-day", "0", "--workload", "mixed", "--out", str(out)])
     printed = capsys.readouterr().out
     res = json.loads(out.read_text(encoding="utf-8"))
-    assert set(res) == {"days", "nights", "versions", "events", "totals", "bill_of_materials", "cost"}
+    assert set(res) == {
+        "days", "nights", "versions", "events", "totals", "bill_of_materials", "cost", "exposure", "rollbacks", "served",
+    }  # fmt: skip
+    assert res["exposure"] == {} and res["rollbacks"] == []  # nothing rolled back in two days
     assert [d["day"] for d in res["days"]] == [1, 2] and [n["night"] for n in res["nights"]] == [1, 2]
     assert res["totals"]["requests"] == 400 and res["nights"][0]["trained"]
     # The cost report (FR-15.3): the simulated endpoint ran 24 h a day, and the GPU-hour view is printed as simulation.
@@ -576,6 +579,47 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     assert "events:" in printed and "[trained]" in printed and lines[-1] == f"wrote {out}"
     for e in res["events"]:
         assert f"  day {e['day']}: [{e['kind']}] {e['detail']}" in lines
+
+
+@pytest.mark.req("FR-9.4", "FR-16.1")
+def test_sim_cli_compares_release_rules(tmp_path, capsys):
+    """--compare-release runs the same arguments and seed once per canary rule and prints one row per rule for each
+    version either rule rolled back (simulation); bad combinations are usage errors (exit 2)."""
+    out = tmp_path / "cmp.json"
+    argv = ["--days", "2", "--requests", "200", "--drift-day", "0", "--canary-audit-rate", "0.5", "--out", str(out)]
+    simulate.main([*argv, "--compare-release", "--promote-evidence"])
+    printed = capsys.readouterr().out
+    res = json.loads(out.read_text(encoding="utf-8"))
+    assert set(res) == {"wilson", "sequential"} and printed.startswith("Wilson vs anytime-valid release gate (simulation")
+    assert res["wilson"]["totals"]["requests"] == res["sequential"]["totals"]["requests"] == 400
+    results = {
+        "wilson": {
+            "versions": [{"id": 3, "state": "rolled_back"}],
+            "rollbacks": [{"version": 3, "audits": 17, "agreed": 7, "served": 145, "day": 4}],
+            "served": {3: 145},
+            "totals": {"savings_pct": 0.69},
+        },
+        "sequential": {
+            "versions": [{"id": 3, "state": "rolled_back"}, {"id": 4, "state": "rolled_back"}],
+            "rollbacks": [
+                {"version": 3, "audits": 7, "agreed": 3, "served": 48, "day": 4},
+                {"version": 4, "audits": 3, "agreed": 0, "served": 20, "day": 6},
+            ],
+            "served": {3: 48, 4: 20},
+            "totals": {"savings_pct": 0.7},
+        },
+    }
+    rows = [line.split() for line in simulate.compare_table(results).splitlines()[2:]]
+    assert rows == [
+        ["wilson", "v3", "rolled_back", "17", "145", "4", "69%"],
+        ["sequential", "v3", "rolled_back", "7", "48", "4", "70%"],
+        ["wilson", "v4", "not", "trained", "-", "0", "-", "69%"],
+        ["sequential", "v4", "rolled_back", "3", "20", "6", "70%"],
+    ]
+    for bad in (["--promote-evidence"], ["--canary-audit-rate", "0"], ["--canary-audit-rate", "1.5"], ["--release", "x"]):
+        with pytest.raises(SystemExit) as exc:
+            simulate.main([*argv[:6], *bad])
+        assert exc.value.code == 2
 
 
 @pytest.mark.req("FR-9.6")

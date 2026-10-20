@@ -294,6 +294,29 @@ def test_canary_rolls_back_on_strong_evidence():
     assert any(e["kind"] == "rollback" for e in led.events())
 
 
+@pytest.mark.req("FR-16.1")
+def test_audit_counts_and_served_counts():
+    """The two integers per version every release decision reads (`audit_counts`, over its life or after a request id)
+    and the answers each version served (`served_counts`, its exposure): only student-served, audited rows count as
+    audits; a stand-in (degraded) answer is still an answer it served; teacher-served rows count for neither."""
+    led = Ledger(":memory:")
+    v = _version(led, "canary")
+    w = _version(led, "live")
+    _audit(led, v, 10, 5)  # 8 of 10
+    since = led.version(v).stage_since
+    row = dict(task="t", student_version=v, cost_usd=0.0, baseline_cost_usd=0.0)
+    led.log_request(served_by="student", audited=0, route="student", **row)
+    led.log_request(served_by="student", audited=0, route="degraded", **row)
+    led.log_request(served_by="teacher", audited=1, audit_agree=1, route="confidence", **row)  # not a student answer
+    last = led.log_request(served_by="student", audited=1, audit_agree=1, route="student", **row)
+    assert led.audit_counts(v) == (11, 9) and led.audit_counts(v, since) == (11, 9)
+    assert led.audit_counts(v, last - 1) == (1, 1) and led.audit_counts(v, last) == (0, 0) and led.audit_counts(w) == (0, 0)
+    assert led.version_live_quality(v) == (11, 9 / 11) and led.version_live_quality(w) == (0, None)
+    assert led.served_counts() == {v: 13}
+    led.log_request(served_by="student", audited=1, audit_agree=None, route="student", **row)  # never written by the router
+    assert led.audit_counts(v) == (12, 9)  # an audit without a verdict counts against the version
+
+
 # ---------- generation parameters (FR-1.13, ADR 0017) ----------
 FULL_PARAMS = {
     "max_completion_tokens": 50,

@@ -327,6 +327,7 @@ class Ratchet:
             self.fallback_teacher = fallback_teacher if fallback_teacher is not None else teacher
         # RATCHET_ON_TEACHER_FAILURE; a bad value stops startup here.
         self.serve_student_on_failure = settings.serve_student_on_teacher_failure()
+        settings.checked_canary_audit_rate()  # RATCHET_CANARY_AUDIT_RATE outside (0, 1] stops startup here (ADR 0025)
         # RATCHET_UNKNOWN_TASKS: distill, teacher or reject (ADR 0022); a bad value stops startup here.
         self.unknown_tasks = settings.unknown_task_policy()
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
@@ -884,6 +885,9 @@ class Ratchet:
         arbitration_c: Completion | None = None
         fp = ""
         degraded: str | None = None
+        # The designed probability that a teacher label of the student's answer is observed (requests.label_p, FR-16.5):
+        # the audit rate this request was drawn at when the student served, 1.0 when it escalated after answering.
+        label_p: float | None = None
         picked: list[Completion] | None = None  # the student's n choices, when n of its samples agree
         served_choices: list[Completion] = []  # every choice the client gets; choice 0 is `served`
 
@@ -916,7 +920,12 @@ class Ratchet:
             if sc.valid and sc.confidence >= threshold and picked is not None:
                 served, served_by, route, served_choices = sc.answer, "student", "student", picked
                 fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
-                if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
+                # Audit focusing (ADR 0025): a canary may be audited at its own rate. Still one draw per served answer.
+                rate = self.s.audit_rate
+                if version.state == "canary" and self.s.canary_audit_rate is not None:
+                    rate = self.s.canary_audit_rate
+                label_p = rate
+                if self.rng.random() < rate:  # audit = quality signal + free training data
                     try:
                         audit = self._call_teacher(task, messages, plan, "audit", meta)
                     except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
@@ -934,9 +943,9 @@ class Ratchet:
                         if answer_problem(task, teacher_c) is None:
                             audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
             elif sc.valid and sc.confidence >= threshold:  # confident, but fewer than n samples agree
-                escalated, route = True, "n_choices"
+                escalated, route, label_p = True, "n_choices", 1.0
             else:
-                escalated, route = True, "confidence"
+                escalated, route, label_p = True, "confidence", 1.0
         if served_by == "teacher":
             try:
                 answer = self._call_teacher(task, messages, plan, "serve", meta)
@@ -1041,6 +1050,7 @@ class Ratchet:
             client=client,
             route=route,
             stored=int(stored),
+            label_p=label_p,
         )
         choices = _choices(task, served_choices, params)
         return Result(

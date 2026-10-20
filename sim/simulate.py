@@ -2,6 +2,7 @@
 
     python -m sim.simulate --days 8 --requests 2000 --bad-deploy-version 3
     python -m sim.simulate --workload research   # Scout's triage + read calls
+    python -m sim.simulate --bad-deploy-version 3 --compare-release   # Wilson vs the anytime-valid gate, same seed
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -11,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
+from typing import Any
 
 from ratchet.config import Settings
 from ratchet.cost import cost_report, record_simulated_day
@@ -23,6 +26,10 @@ from ratchet.router import Ratchet
 from .mock_models import MockFleet, MockTeacher
 from .world import WORKLOADS, make_stream, night_task
 
+# The canary rules --release picks (ADR 0025): today's Wilson bound, or the anytime-valid e-process.
+RELEASE_RULES = ("wilson", "sequential")
+_SUBJECT = re.compile(r"^v(\d+)\b")  # gate events name their version first ('v3 rolled back: ...')
+
 
 def build(args: argparse.Namespace, db: str = ":memory:"):
     settings = Settings(
@@ -31,13 +38,36 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
         confidence_threshold=args.threshold,
         samples=3,
         audit_rate=args.audit_rate,
+        canary_audit_rate=getattr(args, "canary_audit_rate", None),
     )
     ledger = Ledger(db, golden_fraction=0.10)
     corrupt = {f"student-v{args.bad_deploy_version}"} if args.bad_deploy_version else set()
     fleet = MockFleet(corrupt_on_deploy=corrupt, policy=settings.gen_policy())
     ratchet = Ratchet(settings, ledger, MockTeacher(settings.teacher_reasoning_tokens), fleet.resolve, seed=args.seed)
-    gate = ReleaseGate(ledger, ReleasePolicy(min_shadow=args.min_shadow, min_audits=args.min_audits))
+    policy = ReleasePolicy(
+        min_shadow=args.min_shadow,
+        min_audits=args.min_audits,
+        sequential=int(getattr(args, "release", "wilson") == "sequential"),
+        promote_evidence=int(bool(getattr(args, "promote_evidence", False))),
+    )
+    gate = ReleaseGate(ledger, policy)
     return settings, ledger, fleet, ratchet, gate
+
+
+def rollbacks(ledger: Ledger, served: dict[int, int]) -> list[dict[str, Any]]:
+    """Every rolled-back version: the audits and agreements it had (it serves nothing after a rollback, so these are
+    the counts the gate decided on), the answers it served (its exposure, from `served`: `Ledger.served_counts()`) and
+    the day of its rollback."""
+    days = {}
+    for e in ledger.events():
+        m = _SUBJECT.match(e["detail"]) if e["kind"] == "rollback" else None
+        if m:
+            days.setdefault(int(m.group(1)), e["day"])
+    out = []
+    for v in ledger.versions(["rolled_back"]):
+        n, s = ledger.audit_counts(v.id)
+        out.append({"version": v.id, "audits": n, "agreed": s, "served": served.get(v.id, 0), "day": days.get(v.id)})
+    return out
 
 
 def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
@@ -68,6 +98,8 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         trained = ledger.version(rep.version) if rep.trained and rep.version is not None else None
         record_simulated_day(ledger, policy, day, trained)
         nights.append({"night": day, "trained": rep.trained, "version": rep.version, "admitted": rep.admitted, "eval": rep.eval})
+    served = ledger.served_counts()
+    rolled = rollbacks(ledger, served)
     return {
         "days": ledger.stats_by_day(),
         "nights": nights,
@@ -76,7 +108,42 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "totals": ledger.totals(),
         "bill_of_materials": ledger.bill_of_materials(),
         "cost": cost_report(ledger, settings),
+        # Answers each rolled-back version served before its rollback (its exposure), the counts its rollback was decided
+        # on, and the answers every version served (simulation, mock models).
+        "exposure": {r["version"]: r["served"] for r in rolled},
+        "rollbacks": rolled,
+        "served": served,
     }
+
+
+def compare_release(args: argparse.Namespace) -> dict[str, dict]:
+    """The same run (same arguments and seed) under each canary rule, for --compare-release. --promote-evidence applies
+    to the sequential run only (the Wilson rule promotes on the point estimate)."""
+    out = {}
+    for rule in RELEASE_RULES:
+        evidence = bool(getattr(args, "promote_evidence", False)) and rule == "sequential"
+        out[rule] = run(argparse.Namespace(**{**vars(args), "release": rule, "promote_evidence": evidence}))
+    return out
+
+
+def compare_table(results: dict[str, dict]) -> str:
+    """One row per rule and per version rolled back under either rule: its final state, the audits it had when it was
+    rolled back and the day ('-' when that rule did not roll it back), the answers it served (its exposure) and the run's
+    total savings."""
+    ids = sorted({r["version"] for res in results.values() for r in res["rollbacks"]})
+    lines = ["Wilson vs anytime-valid release gate (simulation, mock models)"]
+    if not ids:
+        lines.append("no version was rolled back under either rule")
+    lines.append(f"{'rule':<11} {'version':>7} {'state':<12} {'audits':>6} {'served':>6} {'day':>4} {'saved':>6}")
+    for vid in ids:
+        for rule, res in results.items():
+            state = next((v["state"] for v in res["versions"] if v["id"] == vid), "not trained")
+            row = next((r for r in res["rollbacks"] if r["version"] == vid), None)
+            audits, day = (str(row["audits"]), str(row["day"])) if row else ("-", "-")
+            served = res["served"].get(vid, 0)
+            saved = res["totals"]["savings_pct"]
+            lines.append(f"{rule:<11} {'v' + str(vid):>7} {state:<12} {audits:>6} {served:>6} {day:>4} {saved:>6.0%}")
+    return "\n".join(lines)
 
 
 def table(res: dict) -> str:
@@ -124,14 +191,47 @@ def parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--workload", choices=WORKLOADS, default="tickets", help="tickets, Scout research calls, or both")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument(
+        "--release",
+        choices=RELEASE_RULES,
+        default="wilson",
+        help="canary rule: the Wilson bound per stage, or the anytime-valid e-process (ADR 0025)",
+    )
+    ap.add_argument(
+        "--promote-evidence",
+        action="store_true",
+        help="with --release sequential: promote a canary stage only on an e-value that precision is above the floor",
+    )
+    ap.add_argument(
+        "--canary-audit-rate",
+        type=float,
+        default=None,
+        help="the canary's own audit rate, more than 0 and at most 1 (default: --audit-rate)",
+    )
+    ap.add_argument(
+        "--compare-release",
+        action="store_true",
+        help="run twice with the same seed, once per --release rule, and compare the rolled-back versions",
+    )
     ap.add_argument("--out", default="sim_results.json")
     return ap
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = parser().parse_args(argv)
+    ap = parser()
+    args = ap.parse_args(argv)
     if args.drift_day == 0:
         args.drift_day = None
+    if args.promote_evidence and args.release != "sequential" and not args.compare_release:
+        ap.error("--promote-evidence needs --release sequential")
+    if args.canary_audit_rate is not None and not 0 < args.canary_audit_rate <= 1:
+        ap.error(f"--canary-audit-rate must be more than 0 and at most 1, not {args.canary_audit_rate}")
+    if args.compare_release:
+        results = compare_release(args)
+        print(compare_table(results))
+        Path(args.out).write_text(json.dumps(results, indent=2, default=str))
+        print(f"\nwrote {args.out}")
+        return
     res = run(args)
     print(table(res))
     Path(args.out).write_text(json.dumps(res, indent=2, default=str))

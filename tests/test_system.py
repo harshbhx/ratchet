@@ -31,9 +31,18 @@ def test_loop_learns_and_saves_money():
     assert min(audits) >= 0.85
 
 
+BAD_DEPLOY = ("--days", "6", "--requests", "1500", "--drift-day", "0", "--bad-deploy-version", "3")
+
+
+@pytest.fixture(scope="module")
+def bad_deploy() -> dict:
+    """The corrupted-v3 run under each canary rule (the same seed), shared by the tests below: about 4 s each."""
+    return {rule: sim(*BAD_DEPLOY, "--release", rule) for rule in ("wilson", "sequential")}
+
+
 @pytest.mark.req("FR-9.3", "US-6")
-def test_bad_deploy_is_rolled_back_and_users_return_to_live():
-    res = sim("--days", "6", "--requests", "1500", "--drift-day", "0", "--bad-deploy-version", "3")
+def test_bad_deploy_is_rolled_back_and_users_return_to_live(bad_deploy):
+    res = bad_deploy["wilson"]
     states = {v["id"]: v["state"] for v in res["versions"]}
     kinds = [e["kind"] for e in res["events"]]
     if states.get(3) == "rejected":
@@ -41,6 +50,24 @@ def test_bad_deploy_is_rolled_back_and_users_return_to_live():
     assert states.get(3) == "rolled_back"
     assert states.get(1) == "live"  # traffic went back to the previous live version
     assert "rollback" in kinds
+
+
+@pytest.mark.req("FR-16.1", "FR-9.4")
+def test_sequential_gate_reduces_bad_deploy_exposure(bad_deploy):
+    """The same corrupted deploy under the anytime-valid rule (simulation, mock models): rolled back as under Wilson,
+    after serving no more answers, with the evidence in the event; and the run records each rollback's exposure."""
+    wilson, sequential = bad_deploy["wilson"], bad_deploy["sequential"]
+    states = {rule: {v["id"]: v["state"] for v in res["versions"]} for rule, res in bad_deploy.items()}
+    if "rejected" in (states["wilson"].get(3), states["sequential"].get(3)):
+        pytest.skip("v3 was rejected before deploy in this seed; nothing to roll back")
+    assert states["wilson"][3] == states["sequential"][3] == "rolled_back"
+    assert sequential["exposure"][3] <= wilson["exposure"][3]
+    for res in (wilson, sequential):
+        (row,) = [r for r in res["rollbacks"] if r["version"] == 3]
+        assert row["served"] == res["exposure"][3] == res["served"][3] > 0 and 0 < row["agreed"] < row["audits"]
+    (detail,) = [e["detail"] for e in sequential["events"] if e["kind"] == "rollback"]
+    assert detail.startswith("v3 rolled back: ") and "e-value" in detail and "95% CS [" in detail
+    assert not any(e["kind"] == "inconclusive" for e in wilson["events"])
 
 
 @pytest.mark.req("FR-9.1")

@@ -27,8 +27,11 @@
 | **Shadow mode** | A candidate runs silently on real traffic. Its answers are compared but never shown to users. |
 | **Arbitration** | When a shadow candidate disagrees with the live student's served answer, the teacher decides who was right. |
 | **Canary** | A candidate serves a slice of real traffic (10%, then 50%) while audits measure its quality. |
-| **Rollback** | Pulling a canary version when the 95% upper bound of its audited precision falls below 92%. Traffic returns to the previous live version, or to the teacher. |
-| **Wilson interval** | A statistical range for a proportion that behaves well on small samples. Used for rollback decisions. |
+| **Rollback** | Pulling a canary version when the 95% upper bound of its audited precision falls below 92% (or, with the sequential rule, when its e-value reaches 20). Traffic returns to the previous live version, or to the teacher. |
+| **Wilson interval** | A statistical range for a proportion that behaves well on small samples. Used for rollback decisions by default. Valid for one look at a fixed sample, not for a gate that looks after every request. |
+| **Inconclusive** | Under the sequential rule, a canary stage that reached `RATCHET_MAX_STAGE_AUDITS` audits without enough evidence either way. The canary is retired, not rolled back. |
+| **e-value** | A number that measures evidence against a claim (here "precision is at least the floor"): 1 means none, and the chance that it ever reaches 1/alpha while the claim holds is at most alpha, however often it is checked (anytime-valid). The anytime-valid release gate rolls back at 20 and the live alert fires at 100 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)). |
+| **Confidence sequence** | A range for a rate that holds at every sample size at once with the stated probability, so it can be checked after every audit. Release events report a 95% one as `95% CS [lo, hi]`. |
 | **Live** | The version serving 100% of student traffic. |
 | **States** | `candidate`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rolled_back`. |
 | **Cold start** | The period before any student exists. The teacher answers everything. |
