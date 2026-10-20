@@ -63,7 +63,15 @@ from .openai_compat import (
 from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
-from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
+from .resilience import (
+    CLIENT_CAUSED,
+    RETRY_STATUSES,
+    TEACHER_CIRCUIT_OPEN,
+    TOOL_CALLS_UNSUPPORTED,
+    CircuitOpen,
+    as_upstream,
+    describe_failure,
+)
 from .router import Choice, Ratchet, RequestMeta
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
@@ -84,6 +92,7 @@ MAX_REDACT_CHARS = 5000
 
 
 TRANSPORT_KEYS = ("teacher", "student")
+RETENTION_INTERVAL_S = 3600.0  # live mode applies the retention windows at most this often (FR-13.4)
 
 
 class Runtime:
@@ -112,11 +121,16 @@ class Runtime:
         self.sleep = sleep
         self.clock = clock
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
+        # Retention runs on its own thread, at most every RETENTION_INTERVAL_S on `clock` (`maybe_purge`, FR-13.4).
+        self.purge_lock = threading.Lock()
+        self.purge_thread: threading.Thread | None = None
+        self._last_purge: float | None = None
         self.reset()
 
     def reset(self) -> None:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
+        self.retention = s.retention()  # a bad retention window or RATCHET_ERASURE_SHARED stops startup here (ADR 0081)
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
@@ -258,6 +272,35 @@ class Runtime:
     def tick(self) -> None:
         with self.gate_lock:
             self.gate.tick()
+        self.maybe_purge()
+
+    def maybe_purge(self) -> threading.Thread | None:
+        """In live mode with a retention window set, apply the windows (`privacy.apply_retention`, FR-13.4) at most once
+        every RETENTION_INTERVAL_S on `clock`, starting with the first tick, on a background thread, so no request waits
+        for a purge. Returns the thread when one started. A failure writes a `purge_failed` event naming the exception's
+        class, and the next interval tries again."""
+        if self.settings.mode != "live" or not self.retention.enabled:
+            return None
+        with self.purge_lock:
+            now = self.clock()
+            if self.purge_thread is not None and self.purge_thread.is_alive():
+                return None
+            if self._last_purge is not None and now - self._last_purge < RETENTION_INTERVAL_S:
+                return None
+            self._last_purge = now
+            thread = threading.Thread(target=self._purge, name="ratchet-retention", daemon=True)
+            self.purge_thread = thread
+            thread.start()
+            return thread
+
+    def _purge(self) -> None:
+        try:
+            privacy.apply_retention(self.ledger, self.retention)
+        except Exception as e:  # noqa: BLE001 - a background job: report it and try again next interval
+            try:
+                self.ledger.event("purge_failed", f"retention: {describe_failure(e)}")
+            except Exception:  # noqa: BLE001 - the ledger may be what failed
+                pass
 
     def scout(self, pace: float = 0.0) -> Scout:
         """`pace` > 0 (mock streams only) sleeps for that share of each call's simulated latency."""
@@ -761,14 +804,16 @@ def _short_name(key: str) -> str:
     return key if len(key) <= 64 else key[:61] + "..."
 
 
-def _no_train_body(raw: bytes) -> tuple[str, str | None, bool]:
-    """(end user, client, whether `client` was given) from a no-train body, or a 400. Only an admin names a client."""
+def _no_train_body(raw: bytes, extra: frozenset[str] = frozenset()) -> tuple[str, str | None, bool, dict[str, Any]]:
+    """(end user, client, whether `client` was given, the body) from a no-train body (or an erasure's, which also takes
+    `extra` keys), or a 400. Only an admin names a client."""
     body = parse_body(raw)
     if not isinstance(body, dict):
         raise APIError(400, "The request body must be a JSON object.", INVALID_REQUEST, INVALID_TYPE)
-    unknown = sorted(set(body) - NO_TRAIN_KEYS)
+    unknown = sorted(set(body) - NO_TRAIN_KEYS - extra)
     if unknown:
-        message = f"Unknown parameter {_short_name(unknown[0])}; use 'end_user' (and 'client' with an admin key)."
+        also = "".join(f", '{k}'" for k in sorted(extra))
+        message = f"Unknown parameter {_short_name(unknown[0])}; use 'end_user'{also} (and 'client' with an admin key)."
         raise APIError(400, message, INVALID_REQUEST, "unknown_parameter", param=_short_name(unknown[0]))
     end_user = body.get("end_user")
     if end_user is None:
@@ -781,7 +826,7 @@ def _no_train_body(raw: bytes) -> tuple[str, str | None, bool]:
     client = body.get("client")
     if client is not None and not isinstance(client, str):
         raise APIError(400, "Invalid type for 'client': expected a string.", INVALID_REQUEST, INVALID_TYPE, "client")
-    return end_user, client, "client" in body
+    return end_user, client, "client" in body, body
 
 
 def _no_train_scopes(client: str | None, admin: str | None, named: str | None, given: bool) -> list[str | None]:
@@ -812,7 +857,7 @@ async def no_train_add(
 
 
 def _no_train_add(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
-    end_user, named, given = _no_train_body(raw)
+    end_user, named, given, _ = _no_train_body(raw)
     scopes = _no_train_scopes(client, admin, named, given)
     entries = rt.end_users.hashes(end_user, scopes)
     if rt.settings.mode == "mock" and rt.ledger.no_train_count() + len(entries) > MOCK_MAX_NO_TRAIN:
@@ -842,7 +887,7 @@ async def no_train_remove(
 
 
 def _no_train_remove(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
-    end_user, named, given = _no_train_body(raw)
+    end_user, named, given, _ = _no_train_body(raw)
     entries = rt.end_users.hashes(end_user, _no_train_scopes(client, admin, named, given))
     outcomes = rt.ledger.no_train_remove([h for h, _ in entries], admin=admin is not None)
     if "removed" in outcomes:
@@ -852,6 +897,53 @@ def _no_train_remove(raw: bytes, client: str | None, admin: str | None) -> dict[
         "object": "ratchet.no_train",
         "end_users": [{"client": c, "status": status} for (_, c), status in zip(entries, outcomes, strict=True)],
     }
+
+
+# ----- erasure by the client (FR-13.3, ADR 0081) -----
+ERASE_EXTRA_KEYS = frozenset({"dry_run", "reason"})
+CLIENT_ERASE_REASON = "end user request"
+
+
+@app.delete("/v1/ratchet/examples")
+async def erase_examples(
+    request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Erase the stored examples of one of the caller's end users (`{"end_user": "<user or safety_identifier>"}`, as
+    for no-train; optional `reason` and `dry_run`, default false): their text goes for good, their hashes are never
+    stored again, and the end user's hash is cleared from its request rows (FR-13.3). An API key erases its own end
+    users; an admin key a named client's, or with no `client` every client's. Open where chat completions are, like
+    registering no-train: it only removes data. The end user is read from the body only: a URL with `end_user` is a 400,
+    because access logs keep URLs."""
+    if "end_user" in request.query_params:  # never echoed; the value may identify someone
+        message = "Send 'end_user' in the JSON body; it is never read from the URL, which access logs keep."
+        raise APIError(400, message, INVALID_REQUEST, "end_user_in_url", "end_user")
+    client, admin = _no_train_caller(authorization, x_api_key)
+    raw = await _body(request)
+    return await anyio.to_thread.run_sync(functools.partial(_erase_examples, raw, client, admin))
+
+
+def _erase_examples(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
+    end_user, named, given, body = _no_train_body(raw, ERASE_EXTRA_KEYS)
+    dry_run, reason = body.get("dry_run", False), body.get("reason", CLIENT_ERASE_REASON)
+    if not isinstance(dry_run, bool):
+        raise APIError(400, "Invalid type for 'dry_run': expected a boolean.", INVALID_REQUEST, INVALID_TYPE, "dry_run")
+    if not isinstance(reason, str):
+        raise APIError(400, "Invalid type for 'reason': expected a string.", INVALID_REQUEST, INVALID_TYPE, "reason")
+    scopes = _no_train_scopes(client, admin, named, given)
+    try:
+        return privacy.erase(
+            rt.ledger,
+            client=scopes[0] if len(scopes) == 1 else None,
+            end_user_raw=end_user,
+            actor=admin if admin is not None else (client or "keyless"),
+            reason=reason,
+            dry_run=dry_run,
+            shared=rt.retention.erasure_shared,
+            hasher=rt.end_users,
+            end_user_clients=scopes,
+        )
+    except ValueError as e:  # the message never quotes the end user
+        raise APIError(400, f"Invalid erasure: {e}.", INVALID_REQUEST, INVALID_VALUE) from e
 
 
 @app.get("/ratchet/stats")
@@ -880,6 +972,11 @@ def stats() -> dict[str, Any]:
             "no_store_tasks": sorted(rt.ratchet.no_store_tasks | {t.name for t in tasks.registered() if not t.store}),
             "no_store_clients": sorted(name for name, lim in rt.key_limits.items() if not lim.store),
             "end_user_key": rt.end_users.source,
+            # Retention and erasure (FR-13.3, FR-13.4): the windows in force (0 = forever) and what was removed; counts.
+            "example_retention_days": rt.retention.example_days,
+            "request_retention_days": rt.retention.request_days,
+            "erasure_shared": rt.retention.erasure_shared,
+            **led.retention_stats(),
         },
         "security": {
             "api_keys": rt.keys.enabled,
@@ -1116,6 +1213,66 @@ def delete_task(name: str, admin: str = Depends(_admin)) -> dict[str, Any]:
         kept = rt.ledger.example_count(name)
         rt.ledger.event("task_deleted", f"{name} (spec {current.spec_hash}) by {admin}; {kept} stored examples kept")
     return {"deleted": name, "spec_hash": current.spec_hash, "examples_kept": kept}
+
+
+# ----- erasure and export for operators (FR-13.3, FR-13.5, ADR 0081) -----
+ERASE_KEYS = frozenset({"client", "end_user", "hashes", "contains", "reason", "dry_run"})
+
+
+@app.post("/ratchet/admin/privacy/erase")
+def admin_erase(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Erase stored examples for good (`privacy.erase`): by `client`, `end_user` (in `client`'s scope, or with no client
+    in every API key's scope and the keyless one), `hashes` and `contains`, each narrowing the scope; `reason` is
+    required. A dry run unless `dry_run` is false. Needs an admin key (open in mock mode without admin keys, like the
+    other management calls)."""
+    if not isinstance(body, Mapping):
+        raise HTTPException(400, "the body must be a JSON object")
+    unknown = sorted(set(body) - ERASE_KEYS)
+    if unknown:
+        raise HTTPException(400, f"unknown keys {[_short_name(str(k)) for k in unknown]}; use {sorted(ERASE_KEYS)}")
+    dry_run = body.get("dry_run", True)
+    if not isinstance(dry_run, bool):
+        raise HTTPException(400, "dry_run must be true or false")
+    client, end_user = body.get("client"), body.get("end_user")
+    clients = [*rt.keys.names, None] if end_user is not None and client is None else None
+    try:
+        return privacy.erase(
+            rt.ledger,
+            client=client,
+            end_user_raw=end_user,
+            hashes=body.get("hashes"),
+            contains=body.get("contains"),
+            actor=admin,
+            reason=body.get("reason"),  # checked by erase: 1 to 500 characters
+            dry_run=dry_run,
+            shared=rt.retention.erasure_shared,
+            hasher=rt.end_users,
+            end_user_clients=clients,
+        )
+    except ValueError as e:  # never quotes an end user or the text to match
+        raise HTTPException(400, str(e)) from e
+
+
+@app.get("/ratchet/admin/export/{kind}")
+def admin_export(
+    kind: str,
+    task: str | None = None,
+    split: str | None = None,
+    since: str | None = None,
+    client: str | None = None,
+    admin: str = Depends(_admin),
+) -> StreamingResponse:
+    """One table as NDJSON (`privacy.export_lines`, FR-13.5): `examples` (those that still have their text, with their
+    provenance: teacher, license, license URL, hash, split, seen, redactions, clients), `requests`, `versions` (with
+    their BOMs as stored), `events` or `erasures` (with their items). Filters: `task`, `split`, `since` (epoch seconds or
+    an ISO 8601 date) and `client`, where the kind has them (400 otherwise). Needs an admin key, like the other
+    management calls. End-user hashes are left out; API keys are never stored."""
+    try:
+        filters = privacy.check_export(kind, task=task, split=split, since=since, client=client)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    headers = {"Content-Disposition": f'attachment; filename="ratchet-{kind}.ndjson"', "Cache-Control": "no-store"}
+    return StreamingResponse(privacy.export_lines(rt.ledger, kind, **filters), media_type="application/x-ndjson", headers=headers)
 
 
 # ----- cost accounting (FR-15.2 to FR-15.4, ADR 0023) -----

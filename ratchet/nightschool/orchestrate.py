@@ -7,8 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, tasks
-from ..config import GpuRate
+from .. import bom, privacy, tasks
+from ..config import GpuRate, Retention
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
 from ..resilience import describe_failure
@@ -65,8 +65,11 @@ def run_night(
     clock: Callable[[], float] | None = None,
     redact_pii: bool | None = None,
     store_examples: bool = True,
+    retention: Retention | None = None,
 ) -> NightReport:
-    """One night. With `store_examples` False (RATCHET_STORE_EXAMPLES=0, zero retention; FR-13.1) nothing is stored, so
+    """One night. With `retention` (live mode: `Settings.retention()`), the retention windows are applied first
+    (`privacy.apply_retention`, FR-13.4), so the night never trains on text that has expired; a failure there stops the
+    night. With `store_examples` False (RATCHET_STORE_EXAMPLES=0, zero retention; FR-13.1) nothing is stored, so
     the night skips before anything else (`storage disabled`): examples kept from before are neither trained on nor
     re-scored. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
     recorded as a `training_job` compute interval on `clock` (default `ledger.now`) for the cost report (FR-15.2), and
@@ -76,7 +79,13 @@ def run_night(
 
     Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
     set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
-    into the one `bom_extra` dict."""
+    into the one `bom_extra` dict.
+
+    New data is the training rows now less the training rows of the largest version so far, plus the training rows that
+    version had which were purged since (`Ledger.train_rows_purged_since`), so deleting data never hides new data
+    (FR-4.4); without purges the count is v0.4's."""
+    if retention is not None and retention.enabled:
+        privacy.apply_retention(ledger, retention)
     if not store_examples:
         ledger.event("skip", "storage disabled (RATCHET_STORE_EXAMPLES=0): no new examples are stored; no training tonight")
         return NightReport(False, None, False, "storage disabled")
@@ -91,7 +100,7 @@ def run_night(
     golden_rows = dataset.rows(ledger, "golden", task)
 
     last = max((v.train_examples for v in ledger.versions()), default=0)
-    new = manifest["train_examples"] - last
+    new = manifest["train_examples"] - last + ledger.train_rows_purged_since(task)
     hashes = spec_hashes(golden_rows)
     live = ledger.live()
     # Stored answers the current spec refuses (it tightened since): left out of training, and said so where operators

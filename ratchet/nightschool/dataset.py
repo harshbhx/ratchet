@@ -19,6 +19,9 @@
 - A row of a task that is pinned NOW is left out of both sets and counted (`excluded_pinned` in
   manifest.json; INV-10 at read time): pinning a task that already has data keeps that data from the
   student, and unpinning it brings the rows back, because the ledger keeps them.
+- A purged row (retention or erasure, FR-13.3, FR-13.4) has no text left and is in neither set; its
+  `seen` still counts toward its request's frequency, so a purge never moves another variant of a
+  frequent request back to golden (INV-3).
 """
 
 from __future__ import annotations
@@ -30,15 +33,30 @@ from pathlib import Path
 from typing import Any
 
 from .. import licenses, tasks
-from ..ledger import Ledger, example_hash
+from ..ledger import Ledger, prompt_key
 
 FREQUENT = 3
 
 
-def _prompt_key(r: Any) -> str:
-    """The hash of an example's task and messages without its conditions: the same for every variant of one request,
-    and the example's own hash when it has none (`ledger.example_hash`)."""
-    return example_hash(r["task"], json.loads(r["messages"])) if r["params"] else r["hash"]
+def effective_split(r: Any, seen: Counter[str]) -> str:
+    """'train' for a train-split row or one whose request was seen FREQUENT times or more (over every variant, purged
+    ones included: `ledger.count_prompts`), else 'golden' (INV-3)."""
+    return "train" if (r["split"] == "train" or seen[prompt_key(r)] >= FREQUENT) else "golden"
+
+
+def counts_as_train(r: Any, seen: Counter[str]) -> bool:
+    """Whether a row is a training row by the rules that do not need its answer: its effective split is train, its
+    teacher's license allows distillation, and it was not cut at a client's stop. A purge records this
+    (`examples.purged_train`) while the text is still there: Night School's new-data count and an erasure's affected
+    versions read it after the text is gone. It leaves out the spec and pin checks, which may have changed since a
+    version trained, so it errs toward counting a row."""
+    if effective_split(r, seen) != "train":
+        return False
+    lic = licenses.lookup(r["teacher_model"])
+    if lic is None or not lic.distill_ok:
+        return False
+    params = json.loads(r["params"]) if r["params"] else None
+    return not (params and "stop" in params)
 
 
 def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
@@ -48,11 +66,13 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
     out = []
     specs: dict[str, tasks.Task] = {}
     examples = ledger.examples(task=task)
-    keys = [_prompt_key(r) for r in examples]
+    keys = [prompt_key(r) for r in examples]
     seen: Counter[str] = Counter()
     for r, key in zip(examples, keys, strict=True):
-        seen[key] += int(r["seen"] or 1)
+        seen[key] += int(r["seen"] or 1)  # purged rows count too (INV-3)
     for r, key in zip(examples, keys, strict=True):
+        if r["purged_ts"] is not None or r["messages"] is None:
+            continue  # purged (FR-13.3, FR-13.4): no text to train or grade on
         frequent = seen[key] >= FREQUENT
         effective = "train" if (r["split"] == "train" or frequent) else "golden"
         if effective != split:

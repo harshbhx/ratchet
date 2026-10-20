@@ -20,6 +20,12 @@ MIN_KEY_CHARS = 16
 _NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
+def valid_name(name: object) -> bool:
+    """Whether `name` could name a key: letters, digits, `_`, `.` and `-`, 1 to 64 characters (as RATCHET_API_KEYS and
+    RATCHET_ADMIN_KEYS require). An erasure or export may name a client whose key was since removed."""
+    return isinstance(name, str) and _NAME.fullmatch(name) is not None
+
+
 def _digest(key: str) -> bytes:
     return hashlib.sha256(key.encode()).digest()
 

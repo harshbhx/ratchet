@@ -73,7 +73,8 @@
         "license_url": "string",
         "split": "string",
         "n": "number"
-      }
+      },
+      "purged_examples": "number"
     },
     "clients[]": {
       "client": "string",
@@ -96,7 +97,15 @@
       "store_examples": "bool",
       "no_store_tasks": "list",
       "no_store_clients": "list",
-      "end_user_key": "string"
+      "end_user_key": "string",
+      "example_retention_days": "number",
+      "request_retention_days": "number",
+      "erasure_shared": "string",
+      "purged_examples": "number",
+      "purged_by_reason": "object",
+      "erasures": "number",
+      "erasure_refusals": "number",
+      "rolled_up_requests": "number"
     },
     "security": {
       "api_keys": "bool",

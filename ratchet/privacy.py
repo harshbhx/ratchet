@@ -17,17 +17,36 @@ an opted-out answer stored (docs/lanes/e-invariants.md).
 End users are attributed by HMAC only. `safety_identifier` (else `user`) is hashed with a per-deployment key, scoped to
 the API key name that sent it, and cut to 16 hex digits (`EndUsers.hash`). The raw value is never stored or logged; the
 same person seen by two deployments, or by two API clients of one deployment, gets unrelated hashes.
+
+What was stored can be removed (FR-13.3 to FR-13.5, ADR 0081):
+
+- `erase` purges the examples of a client, an end user, a list of hashes or a piece of stored text for good: the text
+  goes, the hash stays as a tombstone that is never stored again, and the erasure is logged with hashes only, with the
+  versions that may have been trained on them (reported, never edited; signed BOMs stay as they are, INV-14).
+- `apply_retention` purges examples not seen for RATCHET_EXAMPLE_RETENTION_DAYS (a storable duplicate brings the text
+  back) and folds request rows older than RATCHET_REQUEST_RETENTION_DAYS into daily sums.
+- `export_lines` streams a table as NDJSON, examples with their provenance.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import hmac
+import json
+import re
 import secrets
-from collections.abc import Iterable, Mapping
+import time
+from collections import Counter
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from typing import Any
 
-from .ledger import Ledger
+from .auth import valid_name
+from .config import ERASURE_SHARED, MAX_RETENTION_DAYS, Retention
+from .ledger import DAY_SECONDS, EXPORT_FILTERS, EXPORT_KINDS, Ledger
+from .nightschool import dataset
 from .openai_compat import MAX_END_USER, STORE_METADATA
+from .redact import redact
 
 # Why a request's teacher answers could not be stored, broadest first (`requests.store_opt_out`).
 OPT_OUTS = ("global", "task", "key", "request", "end_user")
@@ -130,3 +149,261 @@ def end_users(ledger: Ledger, configured: str = "") -> EndUsers:
             )
         ledger.meta_set(KEY_ID_META, out.key_id)
     return out
+
+
+# ---------- erasure, retention and export (FR-13.3 to FR-13.5, ADR 0081) ----------
+MAX_ERASE_HASHES = 10000  # example hashes one erasure may name
+MAX_CONTAINS_CHARS = 1000
+MAX_REASON_CHARS = 500
+MAX_ACTOR_CHARS = 64
+EXAMPLE_HASH = re.compile(r"[0-9a-f]{64}")
+EXPORT_PAGE = 500  # rows read per ledger call while an export streams; the lock is free between pages
+SPLITS = ("train", "golden")
+
+
+def _check_erasure(
+    client: str | None, end_user_raw: str | None, hashes: Iterable[str] | None, contains: str | None, reason: str, actor: str
+) -> tuple[list[str] | None, str]:
+    """The checked hashes and the reason as it is stored (redacted); ValueError otherwise. Never quotes an end user or
+    the text to match, which may identify someone."""
+    if client is not None and not valid_name(client):
+        raise ValueError("client must be an API key name (letters, digits, '_', '.', '-'; 1 to 64)")
+    if end_user_raw is not None and (not isinstance(end_user_raw, str) or not 1 <= len(end_user_raw) <= END_USER_MAX_CHARS):
+        raise ValueError(f"end_user must be 1 to {END_USER_MAX_CHARS} characters, as sent in 'user' or 'safety_identifier'")
+    wanted: list[str] | None = None
+    if hashes is not None:
+        if not isinstance(hashes, (list, tuple, set, frozenset)) or any(not isinstance(h, str) for h in hashes):
+            raise ValueError("hashes must be a list of example hashes")
+        wanted = sorted(set(hashes))
+        if not wanted or len(wanted) > MAX_ERASE_HASHES:
+            raise ValueError(f"hashes must list 1 to {MAX_ERASE_HASHES} example hashes")
+        if any(EXAMPLE_HASH.fullmatch(h) is None for h in wanted):
+            raise ValueError("each hash must be 64 lowercase hex characters (an example's hash)")
+    if contains is not None and (not isinstance(contains, str) or not contains.strip() or len(contains) > MAX_CONTAINS_CHARS):
+        raise ValueError(f"contains must be 1 to {MAX_CONTAINS_CHARS} characters of text, not only spaces")
+    if client is None and end_user_raw is None and wanted is None and contains is None:
+        raise ValueError("name at least one of client, end_user, hashes or contains")
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > MAX_REASON_CHARS:
+        raise ValueError(f"reason must be 1 to {MAX_REASON_CHARS} characters")
+    if not isinstance(actor, str) or not actor.strip() or len(actor) > MAX_ACTOR_CHARS:
+        raise ValueError(f"actor must be 1 to {MAX_ACTOR_CHARS} characters")
+    return wanted, redact(reason.strip())
+
+
+def _selectors(scope: Mapping[str, Any]) -> str:
+    names = [("client", "client"), ("end_users", "end user"), ("hashes", "hashes"), ("contains_sha256", "content")]
+    return ", ".join(label for key, label in names if scope.get(key) is not None)
+
+
+def erase(
+    led: Ledger,
+    *,
+    client: str | None = None,
+    end_user_raw: str | None = None,
+    hashes: Iterable[str] | None = None,
+    contains: str | None = None,
+    actor: str,
+    reason: str,
+    dry_run: bool = True,
+    shared: str = "delete",
+    hasher: EndUsers | None = None,
+    end_user_clients: Sequence[str | None] | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Erase stored examples for good (FR-13.3). The scope is every selector given, each narrowing it: `client` (an API
+    key name: the examples it sent, first or later), `end_user_raw` (hashed here with `hasher`, in the scope of each of
+    `end_user_clients`, default `[client]`; the value goes no further), `hashes` (example hashes) and `contains` (a LIKE
+    match on the stored, already-redacted text, case-insensitive for ASCII; an identifier the redactor replaced is not
+    there to find). With `dry_run` (the default) nothing is written and the result says what would happen.
+
+    Each selected example loses its text and keeps its hash as a tombstone that `Ledger.add_example` refuses from then
+    on, also from another client. When the scope names a client or an end user, `shared` (RATCHET_ERASURE_SHARED)
+    decides an example another client also sent: `delete` purges it too, `keep` keeps it for that client and unlinks the
+    erased party. Erasing an end user also clears that end user's hash from its request rows. The erasure is logged in
+    `erasures` and `erasure_items` (hashes, never text; the end user as its HMAC, `contains` as its SHA-256, the reason
+    redacted) and as an `erase` event with counts. `affected_versions` lists the versions that may have been trained on
+    the erased examples: reported, not edited, and their signed BOMs stay as they were written (INV-14); unlearning
+    from them is out of scope (docs/THREAT_MODEL.md). ValueError for a bad scope."""
+    if shared not in ERASURE_SHARED:
+        raise ValueError(f"shared must be {' or '.join(ERASURE_SHARED)}, not {shared!r}")
+    wanted, stored_reason = _check_erasure(client, end_user_raw, hashes, contains, reason, actor)
+    end_users: list[str] | None = None
+    if end_user_raw is not None:
+        if hasher is None:
+            raise ValueError("erasing an end user needs the deployment's end-user key (EndUsers)")
+        scopes = list(end_user_clients) if end_user_clients is not None else [client]
+        end_users = sorted({h for h, _ in hasher.hashes(end_user_raw, scopes)})
+    scope: dict[str, Any] = {
+        "client": client,
+        "end_users": end_users,
+        "hashes": len(wanted) if wanted is not None else None,
+        "contains_sha256": hashlib.sha256(contains.encode("utf-8", "surrogatepass")).hexdigest() if contains else None,
+        "shared": shared,
+    }
+    scope = {k: v for k, v in scope.items() if v is not None}
+    party = client is not None or end_users is not None
+    with led.locked():  # one writer: the selection, the rules and the write see the same rows
+        rows = led.erasure_candidates(client=client, end_users=end_users, hashes=wanted, contains=contains)
+        seen = led.prompt_counts() if any(r["purged_ts"] is None for r in rows) else Counter()
+        purge: dict[str, bool] = {}
+        unlink: list[tuple[str, str, str | None]] = []
+        for r in rows:
+            erased_client = client if client is not None else r["client"]
+            if party and shared == "keep" and set(led.example_clients(r["hash"])) - {erased_client}:
+                unlink.append((r["hash"], "end_user", None) if end_users is not None else (r["hash"], "client", client))
+                continue
+            counted = bool(r["purged_train"]) if r["purged_ts"] is not None else dataset.counts_as_train(r, seen)
+            purge[r["hash"]] = counted
+        stamps = {r["hash"]: r["ts"] for r in rows}
+        affected = led.affected_versions((h, stamps[h], counted) for h, counted in purge.items())
+        result: dict[str, Any] = {
+            "object": "ratchet.erasure",
+            "id": None,
+            "dry_run": bool(dry_run),
+            "matched": len(rows),
+            "purged": len(purge),
+            "kept": len(unlink),
+            "requests_unlinked": led.requests_of_end_users(end_users) if end_users else 0,
+            "affected_versions": affected,
+            "scope": {k: (len(v) if k == "end_users" else v) for k, v in scope.items()},
+        }
+        if dry_run:
+            return result
+        done = led.record_erasure(
+            actor=actor.strip(),
+            reason=stored_reason,
+            scope=scope,
+            purge=purge,
+            unlink=unlink,
+            unlink_end_users=end_users or (),
+            affected=[v["id"] for v in affected],
+            now=now,
+        )
+        result.update(id=done["id"], purged=done["purged"], kept=done["kept"], requests_unlinked=done["requests_unlinked"])
+        held = ", ".join(f"v{v['id']}" for v in affected)
+        led.event(
+            "erase",
+            f"erasure {done['id']} ({_selectors(scope)}) by {actor.strip()}: {done['purged']} examples purged"
+            + (f", {done['kept']} shared kept" if done["kept"] else "")
+            + (f", {done['requests_unlinked']} request rows unlinked" if done["requests_unlinked"] else "")
+            + (f"; may be held by {held} (reported, not changed)" if held else ""),
+        )
+    return result
+
+
+def _check_days(days: object, what: str) -> int:
+    if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= MAX_RETENTION_DAYS:
+        raise ValueError(f"{what} must be a whole number of days, 0 to {MAX_RETENTION_DAYS}, not {days!r}")
+    return days
+
+
+def apply_retention(
+    led: Ledger,
+    retention: Retention,
+    *,
+    now: float | None = None,
+    client: str | None = None,
+    example_days: int | None = None,
+    request_days: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Apply the retention windows (FR-13.4). Examples last stored or seen more than `example_days` ago (default
+    `retention.example_days`; golden ones too) lose their text with reason `retention`: a later duplicate that may be
+    stored brings it back. Request rows logged more than `request_days` ago (default `retention.request_days`) are folded
+    into `daily_rollup` and deleted, except rows of a release in flight (`Ledger.fold_requests`). 0 skips a window.
+    `client` limits both to one API client's rows; `dry_run` only counts. Writes a `purge` event when anything went.
+    Runs hourly from the live gateway's tick, at the start of every live night, and from `python -m ratchet.live purge`."""
+    if client is not None and not valid_name(client):
+        raise ValueError("client must be an API key name (letters, digits, '_', '.', '-'; 1 to 64)")
+    ex_days = _check_days(retention.example_days if example_days is None else example_days, "example_days")
+    rq_days = _check_days(retention.request_days if request_days is None else request_days, "request_days")
+    now = time.time() if now is None else float(now)
+    out: dict[str, Any] = {
+        "dry_run": bool(dry_run),
+        "client": client,
+        "example_days": ex_days,
+        "request_days": rq_days,
+        "examples_purged": 0,
+        "requests_folded": 0,
+    }
+    if ex_days:
+        with led.locked():
+            rows = led.retention_candidates(now - ex_days * DAY_SECONDS, client)
+            if rows and not dry_run:
+                seen = led.prompt_counts()
+                counted = {r["hash"]: dataset.counts_as_train(r, seen) for r in rows}
+                out["examples_purged"] = led.purge_examples(counted, "retention", now=now)
+            else:
+                out["examples_purged"] = len(rows)
+    if rq_days:
+        out["requests_folded"] = led.fold_requests(now - rq_days * DAY_SECONDS, client, dry_run=dry_run, now=now)
+    if not dry_run and (out["examples_purged"] or out["requests_folded"]):
+        parts = []
+        if out["examples_purged"]:
+            parts.append(f"{out['examples_purged']} examples not seen for {ex_days} days lost their text")
+        if out["requests_folded"]:
+            parts.append(f"{out['requests_folded']} request rows older than {rq_days} days folded into daily sums")
+        led.event("purge", "retention" + (f" (client {client})" if client else "") + ": " + "; ".join(parts))
+    return out
+
+
+def parse_since(value: object) -> float | None:
+    """An export's `since` as seconds since the epoch: a number, or an ISO 8601 date (`2026-10-01`) or date-time
+    (`2026-10-01T12:00:00Z`, UTC unless it names an offset). None for None or empty; ValueError otherwise."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("since must be seconds since the epoch or an ISO 8601 date")
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip()
+        try:
+            number = float(text)
+        except ValueError:
+            try:
+                when = dt.datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
+            except ValueError:
+                raise ValueError("since must be seconds since the epoch or an ISO 8601 date such as 2026-10-01") from None
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=dt.timezone.utc)
+            number = when.timestamp()
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError("since must be a finite time")
+    return number
+
+
+def check_export(
+    kind: str, *, task: str | None = None, split: str | None = None, since: object = None, client: str | None = None
+) -> dict[str, Any]:
+    """The checked filters of an export (FR-13.5), ready for `export_lines`; ValueError for an unknown kind, a filter the
+    kind does not take, or a bad value. Checked before the first line, so a bad request never starts a stream."""
+    if kind not in EXPORT_KINDS:
+        raise ValueError(f"export kind must be one of {', '.join(EXPORT_KINDS)}")
+    filters = {"task": task or None, "split": split or None, "since": parse_since(since), "client": client or None}
+    given = {k for k, v in filters.items() if v is not None}
+    extra = sorted(given - EXPORT_FILTERS[kind])
+    if extra:
+        allowed = ", ".join(sorted(EXPORT_FILTERS[kind])) or "no filters"
+        raise ValueError(f"{kind} take {allowed}, not {', '.join(extra)}")
+    if filters["split"] is not None and filters["split"] not in SPLITS:
+        raise ValueError("split must be train or golden")
+    if filters["task"] is not None and (not isinstance(filters["task"], str) or len(filters["task"]) > 64):
+        raise ValueError("task must be a task name")
+    if filters["client"] is not None and not valid_name(filters["client"]):
+        raise ValueError("client must be an API key name")
+    return filters
+
+
+def export_lines(led: Ledger, kind: str, page: int = EXPORT_PAGE, **filters: Any) -> Iterator[str]:
+    """One table as NDJSON lines (FR-13.5), in id order, a page at a time, so the ledger is never locked for the whole
+    export (rows written meanwhile may appear; for a snapshot, back up the file). `filters` come from `check_export`.
+    API keys are never stored, so no line can hold one; end-user hashes are left out (`Ledger.export_page`)."""
+    after = 0
+    while True:
+        rows = led.export_page(kind, after, page, **filters)
+        for row in rows:
+            yield json.dumps(row, ensure_ascii=False) + "\n"
+        if len(rows) < page:
+            return
+        after = int(rows[-1]["id"])

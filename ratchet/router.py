@@ -620,7 +620,8 @@ class Ratchet:
         teacher's answer is stored only with RATCHET_STORE_FALLBACK_TEACHER=1 (so the golden labels stay the primary
         teacher's), and then with its own model and license (INV-1). An answer that is not valid under the task's spec
         (`Task.check`: a required field missing, a label outside its vocabulary) is served but skipped, with the field's
-        path as the reason (FR-2.14). The example records `client` (the API key name) and the end user's hash."""
+        path as the reason (FR-2.14). The example records `client` (the API key name) and the end user's hash. An example
+        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3)."""
         if self.store_opt_out(task, meta) is not None:
             return False
         if fallback and not self.s.store_fallback_teacher:
@@ -643,7 +644,7 @@ class Ratchet:
                 return False
         model = self._teacher_model(fallback)
         lic = self.licenses.get(model) or licenses.require_distillable(model)  # licensed at startup; never unlicensed
-        self.ledger.add_example(
+        added = self.ledger.add_example(
             task.name,
             stored,
             clean,
@@ -655,6 +656,9 @@ class Ratchet:
             client=client,
             end_user=meta.end_user if meta is not None else None,
         )
+        if added is None:  # an erasure tombstoned this example (FR-13.3): it is never stored again
+            self._skip_example(task, "erased")
+            return False
         return True
 
     def _skip_example(self, task: tasks.Task, reason: str) -> None:
