@@ -225,6 +225,10 @@ def test_public_live_stats_are_scrubbed_for_anonymous_readers(gw_env, tmp_path, 
         assert OLD_EVENT in [e["detail"] for e in full["events"]]
         assert c.get("/ratchet/tasks/partner-only", headers=key).json()["clients"] == ["globex"]
     assert c.get("/ratchet/stats").json() == body  # stable pseudonyms between reads
+    # On a public dashboard a key is optional: an API key or a wrong key reads as anonymous, never a 401 or 403.
+    for key in (ACME, {"Authorization": "Bearer not-a-key-0123456789"}):
+        r = c.get("/ratchet/stats", headers=key)
+        assert (r.status_code, r.json()) == (200, body)
 
     # RATCHET_SCRUB_STATS=1 scrubs every read, keys or not; 0 none.
     monkeypatch.setattr(rt, "access", replace(rt.access, scrub_stats=True))
