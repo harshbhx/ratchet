@@ -24,7 +24,6 @@ import re
 import threading
 from collections import Counter
 from collections.abc import Iterator
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -756,8 +755,9 @@ CLIENT = GenParams(
 STUDENT_GETS = GenParams(
     max_tokens=50, stop=("\n\n",), seed=7, logit_bias={"11": 5}, response_format={"type": "json_object"}, top_logprobs=3
 )
-# Every standard field as sent (max_tokens already under the 8,192 cap), but the logprobs: responses carry none yet.
-SERVE_GETS = replace(CLIENT, logprobs=None, top_logprobs=None)
+# Every standard field as sent (max_tokens already under the 8,192 cap), the logprobs included: the response returns them
+# (FR-1.14). Only the tool-call fields stay off by default.
+SERVE_GETS = CLIENT
 CHECK_GETS = GenParams(max_tokens=50, temperature=0.0, stop=("\n\n",), response_format={"type": "json_object"})
 
 
@@ -781,7 +781,7 @@ def test_each_call_gets_the_parameters_its_role_allows():
     student, teacher = RecordingProvider(A), RecordingProvider(A)
     _, _, r, _ = _cascade(student, teacher, threshold=0.99)
     assert r.handle(_ask(), TRIAGE, params=CLIENT).route == "confidence"
-    assert _teacher_calls(teacher) == [(0.9, False, SERVE_GETS)]
+    assert _teacher_calls(teacher) == [(0.9, True, SERVE_GETS)]
 
     # Cold start, a pinned task and a teacher-only request serve the teacher's answer the same way.
     teacher = RecordingProvider(A)
@@ -789,7 +789,7 @@ def test_each_call_gets_the_parameters_its_role_allows():
     assert r.handle(_ask(), TRIAGE, params=CLIENT).route == "cold_start"
     assert r.handle(_ask(), "research-plan", params=CLIENT).route == "pinned"
     assert r.teacher_only(_ask(), TRIAGE, params=CLIENT).route == "pinned"
-    assert _teacher_calls(teacher) == [(0.9, False, SERVE_GETS)] * 3
+    assert _teacher_calls(teacher) == [(0.9, True, SERVE_GETS)] * 3
 
     # The shadow samples like the live student; the arbitration of its disagreement is a check.
     led = Ledger(":memory:")
@@ -904,6 +904,167 @@ def test_bad_generation_settings_stop_startup():
         with pytest.raises(ValueError):
             Ratchet(_settings(**bad), led, RecordingProvider(A), lambda v: (None, ""))
     assert _settings(teacher_params="stop,seed").gen_policy() == GenPolicy(teacher_allow=frozenset({"stop", "seed"}))
+
+
+# ---------- cascade: n choices and token logprobs (FR-1.14, ADR 0020) ----------
+A2 = json.dumps({"category": "billing", "priority": "high", "reply": "Checking your account."})
+A3 = json.dumps({"category": "billing", "priority": "high", "reply": "Looking into the double charge."})
+# Four scripted samples: A, A2 and A3 share the label (billing, high), B does not. Over the first three, as calibrated,
+# 2 of 3 agree and the best is A2 (p 0.9): confidence 0.4 * 0.9 + 0.6 * 2 / 3.
+SAMPLES = ([A, A2, B, A3], [math.log(0.6), math.log(0.9), math.log(0.99), math.log(0.95)])
+CONF = 0.4 * 0.9 + 0.6 * 2 / 3
+
+
+@pytest.mark.req("FR-1.14", "FR-2.1", "FR-2.2", "NFR-3")
+def test_n_choices_are_scored_as_calibrated_and_choice_zero_is_the_one_choice_answer():
+    prices = _settings()
+    student, teacher = prices.price("student"), prices.price(OPEN_TEACHER)
+    cases = [  # (n, samples drawn, the student's choices or None when it escalates)
+        (1, 3, [A2]),
+        (2, 3, [A2, A]),  # the best scored sample, then the others that agree, by token probability
+        (3, 3, None),  # 3 choices, but only 2 of the 3 samples agree
+        (4, 4, None),  # a 4th sample is drawn; 3 of 4 agree
+    ]
+    for n, drawn, want in cases:
+        stu = RecordingProvider(*SAMPLES)
+        led, _, r, tea = _cascade(stu, RecordingProvider([A, A2, A3, B]), threshold=0.5)
+        out = r.handle(_ask(), TRIAGE, n=n)
+        (call,) = stu.calls
+        assert (call.kwargs["n"], call.kwargs["temperature"], call.kwargs["logprobs"]) == (drawn, 0.7, True), n
+        # The confidence is the one-choice request's, whatever n: the extra samples only fill choices.
+        assert out.confidence == pytest.approx(CONF, abs=1e-12) and _rows(led)[0]["confidence"] == out.confidence, n
+        if want is not None:
+            assert (out.served_by, out.route, out.escalated, tea.calls) == ("student", "student", False, []), n
+            assert [ch.text for ch in out.choices] == want and out.text == want[0], n
+            assert (out.prompt_tokens, out.completion_tokens) == (10, 5 * n), n  # the prompt once, every choice
+            assert out.usage_breakdown["student_samples"] == {"in": 10, "out": 5 * drawn}
+            assert out.usage_breakdown["served"] == {"in": 10, "out": 5 * n}
+            assert out.cost_usd == pytest.approx(student.cost(10, 5 * drawn), rel=1e-12)
+            assert out.baseline_usd == pytest.approx(teacher.cost(10, 5 * n + 300 * n), rel=1e-12)
+            continue
+        # A confident student that cannot fill n choices escalates: route n_choices, the teacher writes n choices at
+        # 0.7 (the client set no temperature), and only its choice 0 is stored.
+        assert (out.served_by, out.route, out.escalated) == ("teacher", "n_choices", True), n
+        (tcall,) = tea.calls
+        assert (tcall.kwargs["n"], tcall.kwargs["temperature"]) == (n, 0.7), n
+        assert [ch.text for ch in out.choices] == [A, A2, A3, B][:n] and out.text == A, n
+        assert (out.prompt_tokens, out.completion_tokens) == (10, 5 * n), n
+        assert out.usage_breakdown["served"] == {"in": 10, "out": 5 * n}, n
+        assert out.cost_usd == pytest.approx(student.cost(10, 5 * drawn) + teacher.cost(10, 5 * n), rel=1e-12), n
+        assert out.baseline_usd == pytest.approx(teacher.cost(10, 5 * n), rel=1e-12), n
+        assert [(e["completion"], e["seen"]) for e in led.examples()] == [(A, 1)], n
+        assert _rows(led)[0]["route"] == "n_choices"
+
+    # A student that is unsure escalates on confidence, as for one choice.
+    _, _, r, _ = _cascade(RecordingProvider(*SAMPLES), threshold=0.99)
+    assert r.handle(_ask(), TRIAGE, n=2).route == "confidence"
+
+
+@pytest.mark.req("FR-1.14", "FR-4.3", "INV-2", "INV-10", "FR-2.5")
+def test_teacher_writes_n_choices_and_only_choice_zero_is_stored():
+    # Escalated: n choices from the teacher, at 0.7 without a client temperature, at the client's otherwise.
+    teacher = RecordingProvider([A, A2, A3])
+    led, _, r, _ = _cascade(RecordingProvider(A), teacher, threshold=0.99)
+    out = r.handle(_ask(), TRIAGE, n=3)
+    assert [ch.text for ch in out.choices] == [A, A2, A3] and teacher.calls[-1].kwargs["n"] == 3
+    assert teacher.calls[-1].kwargs["temperature"] == 0.7
+    r.handle(_ask(), TRIAGE, params=GenParams(temperature=0.2), n=3)
+    assert teacher.calls[-1].kwargs["temperature"] == 0.2
+    # One example, bumped once per request whatever n: seen still counts requests.
+    assert [(e["completion"], e["seen"]) for e in led.examples()] == [(A, 2)]
+    assert [row["stored"] for row in _rows(led)] == [1, 1]
+
+    # Cold start and pinned: n choices from the teacher; a pinned answer is never stored (INV-10).
+    teacher = RecordingProvider([A, A2])
+    led = Ledger(":memory:")
+    r = Ratchet(_settings(), led, teacher, lambda v: (RecordingProvider(A), v.adapter_uri))
+    assert len(r.handle(_ask("cold"), TRIAGE, n=2).choices) == 2
+    pinned = r.handle([{"role": "user", "content": "Question: what is LoRA?"}], "research-plan", n=2)
+    only = r.teacher_only(_ask("image"), TRIAGE, n=2)
+    assert (pinned.route, len(pinned.choices), only.route, len(only.choices)) == ("pinned", 2, "pinned", 2)
+    assert [c.kwargs["n"] for c in teacher.calls] == [2, 2, 2] and len(led.examples()) == 1
+
+    # A teacher that returns fewer choices than asked gives fewer; never padded with copies.
+    _, _, r, _ = _cascade(RecordingProvider(A), _OneChoice(A), threshold=0.99)
+    assert [ch.text for ch in r.handle(_ask(), TRIAGE, n=3).choices] == [A]
+
+    # Student-served and audited: the audit is one deterministic answer judged against choice 0.
+    stu = RecordingProvider([A2, A, A], [math.log(0.9), math.log(0.8), math.log(0.7)])
+    led, _, r, teacher = _cascade(stu, RecordingProvider(A3), audit_rate=1.0)
+    out = r.handle(_ask(), TRIAGE, n=2)
+    assert out.served_by == "student" and [ch.text for ch in out.choices] == [A2, A]
+    (audit,) = teacher.calls
+    assert (audit.kwargs["n"], audit.kwargs["temperature"], audit.kwargs["logprobs"]) == (1, 0.0, False)
+    assert (_rows(led)[0]["audited"], _rows(led)[0]["audit_agree"]) == (1, 1)
+    # An audited request's baseline: the teacher alone would have written one answer like the audit's per choice.
+    assert out.baseline_usd == pytest.approx(_settings().price(OPEN_TEACHER).cost(10, 5 * 2), rel=1e-12)
+
+    # The shadow samples as calibrated (RATCHET_SAMPLES), whatever n, and is compared with choice 0.
+    led = Ledger(":memory:")
+    _version(led, "live", {"threshold": 0.5})
+    _version(led, "shadow", {"threshold": 0.5})
+    live_student, shadow_student = RecordingProvider(A), RecordingProvider(B)
+    students = {"student-v1": live_student, "student-v2": shadow_student}
+    teacher = RecordingProvider(A)
+    r = Ratchet(_settings(), led, teacher, lambda v: (students[v.adapter_uri], v.adapter_uri))
+    out = r.handle(_ask(), TRIAGE, n=4)
+    assert (live_student.calls[0].kwargs["n"], shadow_student.calls[0].kwargs["n"]) == (4, 3)
+    assert out.served_by == "student" and len(out.choices) == 4
+    (arbitration,) = teacher.calls
+    assert (arbitration.kwargs["n"], arbitration.kwargs["temperature"]) == (1, 0.0)
+    row = _rows(led)[0]
+    assert (row["shadow_serve"], row["shadow_agree"]) == (1, 0)
+
+
+class _OneChoice(RecordingProvider):
+    """A server that ignores `n` and always returns one choice."""
+
+    def complete(self, messages, model, *args, **kwargs):
+        return super().complete(messages, model, *args, **kwargs)[:1]
+
+
+@pytest.mark.req("FR-1.14", "FR-2.2")
+def test_logprobs_come_back_only_when_asked_and_match_the_score():
+    asked = GenParams(logprobs=True, top_logprobs=2)
+    student = RecordingProvider([A, A, B], [math.log(0.6), math.log(0.9), math.log(0.99)])
+    _, _, r, teacher = _cascade(student, threshold=0.5)
+    out = r.handle(_ask(), TRIAGE, params=asked)
+    sc = score(tasks.get(TRIAGE), student.complete(_ask(), "student-v1", n=3, logprobs=True))
+    (choice,) = out.choices
+    content = choice.logprobs
+    assert content and "".join(t["token"] for t in content) == choice.text == out.text
+    # The served sample's token probability, as the confidence score saw it.
+    assert math.exp(sum(t["logprob"] for t in content) / len(content)) == pytest.approx(sc.token_prob, abs=1e-12)
+    assert sc.token_prob == pytest.approx(0.9, abs=1e-12)
+    assert all(len(t["top_logprobs"]) == 2 for t in content)  # the student got the client's top_logprobs
+    assert student.calls[0].kwargs["params"].top_logprobs == 2
+
+    # Not asked: none in the result, and the student is sampled exactly as before.
+    plain = r.handle(_ask(), TRIAGE)
+    assert plain.choices[0].logprobs is None and plain.choices[0].text == out.text
+    assert (student.calls[-1].kwargs["logprobs"], student.calls[-1].kwargs["params"].top_logprobs) == (True, None)
+
+    # Each of n choices carries its own tokens.
+    two = r.handle(_ask(), TRIAGE, params=asked, n=2)
+    for ch, p in zip(two.choices, (0.9, 0.6), strict=True):
+        assert "".join(t["token"] for t in ch.logprobs) == ch.text
+        assert math.exp(sum(t["logprob"] for t in ch.logprobs) / len(ch.logprobs)) == pytest.approx(p, abs=1e-12)
+
+    # The teacher gets logprobs and top_logprobs only when the client asked; an audit never.
+    stu = RecordingProvider(A)
+    _, _, r, teacher = _cascade(stu, RecordingProvider(A2), threshold=0.99)
+    served = r.handle(_ask(), TRIAGE, params=asked)
+    call = teacher.calls[-1]
+    assert (call.kwargs["logprobs"], call.kwargs["params"].top_logprobs) == (True, 2)
+    assert "".join(t["token"] for t in served.choices[0].logprobs) == A2
+    r.handle(_ask(), TRIAGE)
+    assert (teacher.calls[-1].kwargs["logprobs"], teacher.calls[-1].kwargs["params"].top_logprobs) == (False, None)
+    _, _, r, teacher = _cascade(RecordingProvider(A), audit_rate=1.0)
+    assert r.handle(_ask(), TRIAGE, params=asked).served_by == "student"
+    assert (teacher.calls[0].kwargs["logprobs"], teacher.calls[0].kwargs["params"].top_logprobs) == (False, None)
+    # A teacher that sends no logprobs: the choice says so with None, the request still succeeds.
+    _, _, r, _ = _cascade(RecordingProvider(A), RecordingProvider(A2, logprob=None), threshold=0.99)
+    assert r.handle(_ask(), TRIAGE, params=asked).choices[0].logprobs is None
 
 
 # ---------- licensing ----------

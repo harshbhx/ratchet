@@ -3,22 +3,25 @@ import math
 from collections import Counter
 
 import pytest
-from fakes import _audit, _version
+from fakes import _audit, _version, token_entries
 
 from ratchet import licenses, tasks
-from ratchet.confidence import calibrate_threshold, score
+from ratchet.confidence import calibrate_threshold, majority, score
 from ratchet.ledger import STORED_PARAM_KEYS, Ledger, example_hash, target_params
 from ratchet.openai_compat import validate_chat_request
 from ratchet.providers import (
     CHECK_DROPS,
+    CHOICES_TEMPERATURE,
     DEFAULT_STUDENT_PARAMS,
     DEFAULT_TEACHER_PARAMS,
+    MIN_LOGPROB,
     NOT_YET_FORWARDED,
     PARAM_FIELDS,
     Completion,
     GenParams,
     GenPolicy,
     parse_param_allowlist,
+    served_logprobs,
 )
 from ratchet.redact import redact_json
 from ratchet.release import ReleaseGate, ReleasePolicy, wilson
@@ -379,14 +382,10 @@ def test_param_allowlists_parse_and_refuse_what_ratchet_never_forwards():
             parse_param_allowlist(f"seed,{typo}", default, "RATCHET_STUDENT_PARAMS")
     vendor = ("top_k", "min_p", "min_tokens", "repetition_penalty", "max_new_tokens", "guided_json")
     assert parse_param_allowlist(",".join(vendor), default) == frozenset(vendor)
-    # Tool calls and the teacher's logprobs are not forwarded by default: nothing reads them back yet.
-    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS) - {
-        "tools",
-        "tool_choice",
-        "parallel_tool_calls",
-        "logprobs",
-        "top_logprobs",
-    }
+    # Tool calls are not forwarded by default: nothing reads them back yet. The teacher's logprobs are, since responses
+    # return them (FR-1.14); a client that does not ask sends none.
+    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS) - {"tools", "tool_choice", "parallel_tool_calls"}
+    assert {"logprobs", "top_logprobs"} <= DEFAULT_TEACHER_PARAMS
     assert DEFAULT_STUDENT_PARAMS == {"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"}
 
 
@@ -408,8 +407,8 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
     assert policy.student(None) == policy.student(GenParams()) == GenParams(max_tokens=1024)
     assert policy.student(GenParams(max_tokens=10**6)).max_tokens == 1024
 
-    # Teacher serving the answer: every standard field as sent but tools and logprobs (a vendor field only when listed);
-    # temperature 0 when the client set none.
+    # Teacher serving the answer: every standard field as sent but the tool-call fields (a vendor field only when listed),
+    # logprobs included; temperature 0 when the client set none.
     serve = policy.teacher(client, "serve")
     assert serve.to_body() == {k: v for k, v in client.to_body().items() if k not in NOT_YET_FORWARDED | {"top_k"}}
     everything = GenPolicy(teacher_allow=frozenset(PARAM_FIELDS))
@@ -524,3 +523,142 @@ def test_redact_json_redacts_string_values_and_keeps_keys():
     for _ in range(5000):
         out = out[0]
     assert out == "[EMAIL]"
+
+
+# ---------- n choices and token logprobs (FR-1.14, ADR 0020) ----------
+def _lp(tokens, logprob=-0.1, **extra):
+    """A completion whose `logprobs.content` lists `tokens` (strings, or full entries) and whose text is theirs."""
+    content = [t if isinstance(t, dict) else {"token": t, "logprob": logprob, "bytes": None, "top_logprobs": []} for t in tokens]
+    text = "".join(t["token"] for t in content if isinstance(t.get("token"), str))
+    return Completion(text, "m", logprobs_content=content, **extra)
+
+
+def _spelled(entries):
+    return "".join(e["token"] for e in entries)
+
+
+@pytest.mark.req("FR-1.14")
+def test_served_logprobs_spell_the_served_text_and_drop_reasoning():
+    plain = _lp(['{"a"', ": ", "1}"])
+    out = served_logprobs(plain, '{"a": 1}')
+    assert _spelled(out) == '{"a": 1}' and [e["token"] for e in out] == ['{"a"', ": ", "1}"]
+    assert out[0] == {"token": '{"a"', "logprob": -0.1, "bytes": list(b'{"a"'), "top_logprobs": []}  # OpenAI's shape
+    assert plain.logprobs_content[0]["bytes"] is None  # the provider's list is never changed
+
+    cases = [
+        # (tokens, task, what the client gets as content, the tokens it gets)
+        (["<think>", "billing", "</think>", '{"a": 1}'], TRIAGE, '{"a": 1}', ['{"a": 1}']),  # reasoning dropped
+        (["<think>x</think>", "\n\n", "The", " answer"], tasks.get("default"), "The answer", ["The", " answer"]),
+        (["</think>", " The", " answer", ".\n"], tasks.get("default"), "The answer.", ["The", " answer", "."]),  # trimmed
+        (["```json\n", '{"a": 1}', "\n```"], TRIAGE, '{"a": 1}', ['{"a": 1}']),  # a fence unwrapped
+        (["Hi", " there\n"], tasks.get("default"), "Hi there", ["Hi", " there"]),  # trailing whitespace stripped
+        (["  ", "Hi"], tasks.get("default"), "Hi", ["Hi"]),
+        (["  Hi  "], tasks.get("default"), "Hi", ["Hi"]),  # one token trimmed on both sides
+    ]
+    for tokens, task, want_text, want_tokens in cases:
+        c = _lp(tokens)
+        text = tasks.clean_answer(task, c.text)
+        assert text == want_text, tokens
+        out = served_logprobs(c, text)
+        assert out is not None and [e["token"] for e in out] == want_tokens, tokens
+        assert _spelled(out) == text and all(e["bytes"] == list(e["token"].encode()) for e in out), tokens
+
+    # A server that lists the reasoning tokens although its content leaves them out (a vLLM reasoning parser): only
+    # the answer's tokens come back, so reasoning never reaches the client this way either.
+    listed = _lp(["<think>", "secret plan", "</think>", '{"a": 1}']).logprobs_content
+    parsed = Completion('{"a": 1}', "m", logprobs_content=listed)
+    assert [e["token"] for e in served_logprobs(parsed, '{"a": 1}')] == ['{"a": 1}']
+
+    # Tokens that cannot be told apart from what was dropped: None, never a token list that does not spell the answer.
+    for tokens, task in (
+        (["<think>x</think>{", '"a": 1}'], TRIAGE),  # the answer's first character shares a token with the tag
+        (["A ", "<think>x</think>", " B"], tasks.get("default")),  # reasoning removed from the middle of the answer
+    ):
+        c = _lp(tokens)
+        assert served_logprobs(c, tasks.clean_answer(task, c.text)) is None, tokens
+    # A character split over tokens that do not decode alone (vLLM shows each part as U+FFFD): they do not spell it.
+    split = Completion("café", "m", logprobs_content=_lp(["caf", "\ufffd", "\ufffd"]).logprobs_content)
+    assert served_logprobs(split, "café") is None
+    assert served_logprobs(Completion("x", "m"), "x") is None  # the model sent no logprobs
+    assert served_logprobs(_lp(["<think>only reasoning", "</think>"]), "") == []  # nothing served, no tokens
+
+
+@pytest.mark.req("FR-1.14")
+def test_served_logprobs_check_every_entry_and_keep_the_clients_top_logprobs():
+    alts = [{"token": t, "logprob": lp, "bytes": None} for t, lp in (("a", -0.1), ("b", -2.0), ("c", -3.0))]
+    entry = {"token": "a", "logprob": -0.1, "bytes": [97], "top_logprobs": alts}
+    c = _lp([entry])
+    assert served_logprobs(c, "a", top=None)[0]["top_logprobs"] == []  # the client asked for none
+    assert served_logprobs(c, "a", top=0)[0]["top_logprobs"] == []
+    two = served_logprobs(c, "a", top=2)[0]["top_logprobs"]
+    assert two == [{"token": "a", "logprob": -0.1, "bytes": [97]}, {"token": "b", "logprob": -2.0, "bytes": [98]}]
+    # Malformed alternatives are left out; a malformed entry makes the whole list unusable.
+    messy = {**entry, "top_logprobs": ["x", {"token": 5, "logprob": -1}, {"token": "d", "logprob": float("nan")}, alts[2]]}
+    assert served_logprobs(_lp([messy]), "a", top=4)[0]["top_logprobs"] == [{"token": "c", "logprob": -3.0, "bytes": [99]}]
+    for bad in (
+        {"token": "a"},
+        {"token": "a", "logprob": "low"},
+        {"token": "a", "logprob": True},
+        {"token": "a", "logprob": float("nan")},
+        {"token": "a", "logprob": float("inf")},
+        {"token": None, "logprob": -0.1},
+        {"token": "a\ud800", "logprob": -0.1},  # UTF-8 cannot carry it: the response could not be written
+        "a",
+    ):
+        c = Completion("a", "m", logprobs_content=[bad])
+        assert served_logprobs(c, "a") is None, bad
+    # -Infinity (a token the model could not have sampled) is reported as vLLM reports it, since JSON has no -Infinity.
+    sure = served_logprobs(Completion("a", "m", logprobs_content=[{"token": "a", "logprob": float("-inf")}]), "a")
+    assert sure == [{"token": "a", "logprob": MIN_LOGPROB, "bytes": [97], "top_logprobs": []}] and MIN_LOGPROB == -9999.0
+    # The server's bytes are kept when they are bytes (a character split over tokens), else the token's own.
+    split = [{"token": "\\xe2", "logprob": -1, "bytes": [226]}, {"token": "x", "logprob": -1, "bytes": [300]}]
+    out = served_logprobs(Completion("\\xe2x", "m", logprobs_content=split), "\\xe2x")
+    assert [e["bytes"] for e in out] == [[226], [120]]
+    # The fakes' tokens spell their text, with the alternatives a client asked for.
+    fake = Completion("hello world", "m", logprobs_content=token_entries("hello world", -0.2, 3, top=2))
+    out = served_logprobs(fake, "hello world", top=1)
+    assert _spelled(out) == "hello world" and all(len(e["top_logprobs"]) == 1 for e in out)
+
+
+@pytest.mark.req("FR-1.14", "FR-2.2")
+def test_majority_gives_n_agreeing_choices_with_the_best_sample_first():
+    samples = [comp(A, 0.6), comp(A, 0.9), comp(B, 0.99), comp(A, 0.95), comp(A, 0.7)]
+    scored = score(TRIAGE, samples[:3])  # as calibrated: the first RATCHET_SAMPLES samples
+    assert scored.answer is samples[1] and scored.agreement == 2 / 3
+    assert majority(TRIAGE, scored, samples, 1) == [samples[1]]
+    # The best scored sample first, then the other agreeing samples by token probability, the minority never.
+    assert majority(TRIAGE, scored, samples, 4) == [samples[1], samples[3], samples[4], samples[0]]
+    assert majority(TRIAGE, scored, samples, 2) == [samples[1], samples[3]]
+    assert majority(TRIAGE, scored, samples, 5) is None  # only 4 agree
+    # A sample cut off by its token limit, or invalid, never fills a choice; no valid sample, no choices.
+    cut = [comp(A), comp(A), comp(A, finish_reason="length")]
+    assert majority(TRIAGE, score(TRIAGE, cut), cut, 3) is None
+    assert majority(TRIAGE, score(TRIAGE, cut), cut, 2) == cut[:2]
+    junk = [comp("not json")] * 3
+    assert majority(TRIAGE, score(TRIAGE, junk), junk, 1) is None
+    # The same object listed twice (a provider that repeats a choice) still counts as two samples.
+    same = comp(A)
+    assert majority(TRIAGE, score(TRIAGE, [same, same]), [same, same], 2) == [same, same]
+
+
+@pytest.mark.req("FR-1.14", "FR-1.13")
+def test_gen_plan_for_n_choices():
+    policy = GenPolicy()
+    one, two = policy.plan(None), policy.plan(None, 2)
+    assert (one.n, two.n) == (1, 2) and one.serve.temperature == 0.0
+    # n > 1 without a client temperature: the serving teacher samples, so its choices differ; audits stay at 0.
+    assert two.serve.temperature == CHOICES_TEMPERATURE == 0.7 and two.check.temperature == 0.0
+    assert two.student == one.student  # the student's sampling never changes
+    assert policy.plan(GenParams(temperature=0.2), 3).serve.temperature == 0.2  # the client's wins
+    assert policy.plan(GenParams(temperature=0.0), 3).serve.temperature == 0.0
+    narrow = GenPolicy(teacher_allow=frozenset({"stop"}))  # the client's temperature does not reach the teacher
+    assert narrow.plan(GenParams(temperature=0.2), 2).serve.temperature == 0.7
+    assert narrow.plan(GenParams(temperature=0.2)).serve.temperature == 0.0
+    # The teacher's logprobs only when the client asked; never in an audit.
+    asked = policy.plan(GenParams(logprobs=True, top_logprobs=3))
+    assert (asked.serve.logprobs, asked.serve.top_logprobs) == (True, 3)
+    assert (asked.check.logprobs, asked.check.top_logprobs) == (None, None)
+    assert (one.serve.logprobs, one.serve.top_logprobs) == (None, None)
+    for bad in (0, -1, 1.5, True, "2"):
+        with pytest.raises(ValueError, match="whole number of choices"):
+            policy.plan(None, bad)

@@ -158,6 +158,20 @@ def test_shadow_coverage_is_not_compared_with_requests_the_live_student_never_an
     assert led.version(cand).state == "canary"
 
 
+@pytest.mark.req("FR-6.4", "FR-1.14")
+def test_shadow_coverage_counts_an_n_choices_escalation_as_live_served():
+    """A request the live student was confident about, escalated only because fewer than the client's n samples agreed
+    (route `n_choices`), would have been served as one choice; the shadow's verdict uses that one-choice rule, so the
+    live student is held to it too. Counting those rows as escalations would lower the bar for the candidate."""
+    led, gate, live, cand = _shadowing()
+    _shadow(led, cand, 400, serve_every=2, live_vid=live, live_escalate_every=2, live_route="n_choices")
+    s = led.shadow_quality(cand)
+    assert (s["n"], s["served"], s["coverage"], s["live_coverage"]) == (400, 200, 0.5, 1.0)
+    gate.tick()
+    assert led.version(cand).state == "rejected"
+    assert "shadow coverage 50.0% < live 100.0%" in led.events()[-1]["detail"]
+
+
 @pytest.mark.req("FR-6.4", "FR-2.10", "NFR-8")
 def test_shadow_gate_counts_unarbitrated_disagreements_against_the_candidate():
     """Arbitration only runs when the shadow disagrees with the served answer, so a failed one is a disagreement whose

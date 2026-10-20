@@ -10,7 +10,9 @@ drive the real `openai` package through `tests/sdk_bridge.py` and are skipped wh
 from __future__ import annotations
 
 import json
+import math
 import re
+from dataclasses import replace
 from typing import Any
 
 import anyio
@@ -20,6 +22,8 @@ from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
+from ratchet import tasks
+from ratchet.confidence import score
 from ratchet.config import Settings
 from ratchet.ledger import example_hash
 from ratchet.openai_compat import (
@@ -33,7 +37,7 @@ from ratchet.openai_compat import (
     parse_modalities,
     validate_chat_request,
 )
-from ratchet.providers import DEFAULT_TEACHER_PARAMS, OpenAICompatProvider
+from ratchet.providers import DEFAULT_TEACHER_PARAMS, OpenAICompatProvider, approx_tokens
 from ratchet.router import fingerprint
 from ratchet.scout.prompts import WRITE_SYSTEM, plan_messages
 from sim import research, tickets
@@ -52,6 +56,7 @@ PINNED_ENV = {
     "RATCHET_MAX_BODY_BYTES": str(LIMIT),
     "RATCHET_MAX_MESSAGES": "256",
     "RATCHET_MAX_INPUT_CHARS": "120000",
+    "RATCHET_MAX_N": "4",
     "RATCHET_MERGE_SYSTEM": "0",
     "RATCHET_TEACHER_MODALITIES": "text",
     "RATCHET_TEACHER_PARAMS": "",
@@ -90,7 +95,7 @@ BAD_BODIES = [
     pytest.param({"messages": [{"role": "robot", "content": "hi"}]}, 400, "invalid_value", "messages[0].role", id="role-robot"),
     pytest.param({"messages": HI, "temperature": 3}, 400, "invalid_value", "temperature", id="temperature-3"),
     pytest.param({"messages": HI, "n": 0}, 400, "invalid_value", "n", id="n-0"),
-    pytest.param({"messages": HI, "n": 2}, 400, "unsupported_value", "n", id="n-2"),
+    pytest.param({"messages": HI, "n": 5}, 400, "unsupported_value", "n", id="n-5"),  # RATCHET_MAX_N is 4
     pytest.param({"messages": HI, "stop": ["a", "b", "c", "d", "e"]}, 400, "invalid_value", "stop", id="five-stops"),
     pytest.param({"messages": HI, "top_logprobs": 2}, 400, "invalid_value", "top_logprobs", id="top-logprobs-alone"),
     pytest.param(
@@ -1104,6 +1109,198 @@ def test_provider_reads_cached_prompt_tokens():
             "https://m.test/v1", "k", transport=httpx.MockTransport(lambda r, b=body: httpx.Response(200, json=b))
         )
         assert bad.complete(HI, "m")[0].cached_tokens == 0, details
+
+
+# ---------- n choices and token logprobs (FR-1.14, ADR 0020) ----------
+def _trained_mock(gw: Any) -> tuple[Any, list[Any]]:
+    """The mock gateway with a live student trained on 40 demo tickets (the mock fleet's own trainer), and those tickets.
+    The mock student knows the exact texts it trained on, so it serves most of them with every sample agreeing."""
+    rt = gw.rt
+    items = [rt.stream.sample(1) for _ in range(40)]
+    rows = [{"messages": [*it.messages(), {"role": "assistant", "content": it.answer(it.labels)}]} for it in items]
+    rt.fleet.train(rows, rt.settings.student_base_model, "student-v1")
+    _version(rt.ledger, "live", {"threshold": 0.5})
+    return rt, items
+
+
+def _labels(content: str) -> tuple[Any, Any]:
+    obj = json.loads(content)
+    return obj["category"], obj["priority"]
+
+
+def _spelled(logprobs: dict[str, Any]) -> str:
+    return "".join(t["token"] for t in logprobs["content"])
+
+
+@pytest.mark.req("FR-1.14", "FR-1.12", "FR-1.6", "US-1")
+def test_n_choices_from_a_trained_mock_student(gw_env):
+    """n=2 from a trained mock student: two choices with the same labels, `usage.completion_tokens` their sum, a valid
+    `ChatCompletion`; with logprobs, each choice's tokens spell its content and their mean is the token probability the
+    confidence score saw; streamed, each choice's chunks with its own finish chunk; and the real SDK reads it all."""
+    sdk()
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
+
+    gw = _gateway(gw_env)
+    rt, items = _trained_mock(gw)
+    c = TestClient(gw.app)
+    task = {"X-Ratchet-Task": "ticket-triage"}
+    served = []
+    for it in items:
+        body = c.post(CHAT, json={"messages": it.messages(), "n": 2, "logprobs": True, "top_logprobs": 1}, headers=task).json()
+        if body["ratchet"]["served_by"] == "student":
+            served.append((it, body))
+    assert len(served) >= 20  # most trained tickets are served
+    for it, body in served:
+        ChatCompletion.model_validate(body)
+        first, second = body["choices"]
+        assert (first["index"], second["index"]) == (0, 1)
+        assert _labels(first["message"]["content"]) == _labels(second["message"]["content"])
+        assert {first["finish_reason"], second["finish_reason"]} == {"stop"}
+        # The usage adds up both choices (the mock student bills about 4 characters a token), the prompt once.
+        tokens = [approx_tokens(ch["message"]["content"]) for ch in (first, second)]
+        assert body["usage"]["completion_tokens"] == sum(tokens) == body["ratchet"]["usage_breakdown"]["served"]["out"]
+        assert body["ratchet"]["usage_breakdown"]["student_samples"]["out"] >= sum(tokens)  # 3 samples drawn
+        for ch in (first, second):
+            assert ch["logprobs"]["refusal"] is None and _spelled(ch["logprobs"]) == ch["message"]["content"]
+            assert all(len(t["top_logprobs"]) == 1 for t in ch["logprobs"]["content"])
+        # Choice 0's mean token probability is what the confidence score used (the mock's samples are seeded).
+        student, model = rt.fleet.resolve(rt.ledger.live())
+        samples = student.complete(it.messages(), model, n=3, temperature=0.7, logprobs=True)
+        sc = score(tasks.get("ticket-triage"), samples)
+        content = first["logprobs"]["content"]
+        assert math.exp(sum(t["logprob"] for t in content) / len(content)) == pytest.approx(sc.token_prob, rel=1e-9)
+        assert first["message"]["content"] == sc.answer.text
+
+    # Streamed: choice 0's role, content and finish chunks, then choice 1's; the ratchet block on the last finish chunk.
+    it, plain = served[0]
+    msgs = {"messages": it.messages(), "n": 2, "logprobs": True, "top_logprobs": 1}
+    chunks = _stream(c, msgs, headers=task)
+    for ch in chunks:
+        ChatCompletionChunk.model_validate(ch)
+    order = [(ch["choices"][0]["index"], "role" in ch["choices"][0]["delta"], ch["choices"][0]["finish_reason"]) for ch in chunks]
+    starts = [i for i, (_, role, _) in enumerate(order) if role]
+    ends = [i for i, (_, _, finish) in enumerate(order) if finish]
+    assert [order[i][0] for i in starts] == [order[i][0] for i in ends] == [0, 1] and starts[1] == ends[0] + 1
+    assert "ratchet" in chunks[-1] and all("ratchet" not in ch for ch in chunks[:-1])
+    for index in (0, 1):
+        mine = [ch["choices"][0] for ch in chunks if ch["choices"][0]["index"] == index]
+        content = [x for x in mine if x["delta"].get("content")]
+        assert "".join(x["delta"]["content"] for x in content) == plain["choices"][index]["message"]["content"]
+        streamed = [t for x in content for t in x["logprobs"]["content"]]
+        assert streamed == plain["choices"][index]["logprobs"]["content"]
+        assert all("".join(t["token"] for t in x["logprobs"]["content"]) == x["delta"]["content"] for x in content)
+        assert mine[0]["logprobs"] is None and mine[-1]["logprobs"] is None  # the role and finish chunks carry none
+    usage_chunks = _stream(c, {**msgs, "stream_options": {"include_usage": True}}, headers=task)
+    assert usage_chunks[-1]["choices"] == [] and usage_chunks[-1]["usage"] == plain["usage"]
+
+    # Without logprobs: null, as before; the choices are the same.
+    again = c.post(CHAT, json={"messages": it.messages(), "n": 2}, headers=task).json()
+    assert [ch["logprobs"] for ch in again["choices"]] == [None, None]
+    assert [ch["message"] for ch in again["choices"]] == [ch["message"] for ch in plain["choices"]]
+
+    # The real SDK.
+    resp = make_openai_client(gw.app).chat.completions.create(
+        model="ratchet", messages=it.messages(), n=2, logprobs=True, top_logprobs=1, extra_headers=task
+    )
+    assert len(resp.choices) == 2 and resp.usage.completion_tokens == plain["usage"]["completion_tokens"]
+    assert "".join(t.token for t in resp.choices[1].logprobs.content) == resp.choices[1].message.content
+
+
+@pytest.mark.req("FR-1.14", "FR-1.13", "INV-2")
+def test_n_choices_escalated_over_http(gw_env, tmp_path, monkeypatch):
+    """Escalated with n=2: the teacher behind MockTransport receives n=2 (at 0.7, since the client set no temperature),
+    the student draws its usual 3 samples, the response has both choices, and exactly one example is stored. With
+    logprobs the teacher is asked for them and each choice carries its own; with n=4 the student draws 4."""
+    sdk()
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
+
+    gw = _gateway(gw_env)
+    teacher = FakeOpenAIServer(A, out_tokens=6)
+    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_modalities="text,image_url")
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.99})  # unsure of everything: the teacher answers
+    c = TestClient(gw.app)
+    body = c.post(CHAT, json={"messages": HI, "n": 2}).json()
+    ChatCompletion.model_validate(body)
+    assert body["ratchet"]["served_by"] == "teacher" and [ch["index"] for ch in body["choices"]] == [0, 1]
+    assert [ch["message"]["content"] for ch in body["choices"]] == [A, A] and body["usage"]["completion_tokens"] == 12
+    (tbody,) = _bodies(teacher)
+    assert (tbody["n"], tbody["temperature"]) == (2, 0.7) and "logprobs" not in tbody
+    assert _bodies(student)[0]["n"] == 3
+    assert [e["seen"] for e in rt.ledger.examples()] == [1]
+
+    asked = {"messages": HI, "n": 2, "logprobs": True, "top_logprobs": 2, "temperature": 0.3}
+    body = c.post(CHAT, json=asked).json()
+    ChatCompletion.model_validate(body)
+    tbody = _bodies(teacher)[-1]
+    assert (tbody["n"], tbody["temperature"], tbody["logprobs"], tbody["top_logprobs"]) == (2, 0.3, True, 2)
+    for ch in body["choices"]:
+        assert _spelled(ch["logprobs"]) == A and all(len(t["top_logprobs"]) == 2 for t in ch["logprobs"]["content"])
+    assert [e["seen"] for e in rt.ledger.examples()] == [2]  # the same example, bumped once per request
+
+    c.post(CHAT, json={"messages": HI, "n": 4})
+    assert (_bodies(student)[-1]["n"], _bodies(teacher)[-1]["n"]) == (4, 4)
+    image = {
+        "role": "user",
+        "content": [{"type": "text", "text": "What is this?"}, {"type": "image_url", "image_url": {"url": "x"}}],
+    }
+    assert len(c.post(CHAT, json={"messages": [image], "n": 3}).json()["choices"]) == 3  # teacher-only: n too
+    assert _bodies(teacher)[-1]["n"] == 3
+
+    # A reasoning teacher whose tokens include its reasoning: the client gets the answer's tokens, never the reasoning.
+    def reasoning(request: httpx.Request) -> httpx.Response:
+        tokens = [
+            {"token": t, "logprob": -0.5, "bytes": None, "top_logprobs": []} for t in ("<think>", "SECRET plan", "</think>", A)
+        ]
+        choice = {
+            "message": {"content": "<think>SECRET plan</think>" + A},
+            "logprobs": {"content": tokens},
+            "finish_reason": "stop",
+        }
+        return httpx.Response(200, json={"choices": [choice], "usage": {"prompt_tokens": 9, "completion_tokens": 4}})
+
+    cold = replace(rt.settings, db_path=str(tmp_path / "reasoning.db"))  # a new ledger: cold start, the teacher answers
+    rt2 = gw.Runtime(cold, transports={"teacher": httpx.MockTransport(reasoning), "student": FakeOpenAIServer(A).transport})
+    monkeypatch.setattr(gw, "rt", rt2)
+    raw = c.post(CHAT, json={"messages": HI, "logprobs": True}).text
+    body = json.loads(raw)
+    assert body["choices"][0]["message"]["content"] == A and _spelled(body["choices"][0]["logprobs"]) == A
+    assert "SECRET" not in raw and "think" not in raw
+
+    # A teacher that returns no logprobs: every choice says so with content null, streamed too, and still validates.
+    rt3, _ = _gen_runtime(gw, tmp_path, FakeOpenAIServer(A, logprob=None))
+    monkeypatch.setattr(gw, "rt", rt3)
+    body = c.post(CHAT, json={"messages": HI, "n": 2, "logprobs": True}).json()
+    ChatCompletion.model_validate(body)
+    assert [ch["logprobs"] for ch in body["choices"]] == [{"content": None, "refusal": None}] * 2
+    chunks = _stream(c, {"messages": HI, "n": 2, "logprobs": True})
+    for ch in chunks:
+        ChatCompletionChunk.model_validate(ch)
+    content = [ch["choices"][0] for ch in chunks if ch["choices"][0]["delta"].get("content")]
+    assert {x["index"] for x in content} == {0, 1}
+    assert all(x["logprobs"] == {"content": None, "refusal": None} for x in content)
+
+
+@pytest.mark.req("FR-1.14", "FR-1.10")
+def test_max_n_comes_from_settings(gw_env):
+    """RATCHET_MAX_N (4) bounds n; 1 restores one choice per request; a value outside 1 to 128 stops startup."""
+    gw = _gateway(gw_env, RATCHET_MAX_N="1")
+    c = TestClient(gw.app)
+    msgs = gw.rt.stream.sample(1).messages()
+    r = c.post(CHAT, json={"messages": msgs, "n": 2})
+    err = _error(r)
+    assert r.status_code == 400 and (err["code"], err["param"]) == ("unsupported_value", "n")
+    assert "at most 1 choice(s) per request, but got 2 (RATCHET_MAX_N)" in err["message"]
+    assert gw.rt.ledger.totals()["requests"] == 0
+    gw = _gateway(gw_env, RATCHET_MAX_N="6")
+    body = TestClient(gw.app).post(CHAT, json={"messages": msgs, "n": 5}).json()
+    assert len(body["choices"]) == 5  # cold start: the mock teacher writes all five
+    assert Limits().max_n == 4 and validate_chat_request({"messages": HI, "n": 4}).n == 4
+    for bad in (0, -1, 129, 2.5, True):
+        with pytest.raises(ValueError, match="RATCHET_MAX_N"):
+            Limits(max_n=bad)
+        with pytest.raises(ValueError, match="RATCHET_MAX_N"):
+            gw.Runtime(Settings(mode="mock", mock_warmup_days=0, max_n=bad))
 
 
 # ---------- validate_chat_request ----------

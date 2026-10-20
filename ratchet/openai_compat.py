@@ -178,13 +178,24 @@ def _lone_surrogate(value: Any) -> tuple[str | None, str] | None:
 
 
 # ---------- the validated request ----------
+DEFAULT_MAX_N = 4  # RATCHET_MAX_N
+MAX_N = 128  # OpenAI's own limit on `n`; RATCHET_MAX_N may not be set higher
+
+
 @dataclass(frozen=True)
 class Limits:
-    """Request limits from Settings (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS). 0 means no limit."""
+    """Request limits from Settings (`Settings.limits()`: RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS, RATCHET_MAX_N).
+    0 means no limit for the first two; `max_n`, the most choices a request may ask for, is 1 to MAX_N, and anything
+    else raises ValueError (FR-1.14)."""
 
     max_messages: int = 256
     max_input_chars: int = 120_000
-    max_n: int = 1  # one choice per request until n > 1 is built (API-N-LOGPROBS)
+    max_n: int = DEFAULT_MAX_N
+
+    def __post_init__(self) -> None:
+        n = self.max_n
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= MAX_N:
+            raise ValueError(f"RATCHET_MAX_N must be a whole number from 1 to {MAX_N}, not {n!r}")
 
 
 @dataclass
@@ -678,7 +689,10 @@ def validate_chat_request(body: Any, limits: Limits | None = None) -> ChatReques
     if n is not None and n < 1:
         raise _bad("n", f"Invalid value for 'n': expected an integer of at least 1, but got {n} instead.")
     if n is not None and n > limits.max_n:
-        message = f"Unsupported value for 'n': this gateway returns at most {limits.max_n} choice(s) per request."
+        message = (
+            f"Unsupported value for 'n': this gateway returns at most {limits.max_n} choice(s) per request, "
+            f"but got {n} (RATCHET_MAX_N)."
+        )
         raise _bad("n", message, UNSUPPORTED_VALUE)
     max_completion_tokens = _opt_int(body, "max_completion_tokens", lo=1)
     max_tokens = _opt_int(body, "max_tokens", lo=1)

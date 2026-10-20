@@ -10,7 +10,8 @@ The fleet can also take the production endpoint down for a while (`MockFleet.stu
 
 The mock models honour `n`, `stop` (the answer ends before the first stop string) and `max_tokens` (cut at about 4
 characters per token, `finish_reason` `length`). Ticket and research answers are short and contain no stop string, so
-the simulation is unaffected.
+the simulation is unaffected. Asked for logprobs, the mock student also lists its tokens (`_tokens`), so the gateway can
+return them (FR-1.14); the mock teacher lists none.
 
 This is a simulation for demos and tests. Real numbers come from live mode.
 """
@@ -45,6 +46,24 @@ STAGING = "mock://staging"  # shadow candidates and the golden eval
 def _rng(*parts: Any) -> random.Random:
     h = hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()
     return random.Random(int(h[:16], 16))
+
+
+def _tokens(text: str, logprob: float, top: int) -> list[dict[str, Any]]:
+    """`text` as `approx_tokens(text)` tokens of about 4 characters (the last takes the rest), each with `logprob`, in
+    OpenAI's `logprobs.content` shape, so they spell the text exactly. With `top` > 0 (the client's `top_logprobs`),
+    each token lists itself as its one alternative."""
+    count = approx_tokens(text)
+    pieces = [text[i * 4 : (i + 1) * 4] for i in range(count - 1)]
+    pieces.append(text[(count - 1) * 4 :])
+    return [
+        {
+            "token": p,
+            "logprob": logprob,
+            "bytes": None,
+            "top_logprobs": [{"token": p, "logprob": logprob, "bytes": None}] if top > 0 else [],
+        }
+        for p in pieces
+    ]
 
 
 def _generate(text: str, params: GenParams | None) -> tuple[str, str]:
@@ -138,6 +157,7 @@ class MockStudent:
         keys = list(space)
         wrong = {k: r.choice([v for v in space[k] if v != right[k]]) for k in keys}
         confidently_wrong = (not knows) and (self.corrupted or r.random() < 0.15)
+        top = (params.top_logprobs or 0) if params is not None else 0
         out = []
         for i in range(n):
             s = _rng(self.name, t.text, i, self.calls if temperature > 0 else 0)
@@ -153,6 +173,7 @@ class MockStudent:
                 prob = 0.35 + 0.3 * s.random()
             text, finish = _generate(t.answer(labels), params)
             toks = approx_tokens(text)
+            lp = math.log(prob)
             out.append(
                 Completion(
                     text=text,
@@ -160,8 +181,9 @@ class MockStudent:
                     in_tokens=approx_tokens(json.dumps(messages)),
                     out_tokens=toks,
                     latency_ms=280 + 60 * s.random(),
-                    token_logprobs=[math.log(prob)] * toks,
+                    token_logprobs=[lp] * toks if logprobs else [],
                     finish_reason=finish,
+                    logprobs_content=_tokens(text, lp, top) if logprobs else None,
                 )
             )
         return out

@@ -398,12 +398,16 @@ class Ledger:
         so leaving those rows out would raise the precision of the candidate that disagrees most (ADR 0013).
         `live_coverage` leaves out requests the live student never answered (route `student_breaker` or
         `student_error`): its endpoint being down says nothing about how much it would serve, and counting them as
-        escalations would lower the bar the shadow's coverage is held to (ADR 0015). They stay in `n` and `coverage`."""
+        escalations would lower the bar the shadow's coverage is held to (ADR 0015). They stay in `n` and `coverage`.
+        A request the live student was confident about but escalated only because fewer than the client's n samples
+        agreed (route `n_choices`) counts as served: the shadow's verdict uses the one-choice rule, so the live student is
+        held to the same one (ADR 0020)."""
         r = self.db.execute(
             """SELECT COUNT(*) n, SUM(shadow_serve) served,
                       AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
                       SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
                       AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
+                               WHEN route = 'n_choices' THEN 1
                                ELSE served_by='student' END) live_cov
                FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL""",
             (vid,),

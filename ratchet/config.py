@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .openai_compat import DEFAULT_MAX_N, Limits
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
     DEFAULT_STUDENT_PARAMS,
@@ -160,6 +161,9 @@ class Settings:
     max_body_bytes: int = field(default_factory=lambda: int(_env("RATCHET_MAX_BODY_BYTES", "2097152")))
     max_messages: int = field(default_factory=lambda: int(_env("RATCHET_MAX_MESSAGES", "256")))
     max_input_chars: int = field(default_factory=lambda: int(_env("RATCHET_MAX_INPUT_CHARS", "120000")))
+    # The most choices (`n`) a request may ask for, 1 to 128; more is a 400. Each choice past the student's own samples
+    # is one more student sample, and an escalated request asks the teacher for n choices (FR-1.14).
+    max_n: int = field(default_factory=lambda: int(_env("RATCHET_MAX_N", str(DEFAULT_MAX_N))))
     # Merge consecutive leading system (and developer) messages into one, for models that accept only one.
     merge_system: bool = field(default_factory=lambda: _env("RATCHET_MERGE_SYSTEM", "0") == "1")
     # Content part types besides text that the teacher accepts ("text,image_url"). Such requests go to the teacher
@@ -216,6 +220,11 @@ class Settings:
             choices = " or ".join(TEACHER_FAILURE_MODES)
             raise ValueError(f"RATCHET_ON_TEACHER_FAILURE must be {choices}, not {self.on_teacher_failure!r}")
         return mode == "serve_student"
+
+    def limits(self) -> Limits:
+        """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,
+        RATCHET_MAX_N). A bad RATCHET_MAX_N raises ValueError, so the gateway fails at startup."""
+        return Limits(max_messages=self.max_messages, max_input_chars=self.max_input_chars, max_n=self.max_n)
 
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises

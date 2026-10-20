@@ -60,7 +60,7 @@ from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
-from .router import Ratchet
+from .router import Choice, Ratchet
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
 from .scout.prompts import EXAMPLE_QUESTIONS
@@ -177,7 +177,7 @@ class Runtime:
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
         self.keys = KeyRing(s.api_keys)
         self.signer = bomdoc.Signer(s.bom_signing_key) if s.bom_signing_key else None
-        self.limits = Limits(max_messages=s.max_messages, max_input_chars=s.max_input_chars)
+        self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
         reload = self.reloader.request if self.reloader is not None else None
@@ -526,6 +526,28 @@ def _chunks(text: str, words: int = 4) -> list[str]:
     return ["".join(parts[i : i + words]) for i in range(0, len(parts), words)] or [""]
 
 
+TOKENS_PER_CHUNK = 4  # a streamed answer with logprobs: tokens per content chunk
+
+
+def _logprobs(asked: bool, content: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """A choice's `logprobs`: null unless the client asked (`logprobs: true`); then `{content, refusal: null}`, with
+    `content` null when the token logprobs cannot be given (FR-1.14)."""
+    return {"content": content, "refusal": None} if asked else None
+
+
+def _stream_pieces(choice: Choice, asked: bool) -> list[tuple[str, dict[str, Any] | None]]:
+    """A choice's content chunks as (text, logprobs). With token logprobs, a few tokens per chunk, each chunk carrying
+    its own tokens, so the chunks' logprobs add up to the non-streamed response's; tokens that do not spell the text
+    (never from the router, which aligns them) go in one chunk with the whole text. Otherwise a few words per chunk."""
+    entries = choice.logprobs if asked else None
+    if entries is None:
+        return [(piece, _logprobs(asked, None)) for piece in _chunks(choice.text)]
+    if "".join(e["token"] for e in entries) != choice.text or not entries:
+        return [(choice.text, _logprobs(True, entries))]
+    groups = [entries[i : i + TOKENS_PER_CHUNK] for i in range(0, len(entries), TOKENS_PER_CHUNK)]
+    return [("".join(e["token"] for e in g), _logprobs(True, g)) for g in groups]
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     """Liveness for Docker and load balancers. Public, even when API keys protect /v1/*."""
@@ -569,8 +591,8 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     task = header_task or req.task  # the header wins over metadata.ratchet_task
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
-    try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017)
-        r = serve(messages, task, client=client, params=GenParams.from_request(req))
+    try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
+        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n)
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
@@ -596,11 +618,20 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     headers["X-Ratchet-Served-By"] = r.served_by
     if r.degraded:
         headers["X-Ratchet-Degraded"] = r.degraded
+    asked = req.logprobs is True  # token logprobs in each choice (FR-1.14)
     if not req.stream:
-        message = {"role": "assistant", "content": r.text, "refusal": None, "annotations": []}
+        choices = [
+            {
+                "index": i,
+                "message": {"role": "assistant", "content": ch.text, "refusal": None, "annotations": []},
+                "logprobs": _logprobs(asked, ch.logprobs),
+                "finish_reason": ch.finish_reason,
+            }
+            for i, ch in enumerate(r.choices)
+        ]
         payload = {
             **_envelope(cid, "chat.completion", created, r.model, r.fingerprint),
-            "choices": [{"index": 0, "message": message, "logprobs": None, "finish_reason": r.finish_reason}],
+            "choices": choices,
             "usage": usage,
             "ratchet": meta,
         }
@@ -614,21 +645,25 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     def sse(ev: dict[str, Any]) -> str:
         return f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
-    def chunk(delta: dict[str, Any], finish: str | None = None, **extra: Any) -> str:
-        ev = {**envelope, "choices": [{"index": 0, "delta": delta, "logprobs": None, "finish_reason": finish}]}
+    def chunk(index: int, delta: dict[str, Any], finish: str | None = None, logprobs: Any = None, **extra: Any) -> str:
+        ev = {**envelope, "choices": [{"index": index, "delta": delta, "logprobs": logprobs, "finish_reason": finish}]}
         if include_usage:
             ev["usage"] = None  # every chunk but the last has it, as null (OpenAI's stream_options.include_usage)
         return sse({**ev, **extra})
 
     def events() -> Iterator[str]:
-        yield chunk({"role": "assistant", "content": "", "refusal": None})
-        for piece in _chunks(r.text):
-            yield chunk({"content": piece})
-        if include_usage:  # the finish chunk, then one with no choices, the usage and the ratchet block
-            yield chunk({}, r.finish_reason)
+        # One choice after the other: its role chunk, its content, its own finish chunk (FR-1.14).
+        last = len(r.choices) - 1
+        for i, ch in enumerate(r.choices):
+            yield chunk(i, {"role": "assistant", "content": "", "refusal": None})
+            for piece, logprobs in _stream_pieces(ch, asked):
+                yield chunk(i, {"content": piece}, logprobs=logprobs)
+            if include_usage or i < last:
+                yield chunk(i, {}, ch.finish_reason)
+            else:  # the ratchet block rides on the last finish chunk
+                yield chunk(i, {}, ch.finish_reason, ratchet=meta)
+        if include_usage:  # one more chunk with no choices, the usage and the ratchet block
             yield sse({**envelope, "choices": [], "usage": usage, "ratchet": meta})
-        else:
-            yield chunk({}, r.finish_reason, ratchet=meta)
         yield "data: [DONE]\n\n"
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

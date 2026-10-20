@@ -37,6 +37,7 @@ __all__ = [
     "UpstreamError",
     "approx_tokens",
     "parse_param_allowlist",
+    "served_logprobs",
 ]
 
 # `Completion.finish_reason` values for an answer the model ended itself (`stop`) or with a tool call (`tool_calls`).
@@ -52,7 +53,12 @@ class Completion:
     does not say). `reasoning_tokens` is this choice's share of `usage.completion_tokens_details.reasoning_tokens`;
     `out_tokens` already includes them. `cached_tokens` is `usage.prompt_tokens_details.cached_tokens`, the part of
     `in_tokens` the server read from its prompt cache (0 when it does not say); like `in_tokens`, every choice of one
-    call carries the whole count, because the choices share the prompt."""
+    call carries the whole count, because the choices share the prompt.
+
+    `token_logprobs` are the finite token logprobs the confidence score uses. `logprobs_content` is the choice's
+    `logprobs.content` as the server sent it (OpenAI's `[{token, logprob, bytes, top_logprobs}]`; None without one). It
+    is kept as it came, not copied or checked, so a request that does not return logprobs pays nothing for it;
+    `served_logprobs` checks it and puts it in OpenAI's shape for a client that asked. Never mutate it."""
 
     text: str
     model: str
@@ -63,6 +69,7 @@ class Completion:
     finish_reason: str = "stop"
     reasoning_tokens: int = 0
     cached_tokens: int = 0
+    logprobs_content: list[Any] | None = None
 
     @property
     def mean_prob(self) -> float | None:
@@ -112,8 +119,9 @@ NEVER_FORWARDED = frozenset(
 )
 # Standard fields no default allowlist forwards, because the gateway cannot use what comes back yet: a tool call (a
 # response has no `message.tool_calls` until the tool-call item, and the student's vLLM runs without a tool parser, so
-# it refuses `tools`) and the teacher's logprobs (a response's `logprobs` is null). An operator can still name them.
-NOT_YET_FORWARDED = frozenset({"tools", "tool_choice", "parallel_tool_calls", "logprobs", "top_logprobs"})
+# it refuses `tools`). An operator can still name them. The teacher's `logprobs` and `top_logprobs` are forwarded since
+# responses carry logprobs (FR-1.14): only when the client asked, and never to an audit or arbitration (CHECK_DROPS).
+NOT_YET_FORWARDED = frozenset({"tools", "tool_choice", "parallel_tool_calls"})
 # RATCHET_TEACHER_PARAMS and RATCHET_STUDENT_PARAMS when unset. The student gets what shapes the answer it must give
 # (length, stops, format), not the client's sampling: its own sampling is fixed (confidence.STUDENT_SAMPLING).
 DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS) - NOT_YET_FORWARDED
@@ -279,6 +287,9 @@ def _capped(requested: int | None, cap: int) -> int | None:
 # answer it is compared with: the same length limit, stops, format and tools.
 CHECK_DROPS = ("top_p", "seed", "presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs")
 TEACHER_ROLES = ("serve", "audit", "arbitrate")
+# The serving teacher's temperature for a request of n > 1 choices that sets none: at its default of 0 every choice
+# would be the same answer. The student's own sampling temperature (confidence.STUDENT_SAMPLING) is the same.
+CHOICES_TEMPERATURE = 0.7
 
 
 @dataclass(frozen=True)
@@ -286,12 +297,15 @@ class GenPlan:
     """The parameters of one request's model calls: the student's samples (and the shadow's), the teacher when its
     answer is served (escalation, cold start, pinned, teacher-only), and the teacher's audit or arbitration (`check`).
     `visible_max` is the client's `max_tokens` when the teacher was allowed more (the reasoning headroom), else None:
-    a teacher answer whose visible part is longer than that is marked cut off (`Ratchet._ask_teacher`)."""
+    a teacher answer whose visible part is longer than that is marked cut off (`Ratchet._ask_teacher`). `n` is how many
+    choices the client asked for (FR-1.14): the serving teacher writes that many, the student draws at least that many
+    samples, and audits, arbitrations and shadows stay at one answer or `Settings.samples`."""
 
     student: GenParams
     serve: GenParams
     check: GenParams
     visible_max: int | None = None
+    n: int = 1
 
 
 @dataclass(frozen=True)
@@ -300,9 +314,10 @@ class GenPolicy:
 
     - Student: the fields `student_allow` names, `max_tokens` at most `student_max_tokens`; its temperature, logprobs
       and `n` are fixed (`confidence.STUDENT_SAMPLING`, `Settings.samples`), so the client's never apply.
-    - Teacher, serving: the fields `teacher_allow` names, temperature 0 unless the client set one, `max_tokens` = the
-      client's plus `reasoning_headroom`, at most `teacher_max_tokens` (the cap alone when the client sent none).
-    - Teacher, auditing or arbitrating: the same, at temperature 0 and without `CHECK_DROPS`.
+    - Teacher, serving: the fields `teacher_allow` names, temperature 0 unless the client set one (`CHOICES_TEMPERATURE`
+      for n > 1 choices, so they differ), `max_tokens` = the client's plus `reasoning_headroom`, at most
+      `teacher_max_tokens` (the cap alone when the client sent none).
+    - Teacher, auditing or arbitrating: the same, at temperature 0 and without `CHECK_DROPS`, always one answer.
 
     A cap of 0 means no cap. A field outside an allowlist is never sent; the caps apply either way."""
 
@@ -327,13 +342,16 @@ class GenPolicy:
             return self.teacher_max_tokens or None
         return _capped(requested + self.reasoning_headroom, self.teacher_max_tokens)
 
-    def teacher(self, params: GenParams | None, role: str = "serve") -> GenParams:
+    def teacher(self, params: GenParams | None, role: str = "serve", n: int = 1) -> GenParams:
+        """The teacher's parameters in `role`. With `n` > 1 choices to serve and no client temperature that reaches it
+        (not sent, or not in `teacher_allow`), it samples at `CHOICES_TEMPERATURE` instead of 0."""
         if role not in TEACHER_ROLES:
             raise ValueError(f"role must be one of {TEACHER_ROLES}, not {role!r}")
         p = (params or _NONE).only(self.teacher_allow)
         max_tokens = self._teacher_max(p.max_tokens)
         if role == "serve":
-            return replace(p, max_tokens=max_tokens, temperature=0.0 if p.temperature is None else p.temperature)
+            default = CHOICES_TEMPERATURE if n > 1 else 0.0
+            return replace(p, max_tokens=max_tokens, temperature=default if p.temperature is None else p.temperature)
         return replace(p, max_tokens=max_tokens, temperature=0.0, **dict.fromkeys(CHECK_DROPS))
 
     def visible_limit(self, params: GenParams | None) -> int | None:
@@ -344,9 +362,17 @@ class GenPolicy:
         sent = self._teacher_max(requested)
         return requested if sent is not None and sent > requested else None
 
-    def plan(self, params: GenParams | None) -> GenPlan:
+    def plan(self, params: GenParams | None, n: int = 1) -> GenPlan:
+        """Every call's parameters for a request with these client parameters and `n` choices. ValueError for an `n`
+        that is not a whole number of at least 1 (the gateway's validation refuses one first, RATCHET_MAX_N)."""
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(f"n must be a whole number of choices, 1 or more, not {n!r}")
         return GenPlan(
-            self.student(params), self.teacher(params, "serve"), self.teacher(params, "audit"), self.visible_limit(params)
+            self.student(params),
+            self.teacher(params, "serve", n),
+            self.teacher(params, "audit"),
+            self.visible_limit(params),
+            n,
         )
 
 
@@ -505,11 +531,17 @@ def _finish_reason(choice: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _logprob_count(choice: dict[str, Any]) -> int | None:
-    """How many tokens a choice's `logprobs.content` lists (one entry per generated token), or None without that list."""
+def _logprob_list(choice: dict[str, Any]) -> list[Any] | None:
+    """A choice's `logprobs.content` (one entry per generated token) as the server sent it, or None without that list."""
     logprobs = choice.get("logprobs")
     content = logprobs.get("content") if isinstance(logprobs, dict) else None
-    return len(content) if isinstance(content, list) else None
+    return content if isinstance(content, list) else None
+
+
+def _logprob_count(choice: dict[str, Any]) -> int | None:
+    """How many tokens a choice's `logprobs.content` lists, or None without that list."""
+    content = _logprob_list(choice)
+    return None if content is None else len(content)
 
 
 def _split(total: int, n: int) -> list[int]:
@@ -542,17 +574,27 @@ def _out_tokens(total: int, choices: list[dict[str, Any]]) -> list[int]:
     return parts
 
 
+def _number(value: Any) -> float | None:
+    """`value` as a float when it is a JSON number (not a boolean, and not an integer too large for a float), else None.
+    NaN and the infinities come back as they are, for the caller to judge."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value)
+    except OverflowError:  # an integer of hundreds of digits, which json.loads accepts
+        return None
+
+
 def _token_logprobs(choice: dict[str, Any]) -> list[float]:
     """The finite token logprobs of a choice (empty when the endpoint sent none)."""
-    logprobs = choice.get("logprobs")
-    content = logprobs.get("content") if isinstance(logprobs, dict) else None
-    if not isinstance(content, list):
+    content = _logprob_list(choice)
+    if content is None:
         return []
     out = []
     for tok in content:
-        lp = tok.get("logprob") if isinstance(tok, dict) else None
-        if isinstance(lp, (int, float)) and not isinstance(lp, bool) and math.isfinite(lp):
-            out.append(float(lp))
+        lp = _number(tok.get("logprob")) if isinstance(tok, dict) else None
+        if lp is not None and math.isfinite(lp):
+            out.append(lp)
     return out
 
 
@@ -581,6 +623,7 @@ def _completions(data: Any, model: str, latency: float) -> list[Completion]:
             finish_reason=_finish_reason(ch),
             reasoning_tokens=thought,
             cached_tokens=cached,
+            logprobs_content=_logprob_list(ch),
         )
         for ch, out, thought in zip(choices, out_tokens, reasoning, strict=True)
     ]
@@ -588,3 +631,120 @@ def _completions(data: Any, model: str, latency: float) -> list[Completion]:
 
 def approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)
+
+
+# ---------- token logprobs in responses (FR-1.14) ----------
+# The lowest logprob a response carries: JSON has no -Infinity, so vLLM itself reports a token it could not have
+# sampled as -9999.0, and so does Ratchet.
+MIN_LOGPROB = -9999.0
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _logprob(value: Any) -> float | None:
+    """A logprob as a response carries it: a finite number (-Infinity becomes MIN_LOGPROB), or None for anything else."""
+    f = _number(value)
+    if f is None or math.isnan(f) or f == math.inf:
+        return None
+    return max(f, MIN_LOGPROB)
+
+
+def _token_text(value: Any) -> str | None:
+    """A token's text, or None when it is not a string or holds an unpaired surrogate (which UTF-8 cannot carry, so the
+    response could not be written)."""
+    if not isinstance(value, str) or (not value.isascii() and _SURROGATE.search(value)):
+        return None
+    return value
+
+
+def _token_bytes(entry: Mapping[str, Any], token: str) -> list[int]:
+    """The token's UTF-8 bytes as the server sent them (a list of 0 to 255), else those of its text."""
+    sent = entry.get("bytes")
+    if isinstance(sent, list) and all(isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 255 for b in sent):
+        return list(sent)
+    return list(token.encode("utf-8"))
+
+
+def _alternative(entry: Any) -> dict[str, Any] | None:
+    """One of a token's `top_logprobs` in OpenAI's shape, or None when it is malformed."""
+    if not isinstance(entry, dict):
+        return None
+    token, lp = _token_text(entry.get("token")), _logprob(entry.get("logprob"))
+    if token is None or lp is None:
+        return None
+    return {"token": token, "logprob": lp, "bytes": _token_bytes(entry, token)}
+
+
+def _entry(entry: Any, top: int) -> dict[str, Any] | None:
+    """One `logprobs.content` entry in OpenAI's shape ({token, logprob, bytes, top_logprobs}), with at most `top`
+    alternatives (malformed ones left out), or None when the entry itself is malformed."""
+    if not isinstance(entry, dict):
+        return None
+    token, lp = _token_text(entry.get("token")), _logprob(entry.get("logprob"))
+    if token is None or lp is None:
+        return None
+    listed = entry.get("top_logprobs") if top > 0 else None
+    alternatives: list[dict[str, Any]] = []
+    for alt in listed if isinstance(listed, list) else ():
+        a = _alternative(alt)
+        if a is not None:
+            alternatives.append(a)
+            if len(alternatives) == top:
+                break
+    return {"token": token, "logprob": lp, "bytes": _token_bytes(entry, token), "top_logprobs": alternatives}
+
+
+def _trim(entry: dict[str, Any], start: int, end: int) -> None:
+    """Cut a token's text to `[start:end]` (whitespace `clean_answer` stripped from the answer's edges), with its bytes."""
+    entry["token"] = entry["token"][start:end]
+    entry["bytes"] = list(entry["token"].encode("utf-8"))
+
+
+def served_logprobs(c: Completion, text: str, top: int | None = None) -> list[dict[str, Any]] | None:
+    """The token logprobs of an answer as it is served, in OpenAI's `logprobs.content` shape, or None when they cannot
+    be given. `text` is what the client gets of `c.text` (`tasks.clean_answer`): the reasoning and, for a structured
+    task, a fence around the answer may be gone, and so is whitespace at its edges. `top` is the client's
+    `top_logprobs` (each token keeps at most that many alternatives; none for 0 or None).
+
+    The tokens returned always spell `text` exactly. When the model's tokens are `text` as they stand, they are all
+    returned. Otherwise the tokens of the last place `text` occurs in them are kept, and the ones before and after it
+    dropped (`<think>` reasoning, a fence, or reasoning tokens a server lists although its `content` leaves them out:
+    reasoning never reaches a client). A token that `text` only partly covers is cut only when the part left out is
+    whitespace; any other overlap means the answer cannot be told apart from what was dropped, and so does an answer
+    that is not one stretch of the tokens (reasoning removed from its middle) or tokens that do not spell it (a
+    character split over tokens that do not decode alone). Then, and when the model sent no logprobs or a malformed
+    entry, the result is None. Linear in the number of tokens; run only for a client that asked for logprobs."""
+    if c.logprobs_content is None:
+        return None
+    tokens: list[dict[str, Any]] = []
+    for raw in c.logprobs_content:
+        e = _entry(raw, top or 0)
+        if e is None:
+            return None
+        tokens.append(e)
+    joined = "".join(e["token"] for e in tokens)
+    if joined == text:
+        return tokens
+    if not text:
+        return []
+    start = joined.rfind(text)
+    if start < 0:
+        return None
+    end = start + len(text)
+    first = last = -1
+    first_at = last_end = pos = 0
+    for i, e in enumerate(tokens):
+        nxt = pos + len(e["token"])
+        if first < 0 and nxt > start:
+            first, first_at = i, pos
+        if nxt >= end:
+            last, last_end = i, nxt
+            break
+        pos = nxt
+    if joined[first_at:start].strip() or joined[end:last_end].strip():
+        return None  # a token holds both the answer and something that is not whitespace
+    out = tokens[first : last + 1]
+    if end < last_end:
+        _trim(out[-1], 0, len(out[-1]["token"]) - (last_end - end))
+    if first_at < start:
+        _trim(out[0], start - first_at, len(out[0]["token"]))
+    return out

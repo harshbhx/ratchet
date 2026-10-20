@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (492 tests, ~40 s, no network, no GPU)
+make test           # pytest -q (505 tests, ~40 s, no network, no GPU)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -50,18 +50,18 @@ Always run `make lint test` before committing.
 
 | Path | What |
 |---|---|
-| `ratchet/gateway.py` | FastAPI app: `/v1/chat/completions` (API keys, request validation, per-key quota, streaming; OpenAI error envelope on `/v1/*`, body limit; upstream failures mapped to client statuses by `_map_upstream`), `/healthz`, `/ratchet/stats`, `/ratchet/bom`, `/ratchet/versions/{id}/bom`, `/ratchet/redact`, mock-only demo endpoints, pages (`/`, `/scout`, `/dashboard`), Scout endpoints (`/scout/*`) |
-| `ratchet/router.py` | The cascade (`Ratchet.handle`): pinned tasks → teacher; otherwise student → confidence → teacher, audits, shadow arbitration, cost accounting; upstream failure counts (`Ratchet.health()`); the student and teacher breakers, the opt-in fallback teacher and degraded mode |
+| `ratchet/gateway.py` | FastAPI app: `/v1/chat/completions` (API keys, request validation, per-key quota, streaming, `n` choices and token logprobs; OpenAI error envelope on `/v1/*`, body limit; upstream failures mapped to client statuses by `_map_upstream`), `/healthz`, `/ratchet/stats`, `/ratchet/bom`, `/ratchet/versions/{id}/bom`, `/ratchet/redact`, mock-only demo endpoints, pages (`/`, `/scout`, `/dashboard`), Scout endpoints (`/scout/*`) |
+| `ratchet/router.py` | The cascade (`Ratchet.handle`): pinned tasks → teacher; otherwise student → confidence → teacher, audits, shadow arbitration, cost accounting; upstream failure counts (`Ratchet.health()`); the student and teacher breakers, the opt-in fallback teacher and degraded mode; `n` choices (`Result.choices`, route `n_choices`) |
 | `ratchet/confidence.py` | Confidence score (logprob + self-consistency) and threshold calibration |
 | `ratchet/release.py` | `ReleaseGate`: golden gate, shadow, canary, rollback (Wilson bounds); `ReleasePolicy` |
 | `ratchet/ledger.py` | SQLite ledger: requests (with API client), examples (provenance, redaction count), versions (with BOM), events; migrations; `auto_day`; `stats_by_task`, `stats_by_client`, `privacy_stats`; one re-entrant lock |
 | `ratchet/licenses.py` | Teacher license registry; closed-model teachers are refused |
 | `ratchet/redact.py` | PII redaction (`[EMAIL]`, `[CARD]`, …) applied before examples are stored |
 | `ratchet/auth.py` | `KeyRing`: named gateway API keys from `RATCHET_API_KEYS` |
-| `ratchet/openai_compat.py` | OpenAI request contract (standard library only): `validate_chat_request` → `ChatRequest`, `normalize_messages` (developer → system, text parts → string), `APIError` and the error envelope, `Limits`. See [ADR 0012](docs/adr/0012-openai-request-validation-and-error-envelope.md) |
+| `ratchet/openai_compat.py` | OpenAI request contract (standard library only): `validate_chat_request` → `ChatRequest`, `normalize_messages` (developer → system, text parts → string), `APIError` and the error envelope, `Limits` (incl. `max_n`, RATCHET_MAX_N). See [ADR 0012](docs/adr/0012-openai-request-validation-and-error-envelope.md) |
 | `ratchet/bom.py` | Per-adapter bill of materials, Ed25519 signing and verification, `python -m ratchet.bom` |
 | `ratchet/tasks.py` | Task registry: answer comparison (`compare_keys`) and `pinned` |
-| `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs); every failure raises `UpstreamError`. `GenParams` (a request's generation parameters) and `GenPolicy` (what each role sends, the token caps) |
+| `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs); every failure raises `UpstreamError`. `GenParams` (a request's generation parameters) and `GenPolicy` (what each role sends, the token caps); `served_logprobs` (the token logprobs a client gets, aligned with the served text) |
 | `ratchet/resilience.py` | `RetryPolicy`, `retry_call` (full-jitter backoff, `Retry-After`, deadline, a read timeout retried once), `UpstreamError`, per-role `timeouts` ([ADR 0014](docs/adr/0014-upstream-failure-semantics.md)) |
 | `ratchet/nightschool/` | Dataset build, LoRA training script, golden eval, nightly orchestration |
 | `ratchet/live.py` | Live Night School on Nebius: `python -m ratchet.live night|tick|reload` |
@@ -112,6 +112,7 @@ Always run `make lint test` before committing.
 
 ## Current status (Oct 20, 2026)
 
+- Unreleased: `n` choices and token logprobs (FR-1.14): up to `RATCHET_MAX_N` (4) choices; the student serves them only when its confidence, scored on `RATCHET_SAMPLES` samples as calibrated, reaches the threshold and `n` samples agree (else route `n_choices` and the teacher writes `n` at 0.7); only the teacher's choice 0 is stored, and audits, shadows and arbitrations judge choice 0; `logprobs: true` returns each choice's token logprobs, aligned so they spell its content and never include reasoning ([ADR 0020](docs/adr/0020-n-choices-and-token-logprobs.md)).
 - Unreleased: when the teacher is down (FR-2.12): every teacher call goes through a breaker, so after 5 failed calls in a row requests that need the teacher get a 503 `teacher_circuit_open` with `Retry-After` at once instead of waiting out the 180 s deadline; opt-in `RATCHET_ON_TEACHER_FAILURE=serve_student` serves the student's valid answer to an escalation, marked degraded and never stored, audited or shadowed; an opt-in licensed fallback teacher (`RATCHET_TEACHER_FALLBACK_MODEL`) answers for an unavailable teacher and is stored only when asked, under its own license ([ADR 0019](docs/adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)).
 - Unreleased: generation parameters by role (FR-1.13): the client's `max_tokens`, `stop`, `seed`, `temperature`, `response_format`, `tools` and the rest reach the serving teacher, the student (shaping fields only, its own sampling kept) and audits (temperature 0) through allowlists, with per-call output caps and an optional reasoning headroom; examples store the conditions that define the target without changing any v0.4 hash; the golden eval samples under them; the response's `finish_reason` is real; `RequestMeta` for later items ([ADR 0017](docs/adr/0017-generation-parameters-by-role.md)).
 - Unreleased: answer hygiene (INV-16, FR-2.7, FR-2.13): reasoning is stripped also before a lone `</think>` and from an unterminated `<think>` that opens what is left (a tag inside an answer is content), a structured answer loses a code fence around it, and only complete, valid teacher answers are stored (`finish_reason` read per choice; `skip_example` events; `requests.stored`); a cut-off student sample gets no vote ([ADR 0016](docs/adr/0016-store-only-complete-valid-teacher-answers.md)).
