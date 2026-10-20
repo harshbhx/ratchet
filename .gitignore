@@ -10,3 +10,4 @@ data/
 web/node_modules/
 web/*.tsbuildinfo
 *.egg-info/
+.coverage

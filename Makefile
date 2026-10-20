@@ -35,5 +35,5 @@ docker:
 	docker build -t ratchet-gateway .
 
 clean:
-	rm -rf .pytest_cache .ruff_cache build dist *.egg-info sim_results.json ratchet.db
+	rm -rf .pytest_cache .ruff_cache .coverage build dist *.egg-info sim_results.json ratchet.db
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
