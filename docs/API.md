@@ -7,46 +7,48 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000      # offline demo
 RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app --port 8000
 ```
 
-FastAPI also serves interactive docs at `/docs` and the schema at `/openapi.json`.
+FastAPI also serves interactive docs at `/docs` and the schema at `/openapi.json`, in mock mode by default and in live mode only with `RATCHET_OPENAPI=1`.
 
 Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed exceptions with `code` and `param` ([Errors](#errors)); every other route answers errors as `{"detail": ...}`. Every `POST`, `PUT` and `PATCH` body is limited to `RATCHET_MAX_BODY_BYTES` (2 MiB by default; larger is **413**).
 
-| Method | Path | Mode | Purpose |
-|---|---|---|---|
-| GET | `/` | both | Story page: the React app (`ratchet/web/dist/index.html`); falls back to `ratchet/web/landing.html` if the build is missing |
-| GET | `/dashboard` | both | Dashboard (React app; fallback `ratchet/dashboard.html`) |
-| GET | `/scout` | both | Scout demo page (React app; fallback `ratchet/web/scout.html`) |
-| GET | `/assets/*` | both | Built JavaScript, CSS and fonts of the React app |
-| GET | `/lite`, `/lite/scout`, `/lite/dashboard` | both | The hand-written pages (no build step, no JavaScript framework) |
-| GET | `/healthz` | both | Liveness check; always public |
-| GET | `/v1/models` | both | OpenAI-style model list (API key when keys are on) |
-| POST | `/v1/chat/completions` | both | The cascade; `stream: true` supported (API key when keys are on) |
-| GET | `/ratchet/stats` | both | Everything the dashboard shows |
-| GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
-| GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
-| GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
-| POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
-| GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
-| POST | `/ratchet/cost/endpoint` | both | Record the student endpoint going up or down (admin key) |
-| GET | `/ratchet/tasks` | both | Every registered task with its spec, source, spec hash and traffic ([Tasks](#tasks)) |
-| GET | `/ratchet/tasks/{name}` | both | One registered task |
-| POST | `/ratchet/tasks/validate` | both | Check a task spec or a tasks file without changing anything (admin key) |
-| PUT | `/ratchet/tasks/{name}` | both | Create or replace an API task (admin key) |
-| DELETE | `/ratchet/tasks/{name}` | both | Remove an API task; its stored examples stay (admin key) |
-| POST | `/ratchet/demo/day` | mock only | Simulate one day of traffic and one night of training |
-| POST | `/ratchet/demo/break-next` | mock only | Make the next trained student deploy corrupted |
-| POST | `/ratchet/demo/student-outage` | mock only | Take the student endpoint down for a while, to show the circuit breaker |
-| POST | `/ratchet/demo/reset` | mock only | Start over |
-| GET | `/scout/examples` | both | Example questions and whether free text is allowed |
-| GET | `/scout/status` | both | Budget guard state |
-| GET | `/scout/stream?q=` | both | Run Scout, stream events (Server-Sent Events) |
-| POST | `/scout/run` | both | Run Scout, return all events at the end |
+| Method | Path | Mode | Access | Purpose |
+|---|---|---|---|---|
+| GET | `/` | both | [public](#access-levels) | Story page: the React app (`ratchet/web/dist/index.html`); falls back to `ratchet/web/landing.html` if the build is missing |
+| GET | `/dashboard` | both | [public](#access-levels) | Dashboard (React app; fallback `ratchet/dashboard.html`) |
+| GET | `/scout` | both | [public](#access-levels) | Scout demo page (React app; fallback `ratchet/web/scout.html`) |
+| GET | `/assets/*` | both | [public](#access-levels) | Built JavaScript, CSS and fonts of the React app |
+| GET | `/lite`, `/lite/scout`, `/lite/dashboard` | both | [public](#access-levels) | The hand-written pages (no build step, no JavaScript framework) |
+| GET | `/favicon.svg` | both | [public](#access-levels) | The site icon, from the React build (404 without it) |
+| GET | `/healthz` | both | [public](#access-levels) | Liveness check; always public |
+| GET | `/v1/models` | both | [api](#access-levels) | OpenAI-style model list (API key when keys are on) |
+| POST | `/v1/chat/completions` | both | [api](#access-levels) | The cascade; `stream: true` supported (API key when keys are on) |
+| GET | `/ratchet/stats` | both | [dashboard](#access-levels) | Everything the dashboard shows |
+| GET | `/ratchet/bom` | both | [bom](#access-levels) | Bill of materials for the whole ledger (provenance) |
+| GET | `/ratchet/versions/{id}/bom` | both | [bom](#access-levels) | One adapter's bill of materials, written at training time, signed when a key is set |
+| GET | `/ratchet/bom/public-key` | both | [public](#access-levels) | Ed25519 public key that verifies adapter BOMs |
+| POST | `/ratchet/redact` | both | [dashboard](#access-levels) | Show what the PII redactor would store for a text (stores nothing) |
+| GET | `/ratchet/cost` | both | [dashboard](#access-levels) | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
+| POST | `/ratchet/cost/endpoint` | both | [admin](#access-levels) | Record the student endpoint going up or down (admin key) |
+| GET | `/ratchet/tasks` | both | [dashboard](#access-levels) | Every registered task with its spec, source, spec hash and traffic ([Tasks](#tasks)) |
+| GET | `/ratchet/tasks/{name}` | both | [dashboard](#access-levels) | One registered task |
+| POST | `/ratchet/tasks/validate` | both | [admin](#access-levels) | Check a task spec or a tasks file without changing anything (admin key) |
+| PUT | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Create or replace an API task (admin key) |
+| DELETE | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Remove an API task; its stored examples stay (admin key) |
+| POST | `/ratchet/demo/day` | mock only | [mock](#access-levels) | Simulate one day of traffic and one night of training |
+| POST | `/ratchet/demo/break-next` | mock only | [mock](#access-levels) | Make the next trained student deploy corrupted |
+| POST | `/ratchet/demo/student-outage` | mock only | [mock](#access-levels) | Take the student endpoint down for a while, to show the circuit breaker |
+| POST | `/ratchet/demo/reset` | mock only | [mock](#access-levels) | Start over |
+| GET | `/scout/examples` | both | [public](#access-levels) | Example questions and whether free text is allowed |
+| GET | `/scout/status` | both | [public](#access-levels) | Budget guard state |
+| GET | `/scout/stream?q=` | both | [public](#access-levels) | Run Scout, stream events (Server-Sent Events) |
+| POST | `/scout/run` | both | [public](#access-levels) | Run Scout, return all events at the end |
+| GET | `/docs`, `/redoc`, `/openapi.json` | both | [public](#access-levels) | FastAPI's interactive docs and schema; they exist only with `RATCHET_OPENAPI=1` (the default in mock mode, not in live mode) |
 
 The three pages are static HTML files with no build step. If a page file is missing, the route returns a small placeholder page with links to the other two.
 
 ## Authentication
 
-Off by default, so the mock demo and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*`:
+Off by default in mock mode, so the demo and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*`. Live mode refuses to start without them, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says something in front of the gateway (the demo VM's Caddy guard, a private network) checks callers:
 
 ```bash
 RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" uvicorn ratchet.gateway:app
@@ -56,8 +58,28 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
 - `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
-- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
-- Pages, `/healthz`, the other `/ratchet/*` routes (reads included: `GET /ratchet/tasks`) and Scout stay public. The read-only `/ratchet/stats` and `/ratchet/bom` are what the dashboard reads; the mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
+- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
+- **Dashboard keys** (`RATCHET_DASHBOARD_KEYS`, same syntax, never an API or admin key) read the dashboard API and write nothing. Who needs which key is the route's access level ([Access levels](#access-levels)): in live mode the dashboard API needs an admin or dashboard key by default.
+- Pages, `/healthz`, `/ratchet/bom/public-key` and Scout are always public. The mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
+
+### Access levels
+
+Every route has one access level (the Access column above; `ratchet/access.py`, [ADR 0061](adr/0061-endpoint-access-levels.md)). A key goes in `Authorization: Bearer <key>` or `X-API-Key: <key>`, whatever the level.
+
+| Level | Who may call it | Without the right key |
+|---|---|---|
+| `public` | Anyone | (never refused for a key) |
+| `api` | With `RATCHET_API_KEYS` set: an API key. Without: anyone (mock mode, or live mode with `RATCHET_ALLOW_UNAUTHENTICATED=1`) | **401** `invalid_api_key` in OpenAI's envelope |
+| `dashboard` | With `RATCHET_PUBLIC_DASHBOARD=1` (the default in mock mode): anyone. Else (the default in live mode): an admin or dashboard key | **401** `invalid or missing dashboard key` (`WWW-Authenticate: Bearer`); **403** for an API key; **403** `the dashboard API is private: ...` when neither `RATCHET_ADMIN_KEYS` nor `RATCHET_DASHBOARD_KEYS` is set |
+| `bom` | As `dashboard`, and anyone with `RATCHET_PUBLIC_BOM=1`, so auditors can read provenance from a private gateway | As `dashboard` |
+| `admin` | An admin key. Without `RATCHET_ADMIN_KEYS`: nobody in live mode, anyone in mock mode (as `mock-admin`) | **401** `invalid or missing admin key`; **403** for an API key or a dashboard key; **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys |
+| `mock` | Anyone, in mock mode only (invariant 8) | **403** `demo controls are only available in mock mode` in live mode |
+
+A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public), `/metrics` and `/ratchet/kpis` (dashboard).
+
+**Scrubbed reads.** A dashboard shown to anyone should not show who your clients are or where your endpoints live. By default an anonymous read of a public dashboard in live mode is scrubbed (`RATCHET_SCRUB_STATS=1` scrubs every read, `0` none): in `/ratchet/stats` client names become `client-1`, `client-2`, ... (stable, by sorted name; the same pseudonyms replace the names in task allow-lists from `GET /ratchet/tasks`), every `http(s)://` URL in an event detail becomes `<url>`, and an error message after an exception's class is cut (`ConnectError: [Errno 111] ...` becomes `ConnectError`). `security.scrubbed` says whether a payload was scrubbed. A reader who sends an admin or dashboard key gets the full payload. Only names and pseudonyms ever appear, never keys (invariant 13).
+
+**Security headers.** Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and the `Content-Security-Policy` in `RATCHET_CSP` when it is set (none by default, so the pages never break; [CONFIGURATION.md](CONFIGURATION.md#privacy-and-security) has a recommended value).
 
 The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratchet/demo/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
 
@@ -412,6 +434,8 @@ Needs a key when `RATCHET_API_KEYS` is set.
 
 ## GET `/ratchet/stats`
 
+Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; in live mode an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`, and then an anonymous reader gets a scrubbed copy (client pseudonyms, no URLs or error messages in `events`).
+
 ```json
 {
   "mode": "mock",
@@ -472,9 +496,9 @@ Needs a key when `RATCHET_API_KEYS` is set.
 
   Later versions add routes; a client should show an unknown route as it is.
 - `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
-- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off.
+- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. In a scrubbed copy `client` is a pseudonym.
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`).
-- `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).
+- `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)).
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
@@ -484,6 +508,8 @@ Compatibility: the keys the dashboard reads are listed with their JSON types in 
 Freshness: in live mode the payload is computed at most once every `RATCHET_STATS_TTL_S` seconds (default 2) by one request at a time, and every other read in between gets that payload; in mock mode (default 0) every read computes it. On a ledger file it is read from a read-only connection, so a dashboard never waits for requests nor slows them ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)).
 
 ## GET `/ratchet/bom`
+
+Access level `bom`: as `/ratchet/stats`, and public with `RATCHET_PUBLIC_BOM=1`.
 
 ```json
 {
@@ -501,7 +527,7 @@ Freshness: in live mode the payload is computed at most once every `RATCHET_STAT
 
 ## GET `/ratchet/versions/{id}/bom`
 
-The bill of materials of one adapter, written by Night School right after training and evaluation, from the exact rows it was trained and evaluated on. **404** for an unknown id or a version trained before v0.4.
+Access level `bom`, like `/ratchet/bom`. The bill of materials of one adapter, written by Night School right after training and evaluation, from the exact rows it was trained and evaluated on. **404** for an unknown id or a version trained before v0.4.
 
 ```json
 {
@@ -549,7 +575,7 @@ Without `--public-key` the check uses the key embedded in the document, which on
 
 ## POST `/ratchet/redact`
 
-Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored. Nothing is logged or stored. Backs the dashboard's **Try the redactor** box.
+Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored. Nothing is logged or stored. Backs the dashboard's **Try the redactor** box. Access level `dashboard`.
 
 ```bash
 curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
@@ -570,7 +596,7 @@ Utilization-aware cost accounting ([ADR 0023](adr/0023-utilization-aware-cost-ac
 
 ### GET `/ratchet/cost?days=N`
 
-The cost report for every ledger day, or for the last `days` days (1 to 36,500; anything else is **400**, a non-number **422**). Public, like `/ratchet/stats`. `python -m ratchet.cost report [--days N] [--json]` prints the same report. An example from the mock demo (simulation numbers, nine days of 1,500 requests with the endpoint up 24 hours a day):
+The cost report for every ledger day, or for the last `days` days (1 to 36,500; anything else is **400**, a non-number **422**). Access level `dashboard`, like `/ratchet/stats`. `python -m ratchet.cost report [--days N] [--json]` prints the same report. An example from the mock demo (simulation numbers, nine days of 1,500 requests with the endpoint up 24 hours a day):
 
 ```json
 {
@@ -643,7 +669,7 @@ curl -s localhost:8000/ratchet/cost/endpoint -H "Authorization: Bearer $ADMIN_KE
 
 ## Tasks
 
-The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, the tasks of `RATCHET_TASKS_FILE`, and the tasks written through these endpoints (API tasks, stored in the ledger and registered again at every start). The spec format is in [CONFIGURATION.md](CONFIGURATION.md#adding-a-task). Reads are public; writes and `validate` need an admin key ([Authentication](#authentication)). Errors are `{"detail": ...}`; a bad spec is **422** `{"detail": "invalid task spec", "errors": [...]}`, every problem with its path.
+The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, the tasks of `RATCHET_TASKS_FILE`, and the tasks written through these endpoints (API tasks, stored in the ledger and registered again at every start). The spec format is in [CONFIGURATION.md](CONFIGURATION.md#adding-a-task). Reads have the access level `dashboard` (open in mock mode; in live mode an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`, and then an anonymous reader sees `clients` allow-lists as the pseudonyms `/ratchet/stats` uses); writes and `validate` need an admin key ([Access levels](#access-levels)). Errors are `{"detail": ...}`; a bad spec is **422** `{"detail": "invalid task spec", "errors": [...]}`, every problem with its path.
 
 ### GET `/ratchet/tasks`
 

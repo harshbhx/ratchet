@@ -29,5 +29,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0023](0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation | Accepted | 2026-10-20 |
 | [0024](0024-evidence-foundations.md) | Foundations for the evidence features: exact statistics, Merkle trees, one schema change with append-only tables, reserved settings and three pinned workloads | Accepted | 2026-10-20 |
 | [0060](0060-hot-path-caches-and-throttled-tick.md) | The hot path: a WAL ledger, a version routing snapshot, incremental tallies, a throttled tick and cached stats | Accepted | 2026-10-20 |
+| [0061](0061-endpoint-access-levels.md) | Endpoint access levels: a private dashboard API in live mode, scrubbed public reads and a live auth guard | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

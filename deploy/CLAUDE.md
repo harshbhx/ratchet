@@ -9,8 +9,8 @@
   - `cloud-init.yaml`: Docker, `ufw` (22/80/443), unattended upgrades, a `ratchet` service user, clone to `/opt/ratchet`, `.env` from `.env.vm.example`, sslip.io domain default, `docker compose up -d --build`, and `/etc/cron.d/ratchet` (daily backup on; Night School lines commented out).
   - `docker-compose.yml`: the gateway (1 uvicorn worker, `--proxy-headers`, ledger in the `ratchet-data` volume, health check on `/healthz`, which stays public when `RATCHET_API_KEYS` protects `/v1/*`) and Caddy (`caddy:2.11.7-alpine`).
   - `Caddyfile`: HTTPS for `RATCHET_DOMAIN`, security headers, no buffering for `/scout/stream`, and the opt-in `RATCHET_API_GUARD=guarded` (403 on `/v1/*` and `/ratchet/demo/*` without `X-Ratchet-Admin-Token`).
-  - `update.sh`: pull, rebuild, wait for health, then check `/`, `/ratchet/stats`, `/dashboard`, `/scout` over HTTPS. `backup.sh`: SQLite online backup, integrity check, keep 14, optional upload to Object Storage.
-  - `.env.vm.example`: every VM setting with comments. Starts in mock mode with `RATCHET_MOCK_WARMUP_DAYS=4`.
+  - `update.sh`: pull, rebuild, wait for health, then check `/`, `/healthz`, `/dashboard`, `/scout` over HTTPS, and `/ratchet/stats` when the dashboard is public (`RATCHET_PUBLIC_DASHBOARD`). `backup.sh`: SQLite online backup, integrity check, keep 14, optional upload to Object Storage.
+  - `.env.vm.example`: every VM setting with comments. Starts in mock mode with `RATCHET_MOCK_WARMUP_DAYS=4`, and a public dashboard (`RATCHET_PUBLIC_DASHBOARD=1`, scrubbed for anonymous readers in live mode) so judges see it. Live mode without `RATCHET_API_KEYS` needs `RATCHET_ALLOW_UNAUTHENTICATED=1`, meant only with the Caddy guard (ADR 0061).
 
 Rules:
 

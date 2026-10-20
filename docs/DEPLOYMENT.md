@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 728 tests, ~75 s
+pytest -q                                                          # 739 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -124,10 +124,11 @@ Any small VM or container with Python 3.10+ works:
 ```bash
 pip install -e .
 export RATCHET_MODE=live RATCHET_DB=/var/lib/ratchet/ratchet.db
+export RATCHET_API_KEYS="app:$(openssl rand -hex 24)" RATCHET_DASHBOARD_KEYS="me:$(openssl rand -hex 24)"
 uvicorn ratchet.gateway:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-Use **one worker**. The ledger is a single SQLite connection inside the process, and the release gate is not designed for concurrent writers (see [ADR 0006](adr/0006-sqlite-ledger-for-v0.md)). Put TLS and authentication in front with a reverse proxy, since the gateway has no auth of its own.
+Use **one worker**. The ledger is a single SQLite connection inside the process, and the release gate is not designed for concurrent writers (see [ADR 0006](adr/0006-sqlite-ledger-for-v0.md)). Live mode does not start without `RATCHET_API_KEYS` (or `RATCHET_ALLOW_UNAUTHENTICATED=1` when a proxy checks callers instead), and its dashboard API (`/ratchet/stats`, `/ratchet/bom`, ...) answers only admin and dashboard keys unless `RATCHET_PUBLIC_DASHBOARD=1` ([API.md](API.md#access-levels)). Put TLS in front with a reverse proxy.
 
 ### Step 7: Cron
 
@@ -170,7 +171,7 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 ## 5. Verification after deploy
 
 1. `curl $GATEWAY/healthz` returns `{"status":"ok",...}`, and `curl -H "Authorization: Bearer $KEY" $GATEWAY/v1/models` returns `ratchet` (drop the header if `RATCHET_API_KEYS` is not set).
-2. Send 20 real requests. `GET /ratchet/stats` shows them with `served_by=teacher` (cold start), and `GET /ratchet/bom` shows the teacher with license `OpenMDW-1.1`.
+2. Send 20 real requests. `GET /ratchet/stats` (with `-H "Authorization: Bearer $DASHBOARD_KEY"` unless the dashboard is public) shows them with `served_by=teacher` (cold start), and `GET /ratchet/bom` shows the teacher with license `OpenMDW-1.1`.
 3. Run `python -m ratchet.live night` once you have at least 50 new examples. Expect a `trained` event and either `canary` or `rejected`, and a bill of materials at `data/boms/student-v1.json` (also at `GET /ratchet/versions/1/bom`). With `RATCHET_BOM_SIGNING_KEY` set, `python -m ratchet.bom verify data/boms/student-v1.json --public-key <yours>` prints `OK`.
 4. Check that `curl $RATCHET_STUDENT_BASE/models` lists `student-v1` after the night.
 5. Watch the `canary` → `live` events over the next requests. Audits need traffic: at a 5% audit rate and 10% canary, reaching 20 audits takes roughly 4,000+ requests, so for a demo raise `RATCHET_AUDIT_RATE`, or lower `ReleasePolicy.min_audits` in code (there is no environment variable for it).

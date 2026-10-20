@@ -93,6 +93,9 @@ def _live(tmp_path: Path, **overrides: Any) -> Settings:
         "bom_signing_key": "",
         "tavily_api_key": "",
         "mock_warmup_days": 0,
+        # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read the task list without a key.
+        "allow_unauthenticated": True,
+        "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
 

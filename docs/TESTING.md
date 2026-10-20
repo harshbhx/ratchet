@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 728 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf), ~75 s
+pytest -q                     # 739 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -31,12 +31,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
 | `tests/test_perf.py` | 22 |
-| **Total** | **728** |
+| `tests/test_security.py` | 11 |
+| **Total** | **739** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), and the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), and who may call each route ([`tests/test_security.py`](#teststest_securitypy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -589,6 +590,24 @@ The hot path ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), FR-12.
 | `test_wall_ms_is_the_timer_around_the_whole_cascade` | With `Ratchet(timer=...)`, `wall_ms` is exactly the two timer reads apart, on `handle`, a pinned task and `teacher_only`; `latency_ms` is the provider's |
 | `test_handle_overhead_does_not_grow_with_versions` | Zero-latency models: the mean request time with 365 retired versions is at most twice the one-version mean plus 0.5 ms (v0.4's lookups took about 25 times as long) |
 | `test_perf_guard_200k_requests` | A WAL ledger with 200,000 requests and a live, canary and shadow version: a cold tick under 250 ms, a warm tick under 20 ms (median), a request under 5 ms of its own time, the tally still exact |
+
+### `tests/test_security.py`
+
+Endpoint access, scrubbed public stats, the OpenAPI switch, the live-mode auth guard and security headers ([ADR 0061](adr/0061-endpoint-access-levels.md), FR-12.7, NFR-5, INV-13). A private live gateway runs offline through `Runtime(transports=)` with three kinds of keys.
+
+| Test | Covers |
+|---|---|
+| `test_every_route_has_an_access_level` | Every route the app serves has a level in `access.ROUTES` or `access.PREFIXES`, and the Access column of docs/API.md shows the same one; HEAD reads as GET, the prefixes cover routes other packages add (`/ratchet/requests/...`, `/v1/ratchet/no-train`), `/livez`, `/readyz`, `/metrics` and `/ratchet/kpis` are pre-classified, and an unknown route is not guessed |
+| `test_private_live_dashboard_needs_an_admin_or_dashboard_key` | Every dashboard and BOM route of a private live gateway: 401 with `WWW-Authenticate: Bearer` without a key or with a wrong one, 403 for an API key, 200 for an admin or dashboard key (Bearer or `X-API-Key`); health, the BOM public key, the pages and Scout stay open; a dashboard key cannot write tasks (403) or call `/v1/*` (401); keyed readers see client names and no key reaches the payload or the database; `RATCHET_PUBLIC_BOM=1` opens only the BOM endpoints |
+| `test_private_dashboard_without_reader_keys_is_closed_to_everyone` | No admin or dashboard keys: every read is 403 naming `RATCHET_DASHBOARD_KEYS`, also with an API key |
+| `test_mock_dashboard_is_public_by_default` | Mock mode: the dashboard API is open with or without admin and API keys, and unscrubbed; `RATCHET_PUBLIC_DASHBOARD=0` closes it like a live one |
+| `test_public_live_stats_are_scrubbed_for_anonymous_readers` | A public live dashboard: anonymous readers get `client-1`, `client-2` by sorted name (the same pseudonyms in task allow-lists), a v0.4 `ConnectError: ...` event cut to the class, URLs as `<url>`, no client name, address or key; admin and dashboard readers get the full payload from the same cached one (never changed by a scrubbed copy); `RATCHET_SCRUB_STATS` 1 and 0 |
+| `test_scrub_helpers` | `scrub_detail` on v0.4 and current event formats (today's class-and-status details are kept), `pseudonyms`, `scrub_stats` leaving its input unchanged, `scrub_task` |
+| `test_live_mode_without_api_keys_does_not_start` | A live `Runtime` without API keys raises before the ledger file exists; `allow_unauthenticated` lets it start; mock needs no keys; the same from the environment as uvicorn loads it |
+| `test_each_key_has_one_role` | A dashboard key that is an API or admin key, a short one, or an admin key that is an API key stops startup naming the variable |
+| `test_access_switches_resolve_by_mode_and_refuse_typos` | Mock and live defaults; explicit 0 and 1; set but empty is the default; `yes`, `true`, `2`, `on` stop startup naming the variable; a CSP with a line break is refused; `Access.scrubs` for every case |
+| `test_openapi_is_off_in_live_mode` | Live: `/openapi.json`, `/docs` and `/redoc` are 404, back with `RATCHET_OPENAPI=1`; mock serves the schema, `0` removes it |
+| `test_security_headers_on_every_response` | `nosniff` and `no-referrer` on a page, health, stats, a chat completion, a stream, a 400, a 404, a 413 from the body limit, Scout, and both 500s (sent outside the middleware); no CSP by default; `RATCHET_CSP` adds it |
 
 ## Live-path tests
 

@@ -494,6 +494,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.auth:KeyRing",
         "ratchet.gateway:_client",
         "ratchet.gateway:_quota",
+        "ratchet.gateway:Runtime._set_access",
         "ratchet.ledger:Ledger.stats_by_client",
     ),
     "FR-1.8": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat", "ratchet.gateway:_map_upstream"),
@@ -695,6 +696,14 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
     # 6.12 Operations
+    "FR-12.7": (
+        "ratchet.access:route_access",
+        "ratchet.access:scrub_stats",
+        "ratchet.gateway:_access",
+        "ratchet.gateway:Runtime._set_access",
+        "ratchet.gateway:SecurityHeadersMiddleware",
+        "ratchet.config:Settings.access",
+    ),
     "FR-12.8": (
         "ratchet.ledger:Ledger._journal",
         "ratchet.ledger:Ledger._reader",
@@ -745,7 +754,13 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night", "ratchet.providers:GenPolicy"),
     "NFR-4": ("ratchet.redact:redact_messages",),
-    "NFR-5": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_quota"),
+    "NFR-5": (
+        "ratchet.auth:KeyRing.identify",
+        "ratchet.gateway:_quota",
+        "ratchet.gateway:_access",
+        "ratchet.gateway:Runtime._set_access",
+        "ratchet.access:ROUTES",
+    ),
     "NFR-6": ("ratchet.ledger:Ledger.log_request", "ratchet.ledger:Ledger.event", "ratchet.gateway:stats"),
     "NFR-7": ("ratchet.providers:OpenAICompatProvider",),
     "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval"),
@@ -770,7 +785,13 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "INV-11": ("ratchet.gateway:_scout_precheck", "ratchet.gateway:_run_scout", "ratchet.scout.guard:Guard.admit"),
     "INV-12": ("ratchet.redact:redact_messages", "ratchet.redact:redact_json", "ratchet.router:Ratchet._store_example"),
-    "INV-13": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_admin", "ratchet.ledger:Ledger.save_task"),
+    "INV-13": (
+        "ratchet.auth:KeyRing.identify",
+        "ratchet.gateway:_admin",
+        "ratchet.gateway:_access",
+        "ratchet.ledger:Ledger.save_task",
+        "ratchet.access:pseudonyms",
+    ),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
     "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
     "INV-16": (

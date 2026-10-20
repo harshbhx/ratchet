@@ -405,6 +405,7 @@ def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
         RATCHET_STUDENT_BASE="",
         NEBIUS_API_KEY="",
         TAVILY_API_KEY="",
+        RATCHET_ALLOW_UNAUTHENTICATED="1",
     )
     assert gw.rt.settings.mode == "live" and not hasattr(gw.rt, "fleet")
     led = gw.rt.ledger
@@ -1127,6 +1128,7 @@ def test_closed_teacher_fails_at_startup(gw_env, tmp_path):
             student_base="",
             tavily_api_key="",
             api_keys="",
+            allow_unauthenticated=True,  # so the license check, not the missing API keys, stops it (ADR 0061)
             bom_signing_key="",
             mock_warmup_days=0,
         )
@@ -1161,6 +1163,7 @@ def test_closed_fallback_teacher_fails_at_startup(gw_env, tmp_path):
             student_base="",
             tavily_api_key="",
             api_keys="",
+            allow_unauthenticated=True,  # so the license check, not the missing API keys, stops it (ADR 0061)
             bom_signing_key="",
             mock_warmup_days=0,
         )

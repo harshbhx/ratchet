@@ -46,7 +46,8 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/ledger.py` | `Ledger`: SQLite storage, provenance, stats |
 | `ratchet/licenses.py` | Teacher license registry; refuses teachers that forbid distillation |
 | `ratchet/redact.py` | `redact()`, `redact_messages()`: PII placeholders before examples are stored |
-| `ratchet/auth.py` | `KeyRing` (named gateway API keys, and admin keys for management writes) and `bearer()` |
+| `ratchet/auth.py` | `KeyRing` (named gateway API keys, admin keys for management writes, read-only dashboard keys) and `bearer()` |
+| `ratchet/access.py` | Who may call each route ([ADR 0061](adr/0061-endpoint-access-levels.md)): one table of access levels (`route_access`: public, api, dashboard, bom, admin, mock; unknown routes count as dashboard) and the scrubbing of anonymous public reads (`pseudonyms`, `scrub_stats`, `scrub_task`, `scrub_detail`); standard library only |
 | `ratchet/openai_compat.py` | `validate_chat_request()` (typed `ChatRequest`), `normalize_messages()`, `APIError` and OpenAI's error envelope; standard library only |
 | `ratchet/bom.py` | Per-adapter bill of materials: `manifest()`, `document()`, Ed25519 `Signer`, `verify()`, CLI (`keygen`, `verify`) |
 | `ratchet/cost.py` | Utilization-aware cost accounting ([§7](#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)): `cost_report()` (savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover, a recommendation), interval merging (`segments`), the simulator's compute (`record_simulated_day`), CLI (`report`, `endpoint up\|down`, `close`) |
@@ -71,7 +72,7 @@ There are two runtime modes, chosen by `RATCHET_MODE`:
 
 ## 2. Request path
 
-`Ratchet.handle(messages, task, client, params, meta)` in `router.py`. Before it runs, the gateway checks the body size, the API key (when `RATCHET_API_KEYS` is set), validates and normalises the request (`openai_compat.py`), and checks the key's daily quota, in that order; it passes the key's name as `client` and the request's generation parameters as `params` (`providers.GenParams`). A request refused by any of these is not logged and costs nothing:
+`Ratchet.handle(messages, task, client, params, meta)` in `router.py`. Before it runs, the gateway checks the body size, the route's access level (`_access`, one dictionary lookup for `/v1/*`, whose level checks its own key; [ADR 0061](adr/0061-endpoint-access-levels.md)), the API key (when `RATCHET_API_KEYS` is set), validates and normalises the request (`openai_compat.py`), and checks the key's daily quota, in that order; it passes the key's name as `client` and the request's generation parameters as `params` (`providers.GenParams`). A request refused by any of these is not logged and costs nothing:
 
 ```mermaid
 sequenceDiagram

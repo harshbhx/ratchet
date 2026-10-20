@@ -89,6 +89,9 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "api_key_daily_requests": 0,
         "bom_signing_key": "",
         "mock_warmup_days": 0,
+        # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
+        "allow_unauthenticated": True,
+        "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
 
