@@ -2,8 +2,11 @@
 `gateway.chat` are rewritten.
 
 - Gateway: `/v1/models`, task selection (the header wins over `metadata`), request validation, `/ratchet/bom`, the
-  `/ratchet/stats` keys the dashboard reads (tests/fixtures/stats_keys.json: add keys, never remove them) and the demo
-  controls refusing live mode.
+  `/ratchet/stats` keys the dashboard reads (tests/fixtures/stats_keys.json: add keys, never remove them), the
+  `/ratchet/cost` keys its Economics panel reads (tests/fixtures/cost_keys.json, the same rule), the task API keys its
+  Task registry panel reads (tests/fixtures/tasks_keys.json, the same rule), the event grammar its Resilience panel
+  parses (read from the panel's own source), the admin key staying in the page's memory, and the demo controls
+  refusing live mode.
 - Cascade: one student call per request with the production sampling parameters, the confidence formula, the threshold
   boundary, the audit rate, cost accounting to the token, and a consistent ledger under concurrent requests. The
   client's generation parameters as each call receives them (student, serving teacher, audit, arbitration, pinned),
@@ -21,6 +24,8 @@ import hashlib
 import json
 import math
 import re
+import shutil
+import subprocess
 import threading
 from collections import Counter
 from collections.abc import Iterator
@@ -28,10 +33,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import OPEN_TEACHER, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeClock, RecordingProvider, _version
 from fastapi.testclient import TestClient
 
-from ratchet import licenses, tasks
+from ratchet import compare, licenses, tasks, taskspec
 from ratchet.confidence import score
 from ratchet.config import DEFAULT_PRICES, Settings
 from ratchet.ledger import Ledger, example_hash
@@ -40,6 +45,9 @@ from ratchet.release import wilson
 from ratchet.router import ROUTES, USAGE_PARTS, Ratchet, RequestMeta, fingerprint
 
 STATS_KEYS = Path(__file__).resolve().parent / "fixtures" / "stats_keys.json"
+COST_KEYS = Path(__file__).resolve().parent / "fixtures" / "cost_keys.json"
+TASKS_KEYS = Path(__file__).resolve().parent / "fixtures" / "tasks_keys.json"
+DASHBOARD = Path(__file__).resolve().parents[1] / "web" / "src" / "pages" / "dashboard"
 CHAT = "/v1/chat/completions"
 KEY = "contract-test-key-0123456789abcdef"
 TRIAGE = "ticket-triage"
@@ -321,6 +329,15 @@ def _spec_paths(spec: dict[str, Any], prefix: str = "") -> Iterator[str]:
             yield from _spec_paths(sub, path)
 
 
+def _spec_types(spec: dict[str, Any], prefix: str = "") -> Iterator[tuple[str, str]]:
+    """Each key path with its type spec; a nested object (or a list's item) is "object"."""
+    for key, sub in spec.items():
+        path = f"{prefix}.{key}" if prefix else key
+        yield path, "object" if isinstance(sub, dict) else sub
+        if isinstance(sub, dict):
+            yield from _spec_types(sub, path)
+
+
 def _spec_errors(spec: dict[str, Any], where: str = "keys") -> list[str]:
     """The fixture itself: leaves name known types, and a list key ([]) or a nested object maps keys to specs."""
     errors = []
@@ -393,6 +410,634 @@ def test_stats_contract(gw_env):
     for task in stats["tasks"]:  # every request has a route (FR-2.11)
         assert sum(task["routes"].values()) == task["requests"] and set(task["routes"]) <= set(ROUTES), task
     assert stats["versions"][0]["bom"] == "unsigned"
+
+
+# Every key cost_keys.json held when the Economics panel shipped, with its type. The fixture may grow, but deleting or
+# retyping any of these fails test_cost_report_contract. New keys go in the fixture only; this snapshot stays as it is.
+COST_MINIMUM: dict[str, str] = dict(
+    item.split("=", 1)
+    for item in """
+window=object window.since_day=number|null window.until_day=number window.now=number model=string headline=object
+headline.model=string headline.total_usd=number headline.savings_usd=number headline.savings_pct=number|null
+prices=object prices.verified=bool prices.label=string prices.student_gpu_usd_per_hour=number prices.student_gpus=number
+prices.student_endpoint_usd_per_hour=number prices.train_gpu_usd_per_hour=number prices.train_gpus=number
+prices.teacher_model=string prices.teacher_usd_per_m_tokens=object prices.teacher_usd_per_m_tokens.input=number
+prices.teacher_usd_per_m_tokens.output=number prices.student_usd_per_m_tokens=object
+prices.student_usd_per_m_tokens.input=number prices.student_usd_per_m_tokens.output=number
+prices.fallback_student_model=string prices.fallback_student_usd_per_m_tokens=object
+prices.fallback_student_usd_per_m_tokens.input=number prices.fallback_student_usd_per_m_tokens.output=number
+requests=number student_served=number teacher_usd=number student_per_token_usd=number hosted_student_usd=number
+student_served_off_endpoint=number baseline_usd=number endpoint_hours=number endpoint_usd=number idle_hours=number
+idle_share=number|null training_hours=number training_usd=number views=object views.per_token=object
+views.per_token.total_usd=number views.per_token.savings_usd=number views.per_token.savings_pct=number|null
+views.gpu_hours=object views.gpu_hours.total_usd=number views.gpu_hours.savings_usd=number
+views.gpu_hours.savings_pct=number|null avoided_teacher_usd_per_student_request=number|null
+break_even_student_requests_per_gpu_hour=number|null hosted_fallback_usd_per_request=number|null
+self_host_beats_hosted_above_requests_per_hour=number|null observed_student_requests_per_endpoint_hour=number|null
+utilization_vs_break_even=number|null recommendation=string explanation=string open_intervals[]=object
+open_intervals[].id=number open_intervals[].kind=string open_intervals[].start_ts=number open_intervals[].hours=number
+warnings=list daily[]=object daily[].day=number daily[].requests=number daily[].student_served=number
+daily[].teacher_usd=number daily[].student_per_token_usd=number daily[].endpoint_hours=number
+daily[].endpoint_usd=number daily[].training_usd=number daily[].baseline_usd=number
+daily[].savings_pct_per_token=number|null daily[].savings_pct_gpu_hours=number|null daily_truncated=bool
+""".split()
+)
+COST_PINNED = {  # the cost settings the report depends on, so the shell cannot move this test
+    "RATCHET_STUDENT_COST_MODEL": "per_token",
+    "RATCHET_STUDENT_GPU_USD_PER_HOUR": "1.55",
+    "RATCHET_STUDENT_GPUS": "1",
+    "RATCHET_TRAIN_GPU_USD_PER_HOUR": "1.55",
+    "RATCHET_TRAIN_GPUS": "1",
+    "RATCHET_MOCK_ENDPOINT_HOURS": "24",
+    "RATCHET_PRICES_VERIFIED": "0",
+}
+
+
+@pytest.mark.req("FR-7.20", "FR-15.3")
+def test_cost_report_contract(gw_env):
+    """GET /ratchet/cost carries every key the dashboard's Economics panel reads, with its type, and the sums the panel
+    shows add up: each view's breakdown to its total, savings to baseline less total, and each day's dollars (which the
+    panel derives, web/src/pages/dashboard/economics-model.ts `dailySavings`) to the report's daily shares."""
+    spec = json.loads(COST_KEYS.read_text(encoding="utf-8"))["keys"]
+    assert _spec_errors(spec) == []
+    held = dict(_spec_types(spec))
+    lost = sorted(set(COST_MINIMUM) - set(held))
+    assert not lost, f"cost_keys.json lost {lost}: add keys, never remove them"
+    retyped = sorted(
+        f"{path}: {kind} -> {held[path]}" for path, kind in COST_MINIMUM.items() if path in held and held[path] != kind
+    )
+    assert not retyped, f"cost_keys.json retyped {retyped}: add keys, never retype them"
+
+    gw = _gateway(gw_env, **COST_PINNED)
+    c = TestClient(gw.app)
+    # A fresh gateway: every key is there, and the report is empty the way the panel's empty state tests for.
+    fresh = c.get("/ratchet/cost").json()
+    assert _contract_errors(spec, fresh, "cost", allow_empty=True) == []
+    assert (fresh["requests"], fresh["endpoint_hours"], fresh["training_hours"], fresh["daily"]) == (0, 0.0, 0.0, [])
+    assert fresh["recommendation"] == "insufficient_data" and fresh["views"]["gpu_hours"]["savings_pct"] is None
+
+    # Two simulated days and nights (endpoint hours, a training job) and a training job left open for 13 hours: now
+    # the open intervals and warnings have items too, and every list item is checked.
+    for _ in range(2):
+        gw.rt.simulate_day(600, "tickets")
+    led = gw.rt.ledger
+    led.compute_start("training_job", 1.55, 1, "cli", ts=led.now() - 13 * 3600)
+    r = c.get("/ratchet/cost").json()
+    assert _contract_errors(spec, r, "cost") == []
+    assert all(isinstance(w, str) for w in r["warnings"]) and any("training_job" in w for w in r["warnings"])
+    assert r["prices"] == {**r["prices"], "verified": False, "label": "unverified list prices"}
+
+    # The panel's breakdown rows add up to each view's total, and savings are the baseline less the total (never clamped).
+    tok, gpu = r["views"]["per_token"], r["views"]["gpu_hours"]
+    assert tok["total_usd"] == pytest.approx(r["teacher_usd"] + r["student_per_token_usd"])
+    assert gpu["total_usd"] == pytest.approx(r["teacher_usd"] + r["endpoint_usd"] + r["training_usd"] + r["hosted_student_usd"])
+    for view in (tok, gpu):
+        assert view["savings_usd"] == pytest.approx(r["baseline_usd"] - view["total_usd"])
+        assert view["savings_pct"] == pytest.approx(view["savings_usd"] / r["baseline_usd"])
+    assert gpu["savings_usd"] < 0 < tok["savings_usd"]  # simulation: a 24 h endpoint at 600 requests a day does not pay
+
+    # Each day in dollars as the panel derives them, against the report's own shares.
+    assert r["daily"] and [d["day"] for d in r["daily"]] == sorted(d["day"] for d in r["daily"])
+    for d in r["daily"]:
+        per_token = d["baseline_usd"] - (d["teacher_usd"] + d["student_per_token_usd"])
+        hosted = d["student_per_token_usd"] if d["endpoint_hours"] <= 0 else 0.0
+        by_gpu = d["baseline_usd"] - (d["teacher_usd"] + d["endpoint_usd"] + d["training_usd"] + hosted)
+        if d["baseline_usd"] > 0:
+            assert per_token == pytest.approx(d["baseline_usd"] * d["savings_pct_per_token"]), d
+            assert by_gpu == pytest.approx(d["baseline_usd"] * d["savings_pct_gpu_hours"]), d
+        else:
+            assert d["savings_pct_per_token"] is d["savings_pct_gpu_hours"] is None, d
+    assert sum(d["endpoint_hours"] for d in r["daily"]) == pytest.approx(r["endpoint_hours"])
+
+    # The summary the panel falls back to (/ratchet/stats `cost`) is the same report; the open job keeps counting, so
+    # its GPU-hour share moves a little between the two calls.
+    summary = c.get("/ratchet/stats").json()["cost"]
+    assert (summary["model"], summary["recommendation"]) == (r["model"], r["recommendation"])
+    assert summary["endpoint_hours"] == pytest.approx(r["endpoint_hours"])
+    assert summary["gpu_hours_savings_pct"] == pytest.approx(gpu["savings_pct"], rel=1e-3)
+    assert summary["break_even_student_requests_per_gpu_hour"] == pytest.approx(r["break_even_student_requests_per_gpu_hour"])
+
+
+WEB = Path(__file__).resolve().parents[1] / "web"
+NODE = shutil.which("node")
+
+
+def _node_strips_types() -> bool:
+    """Node 22.6 added --experimental-strip-types, which the web tests use to import the app's TypeScript."""
+    if NODE is None:
+        return False
+    out = subprocess.run([NODE, "--version"], capture_output=True, text=True, check=False).stdout.strip()
+    m = re.fullmatch(r"v(\d+)\.(\d+)\.\d+", out)
+    return bool(m) and (int(m[1]), int(m[2])) >= (22, 6)
+
+
+@pytest.mark.req("FR-7.20")
+@pytest.mark.skipif(not _node_strips_types(), reason="needs Node 22.6 or later (the CI web job runs npm test)")
+@pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")
+def test_economics_panel_helpers():
+    """The Economics panel's pure helpers under Node's test runner (web/tests/economics-model.test.mjs, `npm test`):
+    every gridline label on the break-even meter and the daily chart prints the value it sits at (a 2.5 step once
+    printed 3), both ends of the meter carry a tick and the log caption names the real ratio, the empty state needs a
+    report that says it is empty, and a truncated daily list does not give the window's first day."""
+    r = subprocess.run(
+        [NODE, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/economics-model.test.mjs"],
+        cwd=WEB,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert re.search(r"^# fail 0$", r.stdout, re.M) and not re.search(r"^# pass 0$", r.stdout, re.M), r.stdout[-2000:]
+
+
+# The keys the Task registry panel started with: tasks_keys.json may grow, but it must keep these.
+TASKS_MINIMUM = [
+    "list.unknown_tasks",
+    "list.max_tasks",
+    "list.tasks[].name",
+    "list.tasks[].source",
+    "list.tasks[].format",
+    "list.tasks[].fields",
+    "list.tasks[].pinned",
+    "list.tasks[].store",
+    "list.tasks[].spec_hash",
+    "list.tasks[].recalibrating",
+    "list.unregistered[].name",
+    "detail.updated_by",
+    "validate.valid",
+    "validate.errors",
+    "saved.task",
+    "refused.errors",
+    "deleted.examples_kept",
+    "field.type",
+]
+INVOICE = {
+    "description": "Vendor, total and lines from an invoice",
+    "fields": {
+        "vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]},
+        "total": {"type": "number", "abs_tol": 0.01},
+        "currency": {"type": "label", "values": ["USD", "EUR"], "aliases": {"$": "USD"}},
+        "lines": {
+            "type": "records",
+            "key": ["sku"],
+            "required": False,
+            "fields": {"sku": {"type": "label"}, "qty": {"type": "number"}},
+        },
+        "tags": {"type": "set", "item": {"type": "text", "mode": "token_set"}, "split": ","},
+    },
+    "policy": {"samples": 5},
+}
+
+
+def _ts_literal(path: Path, name: str) -> str:
+    """The text of `export const <name> = ...;` in a dashboard source file (one line)."""
+    m = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", path.read_text(encoding="utf-8"), re.M)
+    assert m, f"{path.name} has no one-line `export const {name} = ...;`"
+    return m.group(1)
+
+
+def _ts_regex(path: Path, name: str) -> re.Pattern[str]:
+    """A `/.../` regex literal from the dashboard's source, compiled by Python's `re`: the panel's grammar must mean
+    the same in both (no flags, no JavaScript-only syntax)."""
+    m = re.fullmatch(r"/(.+)/", _ts_literal(path, name))
+    assert m, f"{name} in {path.name} is not a regex literal without flags"
+    return re.compile(m.group(1))
+
+
+def _field_docs(fields: dict[str, Any], where: str) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Every field spec of a task document, records' sub-fields and an object `item` included."""
+    for path, doc in fields.items():
+        yield f"{where}.{path}", doc
+        if isinstance(doc.get("fields"), dict):
+            yield from _field_docs(doc["fields"], f"{where}.{path}")
+        if isinstance(doc.get("item"), dict):
+            yield f"{where}.{path}.item", doc["item"]
+
+
+@pytest.mark.req("FR-7.21", "FR-2.15")
+def test_task_registry_contract(gw_env):
+    """The task API carries every key the dashboard's Task registry panel reads (tests/fixtures/tasks_keys.json), every
+    field spec names a comparator type the panel can label, and the panel's two writes work as it sends them: "Edit
+    spec" puts back the spec keys it copies (web/src/pages/dashboard/registry-model.ts `SPEC_KEYS`) unchanged, and
+    "New task based on this" (`extendDraft`) registers a copy of a built-in task."""
+    sections = json.loads(TASKS_KEYS.read_text(encoding="utf-8"))
+    for name in ("list", "detail", "validate", "saved", "refused", "deleted", "field"):
+        assert _spec_errors(sections[name], name) == []
+    paths = {f"{name}.{p}" for name in sections if name != "about" for p in _spec_paths(sections[name])}
+    lost = sorted(set(TASKS_MINIMUM) - paths)
+    assert not lost, f"tasks_keys.json lost {lost}: add keys, never remove them"
+
+    # The keys the editor copies are taskspec's SPEC_KEYS without the name: what PUT takes back.
+    ts_keys = json.loads(_ts_literal(DASHBOARD / "registry-model.ts", "SPEC_KEYS").removesuffix(" as const"))
+    assert ts_keys == [k for k in taskspec.SPEC_KEYS if k != "name"]
+
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    known_types = set(compare.TYPES) - compare.RESERVED_TYPES
+
+    def check_fields(task: dict[str, Any]) -> None:
+        for where, doc in _field_docs(task["fields"], task["name"]):
+            assert _contract_errors(sections["field"], doc, where) == []
+            assert doc["type"] in known_types, (where, doc)
+            assert not isinstance(doc.get("item"), str) or doc["item"] in known_types, (where, doc)
+
+    # A fresh gateway: the built-in tasks, nothing unregistered yet.
+    fresh = c.get("/ratchet/tasks").json()
+    assert _contract_errors(sections["list"], fresh, "tasks", allow_empty=True) == []
+    assert {t["source"] for t in fresh["tasks"]} == {"builtin"} and fresh["unregistered"] == []
+    for t in fresh["tasks"]:
+        check_fields(t)
+
+    # A request naming a task that is not registered (RATCHET_UNKNOWN_TASKS=distill) shows up as unregistered.
+    msgs = gw.rt.stream.sample(gw.rt.ledger.day).messages()
+    assert c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "invoice-extrct"}).status_code == 200
+
+    # The editor's dry run, both ways, then the save: a refused spec lists its errors (the panel shows each).
+    bad = {**INVOICE, "name": "invoice-extract", "fields": {"total": {"type": "number", "abs_tol": -1}}}
+    v_bad = c.post("/ratchet/tasks/validate", json=bad).json()
+    assert _contract_errors(sections["validate"], v_bad, "validate", allow_empty=True) == []
+    assert v_bad["valid"] is False and v_bad["errors"] and v_bad["tasks"] == []
+    v_ok = c.post("/ratchet/tasks/validate", json={**INVOICE, "name": "invoice-extract"}).json()
+    assert _contract_errors(sections["validate"], v_ok, "validate") == []
+    assert v_ok["valid"] is True and v_ok["tasks"][0]["registered"] is None
+    refused = c.put("/ratchet/tasks/invoice-extract", json=bad)
+    assert refused.status_code == 422 and _contract_errors(sections["refused"], refused.json(), "refused") == []
+    saved = c.put("/ratchet/tasks/invoice-extract", json=INVOICE)
+    assert saved.status_code == 200, saved.text
+    assert _contract_errors(sections["saved"], saved.json(), "saved") == []
+    assert saved.json()["created"] is True
+    # The saved entry is a list entry: the drawer reads the times and the admin's name from GET /ratchet/tasks/{name}.
+    missing = _contract_errors(sections["detail"], saved.json()["task"], "saved.task")
+    assert missing == [f"saved.task.{k}: missing" for k in ("created_ts", "updated_ts", "updated_by")]
+
+    # The drawer's read of one task, and the list with every section filled.
+    detail = c.get("/ratchet/tasks/invoice-extract").json()
+    assert _contract_errors(sections["detail"], detail, "detail") == []
+    assert detail["source"] == "api" and detail["updated_by"] == "mock-admin"
+    listed = c.get("/ratchet/tasks").json()
+    assert _contract_errors(sections["list"], listed, "tasks") == []
+    assert [u["name"] for u in listed["unregistered"]] == ["invoice-extrct"]
+    for t in listed["tasks"]:
+        check_fields(t)
+    assert c.get("/ratchet/tasks/no-such-task").status_code == 404  # the drawer says it is no longer registered
+
+    # "Edit spec" then "Save" with nothing changed: the copied keys are the stored spec exactly.
+    put_back = c.put("/ratchet/tasks/invoice-extract", json={k: detail[k] for k in ts_keys}).json()
+    assert (put_back["changed"], put_back["created"], put_back["spec_hash"]) == (False, False, detail["spec_hash"])
+
+    # "New task based on this" on a built-in task: an API task with the base's fields and its own description.
+    base = next(t for t in listed["tasks"] if t["name"] == TRIAGE)
+    copy = c.put(f"/ratchet/tasks/{TRIAGE}-custom", json={"extends": TRIAGE, "description": "custom"})
+    assert copy.status_code == 200, copy.text
+    assert copy.json()["task"]["fields"] == base["fields"] and copy.json()["spec_hash"] == base["spec_hash"]
+    assert c.put(f"/ratchet/tasks/{TRIAGE}", json={"description": "x"}).status_code == 403  # built in: not editable
+
+    deleted = c.delete("/ratchet/tasks/invoice-extract").json()
+    assert _contract_errors(sections["deleted"], deleted, "deleted") == []
+    assert deleted["deleted"] == "invoice-extract" and deleted["spec_hash"] == detail["spec_hash"]
+    kinds = [e["kind"] for e in c.get("/ratchet/stats").json()["events"]]
+    assert {"task_registered", "task_deleted"} <= set(kinds)  # the release log labels both
+
+
+def _derived_states(events: list[dict[str, Any]], circuit: re.Pattern[str]) -> dict[str, str]:
+    """What the Resilience panel shows (resilience-model.ts `breakerViews`): each breaker's latest reported state."""
+    out: dict[str, str] = {}
+    for e in events:
+        if e["kind"] == "circuit":
+            m = circuit.fullmatch(e["detail"])
+            assert m, f"the panel cannot read the circuit event {e['detail']!r}"
+            out[m.group(1)] = m.group(3)
+    return out
+
+
+@pytest.mark.req("FR-7.22", "FR-2.11", "FR-2.12", "INV-19")
+def test_resilience_panel_contract(gw_env, monkeypatch):
+    """The dashboard's Resilience panel reads breaker states from `circuit` events, the outage drill from its `fault`
+    event and a failed probe's wait from its reason, with the regexes in its own source (model.ts `CIRCUIT_RE`,
+    resilience-model.ts `OUTAGE_RE` and `WAIT_RE`). Through the outage drill and a teacher outage that reaches the
+    longest wait, every event the gateway writes matches them, the state they give is the breaker's real state at each
+    step, and the waits are the real ones. Fallbacks are counted from `routes`, as the panel does."""
+    circuit = _ts_regex(DASHBOARD / "model.ts", "CIRCUIT_RE")
+    outage_re = _ts_regex(DASHBOARD / "resilience-model.ts", "OUTAGE_RE")
+    wait_re = _ts_regex(DASHBOARD / "resilience-model.ts", "WAIT_RE")
+
+    gw = _gateway(gw_env)
+    clock = FakeClock()
+    rt = gw.Runtime(
+        Settings(mode="mock", mock_warmup_days=0, student_breaker_failures=5, student_breaker_cooldown_s=30), clock=clock
+    )
+    monkeypatch.setattr(gw, "rt", rt)
+    rt.fleet.train([], "base", "student-v1")
+    _version(rt.ledger, "live", {"threshold": 0.0})
+    c = TestClient(gw.app)
+
+    def ask() -> None:
+        assert c.post(CHAT, json={"messages": rt.stream.sample(rt.ledger.day).messages()}).status_code == 200
+
+    def real(name: str) -> str:
+        return rt.ratchet.health()["breakers"][name]["state"]
+
+    def shown(name: str) -> str | None:
+        return _derived_states(c.get("/ratchet/stats").json()["events"], circuit).get(name)
+
+    ask()
+    assert shown("student") is None and real("student") == "closed"  # "No recent change": it never moved
+    r = c.post("/ratchet/demo/student-outage?seconds=60").json()
+    fault = [e for e in rt.ledger.events() if e["kind"] == "fault"][-1]
+    m = outage_re.match(fault["detail"])
+    assert m and int(m.group(1)) == r["seconds"] == 60
+    assert abs(fault["ts"] + r["seconds"] - r["until"]) < 1  # the panel's countdown: the event's time plus the length
+
+    for _ in range(6):
+        ask()
+    assert shown("student") == real("student") == "open"
+    clock.advance(30)
+    ask()  # the probe fails: open again, for 60 s
+    assert shown("student") == real("student") == "open"
+    clock.advance(61)  # the outage is over and the wait has passed
+    ask()  # the probe succeeds
+    assert shown("student") == real("student") == "closed"
+
+    # The teacher's breaker up to the longest wait (300 s), whose repeats carry a suffix, then closed again.
+    b = rt.ratchet.teacher_breaker
+    for _ in range(5):
+        assert b.allow()
+        b.record(False, "UpstreamError 503")
+    assert shown("teacher") == real("teacher") == "open"
+    waits = []
+    for _ in range(5):  # 30 s, 60, 120, 240, then the 1st probe at the longest wait (300 s)
+        clock.advance(b.snapshot()["open_s"])
+        assert b.allow()
+        assert shown("teacher") == real("teacher") == "half_open"
+        b.record(False, "UpstreamError 503")
+        waits.append(b.snapshot()["open_s"])
+        assert shown("teacher") == real("teacher") == "open"
+    # The 2nd probe at the longest wait is not logged (REPORTED_REPEATS), so the panel shows "open" one probe behind,
+    # as its footnote says; the close that follows is always logged.
+    clock.advance(b.snapshot()["open_s"])
+    assert b.allow()
+    assert (shown("teacher"), real("teacher")) == ("open", "half_open")
+    b.record(True)
+    assert shown("teacher") == real("teacher") == "closed"
+
+    events = rt.ledger.events()
+    details = [e["detail"] for e in events if e["kind"] == "circuit"]
+    assert all(circuit.fullmatch(d) for d in details), details
+    reported = [float(m.group(1)) for d in details if (m := wait_re.match(circuit.fullmatch(d).group(4) or ""))]
+    assert reported == [60.0, *waits]  # every failed probe's wait, as the breaker set it
+    assert waits[-2:] == [300.0, 300.0] and any("at the longest wait" in d for d in details)
+
+    # What the panel counts as fallbacks: the routes of the requests above.
+    stats = c.get("/ratchet/stats").json()
+    routes = Counter()
+    for t in stats["tasks"]:
+        routes.update(t["routes"])
+    assert routes["student_error"] == 6 and routes["student_breaker"] == 1 and routes["student"] == 2
+    assert sum(routes.values()) == sum(t["requests"] for t in stats["tasks"])
+
+
+@pytest.mark.req("FR-7.21", "INV-13", "INV-18")
+def test_dashboard_admin_key_stays_in_memory():
+    """An admin key typed into the dashboard stays in the page's memory (invariant 18): no file
+    under web/src writes it to storage, a cookie or a URL, the only browser storage the app uses is the theme, and the
+    client sends the key only as an Authorization header."""
+    src = Path(__file__).resolve().parents[1] / "web" / "src"
+    storage = re.compile(r"localStorage|sessionStorage|indexedDB|document\.cookie|caches\.open")
+    users = sorted(str(p.relative_to(src)) for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
+    assert users == ["lib/hooks.ts"], users  # the theme toggle
+    hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
+    assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
+
+    holders = [p for p in src.rglob("*.ts*") if "adminKey" in p.read_text(encoding="utf-8")]
+    assert holders, "no file holds the admin key: the scan below would prove nothing"
+    url = re.compile(r"history\.(push|replace)State|location\.(hash|search|href)\s*=|URLSearchParams")
+    for p in holders:
+        assert not url.search(p.read_text(encoding="utf-8")), f"{p.name} may put the admin key in a URL"
+    api_ts = (src / "lib" / "api.ts").read_text(encoding="utf-8")
+    assert "authorization: `Bearer ${k}`" in api_ts
+    assert api_ts.count("adminKey") == api_ts.count("adminHeaders(adminKey)") * 2, "the admin key goes anywhere but the header"
+
+
+# ---------- web: the story page ----------
+SIM_TS = WEB / "src" / "lib" / "sim.ts"
+STORY = WEB / "src" / "pages" / "landing"
+REPO = WEB.parent
+# web/src/lib/sim.ts names -> the reference run's keys (`sim.simulate.run`: `days` and `totals`).
+SIM_DAY_KEYS = {
+    "student": "student_share",
+    "escalated": "escalation_rate",
+    "audit": "audit_agreement",
+    "costPer1k": "cost_per_1k",
+    "baselinePer1k": "baseline_per_1k",
+    "saved": "savings_pct",
+}
+SIM_TOTAL_KEYS = {"requests": "requests", "cost": "cost_usd", "baseline": "baseline_usd", "saved": "savings_pct"}
+
+
+def _ts_json(path: Path, name: str) -> Any:
+    """`export const <name>: T = {...};` up to its `// end <name>` line, read as strict JSON with every number kept as
+    ("int" | "float", its source text), so a check can hold it to the precision it is written with."""
+    src = path.read_text(encoding="utf-8")
+    m = re.search(rf"^export const {name}(?:: [^=]+)? = (\{{.*?^\}});\n// end {name}$", src, re.M | re.S)
+    assert m, f"{path.name} has no `export const {name} = {{...}};` followed by `// end {name}`"
+    return json.loads(m.group(1), parse_float=lambda s: ("float", s), parse_int=lambda s: ("int", s))
+
+
+def _number_off(literal: tuple[str, str], have: Any) -> bool:
+    """True unless `have` rounds to the literal at the literal's own precision (an int literal: the nearest whole)."""
+    kind, text = literal
+    if have is None or isinstance(have, bool) or not isinstance(have, (int, float)):
+        return True
+    if kind == "int" and isinstance(have, int):
+        return have != int(text)
+    decimals = len(text.split(".")[1]) if kind == "float" and "." in text and "e" not in text.lower() else 0
+    return abs(have - float(text)) > 0.5 * 10**-decimals + 1e-9 * max(1.0, abs(have))
+
+
+def _page_vs_run(page: Any, run: Any, where: str = "") -> list[str]:
+    """Every leaf the page holds that the run does not have, or has with another value."""
+    if isinstance(page, dict):
+        if not isinstance(run, dict):
+            return [f"{where}: the run has {run!r}, not an object"]
+        out = []
+        for k, v in page.items():
+            path = f"{where}.{k}" if where else k
+            out += _page_vs_run(v, run[k], path) if k in run else [f"{path}: not in the run's report"]
+        return out
+    if isinstance(page, tuple):
+        return [f"{where}: the page says {page[1]}, the run has {run!r}"] if _number_off(page, run) else []
+    return [] if page == run else [f"{where}: the page says {page!r}, the run has {run!r}"]
+
+
+def _ts_numbers(text: str) -> dict[str, tuple[str, str]]:
+    """`key: 0.44` pairs of a one-line TypeScript object, numbers as ("float" | "int", text); null as ("null", "null")."""
+    pairs = re.findall(r"(\w+): (null|-?\d+(?:\.\d+)?)\b", text)
+    return {k: ("null", v) if v == "null" else ("float" if "." in v else "int", v) for k, v in pairs}
+
+
+@pytest.mark.req("FR-7.23", "NFR-11", "INV-20")
+def test_story_simulation_numbers_match_reference_run(reference_run, sim_reference):
+    """Every simulation number the story page prints (web/src/lib/sim.ts) is the reference run's, at the precision it
+    is written with: the honest bill's cost report (`SIM_COST_REPORT`, the student priced per token and by GPU-hours,
+    the break-even, the crossover, the recommendation and its explanation word for word), "Watch it learn"'s days and
+    totals, the command the page says reproduces them, and the GPU-hour line that command prints. A change to the
+    simulator or the cost report that moves any of them fails here instead of leaving the page stale."""
+    import os
+    import shlex
+
+    from sim.simulate import parser, table
+
+    report = _ts_json(SIM_TS, "SIM_COST_REPORT")
+    assert report["recommendation"] == "hosted_fallback" and report["views"]["gpu_hours"]["savings_usd"][1].startswith("-")
+    assert _page_vs_run(report, reference_run["cost"]) == []
+
+    src = SIM_TS.read_text(encoding="utf-8")
+    days = [_ts_numbers(line) for line in src.splitlines() if line.strip().startswith("{ day:")]
+    assert [int(d["day"][1]) for d in days] == [d["day"] for d in reference_run["days"]]
+    bad = [
+        f"day {d['day'][1]} {k}: page {d[k][1]}, run {run[want]!r}"
+        for d, run in zip(days, reference_run["days"], strict=True)
+        for k, want in SIM_DAY_KEYS.items()
+        if ((run[want] is not None) if d[k][0] == "null" else _number_off(d[k], run[want]))
+    ]
+    assert bad == []
+    totals = _ts_numbers(_ts_literal(SIM_TS, "SIM_TOTAL"))
+    assert sorted(totals) == sorted(SIM_TOTAL_KEYS)
+    assert [k for k, want in SIM_TOTAL_KEYS.items() if _number_off(totals[k], reference_run["totals"][want])] == []
+
+    # The command the page prints reproduces exactly the reference run's inputs.
+    argv = shlex.split(json.loads(_ts_literal(SIM_TS, "SIM_COMMAND")))
+    assert argv[:3] == ["python", "-m", "sim.simulate"]
+    assert vars(parser().parse_args([*argv[3:], "--out", os.devnull])) == vars(sim_reference.reference_args())
+    # The line it prints is the one web/tests/story-model.test.mjs pins `simulateLine` to.
+    line = next(x for x in table(reference_run).splitlines() if x.startswith("by GPU-hours"))
+    assert f'"{line}"' in (WEB / "tests" / "story-model.test.mjs").read_text(encoding="utf-8"), line
+
+    # The four answers the chapter lists are the report's, in its order, and "more than half" idle is its threshold.
+    from ratchet.cost import IDLE_SHARE, RECOMMENDATIONS
+
+    model = (STORY / "bill-model.ts").read_text(encoding="utf-8")
+    listed = re.findall(r'^  \{ key: "(\w+)", when: "([^"]+)" \},$', model, re.M)
+    assert tuple(k for k, _ in listed) == RECOMMENDATIONS
+    assert IDLE_SHARE == 0.5 and "idle more than half" in dict(listed)["scale_to_zero"]
+
+
+@pytest.mark.req("FR-7.23", "FR-7.24")
+@pytest.mark.skipif(not _node_strips_types(), reason="needs Node 22.6 or later (the CI web job runs npm test)")
+@pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")
+def test_story_page_helpers():
+    """The story page's pure helpers under Node's test runner (web/tests/story-model.test.mjs, `npm test`): the honest
+    bill renders the reference report and a live one through the same code, keeps a missing field unknown rather than
+    zero, prints the break-even and crossover formulas with numbers that satisfy them, and rebuilds the simulator's
+    GPU-hour line exactly; the trust chapter's redaction list and event text read correctly."""
+    r = subprocess.run(
+        [NODE, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/story-model.test.mjs"],
+        cwd=WEB,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert re.search(r"^# fail 0$", r.stdout, re.M) and not re.search(r"^# pass 0$", r.stdout, re.M), r.stdout[-2000:]
+
+
+def _invariants() -> dict[int, str]:
+    """CLAUDE.md's numbered invariants: number -> its text."""
+    text = (REPO / "CLAUDE.md").read_text(encoding="utf-8").split("## Invariants", 1)[1].split("\n## ", 1)[0]
+    return {int(n): body for n, body in re.findall(r"^(\d+)\. (.+)$", text, re.M)}
+
+
+@pytest.mark.req("FR-7.24", "INV-14", "INV-21")
+def test_story_trust_claims_match_code(gw_env, tmp_path, capsys, monkeypatch):
+    """The story's "Built to be checked" chapter claims only what the code does (web/src/pages/landing/trust-model.ts and
+    sections/checked.tsx): the files it names exist; it lists exactly the redaction rules; its gate numbers are
+    `ReleasePolicy`'s defaults; the invariants it cites say what it says; the routes it names exist; its BOM commands
+    work as printed (a signed adapter BOM fetched from a mock gateway verifies offline with the published key and prints
+    the line the page shows, and an edited one prints the failure it shows); CI runs the traceability command it prints;
+    its link lands on the dashboard's redactor; and it mentions v0.5 work only where the code and the PRD have it."""
+    from ratchet import bom, redact
+    from ratchet.release import ReleasePolicy
+
+    model = STORY / "trust-model.ts"
+    chapter = (STORY / "sections" / "checked.tsx").read_text(encoding="utf-8")
+    files = json.loads(_ts_literal(model, "TRUST_FILES"))
+    assert files and [f for f in files if not (REPO / f).is_file()] == []
+    assert json.loads(_ts_literal(model, "TRUST_REDACTS")) == [label for label, _, _ in redact.PATTERNS]
+    # "With redaction on, as it is by default": the setting's default, with nothing in the environment.
+    monkeypatch.delenv("RATCHET_REDACT_PII", raising=False)
+    assert "as it is by default" in chapter and Settings().redact_pii is True
+    gate = json.loads(_ts_literal(model, "TRUST_GATE"))
+    assert set(gate) == {"min_precision", "tolerance", "min_audits", "live_floor"}
+    assert gate == {k: getattr(ReleasePolicy(), k) for k in gate}
+
+    # Each invariant the chapter cites is the one it means.
+    inv = _invariants()
+    cited = {int(n) for group in re.findall(r'"invariants? ([\d and,]+)"', chapter) for n in re.findall(r"\d+", group)}
+    meant = {
+        4: "Champion vs challenger",
+        6: "Precision is measured on held-out data",
+        12: "Redact before storing",
+        14: "A BOM is written once",
+    }
+    assert cited == set(meant)
+    assert all(meant[n] in inv[n] for n in cited), {n: inv[n][:60] for n in cited}
+
+    # Every route the chapter names is served (path parameters compared by position).
+    gw = gw_env(RATCHET_BOM_SIGNING_KEY=bom.keygen()[0])
+    shape = {(m, re.sub(r"\{[^}]+\}", "{}", r.path)) for r in gw.app.routes if hasattr(r, "methods") for m in r.methods}
+    named = re.findall(r'"(GET|POST) (/[^"]+)"', chapter)
+    assert named and [n for n in named if (n[0], re.sub(r"\{[^}]+\}", "{}", n[1])) not in shape] == []
+    assert ("GET", "/dashboard") in shape and 'to="/dashboard#redactor"' in chapter
+    assert 'id="redactor"' in (DASHBOARD / "trust.tsx").read_text(encoding="utf-8")
+
+    # The BOM commands, as printed: fetch an adapter's BOM, then verify it offline with the published public key.
+    c = TestClient(gw.app)
+    gw.rt.simulate_day(600, "tickets")
+    fetch = json.loads(_ts_literal(model, "BOM_FETCH"))
+    m = re.fullmatch(r"curl -s localhost:\d+(/\S+) > (\S+)", fetch)
+    assert m, fetch
+    doc = c.get(m[1])
+    assert doc.status_code == 200, doc.text
+    public = c.get("/ratchet/bom/public-key").json()
+    path = tmp_path / m[2]
+    path.write_text(doc.text, encoding="utf-8")
+    argv = json.loads(_ts_literal(model, "BOM_VERIFY")).replace("<published key>", public["public_key"]).split()
+    assert argv[:3] == ["python", "-m", "ratchet.bom"] and argv[4] == m[2]
+    argv[4] = str(path)
+    capsys.readouterr()
+    assert bom.main(argv[3:]) == 0
+    ok = json.loads(_ts_literal(model, "BOM_OK")).replace("<key id>", public["key_id"])
+    assert capsys.readouterr().out == ok + "\n"
+    # The certificate the chapter says each signed BOM carries is there, and `python -m ratchet.stats check` recomputes it.
+    if "ratchet.stats check" in chapter:
+        from ratchet import stats
+
+        assert doc.json()["manifest"]["eval"]["certificate"]["method"] == "clopper-pearson"
+        assert stats.main(["check", str(path), "--public-key", public["public_key"]]) == 0
+        capsys.readouterr()
+    edited = doc.json()
+    edited["manifest"]["training"]["examples"] += 1
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    assert bom.main(argv[3:]) == 1
+    assert capsys.readouterr().out == json.loads(_ts_literal(model, "BOM_TAMPERED")) + "\n"
+
+    # CI runs the traceability check the chapter prints, and the gate tests it points to exist.
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f"run: {json.loads(_ts_literal(model, 'REQTRACE_CHECK'))}\n" in ci
+    gate_tests = json.loads(_ts_literal(model, "GATE_TESTS")).split()
+    assert gate_tests[:4] == ["python", "-m", "pytest", "-q"] and (REPO / gate_tests[4]).is_file()
+
+    # "In v0.5" only for work the PRD plans for v0.5 and whose foundations are in the code; no evidence tour before
+    # ratchet/tour.py exists.
+    prd = (REPO / "docs" / "PRD.md").read_text(encoding="utf-8")
+    planned = (("FR-16.3", "Certified precision"), ("FR-16.4", "Committed training sets"), ("FR-15.5", "savings receipts"))
+    for rid, words in planned:
+        assert re.search(rf"^\| {re.escape(rid)} \| [^|]*{words}", prd, re.M), rid
+    foundations = ("ratchet/stats.py", "ratchet/merkle.py", "tests/test_stats.py", "tests/test_provenance.py")
+    assert all((REPO / f).is_file() for f in foundations)
+    assert "tour" not in chapter.lower() or (REPO / "ratchet" / "tour.py").is_file()
 
 
 # ---------- gateway: mock-only controls ----------

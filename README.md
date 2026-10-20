@@ -17,7 +17,7 @@ The gateway serves a React web app ([web/](web/CLAUDE.md)):
 
 - `/`: the story. How Ratchet works, why it is license-clean and why releases are safe, with an interactive replay of the reference simulation.
 - `/scout`: the Scout multi-agent demo (below). Watch each call get answered by your model or by Ultra.
-- `/dashboard`: savings, the release pipeline, versions, per-task routing, trust and privacy, release log and provenance, with demo controls in mock mode.
+- `/dashboard`: savings, the release pipeline, economics (savings per token and by GPU-hours paid, break-even and a self-host recommendation), versions, per-task routing, the task registry (each task's comparators and spec, API tasks editable with an admin key), resilience (circuit breakers, fallbacks, recent failures and an outage drill), trust and privacy, release log and provenance, with demo controls in mock mode.
 
 The original no-build pages stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
 
@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 759 tests
+pytest -q                                                                # 767 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.

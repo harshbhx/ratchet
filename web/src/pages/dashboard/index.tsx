@@ -9,19 +9,22 @@ import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
+import { EconomicsPanel, hasEconomics } from "./economics";
 import { KpiSkeleton, Kpis } from "./kpis";
 import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
 import { Pipeline } from "./pipeline";
 import { Provenance } from "./provenance";
+import { TaskRegistryPanel } from "./registry";
 import { ReleaseLog } from "./release-log";
+import { ResiliencePanel } from "./resilience";
 import { TasksTable, VersionsTable } from "./tables";
 import { TrustPanel } from "./trust";
 import { DetailText, KindChip } from "./ui";
-import { useDashboardStats, useNow } from "./use-dashboard";
+import { useCostReport, useDashboardStats, useNow, useTaskRegistry } from "./use-dashboard";
 
 const POLL_MS = 15000;
 const DAY_REQUESTS = 1500;
-const NOTABLE = new Set(["rollback", "alert", "live", "rejected", "canary", "shadow", "student_error"]);
+const NOTABLE = new Set(["rollback", "alert", "live", "rejected", "canary", "shadow", "student_error", "circuit", "degraded", "fallback_teacher"]);
 
 function ago(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -216,6 +219,10 @@ function Reveal({ children, className, delay = 0 }: { children: ReactNode; class
 
 export default function DashboardPage() {
   const { stats, error, updatedAt, loading, refreshing, refresh } = useDashboardStats(POLL_MS);
+  const cost = useCostReport(updatedAt);
+  const registry = useTaskRegistry(updatedAt);
+  // The gateway's clock minus this browser's, measured when this viewer starts an outage drill (for its countdown).
+  const [skewMs, setSkewMs] = useState(0);
   const [workload, setWorkload] = useState<Workload>("mixed");
   const [busy, setBusy] = useState<Busy>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -241,7 +248,7 @@ export default function DashboardPage() {
       const after = await refresh();
       const added = markFresh(before, after);
       const notable = added.filter((e) => NOTABLE.has(e.kind) && e.kind !== "trained");
-      const bad = added.some((e) => e.kind === "rollback" || e.kind === "alert" || e.kind === "student_error");
+      const bad = added.some((e) => e.kind === "rollback" || e.kind === "alert" || e.kind === "student_error" || e.kind === "circuit");
       const wl = WORKLOADS.find((w) => w.id === r.workload)?.label ?? r.workload;
       say({
         tone: bad ? "warn" : r.night.admitted || added.some((e) => e.kind === "live") ? "good" : "info",
@@ -292,6 +299,28 @@ export default function DashboardPage() {
     }
   };
 
+  const studentOutage = async (seconds: number): Promise<Omit<Notice, "id"> | null> => {
+    const before = statsRef.current?.events;
+    setBusy("outage");
+    try {
+      const sent = Date.now();
+      const r = await api.studentOutage(seconds);
+      const got = Date.now();
+      // The gateway's `until` is its clock at the start plus the length; the start fell between `sent` and `got`.
+      if (Number.isFinite(r.until)) setSkewMs(Math.round(r.until * 1000 - r.seconds * 1000 - (sent + got) / 2));
+      const after = await refresh();
+      markFresh(before, after);
+      return null; // the panel's countdown says what happens next
+    } catch (e) {
+      return {
+        tone: e instanceof ApiError && (e.status === 409 || e.status === 429) ? "warn" : "bad",
+        title: errorText(e, "Could not take the student endpoint down"),
+      };
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const reset = async () => {
     setBusy("reset");
     try {
@@ -306,6 +335,7 @@ export default function DashboardPage() {
     }
   };
 
+  const onOutageEnd = useCallback(() => void refresh(), [refresh]);
   const mock = stats?.mode === "mock";
   const cold = stats != null && stats.days.length === 0;
   const fault = stats ? armedFault(stats) : null;
@@ -360,6 +390,12 @@ export default function DashboardPage() {
                   <Pipeline versions={stats.versions} faultId={fault?.id} />
                 </Reveal>
 
+                {hasEconomics(stats, cost) && (
+                  <Reveal delay={0.08}>
+                    <EconomicsPanel stats={stats} cost={cost} />
+                  </Reveal>
+                )}
+
                 <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
                   <CostChart days={stats.days} />
                   <ShareChart days={stats.days} />
@@ -369,15 +405,38 @@ export default function DashboardPage() {
                   <VersionsTable versions={stats.versions} />
                 </Reveal>
 
-                <Reveal delay={0.14}>
+                <Reveal delay={0.13}>
                   <TasksTable tasks={stats.tasks} />
                 </Reveal>
 
+                {!registry.missing && (
+                  <Reveal delay={0.14}>
+                    <TaskRegistryPanel state={registry} mode={stats.mode} onChanged={() => void refresh()} />
+                  </Reveal>
+                )}
+
                 <Reveal delay={0.15}>
+                  <ResiliencePanel
+                    stats={stats}
+                    demo={
+                      mock
+                        ? {
+                            busy,
+                            onOutage: studentOutage,
+                            onRunDay: () => void runDay(),
+                            onOutageEnd: onOutageEnd,
+                            skewMs,
+                          }
+                        : undefined
+                    }
+                  />
+                </Reveal>
+
+                <Reveal delay={0.16}>
                   <TrustPanel stats={stats} />
                 </Reveal>
 
-                <Reveal delay={0.16} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+                <Reveal delay={0.17} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
                   <ReleaseLog events={stats.events} fresh={fresh} />
                   <div className="flex min-w-0 flex-col gap-4">
                     <PrecisionChart

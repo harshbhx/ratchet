@@ -679,6 +679,29 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-7.6": ("web/src/styles/globals.css", "web/src/components/layout/site-header.tsx"),
     "FR-7.7": ("ratchet.ledger:Ledger.stats_by_task", "web/src/pages/dashboard/tables.tsx"),
     "FR-7.8": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_reset", "web/src/pages/dashboard/controls.tsx"),
+    "FR-7.20": ("web/src/pages/dashboard/economics.tsx", "web/src/pages/dashboard/economics-model.ts", "ratchet.gateway:cost"),
+    "FR-7.21": (
+        "web/src/pages/dashboard/registry.tsx",
+        "web/src/pages/dashboard/task-drawer.tsx",
+        "web/src/pages/dashboard/registry-model.ts",
+        "ratchet.gateway:list_tasks",
+    ),
+    "FR-7.22": (
+        "web/src/pages/dashboard/resilience.tsx",
+        "web/src/pages/dashboard/resilience-model.ts",
+        "ratchet.gateway:demo_student_outage",
+    ),
+    "FR-7.23": (
+        "web/src/pages/landing/sections/bill.tsx",
+        "web/src/pages/landing/bill-model.ts",
+        "web/src/lib/sim.ts",
+        "ratchet.gateway:cost",
+    ),
+    "FR-7.24": (
+        "web/src/pages/landing/sections/checked.tsx",
+        "web/src/pages/landing/trust-model.ts",
+        "ratchet.bom:verify",
+    ),
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
@@ -803,6 +826,15 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.tasks:Task.check",
     ),
     "INV-17": ("ratchet.ledger:SCHEMA", "ratchet.ledger:APPEND_ONLY_TABLES"),
+    "INV-18": ("web/src/lib/api.ts", "web/src/pages/dashboard/registry.tsx", "web/src/pages/dashboard/task-drawer.tsx"),
+    "INV-19": (
+        "web/src/pages/dashboard/model.ts",
+        "web/src/pages/dashboard/resilience-model.ts",
+        "ratchet.router:Ratchet._circuit_event",
+        "ratchet.gateway:demo_student_outage",
+    ),
+    "INV-20": ("web/src/lib/sim.ts", "web/src/pages/landing/bill-model.ts", "scripts/regen_sim_reference.py"),
+    "INV-21": ("web/src/pages/landing/trust-model.ts", "web/src/pages/landing/sections/checked.tsx"),
 }
 
 _UI = "dashboard UI: checked in light and dark mode at 1440 and 390 px with Playwright; CI typechecks and builds it"

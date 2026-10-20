@@ -66,7 +66,7 @@ export function Kpis({ stats }: { stats: Stats }) {
   return (
     <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-4">
       <Tile
-        label="Saved vs all-teacher"
+        label="Saved vs all-teacher, per token"
         value={fmtUsd(totals.saved_usd, 2)}
         trend={<Sparkline values={cum} label="Cumulative savings by day, rising" />}
         foot={
