@@ -46,10 +46,9 @@ def spec_hashes(golden_rows: list[dict[str, Any]]) -> dict[str, str]:
 
 def stale_tasks(version: Version, hashes: dict[str, str]) -> list[str]:
     """The tasks whose spec changed since `version` was last scored: recorded in its eval (its per-task record, else
-    `spec_hashes`; `calibration.recorded_hash`) with another hash than `hashes` (the current ones). A version scored
-    before spec hashes were recorded has none."""
-    found = ((t, calibration.recorded_hash(version.eval, t)) for t in hashes)
-    return sorted(t for t, h in found if h is not None and h != hashes[t])
+    `spec_hashes`; `calibration.stale`) with another hash than `hashes` (the current ones). A version scored before spec
+    hashes were recorded has none."""
+    return sorted(t for t, h in hashes.items() if calibration.stale(version.eval, t, h))
 
 
 def rescore(ledger: Ledger, version: Version, recheck: dict[str, Any], hashes: dict[str, str]) -> None:

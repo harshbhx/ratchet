@@ -64,11 +64,20 @@ def recorded_hash(ev: Mapping[str, Any] | None, name: str) -> str | None:
     return h if isinstance(h, str) else None
 
 
+def stale(ev: Mapping[str, Any] | None, name: str, current_hash: str) -> bool:
+    """Whether the version was scored under another spec of task `name` than `current_hash` (FR-2.15): its per-task
+    record names another hash, or none (a record that cannot say what it was scored under is not current), or, without
+    a record, `spec_hashes` names another one. A version with neither has nothing to compare."""
+    rec = entry(ev, name)
+    if rec is not None:
+        return rec.get("spec_hash") != current_hash
+    h = recorded_hash(ev, name)
+    return h is not None and h != current_hash
+
+
 def spec_changed(ev: Mapping[str, Any] | None, task: tasks.Task) -> bool:
-    """Whether the version was scored under another spec of `task` than the current one (FR-2.15). A version with no
-    record for the task has nothing to compare."""
-    h = recorded_hash(ev, task.name)
-    return h is not None and h != task.spec_hash
+    """`stale` for `task` under its current spec: the teacher answers it until a night re-scores the version."""
+    return stale(ev, task.name, task.spec_hash)
 
 
 def threshold(ev: Mapping[str, Any] | None, task: tasks.Task, default: float) -> float:
@@ -77,15 +86,13 @@ def threshold(ev: Mapping[str, Any] | None, task: tasks.Task, default: float) ->
     rows); SERVE_NOTHING when the record, or the older `spec_hashes`, names another spec (the teacher answers until a
     night re-scores the version); otherwise `default`, the version's global threshold. A record that names no spec, or
     whose threshold is not a number, sends the task to the teacher rather than guess."""
-    rec = entry(ev, task.name)
-    if rec is not None:
-        if rec.get("spec_hash") != task.spec_hash or rec.get("disabled"):
-            return SERVE_NOTHING
-        thr = number(rec.get("threshold"))
-        return SERVE_NOTHING if thr is None else thr
     if spec_changed(ev, task):
         return SERVE_NOTHING
-    return default
+    rec = entry(ev, task.name)
+    if rec is None:
+        return default
+    thr = number(rec.get("threshold"))
+    return SERVE_NOTHING if thr is None or rec.get("disabled") else thr
 
 
 def serves(rec: Mapping[str, Any]) -> bool:

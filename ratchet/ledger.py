@@ -833,6 +833,13 @@ class Ledger:
         return int(r["n"]), (None if r["a"] is None else float(r["a"]))
 
     @_locked
+    def last_audit_id(self, vid: int) -> int | None:
+        """The id of the newest audited request of version `vid`, or None: one seek on `requests_version_audited`, so a
+        gate step can tell cheaply whether a new audit arrived since it last looked."""
+        row = self.db.execute("SELECT MAX(id) FROM requests WHERE student_version=? AND audited=1", (vid,)).fetchone()
+        return None if row[0] is None else int(row[0])
+
+    @_locked
     def task_live_quality(self, vid: int, current_stage_only: bool = True) -> dict[str, tuple[int, float | None]]:
         """{task: (audits, audited precision)} for a version, `version_live_quality` per task in one query (FR-14.1)."""
         rows = self.db.execute(
