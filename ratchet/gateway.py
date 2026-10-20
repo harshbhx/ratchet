@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,7 @@ from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
+    INVALID_REQUEST,
     APIError,
     Limits,
     from_validation_errors,
@@ -56,6 +57,7 @@ from .openai_compat import (
 from .providers import OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
+from .resilience import RETRY_STATUSES, as_upstream
 from .router import Ratchet
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
@@ -82,15 +84,21 @@ class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
     `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ...}, each an
-    `httpx.BaseTransport` such as `httpx.MockTransport`), so live mode can run offline in tests. Mock mode has no HTTP
-    providers and ignores it."""
+    `httpx.BaseTransport` such as `httpx.MockTransport`), so live mode can run offline in tests, and `sleep` the
+    teacher's waits between retries. Mock mode has no HTTP providers and ignores both."""
 
-    def __init__(self, settings: Settings | None = None, transports: dict[str, httpx.BaseTransport] | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        transports: dict[str, httpx.BaseTransport] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         unknown = set(transports or {}) - set(TRANSPORT_KEYS)
         if unknown:
             raise ValueError(f"unknown transport keys {sorted(unknown)}; use {list(TRANSPORT_KEYS)}")
         self.settings = settings or Settings()
         self.transports = dict(transports or {})
+        self.sleep = sleep
         self.reset()
 
     def reset(self) -> None:
@@ -111,16 +119,30 @@ class Runtime:
             self.guard = Guard(None, 10 * s.scout_runs_per_hour)
         else:
             self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True)
-            teacher = OpenAICompatProvider(s.teacher_base, s.teacher_api_key, transport=self.transports.get("teacher"))
+            # Timeouts and retries per role (ADR 0014): the teacher is retried within a deadline; the student never is,
+            # because the teacher is its retry. A bad setting raises here, at startup.
+            teacher = OpenAICompatProvider(
+                s.teacher_base,
+                s.teacher_api_key,
+                timeout=s.teacher_timeout(),
+                retry=s.teacher_retry(),
+                transport=self.transports.get("teacher"),
+                sleep=self.sleep,
+            )
             if s.student_base:
-                student = OpenAICompatProvider(s.student_base, s.student_api_key, transport=self.transports.get("student"))
+                student = OpenAICompatProvider(
+                    s.student_base, s.student_api_key, timeout=s.student_timeout(), transport=self.transports.get("student")
+                )
 
                 def resolver(v: Version):
                     return student, v.adapter_uri  # vLLM serves each LoRA adapter under its own name
-            else:
+            else:  # endpoint offline: the hosted, untuned fallback on Token Factory, still with the student's timeouts
+                fallback = OpenAICompatProvider(
+                    s.teacher_base, s.teacher_api_key, timeout=s.student_timeout(), transport=self.transports.get("teacher")
+                )
 
-                def resolver(v: Version):  # endpoint offline: hosted, untuned fallback
-                    return teacher, s.fallback_student_model
+                def resolver(v: Version):
+                    return fallback, s.fallback_student_model
 
             policy = ReleasePolicy.from_env()
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
@@ -365,24 +387,66 @@ def _utc_midnight(now: float) -> float:
     return float(calendar.timegm(time.gmtime(now)[:3] + (0, 0, 0)))
 
 
+def _duration(seconds: float) -> str:
+    """OpenAI's duration format for `X-RateLimit-Reset-*`, in whole seconds rounded up: `3h12m5s`, `6m0s`, `45s`."""
+    total = max(0, math.ceil(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}h{minutes}m{secs}s"
+    return f"{minutes}m{secs}s" if minutes else f"{secs}s"
+
+
 def _quota(client: str | None) -> dict[str, str]:
-    """Rate-limit headers for this client; 429 when its daily quota is used up. The 429 says when it resets and tells
-    OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight)."""
+    """Rate-limit headers for this client, with when the quota resets (`X-RateLimit-Reset-Requests`); 429
+    `insufficient_quota` when its daily quota is used up. The 429 says when to come back (`Retry-After`, seconds to
+    00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight)."""
     limit = rt.settings.api_key_daily_requests
     if client is None or limit <= 0:
         return {}
     now = time.time()
     midnight = _utc_midnight(now)
+    reset_in = midnight + 86400 - now
     used = rt.ledger.client_requests_since(client, midnight)
+    headers = {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Reset-Requests": _duration(reset_in)}
     if used >= limit:
-        headers = {
-            "X-RateLimit-Limit-Requests": str(limit),
-            "X-RateLimit-Remaining-Requests": "0",
-            "Retry-After": str(max(1, math.ceil(midnight + 86400 - now))),
-            "X-Should-Retry": "false",
-        }
-        raise HTTPException(429, f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC", headers=headers)
-    return {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
+        headers.update(
+            {"X-RateLimit-Remaining-Requests": "0", "Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
+        )
+        message = f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC"
+        raise APIError(429, message, "insufficient_quota", "daily_quota_exceeded", headers=headers)
+    return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
+
+
+# Upstream statuses the client caused (its request is too long or malformed for the teacher): a 400 it should fix.
+CLIENT_CAUSED = frozenset({400, 413, 422})
+NO_RETRY = {"X-Should-Retry": "false"}
+MAX_UPSTREAM_RETRY_AFTER = 60  # OpenAI SDKs refuse to wait longer than this
+
+
+def _map_upstream(e: httpx.HTTPError) -> APIError:
+    """The client's error for a failed teacher call whose answer it needed (INV-7, ADR 0014), after the provider's own
+    retries. A cause the client can fix is a 400 with the teacher's message, param and code; a rate limit is a 429 with
+    the teacher's wait; a timeout is a 504; everything else is a 502. `X-Should-Retry: false` marks the ones a retry
+    cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing."""
+    u = as_upstream(e)
+    if u.status in CLIENT_CAUSED:
+        code = u.code or ("request_too_large" if u.status == 413 else None)
+        message = u.message or f"The teacher model rejected the request ({u.label})."
+        return APIError(400, message, INVALID_REQUEST, code, u.param, headers=NO_RETRY)
+    if u.status in (401, 403):
+        return APIError(502, f"teacher authentication failed: {u.label}", "api_error", "upstream_auth_error", headers=NO_RETRY)
+    if u.status == 404:  # the request's model never selects the teacher, so this is the gateway's configuration
+        return APIError(502, f"teacher model not found: {u.label}", "api_error", "upstream_not_found", headers=NO_RETRY)
+    if u.status == 429:
+        wait = min(MAX_UPSTREAM_RETRY_AFTER, max(1, math.ceil(u.retry_after or 1)))
+        message = f"teacher rate limited: {u.label}; retry after {wait} s"
+        return APIError(429, message, "rate_limit_error", "upstream_rate_limited", headers={"Retry-After": str(wait)})
+    if u.status == 504:
+        return APIError(504, f"teacher timeout: {u.label}", "api_error", "teacher_timeout")
+    final = 300 <= u.status < 500 and u.status not in RETRY_STATUSES  # a redirect, a 402: no retry changes the answer
+    headers = NO_RETRY if final else None
+    return APIError(502, f"teacher unavailable: {u.label}", "api_error", "teacher_unavailable", headers=headers)
 
 
 def _chunks(text: str, words: int = 4) -> list[str]:
@@ -440,8 +504,8 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
         raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e  # sim.world.lookup
-    except httpx.HTTPError as e:  # the teacher itself failed: nothing left to fall back to
-        raise HTTPException(502, f"teacher unavailable: {type(e).__name__}") from e
+    except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
+        raise _map_upstream(e) from e
     rt.tick()
     meta = {
         "served_by": r.served_by,
@@ -644,8 +708,8 @@ def _run_scout(question: str, emit, pace: float = 0.0) -> dict[str, Any] | None:
 
     try:
         done = rt.scout(pace).run(question.strip(), counting_emit, mode=rt.settings.mode)
-    except httpx.HTTPError as e:
-        emit({"type": "error", "message": f"a model or search call failed: {type(e).__name__}"})
+    except httpx.HTTPError as e:  # the status and code only: an httpx message carries the URL
+        emit({"type": "error", "message": f"a model or search call failed: {as_upstream(e).label}"})
         return None
     except Exception as e:  # noqa: BLE001 - report, never crash the server
         emit({"type": "error", "message": f"run failed: {type(e).__name__}: {e}"[:300]})

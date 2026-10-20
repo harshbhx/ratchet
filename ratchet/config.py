@@ -9,6 +9,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+import httpx
+
+from .resilience import RetryPolicy, timeouts
+
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
@@ -65,6 +69,16 @@ class Settings:
     audit_rate: float = field(default_factory=lambda: float(_env("RATCHET_AUDIT_RATE", "0.05")))
     golden_fraction: float = field(default_factory=lambda: float(_env("RATCHET_GOLDEN_FRACTION", "0.10")))
 
+    # Upstream timeouts and retries (ratchet/resilience.py, ADR 0014). The read timeout is how long a model may take to
+    # answer; connect, write and pool timeouts are 5, 10 and 5 s (the student's connect timeout is its own). A failed
+    # teacher call (the judge's too) is retried up to RATCHET_TEACHER_RETRIES times, within RATCHET_TEACHER_DEADLINE_S
+    # seconds in all. A student call on the request path is never retried: the teacher is its retry.
+    teacher_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_TIMEOUT_S", "120")))
+    teacher_retries: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_RETRIES", "2")))
+    teacher_deadline_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_DEADLINE_S", "180")))
+    student_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_TIMEOUT_S", "15")))
+    student_connect_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_CONNECT_TIMEOUT_S", "2")))
+
     # Extra output tokens the teacher spends on reasoning (billed, not returned).
     teacher_reasoning_tokens: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_TOKENS", "300")))
 
@@ -110,6 +124,22 @@ class Settings:
     mock_pace: float = field(default_factory=lambda: float(_env("RATCHET_MOCK_PACE", "0.25")))
 
     prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
+
+    def teacher_timeout(self) -> httpx.Timeout:
+        """Timeouts for Token Factory calls (teacher, judge). A bad value raises ValueError, so live mode fails at startup."""
+        return timeouts(self.teacher_timeout_s)
+
+    def student_timeout(self) -> httpx.Timeout:
+        """Timeouts for student calls (the vLLM endpoint, or the hosted fallback model)."""
+        return timeouts(self.student_timeout_s, self.student_connect_timeout_s)
+
+    def teacher_retry(self) -> RetryPolicy:
+        """Retries for teacher and judge calls: RATCHET_TEACHER_RETRIES more attempts, within RATCHET_TEACHER_DEADLINE_S."""
+        if isinstance(self.teacher_retries, bool) or not isinstance(self.teacher_retries, int) or self.teacher_retries < 0:
+            raise ValueError(f"RATCHET_TEACHER_RETRIES must be 0 or more, not {self.teacher_retries!r}")
+        if not self.teacher_deadline_s > 0:
+            raise ValueError(f"RATCHET_TEACHER_DEADLINE_S must be more than 0, not {self.teacher_deadline_s!r}")
+        return RetryPolicy(max_attempts=self.teacher_retries + 1, deadline_s=self.teacher_deadline_s)
 
     def price(self, model: str) -> Price:
         if model in self.prices:

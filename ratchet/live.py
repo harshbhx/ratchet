@@ -36,9 +36,10 @@ from .providers import OpenAICompatProvider, Provider
 from .release import ReleaseGate, ReleasePolicy
 
 # The test seams below are default arguments: `run` replaces subprocess.run, `http` the client that talks to vLLM, and
-# `provider_factory` the model clients. Production code never passes them.
+# `provider_factory` the model clients (called as `factory(base_url, api_key, timeout=..., retry=...)`). Production code
+# never passes them.
 RunFn = Callable[..., Any]
-ProviderFactory = Callable[[str, str], Provider]
+ProviderFactory = Callable[..., Provider]
 NO_STUDENT_BASE = "RATCHET_STUDENT_BASE is not set: no student endpoint to load adapters into"
 
 
@@ -118,8 +119,10 @@ def main(
     elif cmd == "reload":
         print("reloaded:", reload_adapters(s, led, http))
     elif cmd == "night":
-        student = provider_factory(s.student_base, s.student_api_key)
-        judge = provider_factory(s.teacher_base, s.teacher_api_key)
+        # The student keeps its own timeouts but is retried like the teacher: in the golden eval no teacher stands
+        # behind it, and one failed call would end the night (ADR 0014). The judge is a teacher call.
+        student = provider_factory(s.student_base, s.student_api_key, timeout=s.student_timeout(), retry=s.teacher_retry())
+        judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
         evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples)
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         rep = run_night(led, NebiusTrainer(s, run, http), evaluator, gate, s.student_base_model, signer=signer)

@@ -1,28 +1,44 @@
-"""Upstream failures on the request path (NFR-2, FR-2.10, INV-7, INV-15).
+"""Upstream failures on the request path (NFR-2, FR-1.8, FR-1.11, FR-2.10, INV-7, INV-15).
 
-A failing student falls back to the teacher (`tests/test_hardening.py`). Here: the optional calls around a request the
-student already answered, the teacher's audit and its shadow arbitration, and the shadow's own samples. Each failure is
-counted (`Ratchet.health()`), logged as a throttled `audit_error` or `shadow_error` event that names the exception
-class (and HTTP status) but never its message, and the student's answer is served. A teacher failure on the
-escalation path is still an error: there is no answer to serve, so the gateway returns 502.
+A failing student falls back to the teacher (`tests/test_hardening.py`). Here:
+
+- The optional calls around a request the student already answered, the teacher's audit and its shadow arbitration,
+  and the shadow's own samples. Each failure is counted (`Ratchet.health()`), logged as a throttled `audit_error` or
+  `shadow_error` event that names the exception class (and HTTP status) but never its message, and the student's
+  answer is served.
+- The provider's retries (`ratchet/resilience.py`, ADR 0014): full-jitter backoff under the cap, the server's
+  Retry-After, the deadline, a read timeout retried once, no retry for other 4xx or for a bad 2xx body, and
+  `UpstreamError` parsed from the error body without the URL. Waits go to an injected `sleep`, so nothing really waits.
+- What the client gets when the teacher's answer was needed and the teacher failed: 400 for a cause it can fix, 429
+  for a rate limit, 504 for a timeout, 502 otherwise, with `X-Should-Retry: false` where a retry cannot help; and the
+  daily quota's 429 headers.
 """
 
 from __future__ import annotations
 
+import calendar
+import email.utils
 import json
+import math
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, _version
 from fastapi.testclient import TestClient
+from sdk_bridge import make_openai_client, sdk
 
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
+from ratchet.providers import OpenAICompatProvider, UpstreamError
+from ratchet.resilience import NO_RETRY, RetryPolicy, as_upstream, parse_retry_after, timeouts
 from ratchet.router import Ratchet
+from ratchet.scout.guard import Guard
+from ratchet.scout.prompts import EXAMPLE_QUESTIONS
 
 A = json.dumps({"category": "billing", "priority": "high"})
 B = json.dumps({"category": "refund", "priority": "high"})
@@ -30,7 +46,16 @@ TRIAGE = "ticket-triage"
 CHAT = "/v1/chat/completions"
 # httpx puts the URL in its messages; an event must never repeat it (it can hold a host, a path or a query token).
 TEACHER_URL = "https://teacher.test/v1/chat/completions?token=do-not-log"
+TEACHER_BASE = "https://teacher.test/v1"
+TEACHER_KEY = "tf-teacher-api-key"
 NO_ERRORS = {"student_errors": 0, "audit_errors": 0, "shadow_errors": 0}
+HI = [{"role": "user", "content": "hi"}]
+KEY = "resilience-test-key-0123456789abcdef"
+OK_BODY = {"model": "m", "choices": [{"message": {"content": "hi"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
+TOO_LONG = "This model's maximum context length is 8192 tokens."
+CONTEXT_TOO_LONG = {
+    "error": {"message": TOO_LONG, "type": "invalid_request_error", "param": "messages", "code": "context_length_exceeded"}
+}
 
 
 def _ask(tag: object) -> list[dict[str, Any]]:
@@ -212,6 +237,11 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "teacher_model": OPEN_TEACHER,
         "student_base": "https://student.test/v1",
         "student_api_key": "sk-student-endpoint-token",
+        "teacher_timeout_s": 120.0,
+        "teacher_retries": 2,
+        "teacher_deadline_s": 180.0,
+        "student_timeout_s": 15.0,
+        "student_connect_timeout_s": 2.0,
         "samples": 3,
         "audit_rate": 1.0,
         "redact_pii": True,
@@ -225,8 +255,9 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
 
 @pytest.mark.req("FR-1.8", "FR-2.10", "INV-7", "INV-15", "NFR-2")
 def test_optional_teacher_failures_through_the_gateway(gw_env, tmp_path, monkeypatch):
-    """A teacher that times out on Token Factory, behind the real HTTP provider: confident answers are still 200 (also
-    streamed); an escalation is a 502."""
+    """A teacher that times out on Token Factory, behind the real HTTP provider with its retry policy: confident answers
+    are still 200 (also streamed); an escalation is a 504 `teacher_timeout`. Each teacher call is two HTTP requests,
+    because a read timeout is retried once (ADR 0014)."""
     gw = gw_env()
     for name in [n for n in os.environ if n.startswith("RATCHET_")]:  # e.g. RATCHET_MIN_SHADOW would move the gate
         monkeypatch.delenv(name)
@@ -237,7 +268,9 @@ def test_optional_teacher_failures_through_the_gateway(gw_env, tmp_path, monkeyp
         raise httpx.ReadTimeout("timed out", request=request)
 
     student = FakeOpenAIServer(lambda body: A if body["model"] == "student-v1" else B)
-    rt = gw.Runtime(_live_settings(tmp_path), transports={"teacher": httpx.MockTransport(teacher), "student": student.transport})
+    waits: list[float] = []
+    transports = {"teacher": httpx.MockTransport(teacher), "student": student.transport}
+    rt = gw.Runtime(_live_settings(tmp_path), transports=transports, sleep=waits.append)
     monkeypatch.setattr(gw, "rt", rt)
     live = _version(rt.ledger, "live", {"threshold": 0.5})
     cand = _version(rt.ledger, "shadow", {"threshold": 0.5})
@@ -247,23 +280,532 @@ def test_optional_teacher_failures_through_the_gateway(gw_env, tmp_path, monkeyp
     r = c.post(CHAT, json={"messages": _ask(1)})
     assert r.status_code == 200, r.text
     assert (r.json()["ratchet"]["served_by"], r.json()["choices"][0]["message"]["content"]) == ("student", A)
-    assert len(teacher_calls) == 1
+    assert len(teacher_calls) == 2 and len(waits) == 1
     row = _last_request(rt.ledger)
     assert (row["audited"], row["shadow_version"], row["shadow_serve"], row["shadow_agree"]) == (0, cand, 1, None)
 
     r = c.post(CHAT, json={"messages": _ask(2), "stream": True})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
-    assert r.text.rstrip().endswith("data: [DONE]") and len(teacher_calls) == 2
+    assert r.text.rstrip().endswith("data: [DONE]") and len(teacher_calls) == 4
 
     # Not audited: the shadow's disagreement goes to the teacher, which fails, and the request is still a 200.
     rt.settings.audit_rate = 0.0
     r = c.post(CHAT, json={"messages": _ask(3)})
-    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "student" and len(teacher_calls) == 3
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "student" and len(teacher_calls) == 6
     assert rt.ratchet.health() == {"student_errors": 0, "audit_errors": 2, "shadow_errors": 1}
-    assert [e["kind"] for e in rt.ledger.events()] == ["audit_error", "shadow_error"]
+    events = [(e["kind"], e["detail"]) for e in rt.ledger.events()]
+    assert events == [
+        ("audit_error", "default: UpstreamError 504 upstream_timeout"),
+        ("shadow_error", f"v{cand} arbitration: UpstreamError 504 upstream_timeout"),
+    ]
     assert rt.ledger.examples() == []
 
-    # INV-7: an unsure student needs the teacher's answer; with the teacher down that is a 502, as before.
+    # INV-7: an unsure student needs the teacher's answer; with the teacher timing out that is a 504 the SDKs retry.
     rt.ledger.update_eval(live, {"threshold": 0.99})
     r = c.post(CHAT, json={"messages": _ask(4)})
-    assert r.status_code == 502 and r.json()["detail"] == "teacher unavailable: ReadTimeout"
+    assert r.status_code == 504 and r.json()["detail"] == "teacher timeout: upstream 504 upstream_timeout"
+    assert (r.json()["error"]["type"], r.json()["error"]["code"]) == ("api_error", "teacher_timeout")
+    assert "teacher.test" not in r.text and len(teacher_calls) == 8 and rt.gateway_errors == 0
+
+
+# ---------- the provider's retries (ADR 0014) ----------
+class Upstream:
+    """An OpenAI-compatible endpoint that plays `steps` in order, repeating the last one. A step is a status (with a
+    default body), `(status, headers, body)` (a str body is sent as is), or an httpx exception class to raise. Each
+    attempt takes `takes` seconds on `clock`. Records every request, with the timeouts it was sent with."""
+
+    def __init__(self, *steps: Any, clock: FakeClock | None = None, takes: float = 0.0) -> None:
+        self.steps = steps
+        self.clock = clock
+        self.takes = takes
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.clock is not None:
+            self.clock.advance(self.takes)
+        step = self.steps[min(len(self.requests), len(self.steps)) - 1]
+        if isinstance(step, type) and issubclass(step, Exception):
+            raise step(f"failed talking to {request.url}", request=request)
+        status, headers, body = (step, {}, None) if isinstance(step, int) else step
+        if body is None:
+            body = OK_BODY if status == 200 else {"error": {"message": f"status {status}", "type": "server_error"}}
+        if isinstance(body, str):
+            return httpx.Response(status, headers=headers, text=body)
+        return httpx.Response(status, headers=headers, json=body)
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self)
+
+    def timeouts(self, phase: str = "read") -> list[float]:
+        return [r.extensions["timeout"][phase] for r in self.requests]
+
+
+def _provider(
+    upstream: Upstream,
+    policy: RetryPolicy | None = RetryPolicy(),
+    *,
+    clock: FakeClock | None = None,
+    rng: float = 0.999,
+    read_s: float = 120.0,
+) -> tuple[OpenAICompatProvider, list[float]]:
+    """The real provider on `upstream`, with its waits recorded (and moving `clock`, when given) instead of slept."""
+    waits: list[float] = []
+    clock = clock or FakeClock(0.0)
+
+    def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        clock.advance(seconds)
+
+    provider = OpenAICompatProvider(
+        TEACHER_BASE,
+        TEACHER_KEY,
+        timeout=timeouts(read_s),
+        retry=policy,
+        transport=upstream.transport,
+        sleep=sleep,
+        clock=clock,
+        rng=lambda: rng,
+    )
+    return provider, waits
+
+
+def _no_secrets(e: UpstreamError) -> None:
+    """An UpstreamError never carries the URL, the host or the API key, in its message or any attribute."""
+    seen = f"{e!s} {e!r} {vars(e)!r}"
+    assert "teacher.test" not in seen and TEACHER_KEY not in seen and "do-not-log" not in seen, seen
+
+
+@pytest.mark.req("NFR-2", "FR-1.11")
+def test_retry_backs_off_with_full_jitter_under_the_cap():
+    up = Upstream(503, 503, 200)
+    provider, waits = _provider(up)
+    out = provider.complete(HI, OPEN_TEACHER)
+    assert [c.text for c in out] == ["hi"] and len(up.requests) == 3
+    # Full jitter: uniform(0, min(cap, base * 2**i)), here with the random draw at 0.999 of its range.
+    assert waits == pytest.approx([0.999 * 0.5, 0.999 * 1.0]) and waits[0] < waits[1] <= RetryPolicy().cap_s
+    assert out[0].latency_ms >= 0 and out[0].in_tokens == 3
+
+    # A long outage: the waits double up to the cap and stay there; then the last error goes back to the caller.
+    up = Upstream(503)
+    provider, waits = _provider(up, RetryPolicy(max_attempts=8, base_s=0.5, cap_s=2.0, deadline_s=math.inf))
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    assert (e.value.status, e.value.message, e.value.type, len(up.requests)) == (503, "status 503", "server_error", 8)
+    assert waits == pytest.approx([0.4995, 0.999, 1.998, 1.998, 1.998, 1.998, 1.998]) and max(waits) <= 2.0
+    assert isinstance(e.value, httpx.HTTPError)  # existing `except httpx.HTTPError` clauses still catch it
+    _no_secrets(e.value)
+
+    # The low end of the jitter is no wait at all.
+    provider, waits = _provider(Upstream(500, 502, 200), rng=0.0)
+    assert provider.complete(HI, OPEN_TEACHER)[0].text == "hi" and waits == [0.0, 0.0]
+
+
+@pytest.mark.req("NFR-2", "FR-1.11")
+def test_retry_after_is_honoured():
+    up = Upstream((429, {"Retry-After": "2"}, None), 200)
+    provider, waits = _provider(up)
+    assert provider.complete(HI, OPEN_TEACHER)[0].text == "hi" and waits == [2.0] and len(up.requests) == 2
+
+    # retry-after-ms (OpenAI's) wins over Retry-After, and works on a 503 too.
+    up = Upstream((503, {"retry-after-ms": "1500", "Retry-After": "7"}, None), 200)
+    provider, waits = _provider(up)
+    assert provider.complete(HI, OPEN_TEACHER)[0].text == "hi" and waits == [1.5]
+
+    # A wait longer than cap_s (8 s) is not worth holding the request for: the 429 goes back at once, with the wait.
+    up = Upstream((429, {"Retry-After": "30"}, {"error": {"message": "slow down", "code": "rate_limit_exceeded"}}))
+    provider, waits = _provider(up)
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    assert (e.value.status, e.value.code, e.value.retry_after, len(up.requests), waits) == (
+        429,
+        "rate_limit_exceeded",
+        30.0,
+        1,
+        [],
+    )
+
+
+@pytest.mark.req("FR-1.11")
+def test_parse_retry_after_forms():
+    now = 1_800_000_000.0
+    assert parse_retry_after({"Retry-After": "2"}) == 2.0
+    assert parse_retry_after({"retry-after": "1.5"}) == 1.5
+    assert parse_retry_after({"Retry-After-Ms": "250"}) == 0.25
+    assert parse_retry_after({"Retry-After": email.utils.formatdate(now + 7, usegmt=True)}, now=now) == 7.0
+    assert parse_retry_after({"retry-after-ms": "soon", "retry-after": "4"}) == 4.0  # a bad ms value falls back
+    assert parse_retry_after(httpx.Headers({"RETRY-AFTER": "3"})) == 3.0
+    assert parse_retry_after({}) is None
+    past = email.utils.formatdate(now - 60, usegmt=True)
+    for junk in ("", "soon", "0", "-3", "inf", "nan", "1e400", past, "Mon, 99 Foo 2026 25:61:00 GMT"):
+        assert parse_retry_after({"Retry-After": junk}, now=now) is None, junk
+
+
+@pytest.mark.req("NFR-2", "FR-1.11")
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 413, 422])
+def test_client_errors_are_not_retried(status):
+    up = Upstream(status)
+    provider, waits = _provider(up, RetryPolicy(max_attempts=5))
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    assert (e.value.status, len(up.requests), waits) == (status, 1, [])
+
+
+@pytest.mark.req("NFR-2", "FR-1.11")
+def test_deadline_stops_retries():
+    """The deadline bounds attempts and waits together: each attempt's timeouts shrink to the time that is left, and a
+    wait that would end past it is not started."""
+    clock = FakeClock(0.0)
+    up = Upstream(503, clock=clock, takes=1.0)
+    provider, waits = _provider(up, RetryPolicy(max_attempts=10, deadline_s=5.0), clock=clock, rng=1.0)
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    # t=0 try (1 s), wait 0.5; t=1.5 try, wait 1.0; t=3.5 try; t=4.5: a 2 s wait would end at 6.5, past 5. Stop.
+    assert e.value.status == 503 and waits == [0.5, 1.0] and len(up.requests) == 3
+    assert up.timeouts("read") == [5.0, 3.5, 1.5] and up.timeouts("connect") == [5.0, 3.5, 1.5]
+    assert clock.now == 4.5
+
+    # The server's Retry-After counts against the deadline too.
+    clock = FakeClock(0.0)
+    up = Upstream((503, {"Retry-After": "4"}, None), clock=clock, takes=2.0)
+    provider, waits = _provider(up, RetryPolicy(deadline_s=5.0), clock=clock)
+    with pytest.raises(UpstreamError):
+        provider.complete(HI, OPEN_TEACHER)
+    assert (len(up.requests), waits) == (1, [])
+
+    # No retry policy: one attempt with the configured timeouts, unchanged.
+    up = Upstream(503)
+    provider, waits = _provider(up, None, read_s=15.0)
+    with pytest.raises(UpstreamError):
+        provider.complete(HI, OPEN_TEACHER)
+    assert (len(up.requests), waits, up.timeouts()) == (1, [], [15.0]) and provider.retry == NO_RETRY
+
+
+@pytest.mark.req("NFR-2", "FR-1.11")
+def test_read_timeout_is_retried_exactly_once():
+    up = Upstream(httpx.ReadTimeout)
+    provider, waits = _provider(up, RetryPolicy(max_attempts=5))
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    assert (e.value.status, e.value.code, len(up.requests), len(waits)) == (504, "upstream_timeout", 2, 1)
+    assert isinstance(e.value.__cause__, httpx.ReadTimeout) and "ReadTimeout" in e.value.message
+    _no_secrets(e.value)
+
+    # A 503 first does not use up the one read-timeout retry; a second read timeout ends it.
+    up = Upstream(503, httpx.ReadTimeout, httpx.ReadTimeout, 200)
+    provider, _ = _provider(up, RetryPolicy(max_attempts=5))
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    assert (e.value.code, len(up.requests)) == ("upstream_timeout", 3)
+    up = Upstream(503, httpx.ReadTimeout, 200)
+    provider, _ = _provider(up, RetryPolicy(max_attempts=5))
+    assert provider.complete(HI, OPEN_TEACHER)[0].text == "hi" and len(up.requests) == 3
+
+    # A connection that never opened reached no model: retried up to max_attempts, then 502 upstream_unreachable.
+    for exc in (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError):
+        up = Upstream(exc)
+        provider, waits = _provider(up, RetryPolicy(max_attempts=4))
+        with pytest.raises(UpstreamError) as e:
+            provider.complete(HI, OPEN_TEACHER)
+        assert len(up.requests) == 4 and len(waits) == 3, exc
+        timeout = issubclass(exc, httpx.TimeoutException)
+        assert (e.value.status, e.value.code) == ((504, "upstream_timeout") if timeout else (502, "upstream_unreachable"))
+        _no_secrets(e.value)
+
+    # Failures after the request may have reached the model are not retried.
+    for exc, status in ((httpx.WriteTimeout, 504), (httpx.ReadError, 502), (httpx.WriteError, 502)):
+        up = Upstream(exc)
+        provider, waits = _provider(up, RetryPolicy(max_attempts=4))
+        with pytest.raises(UpstreamError) as e:
+            provider.complete(HI, OPEN_TEACHER)
+        assert (e.value.status, len(up.requests), waits) == (status, 1, []), exc
+
+
+@pytest.mark.req("NFR-2", "FR-1.11")
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"choices": []}, id="empty-choices"),
+        pytest.param({"object": "chat.completion"}, id="no-choices"),
+        pytest.param({"choices": None}, id="null-choices"),
+        pytest.param({"choices": ["hi"]}, id="choice-not-an-object"),
+        pytest.param([OK_BODY], id="not-an-object"),
+        pytest.param("<html>maintenance</html>", id="not-json"),
+    ],
+)
+def test_bad_upstream_bodies_are_502_and_not_retried(body):
+    """A 2xx the provider cannot read is a 502 `bad_upstream_response` (before: an IndexError, so the gateway's 500).
+    It is not retried: the model answered, and the tokens are billed."""
+    up = Upstream((200, {}, body))
+    provider, waits = _provider(up)
+    with pytest.raises(UpstreamError) as e:
+        provider.complete(HI, OPEN_TEACHER)
+    assert (e.value.status, e.value.code, len(up.requests), waits) == (502, "bad_upstream_response", 1, [])
+
+
+@pytest.mark.req("FR-1.11")
+def test_malformed_optional_fields_count_as_absent():
+    choice = {
+        "message": {"content": [{"type": "text", "text": "a"}, {"type": "image_url"}, {"type": "text", "text": "b"}]},
+        "logprobs": {"content": [{"logprob": "x"}, {"logprob": -0.5}, "junk", {"logprob": True}, {"logprob": None}]},
+    }
+    body = {"model": None, "choices": [choice, {"message": None}], "usage": {"prompt_tokens": "12", "completion_tokens": -4}}
+    provider, _ = _provider(Upstream((200, {}, body)))
+    out = provider.complete(HI, OPEN_TEACHER, n=2, logprobs=True)
+    assert [(c.text, c.model, c.in_tokens, c.out_tokens, c.token_logprobs) for c in out] == [
+        ("ab", OPEN_TEACHER, 0, 0, [-0.5]),
+        ("", OPEN_TEACHER, 0, 0, []),
+    ]
+    # NaN is accepted by Python's JSON parser; it is not a probability.
+    raw = '{"choices": [{"message": {"content": "a"}, "logprobs": {"content": [{"logprob": NaN}, {"logprob": -1}]}}]}'
+    provider, _ = _provider(Upstream((200, {"content-type": "application/json"}, raw)))
+    assert provider.complete(HI, OPEN_TEACHER, logprobs=True)[0].token_logprobs == [-1.0]
+
+
+@pytest.mark.req("FR-1.11")
+@pytest.mark.parametrize(
+    ("status", "body", "parsed"),
+    [
+        pytest.param(
+            400,
+            CONTEXT_TOO_LONG,
+            (TOO_LONG, "invalid_request_error", "context_length_exceeded", "messages"),
+            id="openai",
+        ),
+        pytest.param(
+            400,
+            {"object": "error", "message": "bad n", "type": "BadRequestError", "param": None, "code": 400},
+            ("bad n", "BadRequestError", None, None),
+            id="vllm-legacy-integer-code",
+        ),
+        pytest.param(503, {"error": "overloaded"}, ("overloaded", None, None, None), id="error-string"),
+        pytest.param(404, {"detail": "Not Found"}, ("Not Found", None, None, None), id="fastapi-detail"),
+        pytest.param(
+            422,
+            {"detail": [{"loc": ["body", "messages", 0, "content"], "msg": "Field required", "type": "missing"}]},
+            ("Field required", None, None, "messages.0.content"),
+            id="fastapi-validation",
+        ),
+        pytest.param(502, "<html>Bad Gateway from https://teacher.test</html>", ("Bad Gateway", None, None, None), id="html"),
+        pytest.param(
+            400,
+            # JSON text: a control character and a lone surrogate (escaped, as a JSON encoder writes them), too long.
+            '{"error": {"message": "line\\nbreak \\ud800' + "x" * 400 + '", "code": "has spaces", "param": ["messages"]}}',
+            ("line break ?" + "x" * 287 + "…", None, None, None),
+            id="clipped-and-cleaned",
+        ),
+    ],
+)
+def test_upstream_error_bodies_are_parsed_without_the_url(status, body, parsed):
+    request = httpx.Request("POST", TEACHER_URL, headers={"Authorization": f"Bearer {TEACHER_KEY}"})
+    if isinstance(body, str):
+        response = httpx.Response(status, text=body, request=request)
+    else:
+        response = httpx.Response(status, json=body, request=request)
+    e = UpstreamError.from_response(response)
+    assert (e.status, (e.message, e.type, e.code, e.param)) == (status, parsed)
+    assert len(e.message) <= 300 and e.retry_after is None
+    assert json.dumps(vars(e), ensure_ascii=False).encode()  # always valid UTF-8
+    _no_secrets(e)
+    # httpx's own status error, as Tavily's raise_for_status raises it, reads the same way.
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as err:
+        assert (as_upstream(err).status, as_upstream(err).message) == (status, e.message)
+
+
+# ---------- what the client gets (ADR 0014) ----------
+def _cold_start(gw_env: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: Upstream) -> tuple[Any, Any, list]:
+    """A live gateway with no student version yet, so the teacher (behind `upstream`) answers every request."""
+    gw = gw_env()
+    waits: list[float] = []
+    rt = gw.Runtime(_live_settings(tmp_path, audit_rate=0.0), transports={"teacher": upstream.transport}, sleep=waits.append)
+    monkeypatch.setattr(gw, "rt", rt)
+    return gw, rt, waits
+
+
+@pytest.mark.req("FR-1.8", "FR-1.11", "INV-7", "NFR-2")
+@pytest.mark.parametrize(
+    ("step", "status", "kind", "code", "no_retry", "retry_after", "attempts"),
+    [
+        pytest.param(
+            (400, {}, CONTEXT_TOO_LONG),
+            400,
+            "invalid_request_error",
+            "context_length_exceeded",
+            True,
+            None,
+            1,
+            id="context-too-long",
+        ),
+        pytest.param((413, {}, None), 400, "invalid_request_error", "request_too_large", True, None, 1, id="too-large"),
+        pytest.param(
+            (429, {"Retry-After": "7"}, None), 429, "rate_limit_error", "upstream_rate_limited", False, "7", 3, id="rate"
+        ),
+        pytest.param((429, {}, None), 429, "rate_limit_error", "upstream_rate_limited", False, "1", 3, id="rate-no-wait"),
+        pytest.param(
+            (429, {"Retry-After": "600"}, None), 429, "rate_limit_error", "upstream_rate_limited", False, "60", 1, id="rate-long"
+        ),
+        pytest.param(500, 502, "api_error", "teacher_unavailable", False, None, 3, id="server-error"),
+        pytest.param(httpx.ConnectError, 502, "api_error", "teacher_unavailable", False, None, 3, id="connect-error"),
+        pytest.param(httpx.ReadTimeout, 504, "api_error", "teacher_timeout", False, None, 2, id="read-timeout"),
+        pytest.param(401, 502, "api_error", "upstream_auth_error", True, None, 1, id="auth"),
+        pytest.param(403, 502, "api_error", "upstream_auth_error", True, None, 1, id="forbidden"),
+        pytest.param(404, 502, "api_error", "upstream_not_found", True, None, 1, id="model-not-found"),
+        pytest.param(402, 502, "api_error", "teacher_unavailable", True, None, 1, id="payment-required"),
+        pytest.param(301, 502, "api_error", "teacher_unavailable", True, None, 1, id="redirect"),
+        pytest.param((200, {}, {"choices": []}), 502, "api_error", "teacher_unavailable", False, None, 1, id="empty-choices"),
+    ],
+)
+def test_upstream_errors_map_to_client_statuses(
+    gw_env, tmp_path, monkeypatch, step, status, kind, code, no_retry, retry_after, attempts
+):
+    """Live Runtime, the real provider and its retry policy, the teacher behind MockTransport. A cause the client can
+    fix is a 400 with the teacher's message, param and code; a rate limit a 429 with the teacher's wait (1 to 60 s); a
+    timeout a 504; anything else a 502. `X-Should-Retry: false` where no retry can help, so SDKs do not resend it."""
+    upstream = Upstream(step)
+    gw, rt, waits = _cold_start(gw_env, tmp_path, monkeypatch, upstream)
+    r = TestClient(gw.app, raise_server_exceptions=False).post(CHAT, json={"messages": HI})
+    err = r.json()["error"]
+    assert (r.status_code, err["type"], err["code"]) == (status, kind, code), r.text
+    assert r.headers.get("x-should-retry") == ("false" if no_retry else None)
+    assert r.headers.get("retry-after") == retry_after
+    assert len(upstream.requests) == attempts and len(waits) == attempts - 1
+    assert r.json()["detail"] == err["message"] and "teacher.test" not in r.text and TEACHER_KEY not in r.text
+    assert rt.gateway_errors == 0 and rt.ledger.totals()["requests"] == 0  # not a crash, and nothing logged
+    if status == 400 and code == "context_length_exceeded":  # the teacher's own words reach the client
+        assert (err["message"], err["param"]) == (TOO_LONG, "messages")
+    if retry_after == "7":
+        assert waits == [7.0, 7.0]  # the teacher's own wait before each retry
+    else:
+        assert all(0 <= w <= RetryPolicy().cap_s for w in waits)  # full-jitter backoff
+
+
+@pytest.mark.req("FR-1.11", "FR-8.1", "NFR-2")
+def test_live_runtime_passes_timeouts_and_retries(gw_env, tmp_path, monkeypatch):
+    gw = gw_env()
+    teacher, student = Upstream(200), Upstream(200)
+    tuned = _live_settings(
+        tmp_path,
+        teacher_timeout_s=30.0,
+        teacher_retries=1,
+        teacher_deadline_s=50.0,
+        student_timeout_s=7.0,
+        student_connect_timeout_s=1.5,
+        audit_rate=0.0,
+    )
+    waits: list[float] = []
+    rt = gw.Runtime(tuned, transports={"teacher": teacher.transport, "student": student.transport}, sleep=waits.append)
+    t = rt.ratchet.teacher
+    assert (t.timeout, t.retry, t.sleep) == (timeouts(30.0), RetryPolicy(max_attempts=2, deadline_s=50.0), waits.append)
+    vid = _version(rt.ledger, "live", {"threshold": 1.01})  # serves nothing: every request escalates
+    s, model = rt.ratchet.resolve_student(rt.ledger.version(vid))
+    assert (s.timeout, s.retry, model) == (timeouts(7.0, connect_s=1.5), NO_RETRY, "student-v1")
+
+    # Each request carries its role's timeouts: the student's own; the teacher's, within its deadline.
+    monkeypatch.setattr(gw, "rt", rt)
+    r = TestClient(gw.app).post(CHAT, json={"messages": HI})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    assert student.requests[0].extensions["timeout"] == {"connect": 1.5, "read": 7.0, "write": 10.0, "pool": 5.0}
+    assert teacher.requests[0].extensions["timeout"] == {"connect": 5.0, "read": 30.0, "write": 10.0, "pool": 5.0}
+
+    # No student endpoint: the hosted fallback on Token Factory is still a student, with its timeouts and no retries.
+    fb = gw.Runtime(_live_settings(tmp_path, db_path=str(tmp_path / "fb.db"), student_base="", student_timeout_s=9.0))
+    s, model = fb.ratchet.resolve_student(fb.ledger.version(_version(fb.ledger, "live")))
+    assert s is not fb.ratchet.teacher and (s.base_url, s.timeout.read, s.retry) == (TEACHER_BASE, 9.0, NO_RETRY)
+    assert fb.ratchet.teacher.retry == RetryPolicy(max_attempts=3, deadline_s=180.0)
+
+    # The variables reach Settings; a bad value stops live mode at startup instead of failing every request.
+    monkeypatch.setenv("RATCHET_TEACHER_RETRIES", "5")
+    monkeypatch.setenv("RATCHET_TEACHER_DEADLINE_S", "30")
+    assert Settings().teacher_retry() == RetryPolicy(max_attempts=6, deadline_s=30.0)
+    bad_values = [
+        {"teacher_timeout_s": 0.0},
+        {"teacher_retries": -1},
+        {"teacher_deadline_s": 0.0},
+        {"student_timeout_s": -1.0},
+        {"student_connect_timeout_s": float("nan")},
+    ]
+    for i, bad in enumerate(bad_values):
+        with pytest.raises(ValueError):
+            gw.Runtime(_live_settings(tmp_path, db_path=str(tmp_path / f"bad{i}.db"), **bad))
+
+
+@pytest.mark.req("FR-1.7", "FR-1.11")
+def test_quota_429_says_when_it_resets(gw_env, monkeypatch):
+    gw = gw_env(RATCHET_API_KEYS=f"acme:{KEY}", RATCHET_API_KEY_DAILY_REQUESTS="1")
+    eleven_pm = float(calendar.timegm((2026, 10, 20, 23, 0, 0)))
+    monkeypatch.setattr(time, "time", lambda: eleven_pm)  # the gateway and the ledger read the same clock
+    c = TestClient(gw.app)
+    key = {"Authorization": f"Bearer {KEY}"}
+    msgs = gw.rt.stream.sample(1).messages()
+
+    ok = c.post(CHAT, json={"messages": msgs}, headers=key)
+    assert ok.status_code == 200 and ok.headers["x-ratelimit-reset-requests"] == "1h0m0s"
+    assert (ok.headers["x-ratelimit-limit-requests"], ok.headers["x-ratelimit-remaining-requests"]) == ("1", "0")
+    r = c.post(CHAT, json={"messages": msgs}, headers=key)
+    err = r.json()["error"]
+    assert r.status_code == 429 and (err["type"], err["code"]) == ("insufficient_quota", "daily_quota_exceeded")
+    assert (r.headers["retry-after"], r.headers["x-ratelimit-reset-requests"]) == ("3600", "1h0m0s")
+    assert (r.headers["x-should-retry"], r.headers["x-ratelimit-remaining-requests"]) == ("false", "0")
+
+    monkeypatch.setattr(time, "time", lambda: eleven_pm + 3600 - 90.5)  # 90.5 s before midnight: rounded up
+    r = c.post(CHAT, json={"messages": msgs}, headers=key)
+    assert (r.status_code, r.headers["retry-after"], r.headers["x-ratelimit-reset-requests"]) == (429, "91", "1m31s")
+    assert gw.rt.ledger.client_requests_since("acme", 0) == 1  # refusals are not counted
+
+    assert [gw._duration(s) for s in (0, 0.2, 59, 60, 11525, 86400)] == ["0s", "1s", "59s", "1m0s", "3h12m5s", "24h0m0s"]
+
+
+@pytest.mark.req("FR-1.7", "FR-1.11", "US-1")
+def test_sdk_sends_an_exhausted_quota_once(gw_env):
+    openai, _ = sdk()
+    gw = gw_env(RATCHET_API_KEYS=f"acme:{KEY}", RATCHET_API_KEY_DAILY_REQUESTS="1")
+    msgs = gw.rt.stream.sample(1).messages()
+    assert TestClient(gw.app).post(CHAT, json={"messages": msgs}, headers={"Authorization": f"Bearer {KEY}"}).status_code == 200
+    calls: list[Any] = []
+    client = make_openai_client(gw.app, api_key=KEY, calls=calls, max_retries=2)  # the SDK's default retry budget
+    with pytest.raises(openai.RateLimitError) as e:
+        client.chat.completions.create(model="ratchet", messages=msgs)
+    assert len(calls) == 1  # X-Should-Retry: false (and a Retry-After past the SDK's 60 s limit)
+    assert (e.value.status_code, e.value.type, e.value.code) == (429, "insufficient_quota", "daily_quota_exceeded")
+    assert int(e.value.response.headers["retry-after"]) > 0 and e.value.response.headers["x-ratelimit-reset-requests"]
+
+
+@pytest.mark.req("FR-1.8", "FR-1.11", "US-1")
+def test_sdk_sends_an_upstream_client_error_once(gw_env, tmp_path, monkeypatch):
+    """What the OpenAI SDK sees: a typed exception with the teacher's code, and no retry of a request that cannot work."""
+    openai, _ = sdk()
+    upstream = Upstream((400, {}, CONTEXT_TOO_LONG))
+    gw, rt, waits = _cold_start(gw_env, tmp_path, monkeypatch, upstream)
+    calls: list[Any] = []
+    client = make_openai_client(gw.app, calls=calls, max_retries=2)
+    with pytest.raises(openai.BadRequestError) as e:
+        client.chat.completions.create(model="ratchet", messages=HI)
+    assert (e.value.code, e.value.param, len(calls), len(upstream.requests)) == ("context_length_exceeded", "messages", 1, 1)
+
+    upstream.steps = (401,)  # the gateway's own Token Factory key is wrong: a 502 the SDK does not retry either
+    with pytest.raises(openai.InternalServerError) as e:
+        client.chat.completions.create(model="ratchet", messages=HI)
+    assert (e.value.status_code, e.value.code, len(calls), len(upstream.requests)) == (502, "upstream_auth_error", 2, 2)
+
+
+@pytest.mark.req("FR-10.5", "FR-1.11")
+def test_scout_error_event_names_the_upstream_status(gw, monkeypatch):
+    c = TestClient(gw.app)
+    gw.rt.guard = Guard(5.0, 10)
+    failures = [
+        (UpstreamError(503, "overloaded", code="service_unavailable"), "upstream 503 service_unavailable"),
+        (httpx.ConnectError(f"[Errno 111] Connection refused: {TEACHER_URL}"), "upstream 502 upstream_unreachable"),
+        (httpx.ReadTimeout("timed out"), "upstream 504 upstream_timeout"),
+    ]
+    for exc, label in failures:
+
+        def failing(messages: Any, task: str | None = None, exc: Exception = exc) -> Any:
+            raise exc
+
+        monkeypatch.setattr(gw.rt.ratchet, "handle", failing)
+        r = c.post("/scout/run", json={"question": EXAMPLE_QUESTIONS[0]})
+        assert r.status_code == 502 and r.json()["detail"] == f"a model or search call failed: {label}"
+        assert "teacher.test" not in r.text

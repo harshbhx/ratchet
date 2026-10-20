@@ -15,7 +15,7 @@ from . import licenses, tasks
 from .confidence import STUDENT_SAMPLING, score
 from .config import Settings
 from .ledger import Ledger, Version
-from .providers import Completion, Provider, approx_tokens
+from .providers import Completion, Provider, UpstreamError, approx_tokens
 from .redact import redact, redact_messages
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
@@ -26,8 +26,11 @@ EVENT_ON_FAILURE = (1, 10, 100, 1000)
 
 
 def _failure(e: BaseException) -> str:
-    """What an event may say about a failed call: the exception's class and, for an HTTP error, the status. Never the
-    message: an httpx message carries the endpoint URL, and other messages can carry request text."""
+    """What an event may say about a failed call: the exception's class and, for an HTTP error, the status (and an
+    upstream error's code, such as `upstream_timeout`). Never the message: an httpx message carries the endpoint URL,
+    and other messages can carry request text."""
+    if isinstance(e, UpstreamError):
+        return f"{type(e).__name__} {e.status} {e.code}" if e.code else f"{type(e).__name__} {e.status}"
     if isinstance(e, httpx.HTTPStatusError):
         return f"{type(e).__name__} {e.response.status_code}"
     return type(e).__name__
