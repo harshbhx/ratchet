@@ -1,4 +1,4 @@
-"""Check that the pinned behaviour is unchanged on three workloads, against tests/fixtures/reference.json.
+"""Check that v0.4.0's behaviour is unchanged on three workloads, against tests/fixtures/reference.json.
 
     python scripts/reference_check.py                       # run each workload and compare (exit 1 on a difference)
     python scripts/reference_check.py --only mixed-seed1    # one workload (repeat --only for more)
@@ -6,12 +6,15 @@
 
 The fixture holds three runs of the simulator with mock models, captured from v0.4.0 (commit 1f9b18c): `tickets-seed7`
 (10 days of 2,000 requests, a product launch on day 5 and a corrupted v3: the reference simulation), `mixed-seed1` and
-`research-seed7` (8 days of 1,500 requests each). The mixed and research runs, where several tasks share one adapter,
-were captured again with per-task calibration (FR-14.1, ADR 0040), which changes what they serve by design; the tickets
-run has one task and is still v0.4.0's. For each it pins every simulator input, every v0.4 key of each day's
+`research-seed7` (8 days of 1,500 requests each). For each it pins every simulator input, every v0.4 key of each day's
 stats (`DAY_KEYS`), the totals, each version's final state, training-set size and dataset hash, and the event log. Every later
-feature defaults to the pinned behaviour (ADR 0024), so every change must pass this check; CI runs it, and
+feature defaults to v0.4's behaviour (ADR 0024), so every change must pass this check; CI runs it, and
 `make reference` runs it locally (about 25 s).
+
+One feature is on by default and moves the multi-task runs by design: per-task calibration (FR-14.1, ADR 0040) holds
+each task of the mixed and research workloads to its own threshold. The runs here switch it off (`LEGACY_ENV`), so they
+still reproduce v0.4.0 exactly; with one task it changes nothing, and the tickets run is also checked with it on (the
+session's reference simulation in tests/test_system.py).
 
 What counts as unchanged:
 
@@ -53,6 +56,9 @@ CONFIGS: dict[str, tuple[str, ...]] = {
     "mixed-seed1": ("--seed", "1", "--days", "8", "--requests", "1500", "--workload", "mixed"),
     "research-seed7": ("--seed", "7", "--days", "8", "--requests", "1500", "--workload", "research"),
 }
+# Settings the runs use beside the defaults: they switch off the features that change these runs by design, so the
+# fixture stays v0.4.0's output (per-task calibration, FR-14.1, ADR 0040; tested on its own in tests/test_calibration.py).
+LEGACY_ENV: dict[str, str] = {"RATCHET_PER_TASK_CALIBRATION": "0"}
 # Advisory event kinds later features write without changing a decision; they are not part of v0.4's log.
 IGNORED_KINDS = frozenset({"drift", "teacher_drift", "teacher_model_changed", "warning", "student_healed"})
 # v0.4.0's keys of `Ledger.stats_by_day` rows; keys added since are not pinned, so the fixture is exactly v0.4.0's output.
@@ -91,9 +97,15 @@ def summarize(name: str, res: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def capture(name: str) -> dict[str, Any]:
-    """Run one workload on the default settings (every RATCHET_* variable unset while it runs) and summarize it."""
+    """Run one workload on the default settings (every RATCHET_* variable unset while it runs) plus `LEGACY_ENV`, and
+    summarize it."""
     with regen._default_settings():
-        return summarize(name, run(args_for(name)))
+        os.environ.update(LEGACY_ENV)  # `_default_settings` puts the caller's RATCHET_* variables back afterwards
+        try:
+            return summarize(name, run(args_for(name)))
+        finally:
+            for key in LEGACY_ENV:
+                os.environ.pop(key, None)
 
 
 def _same(want: Any, have: Any) -> bool:

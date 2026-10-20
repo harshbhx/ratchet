@@ -196,6 +196,9 @@ class Settings:
     # Calibration rows (the even half of a task's golden rows) a task needs before its own threshold may go below the
     # version's global one (FR-14.1, ADR 0040); with fewer it gets the higher of the two.
     min_task_golden: int = field(default_factory=lambda: _int("RATCHET_MIN_TASK_GOLDEN", "20"))
+    # RATCHET_PER_TASK_CALIBRATION=0: Night School writes no per-task records, so each new version keeps one pooled
+    # threshold and the golden gate checks only the pooled numbers, as in v0.4 (FR-14.1, ADR 0040). On by default.
+    per_task_calibration: bool = field(default_factory=lambda: _env("RATCHET_PER_TASK_CALIBRATION", "1") != "0")
 
     # Upstream timeouts and retries (ratchet/resilience.py, ADR 0014). The read timeout is how long a model may take to
     # answer; connect, write and pool timeouts are 5, 10 and 5 s (the student's connect timeout is its own). A failed

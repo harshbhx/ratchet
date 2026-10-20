@@ -801,13 +801,38 @@ class Ledger:
 
     @_locked
     def has_event(self, kind: str, detail_prefix: str = "") -> bool:
-        """Whether an event of `kind` whose detail starts with `detail_prefix` was ever logged. What once-only events
-        (a per-task alert) check, so they stay once-only across processes and restarts. A plain prefix comparison, not
-        LIKE: task names may hold '_'."""
+        """Whether an event of `kind` whose detail starts with `detail_prefix` was ever logged. A plain prefix
+        comparison, not LIKE: task names may hold '_'. A writer that must not repeat an event uses `event_once`, which
+        checks and writes in one transaction."""
         row = self.db.execute(
             "SELECT 1 FROM events WHERE kind=? AND substr(detail, 1, ?)=? LIMIT 1", (kind, len(detail_prefix), detail_prefix)
         ).fetchone()
         return row is not None
+
+    @_locked
+    def event_once(self, kind: str, detail_prefix: str, detail: str) -> bool:
+        """Log `detail` as a `kind` event unless an event of `kind` whose detail starts with `detail_prefix` was logged
+        already; True when it wrote one. The check and the write are one write transaction (`_begin`), so two processes
+        on one ledger file (the gateway's tick after a request and a `python -m ratchet.live tick` cron) cannot both
+        write it: what keeps a once-only event (a per-task alert, FR-14.1) once-only across processes and restarts.
+        ValueError when `detail` does not start with `detail_prefix`, since the event could never be found again."""
+        if not detail.startswith(detail_prefix):
+            raise ValueError(f"event detail {detail!r} does not start with {detail_prefix!r}")
+        self._begin()
+        try:
+            found = self.db.execute(
+                "SELECT 1 FROM events WHERE kind=? AND substr(detail, 1, ?)=? LIMIT 1",
+                (kind, len(detail_prefix), detail_prefix),
+            ).fetchone()
+            if found is None:
+                self.db.execute(
+                    "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail)
+                )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return found is None
 
     def _stage_start(self, vid: int, current_stage_only: bool) -> int:
         if not current_stage_only:

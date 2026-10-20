@@ -241,8 +241,9 @@ class DownStudent:
 class MockFleet:
     """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages;
     `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would; `min_task_n` is
-    RATCHET_MIN_TASK_GOLDEN, as `LiveEvaluator` takes it; `strict` (RATCHET_MOCK_STRICT=1) goes to the students it
-    serves, never to training or the golden eval, which read rows already stored."""
+    RATCHET_MIN_TASK_GOLDEN and `per_task` RATCHET_PER_TASK_CALIBRATION, as `LiveEvaluator` takes them; `strict`
+    (RATCHET_MOCK_STRICT=1) goes to the students it serves, never to training or the golden eval, which read rows
+    already stored."""
 
     def __init__(
         self,
@@ -251,12 +252,14 @@ class MockFleet:
         policy: GenPolicy | None = None,
         min_task_n: int = MIN_TASK_GOLDEN,
         strict: bool = False,
+        per_task: bool = True,
     ):
         self.knowledge: dict[str, dict[str, Any]] = {}
         self.corrupt_on_deploy = corrupt_on_deploy or set()
         self.clock = clock
         self.policy = policy or GenPolicy()
         self.min_task_n = min_task_n  # RATCHET_MIN_TASK_GOLDEN: calibration rows a task needs for its own threshold
+        self.per_task = per_task  # RATCHET_PER_TASK_CALIBRATION: False writes no per-task records (v0.4's evals)
         self.strict = strict
         self.outage_until: float | None = None  # on `clock`; None = never down
 
@@ -288,7 +291,9 @@ class MockFleet:
             gen = self.policy.student(GenParams.from_stored(params))
             return student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
-        return cascade_eval(sample, golden_rows, samples=3, target_precision=0.97, min_task_n=self.min_task_n)
+        return cascade_eval(
+            sample, golden_rows, samples=3, target_precision=0.97, min_task_n=self.min_task_n, per_task=self.per_task
+        )
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
     def resolve(self, version: Version):

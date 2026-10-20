@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 746 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world), ~85 s
+pytest -q                     # 751 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -10,7 +10,7 @@ python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 python -m sim.simulate --workload schema --days 8 --requests 1500     # structured outputs (the generic mock world)
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
-python scripts/reference_check.py                    # do tickets, mixed and research still reproduce the pinned runs? (make reference, CI)
+python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
 ```
 
 | File | Tests |
@@ -20,7 +20,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_registry.py` | 29 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 21 (13 functions; one has 8 cases, one has 2) |
-| `tests/test_system.py` | 10 |
+| `tests/test_system.py` | 11 |
 | `tests/test_hardening.py` | 80 (54 functions; one has 11 cases, one has 8, one has 6, one has 4, one has 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
@@ -31,9 +31,9 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
-| `tests/test_calibration.py` | 22 (20 functions; one has 3 cases) |
+| `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 18 |
-| **Total** | **746** |
+| **Total** | **751** |
 
 There are three layers:
 
@@ -210,6 +210,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
 | `test_reference_simulation_unchanged` | The pinned reference run equals `tests/fixtures/sim_reference_seed7.json` exactly: the pinned inputs (a flag added later is not compared), daily numbers, release events and final versions ([below](#the-pinned-reference-simulation)) |
 | `test_reference_workloads_reproduce_v040` | ADR 0024: the tickets workload of `tests/fixtures/reference.json` (captured from v0.4.0) matches the session's reference run under `scripts/reference_check.py`'s rules, and every input the fixture pins for all three workloads is still the simulator's default |
+| `test_reference_check_runs_with_per_task_calibration_off` | ADR 0040: `reference_check.capture` runs each workload with `RATCHET_PER_TASK_CALIBRATION=0` (`LEGACY_ENV`), whatever the caller's shell says, and puts the caller's `RATCHET_*` variables back afterwards |
 | `test_reference_check_rules` | ADR 0024: `reference_check.compare` ignores float noise below a relative 1e-9, new day and totals keys, advisory event kinds and text appended to an event, and reports one line for a moved number, a removed key or day, reworded event text, an extra event, a changed version or a changed input default |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
@@ -572,23 +573,27 @@ Per-task calibration when several tasks share one adapter (FR-14.1, [ADR 0040](a
 | `test_cascade_eval_per_task_thresholds` | FR-14.1, FR-5.2, INV-6: an easy and a noisy task on one adapter. Pooled, the global threshold (0.85) serves the noisy task's wrong answers (97% overall); the records give the easy task 0.85 and the noisy one 0.95 (precision 1.0, coverage 0.85), with their row counts, agreement, spec hashes and `calibrated`. When nothing reaches its target the noisy task gets 1.01; a `policy.target_precision` of 0.8 gives it 0.85 and a new spec hash |
 | `test_single_task_eval_identical_to_global` (3 cases) | FR-14.1, FR-5.2, FR-5.3: with one task, its record holds exactly the global threshold, precision, coverage, row counts and agreement, for `min_task_n` 1, 20 and 1000 (`calibrated` true, true, false) |
 | `test_task_with_few_calibration_rows_is_never_below_global` | FR-14.1, FR-5.2: with fewer than `min_task_n` calibration rows a task takes the higher of its own threshold and the global one (`calibrated: false`), the global one with no calibration row, 1.01 with no held-out row; enough rows make it its own |
-| `test_task_without_test_rows_is_teacher_only` | FR-14.1, INV-6: a task whose one golden row calibrates (none held out) gets 1.01, and so does a task whose references are all invalid; the router escalates it at confidence 0.996 while serving the other task |
+| `test_task_without_test_rows_is_teacher_only` | FR-14.1, INV-6: a task whose one golden row calibrates (none held out) gets 1.01, and so does a task whose references are all invalid; the router escalates it without a student call (route `task_disabled`) while serving the other task |
 | `test_router_uses_task_threshold` | FR-14.1, FR-2.3: at confidence 0.9 task A (0.7) is served, B (0.95) escalates and C (no record) uses the global 0.8; without a task the global threshold, for the fallback model `RATCHET_CONFIDENCE_THRESHOLD`; each task of a version has its own fingerprint |
+| `test_disabled_task_skips_the_student` | FR-14.1, FR-2.3, FR-2.12: a task the gate disabled on the serving version goes to the teacher without a student call (route `task_disabled`, no student cost, confidence null); with the teacher down and `RATCHET_ON_TEACHER_FAILURE=serve_student` another task degrades but the disabled one gets the teacher's error; the shadow still runs; the hosted untuned fallback model ignores the records; a failing resolver leaves the task held back |
 | `test_stale_spec_hash_threshold_ignored` | FR-14.1, FR-2.3, FR-2.15: a record under an old spec hash gives 1.01 (neither its own nor the global threshold), and `stale_tasks` names it; a current record wins over a stale `spec_hashes` entry |
 | `test_versions_without_task_eval_unchanged` | FR-14.1, FR-2.3: a version without records keeps its one threshold for every task; `spec_hashes` alone still sends a changed task to the teacher; the gate checks only the global numbers |
 | `test_threshold_reads_malformed_records_safely` | FR-14.1, FR-2.3, INV-7: records that are not mappings are ignored; a non-numeric or NaN threshold, a missing hash or a disabled record give 1.01; a global threshold that is not a number serves nothing instead of failing the request |
-| `test_admit_disables_regressed_task_but_ships_version` | FR-14.1, FR-6.1, NFR-8: 36 of 40 right (upper bound 96.0%) is above the 95% floor but strongly behind live's 100%: the task is disabled (threshold 1.01, the reason, a `task_disabled` event) and the version shadows; far below the floor it is disabled with nothing live |
+| `test_admit_disables_regressed_task_but_ships_version` | FR-14.1, FR-6.1: 48 of 50 right (96%) is above the 95% floor but more than 2 points behind live's 100%: the task is disabled (threshold 1.01, the reason, a `task_disabled` event) and the version shadows; below the floor (70%) it is disabled with nothing live |
+| `test_per_task_gate_holds_each_task_to_its_floor` | FR-14.1, FR-6.1: the global gate's point-estimate rule on each task's own rows: 36 of 40, 9 of 10, 18 of 20 and 91 of 100 right all fail a 95% floor next to a task at 100% (a Wilson upper bound passed them all), and a cold start ships the good task alone; exactly 95% passes; a task that answers none of its held-out rows fails as unmeasured |
 | `test_admit_reject_mode` | FR-14.1, FR-6.1: with `task_mode="reject"` the same candidate is rejected, naming the task, and nothing is disabled |
-| `test_per_task_gate_needs_evidence` | FR-14.1, FR-6.1, NFR-8: no failure under `min_task_test_n` rows, for a dip within the noise, for a task already at 1.01, or against a live record that serves nothing, has another spec or too few rows; a policy floor of 99% fails 194 of 200 |
+| `test_per_task_gate_needs_evidence` | FR-14.1, FR-6.1: no failure under `min_task_test_n` rows, for a dip within the tolerance (49 of 50 against live's 100%), for a task already at 1.01, or against a live record that serves nothing, has another spec or too few rows; 97% passes the 95% floor but not a policy floor of 99% |
 | `test_admit_rejects_a_version_that_would_serve_too_little` | FR-14.1, FR-6.1, INV-5: disabling a task that leaves 12.5% of the held-out rows answered, or per-task thresholds that answer none, reject the candidate instead of leaving it in shadow or canary |
 | `test_disabled_task_survives_rescore` | FR-14.1, INV-4: the champion re-check overwrites the eval but keeps the disabled tasks disabled, also one the re-score has no record for |
 | `test_per_task_live_alert_once` | FR-14.1, FR-6.7, NFR-8: 12 of 20 audits on one task of the live version raise one alert, not repeated by later ticks or a new gate; `has_event` compares a prefix (a `_` in a task name is not a wildcard); the grouped query runs again only after a new audit; the canary gets its own alert |
+| `test_per_task_alert_is_written_once_across_processes` | FR-14.1, FR-6.7: two `Ledger` connections on one file; the second checks for the alert while the first is writing it and waits on the write lock, then finds it: one alert, never two (`Ledger.event_once`: `BEGIN IMMEDIATE`, a check and the insert, `COMMIT`); another task or kind is another event; a detail outside its prefix is refused |
 | `test_per_task_alert_leaves_single_task_versions_to_the_version_alert` | FR-14.1, FR-6.7: a version whose audits are all one task's gets only the version-level alert |
 | `test_stats_by_task_has_audit_agreement` | FR-14.1, FR-7.7: `audits` and `audit_agreement` per task; `threshold`, `precision`, `coverage`, `calibrated` and `disabled` from the live version's records (the global threshold for a task without one, 1.01 for a disabled task or a changed spec, null for a pinned task or without a live version) |
 | `test_bom_eval_carries_task_records` | FR-14.1, INV-14: a night's BOM carries the eval's per-task records, and `spec_hashes` matches them |
 | `test_task_calibration_settings` | FR-14.1: `RATCHET_MIN_TASK_GOLDEN` (a whole number, 1 or more, reaching `LiveEvaluator`), `RATCHET_TASK_MODE` (case-insensitive, empty is the default, a bad value names the variable) and `RATCHET_MIN_TASK_TEST_N` |
+| `test_per_task_calibration_can_be_switched_off` | FR-14.1: `RATCHET_PER_TASK_CALIBRATION=0` makes `cascade_eval` write no records and leaves the pooled numbers as they are; the simulator, the mock gateway and `python -m ratchet.live night` pass it on; only `0` switches it off |
 | `test_ledger_merges_a_task_record_atomically` | FR-14.1: `merge_task_eval` merges into one record, keeps the others, and rolls back on an unknown version |
-| `test_mixed_workload_calibrates_each_task` | FR-14.1, FR-9.5, US-4: a 6-day mixed simulation (mock models): every trained version has a record for `ticket-triage`, `source-triage` and `page-read` under their current specs, and the student still takes over (over 80% on the last day) at audited agreement of 90% or more |
+| `test_mixed_workload_calibrates_each_task` | FR-14.1, FR-9.5, US-4: a 6-day mixed simulation (mock models) with `RATCHET_PER_TASK_CALIBRATION=1`: every trained version has a record for `ticket-triage`, `source-triage` and `page-read` under their current specs, and the student still takes over (over 80% on the last day) at audited agreement of 90% or more |
 
 ### `tests/test_mock_world.py`
 
@@ -747,7 +752,7 @@ The ticket numbers above are the same as in v0.1. Adding the research world did 
 
 ### Workloads: research and mixed
 
-Simulation, mock models. 8 days × 1,500 requests/day, drift day 5, no fault injection (selected days shown). Both workloads have several tasks on one adapter, so each task has its own threshold ([per-task calibration](adr/0040-per-task-calibration.md)):
+Simulation, mock models. 8 days × 1,500 requests/day, drift day 5, no fault injection (selected days shown). Both workloads have several tasks on one adapter, so each task has its own threshold and its own golden check ([per-task calibration](adr/0040-per-task-calibration.md), on by default):
 
 ```
 python -m sim.simulate --workload research --days 8 --requests 1500     (seed 7)
@@ -774,10 +779,12 @@ Seeds 1, 2, 3, 7, 11 (same settings):
 
 | Workload | Final student share | Final-day savings | Total savings | Lowest daily audit agreement | First version live |
 |---|---|---|---|---|---|
-| research | 92–97% | 81–84% | 54–65% | 97–98% | day 2–3 |
-| mixed | 93–96% | 80–85% | 51–60% | 95–98% | day 2–3 |
+| research | 65–97% | 56–86% | 19–65% | 97–98% | day 2–6 |
+| mixed | 90–96% | 78–85% | 47–60% | 96–98% | day 2–3 |
+| research, `RATCHET_PER_TASK_CALIBRATION=0` | 96–98% | 85–86% | 57–65% | 96–98% | day 2–3 |
+| mixed, `RATCHET_PER_TASK_CALIBRATION=0` | 92–98% | 79–86% | 54–63% | 93–96% | day 2–3 |
 
-On mixed traffic the first student comes a night later with seed 7 (v1 was rejected at 94.3% golden precision), so total savings are lower. With one pooled threshold (before per-task calibration) the student served a few points more (final share 96–98% on research, 92–98% on mixed; total savings up to 65% and 63%) at a lower worst day of audited agreement (96% and 93%): a task's own threshold, calibrated on a few dozen golden rows, is conservative.
+On mixed traffic the first student comes a night later with seed 7 (v1 was rejected at 94.3% golden precision), so total savings are lower. With one pooled threshold and the pooled gate (`RATCHET_PER_TASK_CALIBRATION=0`, v0.4's behaviour) the student serves more at a lower worst day of audited agreement. Per task, each task's threshold and its golden check rest on a few dozen held-out rows, and the check is a point estimate, as the global gate's is: a good task dips under its 95% floor, or more than 2 points under live's 100% on it, now and then, and is disabled on that version (research, seed 11: the first version's `page-read` at 18 of 19 right; its canary, answering one task at 10% of traffic, then took until day 6 to collect its audits). A version with a disabled task that live still answers usually loses the shadow's coverage comparison too, so it is rejected a day later (research, seed 1, nights 3 to 5).
 
 ### Workloads: schema and tools
 
@@ -807,10 +814,11 @@ Seeds 1, 2, 3, 7, 11 (same settings):
 
 | Workload | Final student share | Final-day savings | Total savings | Lowest daily audit agreement | First version live |
 |---|---|---|---|---|---|
-| schema | 78–94% | 69–82% | 51–57% | 92–97% | day 3 |
+| schema | 70–93% | 60–81% | 40–57% | 92–97% | day 3 |
 | tools | 99–100% | 85–87% | 62–68% | 97–99% | day 2–3 |
+| schema, `RATCHET_PER_TASK_CALIBRATION=0` | 86–94% | 75–82% | 55–61% | 92–96% | day 2–3 |
 
-On `schema` the drift schema (`warranty-claim`, five or more labels, `hard`) holds the share near 80% for two nights from day 5. On `tools` both models answer in prose, because the default allowlists forward `tools` to neither: one easy free-text template, learned within two nights. It shows what the gateway does with tool requests today, not tool-call distillation.
+On `schema` the drift schema (`warranty-claim`, five or more labels, `hard`) holds the share near 80% for two nights from day 5. Its three tasks share one adapter, so per-task calibration (on by default) applies, and with some seeds a task disabled on a few dozen held-out rows lowers the share, as on the research workload above; `tools` has one task and is the same either way. On `tools` both models answer in prose, because the default allowlists forward `tools` to neither: one easy free-text template, learned within two nights. It shows what the gateway does with tool requests today, not tool-call distillation.
 
 ## Bugs the simulation found (and the fixes)
 
@@ -858,7 +866,7 @@ The run unsets every `RATCHET_*` variable while it runs, so settings in your she
 
 ### The reference workloads
 
-`scripts/reference_check.py` pins three workloads, captured from v0.4.0 (commit 1f9b18c) in `tests/fixtures/reference.json` ([ADR 0024](adr/0024-evidence-foundations.md)): `tickets-seed7` (the run above), `mixed-seed1` and `research-seed7` (8 days × 1,500 requests). The mixed and research runs, where several tasks share one adapter, were captured again with per-task calibration ([ADR 0040](adr/0040-per-task-calibration.md)), which changes what they serve by design; the tickets run has one task, so it is still v0.4.0's. It pins more than the reference simulation does: every input, every v0.4 key of each day's stats at full precision (`cost_per_1k`, `avg_latency_ms`, ...), the totals, each version's final state, training-set size and dataset hash, and the event log with its text. Every later feature defaults to v0.4's behaviour, so every change passes it: `make reference` (about 25 s) and a CI step run all three; the pytest suite checks the tickets workload against the session's reference run at no extra cost (`test_reference_workloads_reproduce_v040`).
+`scripts/reference_check.py` pins three workloads, captured from v0.4.0 (commit 1f9b18c) in `tests/fixtures/reference.json` ([ADR 0024](adr/0024-evidence-foundations.md)): `tickets-seed7` (the run above), `mixed-seed1` and `research-seed7` (8 days × 1,500 requests). All three run with `RATCHET_PER_TASK_CALIBRATION=0` (`LEGACY_ENV` in the script), because per-task calibration ([ADR 0040](adr/0040-per-task-calibration.md)), on by default, changes what the multi-task runs serve by design; so the fixture is still v0.4.0's capture, byte for byte. The tickets run has one task, so it gives the same output with the switch on (the session's reference run, which the pytest check uses). It pins more than the reference simulation does: every input, every v0.4 key of each day's stats at full precision (`cost_per_1k`, `avg_latency_ms`, ...), the totals, each version's final state, training-set size and dataset hash, and the event log with its text. Every later feature defaults to v0.4's behaviour, so every change passes it: `make reference` (about 25 s) and a CI step run all three; the pytest suite checks the tickets workload against the session's reference run at no extra cost (`test_reference_workloads_reproduce_v040`).
 
 The rules: floats agree within a relative 1e-9 (an index may add the same numbers in another order); days and totals may gain keys; events compare as (day, kind, version) in order, and each pinned text must be a prefix of the fresh one, so a feature may append evidence to a message but never change it; the advisory kinds later features add (`drift`, `teacher_drift`, `teacher_model_changed`, `warning`, `student_healed`) are left out; a flag added later is not compared, a changed default is. When a change is meant to move these runs: `python scripts/reference_check.py --write --captured-from "<release or commit>"`, review the diff, and add a CHANGELOG line that says why. The numbers are simulation output from mock models, not measurements.
 

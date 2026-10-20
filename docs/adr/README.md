@@ -28,7 +28,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0022](0022-task-registry.md) | A task registry: specs as data, operator-only pinning, an unknown-task policy and admin keys | Accepted | 2026-10-20 |
 | [0023](0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation | Accepted | 2026-10-20 |
 | [0024](0024-evidence-foundations.md) | Foundations for the evidence features: exact statistics, Merkle trees, one schema change with append-only tables, reserved settings and three pinned workloads | Accepted | 2026-10-20 |
-| [0040](0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate on Wilson bounds, and per-task alerts | Accepted | 2026-10-20 |
+| [0040](0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate, and per-task alerts | Accepted | 2026-10-20 |
 | [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.
