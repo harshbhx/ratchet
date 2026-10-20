@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api, type CostReport, type Stats } from "@/lib/api";
+import { ApiError, api, type CostReport, type Stats, type TaskRegistry } from "@/lib/api";
 
 /**
  * Poll /ratchet/stats. Keeps the last good snapshot when a poll fails (the page shows a
@@ -106,6 +106,62 @@ export function useCostReport(key: number | null): CostState {
         if (gone) missing.current = true;
         const error = e instanceof Error ? e.message : "unreachable";
         setState((s) => ({ report: gone ? null : s.report, error, missing: gone, loading: false }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+
+  return state;
+}
+
+export type RegistryState = {
+  /** The last registry that loaded; kept while a refetch fails. */
+  registry: TaskRegistry | null;
+  error: string | null;
+  /** The gateway has no GET /ratchet/tasks (older than v0.5): the panel hides and polling stops. */
+  missing: boolean;
+  loading: boolean;
+};
+
+/** Enough of a registry to draw the panel; a task's other keys are optional in the drawing. */
+function isRegistry(x: unknown): x is TaskRegistry {
+  const r = x as TaskRegistry | null;
+  return (
+    r != null &&
+    typeof r === "object" &&
+    Array.isArray(r.tasks) &&
+    r.tasks.every((t) => t != null && typeof t.name === "string" && typeof t.source === "string" && t.fields != null && typeof t.fields === "object") &&
+    (r.unregistered == null || Array.isArray(r.unregistered))
+  );
+}
+
+/**
+ * GET /ratchet/tasks, fetched again whenever `key` changes (the stats poll's `updatedAt`, so it follows every poll,
+ * demo action and task write without a second timer). A newer response always wins over an older one.
+ */
+export function useTaskRegistry(key: number | null): RegistryState {
+  const [state, setState] = useState<RegistryState>({ registry: null, error: null, missing: false, loading: true });
+  const seq = useRef(0);
+  const missing = useRef(false);
+
+  useEffect(() => {
+    if (key == null || missing.current) return;
+    const id = ++seq.current;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r: unknown = await api.tasks();
+        if (cancelled || id !== seq.current) return;
+        if (!isRegistry(r)) throw new Error("the task registry has an unexpected shape");
+        setState({ registry: { ...r, unregistered: r.unregistered ?? [] }, error: null, missing: false, loading: false });
+      } catch (e) {
+        if (cancelled || id !== seq.current) return;
+        const gone = e instanceof ApiError && (e.status === 404 || e.status === 405);
+        if (gone) missing.current = true;
+        const error = e instanceof Error ? e.message : "unreachable";
+        setState((s) => ({ registry: gone ? null : s.registry, error, missing: gone, loading: false }));
       }
     })();
     return () => {

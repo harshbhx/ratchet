@@ -3,7 +3,9 @@
 
 - Gateway: `/v1/models`, task selection (the header wins over `metadata`), request validation, `/ratchet/bom`, the
   `/ratchet/stats` keys the dashboard reads (tests/fixtures/stats_keys.json: add keys, never remove them), the
-  `/ratchet/cost` keys its Economics panel reads (tests/fixtures/cost_keys.json, the same rule) and the demo controls
+  `/ratchet/cost` keys its Economics panel reads (tests/fixtures/cost_keys.json, the same rule), the task API keys its
+  Task registry panel reads (tests/fixtures/tasks_keys.json, the same rule), the event grammar its Resilience panel
+  parses (read from the panel's own source), the admin key staying in the page's memory, and the demo controls
   refusing live mode.
 - Cascade: one student call per request with the production sampling parameters, the confidence formula, the threshold
   boundary, the audit rate, cost accounting to the token, and a consistent ledger under concurrent requests. The
@@ -29,10 +31,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import OPEN_TEACHER, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeClock, RecordingProvider, _version
 from fastapi.testclient import TestClient
 
-from ratchet import licenses, tasks
+from ratchet import compare, licenses, tasks, taskspec
 from ratchet.confidence import score
 from ratchet.config import DEFAULT_PRICES, Settings
 from ratchet.ledger import Ledger, example_hash
@@ -42,6 +44,8 @@ from ratchet.router import ROUTES, USAGE_PARTS, Ratchet, RequestMeta, fingerprin
 
 STATS_KEYS = Path(__file__).resolve().parent / "fixtures" / "stats_keys.json"
 COST_KEYS = Path(__file__).resolve().parent / "fixtures" / "cost_keys.json"
+TASKS_KEYS = Path(__file__).resolve().parent / "fixtures" / "tasks_keys.json"
+DASHBOARD = Path(__file__).resolve().parents[1] / "web" / "src" / "pages" / "dashboard"
 CHAT = "/v1/chat/completions"
 KEY = "contract-test-key-0123456789abcdef"
 TRIAGE = "ticket-triage"
@@ -485,6 +489,274 @@ def test_cost_report_contract(gw_env):
     assert summary["endpoint_hours"] == pytest.approx(r["endpoint_hours"])
     assert summary["gpu_hours_savings_pct"] == pytest.approx(gpu["savings_pct"], rel=1e-3)
     assert summary["break_even_student_requests_per_gpu_hour"] == pytest.approx(r["break_even_student_requests_per_gpu_hour"])
+
+
+# The keys the Task registry panel started with: tasks_keys.json may grow, but it must keep these.
+TASKS_MINIMUM = [
+    "list.unknown_tasks",
+    "list.max_tasks",
+    "list.tasks[].name",
+    "list.tasks[].source",
+    "list.tasks[].format",
+    "list.tasks[].fields",
+    "list.tasks[].pinned",
+    "list.tasks[].store",
+    "list.tasks[].spec_hash",
+    "list.tasks[].recalibrating",
+    "list.unregistered[].name",
+    "detail.updated_by",
+    "validate.valid",
+    "validate.errors",
+    "saved.task",
+    "refused.errors",
+    "deleted.examples_kept",
+    "field.type",
+]
+INVOICE = {
+    "description": "Vendor, total and lines from an invoice",
+    "fields": {
+        "vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]},
+        "total": {"type": "number", "abs_tol": 0.01},
+        "currency": {"type": "label", "values": ["USD", "EUR"], "aliases": {"$": "USD"}},
+        "lines": {
+            "type": "records",
+            "key": ["sku"],
+            "required": False,
+            "fields": {"sku": {"type": "label"}, "qty": {"type": "number"}},
+        },
+        "tags": {"type": "set", "item": {"type": "text", "mode": "token_set"}, "split": ","},
+    },
+    "policy": {"samples": 5},
+}
+
+
+def _ts_literal(path: Path, name: str) -> str:
+    """The text of `export const <name> = ...;` in a dashboard source file (one line)."""
+    m = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", path.read_text(encoding="utf-8"), re.M)
+    assert m, f"{path.name} has no one-line `export const {name} = ...;`"
+    return m.group(1)
+
+
+def _ts_regex(path: Path, name: str) -> re.Pattern[str]:
+    """A `/.../` regex literal from the dashboard's source, compiled by Python's `re`: the panel's grammar must mean
+    the same in both (no flags, no JavaScript-only syntax)."""
+    m = re.fullmatch(r"/(.+)/", _ts_literal(path, name))
+    assert m, f"{name} in {path.name} is not a regex literal without flags"
+    return re.compile(m.group(1))
+
+
+def _field_docs(fields: dict[str, Any], where: str) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Every field spec of a task document, records' sub-fields and an object `item` included."""
+    for path, doc in fields.items():
+        yield f"{where}.{path}", doc
+        if isinstance(doc.get("fields"), dict):
+            yield from _field_docs(doc["fields"], f"{where}.{path}")
+        if isinstance(doc.get("item"), dict):
+            yield f"{where}.{path}.item", doc["item"]
+
+
+@pytest.mark.req("FR-7.21", "FR-2.15")
+def test_task_registry_contract(gw_env):
+    """The task API carries every key the dashboard's Task registry panel reads (tests/fixtures/tasks_keys.json), every
+    field spec names a comparator type the panel can label, and the panel's two writes work as it sends them: "Edit
+    spec" puts back the spec keys it copies (web/src/pages/dashboard/registry-model.ts `SPEC_KEYS`) unchanged, and
+    "New task based on this" (`extendDraft`) registers a copy of a built-in task."""
+    sections = json.loads(TASKS_KEYS.read_text(encoding="utf-8"))
+    for name in ("list", "detail", "validate", "saved", "refused", "deleted", "field"):
+        assert _spec_errors(sections[name], name) == []
+    paths = {f"{name}.{p}" for name in sections if name != "about" for p in _spec_paths(sections[name])}
+    lost = sorted(set(TASKS_MINIMUM) - paths)
+    assert not lost, f"tasks_keys.json lost {lost}: add keys, never remove them"
+
+    # The keys the editor copies are taskspec's SPEC_KEYS without the name: what PUT takes back.
+    ts_keys = json.loads(_ts_literal(DASHBOARD / "registry-model.ts", "SPEC_KEYS").removesuffix(" as const"))
+    assert ts_keys == [k for k in taskspec.SPEC_KEYS if k != "name"]
+
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    known_types = set(compare.TYPES) - compare.RESERVED_TYPES
+
+    def check_fields(task: dict[str, Any]) -> None:
+        for where, doc in _field_docs(task["fields"], task["name"]):
+            assert _contract_errors(sections["field"], doc, where) == []
+            assert doc["type"] in known_types, (where, doc)
+            assert not isinstance(doc.get("item"), str) or doc["item"] in known_types, (where, doc)
+
+    # A fresh gateway: the built-in tasks, nothing unregistered yet.
+    fresh = c.get("/ratchet/tasks").json()
+    assert _contract_errors(sections["list"], fresh, "tasks", allow_empty=True) == []
+    assert {t["source"] for t in fresh["tasks"]} == {"builtin"} and fresh["unregistered"] == []
+    for t in fresh["tasks"]:
+        check_fields(t)
+
+    # A request naming a task that is not registered (RATCHET_UNKNOWN_TASKS=distill) shows up as unregistered.
+    msgs = gw.rt.stream.sample(gw.rt.ledger.day).messages()
+    assert c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "invoice-extrct"}).status_code == 200
+
+    # The editor's dry run, both ways, then the save: a refused spec lists its errors (the panel shows each).
+    bad = {**INVOICE, "name": "invoice-extract", "fields": {"total": {"type": "number", "abs_tol": -1}}}
+    v_bad = c.post("/ratchet/tasks/validate", json=bad).json()
+    assert _contract_errors(sections["validate"], v_bad, "validate", allow_empty=True) == []
+    assert v_bad["valid"] is False and v_bad["errors"] and v_bad["tasks"] == []
+    v_ok = c.post("/ratchet/tasks/validate", json={**INVOICE, "name": "invoice-extract"}).json()
+    assert _contract_errors(sections["validate"], v_ok, "validate") == []
+    assert v_ok["valid"] is True and v_ok["tasks"][0]["registered"] is None
+    refused = c.put("/ratchet/tasks/invoice-extract", json=bad)
+    assert refused.status_code == 422 and _contract_errors(sections["refused"], refused.json(), "refused") == []
+    saved = c.put("/ratchet/tasks/invoice-extract", json=INVOICE)
+    assert saved.status_code == 200, saved.text
+    assert _contract_errors(sections["saved"], saved.json(), "saved") == []
+    assert saved.json()["created"] is True
+    # The saved entry is a list entry: the drawer reads the times and the admin's name from GET /ratchet/tasks/{name}.
+    missing = _contract_errors(sections["detail"], saved.json()["task"], "saved.task")
+    assert missing == [f"saved.task.{k}: missing" for k in ("created_ts", "updated_ts", "updated_by")]
+
+    # The drawer's read of one task, and the list with every section filled.
+    detail = c.get("/ratchet/tasks/invoice-extract").json()
+    assert _contract_errors(sections["detail"], detail, "detail") == []
+    assert detail["source"] == "api" and detail["updated_by"] == "mock-admin"
+    listed = c.get("/ratchet/tasks").json()
+    assert _contract_errors(sections["list"], listed, "tasks") == []
+    assert [u["name"] for u in listed["unregistered"]] == ["invoice-extrct"]
+    for t in listed["tasks"]:
+        check_fields(t)
+    assert c.get("/ratchet/tasks/no-such-task").status_code == 404  # the drawer says it is no longer registered
+
+    # "Edit spec" then "Save" with nothing changed: the copied keys are the stored spec exactly.
+    put_back = c.put("/ratchet/tasks/invoice-extract", json={k: detail[k] for k in ts_keys}).json()
+    assert (put_back["changed"], put_back["created"], put_back["spec_hash"]) == (False, False, detail["spec_hash"])
+
+    # "New task based on this" on a built-in task: an API task with the base's fields and its own description.
+    base = next(t for t in listed["tasks"] if t["name"] == TRIAGE)
+    copy = c.put(f"/ratchet/tasks/{TRIAGE}-custom", json={"extends": TRIAGE, "description": "custom"})
+    assert copy.status_code == 200, copy.text
+    assert copy.json()["task"]["fields"] == base["fields"] and copy.json()["spec_hash"] == base["spec_hash"]
+    assert c.put(f"/ratchet/tasks/{TRIAGE}", json={"description": "x"}).status_code == 403  # built in: not editable
+
+    deleted = c.delete("/ratchet/tasks/invoice-extract").json()
+    assert _contract_errors(sections["deleted"], deleted, "deleted") == []
+    assert deleted["deleted"] == "invoice-extract" and deleted["spec_hash"] == detail["spec_hash"]
+    kinds = [e["kind"] for e in c.get("/ratchet/stats").json()["events"]]
+    assert {"task_registered", "task_deleted"} <= set(kinds)  # the release log labels both
+
+
+def _derived_states(events: list[dict[str, Any]], circuit: re.Pattern[str]) -> dict[str, str]:
+    """What the Resilience panel shows (resilience-model.ts `breakerViews`): each breaker's latest reported state."""
+    out: dict[str, str] = {}
+    for e in events:
+        if e["kind"] == "circuit":
+            m = circuit.fullmatch(e["detail"])
+            assert m, f"the panel cannot read the circuit event {e['detail']!r}"
+            out[m.group(1)] = m.group(3)
+    return out
+
+
+@pytest.mark.req("FR-7.22", "FR-2.11", "FR-2.12")
+def test_resilience_panel_contract(gw_env, monkeypatch):
+    """The dashboard's Resilience panel reads breaker states from `circuit` events, the outage drill from its `fault`
+    event and a failed probe's wait from its reason, with the regexes in its own source (model.ts `CIRCUIT_RE`,
+    resilience-model.ts `OUTAGE_RE` and `WAIT_RE`). Through the outage drill and a teacher outage that reaches the
+    longest wait, every event the gateway writes matches them, the state they give is the breaker's real state at each
+    step, and the waits are the real ones. Fallbacks are counted from `routes`, as the panel does."""
+    circuit = _ts_regex(DASHBOARD / "model.ts", "CIRCUIT_RE")
+    outage_re = _ts_regex(DASHBOARD / "resilience-model.ts", "OUTAGE_RE")
+    wait_re = _ts_regex(DASHBOARD / "resilience-model.ts", "WAIT_RE")
+
+    gw = _gateway(gw_env)
+    clock = FakeClock()
+    rt = gw.Runtime(
+        Settings(mode="mock", mock_warmup_days=0, student_breaker_failures=5, student_breaker_cooldown_s=30), clock=clock
+    )
+    monkeypatch.setattr(gw, "rt", rt)
+    rt.fleet.train([], "base", "student-v1")
+    _version(rt.ledger, "live", {"threshold": 0.0})
+    c = TestClient(gw.app)
+
+    def ask() -> None:
+        assert c.post(CHAT, json={"messages": rt.stream.sample(rt.ledger.day).messages()}).status_code == 200
+
+    def real(name: str) -> str:
+        return rt.ratchet.health()["breakers"][name]["state"]
+
+    def shown(name: str) -> str | None:
+        return _derived_states(c.get("/ratchet/stats").json()["events"], circuit).get(name)
+
+    ask()
+    assert shown("student") is None and real("student") == "closed"  # "No recent change": it never moved
+    r = c.post("/ratchet/demo/student-outage?seconds=60").json()
+    fault = [e for e in rt.ledger.events() if e["kind"] == "fault"][-1]
+    m = outage_re.match(fault["detail"])
+    assert m and int(m.group(1)) == r["seconds"] == 60
+    assert abs(fault["ts"] + r["seconds"] - r["until"]) < 1  # the panel's countdown: the event's time plus the length
+
+    for _ in range(6):
+        ask()
+    assert shown("student") == real("student") == "open"
+    clock.advance(30)
+    ask()  # the probe fails: open again, for 60 s
+    assert shown("student") == real("student") == "open"
+    clock.advance(61)  # the outage is over and the wait has passed
+    ask()  # the probe succeeds
+    assert shown("student") == real("student") == "closed"
+
+    # The teacher's breaker up to the longest wait (300 s), whose repeats carry a suffix, then closed again.
+    b = rt.ratchet.teacher_breaker
+    for _ in range(5):
+        assert b.allow()
+        b.record(False, "UpstreamError 503")
+    assert shown("teacher") == real("teacher") == "open"
+    waits = []
+    for _ in range(5):  # 30 s, 60, 120, 240, then the 1st probe at the longest wait (300 s)
+        clock.advance(b.snapshot()["open_s"])
+        assert b.allow()
+        assert shown("teacher") == real("teacher") == "half_open"
+        b.record(False, "UpstreamError 503")
+        waits.append(b.snapshot()["open_s"])
+        assert shown("teacher") == real("teacher") == "open"
+    # The 2nd probe at the longest wait is not logged (REPORTED_REPEATS), so the panel shows "open" one probe behind,
+    # as its footnote says; the close that follows is always logged.
+    clock.advance(b.snapshot()["open_s"])
+    assert b.allow()
+    assert (shown("teacher"), real("teacher")) == ("open", "half_open")
+    b.record(True)
+    assert shown("teacher") == real("teacher") == "closed"
+
+    events = rt.ledger.events()
+    details = [e["detail"] for e in events if e["kind"] == "circuit"]
+    assert all(circuit.fullmatch(d) for d in details), details
+    reported = [float(m.group(1)) for d in details if (m := wait_re.match(circuit.fullmatch(d).group(4) or ""))]
+    assert reported == [60.0, *waits]  # every failed probe's wait, as the breaker set it
+    assert waits[-2:] == [300.0, 300.0] and any("at the longest wait" in d for d in details)
+
+    # What the panel counts as fallbacks: the routes of the requests above.
+    stats = c.get("/ratchet/stats").json()
+    routes = Counter()
+    for t in stats["tasks"]:
+        routes.update(t["routes"])
+    assert routes["student_error"] == 6 and routes["student_breaker"] == 1 and routes["student"] == 2
+    assert sum(routes.values()) == sum(t["requests"] for t in stats["tasks"])
+
+
+@pytest.mark.req("FR-7.21", "INV-13")
+def test_dashboard_admin_key_stays_in_memory():
+    """An admin key typed into the dashboard stays in the page's memory (docs/lanes/u-invariants.md, U-1): no file
+    under web/src writes it to storage, a cookie or a URL, the only browser storage the app uses is the theme, and the
+    client sends the key only as an Authorization header."""
+    src = Path(__file__).resolve().parents[1] / "web" / "src"
+    storage = re.compile(r"localStorage|sessionStorage|indexedDB|document\.cookie|caches\.open")
+    users = sorted(str(p.relative_to(src)) for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
+    assert users == ["lib/hooks.ts"], users  # the theme toggle
+    hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
+    assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
+
+    holders = [p for p in src.rglob("*.ts*") if "adminKey" in p.read_text(encoding="utf-8")]
+    assert holders, "no file holds the admin key: the scan below would prove nothing"
+    url = re.compile(r"history\.(push|replace)State|location\.(hash|search|href)\s*=|URLSearchParams")
+    for p in holders:
+        assert not url.search(p.read_text(encoding="utf-8")), f"{p.name} may put the admin key in a URL"
+    api_ts = (src / "lib" / "api.ts").read_text(encoding="utf-8")
+    assert "authorization: `Bearer ${k}`" in api_ts
+    assert api_ts.count("adminKey") == api_ts.count("adminHeaders(adminKey)") * 2, "the admin key goes anywhere but the header"
 
 
 # ---------- gateway: mock-only controls ----------

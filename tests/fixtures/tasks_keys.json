@@ -1,0 +1,86 @@
+{
+  "about": [
+    "Every key the dashboard's Task registry panel reads from the task API (web/src/lib/api.ts: TaskRegistry, TaskEntry, FieldDoc, TaskValidation, TaskSaved, TaskDeleted), with its JSON type.",
+    "tests/test_contract.py::test_task_registry_contract checks each section against a live mock gateway.",
+    "list: GET /ratchet/tasks. detail: GET /ratchet/tasks/{name} for an API task. validate: POST /ratchet/tasks/validate. saved: PUT /ratchet/tasks/{name} (200). refused: its 422. deleted: DELETE /ratchet/tasks/{name}. field: every field spec, at any depth.",
+    "A key ending in [] is a list: the test checks every item. A nested object is checked key by key.",
+    "Types: string, number (int or float, not bool), bool, null, object, list; a|b allows either.",
+    "Add keys when the payload grows. Never remove or retype one: the dashboard and other clients rely on them."
+  ],
+  "list": {
+    "unknown_tasks": "string",
+    "max_tasks": "number",
+    "tasks[]": {
+      "name": "string",
+      "description": "string",
+      "format": "string",
+      "fields": "object",
+      "pinned": "bool",
+      "store": "bool",
+      "match": "object",
+      "routing": "object",
+      "policy": "object",
+      "tools": "string",
+      "clients": "list",
+      "source": "string",
+      "spec_hash": "string",
+      "verifiable": "bool",
+      "requests": "number",
+      "student_share": "number",
+      "recalibrating": "bool"
+    },
+    "unregistered[]": {
+      "name": "string",
+      "requests": "number"
+    }
+  },
+  "detail": {
+    "name": "string",
+    "description": "string",
+    "format": "string",
+    "fields": "object",
+    "pinned": "bool",
+    "store": "bool",
+    "match": "object",
+    "routing": "object",
+    "policy": "object",
+    "tools": "string",
+    "clients": "list",
+    "source": "string",
+    "spec_hash": "string",
+    "verifiable": "bool",
+    "requests": "number",
+    "student_share": "number",
+    "recalibrating": "bool",
+    "created_ts": "number",
+    "updated_ts": "number",
+    "updated_by": "string"
+  },
+  "validate": {
+    "valid": "bool",
+    "errors": "list",
+    "tasks[]": {
+      "name": "string",
+      "spec_hash": "string",
+      "registered": "string|null"
+    }
+  },
+  "saved": {
+    "task": "object",
+    "spec_hash": "string",
+    "changed": "bool",
+    "created": "bool"
+  },
+  "refused": {
+    "detail": "string",
+    "errors": "list"
+  },
+  "deleted": {
+    "deleted": "string",
+    "spec_hash": "string",
+    "examples_kept": "number"
+  },
+  "field": {
+    "type": "string"
+  }
+}

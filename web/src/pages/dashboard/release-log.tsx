@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Circle, ScrollText } from "lucide-react";
+import { ScrollText } from "lucide-react";
 import type { LedgerEvent } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { EVENT_KINDS, EVENT_LABEL, EVENT_TONE, eventKey } from "./model";
-import { DetailText, Empty, EVENT_ICON, Panel, TONE_DOT } from "./ui";
+import { EVENT_KINDS, EVENT_LABEL, eventKey, eventLabel, eventTone } from "./model";
+import { DetailText, Empty, eventIcon, Panel, TONE_DOT } from "./ui";
 
 export function ReleaseLog({ events, fresh }: { events: LedgerEvent[]; fresh: Set<string> }) {
   const [filter, setFilter] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function ReleaseLog({ events, fresh }: { events: LedgerEvent[]; fresh: Se
     <Panel
       id="log"
       title="Release log"
-      description="The last 40 events from training and the release gate, newest first."
+      description="The last 40 events: training, the release gate, upstream failures and operator changes, newest first."
       bodyClassName="flex flex-col"
     >
       {events.length === 0 ? (
@@ -73,8 +73,8 @@ export function ReleaseLog({ events, fresh }: { events: LedgerEvent[]; fresh: Se
                 <ol className="relative">
                   <AnimatePresence initial={false}>
                     {g.items.map(({ e, i }) => {
-                      const Icon = EVENT_ICON[e.kind] ?? Circle;
-                      const tone = EVENT_TONE[e.kind] ?? "neutral";
+                      const Icon = eventIcon(e);
+                      const tone = eventTone(e);
                       const isNew = fresh.has(eventKey(e));
                       return (
                         <motion.li
@@ -92,7 +92,7 @@ export function ReleaseLog({ events, fresh }: { events: LedgerEvent[]; fresh: Se
                           </span>
                           <div className={cn("min-w-0 flex-1 rounded-lg px-2 py-1 -mx-2 transition-colors", isNew && "bg-owned-soft/60")}>
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                              <span className="text-[13px] font-semibold text-ink">{EVENT_LABEL[e.kind] ?? e.kind}</span>
+                              <span className="text-[13px] font-semibold text-ink">{eventLabel(e)}</span>
                               {isNew && (
                                 <span className="rounded-full bg-owned px-1.5 text-[10.5px] font-semibold uppercase leading-4 tracking-wide text-white dark:text-[#06101f]">
                                   new

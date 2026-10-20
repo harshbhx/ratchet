@@ -9,12 +9,12 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 707 tests, ~75 s
+pytest -q                                                          # 710 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
 
-Open `/dashboard` and click **Run 1 day + night** a few times (the **Traffic** selector picks tickets, Scout research calls, or both). Click **Break next deploy** to watch an automatic rollback. Open `/scout` and ask an example question to watch the agents. Add `RATCHET_MOCK_WARMUP_DAYS=4` to start with a trained student.
+Open `/dashboard` and click **Run 1 day + night** a few times (the **Traffic** selector picks tickets, Scout research calls, or both). Click **Break next deploy** to watch an automatic rollback, and **Take the student down** in the Resilience panel, then run a day, to watch the circuit breaker open and close. Open `/scout` and ask an example question to watch the agents. Add `RATCHET_MOCK_WARMUP_DAYS=4` to start with a trained student.
 
 ## 2. Live mode on Nebius
 

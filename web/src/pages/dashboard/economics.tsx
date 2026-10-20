@@ -663,7 +663,7 @@ function Full({ report, mock, stale }: { report: CostReport; mock: boolean; stal
             <RecommendationTile report={report} />
             <ViewTile
               title="Per token"
-              sub="The student priced at the hosted Nano's token price. The tiles and charts above use this view."
+              sub="The student priced at the hosted Nano's token price. The tiles above and the charts below use this view."
               view={report.views.per_token}
               baseline={baseline}
               fill="owned-soft"

@@ -672,6 +672,17 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-7.7": ("ratchet.ledger:Ledger.stats_by_task", "web/src/pages/dashboard/tables.tsx"),
     "FR-7.8": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_reset", "web/src/pages/dashboard/controls.tsx"),
     "FR-7.20": ("web/src/pages/dashboard/economics.tsx", "web/src/pages/dashboard/economics-model.ts", "ratchet.gateway:cost"),
+    "FR-7.21": (
+        "web/src/pages/dashboard/registry.tsx",
+        "web/src/pages/dashboard/task-drawer.tsx",
+        "web/src/pages/dashboard/registry-model.ts",
+        "ratchet.gateway:list_tasks",
+    ),
+    "FR-7.22": (
+        "web/src/pages/dashboard/resilience.tsx",
+        "web/src/pages/dashboard/resilience-model.ts",
+        "ratchet.gateway:demo_student_outage",
+    ),
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
