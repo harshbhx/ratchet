@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 364 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 377 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -16,14 +16,14 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_release.py` | 10 (9 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 26 |
-| `tests/test_resilience.py` | 52 (21 functions; one has 14 cases, one has 7, two have 6, one has 3) |
+| `tests/test_hardening.py` | 27 |
+| `tests/test_resilience.py` | 64 (33 functions; one has 14 cases, one has 7, two have 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 130 (24 functions; one has 86 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **364** |
+| **Total** | **377** |
 
 There are three layers:
 
@@ -126,6 +126,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_bom_is_stored_unsigned_without_a_key_and_cli_verifies` | Without a key, a simulated night stores an unsigned BOM whose dataset hash matches the version; the CLI `verify` and `keygen` commands work |
 | `test_bad_signing_key_fails_at_startup` | A key that is not base64, or not 32 bytes, raises |
 | `test_v03_database_gets_v04_columns` | A v0.3 database file gets `client`, `redactions` and `bom` on open |
+| `test_v04_database_gets_the_route_column` | A v0.4 database file with requests in it gets `requests.route` on open; `stats_by_task` reports the old rows as `unrecorded` next to a new `cold_start` row |
 | `test_healthz_stays_public_when_keys_are_on` | `/healthz` answers 200 while `/v1/models` needs a key |
 | `test_redact_preview_endpoint` | `POST /ratchet/redact` returns the redacted text and counts; over-long or missing text gets 400 |
 | `test_live_night_checks_the_student_endpoint_before_paid_work` | Without `RATCHET_STUDENT_BASE`, `NebiusTrainer.train` raises before the sync, the training job or any file write; `reload` with adapters to load raises the same clear error (and with none, returns an empty list) |
@@ -133,7 +134,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 
 ### `tests/test_resilience.py`
 
-Upstream failures: around a request the student already answered (FR-2.10, INV-15, [ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)), the provider's retries and the client statuses they end in (FR-1.11, FR-1.8, INV-7, [ADR 0014](adr/0014-upstream-failure-semantics.md)); the student falling back to the teacher is in `test_hardening.py`. The failing teacher puts its URL, with a query token, in each message, and every test checks the events, errors and responses never repeat it. Retry tests use the local `Upstream` fake (a scripted endpoint behind `httpx.MockTransport` that records each attempt's timeouts) and inject `sleep`, `clock` and `rng`, so nothing really waits.
+Upstream failures: around a request the student already answered (FR-2.10, INV-15, [ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)), the provider's retries and the client statuses they end in (FR-1.11, FR-1.8, INV-7, [ADR 0014](adr/0014-upstream-failure-semantics.md)), and the student circuit breaker with automatic adapter reloads (FR-2.11, NFR-2, [ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)); the student falling back to the teacher is in `test_hardening.py`. Breaker tests run on a `FakeClock` (`Ratchet(clock=...)`, `Runtime(clock=...)`), so no test waits out a cooldown. The failing teacher puts its URL, with a query token, in each message, and every test checks the events, errors and responses never repeat it. Retry tests use the local `Upstream` fake (a scripted endpoint behind `httpx.MockTransport` that records each attempt's timeouts) and inject `sleep`, `clock` and `rng`, so nothing really waits.
 
 | Test | Covers |
 |---|---|
@@ -141,7 +142,7 @@ Upstream failures: around a request the student already answered (FR-2.10, INV-1
 | `test_audit_errors_are_counted_and_throttled_and_escalation_still_fails` | 12 failed audits: 12 counted, events on the 1st and 10th only, no row counted as audited. The teacher comes back: audits and their training examples resume. An unsure student with the teacher down still raises (INV-7, an error status at the gateway) and is not counted as an optional failure |
 | `test_failure_counters_are_exact_under_threads` | 8 threads, 200 failed audits: every request served by the student, exactly 200 counted, exactly three events (1st, 10th, 100th) |
 | `test_shadow_arbitration_failure_is_silent` | The shadow disagrees with the live student and the teacher times out only on that request: the user gets the live answer, the row keeps `shadow_serve=1` with `shadow_agree` NULL, no teacher cost and no example, one `shadow_error` (`v2 arbitration: ReadTimeout`); `shadow_quality` counts the row in `n` and coverage and as a disagreement (precision 1.0 → 0.5, `unarbitrated` 1) |
-| `test_shadow_sampling_error_counted` | A shadow endpoint that times out on 10 requests: all served by the live student at the samples' cost, no shadow record and no teacher call, events on the 1st and 10th, `shadow_errors` 10 |
+| `test_shadow_sampling_error_counted` | With the breaker off (`student_breaker_failures=0`), a shadow endpoint that times out on 10 requests: all served by the live student at the samples' cost, no shadow record and no teacher call, events on the 1st and 10th, `shadow_errors` 10 |
 | `test_optional_teacher_failures_through_the_gateway` | Live `Runtime` with the real HTTP provider, its retry policy and a Token Factory that times out: audited requests (plain and streamed) are 200 with the student's answer, and the shadow's disagreement is not sent to the teacher again after the audit failed (one teacher call, two HTTP attempts, per request); unaudited, the failed arbitration is still a 200; the events read `UpstreamError 504 upstream_timeout`; an escalation is a 504 `teacher_timeout` |
 | `test_retry_backs_off_with_full_jitter_under_the_cap` | 503, 503, 200: three attempts, waits `uniform(0, min(cap, base·2^i))` that grow and stay under the cap; a long outage waits at the cap and returns the last `UpstreamError` (still an `httpx.HTTPError`); jitter's low end waits 0 |
 | `test_retry_after_is_honoured` | A 429 with `Retry-After: 2` waits exactly 2 s; `retry-after-ms` wins over `Retry-After`; a wait over the 8 s cap is not waited for: one attempt, and the error carries the wait |
@@ -158,6 +159,18 @@ Upstream failures: around a request the student already answered (FR-2.10, INV-1
 | `test_sdk_sends_an_exhausted_quota_once` | The real OpenAI SDK with its default two retries sends the quota-exhausted request once and raises `RateLimitError` with the type and code |
 | `test_sdk_sends_an_upstream_client_error_once` | The SDK raises `BadRequestError` with the teacher's `context_length_exceeded` and `param` after one request, and `InternalServerError` 502 `upstream_auth_error` without retrying |
 | `test_scout_error_event_names_the_upstream_status` | A failed Scout run says `a model or search call failed: upstream 503 service_unavailable` (or `upstream 502 upstream_unreachable`, `upstream 504 upstream_timeout`), never the URL |
+| `test_breaker_opens_probes_backs_off_and_closes` | `Breaker` on a fake clock: 4 failures and a success stay closed, 5 in a row open it (`open_until` 30 s on); exactly one probe after the wait; failed probes wait 60, 120, 240, 300, 300 s; a successful probe closes it and resets the wait; a released probe and a lost one (no report within the wait) let the next caller probe; a late result from another thread in half_open, and results while open, change nothing; threshold 0 never opens; a failing listener is swallowed; bad arguments and bad `RATCHET_STUDENT_BREAKER_*` settings raise `ValueError` when the cascade is built |
+| `test_half_open_lets_exactly_one_probe_through` | 25 rounds of 16 threads released by a barrier at the end of the cooldown: exactly one `allow()` is True each time |
+| `test_endpoint_failures_are_told_from_request_errors` | Timeouts, connection and protocol errors, 5xx, 408, 429 and an unreadable answer count as the endpoint down; 400, 401, 404 and `AdapterMissing` as the endpoint answering; a `KeyError` or `ValueError` as neither. `CircuitOpen` is a 503 `circuit_open` |
+| `test_open_student_breaker_sends_requests_straight_to_the_teacher` | A student that times out: 5 `student_error`s and `student: closed->open after 5 failures (ReadTimeout)`; the 6th request never reaches the student (call counter), is served by the teacher with route `student_breaker`, `escalated=1`, `confidence` NULL and only the teacher's cost, and is not another student error; a failed probe after 30 s waits 60 s; once the student is back the probe serves and closes it; the five `circuit` events in order |
+| `test_shadow_breaker_is_its_own` | A shadow that times out opens the `shadow` breaker after 5 calls; the live student serves all 10 requests and its breaker stays closed; skipped shadow calls are not counted as errors and leave no shadow record |
+| `test_breakers_are_per_endpoint_and_role` | Live and canary on one endpoint share the `student` breaker (five failures between them open it for both); breakers are keyed by `base_url` (two clients of one URL share one), by class without one (a new provider object per call keeps one breaker), and by role; names `student`, `student-2`, `student-3`, `shadow` |
+| `test_lost_adapter_is_reported_and_does_not_open_the_breaker` | vLLM's 404 ``The model `student-v1` does not exist.``: 10 requests escalate, `on_adapter_missing` is called each time with the version, the breaker stays closed, the `student_error` detail says `AdapterMissing 404 adapter_missing`; a 404 that names no adapter or another one, and the hosted fallback model's 404, call nothing; a failing or missing callback never fails the request; a shadow's lost adapter is reported too and leaves the `shadow` breaker closed |
+| `test_errors_without_an_http_status_say_nothing_to_the_breaker` | 10 `KeyError`s from the student leave the breaker closed with no failures; a half-open probe that ends in a `KeyError` is handed back and the next request probes (and closes it); a 200 with no choices is a 502 `bad_upstream_response` that counts, so five of them open the breaker |
+| `test_adapter_reloader_rate_limits_and_reports` | `AdapterReloader` on a fake clock: one queued reload per adapter per 60 s, `adapter_reloaded` and `adapter_reload_failed` (`HTTPStatusError 503`, never the URL) events; the thread survives a failing ledger write; nothing is queued after `close()`; `adapter_reloader` refuses to build one without `RATCHET_STUDENT_BASE` |
+| `test_live_gateway_reloads_a_lost_adapter_once_a_minute` | Live `Runtime` with `FakeOpenAIServer(loaded=set())` as a restarted vLLM: 10 requests in 50 s are 200s from the teacher, one `load_lora_adapter` call with the adapter's path and the endpoint token, the breaker closed, rows routed `student_error`, `adapter_reload_failed` while loading fails; a minute later the next 404 reloads it and the student serves again. Mock mode and the hosted fallback have no reloader |
+| `test_demo_student_outage_opens_and_closes_the_breaker` | Mock gateway on a fake clock: `seconds` clamped to 5 and 300; a 60 s outage gives 5 `student_error`s, then `student_breaker`, a failed probe at 30 s, `student_breaker` again, and at 91 s a probe served by the student; the five `circuit` events and the `fault` event; `/ratchet/stats` routes add up to the task's requests |
+| `test_every_request_row_has_a_route` | Cold start, a pinned task, a teacher-only request, a confident and an unsure student, a failing student and an open breaker give `cold_start`, `pinned`, `pinned`, `student`, `confidence`, `student_error`, `student_breaker`: every route in `router.ROUTES`, no NULL route, and `stats_by_task` routes per task, most frequent first |
 
 ### `tests/test_scout.py`
 
@@ -194,8 +207,8 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 | `test_bad_metadata_is_400` | FR-1.3: `metadata` as a string, a list, or with a non-string `ratchet_task` gets 400 and logs nothing |
 | `test_text_content_parts_answered_in_mock` | FR-1.1: a demo ticket sent as OpenAI text content parts gets the same answer as the string form and the same stored example (`seen` 2) |
 | `test_bom_endpoint_counts_by_split_and_fingerprint_changes` | FR-3.5, US-7: `/ratchet/bom` counts per split equal the ledger's; every source names the configured teacher and its license; `examples_sha256` is the documented SHA-256 over the sorted example hashes, stable between reads and equal to the stats block; a repeated request changes nothing, a new one changes the fingerprint and adds one |
-| `test_stats_contract` | FR-7.1 to FR-7.4, FR-7.7, US-9: every key in `tests/fixtures/stats_keys.json`, with its JSON type, on a fresh gateway (lists empty) and after two simulated days and nights plus a keyed request (every list has items, each item checked); the fixture still holds the keys this item named; totals, days, tasks and clients add up to the same requests and dollars, and the savings are positive |
-| `test_demo_endpoints_are_403_in_live_mode` | INV-8: in live mode `POST /ratchet/demo/day` (also with bad arguments), `break-next` and `reset` get 403 and change nothing in the ledger |
+| `test_stats_contract` | FR-7.1 to FR-7.4, FR-7.7, US-9: every key in `tests/fixtures/stats_keys.json`, with its JSON type, on a fresh gateway (lists empty) and after two simulated days and nights plus a keyed request (every list has items, each item checked); the fixture still holds the keys this item named; totals, days, tasks and clients add up to the same requests and dollars, and the savings are positive; each task's `routes` add up to its requests and use only known routes |
+| `test_demo_endpoints_are_403_in_live_mode` | INV-8: in live mode `POST /ratchet/demo/day` (also with bad arguments), `break-next`, `student-outage` and `reset` get 403 and change nothing in the ledger |
 | `test_student_sampled_once_with_production_params` | FR-2.1, NFR-1: one student call per request with `n = Settings.samples` (3 and 5), temperature 0.7 and logprobs on, to the version's adapter with the request as sent; an escalated or audited request adds exactly one teacher call |
 | `test_confidence_formula_exact` | FR-2.2: two of three samples agreeing, the best majority sample at p = 0.9, give 0.4 × 0.9 + 0.6 × 2/3 (not the minority's 0.99, not the weaker majority sample's 0.6), from `score()` and from the router, which logs the same number |
 | `test_confidence_without_logprobs_is_agreement` | FR-2.2: without token logprobs the confidence is the agreement: 2/3 for a split, exactly 1.0 for a unanimous student whose endpoint ignores `logprobs=True` |

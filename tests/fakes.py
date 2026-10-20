@@ -171,7 +171,9 @@ class FakeOpenAIServer:
     `POST .../chat/completions` returns `n` choices with `text` (or `text(body)`), token logprobs only when the body
     asks for them (`logprob=None` plays a server that never returns them), and usage of `in_tokens` and `out_tokens`
     per choice. `POST .../load_lora_adapter` answers `load(body)` as `(status, text)`, 200 by default. `GET .../models`
-    lists `models`. Anything else is a 404, as on a server without that route. Every request is recorded as an
+    lists `models`. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
+    it keeps vLLM's adapter state: a chat request for a model not in it is vLLM's 404 (`The model `x` does not
+    exist.`), a successful load adds the adapter, and `restart()` forgets them all. Every request is recorded as an
     `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
     Pass `server.transport` to `OpenAICompatProvider(transport=...)`, `Runtime(transports=...)` or `httpx.Client`."""
 
@@ -184,6 +186,7 @@ class FakeOpenAIServer:
         out_tokens: int = 5,
         load: Callable[[dict[str, Any]], tuple[int, str]] | None = None,
         models: Collection[str] = (),
+        loaded: Collection[str] | None = None,
     ) -> None:
         self.text = text
         self.logprob = logprob
@@ -191,8 +194,15 @@ class FakeOpenAIServer:
         self.out_tokens = out_tokens
         self.load = load or (lambda body: (200, ""))
         self.models = list(models)
+        self.loaded = set(loaded) if loaded is not None else None
         self.calls: list[HttpCall] = []
         self._lock = threading.Lock()
+
+    def restart(self) -> None:
+        """An endpoint restart: vLLM forgets every adapter loaded at runtime."""
+        with self._lock:
+            if self.loaded is not None:
+                self.loaded.clear()
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -208,9 +218,18 @@ class FakeOpenAIServer:
             self.calls.append(HttpCall(request.method, str(request.url), dict(request.headers), body))
         path = request.url.path
         if request.method == "POST" and path.endswith("/chat/completions"):
+            with self._lock:
+                missing = self.loaded is not None and body["model"] not in self.loaded
+            if missing:  # vLLM's error body for a model it does not serve
+                message = f"The model `{body['model']}` does not exist."
+                return httpx.Response(404, json={"object": "error", "message": message, "type": "NotFoundError", "code": 404})
             return httpx.Response(200, json=self.completion(body))
         if request.method == "POST" and path.endswith("/load_lora_adapter"):
             status, text = self.load(body)
+            if status < 400:
+                with self._lock:
+                    if self.loaded is not None:
+                        self.loaded.add(body["lora_name"])
             return httpx.Response(status, text=text)
         if request.method == "GET" and path.endswith("/models"):
             return httpx.Response(200, json={"object": "list", "data": [{"id": m, "object": "model"} for m in self.models]})

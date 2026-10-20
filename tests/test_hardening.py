@@ -399,6 +399,43 @@ def test_v03_database_gets_v04_columns(tmp_path):
     assert led.client_requests_since("acme", 0) == 0
 
 
+@pytest.mark.req("FR-2.11", "NFR-6")
+def test_v04_database_gets_the_route_column(tmp_path):
+    """A v0.4 ledger (requests with `client`, no `route`) opens, gains the column, and reports its old rows' route as
+    `unrecorded` next to the routes of new ones."""
+    db = tmp_path / "v04.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, served_by TEXT, student_version INTEGER,
+            confidence REAL, escalated INTEGER, audited INTEGER, audit_agree INTEGER, shadow_version INTEGER,
+            shadow_serve INTEGER, shadow_agree INTEGER, latency_ms REAL, cost_usd REAL, baseline_cost_usd REAL, client TEXT
+        );
+        CREATE TABLE examples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, hash TEXT UNIQUE, messages TEXT,
+            completion TEXT, teacher_model TEXT, license TEXT, license_url TEXT, split TEXT, seen INTEGER DEFAULT 1,
+            redactions INTEGER DEFAULT 0
+        );
+        CREATE TABLE versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, created_ts REAL, day INTEGER, base_model TEXT, adapter_uri TEXT,
+            train_examples INTEGER, dataset_hash TEXT, eval TEXT, state TEXT, traffic_pct INTEGER DEFAULT 0,
+            stage_since INTEGER DEFAULT 0, bom TEXT
+        );
+        CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, kind TEXT, detail TEXT);
+        INSERT INTO requests (ts, day, task, served_by, escalated, cost_usd, baseline_cost_usd, latency_ms)
+            VALUES (1800000000, 1, 'ticket-triage', 'teacher', 1, 0.01, 0.01, 900),
+                   (1800000001, 1, 'ticket-triage', 'student', 0, 0.001, 0.01, 300);
+    """)
+    con.commit()
+    con.close()
+    led = Ledger(str(db))
+    assert "route" in {r["name"] for r in led.db.execute("PRAGMA table_info(requests)")}
+    r = Ratchet(Settings(teacher_model="nvidia/Nemotron-3-Ultra-550b-a55b"), led, FakeTeacher(), lambda v: (BrokenStudent(), ""))
+    assert r.handle([{"role": "user", "content": "new"}], "ticket-triage").route == "cold_start"
+    (task,) = led.stats_by_task()
+    assert task["requests"] == 3 and task["routes"] == {"unrecorded": 2, "cold_start": 1}
+
+
 @pytest.mark.req("FR-1.7", "INV-13")
 def test_healthz_stays_public_when_keys_are_on(gw_env):
     from fastapi.testclient import TestClient

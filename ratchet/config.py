@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from .resilience import RetryPolicy, timeouts
+from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
 
 
 def _env(name: str, default: str) -> str:
@@ -78,6 +78,11 @@ class Settings:
     teacher_deadline_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_DEADLINE_S", "180")))
     student_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_TIMEOUT_S", "15")))
     student_connect_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_CONNECT_TIMEOUT_S", "2")))
+    # Student circuit breaker (ADR 0015). After RATCHET_STUDENT_BREAKER_FAILURES endpoint failures in a row (timeouts,
+    # connection errors, 5xx, 408, 429) the student is skipped for RATCHET_STUDENT_BREAKER_COOLDOWN_S seconds and the
+    # teacher answers at once; then one probe decides, and each failed probe doubles the wait up to 300 s. 0 = no breaker.
+    student_breaker_failures: int = field(default_factory=lambda: int(_env("RATCHET_STUDENT_BREAKER_FAILURES", "5")))
+    student_breaker_cooldown_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_BREAKER_COOLDOWN_S", "30")))
 
     # Extra output tokens the teacher spends on reasoning (billed, not returned).
     teacher_reasoning_tokens: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_TOKENS", "300")))
@@ -140,6 +145,16 @@ class Settings:
         if not self.teacher_deadline_s > 0:
             raise ValueError(f"RATCHET_TEACHER_DEADLINE_S must be more than 0, not {self.teacher_deadline_s!r}")
         return RetryPolicy(max_attempts=self.teacher_retries + 1, deadline_s=self.teacher_deadline_s)
+
+    def student_breaker(self) -> BreakerPolicy:
+        """The student breakers' policy. A bad value raises ValueError, so the gateway fails at startup. The longest wait
+        is 300 s, or the cooldown itself when that is longer."""
+        failures, cooldown = self.student_breaker_failures, self.student_breaker_cooldown_s
+        if isinstance(failures, bool) or not isinstance(failures, int) or failures < 0:
+            raise ValueError(f"RATCHET_STUDENT_BREAKER_FAILURES must be 0 (no breaker) or more, not {failures!r}")
+        if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not (0 < cooldown < float("inf")):
+            raise ValueError(f"RATCHET_STUDENT_BREAKER_COOLDOWN_S must be a positive number of seconds, not {cooldown!r}")
+        return BreakerPolicy(failures, float(cooldown), max(MAX_OPEN_S, float(cooldown)))
 
     def price(self, model: str) -> Price:
         if model in self.prices:

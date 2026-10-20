@@ -35,7 +35,7 @@ from ratchet.config import DEFAULT_PRICES, Settings
 from ratchet.ledger import Ledger, example_hash
 from ratchet.providers import Completion
 from ratchet.release import wilson
-from ratchet.router import Ratchet
+from ratchet.router import ROUTES, Ratchet
 
 STATS_KEYS = Path(__file__).resolve().parent / "fixtures" / "stats_keys.json"
 CHAT = "/v1/chat/completions"
@@ -372,6 +372,8 @@ def test_stats_contract(gw_env):
     assert t["cost_usd"] == pytest.approx(sum(d["cost_per_1k"] * d["requests"] / 1000 for d in stats["days"]))
     assert t["baseline_usd"] == pytest.approx(sum(d["baseline_per_1k"] * d["requests"] / 1000 for d in stats["days"]))
     assert [(x["client"], x["requests"]) for x in stats["clients"]] == [("acme", 1)]
+    for task in stats["tasks"]:  # every request has a route (FR-2.11)
+        assert sum(task["routes"].values()) == task["requests"] and set(task["routes"]) <= set(ROUTES), task
     assert stats["versions"][0]["bom"] == "unsigned"
 
 
@@ -394,6 +396,8 @@ def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
         "/ratchet/demo/day",
         "/ratchet/demo/day?workload=bogus&requests=1",  # refused for the mode before the arguments are looked at
         "/ratchet/demo/break-next",
+        "/ratchet/demo/student-outage",
+        "/ratchet/demo/student-outage?seconds=5",
         "/ratchet/demo/reset",
     ):
         r = c.post(path)

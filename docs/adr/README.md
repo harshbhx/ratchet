@@ -18,5 +18,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0012](0012-openai-request-validation-and-error-envelope.md) | Validate and normalise OpenAI requests at the gateway, and answer errors in OpenAI's envelope | Accepted | 2026-10-20 |
 | [0013](0013-optional-teacher-calls-fail-open.md) | Optional teacher calls fail open for the request and count against the shadow in the release gate | Accepted | 2026-10-20 |
 | [0014](0014-upstream-failure-semantics.md) | Upstream failure semantics: bounded retries, one error type, and statuses a client can act on | Accepted | 2026-10-20 |
+| [0015](0015-student-circuit-breaker-and-adapter-reload.md) | A circuit breaker per student endpoint, automatic adapter reloads, and a route on every request | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

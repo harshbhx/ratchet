@@ -28,6 +28,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
 | POST | `/ratchet/demo/day` | mock only | Simulate one day of traffic and one night of training |
 | POST | `/ratchet/demo/break-next` | mock only | Make the next trained student deploy corrupted |
+| POST | `/ratchet/demo/student-outage` | mock only | Take the student endpoint down for a while, to show the circuit breaker |
 | POST | `/ratchet/demo/reset` | mock only | Start over |
 | GET | `/scout/examples` | both | Example questions and whether free text is allowed |
 | GET | `/scout/status` | both | Budget guard state |
@@ -311,9 +312,11 @@ Needs a key when `RATCHET_API_KEYS` is set.
   ],
   "tasks": [
     {"task": "ticket-triage", "pinned": false, "requests": 12000, "student_share": 0.84, "escalation_rate": 0.06,
-     "cost_usd": 3.21, "baseline_usd": 13.1, "savings_pct": 0.75, "avg_latency_ms": 640.0},
+     "cost_usd": 3.21, "baseline_usd": 13.1, "savings_pct": 0.75, "avg_latency_ms": 640.0,
+     "routes": {"student": 10080, "cold_start": 1100, "confidence": 720, "student_error": 60, "student_breaker": 40}},
     {"task": "research-plan", "pinned": true, "requests": 3, "student_share": 0.0, "escalation_rate": 0.0,
-     "cost_usd": 0.0039, "baseline_usd": 0.0039, "savings_pct": 0.0, "avg_latency_ms": 2400.0}
+     "cost_usd": 0.0039, "baseline_usd": 0.0039, "savings_pct": 0.0, "avg_latency_ms": 2400.0,
+     "routes": {"pinned": 3}}
   ],
   "events": [{"id": 57, "ts": 1792400000.0, "day": 9, "kind": "live", "detail": "v5 promoted to 100% (audited precision 94.1%, n=17)"}],
   "totals": {"requests": 13500, "cost_usd": 5.21, "baseline_usd": 14.58, "saved_usd": 9.37, "savings_pct": 0.64},
@@ -327,7 +330,19 @@ Needs a key when `RATCHET_API_KEYS` is set.
 ```
 
 - `days`: one entry per `requests.day` (see `Ledger.stats_by_day`). `audit_agreement` is `null` on days without audits.
-- `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher".
+- `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher". `routes` counts the task's requests by how they were served (the ledger's `requests.route`), most frequent first, and adds up to `requests`:
+
+  | Route | Served by | Why |
+  |---|---|---|
+  | `student` | student | Its confidence reached the version's threshold |
+  | `confidence` | teacher | The student was unsure (below the threshold) |
+  | `cold_start` | teacher | No version serves yet (no live version, and the canary was not picked) |
+  | `pinned` | teacher | A pinned task, or a request with a part only the teacher reads (`RATCHET_TEACHER_MODALITIES`) |
+  | `student_error` | teacher | The student call failed (timeout, connection error, an error status, a lost adapter) |
+  | `student_breaker` | teacher | The student's circuit breaker was open, so the student was not called ([ARCHITECTURE.md](ARCHITECTURE.md#student-circuit-breaker)) |
+  | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
+
+  Later versions add routes; a client should show an unknown route as it is.
 - `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off.
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`).
@@ -417,11 +432,11 @@ curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
 
 ## Demo controls (mock mode only)
 
-All three return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
+All four return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
 
 The mock demo is shared by every visitor, so the controls protect themselves:
 
-- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next` does not take the lock.)
+- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next` and `student-outage` do not take the lock.)
 - **Reset cooldown.** `reset` returns **429** `the demo was reset less than 30 seconds ago` within 30 seconds (`RESET_COOLDOWN_S`) of the last successful reset.
 
 The dashboard shows these messages under its buttons.
@@ -452,6 +467,16 @@ Marks the next version name (`student-v{count+1}`) to be served corrupted once i
 ```json
 {"corrupt": "student-v4"}
 ```
+
+### POST `/ratchet/demo/student-outage?seconds=60`
+
+Fault injection for the student circuit breaker: for `seconds` (clamped to 5–300, default 60) every call to the production student endpoint, which serves the live and canary versions, fails as an unreachable endpoint does (`httpx.ConnectError`). Shadow candidates run on the mock staging endpoint and are not affected. It writes a `fault` event and returns when the outage ends (Unix time):
+
+```json
+{"seconds": 60, "until": 1792400060.0}
+```
+
+Send traffic (Scout, or **Run 1 day + night**) and the release log shows the breaker at work: five `student_error`s, then `circuit` `student: closed->open after 5 failures (ConnectError)`; requests go straight to the teacher (route `student_breaker`); after 30 s one probe (`open->half_open`), which fails while the outage lasts and doubles the wait (`half_open->open for 60 s ...`); once the endpoint is back, a probe succeeds and `half_open->closed`. Calling it again starts a new outage of the given length from now.
 
 ### POST `/ratchet/demo/reset`
 
@@ -557,5 +582,7 @@ result = r.handle([{"role": "user", "content": "..."}], "ticket-triage")
 gate.tick()
 print(result.served_by, result.text, result.cost_usd)
 ```
+
+`result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)). `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`) and `breakers`: each student breaker's state by name (`student`, `shadow`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
 
 When the teacher's answer was needed and the teacher failed after its retries, `handle` raises `ratchet.providers.UpstreamError` (an `httpx.HTTPError`): `status` (504 for a timeout, 502 when Token Factory could not be reached), and the teacher's `type`, `code`, `param`, `message` and `retry_after` when it sent them. It never carries the URL or headers.

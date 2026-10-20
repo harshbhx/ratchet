@@ -5,6 +5,9 @@ it was trained on (a saturating learning curve), capped lower for "hard" templat
 When it does not know a request, its samples sometimes agree on the same wrong answer
 with high confidence: the dangerous case that audits and shadow mode exist to catch.
 
+The fleet can also take the production endpoint down for a while (`MockFleet.student_outage`, the demo's
+`POST /ratchet/demo/student-outage`), so the student circuit breaker can be shown opening and closing again.
+
 This is a simulation for demos and tests. Real numbers come from live mode.
 """
 
@@ -14,8 +17,12 @@ import hashlib
 import json
 import math
 import random
+import time
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
+
+import httpx
 
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
@@ -25,6 +32,10 @@ from ratchet.scout.prompts import PLAN_SYSTEM, WRITE_SYSTEM
 
 from . import research
 from .world import Item, lookup
+
+# The mock endpoints, as `base_url`s: the router keeps one student breaker per endpoint (ratchet/router.py).
+PRODUCTION = "mock://production"  # canary and live versions
+STAGING = "mock://staging"  # shadow candidates and the golden eval
 
 
 def _rng(*parts: Any) -> random.Random:
@@ -80,10 +91,11 @@ class MockStudent:
     CURVE = 6.0  # examples to reach ~63% of the way to the ceiling
     CEIL = {"easy": 0.985, "hard": 0.86}
 
-    def __init__(self, name: str, knowledge: dict[str, Any], corrupted: bool = False):
+    def __init__(self, name: str, knowledge: dict[str, Any], corrupted: bool = False, base_url: str = STAGING):
         self.name = name
         self.knowledge = knowledge  # {"templates": {template: unique examples}, "texts": set}
         self.corrupted = corrupted
+        self.base_url = base_url
         self.calls = 0
 
     def skill(self, t: Item) -> float:
@@ -132,12 +144,29 @@ class MockStudent:
         return out
 
 
-class MockFleet:
-    """Holds trained mock adapters; acts as trainer, evaluator and student resolver."""
+class DownStudent:
+    """The production endpoint during a demo outage: every call fails the way an unreachable endpoint does."""
 
-    def __init__(self, corrupt_on_deploy: set[str] | None = None):
+    base_url = PRODUCTION
+
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+        raise httpx.ConnectError("the mock student endpoint is down (demo outage)")
+
+
+class MockFleet:
+    """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages."""
+
+    def __init__(self, corrupt_on_deploy: set[str] | None = None, clock: Callable[[], float] = time.monotonic):
         self.knowledge: dict[str, dict[str, Any]] = {}
         self.corrupt_on_deploy = corrupt_on_deploy or set()
+        self.clock = clock
+        self.outage_until: float | None = None  # on `clock`; None = never down
+
+    def student_outage(self, seconds: float) -> float:
+        """Take the production endpoint down for `seconds` from now (demo fault injection); returns when it comes back,
+        on `clock`. Shadow candidates run on staging and are not affected."""
+        self.outage_until = self.clock() + seconds
+        return self.outage_until
 
     # Trainer
     def train(self, train_rows: list[dict[str, Any]], base_model: str, name: str) -> str:
@@ -161,5 +190,11 @@ class MockFleet:
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
     def resolve(self, version: Version):
-        corrupted = version.adapter_uri in self.corrupt_on_deploy and version.state in ("canary", "live")
-        return MockStudent(version.adapter_uri, self.knowledge[version.adapter_uri], corrupted), version.adapter_uri
+        production = version.state in ("canary", "live")
+        if production and self.outage_until is not None and self.clock() < self.outage_until:
+            return DownStudent(), version.adapter_uri
+        corrupted = version.adapter_uri in self.corrupt_on_deploy and production
+        student = MockStudent(
+            version.adapter_uri, self.knowledge[version.adapter_uri], corrupted, PRODUCTION if production else STAGING
+        )
+        return student, version.adapter_uri

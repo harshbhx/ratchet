@@ -2,7 +2,8 @@
 
     python -m ratchet.live night        # run one night against the live ledger
     python -m ratchet.live tick         # advance the release gate (run every few minutes via cron)
-    python -m ratchet.live reload       # re-load live/canary/shadow adapters after an endpoint restart
+    python -m ratchet.live reload       # re-load live/canary/shadow adapters after an endpoint restart (the gateway
+                                        # also does this by itself when vLLM answers 404 for an adapter: AdapterReloader)
 
 Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
@@ -17,9 +18,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shlex
 import subprocess
 import sys
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -28,12 +32,13 @@ import httpx
 
 from . import bom
 from .config import Settings
-from .ledger import Ledger
+from .ledger import Ledger, Version
 from .nightschool import dataset
 from .nightschool.evaluate import LiveEvaluator
 from .nightschool.orchestrate import run_night
 from .providers import OpenAICompatProvider, Provider
 from .release import ReleaseGate, ReleasePolicy
+from .resilience import describe_failure
 
 # The test seams below are default arguments: `run` replaces subprocess.run, `http` the client that talks to vLLM, and
 # `provider_factory` the model clients (called as `factory(base_url, api_key, timeout=..., retry=...)`). Production code
@@ -41,6 +46,12 @@ from .release import ReleaseGate, ReleasePolicy
 RunFn = Callable[..., Any]
 ProviderFactory = Callable[..., Provider]
 NO_STUDENT_BASE = "RATCHET_STUDENT_BASE is not set: no student endpoint to load adapters into"
+RELOAD_INTERVAL_S = 60.0  # the gateway reloads one adapter at most this often, however many requests hit its 404
+
+
+def adapter_root() -> str:
+    """Where the endpoint sees adapters (`lora_path` = `<root>/<name>`)."""
+    return os.environ.get("RATCHET_ADAPTER_ROOT", "/data/adapters")
 
 
 def _run(cmd: str, run: RunFn = subprocess.run) -> None:
@@ -75,7 +86,7 @@ class NebiusTrainer:
         self.data = Path(os.environ.get("RATCHET_DATA_DIR", "data"))
         self.sync_cmd = os.environ.get("RATCHET_SYNC_CMD", "")
         self.train_cmd = os.environ.get("RATCHET_TRAIN_CMD", "bash deploy/train_job.sh {version}")
-        self.adapter_root = os.environ.get("RATCHET_ADAPTER_ROOT", "/data/adapters")
+        self.adapter_root = adapter_root()
 
     def train(self, train_rows: list[dict[str, Any]], base_model: str, name: str) -> str:
         # Check before the sync and the paid GPU job: an adapter with no endpoint to load into cannot be evaluated.
@@ -95,14 +106,113 @@ def build(s: Settings) -> tuple[Ledger, ReleaseGate]:
 
 
 def reload_adapters(s: Settings, led: Ledger, http: httpx.Client | None = None) -> list[str]:
-    """vLLM forgets runtime-loaded adapters when the endpoint restarts: load them again."""
-    root = os.environ.get("RATCHET_ADAPTER_ROOT", "/data/adapters")
+    """vLLM forgets runtime-loaded adapters when the endpoint restarts: load them again (the manual fallback for
+    `AdapterReloader`, which the gateway runs by itself)."""
+    root = adapter_root()
     names = [v.adapter_uri for v in led.versions(["live", "canary", "shadow"])]
     if names and not s.student_base:
         raise RuntimeError(NO_STUDENT_BASE)
     for name in names:
         load_adapter(s.student_base, s.student_api_key, name, f"{root}/{name}", http)
     return names
+
+
+class AdapterReloader:
+    """Loads a version's LoRA adapter again when vLLM answers 404 for it: an endpoint restart forgets every adapter
+    loaded at runtime, and before this only `python -m ratchet.live reload` by hand brought them back.
+
+    `request(version)` never waits: the request that hit the 404 has already escalated to the teacher. One daemon
+    thread, started on the first request, calls `load(adapter_name)` for each queued version in turn, and each adapter
+    is tried at most once per `interval_s` (on `clock`), however many requests hit its 404 meanwhile. The outcome is an
+    `adapter_reloaded` or `adapter_reload_failed` event; a failure names the error's class and status, never its
+    message, which carries the endpoint URL."""
+
+    def __init__(
+        self,
+        load: Callable[[str], object],
+        ledger: Ledger,
+        interval_s: float = RELOAD_INTERVAL_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.load = load
+        self.ledger = ledger
+        self.interval_s = interval_s
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._idle = threading.Condition(self._lock)
+        self._tried: dict[str, float] = {}  # adapter name -> when its last reload was queued
+        self._pending = 0
+        self._queue: queue.Queue[Version | None] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._closed = False
+
+    def request(self, version: Version) -> bool:
+        """Queue a reload of `version`'s adapter, unless one was queued less than `interval_s` ago or the reloader is
+        closed. True when queued."""
+        name = version.adapter_uri
+        with self._lock:
+            if self._closed:
+                return False
+            now = self.clock()
+            last = self._tried.get(name)
+            if last is not None and now - last < self.interval_s:
+                return False
+            self._tried[name] = now
+            self._pending += 1
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="ratchet-adapter-reloader", daemon=True)
+                self._thread.start()
+            self._queue.put(version)
+        return True
+
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait until every queued reload has finished; False if `timeout` passed first. The gateway never waits; tests
+        and scripts do."""
+        with self._idle:
+            return self._idle.wait_for(lambda: self._pending == 0, timeout)
+
+    def close(self) -> None:
+        """Stop the thread once the reloads already queued are done; later requests are refused."""
+        with self._lock:
+            if not self._closed and self._thread is not None:
+                self._queue.put(None)
+            self._closed = True
+
+    def _run(self) -> None:
+        while (version := self._queue.get()) is not None:
+            try:
+                self._reload(version)
+            finally:
+                with self._idle:
+                    self._pending -= 1
+                    self._idle.notify_all()
+
+    def _reload(self, version: Version) -> None:
+        name = version.adapter_uri
+        try:
+            self.load(name)
+        except Exception as e:  # noqa: BLE001 - report it; the next 404 after interval_s tries again
+            kind, detail = "adapter_reload_failed", f"v{version.id} {name}: {describe_failure(e)}"
+        else:
+            kind, detail = "adapter_reloaded", f"v{version.id} {name}: loaded again after the student endpoint answered 404"
+        try:
+            self.ledger.event(kind, detail)
+        except Exception:  # noqa: BLE001 - the thread must outlive a failing ledger write
+            pass
+
+
+def adapter_reloader(
+    s: Settings, led: Ledger, http: httpx.Client | None = None, clock: Callable[[], float] = time.monotonic
+) -> AdapterReloader:
+    """The gateway's reloader for the student endpoint at `s.student_base` (live mode with an endpoint only)."""
+    if not s.student_base:
+        raise RuntimeError(NO_STUDENT_BASE)
+    root = adapter_root()
+
+    def load(name: str) -> None:
+        load_adapter(s.student_base, s.student_api_key, name, f"{root}/{name}", http)
+
+    return AdapterReloader(load, led, clock=clock)
 
 
 def main(

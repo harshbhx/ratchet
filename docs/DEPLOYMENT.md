@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 364 tests, ~35 s
+pytest -q                                                          # 377 tests, ~35 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -97,7 +97,7 @@ curl -s ${RATCHET_STUDENT_BASE%/v1}/v1/load_lora_adapter -H "Authorization: Bear
   -H 'content-type: application/json' -d '{"lora_name":"student-v1","lora_path":"/data/adapters/student-v1"}'
 ```
 
-> Adapters loaded at runtime are lost when the endpoint restarts. After a restart run `python -m ratchet.live reload`, which re-loads every `live`, `canary` and `shadow` adapter. Until then, student calls fail and fall back to the teacher (requests still succeed, at teacher cost). See [RUNBOOK.md](RUNBOOK.md#student-endpoint-down-or-restarted).
+> Adapters loaded at runtime are lost when the endpoint restarts. The gateway notices vLLM's 404 for an adapter and loads it again by itself (at most once per adapter per minute; `adapter_reloaded` events), so student calls fall back to the teacher for a few requests (they still succeed, at teacher cost). `python -m ratchet.live reload` re-loads every `live`, `canary` and `shadow` adapter by hand if that fails. See [RUNBOOK.md](RUNBOOK.md#student-endpoint-down-or-adapters-lost).
 
 ### Step 5: Training job
 
