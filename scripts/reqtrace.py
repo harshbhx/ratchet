@@ -603,10 +603,6 @@ EXEMPT: dict[str, Exempt] = {
     "FR-4.5": Exempt("live", "deploy/Dockerfile.train", "needs a GPU: runs in the training image on a Serverless Job"),
     "FR-4.6": Exempt("live", "deploy/train_job.sh", "needs a Nebius Serverless Job and a bucket"),
     "FR-5.5": Exempt("live", "scripts/day1_check.py", "the judge's JSON mode is checked against Token Factory"),
-    "FR-7.1": Exempt("manual", "web/CLAUDE.md", _UI),
-    "FR-7.2": Exempt("manual", "web/CLAUDE.md", _UI),
-    "FR-7.3": Exempt("manual", "web/CLAUDE.md", _UI),
-    "FR-7.4": Exempt("manual", "web/CLAUDE.md", _UI),
     "FR-7.6": Exempt("manual", "web/CLAUDE.md", _UI),
     "FR-8.1": Exempt("live", "scripts/day1_check.py", "model ids, logprobs and JSON mode on Token Factory"),
     "FR-8.2": Exempt("live", "deploy/student_endpoint.sh", "needs a vLLM Serverless Endpoint with runtime LoRA loading"),
@@ -634,8 +630,8 @@ INITIAL_KNOWN_GAPS: frozenset[str] = frozenset(
 # The gaps still open. Remove an id when a test marks it; the check fails until you do.
 KNOWN_GAPS: frozenset[str] = frozenset(
     {
-        "FR-1.2", "FR-2.1", "FR-4.5", "FR-4.6", "FR-5.1", "FR-5.5", "FR-8.2", "FR-8.4", "FR-8.5", "FR-9.6",
-        "FR-10.6", "FR-11.1", "FR-11.2", "NFR-1", "INV-8",
+        "FR-4.5", "FR-4.6", "FR-5.1", "FR-5.5", "FR-8.2", "FR-8.4", "FR-8.5", "FR-9.6", "FR-10.6", "FR-11.1",
+        "FR-11.2",
     }
 )  # fmt: skip
 

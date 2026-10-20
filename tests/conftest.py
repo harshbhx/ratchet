@@ -1,4 +1,5 @@
-"""Shared fixtures: the reloaded mock gateway (`gw`, `gw_env`) and the pinned reference simulation (`reference_run`).
+"""Shared fixtures: the reloaded mock gateway (`gw`, `gw_env`), scripts loaded by path (`sim_reference`, `day1_check`)
+and the pinned reference simulation (`reference_run`).
 
 Test doubles and ledger builders live in tests/fakes.py (`from fakes import ...`).
 """
@@ -60,6 +61,12 @@ def gw_env(monkeypatch):
 def sim_reference() -> ModuleType:
     """scripts/regen_sim_reference.py: the pinned inputs, `snapshot()`, `load()` and the fixture path."""
     return _load_script("regen_sim_reference")
+
+
+@pytest.fixture(scope="session")
+def day1_check() -> ModuleType:
+    """scripts/day1_check.py: `WANT`, the Token Factory models the live day-1 check confirms. Loading it calls nothing."""
+    return _load_script("day1_check")
 
 
 @pytest.fixture(scope="session")

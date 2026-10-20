@@ -6,9 +6,10 @@
 - `test_system.py`: end-to-end with mock models through `sim.simulate.run`: learning curve, savings, rollback, drift recovery, provenance, gateway API shape, provider parsing via `httpx.MockTransport`, and `test_reference_simulation_unchanged` (below).
 - `test_hardening.py`: regressions for the issues listed in [docs/TESTING.md](../docs/TESTING.md): migrations, `auto_day`, student-failure fallback, 502 on teacher failure, fallback threshold, registry growth, alert de-duplication, `ReleasePolicy.from_env`. Also the v0.4 hardening: PII redaction (incl. a check that it never changes a mock request), API keys and quotas, streaming, signed BOMs, `/healthz`, `/ratchet/redact`.
 - `test_traceability.py`: the requirements traceability check (`scripts/reqtrace.py`, loaded with `importlib.util.spec_from_file_location`). Repo tests run each rule on the real repo; mini-world tests write a tiny PRD, CLAUDE.md and test file to `tmp_path` and assert that each kind of mistake gives exactly one error. One test runs `pytest --collect-only` in a subprocess to prove the AST test count matches pytest.
+- `test_contract.py`: the contract clients, the dashboard and the license rules rely on, pinned before `Ratchet.handle` and `gateway.chat` are rewritten. Gateway: `/v1/models`, the task header over `metadata`, 400 for missing or malformed `messages`, `/ratchet/bom` counts and fingerprint, the `/ratchet/stats` keys in `fixtures/stats_keys.json`, demo controls refused (403) in live mode. Cascade: one student call with `n = samples`, temperature 0.7 and logprobs; the exact confidence formula, with and without logprobs; serve at a confidence equal to the threshold and escalate a float step below; audit rates 0, 1 and 0.2 (99% Wilson interval); cost and baseline to the token in 11 paths; a consistent ledger under 8 threads. Licensing: o-series refused, a closed teacher stops `Ratchet` and `Runtime` at startup, examples record the license URL, every priced model is licensed and in `day1_check.WANT`. Known bugs are strict xfails naming the item that fixes them (below).
 - `test_scout.py`: Scout and its pieces: example questions match the research world, the documented event shape, pinned tasks never stored as training data, the student learning Scout calls over simulated days, `--workload research`, all gateway pages and `/scout/*` routes (incl. SSE and the 400/429 paths), the guard (budget, hourly window, daily run cap, with `FakeClock`), `TavilySearch` against `httpx.MockTransport`, and bad JSON from models.
 
-131 tests in total (19 core, 13 nightschool, 9 release, 8 system, 23 hardening, 15 Scout, 44 traceability).
+164 tests in total (19 core, 13 nightschool, 9 release, 8 system, 23 hardening, 15 Scout, 33 contract, 44 traceability).
 
 ## Shared fixtures (`conftest.py`)
 
@@ -17,6 +18,7 @@
 | `gw` | test | `ratchet.gateway` reloaded in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0` (Scout and page tests) |
 | `gw_env` | test | `gw_env(RATCHET_API_KEYS=...)` reloads the gateway in mock mode with those variables (and no warm-up), and reloads the default gateway afterwards |
 | `sim_reference` | session | `scripts/regen_sim_reference.py`, loaded by path: `snapshot()`, `load()`, `inputs()`, the fixture path |
+| `day1_check` | session | `scripts/day1_check.py`, loaded by path (its `WANT` list of Token Factory models); loading it calls nothing |
 | `reference_run` | session | The result of one `sim.simulate.run` with the pinned reference inputs. It runs once per session (about 7 s) however many tests use it, so treat the dict as read-only |
 
 ## Fakes and builders (`fakes.py`)
@@ -25,7 +27,7 @@ Import with `from fakes import ...` (pytest puts `tests/` on `sys.path` because 
 
 | Name | What |
 |---|---|
-| `RecordingProvider(text, logprob=-0.05, in_tokens=10, out_tokens=5, raise_on=set())` | Any OpenAI-compatible model. `text` is a string or `text(messages, model)`. Returns `n` identical choices (so a student built from it is unanimous; -0.05 is p≈0.95, confident), token logprobs only when `logprobs=True`, and raises `httpx.ConnectError` for a model in `raise_on`. Records `ProviderCall(messages, model, kwargs)` per call; `answer(messages, model)` gives what it said |
+| `RecordingProvider(text, logprob=-0.05, in_tokens=10, out_tokens=5, raise_on=set())` | Any OpenAI-compatible model. `text` is a string or `text(messages, model)`. Returns `n` identical choices (so a student built from it is unanimous; -0.05 is p≈0.95, confident), token logprobs only when `logprobs=True` (`logprob=None`: never, like an endpoint without logprob support), and raises `httpx.ConnectError` for a model in `raise_on`. A list for `text` or `logprob` scripts the choices (choice i gets item i, cycling): `RecordingProvider([A, A, B], [log(.6), log(.9), log(.99)])` is a 2-of-3 majority. Records `ProviderCall(messages, model, kwargs)` per call; `answer(messages, model)` gives what it said (the first choice when scripted) |
 | `RecordingTrainer` | Records `TrainCall(rows, base_model, name)` and returns `name` as the adapter |
 | `RecordingEvaluator(result_fn)` | Returns `result_fn(adapter_uri, golden_rows)` (or a copy of a fixed dict) and records `EvalCall(adapter_uri, golden_rows)` |
 | `REJECTED_EVAL` | A golden result the gate always rejects, so no release stays in flight and the next night trains again |
@@ -58,3 +60,5 @@ Every builder writes through the ledger's public writers (`create_version`, `set
 - Tests that reload `ratchet.gateway` must restore state (`gw.rt.reset()`). Set `RATCHET_MOCK_WARMUP_DAYS=0` when you reload it, so a warm-up in your shell does not slow tests or change their numbers.
 - Pass explicit values to `Settings(...)` for anything a test depends on (`audit_rate`, `samples`, `teacher_model`), so environment variables in your shell cannot change the result.
 - Guard tests use an injected clock (`FakeClock`), never `time.sleep`.
+- **`fixtures/stats_keys.json` only grows.** It lists every key the dashboard reads from `/ratchet/stats` (mirroring `Stats` in `web/src/lib/api.ts`) with its JSON type, and `test_stats_contract` checks it recursively. When the payload gains a key, add it here; never remove or retype a key, or the React dashboard and other clients break.
+- A known bug that a planned item will fix gets a strict xfail whose reason names that item (`fixed by API-VALIDATE-NORMALIZE`). The fixing change removes the marker. Write xfail marks literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`), never through a variable: the traceability scan reads them from the source, and a hidden xfail would count as proof.

@@ -1,0 +1,95 @@
+{
+  "about": [
+    "Every key the dashboard reads from GET /ratchet/stats (web/src/lib/api.ts, interface Stats), with its JSON type.",
+    "tests/test_contract.py::test_stats_contract checks it recursively against a live payload.",
+    "A key ending in [] is a list: the test checks every item. A nested object is checked key by key.",
+    "Types: string, number (int or float, not bool), bool, null, object, list; a|b allows either.",
+    "Add keys when the payload grows. Never remove or retype one: the dashboard and other clients rely on them."
+  ],
+  "keys": {
+    "mode": "string",
+    "day": "number",
+    "teacher": "string",
+    "student_base": "string",
+    "totals": {
+      "requests": "number",
+      "cost_usd": "number",
+      "baseline_usd": "number",
+      "saved_usd": "number",
+      "savings_pct": "number"
+    },
+    "days[]": {
+      "day": "number",
+      "requests": "number",
+      "student_share": "number",
+      "escalation_rate": "number",
+      "cost_per_1k": "number",
+      "baseline_per_1k": "number",
+      "savings_pct": "number",
+      "avg_latency_ms": "number",
+      "audit_agreement": "number|null"
+    },
+    "tasks[]": {
+      "task": "string",
+      "pinned": "bool",
+      "requests": "number",
+      "student_share": "number",
+      "escalation_rate": "number",
+      "cost_usd": "number",
+      "baseline_usd": "number",
+      "savings_pct": "number",
+      "avg_latency_ms": "number"
+    },
+    "versions[]": {
+      "id": "number",
+      "day": "number",
+      "base_model": "string",
+      "adapter_uri": "string",
+      "train_examples": "number",
+      "dataset_hash": "string",
+      "eval": "object",
+      "state": "string",
+      "traffic_pct": "number",
+      "stage_since": "number",
+      "bom": "string|null"
+    },
+    "events[]": {
+      "id": "number",
+      "ts": "number",
+      "day": "number",
+      "kind": "string",
+      "detail": "string"
+    },
+    "bill_of_materials": {
+      "generated_at": "number",
+      "examples_sha256": "string",
+      "sources[]": {
+        "teacher_model": "string",
+        "license": "string",
+        "license_url": "string",
+        "split": "string",
+        "n": "number"
+      }
+    },
+    "clients[]": {
+      "client": "string",
+      "requests": "number",
+      "student_share": "number",
+      "cost_usd": "number",
+      "baseline_usd": "number",
+      "savings_pct": "number"
+    },
+    "privacy": {
+      "redaction": "bool",
+      "examples": "number",
+      "redacted_examples": "number",
+      "placeholders": "number"
+    },
+    "security": {
+      "api_keys": "bool",
+      "daily_requests_per_key": "number|null",
+      "bom_signing": "bool",
+      "bom_key_id": "string|null"
+    }
+  }
+}

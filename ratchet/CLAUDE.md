@@ -56,6 +56,8 @@ Pages: the React build in `web/dist` (source in `/web`, see [web/CLAUDE.md](../w
 
 Demo controls are shared by every visitor: `day` and `reset` take `_demo_lock` without blocking (busy → 409), and `reset` has a 30 s cooldown (429).
 
+`/ratchet/stats` only gains keys: every key the dashboard reads is listed with its JSON type in `tests/fixtures/stats_keys.json` and checked by `test_stats_contract`. Add new keys there too; never remove or retype one. The other client-facing behaviour (status codes, task selection, sampling parameters, the confidence formula, the threshold boundary, audits, cost to the token) is pinned in `tests/test_contract.py`.
+
 ## Scout (`scout/`)
 
 Multi-agent research demo ([docs/SCOUT.md](../docs/SCOUT.md)).
