@@ -663,6 +663,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
 - `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
 - `unknown_tasks`: the `RATCHET_UNKNOWN_TASKS` policy. `max_tasks`: how many tasks the registry holds at most, built-in ones included.
 - `unregistered`: names requests used that are not registered (a typo, or a task to register or pin), with their request counts.
+- The dashboard's **Task registry** panel reads this list, `GET /ratchet/tasks/{name}` for its drawer, and the write results below. The keys it reads are listed with their JSON types in `tests/fixtures/tasks_keys.json` and checked by `test_task_registry_contract`; like `/ratchet/stats`, these responses add keys and never remove or retype one. The panel writes API tasks with an admin key the operator types in, sent only as `Authorization: Bearer` and kept in the page's memory ([ADR 0100](adr/0100-dashboard-task-writes-and-derived-breaker-state.md)).
 
 ### GET `/ratchet/tasks/{name}`
 
@@ -748,7 +749,7 @@ Fault injection for the student circuit breaker: for `seconds` (clamped to 5–3
 {"seconds": 60, "until": 1792400060.0}
 ```
 
-Send traffic (Scout, or **Run 1 day + night**) and the release log shows the breaker at work: a `student_error` event for the first failure (`v2: ConnectError`; later ones are logged on the 10th, 100th and 1000th), then, after 5 failures in a row, `circuit` `student: closed->open after 5 failures (ConnectError)`; requests go straight to the teacher (route `student_breaker`); after 30 s one probe (`open->half_open`), which fails while the outage lasts and doubles the wait (`half_open->open for 60 s ...`); once the endpoint is back, a probe succeeds and `half_open->closed`. Calling it again starts a new outage of the given length from now.
+Send traffic (Scout, or **Run 1 day + night**) and the release log shows the breaker at work: a `student_error` event for the first failure (`v2: ConnectError`; later ones are logged on the 10th, 100th and 1000th), then, after 5 failures in a row, `circuit` `student: closed->open after 5 failures (ConnectError)`; requests go straight to the teacher (route `student_breaker`); after 30 s one probe (`open->half_open`), which fails while the outage lasts and doubles the wait (`half_open->open for 60 s ...`); once the endpoint is back, a probe succeeds and `half_open->closed`. Calling it again starts a new outage of the given length from now. The dashboard's **Resilience** panel runs this drill (30 s, 1 min or 2 min) and reads the breaker's state from the `circuit` events and the outage's end from the `fault` event's `ts` plus its length; the wording of both events is parsed there, and `test_resilience_panel_contract` checks the parser against the gateway's events.
 
 ### POST `/ratchet/demo/reset`
 

@@ -1,27 +1,43 @@
 import type { ReactNode } from "react";
 import {
+  Activity,
   AlertTriangle,
   Archive,
+  ArrowLeftRight,
   BarChart3,
   Bug,
   CheckCircle2,
   Circle,
   CircleDashed,
   Eye,
+  EyeOff,
+  FileMinus,
+  FilePenLine,
+  FilePlus2,
+  FileWarning,
+  FileX2,
   FlaskConical,
   Gauge,
+  LifeBuoy,
+  OctagonAlert,
+  RefreshCcw,
+  RefreshCwOff,
+  RotateCw,
+  Server,
   ServerCrash,
+  ShieldAlert,
   SkipForward,
   Table2,
   Timer,
   Undo2,
+  Unplug,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
-import type { VersionState } from "@/lib/api";
+import type { LedgerEvent, VersionState } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { EVENT_LABEL, EVENT_TONE, STATE_TONE, stateLabel, type Tone } from "./model";
+import { EVENT_LABEL, EVENT_TONE, STATE_TONE, parseCircuit, stateLabel, type BreakerState, type Tone } from "./model";
 
 export const EVENT_ICON: Record<string, LucideIcon> = {
   trained: FlaskConical,
@@ -33,10 +49,38 @@ export const EVENT_ICON: Record<string, LucideIcon> = {
   rollback: Undo2,
   alert: AlertTriangle,
   retired: Archive,
+  rescored: RefreshCcw,
+  rescore_failed: RefreshCwOff,
   student_error: ServerCrash,
+  circuit: Unplug,
+  audit_error: ShieldAlert,
+  shadow_error: EyeOff,
+  degraded: LifeBuoy,
+  fallback_teacher: ArrowLeftRight,
+  adapter_reloaded: RotateCw,
+  adapter_reload_failed: RefreshCwOff,
+  gateway_error: OctagonAlert,
+  skip_example: FileMinus,
+  task_registered: FilePlus2,
+  task_changed: FilePenLine,
+  task_deleted: FileX2,
+  task_skipped: FileWarning,
+  endpoint: Server,
   fault: Bug,
   warmup: Timer,
 };
+
+/** A breaker state's icon: it always comes with a word (`BREAKER_WORD` in resilience-model.ts). */
+export const BREAKER_ICON: Record<BreakerState, LucideIcon> = { closed: CheckCircle2, open: Unplug, half_open: Activity };
+
+/** An event's icon: its kind's, except a `circuit` event, whose icon is the state it moved to. */
+export function eventIcon(e: Pick<LedgerEvent, "kind" | "detail">): LucideIcon {
+  if (e.kind === "circuit") {
+    const c = parseCircuit(e.detail);
+    if (c) return BREAKER_ICON[c.to];
+  }
+  return EVENT_ICON[e.kind] ?? Circle;
+}
 
 export const STATE_ICON: Record<VersionState, LucideIcon> = {
   live: CheckCircle2,
