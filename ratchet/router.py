@@ -276,7 +276,8 @@ class Ratchet:
             except Exception as e:  # student endpoint down or erroring: the teacher still answers
                 if isinstance(e, AdapterMissing):
                     self._request_reload(version)
-                self._count_failure("student_errors", "student_error", f"v{version.id}: {type(e).__name__}: {e}"[:300])
+                # The class, status and code only: an endpoint's error message can quote the request (INV-12).
+                self._count_failure("student_errors", "student_error", f"v{version.id}: {describe_failure(e)}")
                 escalated, route = True, "student_error"
             else:
                 latency += max(s.latency_ms for s in samples)

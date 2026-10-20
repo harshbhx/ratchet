@@ -121,7 +121,7 @@ class OpenAICompatProvider:
         # A 2xx body is read once and never retried: the model answered, and the tokens are billed.
         try:
             data = resp.json()
-        except ValueError as e:
+        except (ValueError, RecursionError) as e:  # RecursionError: JSON nested too deeply for the parser
             raise UpstreamError(502, "the upstream model's response is not JSON", code=BAD_RESPONSE) from e
         return _completions(data, model, latency)
 

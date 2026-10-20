@@ -436,11 +436,18 @@ NO_RETRY = {"X-Should-Retry": "false"}
 MAX_UPSTREAM_RETRY_AFTER = 60  # OpenAI SDKs refuse to wait longer than this
 
 
+def _client_wait(retry_after: float | None) -> int:
+    """The teacher's wait as a client's `Retry-After`: whole seconds, 1 to 60 (1 when it sent none)."""
+    return min(MAX_UPSTREAM_RETRY_AFTER, max(1, math.ceil(retry_after or 1)))
+
+
 def _map_upstream(e: httpx.HTTPError) -> APIError:
     """The client's error for a failed teacher call whose answer it needed (INV-7, ADR 0014), after the provider's own
     retries. A cause the client can fix is a 400 with the teacher's message, param and code; a rate limit is a 429 with
     the teacher's wait; a timeout is a 504; everything else is a 502. `X-Should-Retry: false` marks the ones a retry
-    cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing."""
+    cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing. A 502 or 504 the client
+    may retry carries the teacher's `Retry-After` when it sent one: the provider stops retrying at a wait over its cap,
+    so the client is the one that has to wait."""
     u = as_upstream(e)
     if u.status in CLIENT_CAUSED:
         code = u.code or ("request_too_large" if u.status == 413 else None)
@@ -451,13 +458,18 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
     if u.status == 404:  # the request's model never selects the teacher, so this is the gateway's configuration
         return APIError(502, f"teacher model not found: {u.label}", "api_error", "upstream_not_found", headers=NO_RETRY)
     if u.status == 429:
-        wait = min(MAX_UPSTREAM_RETRY_AFTER, max(1, math.ceil(u.retry_after or 1)))
+        wait = _client_wait(u.retry_after)
         message = f"teacher rate limited: {u.label}; retry after {wait} s"
         return APIError(429, message, "rate_limit_error", "upstream_rate_limited", headers={"Retry-After": str(wait)})
-    if u.status == 504:
-        return APIError(504, f"teacher timeout: {u.label}", "api_error", "teacher_timeout")
     final = 300 <= u.status < 500 and u.status not in RETRY_STATUSES  # a redirect, a 402: no retry changes the answer
-    headers = NO_RETRY if final else None
+    if final:
+        headers: dict[str, str] | None = NO_RETRY
+    elif u.retry_after is not None:
+        headers = {"Retry-After": str(_client_wait(u.retry_after))}
+    else:
+        headers = None
+    if u.status == 504:
+        return APIError(504, f"teacher timeout: {u.label}", "api_error", "teacher_timeout", headers=headers)
     return APIError(502, f"teacher unavailable: {u.label}", "api_error", "teacher_unavailable", headers=headers)
 
 

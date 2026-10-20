@@ -12,7 +12,7 @@
 - `test_scout.py`: Scout and its pieces: example questions match the research world, the documented event shape, pinned tasks never stored as training data, the student learning Scout calls over simulated days, `--workload research`, all gateway pages and `/scout/*` routes (incl. SSE and the 400/429 paths), the guard (budget, hourly window, daily run cap, with `FakeClock`), `TavilySearch` against `httpx.MockTransport`, and bad JSON from models.
 - `test_live.py`: the live-mode and operational entry points, offline, through their default-argument seams ([docs/TESTING.md](../docs/TESTING.md#live-path-tests)): `NebiusTrainer` (write, sync, train, hot-load, in that order), `load_adapter`, `reload_adapters`, `python -m ratchet.live tick|reload|night` (BOM file written), the gateway's live `Runtime` over HTTP with `transports`, `LiveEvaluator` and the shared `STUDENT_SAMPLING`, `train.py` arguments and row contract, the Scout CLI over HTTP, the simulator CLI, the mock warm-up, `RATCHET_TRUST_PROXY`, the day-1 check, and the deploy scripts (`bash -n`, `create_vm.sh` dry run, `backup.sh` in mock mode).
 
-377 tests in total (19 core, 13 nightschool, 10 release, 8 system, 27 hardening, 64 resilience, 15 Scout, 33 contract, 130 openai_compat, 44 traceability, 14 live).
+385 tests in total (19 core, 13 nightschool, 10 release, 8 system, 27 hardening, 72 resilience, 15 Scout, 33 contract, 130 openai_compat, 44 traceability, 14 live).
 
 ## Shared fixtures (`conftest.py`)
 

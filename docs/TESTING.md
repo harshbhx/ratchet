@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 377 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 385 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -17,13 +17,13 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_release.py` | 10 (9 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
 | `tests/test_hardening.py` | 27 |
-| `tests/test_resilience.py` | 64 (33 functions; one has 14 cases, one has 7, two have 6, one has 3) |
+| `tests/test_resilience.py` | 72 (34 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 130 (24 functions; one has 86 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **377** |
+| **Total** | **385** |
 
 There are three layers:
 
@@ -144,16 +144,17 @@ Upstream failures: around a request the student already answered (FR-2.10, INV-1
 | `test_shadow_arbitration_failure_is_silent` | The shadow disagrees with the live student and the teacher times out only on that request: the user gets the live answer, the row keeps `shadow_serve=1` with `shadow_agree` NULL, no teacher cost and no example, one `shadow_error` (`v2 arbitration: ReadTimeout`); `shadow_quality` counts the row in `n` and coverage and as a disagreement (precision 1.0 → 0.5, `unarbitrated` 1) |
 | `test_shadow_sampling_error_counted` | With the breaker off (`student_breaker_failures=0`), a shadow endpoint that times out on 10 requests: all served by the live student at the samples' cost, no shadow record and no teacher call, events on the 1st and 10th, `shadow_errors` 10 |
 | `test_optional_teacher_failures_through_the_gateway` | Live `Runtime` with the real HTTP provider, its retry policy and a Token Factory that times out: audited requests (plain and streamed) are 200 with the student's answer, and the shadow's disagreement is not sent to the teacher again after the audit failed (one teacher call, two HTTP attempts, per request); unaudited, the failed arbitration is still a 200; the events read `UpstreamError 504 upstream_timeout`; an escalation is a 504 `teacher_timeout` |
+| `test_student_error_event_never_quotes_the_endpoint` | INV-12: live `Runtime` with a student endpoint whose 400 quotes the request (`Invalid content: 'My SSN is 123-45-6789, email jane@corp.com'`) and its URL, as vLLM's validation errors can: the teacher answers (route `student_error`), and the `student_error` event, in the ledger and in the public `/ratchet/stats`, reads `v1: UpstreamError 400`, with no request text, message or URL |
 | `test_retry_backs_off_with_full_jitter_under_the_cap` | 503, 503, 200: three attempts, waits `uniform(0, min(cap, base·2^i))` that grow and stay under the cap; a long outage waits at the cap and returns the last `UpstreamError` (still an `httpx.HTTPError`); jitter's low end waits 0 |
 | `test_retry_after_is_honoured` | A 429 with `Retry-After: 2` waits exactly 2 s; `retry-after-ms` wins over `Retry-After`; a wait over the 8 s cap is not waited for: one attempt, and the error carries the wait |
 | `test_parse_retry_after_forms` | Seconds, fractions, milliseconds, an HTTP date, case-insensitive names, a bad ms value falling back; empty, zero, negative, infinite, NaN, past and malformed values are ignored |
 | `test_client_errors_are_not_retried` (6 cases) | 400, 401, 403, 404, 413 and 422: one attempt, no wait |
 | `test_deadline_stops_retries` | With a 5 s deadline and 1 s attempts, a wait that would end past it is not started (three attempts), each attempt's connect and read timeouts shrink to the time left (5, 3.5, 1.5 s), and a server wait counts too; with no policy, one attempt with the configured timeouts |
 | `test_read_timeout_is_retried_exactly_once` | A read timeout twice gives up after two attempts with 504 `upstream_timeout` (the cause kept, no URL); a 503 first does not use up that retry; connection failures before the model saw the request are retried up to `max_attempts`; write timeouts and read or write errors are not retried |
-| `test_bad_upstream_bodies_are_502_and_not_retried` (6 cases) | Empty, missing or null `choices`, a choice that is not an object, a body that is not an object or not JSON: 502 `bad_upstream_response` after one attempt (before: an `IndexError`, so a 500) |
+| `test_bad_upstream_bodies_are_502_and_not_retried` (7 cases) | Empty, missing or null `choices`, a choice that is not an object, a body that is not an object or not JSON, JSON nested too deeply for the parser (a `RecursionError`): 502 `bad_upstream_response` after one attempt (before: an `IndexError`, so a 500) |
 | `test_malformed_optional_fields_count_as_absent` | Text parts joined, junk logprobs (strings, booleans, NaN) skipped, bad usage counted as 0, a missing model replaced by the requested one |
 | `test_upstream_error_bodies_are_parsed_without_the_url` (7 cases) | OpenAI's `{"error": {...}}`, vLLM's legacy body (integer `code` dropped), an error string, FastAPI's `detail` (string and validation list, with `param`), HTML (the reason phrase), and a long message with a control character and a lone surrogate (cleaned, clipped to 300); never the URL or the key; `raise_for_status()`'s error reads the same |
-| `test_upstream_errors_map_to_client_statuses` (14 cases) | Live `Runtime` at cold start, the teacher behind `MockTransport`: upstream 400 `context_length_exceeded` → 400 with the teacher's message, param and code; 413 → 400 `request_too_large`; 429 → 429 with `Retry-After` 7 (after two 7 s waits), 1 when none was sent, 60 for a 600 s wait (not retried); 500 and a connection error → 502 `teacher_unavailable` after three attempts; a read timeout → 504 `teacher_timeout` after two; 401 and 403 → 502 `upstream_auth_error`; 404 → 502 `upstream_not_found`; 402 and a 301 redirect → 502 with `X-Should-Retry: false`; empty `choices` → 502, not 500. `X-Should-Retry: false` exactly where a retry cannot help; nothing logged, no `gateway_error` |
+| `test_upstream_errors_map_to_client_statuses` (20 cases) | Live `Runtime` at cold start, the teacher behind `MockTransport`: upstream 400 `context_length_exceeded` → 400 with the teacher's message, param and code; 413 → 400 `request_too_large`; 429 → 429 with `Retry-After` 7 (after two 7 s waits), 1 when none was sent, 60 for a 600 s wait (not retried); 500 and a connection error → 502 `teacher_unavailable` after three attempts; a 503 with `Retry-After` 2 → 502 with `Retry-After` 2 after two 2 s waits, with 30 or 600 → 502 with `Retry-After` 30 or 60 after one attempt (a wait over the 8 s cap goes to the client), a 504 with `Retry-After` 20 → 504 with it; a read timeout → 504 `teacher_timeout` after two; 401 and 403 → 502 `upstream_auth_error`; 404 → 502 `upstream_not_found`; 402 (also with a `Retry-After`, which is then not passed on) and a 301 redirect → 502 with `X-Should-Retry: false`; empty `choices` and JSON nested too deeply → 502, not 500. `X-Should-Retry: false` exactly where a retry cannot help; nothing logged, no `gateway_error` |
 | `test_live_runtime_passes_timeouts_and_retries` | The teacher gets its read timeout and retry policy (and the injected `sleep`), the student its own timeouts and no retries; the timeouts arrive on each request; the hosted fallback is a separate client with the student's settings; the variables reach `Settings`; zero, negative or NaN values stop live mode at startup |
 | `test_quota_429_says_when_it_resets` | At 23:00 UTC: `X-RateLimit-Reset-Requests: 1h0m0s` on the 200 and the 429; the 429 is `insufficient_quota` / `daily_quota_exceeded` with `Retry-After: 3600` and `X-Should-Retry: false`; 90.5 s before midnight rounds up to 91 s and `1m31s`; refusals are not counted; `_duration` formats |
 | `test_sdk_sends_an_exhausted_quota_once` | The real OpenAI SDK with its default two retries sends the quota-exhausted request once and raises `RateLimitError` with the type and code |

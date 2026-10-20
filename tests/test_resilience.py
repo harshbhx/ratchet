@@ -330,6 +330,37 @@ def test_optional_teacher_failures_through_the_gateway(gw_env, tmp_path, monkeyp
     assert "teacher.test" not in r.text and len(teacher_calls) == 8 and rt.gateway_errors == 0
 
 
+@pytest.mark.req("INV-12", "INV-7", "FR-1.8", "NFR-2")
+def test_student_error_event_never_quotes_the_endpoint(gw_env, tmp_path, monkeypatch):
+    """vLLM's 400 can quote the request (it returns `str(exc)` of validation and template errors). The `student_error`
+    event, which /ratchet/stats serves without an API key, names the class, status and code only: no request text and
+    no URL (INV-12, ADR 0014). The teacher still answers."""
+    gw = gw_env()
+    for name in [n for n in os.environ if n.startswith("RATCHET_")]:
+        monkeypatch.delenv(name)
+    private = "My SSN is 123-45-6789, email jane@corp.com"
+
+    def student(request: httpx.Request) -> httpx.Response:
+        content = json.loads(request.content)["messages"][-1]["content"]
+        error = {"message": f"Invalid content: {content!r} ({request.url})", "type": "BadRequestError", "code": 400}
+        return httpx.Response(400, json={"error": error})
+
+    teacher = FakeOpenAIServer(B)
+    transports = {"teacher": teacher.transport, "student": httpx.MockTransport(student)}
+    rt = gw.Runtime(_live_settings(tmp_path, audit_rate=0.0), transports=transports)
+    monkeypatch.setattr(gw, "rt", rt)
+    live = _version(rt.ledger, "live", {"threshold": 0.5})
+    c = TestClient(gw.app)
+
+    r = c.post(CHAT, json={"messages": [{"role": "user", "content": private}]})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    assert _last_request(rt.ledger)["route"] == "student_error" and _counters(rt.ratchet)["student_errors"] == 1
+    stats = c.get("/ratchet/stats")
+    assert [(e["kind"], e["detail"]) for e in stats.json()["events"]] == [("student_error", f"v{live}: UpstreamError 400")]
+    for leak in ("123-45-6789", "jane@corp.com", "Invalid content", "student.test"):
+        assert leak not in stats.text and all(leak not in e["detail"] for e in rt.ledger.events()), leak
+
+
 # ---------- the provider's retries (ADR 0014) ----------
 class Upstream:
     """An OpenAI-compatible endpoint that plays `steps` in order, repeating the last one. A step is a status (with a
@@ -554,6 +585,7 @@ def test_read_timeout_is_retried_exactly_once():
         pytest.param({"choices": ["hi"]}, id="choice-not-an-object"),
         pytest.param([OK_BODY], id="not-an-object"),
         pytest.param("<html>maintenance</html>", id="not-json"),
+        pytest.param("[" * 100_000 + "]" * 100_000, id="nested-too-deeply"),
     ],
 )
 def test_bad_upstream_bodies_are_502_and_not_retried(body):
@@ -670,14 +702,30 @@ def _cold_start(gw_env: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, up
             (429, {"Retry-After": "600"}, None), 429, "rate_limit_error", "upstream_rate_limited", False, "60", 1, id="rate-long"
         ),
         pytest.param(500, 502, "api_error", "teacher_unavailable", False, None, 3, id="server-error"),
+        pytest.param((503, {"Retry-After": "2"}, None), 502, "api_error", "teacher_unavailable", False, "2", 3, id="overloaded"),
+        pytest.param(
+            (503, {"Retry-After": "30"}, None), 502, "api_error", "teacher_unavailable", False, "30", 1, id="overloaded-long"
+        ),
+        pytest.param(
+            (503, {"Retry-After": "600"}, None), 502, "api_error", "teacher_unavailable", False, "60", 1, id="overloaded-longer"
+        ),
+        pytest.param(
+            (504, {"Retry-After": "20"}, None), 504, "api_error", "teacher_timeout", False, "20", 1, id="gateway-timeout-wait"
+        ),
         pytest.param(httpx.ConnectError, 502, "api_error", "teacher_unavailable", False, None, 3, id="connect-error"),
         pytest.param(httpx.ReadTimeout, 504, "api_error", "teacher_timeout", False, None, 2, id="read-timeout"),
         pytest.param(401, 502, "api_error", "upstream_auth_error", True, None, 1, id="auth"),
         pytest.param(403, 502, "api_error", "upstream_auth_error", True, None, 1, id="forbidden"),
         pytest.param(404, 502, "api_error", "upstream_not_found", True, None, 1, id="model-not-found"),
         pytest.param(402, 502, "api_error", "teacher_unavailable", True, None, 1, id="payment-required"),
+        pytest.param(
+            (402, {"Retry-After": "30"}, None), 502, "api_error", "teacher_unavailable", True, None, 1, id="final-with-wait"
+        ),
         pytest.param(301, 502, "api_error", "teacher_unavailable", True, None, 1, id="redirect"),
         pytest.param((200, {}, {"choices": []}), 502, "api_error", "teacher_unavailable", False, None, 1, id="empty-choices"),
+        pytest.param(
+            (200, {}, "[" * 100_000 + "]" * 100_000), 502, "api_error", "teacher_unavailable", False, None, 1, id="deep-json"
+        ),
     ],
 )
 def test_upstream_errors_map_to_client_statuses(
@@ -685,7 +733,9 @@ def test_upstream_errors_map_to_client_statuses(
 ):
     """Live Runtime, the real provider and its retry policy, the teacher behind MockTransport. A cause the client can
     fix is a 400 with the teacher's message, param and code; a rate limit a 429 with the teacher's wait (1 to 60 s); a
-    timeout a 504; anything else a 502. `X-Should-Retry: false` where no retry can help, so SDKs do not resend it."""
+    timeout a 504; anything else a 502. `X-Should-Retry: false` where no retry can help, so SDKs do not resend it. A 502
+    or 504 SDKs may retry carries the teacher's wait (1 to 60 s) when it sent one, so they do not come back sooner; a
+    wait over the provider's cap (8 s) is not slept on the request path at all."""
     upstream = Upstream(step)
     gw, rt, waits = _cold_start(gw_env, tmp_path, monkeypatch, upstream)
     r = TestClient(gw.app, raise_server_exceptions=False).post(CHAT, json={"messages": HI})
@@ -1149,7 +1199,7 @@ def test_lost_adapter_is_reported_and_does_not_open_the_breaker():
     assert lost == [led.version(live)] * 10  # every time: AdapterReloader keeps it to one reload a minute
     assert len(student.calls) == 10 and r.health()["breakers"]["student"]["state"] == "closed"
     errors = [e["detail"] for e in led.events() if e["kind"] == "student_error"]
-    assert errors == ["v1: AdapterMissing: upstream 404 adapter_missing: The model `student-v1` does not exist."] * 2
+    assert errors == ["v1: AdapterMissing 404 adapter_missing"] * 2  # never the message (INV-12, ADR 0014)
 
     # A 404 that does not name the adapter (a wrong base URL) is not a lost adapter.
     student.exc = lambda message: UpstreamError(404, "Not Found")
@@ -1218,9 +1268,7 @@ def test_errors_without_an_http_status_say_nothing_to_the_breaker():
     # 200 with no choices is a bad answer from the endpoint: 502 bad_upstream_response, counted.
     led2, _, _, r2 = _breaker_cascade(_NoChoices(), FakeClock())  # type: ignore[arg-type]
     assert [r2.handle(_ask(i), TRIAGE).route for i in range(6)] == ["student_error"] * 5 + ["student_breaker"]
-    assert [e["detail"] for e in led2.events()][:1] == [
-        "v1: UpstreamError: upstream 502 bad_upstream_response: the student returned no choices"
-    ]
+    assert [e["detail"] for e in led2.events()][:1] == ["v1: UpstreamError 502 bad_upstream_response"]
 
 
 @pytest.mark.req("FR-2.11", "NFR-2")
