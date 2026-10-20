@@ -1,4 +1,5 @@
-"""OpenAI chat-completions compatibility: request validation, message normalisation and the error envelope.
+"""OpenAI chat-completions compatibility: request validation, message normalisation, the error envelope and the
+response's `usage` object.
 
 Standard library only (plus `tasks` for the task-name rule), so it is cheap to import and easy to test without the web
 stack. The gateway runs `parse_body`, `validate_chat_request` and `normalize_messages` before anything is logged,
@@ -7,6 +8,9 @@ billed or sent to a model, and turns `APIError` into the body OpenAI SDKs read: 
 
 Validation is strict about what Ratchet reads or will forward, and lenient about the rest: unknown top-level keys are
 kept in `ChatRequest.extra` and ignored, so a newer SDK that sends a field Ratchet does not know still works.
+
+Responses carry the fields OpenAI's own do (`usage_object`, `SERVICE_TIER`; the gateway builds the body), so SDKs that
+validate them, and clients that meter by `usage`, work unchanged (docs/API.md#response-200, FR-1.12).
 """
 
 from __future__ import annotations
@@ -223,6 +227,12 @@ class ChatRequest:
         """`metadata.ratchet_task`. The gateway gives the `X-Ratchet-Task` header precedence over it."""
         return (self.metadata or {}).get("ratchet_task")
 
+    @property
+    def include_usage(self) -> bool:
+        """`stream_options.include_usage`: a streamed answer ends with a chunk that carries `usage` (and no choices).
+        Read only when `stream` is true, as OpenAI does; without a stream the response always has `usage`."""
+        return self.stream and bool((self.stream_options or {}).get("include_usage"))
+
 
 KNOWN_FIELDS = frozenset({f.name for f in fields(ChatRequest)} - {"extra"} | {"max_completion_tokens"})
 
@@ -283,13 +293,6 @@ def _opt_bool(body: Mapping[str, Any], key: str) -> bool | None:
     v = body.get(key)
     if v is not None and not isinstance(v, bool):
         raise _wrong_type(key, "a boolean", v)
-    return v
-
-
-def _opt_object(body: Mapping[str, Any], key: str) -> dict[str, Any] | None:
-    v = body.get(key)
-    if v is not None and not isinstance(v, dict):
-        raise _wrong_type(key, "an object", v)
     return v
 
 
@@ -624,6 +627,19 @@ def _tool_list(value: Any, key: str) -> list[dict[str, Any]] | None:
     return value
 
 
+def _stream_options(value: Any) -> dict[str, Any] | None:
+    """`stream_options`: an object whose `include_usage`, the one key Ratchet reads, is a boolean. Other keys
+    (`include_obfuscation`, newer ones) are kept and ignored; the object is ignored without `stream: true`."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _wrong_type("stream_options", "an object", value)
+    include = value.get("include_usage")
+    if include is not None and not isinstance(include, bool):
+        raise _wrong_type("stream_options.include_usage", "a boolean", include)
+    return value
+
+
 def _choice(value: Any, key: str, allowed: tuple[str, ...]) -> str | dict[str, Any] | None:
     """`tool_choice` ('none' | 'auto' | 'required' | {type, function: {name}}) or `function_call` ('none' | 'auto' | {name})."""
     if value is None:
@@ -674,7 +690,7 @@ def validate_chat_request(body: Any, limits: Limits | None = None) -> ChatReques
         messages=messages,
         model=_opt_str(body, "model"),
         stream=bool(stream),
-        stream_options=_opt_object(body, "stream_options"),
+        stream_options=_stream_options(body.get("stream_options")),
         n=n or 1,
         max_tokens=max_completion_tokens if max_completion_tokens is not None else max_tokens,
         temperature=_opt_number(body, "temperature", 0, 2),
@@ -699,6 +715,27 @@ def validate_chat_request(body: Any, limits: Limits | None = None) -> ChatReques
         reasoning_effort=_opt_str(body, "reasoning_effort"),
         extra={k: v for k, v in body.items() if k not in KNOWN_FIELDS},
     )
+
+
+# ---------- responses ----------
+SERVICE_TIER = "default"  # the response's `service_tier`: Ratchet has one
+
+
+def usage_object(prompt_tokens: int, completion_tokens: int, reasoning_tokens: int = 0, cached_tokens: int = 0) -> dict[str, Any]:
+    """A chat completion's `usage` in OpenAI's shape. Reasoning tokens are part of `completion_tokens` and cached tokens
+    part of `prompt_tokens`, as in OpenAI's. Ratchet has no audio and no predicted outputs, so those counts are 0."""
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "prompt_tokens_details": {"cached_tokens": cached_tokens, "audio_tokens": 0},
+        "completion_tokens_details": {
+            "reasoning_tokens": reasoning_tokens,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+    }
 
 
 # ---------- normalisation ----------

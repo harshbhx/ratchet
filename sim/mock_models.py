@@ -80,7 +80,8 @@ def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
 
 
 class MockTeacher:
-    """Plays Nemotron 3 Ultra: always right on labels, slow, reasoning tokens billed."""
+    """Plays Nemotron 3 Ultra: always right on labels, slow, reasoning tokens billed. Like Token Factory, it reports them
+    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`."""
 
     def __init__(self, reasoning_tokens: int = 300, latency_ms: float = 2400.0):
         self.reasoning_tokens = reasoning_tokens
@@ -100,6 +101,7 @@ class MockTeacher:
                 out_tokens=approx_tokens(text) + self.reasoning_tokens,
                 latency_ms=self.latency_ms,
                 finish_reason=finish,
+                reasoning_tokens=self.reasoning_tokens,
             )
         ] * n
 

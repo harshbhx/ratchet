@@ -45,6 +45,7 @@ from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
+    SERVICE_TIER,
     APIError,
     Limits,
     from_validation_errors,
@@ -52,6 +53,7 @@ from .openai_compat import (
     normalize_messages,
     parse_body,
     parse_modalities,
+    usage_object,
     validate_chat_request,
 )
 from .providers import GenParams, OpenAICompatProvider
@@ -473,6 +475,19 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
     return APIError(502, f"teacher unavailable: {u.label}", "api_error", "teacher_unavailable", headers=headers)
 
 
+def _envelope(cid: str, obj: str, created: int, model: str, fingerprint: str) -> dict[str, Any]:
+    """The fields every response body and stream chunk starts with. `system_fingerprint` names the serving configuration
+    (`router.fingerprint`); Ratchet has one service tier."""
+    return {
+        "id": cid,
+        "object": obj,
+        "created": created,
+        "model": model,
+        "system_fingerprint": fingerprint,
+        "service_tier": SERVICE_TIER,
+    }
+
+
 def _chunks(text: str, words: int = 4) -> list[str]:
     """Split an answer into a few words per streamed chunk, keeping every character."""
     parts = re.findall(r"\s*\S+\s*|\s+", text)
@@ -539,38 +554,46 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         "cost_usd": r.cost_usd,
         "all_teacher_cost_usd": r.baseline_usd,
         "latency_ms": r.latency_ms,
+        "usage_breakdown": r.usage_breakdown,
     }
+    # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
+    # cost_usd (FR-1.12, docs/API.md#usage).
+    usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
     cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
     if not req.stream:
+        message = {"role": "assistant", "content": r.text, "refusal": None, "annotations": []}
         payload = {
-            "id": cid,
-            "object": "chat.completion",
-            "created": created,
-            "model": r.model,
-            "choices": [{"index": 0, "finish_reason": r.finish_reason, "message": {"role": "assistant", "content": r.text}}],
+            **_envelope(cid, "chat.completion", created, r.model, r.fingerprint),
+            "choices": [{"index": 0, "message": message, "logprobs": None, "finish_reason": r.finish_reason}],
+            "usage": usage,
             "ratchet": meta,
         }
         return JSONResponse(payload, headers=headers)
 
     # Streaming. The cascade must see the student's whole answer to score its confidence, so the
     # answer is complete before the first chunk; the stream format is what clients need from it.
-    def chunk(delta: dict[str, Any], finish: str | None = None, **extra: Any) -> str:
-        ev = {
-            "id": cid,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": r.model,
-            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
-            **extra,
-        }
+    envelope = _envelope(cid, "chat.completion.chunk", created, r.model, r.fingerprint)
+    include_usage = req.include_usage
+
+    def sse(ev: dict[str, Any]) -> str:
         return f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
+    def chunk(delta: dict[str, Any], finish: str | None = None, **extra: Any) -> str:
+        ev = {**envelope, "choices": [{"index": 0, "delta": delta, "logprobs": None, "finish_reason": finish}]}
+        if include_usage:
+            ev["usage"] = None  # every chunk but the last has it, as null (OpenAI's stream_options.include_usage)
+        return sse({**ev, **extra})
+
     def events() -> Iterator[str]:
-        yield chunk({"role": "assistant", "content": ""})
+        yield chunk({"role": "assistant", "content": "", "refusal": None})
         for piece in _chunks(r.text):
             yield chunk({"content": piece})
-        yield chunk({}, r.finish_reason, ratchet=meta)
+        if include_usage:  # the finish chunk, then one with no choices, the usage and the ratchet block
+            yield chunk({}, r.finish_reason)
+            yield sse({**envelope, "choices": [], "usage": usage, "ratchet": meta})
+        else:
+            yield chunk({}, r.finish_reason, ratchet=meta)
         yield "data: [DONE]\n\n"
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

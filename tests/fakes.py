@@ -105,8 +105,9 @@ class RecordingProvider:
     log(.99)])` is a 2-of-3 majority with known token probabilities. Calls to a model in `raise_on` are recorded and
     then raise `exc(message)`: `httpx.ConnectError` by default, the way an unreachable endpoint fails, or another error
     such as `exc=httpx.ReadTimeout` for a slow one. `finish_reason` (a string, or a list scripted like `text`) is why
-    each choice stopped: `"length"` plays an answer cut off by the token limit. Thread-safe, because Scout calls the
-    router from several threads."""
+    each choice stopped: `"length"` plays an answer cut off by the token limit. Each choice reports `reasoning_tokens`
+    (part of its `out_tokens`) and `cached_tokens` (part of `in_tokens`), 0 by default. Thread-safe, because Scout calls
+    the router from several threads."""
 
     def __init__(
         self,
@@ -118,6 +119,9 @@ class RecordingProvider:
         latency_ms: float = 1.0,
         exc: Callable[[str], BaseException] = httpx.ConnectError,
         finish_reason: str | list[str] = "stop",
+        *,
+        reasoning_tokens: int = 0,
+        cached_tokens: int = 0,
     ) -> None:
         if any(isinstance(v, list) and not v for v in (text, logprob, finish_reason)):
             raise ValueError("a scripted text, logprob or finish_reason list needs at least one item")
@@ -129,6 +133,8 @@ class RecordingProvider:
         self.latency_ms = latency_ms
         self.exc = exc
         self.finish_reason = finish_reason
+        self.reasoning_tokens = reasoning_tokens
+        self.cached_tokens = cached_tokens
         self.calls: list[ProviderCall] = []
         self._lock = threading.Lock()
 
@@ -153,7 +159,19 @@ class RecordingProvider:
             lp = _nth(self.logprob, i)
             logprobs = [lp] * self.out_tokens if kwargs.get("logprobs") and lp is not None else []
             finish = _nth(self.finish_reason, i)
-            out.append(Completion(_nth(said, i), model, self.in_tokens, self.out_tokens, self.latency_ms, logprobs, finish))
+            out.append(
+                Completion(
+                    _nth(said, i),
+                    model,
+                    self.in_tokens,
+                    self.out_tokens,
+                    self.latency_ms,
+                    logprobs,
+                    finish,
+                    reasoning_tokens=self.reasoning_tokens,
+                    cached_tokens=self.cached_tokens,
+                )
+            )
         return out
 
 
@@ -181,6 +199,8 @@ class FakeOpenAIServer:
     exist.`), a successful load adds the adapter, and `restart()` forgets them all. Every request is recorded as an
     `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
     `finish_reason` is what every choice reports (`"length"`: cut off by the token limit; None leaves the field out).
+    `reasoning_tokens` (per choice, part of `out_tokens`) and `cached_tokens` (of the prompt) add
+    `usage.completion_tokens_details` and `usage.prompt_tokens_details` when they are not 0, as Token Factory does.
     Pass `server.transport` to `OpenAICompatProvider(transport=...)`, `Runtime(transports=...)` or `httpx.Client`."""
 
     def __init__(
@@ -194,12 +214,16 @@ class FakeOpenAIServer:
         models: Collection[str] = (),
         loaded: Collection[str] | None = None,
         finish_reason: str | None = "stop",
+        reasoning_tokens: int = 0,
+        cached_tokens: int = 0,
     ) -> None:
         self.text = text
         self.logprob = logprob
         self.in_tokens = in_tokens
         self.out_tokens = out_tokens
         self.finish_reason = finish_reason
+        self.reasoning_tokens = reasoning_tokens
+        self.cached_tokens = cached_tokens
         self.load = load or (lambda body: (200, ""))
         self.models = list(models)
         self.loaded = set(loaded) if loaded is not None else None
@@ -252,11 +276,16 @@ class FakeOpenAIServer:
         choice: dict[str, Any] = {"message": {"role": "assistant", "content": text}, "logprobs": lp}
         if self.finish_reason is not None:
             choice["finish_reason"] = self.finish_reason
+        usage: dict[str, Any] = {"prompt_tokens": self.in_tokens, "completion_tokens": self.out_tokens * n}
+        if self.reasoning_tokens:
+            usage["completion_tokens_details"] = {"reasoning_tokens": self.reasoning_tokens * n}
+        if self.cached_tokens:
+            usage["prompt_tokens_details"] = {"cached_tokens": self.cached_tokens}
         return {
             "object": "chat.completion",
             "model": body["model"],
             "choices": [{"index": i, **choice} for i in range(n)],
-            "usage": {"prompt_tokens": self.in_tokens, "completion_tokens": self.out_tokens * n},
+            "usage": usage,
         }
 
 

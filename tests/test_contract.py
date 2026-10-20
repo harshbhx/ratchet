@@ -35,9 +35,9 @@ from ratchet import licenses, tasks
 from ratchet.confidence import score
 from ratchet.config import DEFAULT_PRICES, Settings
 from ratchet.ledger import Ledger, example_hash
-from ratchet.providers import Completion, GenParams, GenPolicy
+from ratchet.providers import Completion, GenParams, GenPolicy, approx_tokens
 from ratchet.release import wilson
-from ratchet.router import ROUTES, Ratchet, RequestMeta
+from ratchet.router import ROUTES, USAGE_PARTS, Ratchet, RequestMeta, fingerprint
 
 STATS_KEYS = Path(__file__).resolve().parent / "fixtures" / "stats_keys.json"
 CHAT = "/v1/chat/completions"
@@ -584,6 +584,105 @@ def test_cost_includes_audit_shadow_and_arbitration():
         assert out.cost_usd == pytest.approx(cost, rel=1e-12, abs=0), name
         assert out.baseline_usd == pytest.approx(baseline, rel=1e-12, abs=0), name
         assert teacher_calls == calls, name
+
+
+@pytest.mark.req("FR-1.12", "NFR-3")
+def test_usage_is_the_served_answer_and_the_breakdown_every_call():
+    """On every path, `Result`'s usage is the served answer's, as if its model had answered alone (the student's chosen
+    sample, or the teacher's call with its reasoning and cached tokens), and `usage_breakdown` lists every call the
+    request made, so `cost_usd` is exactly the price of those calls. The fingerprint names who served."""
+    s = _settings()
+    student, teacher = s.price("student"), s.price(OPEN_TEACHER)
+    sampled = {"in": 30, "out": 7 * s.samples}  # one call: the prompt once, every sample's output
+    one = {"in": 30, "out": 7}  # the sample served
+    shadowed = {"in": 31, "out": 9 * s.samples}
+    call = {"in": 120, "out": 45}
+    as_student = (30, 7, 0, 0)
+    as_teacher = (120, 45, 40, 100)  # reasoning and cached tokens are the teacher's own counts
+
+    def run(*, audit=0.0, threshold=0.5, shadow_says=None, live_down=False, cold=False, task=TRIAGE):
+        led = Ledger(":memory:")
+        models: dict[int, RecordingProvider] = {}
+        if not cold:
+            vid = _version(led, "live", {"threshold": threshold})
+            models[vid] = RecordingProvider(A, in_tokens=30, out_tokens=7, raise_on={f"student-v{vid}"} if live_down else ())
+        if shadow_says is not None:
+            models[_version(led, "shadow", {"threshold": 0.5})] = RecordingProvider(shadow_says, in_tokens=31, out_tokens=9)
+        t = RecordingProvider(A, in_tokens=120, out_tokens=45, reasoning_tokens=40, cached_tokens=100)
+        r = Ratchet(_settings(audit_rate=audit), led, t, lambda v: (models[v.id], v.adapter_uri), seed=1)
+        return r.handle(_ask(), task), led
+
+    cases = [  # (name, run(...) arguments, usage, breakdown without the empty parts)
+        ("served", {}, as_student, {"student_samples": sampled, "served": one}),
+        ("served and audited", {"audit": 1.0}, as_student, {"student_samples": sampled, "served": one, "audit": call}),
+        ("escalated", {"threshold": 0.99}, as_teacher, {"student_samples": sampled, "served": call}),
+        ("student endpoint down", {"live_down": True}, as_teacher, {"served": call}),
+        ("cold start", {"cold": True}, as_teacher, {"served": call}),
+        ("pinned task", {"task": "research-plan"}, as_teacher, {"served": call}),
+        ("shadow agrees", {"shadow_says": A}, as_student, {"student_samples": sampled, "served": one, "shadow": shadowed}),
+        (
+            "shadow unsure",
+            {"shadow_says": "not json"},
+            as_student,
+            {"student_samples": sampled, "served": one, "shadow": shadowed},
+        ),
+        (
+            "shadow disagrees: arbitration",
+            {"shadow_says": B},
+            as_student,
+            {"student_samples": sampled, "served": one, "shadow": shadowed, "arbitration": call},
+        ),
+        (
+            "audit is the shadow's reference",
+            {"audit": 1.0, "shadow_says": B},
+            as_student,
+            {"student_samples": sampled, "served": one, "audit": call, "shadow": shadowed},
+        ),
+        (
+            "escalation is the shadow's reference",
+            {"threshold": 0.99, "shadow_says": B},
+            as_teacher,
+            {"student_samples": sampled, "served": call, "shadow": shadowed},
+        ),
+    ]
+    for name, kwargs, usage, parts in cases:
+        out, led = run(**kwargs)
+        assert (out.prompt_tokens, out.completion_tokens, out.reasoning_tokens, out.cached_tokens) == usage, name
+        assert out.total_tokens == usage[0] + usage[1], name
+        assert out.usage_breakdown == {k: parts.get(k) for k in USAGE_PARTS}, name
+        b = out.usage_breakdown
+        priced = sum(student.cost(b[k]["in"], b[k]["out"]) for k in ("student_samples", "shadow") if b[k])
+        priced += sum(teacher.cost(b[k]["in"], b[k]["out"]) for k in ("audit", "arbitration") if b[k])
+        if out.served_by == "teacher":  # the student's served sample is already in student_samples
+            priced += teacher.cost(b["served"]["in"], b["served"]["out"])
+        assert out.cost_usd == pytest.approx(priced, rel=1e-12, abs=0), name
+        if out.served_by == "student":
+            (v,) = [v for v in led.versions() if v.state == "live"]
+            assert out.fingerprint == fingerprint("student", v.adapter_uri, v.id, v.dataset_hash, 0.5), name
+        else:
+            assert out.fingerprint == fingerprint("teacher", OPEN_TEACHER), name
+
+
+@pytest.mark.req("FR-1.12")
+def test_usage_estimates_missing_counts_and_keeps_details_inside_totals():
+    """A model that reports no usage still gives the client counts: about 4 characters a token, from the messages as
+    JSON and from the answer as served; the breakdown keeps the zeros the model reported. Reasoning and cached tokens
+    never exceed the totals they are part of, whatever an upstream says."""
+    led = Ledger(":memory:")
+    teacher = RecordingProvider(f"<think>{'x' * 400}</think>{A}", in_tokens=0, out_tokens=0)
+    r = Ratchet(_settings(), led, teacher, lambda v: (teacher, v.adapter_uri), seed=1)
+    msgs = [{"role": "user", "content": "Ich wurde zweimal belastet, Bestellnummer 4711, bitte prüfen."}]
+    out = r.handle(msgs, TRIAGE)  # cold start: the teacher answers
+    assert out.prompt_tokens == approx_tokens(json.dumps(msgs, ensure_ascii=False))
+    assert (out.text, out.completion_tokens) == (A, approx_tokens(A))  # the answer as served, without the reasoning
+    assert out.usage_breakdown["served"] == {"in": 0, "out": 0}
+    teacher.text = ""  # an empty answer with no count: no completion tokens
+    out = r.handle(_ask(1), "default")
+    assert (out.text, out.completion_tokens) == ("", 0) and out.total_tokens == out.prompt_tokens > 0
+
+    teacher = RecordingProvider(A, in_tokens=10, out_tokens=5, reasoning_tokens=300, cached_tokens=64)
+    out = Ratchet(_settings(), Ledger(":memory:"), teacher, lambda v: (teacher, v.adapter_uri)).handle(_ask(), TRIAGE)
+    assert (out.prompt_tokens, out.completion_tokens, out.reasoning_tokens, out.cached_tokens) == (10, 5, 5, 10)
 
 
 @pytest.mark.req("NFR-6")

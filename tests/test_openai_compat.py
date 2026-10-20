@@ -1,6 +1,7 @@
 """OpenAI compatibility of `/v1/chat/completions`: strict request validation, message normalisation, the error envelope
 OpenAI SDKs read, the body and input limits, and the rule that a client mistake is never a 500 (ratchet/openai_compat.py,
-the gateway's error handlers and `BodyLimitMiddleware`; docs/API.md#errors, ADR 0012).
+the gateway's error handlers and `BodyLimitMiddleware`; docs/API.md#errors, ADR 0012); and the response's parity with
+OpenAI's: `usage`, `system_fingerprint`, the full choice and `stream_options.include_usage` (FR-1.12, ADR 0018).
 
 Gateway tests reload the mock gateway with `PINNED_ENV`, so variables in the shell cannot move a result. The SDK tests
 drive the real `openai` package through `tests/sdk_bridge.py` and are skipped when it is not installed.
@@ -9,9 +10,11 @@ drive the real `openai` package through `tests/sdk_bridge.py` and are skipped wh
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import anyio
+import httpx
 import pytest
 from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, _version
 from fastapi.testclient import TestClient
@@ -30,8 +33,9 @@ from ratchet.openai_compat import (
     parse_modalities,
     validate_chat_request,
 )
-from ratchet.providers import DEFAULT_TEACHER_PARAMS
-from ratchet.scout.prompts import WRITE_SYSTEM
+from ratchet.providers import DEFAULT_TEACHER_PARAMS, OpenAICompatProvider
+from ratchet.router import fingerprint
+from ratchet.scout.prompts import WRITE_SYSTEM, plan_messages
 from sim import research, tickets
 
 CHAT = "/v1/chat/completions"
@@ -216,6 +220,7 @@ FULL_REQUEST: dict[str, Any] = {
     "tools": [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}],
     "tool_choice": {"type": "function", "function": {"name": "f"}},
     "stream": False,
+    "stream_options": {"include_usage": True},
     "user": "u-1",
 }
 
@@ -834,6 +839,227 @@ def test_openai_sdk_auth_and_quota_errors(gw_env):
     assert len(calls) == 2  # X-Should-Retry: false, so the daily quota is not retried
 
 
+# ---------- response parity: usage, system_fingerprint, the full choice, include_usage (FR-1.12) ----------
+FINGERPRINT = re.compile(r"fp_[0-9a-f]{12}")
+BODY_KEYS = {"id", "object", "created", "model", "system_fingerprint", "service_tier", "choices", "usage", "ratchet"}
+NO_CALL = {"audit": None, "shadow": None, "arbitration": None}
+
+
+def _usage(prompt: int, completion: int, reasoning: int = 0, cached: int = 0) -> dict[str, Any]:
+    """OpenAI's `usage` object, written out in full."""
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+        "prompt_tokens_details": {"cached_tokens": cached, "audio_tokens": 0},
+        "completion_tokens_details": {
+            "reasoning_tokens": reasoning,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0,
+        },
+    }
+
+
+def _stream(c: TestClient, body: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+    """The data chunks of a streamed response, parsed; checks that `data: [DONE]` ends it."""
+    with c.stream("POST", CHAT, json={**body, "stream": True}, **kwargs) as resp:
+        assert resp.status_code == 200, resp.read()[:300]
+        lines = [line[6:] for line in resp.iter_lines() if line.startswith("data: ")]
+    assert lines[-1] == "[DONE]" and "[DONE]" not in lines[:-1]
+    return [json.loads(line) for line in lines[:-1]]
+
+
+@pytest.mark.req("FR-1.1", "FR-1.12", "US-1")
+def test_responses_are_openai_chat_completions_with_usage(gw_env, tmp_path, monkeypatch):
+    """Student- and teacher-served responses pass the OpenAI SDK's own `ChatCompletion` model with every field an
+    OpenAI response has, and `usage` is the served answer's as if its model had answered alone: the student's chosen
+    sample, or the teacher's call with its reasoning and cached tokens. Ratchet's other calls are in the breakdown."""
+    sdk()
+    from openai.types.chat import ChatCompletion
+
+    gw = _gateway(gw_env)
+    teacher = FakeOpenAIServer(A, in_tokens=40, out_tokens=320, reasoning_tokens=300, cached_tokens=16)
+    rt, _ = _gen_runtime(gw, tmp_path, teacher)  # the student: 10 prompt tokens and 5 per sample, 3 samples
+    monkeypatch.setattr(gw, "rt", rt)
+    vid = _version(rt.ledger, "live", {"threshold": 0.5})
+    c = TestClient(gw.app)
+
+    body = c.post(CHAT, json={"messages": HI}).json()
+    ChatCompletion.model_validate(body)
+    assert set(body) == BODY_KEYS and (body["object"], body["service_tier"]) == ("chat.completion", "default")
+    assert body["model"] == "student-v1" and FINGERPRINT.fullmatch(body["system_fingerprint"])
+    message = {"role": "assistant", "content": A, "refusal": None, "annotations": []}
+    assert body["choices"] == [{"index": 0, "message": message, "logprobs": None, "finish_reason": "stop"}]
+    assert body["usage"] == _usage(10, 5)  # one sample, not the three the cascade drew
+    assert body["ratchet"]["served_by"] == "student"
+    breakdown = {"student_samples": {"in": 10, "out": 15}, "served": {"in": 10, "out": 5}, **NO_CALL}
+    assert body["ratchet"]["usage_breakdown"] == breakdown
+    student_fp = body["system_fingerprint"]
+
+    rt.ledger.update_eval(vid, {"threshold": 0.99})  # unsure of everything: the teacher answers
+    body = c.post(CHAT, json={"messages": HI}).json()
+    ChatCompletion.model_validate(body)
+    assert (body["model"], body["ratchet"]["served_by"]) == (OPEN_TEACHER, "teacher")
+    assert body["usage"] == _usage(40, 320, reasoning=300, cached=16)  # reasoning counted in completion_tokens
+    breakdown = {"student_samples": {"in": 10, "out": 15}, "served": {"in": 40, "out": 320}, **NO_CALL}
+    assert body["ratchet"]["usage_breakdown"] == breakdown
+    assert FINGERPRINT.fullmatch(body["system_fingerprint"]) and body["system_fingerprint"] != student_fp
+
+    # A teacher answer cut off by its token limit is `length`, and still a valid ChatCompletion.
+    teacher.finish_reason = "length"
+    cut = c.post(CHAT, json={"messages": HI, "max_tokens": 5}).json()
+    assert ChatCompletion.model_validate(cut).choices[0].finish_reason == "length"
+
+    # The real SDK reads the same fields.
+    teacher.finish_reason = "stop"
+    resp = make_openai_client(gw.app).chat.completions.create(model="ratchet", messages=HI)
+    assert (resp.usage.prompt_tokens, resp.usage.completion_tokens, resp.usage.total_tokens) == (40, 320, 360)
+    assert (resp.usage.completion_tokens_details.reasoning_tokens, resp.usage.prompt_tokens_details.cached_tokens) == (300, 16)
+    assert (resp.system_fingerprint, resp.service_tier) == (body["system_fingerprint"], "default")
+    assert resp.choices[0].message.refusal is None and resp.choices[0].logprobs is None
+
+
+@pytest.mark.req("FR-1.12", "FR-9.2", "FR-2.9")
+def test_mock_teacher_reports_its_reasoning_tokens(gw_env):
+    """The mock teacher reports the reasoning tokens it bills (`RATCHET_TEACHER_REASONING_TOKENS`) the way Token
+    Factory does, so a mock response's usage has them; a pinned task's response has usage too, from its one call."""
+    sdk()
+    from openai.types.chat import ChatCompletion
+
+    gw = _gateway(gw_env, RATCHET_TEACHER_REASONING_TOKENS="120")
+    c = TestClient(gw.app)
+    msgs = gw.rt.stream.sample(1).messages()
+    body = c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "ticket-triage"}).json()  # cold start
+    ChatCompletion.model_validate(body)
+    usage = body["usage"]
+    assert usage["completion_tokens_details"]["reasoning_tokens"] == gw.rt.settings.teacher_reasoning_tokens == 120
+    assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"] > 0
+    assert usage["completion_tokens"] > 120  # the answer's own tokens, plus the reasoning
+    teacher_fp = body["system_fingerprint"]
+    assert teacher_fp == fingerprint("teacher", OPEN_TEACHER)
+
+    plan = c.post(
+        CHAT, json={"messages": plan_messages("What is LoRA fine-tuning?")}, headers={"X-Ratchet-Task": "research-plan"}
+    )
+    body = plan.json()
+    ChatCompletion.model_validate(body)
+    served = {"in": body["usage"]["prompt_tokens"], "out": body["usage"]["completion_tokens"]}
+    assert body["ratchet"]["usage_breakdown"] == {"student_samples": None, "served": served, **NO_CALL}
+    assert body["usage"]["completion_tokens_details"]["reasoning_tokens"] == 120 and body["system_fingerprint"] == teacher_fp
+
+
+@pytest.mark.req("FR-1.12")
+def test_system_fingerprint_follows_the_serving_configuration(gw_env, tmp_path, monkeypatch):
+    """Equal for answers of one version; another when a promotion puts another version live, back to the old one after
+    a rollback, another again when the version's threshold changes; the teacher's is its own and the same each time."""
+    gw = _gateway(gw_env)
+    rt, _ = _gen_runtime(gw, tmp_path, FakeOpenAIServer(A))
+    monkeypatch.setattr(gw, "rt", rt)
+    led = rt.ledger
+    c = TestClient(gw.app)
+
+    def served() -> tuple[str, str]:
+        body = c.post(CHAT, json={"messages": HI}).json()
+        return body["ratchet"]["served_by"], body["system_fingerprint"]
+
+    v1 = _version(led, "live", {"threshold": 0.5})
+    first = served()
+    assert first == served() == ("student", fingerprint("student", "student-v1", v1, "dataset-student-v1", 0.5))
+    v2 = _version(led, "live", {"threshold": 0.5})  # promoted
+    led.set_version(v1, "retired", 0)
+    second = served()
+    assert second == served() and second[0] == "student" and second[1] != first[1]
+    led.set_version(v2, "rolled_back", 0)
+    led.set_version(v1, "live", 100)
+    assert served() == first
+    led.update_eval(v1, {"threshold": 0.6})  # recalibrated: the same adapter serves other answers
+    third = served()
+    assert third[0] == "student" and third[1] not in (first[1], second[1])
+    led.update_eval(v1, {"threshold": 0.99})
+    assert served() == served() == ("teacher", fingerprint("teacher", OPEN_TEACHER))
+    # Every chunk of a streamed answer carries it too.
+    assert {ch["system_fingerprint"] for ch in _stream(c, {"messages": HI})} == {fingerprint("teacher", OPEN_TEACHER)}
+
+
+@pytest.mark.req("FR-1.6", "FR-1.12", "US-1")
+def test_stream_chunks_validate_and_include_usage_ends_with_the_usage(gw_env, tmp_path, monkeypatch):
+    """Every chunk passes the SDK's `ChatCompletionChunk` model and carries the fingerprint, the service tier and null
+    logprobs. With `stream_options.include_usage`, every chunk has `usage: null` and one more chunk before `[DONE]` has
+    no choices, the non-streamed response's usage and the ratchet block; without it the block stays on the finish
+    chunk and no chunk has `usage`. Student- and teacher-served."""
+    sdk()
+    from openai.types.chat import ChatCompletionChunk
+
+    gw = _gateway(gw_env)
+    rt, _ = _gen_runtime(gw, tmp_path, FakeOpenAIServer(A, in_tokens=40, out_tokens=320, reasoning_tokens=300))
+    monkeypatch.setattr(gw, "rt", rt)
+    vid = _version(rt.ledger, "live", {"threshold": 0.5})
+    c = TestClient(gw.app)
+    for threshold, served_by in ((0.5, "student"), (0.99, "teacher")):
+        rt.ledger.update_eval(vid, {"threshold": threshold})
+        plain = c.post(CHAT, json={"messages": HI}).json()
+        assert plain["ratchet"]["served_by"] == served_by
+
+        chunks = _stream(c, {"messages": HI, "stream_options": {"include_usage": True}})
+        for ch in chunks:
+            ChatCompletionChunk.model_validate(ch)
+        *parts, finish, last = chunks
+        assert last["choices"] == [] and last["usage"] == plain["usage"]
+        assert last["ratchet"]["served_by"] == served_by
+        assert last["ratchet"]["usage_breakdown"] == plain["ratchet"]["usage_breakdown"]
+        assert all(ch["usage"] is None and "ratchet" not in ch for ch in (*parts, finish))
+        assert (finish["choices"][0]["delta"], finish["choices"][0]["finish_reason"]) == ({}, "stop")
+        assert all(ch["choices"][0]["finish_reason"] is None for ch in parts)
+        assert all(ch["choices"][0]["logprobs"] is None for ch in (*parts, finish))
+        assert parts[0]["choices"][0]["delta"] == {"role": "assistant", "content": "", "refusal": None}
+        text = "".join(ch["choices"][0]["delta"].get("content", "") for ch in parts)
+        assert text == plain["choices"][0]["message"]["content"]
+        envelope = (chunks[0]["id"], chunks[0]["created"], plain["model"], plain["system_fingerprint"], "default")
+        assert {(ch["id"], ch["created"], ch["model"], ch["system_fingerprint"], ch["service_tier"]) for ch in chunks} == {
+            envelope
+        }
+
+        # Without include_usage (absent, false or an empty object): no usage, and the block on the finish chunk.
+        for options in ({}, {"stream_options": {"include_usage": False}}, {"stream_options": {}}):
+            chunks = _stream(c, {"messages": HI, **options})
+            for ch in chunks:
+                ChatCompletionChunk.model_validate(ch)
+            assert all("usage" not in ch for ch in chunks) and all("ratchet" not in ch for ch in chunks[:-1])
+            assert chunks[-1]["choices"][0]["finish_reason"] == "stop" and chunks[-1]["ratchet"]["served_by"] == served_by
+
+    # stream_options without a stream changes nothing.
+    again = c.post(CHAT, json={"messages": HI, "stream_options": {"include_usage": True}}).json()
+    assert again["object"] == "chat.completion" and again["usage"] == plain["usage"] == _usage(40, 320, reasoning=300)
+
+    # The real SDK: the last chunk has no choices and the usage; the others have none.
+    got = list(
+        make_openai_client(gw.app).chat.completions.create(
+            model="ratchet", messages=HI, stream=True, stream_options={"include_usage": True}
+        )
+    )
+    assert got[-1].choices == [] and got[-1].usage.total_tokens == 360
+    assert got[-1].usage.completion_tokens_details.reasoning_tokens == 300
+    assert all(ch.usage is None for ch in got[:-1])
+    assert "".join(ch.choices[0].delta.content or "" for ch in got[:-1]) == A
+
+
+@pytest.mark.req("FR-1.12", "FR-1.11")
+def test_provider_reads_cached_prompt_tokens():
+    """`usage.prompt_tokens_details.cached_tokens` reaches every choice of a call, like the prompt it is part of; a
+    malformed value or details object counts as 0."""
+    server = FakeOpenAIServer(A, in_tokens=90, out_tokens=4, cached_tokens=64)
+    p = OpenAICompatProvider("https://student.test/v1", "k", transport=server.transport)
+    assert [(x.in_tokens, x.cached_tokens) for x in p.complete(HI, "m", n=2)] == [(90, 64), (90, 64)]
+    for details in ({"cached_tokens": "64"}, {"cached_tokens": -1}, {"cached_tokens": True}, [64], None):
+        usage = {"prompt_tokens": 90, "completion_tokens": 4, "prompt_tokens_details": details}
+        body = {"choices": [{"message": {"content": "a"}}], "usage": usage}
+        bad = OpenAICompatProvider(
+            "https://m.test/v1", "k", transport=httpx.MockTransport(lambda r, b=body: httpx.Response(200, json=b))
+        )
+        assert bad.complete(HI, "m")[0].cached_tokens == 0, details
+
+
 # ---------- validate_chat_request ----------
 @pytest.mark.req("FR-1.10")
 def test_chat_request_fields():
@@ -894,6 +1120,12 @@ def test_chat_request_fields():
     }
     req = validate_chat_request({"messages": HI, **fields})
     assert {k: getattr(req, k) for k in fields} == fields and req.extra == {}
+    # stream_options.include_usage counts only in a stream, as on OpenAI's API; other keys in it are kept.
+    assert req.include_usage is True
+    assert validate_chat_request({"messages": HI, "stream_options": {"include_usage": True}}).include_usage is False
+    newer = {"include_usage": None, "include_obfuscation": False}
+    assert validate_chat_request({"messages": HI, "stream": True, "stream_options": newer}).stream_options == newer
+    assert validate_chat_request({"messages": HI, "stream": True, "stream_options": newer}).include_usage is False
     with pytest.raises(APIError) as e:  # JSON keys are strings; a Python caller can pass anything
         validate_chat_request({"messages": HI, "metadata": {1: "x"}})
     assert (e.value.code, e.value.param) == ("invalid_type", "metadata")
@@ -1057,6 +1289,12 @@ VALIDATION_CASES = [
     ),
     pytest.param({"messages": HI, "stream": "true"}, "invalid_type", "stream", id="stream-string"),
     pytest.param({"messages": HI, "stream_options": "x"}, "invalid_type", "stream_options", id="stream-options"),
+    pytest.param(
+        {"messages": HI, "stream": True, "stream_options": {"include_usage": "yes"}},
+        "invalid_type",
+        "stream_options.include_usage",
+        id="include-usage-string",
+    ),
     pytest.param({"messages": HI, "metadata": ["ratchet_task"]}, "invalid_type", "metadata", id="metadata-list"),
     pytest.param(
         {"messages": HI, "metadata": {str(i): "v" for i in range(17)}}, "invalid_value", "metadata", id="metadata-17-keys"

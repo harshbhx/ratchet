@@ -49,7 +49,9 @@ class Completion:
     """One choice of a chat completion. `text` is the message's `content` only: reasoning that a server returns apart
     (`reasoning_content`, `reasoning`) is never read. `finish_reason` is why the model stopped (`stop` when the server
     does not say). `reasoning_tokens` is this choice's share of `usage.completion_tokens_details.reasoning_tokens`;
-    `out_tokens` already includes them."""
+    `out_tokens` already includes them. `cached_tokens` is `usage.prompt_tokens_details.cached_tokens`, the part of
+    `in_tokens` the server read from its prompt cache (0 when it does not say); like `in_tokens`, every choice of one
+    call carries the whole count, because the choices share the prompt."""
 
     text: str
     model: str
@@ -59,6 +61,7 @@ class Completion:
     token_logprobs: list[float] = field(default_factory=list)
     finish_reason: str = "stop"
     reasoning_tokens: int = 0
+    cached_tokens: int = 0
 
     @property
     def mean_prob(self) -> float | None:
@@ -527,7 +530,9 @@ def _completions(data: Any, model: str, latency: float) -> list[Completion]:
         raise UpstreamError(502, "the upstream model returned no choices", code=BAD_RESPONSE)
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
+    prompt_details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
     in_tokens = _count(usage.get("prompt_tokens"))
+    cached = _count(prompt_details.get("cached_tokens"))  # one prompt for every choice, like in_tokens
     out_tokens = _out_tokens(_count(usage.get("completion_tokens")), choices)
     reasoning = _split(_count(details.get("reasoning_tokens")), len(choices))  # no per-choice figure exists
     served = data.get("model") if isinstance(data.get("model"), str) and data.get("model") else model
@@ -541,6 +546,7 @@ def _completions(data: Any, model: str, latency: float) -> list[Completion]:
             token_logprobs=_token_logprobs(ch),
             finish_reason=_finish_reason(ch),
             reasoning_tokens=thought,
+            cached_tokens=cached,
         )
         for ch, out, thought in zip(choices, out_tokens, reasoning, strict=True)
     ]

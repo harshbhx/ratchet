@@ -64,10 +64,11 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 | `messages` | array of message objects | yes | 1 to `RATCHET_MAX_MESSAGES` (256) messages ([Messages](#messages)) |
 | `model` | string | no | Ignored; Ratchet chooses the model. Use `"ratchet"` |
 | `stream` | bool | no | `true` returns Server-Sent Events in the OpenAI chunk format ([Streaming](#streaming)) |
+| `stream_options` | object | no | With `stream: true`, `{"include_usage": true}` ends the stream with a chunk that carries `usage` ([Streaming](#streaming)). Other keys are ignored, and so is the object without a stream. Never forwarded |
 | `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent |
 | `n` | integer | no | Must be 1 (one choice per request for now); 2 or more is a 400 `unsupported_value` |
 | `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `logprobs`, `top_logprobs`, `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `reasoning_effort` | | no | Checked against OpenAI's rules ([Request validation](#request-validation)), then sent to each model as its role allows ([Generation parameters](#generation-parameters)). `max_completion_tokens` wins over `max_tokens`; a string `stop` counts as a one-item list |
-| `functions`, `function_call`, `user`, `safety_identifier`, `store`, `stream_options` | | no | Checked, not forwarded: the end user's identity and the storage choice never go upstream, and the legacy function fields are not mapped to `tools` yet |
+| `functions`, `function_call`, `user`, `safety_identifier`, `store` | | no | Checked, not forwarded: the end user's identity and the storage choice never go upstream, and the legacy function fields are not mapped to `tools` yet |
 | any other field | | no | Ignored on purpose: unknown fields are kept, not refused, so newer OpenAI SDKs and third-party clients that send fields Ratchet does not know (`service_tier`, `prompt_cache_key`, …) keep working. One is forwarded only when `RATCHET_TEACHER_PARAMS` or `RATCHET_STUDENT_PARAMS` names it (vLLM's `top_k`, for example) |
 
 `null` for any optional field means it is not set.
@@ -149,10 +150,11 @@ Every rule runs before the quota check and before any model call; a refused requ
 | `functions`, `function_call` | The legacy forms: functions named as above; `none`, `auto` or `{"name": ...}` | `invalid_type`, `invalid_value` |
 | `stream`, `parallel_tool_calls`, `store` | Booleans | `invalid_type` |
 | `model`, `user`, `safety_identifier`, `reasoning_effort` / `stream_options` | Strings / an object | `invalid_type` |
+| `stream_options.include_usage` | A boolean | `invalid_type` |
 
 ### Response (200)
 
-Standard `chat.completion` plus a `ratchet` block:
+A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` block:
 
 ```json
 {
@@ -160,11 +162,22 @@ Standard `chat.completion` plus a `ratchet` block:
   "object": "chat.completion",
   "created": 1792400000,
   "model": "student-v5",
+  "system_fingerprint": "fp_6c1e0f3a9b2d",
+  "service_tier": "default",
   "choices": [
-    {"index": 0, "finish_reason": "stop",
+    {"index": 0,
      "message": {"role": "assistant",
-                 "content": "{\"category\": \"billing\", \"priority\": \"medium\", \"reply\": \"Sorry about the billing trouble, I'm checking your charges now.\"}"}}
+                 "content": "{\"category\": \"billing\", \"priority\": \"medium\", \"reply\": \"Sorry about the billing trouble, I'm checking your charges now.\"}",
+                 "refusal": null, "annotations": []},
+     "logprobs": null,
+     "finish_reason": "stop"}
   ],
+  "usage": {
+    "prompt_tokens": 104, "completion_tokens": 31, "total_tokens": 135,
+    "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 0},
+    "completion_tokens_details": {"reasoning_tokens": 0, "audio_tokens": 0,
+                                  "accepted_prediction_tokens": 0, "rejected_prediction_tokens": 0}
+  },
   "ratchet": {
     "served_by": "student",
     "student_version": 5,
@@ -172,7 +185,12 @@ Standard `chat.completion` plus a `ratchet` block:
     "escalated": false,
     "cost_usd": 0.0000312,
     "all_teacher_cost_usd": 0.00131,
-    "latency_ms": 311.4
+    "latency_ms": 311.4,
+    "usage_breakdown": {
+      "student_samples": {"in": 104, "out": 93},
+      "served": {"in": 104, "out": 31},
+      "audit": null, "shadow": null, "arbitration": null
+    }
   }
 }
 ```
@@ -186,8 +204,11 @@ Standard `chat.completion` plus a `ratchet` block:
 | `cost_usd` | Actual cost of this request, including audit, shadow and arbitration calls (a call that failed adds nothing) |
 | `all_teacher_cost_usd` | Estimated cost if the teacher had answered alone |
 | `latency_ms` | Student latency plus teacher latency when the teacher answered |
+| `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call), `audit`, `shadow` (the candidate's samples) and `arbitration` ([Usage](#usage)) |
 
-`model` is the model that produced the served answer: the adapter name (`student-vN`) or the teacher model ID. `usage` is not returned yet.
+`model` is the model that produced the served answer: the adapter name (`student-vN`) or the teacher model ID.
+
+`system_fingerprint` names the configuration that produced the answer: `fp_` and the first 12 hex digits of SHA-256 over `student|<adapter>|<version id>|<training-set hash>|<threshold>` for a student answer, or `teacher|<RATCHET_TEACHER_MODEL>` for a teacher answer. It is the same for every answer of one version, and changes when a promotion or a rollback puts another version in front (during a canary, both versions' fingerprints appear) or when a version's threshold changes. `service_tier` is always `default`. `choices[0].logprobs` is `null` (token logprobs are not returned yet), `message.refusal` is `null` and `message.annotations` is empty.
 
 `message.content` is the served answer after `tasks.clean_answer`: model reasoning is never returned (a `<think>…</think>` block, anything before a lone `</think>`, an unterminated `<think>` that opens what is left and what follows), and for a structured task such as `ticket-triage` a code fence around the whole JSON answer is removed, so the content is bare JSON. A structured answer that is one JSON object is returned whole, so a tag quoted in its strings stays; a `<think>` after answer text is content too. A free-text answer keeps its code blocks. A teacher answer that was cut off by its token limit is still returned (and is not stored as training data), with `finish_reason: "length"`.
 
@@ -195,16 +216,43 @@ Standard `chat.completion` plus a `ratchet` block:
 
 Response headers: `X-Ratchet-Served-By: student|teacher`, plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
 
+#### Usage
+
+`usage` is the served answer's, as if the model that wrote it had answered the request alone ([ADR 0018](adr/0018-usage-reports-the-served-answer.md)):
+
+| Field | Student answer | Teacher answer |
+|---|---|---|
+| `prompt_tokens` | The student's prompt tokens | The teacher's prompt tokens |
+| `completion_tokens` | The chosen sample's tokens (one of n; the endpoint's `completion_tokens` split over the samples by their logprob counts) | The teacher's completion tokens, reasoning included, as OpenAI counts them for its reasoning models |
+| `total_tokens` | `prompt_tokens + completion_tokens` | The same |
+| `completion_tokens_details.reasoning_tokens` | The sample's share of the endpoint's reasoning tokens (0 for the tuned student) | What the teacher reported (Token Factory reports them; the mock teacher reports `RATCHET_TEACHER_REASONING_TOKENS`) |
+| `prompt_tokens_details.cached_tokens` | What the endpoint reported in `prompt_tokens_details.cached_tokens`, else 0 | The same |
+| `audio_tokens`, `accepted_prediction_tokens`, `rejected_prediction_tokens` | 0 | 0 |
+
+When the served model reported no prompt or completion count, Ratchet estimates it at about 4 characters a token (the messages as JSON; the answer as served), so `total_tokens` is never 0. Reasoning and cached tokens never exceed the counts they are part of.
+
+`usage` is **not** what the request cost Ratchet. The other student samples, an audit, a shadow and an arbitration are listed in `ratchet.usage_breakdown`, and `ratchet.cost_usd` prices all of them. So the same answer reports the same `usage` whether or not it was audited or shadowed, and a client that bills its own users from `usage` charges them for the answer they got.
+
 ### Streaming
 
-With `"stream": true` the response is `text/event-stream` in the format OpenAI SDKs expect: a first chunk with `delta.role`, content chunks of a few words each, a last chunk with the answer's `finish_reason` (`"stop"`, or `"length"` as above) and the same `ratchet` block as above, then `data: [DONE]`.
+With `"stream": true` the response is `text/event-stream` in the format OpenAI SDKs expect: a first chunk with `delta.role`, content chunks of a few words each, a last chunk with the answer's `finish_reason` (`"stop"`, or `"length"` as above) and the same `ratchet` block as above, then `data: [DONE]`. Every chunk has the response's `id`, `created`, `model`, `system_fingerprint` and `service_tier`, and `logprobs: null` in its choice.
 
 ```text
-data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1792400000,"model":"student-v5","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk","created":1792400000,"model":"student-v5","system_fingerprint":"fp_6c1e0f3a9b2d","service_tier":"default","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}]}
 
-data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[{"index":0,"delta":{"content":"{\"category\": \"billing\", "},"finish_reason":null}]}
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[{"index":0,"delta":{"content":"{\"category\": \"billing\", "},"logprobs":null,"finish_reason":null}]}
 
-data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"ratchet":{"served_by":"student",…}}
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"ratchet":{"served_by":"student",…}}
+
+data: [DONE]
+```
+
+With `"stream_options": {"include_usage": true}`, as OpenAI documents it: every chunk above has `"usage": null`, the finish chunk has no `ratchet` block, and one more chunk comes before `[DONE]`, with no choices, the same `usage` as the non-streamed response and the `ratchet` block:
+
+```text
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null}
+
+data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[],"usage":{"prompt_tokens":104,"completion_tokens":31,"total_tokens":135,…},"ratchet":{"served_by":"student",…}}
 
 data: [DONE]
 ```
@@ -212,8 +260,11 @@ data: [DONE]
 The cascade has to see the student's whole answer to score its confidence before it decides who serves, so the answer is complete before the first chunk is sent: time to first token equals the full latency. Streaming exists so that clients built for streaming work unchanged. Errors (400, 401, 413, 429, 502, 504) are returned as normal JSON HTTP errors before the stream starts.
 
 ```python
-for chunk in client.chat.completions.create(model="ratchet", messages=msgs, stream=True):
-    print(chunk.choices[0].delta.content or "", end="")
+for chunk in client.chat.completions.create(model="ratchet", messages=msgs, stream=True, stream_options={"include_usage": True}):
+    if chunk.choices:
+        print(chunk.choices[0].delta.content or "", end="")
+    else:
+        print("\n", chunk.usage.total_tokens, "tokens")
 ```
 
 ### Errors
@@ -617,10 +668,11 @@ from ratchet.router import RequestMeta
 
 result = r.handle(msgs, "ticket-triage", client="acme", params=GenParams(max_tokens=200, stop=("\n\n",)), meta=RequestMeta())
 print(result.finish_reason)  # "stop", or "length" when the answer was cut off
+print(result.prompt_tokens, result.completion_tokens, result.total_tokens, result.fingerprint)
 ```
 
 `handle(messages, task=None, client=None, params=None, meta=None)`: `task` is a task name or a `tasks.Task`; `params` (`providers.GenParams`, `GenParams.from_request(chat_request)` in the gateway) are sent to each call as `Settings.gen_policy()` allows ([Generation parameters](#generation-parameters)); `meta` (`router.RequestMeta`) carries what else the caller knows, and `RequestMeta(storable=False)` keeps the request's teacher answers out of the training set. A provider's `complete(messages, model, n, temperature, logprobs, response_format, params=None, **_)` receives the role's `GenParams`; the explicit arguments win over the same fields in it.
 
-`result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)); `result.text` is the answer after `tasks.clean_answer`. Each `Completion` a provider returns carries `finish_reason` (`stop` when the server leaves it out or sends an empty string) and `reasoning_tokens`; only a teacher answer with `finish_reason` `stop` or `tool_calls` that is non-empty and valid for its task is stored (invariant 16), and `requests.stored` says whether a request stored one. `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`) and `breakers`: each student breaker's state by name (`student`, `shadow`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
+`result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)); `result.text` is the answer after `tasks.clean_answer`. `result.prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `cached_tokens` and `total_tokens` are the response's [usage](#usage), `result.usage_breakdown` its `ratchet.usage_breakdown` (keys in `router.USAGE_PARTS`), and `result.fingerprint` its `system_fingerprint` (`router.fingerprint(...)`). Each `Completion` a provider returns carries `finish_reason` (`stop` when the server leaves it out or sends an empty string), `reasoning_tokens` and `cached_tokens` (from `usage.prompt_tokens_details`, 0 when absent); only a teacher answer with `finish_reason` `stop` or `tool_calls` that is non-empty and valid for its task is stored (invariant 16), and `requests.stored` says whether a request stored one. `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`) and `breakers`: each student breaker's state by name (`student`, `shadow`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
 
 When the teacher's answer was needed and the teacher failed after its retries, `handle` raises `ratchet.providers.UpstreamError` (an `httpx.HTTPError`): `status` (504 for a timeout, 502 when Token Factory could not be reached), and the teacher's `type`, `code`, `param`, `message` and `retry_after` when it sent them. It never carries the URL or headers.
