@@ -3,10 +3,45 @@
 Ready to paste. Replace every `[LIVE NUMBER]` with results from the live run before submitting. Keep simulation results labelled as simulation.
 
 - **Deadline:** Oct 30, 2026, 10:00 AM PDT (10:30 PM IST). Target: submit Oct 29.
-- **Track:** Best Apps and Agents
-- **Also eligible for:** Best Use of Tavily (Scout's searcher uses the Tavily Search API). Confirm this prize and its rules on the Devpost page before submitting.
-- **Judging (equal weight):** Technological Implementation, Design, Potential Impact, Quality of the Idea
+- **Track:** Best Apps and Agents ("Useful applications and agents powered by Nemotron models through Token Factory").
+- **Also eligible for:** Best Use of Tavily (Scout's searcher uses the Tavily Search API). It needs a working runtime call to Tavily, so only live mode counts.
+- **Judging:** a pass/fail Stage One check against the submission requirements, then four equally weighted criteria: Technological Implementation, Design, Potential Impact, Quality of the Idea. Judging runs Dec 1–15, 2026.
 - **Demo URL:** [DEMO URL], hosted on a Nebius VM (see [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Pages: `/` landing, `/scout` Scout demo, `/dashboard` dashboard.
+
+### Prizes and field (as reported, Oct 2026)
+
+The Devpost page blocks automated reading, so these come from an organizer-deck recap and third-party listings. Confirm on [Devpost](https://nebiusglobalaihackathon.devpost.com/) before relying on them.
+
+| Prize | Amount | Note |
+|---|---|---|
+| Grand prize | $20,000 | Overall, across all four tracks |
+| 2nd place | $10,000 | Overall |
+| 3rd place | $6,000 | Overall |
+| Track winners (4) | NVIDIA Jetson Orin Nano each | Hardware, not cash |
+| Best Use of Tavily | $3,000 | Needs a functional runtime Tavily call |
+| Most Valuable Feedback (10) | $100 plus NVIDIA swag | For the feedback section below |
+| City winners (20) | $500 each | In-person Builders & Brews attendees only; no Indian city |
+
+Registrants: 24,785 as of Oct 19, 2026 (third-party tracker; the number of submissions is not published). Sources: [Amsterdam recap with the organizer deck](https://lucaberton.com/blog/aaif-builders-brews-amsterdam-nebius-nvidia-hackathon-2026/), [Tierones listing](https://tierones.io/opportunities/nebius-nvidia-ai-2026), [participant's rules summary checked Oct 11](https://github.com/smanika3/Nebius-x-NVIDIA-Hackathon/blob/main/README.md).
+
+### Stage One (pass/fail) readiness
+
+A submission that misses any of these is out of scope regardless of quality:
+
+- **A runtime call to Token Factory, or running on Nebius AI Cloud.** Mock mode makes no Token Factory call, so the hosted demo must run in **live mode** (at least the teacher) during judging.
+- **At least one NVIDIA open model:** Nemotron 3 Ultra (teacher), Super (judge), Nano (student and fallback).
+- **A working demo URL, free for judges, up until Dec 15, 2026.** Check that the Token Factory credit lasts that long, or top it up; the guide's $0.50/day Scout budget is about $24 over 48 days.
+- **A public repo with an open-source license file** (Apache-2.0) and a README with setup instructions.
+- **A demo video under 3 minutes**, public on YouTube, with no copyrighted music. Judges need not watch past 3 minutes, so lead with the strongest moment.
+- **English materials, a description of features, and the feedback section.**
+
+### What past winners had in common
+
+- **Nebius's [Serverless AI Builders Challenge](https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners)** (35 qualifying projects; criteria: technical implementation, reproducibility, educational content quality, product usage depth, real-world usefulness, originality). First place LoRA-fine-tuned 7–8B models on Serverless Jobs, served the winner on a Serverless Endpoint and reported its full bill ($320, failed jobs included). Second place compared Token Factory against self-hosted vLLM on quality, latency and cost, and found self-hosting wins only at high utilization. Third place injected faults into multi-agent systems and measured robustness, with a $3.64 bill.
+- **NVIDIA's [Nemotron hackathon](https://blog.nota.ai/insights/nemotron-hackathon-winner)** grand prize went to an infrastructure project; the judges singled out "not only qualitative but also quantitative evaluation" over polished but unmeasured demos.
+- **NVIDIA's [Agent Toolkit hackathon](https://developer.nvidia.com/blog/hackathon-winners-bring-agentic-ai-to-life-with-the-nvidia-nemo-agent-toolkit/)** was won by a project that used several NVIDIA products together.
+
+For Ratchet that means: real measured numbers from the live run, the real Nebius bill (total, failed jobs included), deep use of Jobs, Endpoints, Object Storage and Token Factory, and an honest cost model. Ratchet's GPU-hour cost accounting reports when self-hosting does not pay and recommends the hosted fallback instead (see [BUSINESS.md](BUSINESS.md#when-self-hosting-pays-utilization-aware)).
 
 ---
 
@@ -84,7 +119,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 64 tests (87% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, and the privacy and security features.
+- A full, tested loop: 105 tests (87% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, and the privacy and security features.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -135,10 +170,13 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 ## Submission checklist
 
 - [ ] Working project uses NVIDIA Nemotron on Token Factory and Nebius AI Cloud
+- [ ] Hosted demo runs in **live mode** (Stage One needs a runtime Token Factory call; the Tavily prize needs a runtime Tavily call)
+- [ ] Token Factory and Tavily credits last until Dec 15, 2026 (or are topped up); budget guard set accordingly
 - [ ] Track selected: Best Apps and Agents
 - [ ] Project description (this file, sections above)
 - [ ] Working demo URL, tested logged-out, stays live through Dec 15, 2026
-- [ ] Demo VM on Nebius up and checked ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#4-check-it-works)): `/`, `/scout`, `/dashboard` load over HTTPS; budget guard set; `RATCHET_API_GUARD=guarded` if in live mode
+- [ ] Demo VM on Nebius up and checked ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#4-check-it-works)): `/`, `/scout`, `/dashboard` load over HTTPS; budget guard set; `/v1/*` protected (`RATCHET_API_KEYS` or `RATCHET_API_GUARD=guarded`) in live mode
+- [ ] Real numbers from the live run in the description and video, including the total Nebius bill (failed jobs included) and the cost report's break-even line
 - [ ] Best Use of Tavily: prize confirmed on Devpost, selected if it needs opting in, and Tavily use described (Scout's searcher)
 - [ ] Demo video under 3 minutes, public on YouTube, no unlicensed music or third-party trademarks ([DEMO_SCRIPT.md](DEMO_SCRIPT.md))
 - [ ] Public GitHub repo with Apache-2.0 license visible at the top of the repo page

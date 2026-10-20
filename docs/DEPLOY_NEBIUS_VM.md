@@ -102,6 +102,8 @@ curl -sN "https://<domain>/scout/stream?q=What%20is%20LoRA%20fine-tuning%3F"   #
 
 Live mode spends real money on every Scout run and every `/v1/chat/completions` call. Do it only after the checks in [DAY1.md](DAY1.md) pass.
 
+> **For judging, live mode is required.** The hackathon's pass/fail Stage One needs a runtime call to Token Factory, and the Best Use of Tavily prize needs a runtime call to Tavily. Mock mode makes neither. Switch the VM to live mode before submitting (Oct 29) and keep it running, with the budget guard on, until judging ends on Dec 15, 2026. Make sure the Token Factory and Tavily credits last that long. See [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md#stage-one-passfail-readiness).
+
 1. In `.env`, set:
    - `RATCHET_MODE=live`
    - `NEBIUS_API_KEY` (Token Factory) and `TAVILY_API_KEY`

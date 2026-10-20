@@ -30,7 +30,22 @@ As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
   - `/healthz`, coverage in CI, and a **Trust and privacy** panel on the dashboard with a live redactor.
 - 64 tests passing.
 
+## Milestone 0.9: v0.5 backend completeness (in progress, from Oct 20)
+
+Built package by package. Every item gets offline tests and an adversarial review, and the reference simulation numbers must not change. The UI is out of scope for v0.5.
+
+| Package | Scope |
+|---|---|
+| A. Verification foundation | Requirements traceability matrix generated from the PRD and checked in CI; tests for every invariant and release-gate rule; a pinned reference simulation; contract tests for the gateway, stats and licensing; offline tests for live-mode entry points |
+| B. Request contract and resilience | Strict validation with OpenAI-style errors; teacher retries with backoff and Retry-After; a student circuit breaker; optional teacher calls that never break a served answer; answer hygiene; generation parameters and token caps; full OpenAI response parity; a degraded mode when the teacher is down |
+| C. Task model and use cases | Per-field comparators; task registry and per-task thresholds; structured outputs (JSON schema) as tasks; tool-call pass-through and opt-in tool-call distillation; risk-aware routing; free-text and SQL tasks; mock workloads and a use-case catalog; adjacent OpenAI endpoints; real teacher streaming |
+| D. Operations, security, performance | Hot-path performance; authorization for management endpoints; request IDs, metrics and a failures table; per-key spend and rate limits; an admin API with an audit trail; config validation and readiness; Night School leases and alert webhooks; idempotency; quality checks off the request path |
+| E. Data governance and KPIs | Per-request storage opt-out; retention, verifiable erasure and export; redaction for extraction tasks; licenses that travel with the adapter; human feedback and labelled-data import; PRD success metrics computed and checked in CI |
+| F. Novel features | Utilization-aware cost accounting (GPU-hours, break-even, self-host recommendation); an anytime-valid release gate (e-process rollback, confidence sequences); committed training sets (Merkle roots in the BOM, membership proofs); certified precision; a ledger time machine for counterfactual replay; a label-free drift alarm with a false-alarm bound; teacher self-consistency checks; verified savings receipts; clean-room backfill through the Batch API; provable erasure; a guarantee harness; and a one-command evidence tour |
+
 ## Milestone 1: hackathon submission (Oct 19–29, 2026)
+
+> Stage One of judging is pass/fail on the submission requirements, and one of them is a runtime call to Token Factory. Mock mode makes none, so the public demo must run in live mode during judging (Dec 1–15). Details in [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md#stage-one-passfail-readiness).
 
 | Dates | Work | Exit criteria |
 |---|---|---|
@@ -38,7 +53,7 @@ As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 | Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs |
 | Oct 23–24 | Live Night School: dataset → Serverless Job → hot-load adapter → golden eval → release gate | At least one version trained and evaluated live |
 | Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" | At least 3 versions; real cost and precision numbers |
-| Oct 26–27 | Public demo on the Nebius VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): mock first, then live Scout with Tavily and the budget guard, Token Factory fallback student | Demo URL works logged-out over HTTPS; `/`, `/scout`, `/dashboard` load; stays up when the student endpoint is stopped |
+| Oct 26–27 | Public demo on the Nebius VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): mock first, then **live mode** (required for Stage One) with live Scout, Tavily and the budget guard, Token Factory fallback student | Demo URL works logged-out over HTTPS; `/`, `/scout`, `/dashboard` load; live Token Factory and Tavily calls succeed; stays up when the student endpoint is stopped; credits cover the demo until Dec 15 |
 | Oct 28 | README with live numbers, feedback section, video recorded ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) | Video under 3 minutes on YouTube (public) |
 | Oct 29 | Submit on Devpost ([HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md)) | Every checklist item ticked |
 | Dec 1–15 | Judging | Demo URL live the whole window (VM runs Oct 29 – Dec 15) |
