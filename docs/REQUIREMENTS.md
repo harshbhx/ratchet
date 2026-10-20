@@ -8,7 +8,7 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Status | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Done | 0 | 73 | 7 | 0 | 0 | 80 |
+| Done | 0 | 74 | 7 | 0 | 0 | 81 |
 | Done, untested live | 0 | 11 | 1 | 0 | 0 | 12 |
 | Done, more planned | 0 | 1 | 2 | 0 | 0 | 3 |
 | Partial | 0 | 0 | 1 | 0 | 0 | 1 |
@@ -17,14 +17,14 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
 | Invariant | 0 | 0 | 0 | 0 | 17 | 17 |
-| **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
+| **Total** | **11** | **99** | **11** | **5** | **17** | **143** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 84 | 11 | 0 | 17 | 123 |
+| Tested | 11 | 85 | 11 | 0 | 17 | 124 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
 | No check needed | 0 | 13 | 0 | 5 | 0 | 18 |
-| **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
+| **Total** | **11** | **99** | **11** | **5** | **17** | **143** |
 
 ## 5. User stories and acceptance criteria
 
@@ -207,7 +207,9 @@ From [PRD §6.11](PRD.md#611-demo-hosting).
 
 From [PRD §6.12](PRD.md#612-operations).
 
-No requirements in this section yet.
+| ID | Requirement | Status | Code | Tests | Verification/notes |
+|---|---|---|---|---|---|
+| FR-12.8 | Hot-path performance (ADR 0060): a ledger file runs in the WAL journal with `synchronous=NORMAL` an… | Done (v0.5) | `ratchet.ledger:Ledger._journal`<br>`ratchet.ledger:Ledger._reader`<br>`ratchet.ledger:Ledger._routed`<br>`ratchet.ledger:Ledger.version_live_quality`<br>`ratchet.ledger:INDEXES`<br>`ratchet.gateway:Runtime.tick`<br>`ratchet.gateway:SnapshotCache`<br>`ratchet.config:Settings.tick_interval`<br>`ratchet.config:Settings.stats_ttl` | `tests/test_perf.py::test_file_ledger_uses_wal_and_memory_does_not`<br>`tests/test_perf.py::test_sync_full_keeps_the_rollback_journal_and_bad_values_stop_startup`<br>`tests/test_perf.py::test_full_cannot_take_a_file_out_of_wal_while_another_process_holds_it`<br>`tests/test_perf.py::test_gate_queries_search_their_indexes`<br>`tests/test_perf.py::test_version_cache_sees_another_connections_writes`<br>`tests/test_perf.py::test_version_cache_invalidates_on_state_change`<br>`tests/test_perf.py::test_routing_reads_no_version_rows_until_a_version_changes`<br>`tests/test_perf.py::test_live_quality_tally_matches_a_full_count`<br>`tests/test_perf.py::test_bom_digest_is_cached_until_examples_change`<br>`tests/test_perf.py::test_events_last_reads_only_the_newest`<br>`tests/test_perf.py::test_stats_reads_skip_the_writer_lock`<br>`tests/test_perf.py::test_tick_throttle_runs_the_gate_once_per_interval`<br>`tests/test_perf.py::test_request_path_ticks_at_most_once_per_interval`<br>`tests/test_perf.py::test_snapshot_cache_ttl_and_single_flight`<br>`tests/test_perf.py::test_stats_ttl_returns_the_cached_payload`<br>`tests/test_perf.py::test_interval_settings_have_mode_defaults_and_bounds`<br>`tests/test_perf.py::test_latency_percentiles`<br>`tests/test_perf.py::test_handle_overhead_does_not_grow_with_versions`<br>`tests/test_perf.py::test_perf_guard_200k_requests` | tested |
 
 ## 6.13 Data governance
 
@@ -257,7 +259,7 @@ From [PRD §7](PRD.md#7-non-functional-requirements).
 
 | ID | Requirement | Status | Code | Tests | Verification/notes |
 |---|---|---|---|---|---|
-| NFR-1 | Latency: Student path adds at most one student call (n samples in one request). Target p50 under 1… | Done (v0.1), untested (live) | `ratchet.router:Ratchet._sample` | `tests/test_contract.py::test_student_sampled_once_with_production_params`<br>`tests/test_hardening.py::test_answer_cleaning_is_linear_on_adversarial_answers` | offline test; live check: `docs/DEPLOYMENT.md` (p50 latency needs the real student endpoint) |
+| NFR-1 | Latency: Student path adds at most one student call (n samples in one request). Target p50 under 1… | Done (v0.1), untested (live) | `ratchet.router:Ratchet._sample`<br>`ratchet.router:Ratchet.handle`<br>`ratchet.ledger:Ledger.latency_percentiles` | `tests/test_contract.py::test_student_sampled_once_with_production_params`<br>`tests/test_hardening.py::test_answer_cleaning_is_linear_on_adversarial_answers`<br>`tests/test_perf.py::test_latency_percentiles`<br>`tests/test_perf.py::test_stats_by_day_reports_latency_percentiles_and_sorts_only_changed_days`<br>`tests/test_perf.py::test_wall_ms_logged_and_at_least_latency`<br>`tests/test_perf.py::test_wall_ms_is_the_timer_around_the_whole_cascade`<br>`tests/test_perf.py::test_handle_overhead_does_not_grow_with_versions`<br>`tests/test_perf.py::test_perf_guard_200k_requests` | offline test; live check: `docs/DEPLOYMENT.md` (p50 latency needs the real student endpoint) |
 | NFR-2 | Availability: If the student endpoint errors, requests fall back to the teacher automatically (v0.1… | Done (v0.1.1); a demo URL that stays live through judging planned | `ratchet.router:Ratchet.handle`<br>`ratchet.router:Ratchet._teacher_complete`<br>`ratchet.resilience:retry_call`<br>`ratchet.resilience:Breaker`<br>`ratchet.live:AdapterReloader`<br>`ratchet.live:reload_adapters` | `tests/test_hardening.py::test_student_failure_falls_back_to_teacher`<br>`tests/test_hardening.py::test_teacher_failure_returns_502`<br>`tests/test_hardening.py::test_live_night_checks_the_student_endpoint_before_paid_work`<br>`tests/test_live.py::test_reload_adapters_loads_live_canary_shadow`<br>`tests/test_resilience.py::test_audit_failure_still_serves_the_student`<br>`tests/test_resilience.py::test_shadow_sampling_error_counted`<br>`tests/test_resilience.py::test_optional_teacher_failures_through_the_gateway`<br>`tests/test_resilience.py::test_student_error_event_never_quotes_the_endpoint`<br>`tests/test_resilience.py::test_retry_backs_off_with_full_jitter_under_the_cap`<br>`tests/test_resilience.py::test_retry_after_is_honoured`<br>`tests/test_resilience.py::test_client_errors_are_not_retried`<br>`tests/test_resilience.py::test_deadline_stops_retries`<br>`tests/test_resilience.py::test_read_timeout_is_retried_exactly_once`<br>`tests/test_resilience.py::test_bad_upstream_bodies_are_502_and_not_retried`<br>`tests/test_resilience.py::test_upstream_errors_map_to_client_statuses`<br>`tests/test_resilience.py::test_live_runtime_passes_timeouts_and_retries`<br>`tests/test_resilience.py::test_breaker_opens_probes_backs_off_and_closes`<br>`tests/test_resilience.py::test_a_probe_slower_than_the_cooldown_still_counts_and_backs_the_breaker_off`<br>`tests/test_resilience.py::test_router_never_replaces_a_probe_that_can_still_be_running`<br>`tests/test_resilience.py::test_endpoint_failures_are_told_from_request_errors`<br>`tests/test_resilience.py::test_open_student_breaker_sends_requests_straight_to_the_teacher`<br>`tests/test_resilience.py::test_shadow_breaker_is_its_own`<br>`tests/test_resilience.py::test_lost_adapter_is_reported_and_does_not_open_the_breaker`<br>`tests/test_resilience.py::test_adapter_reloader_rate_limits_and_reports`<br>`tests/test_resilience.py::test_live_gateway_reloads_a_lost_adapter_once_a_minute`<br>`tests/test_resilience.py::test_open_teacher_breaker_answers_503_at_once_with_retry_after`<br>`tests/test_resilience.py::test_open_teacher_breaker_skips_audits_and_arbitration_without_counting_them`<br>`tests/test_resilience.py::test_teacher_breaker_counts_only_teacher_outages`<br>`tests/test_resilience.py::test_serve_student_mode_answers_degraded_with_a_flag_and_a_header`<br>`tests/test_resilience.py::test_fallback_teacher_answers_when_the_primary_is_unavailable`<br>`tests/test_resilience.py::test_live_runtime_wires_the_fallback_teacher` | tested |
 | NFR-3 | Cost: Shadow, audit, and arbitration overhead is counted in reported cost. No training while a rele… | Done (v0.1) | `ratchet.router:Ratchet.handle`<br>`ratchet.nightschool.orchestrate:run_night`<br>`ratchet.providers:GenPolicy` | `tests/test_contract.py::test_cost_includes_audit_shadow_and_arbitration`<br>`tests/test_contract.py::test_usage_is_the_served_answer_and_the_breakdown_every_call`<br>`tests/test_contract.py::test_n_choices_are_scored_as_calibrated_and_choice_zero_is_the_one_choice_answer`<br>`tests/test_core.py::test_gen_policy_gives_each_role_its_parameters_and_caps`<br>`tests/test_cost.py::test_split_is_exact_on_every_cost_path`<br>`tests/test_openai_compat.py::test_allowlists_and_token_caps_through_the_gateway`<br>`tests/test_release.py::test_shadow_arbitration_calls_teacher_once_and_stores_example` | tested |
 | NFR-4 | Privacy: Prompts and teacher answers are stored in SQLite with identifiers (emails, phones, cards,… | Done (v0.4); NER-based redaction (Presidio) and zero-retention options planned | `ratchet.redact:redact_messages` | `tests/test_hardening.py::test_redact_finds_each_kind_and_checks_checksums`<br>`tests/test_hardening.py::test_examples_are_stored_redacted_but_the_teacher_sees_the_original` | tested |

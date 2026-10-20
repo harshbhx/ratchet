@@ -591,7 +591,7 @@ def _ledger(path: str, settings: Settings) -> Ledger:
     """The live ledger at `path`, which must exist: the CLI never creates an empty ledger somewhere it was not asked to."""
     if path != ":memory:" and not os.path.exists(path):
         raise FileNotFoundError(f"no ledger at {path!r}; pass --db or set RATCHET_DB")
-    return Ledger(path, settings.golden_fraction, auto_day=True)
+    return Ledger(path, settings.golden_fraction, auto_day=True, sync=settings.ledger_sync())
 
 
 def _when(text: str | None) -> float | None:

@@ -694,6 +694,18 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
+    # 6.12 Operations
+    "FR-12.8": (
+        "ratchet.ledger:Ledger._journal",
+        "ratchet.ledger:Ledger._reader",
+        "ratchet.ledger:Ledger._routed",
+        "ratchet.ledger:Ledger.version_live_quality",
+        "ratchet.ledger:INDEXES",
+        "ratchet.gateway:Runtime.tick",
+        "ratchet.gateway:SnapshotCache",
+        "ratchet.config:Settings.tick_interval",
+        "ratchet.config:Settings.stats_ttl",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -722,7 +734,7 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "FR-15.4": ("ratchet.cost:_recommend", "ratchet.cost:_explain"),
     # 7 Non-functional
-    "NFR-1": ("ratchet.router:Ratchet._sample",),
+    "NFR-1": ("ratchet.router:Ratchet._sample", "ratchet.router:Ratchet.handle", "ratchet.ledger:Ledger.latency_percentiles"),
     "NFR-2": (
         "ratchet.router:Ratchet.handle",
         "ratchet.router:Ratchet._teacher_complete",
@@ -1094,7 +1106,8 @@ def rule_routes_documented(ctx: Context) -> list[str]:
     return [f"{m} {p}: not in {API_DOC}; add it to the endpoint table" for m, p in routes if (m, p) not in documented]
 
 
-ENV_HELPERS = {"_env", "_int", "_float", "_bool"}  # config.py readers: _env(name, default), _int(name, default), ...
+# config.py readers: _env(name, default), _int(name, default), ..., _float_or_none(name)
+ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none"}
 
 
 def _env_name(node: ast.AST) -> str | None:
