@@ -428,7 +428,11 @@ Needs a key when `RATCHET_API_KEYS` is set.
      "train_examples": 1801, "dataset_hash": "…",
      "eval": {"golden_n": 201, "golden_agreement": 0.94, "threshold": 0.76, "coverage": 0.89,
               "precision": 0.99, "test_n": 100, "rechecked_day": 9},
-     "state": "live", "traffic_pct": 100, "stage_since": 12034}
+     "state": "live", "traffic_pct": 100, "stage_since": 12034, "bom": "signed",
+     "evidence": {"rule": "wilson", "promote_rule": "point", "alert_rule": "eprocess", "floor": 0.92,
+                  "n": 61, "s": 60, "e_rollback": 0.074, "n_stage": 38, "s_stage": 37, "e_promote": 2.0,
+                  "e_alert": 0.146, "thresholds": {"rollback": 20.0, "promote": 20.0, "alert": 100.0},
+                  "cs": [0.879, 0.999], "wilson": [0.865, 0.995]}}
   ],
   "tasks": [
     {"task": "ticket-triage", "pinned": false, "requests": 12000, "student_share": 0.84, "escalation_rate": 0.06,
@@ -470,7 +474,24 @@ Needs a key when `RATCHET_API_KEYS` is set.
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
   Later versions add routes; a client should show an unknown route as it is.
-- `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
+- `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4. `evidence` (v0.5) is what the release gate reads for the version in `canary` or `live` state, recomputed from its audit counts on every call (`ReleaseGate.evidence`, [ADR 0025](adr/0025-anytime-valid-release-gate.md)); `null` for every other state. Anyone can re-check a gate decision from it:
+
+  | Key | Meaning |
+  |---|---|
+  | `rule` | The canary rule in force: `wilson` (the default) or `sequential` (`RATCHET_SEQUENTIAL=1`) |
+  | `promote_rule` | `point` (point estimate at or above the floor) or `evidence` (`RATCHET_PROMOTE_EVIDENCE=1`) |
+  | `alert_rule` | The live alert's rule: `eprocess` (the default) or `wilson` |
+  | `floor` | `RATCHET_LIVE_FLOOR` |
+  | `n`, `s` | Audits of answers the version served over its whole life, and how many agreed with the teacher |
+  | `n_stage`, `s_stage` | The same in its current stage (for a live version: since it went live) |
+  | `e_rollback` | e-value against "precision ≥ floor" over its life: the sequential rule rolls back at `thresholds.rollback` or more |
+  | `e_alert` | The same over the current stage: the live alert fires at `thresholds.alert` or more |
+  | `e_promote` | e-value against "precision ≤ floor" over the current stage: evidence-based promotion needs `thresholds.promote` |
+  | `thresholds` | 1/alpha for each: `rollback` (`RATCHET_ALPHA_ROLLBACK`), `promote` (`RATCHET_ALPHA_PROMOTE`), `alert` (`RATCHET_ALPHA_ALERT`) |
+  | `cs` | Anytime-valid 95% confidence sequence for precision over its life, on a 0.001 grid |
+  | `wilson` | 95% Wilson interval of the current stage (what the Wilson rule reads; valid for one look only) |
+
+  e-values are finite (capped at e^690). With no audits `n` is 0, the e-values are 1 and both intervals are `[0, 1]`.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off.
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`).
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).

@@ -825,18 +825,37 @@ class Ledger:
         return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
 
     @_locked
+    def audit_counts(self, vid: int, since_id: int = 0) -> tuple[int, int]:
+        """(audits, agreements): teacher audits of answers version `vid` served, in requests after id `since_id` (0: its
+        whole life; a version's `stage_since`: its current stage). Every release decision is computed from these two
+        integers (ADR 0025). An audited row without a verdict, which the router never writes, counts as a disagreement."""
+        r = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(audit_agree = 1), 0) s FROM requests WHERE student_version=? AND audited=1"
+            " AND served_by='student' AND id>?",
+            (vid, since_id),
+        ).fetchone()
+        return int(r["n"]), int(r["s"])
+
+    @_locked
     def version_live_quality(self, vid: int, current_stage_only: bool = True) -> tuple[int, float | None]:
-        """(audits, audited precision) for a version, from teacher audits of answers it served."""
+        """(audits, audited precision) for a version, from teacher audits of answers it served (`audit_counts`), in its
+        current stage or over its whole life; precision is None without audits."""
         since = 0
         if current_stage_only:
             v = self.version(vid)
             since = v.stage_since if v else 0
-        r = self.db.execute(
-            "SELECT COUNT(*) n, AVG(audit_agree) a FROM requests WHERE student_version=? AND audited=1"
-            " AND served_by='student' AND id>?",
-            (vid, since),
-        ).fetchone()
-        return int(r["n"]), (None if r["a"] is None else float(r["a"]))
+        n, s = self.audit_counts(vid, since)
+        return n, (s / n if n else None)
+
+    @_locked
+    def served_counts(self) -> dict[int, int]:
+        """{version id: answers it served}: requests a student version answered (a stand-in answer included), so a
+        rolled-back version's exposure is known. Versions that never served are absent."""
+        rows = self.db.execute(
+            "SELECT student_version v, COUNT(*) n FROM requests WHERE served_by='student' AND student_version IS NOT NULL"
+            " GROUP BY student_version"
+        )
+        return {int(r["v"]): int(r["n"]) for r in rows}
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:

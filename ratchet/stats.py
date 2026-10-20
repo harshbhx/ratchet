@@ -317,6 +317,13 @@ def confidence_sequence(s: int, n: int, alpha: float = 0.05, step: float = 0.001
     alpha = _check_prob(alpha, "alpha", open_interval=True)
     if isinstance(step, bool) or not isinstance(step, (int, float)) or not 0 < step < 0.5:
         raise ValueError(f"step must be a number strictly between 0 and 0.5, not {step!r}")
+    return _confidence_sequence(s, n, alpha, float(step))
+
+
+@functools.lru_cache(maxsize=4096)
+def _confidence_sequence(s: int, n: int, alpha: float, step: float) -> tuple[float, float]:
+    """`confidence_sequence` on checked arguments. A scan of the grid costs about 20 ms, and the release gate's events
+    and every `/ratchet/stats` call ask again for the same counts until a new audit lands, so results are cached."""
     if n == 0:
         return 0.0, 1.0
     threshold = math.log(2 / alpha)

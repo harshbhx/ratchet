@@ -35,8 +35,9 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
 | `live` | `tick` | Candidate promoted to 100%; previous live retired | None |
 | `retired` | `admit` | An in-flight shadow or canary was replaced by a newer candidate | None |
-| `rollback` | `tick` | Canary audited precision has a Wilson upper bound below 0.92; traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
-| `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
+| `rollback` | `tick` | The canary's audited precision is clearly below 0.92: by default its Wilson upper bound after `min_audits` audits (`v3 audited precision 41.2% (n=17, upper bound 64.0% < 92%)`), with `RATCHET_SEQUENTIAL=1` an e-value over all its audits (`v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 ...`, see [Reading an e-value event](#reading-an-e-value-event)). Traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
+| `inconclusive` | `tick` | `RATCHET_SEQUENTIAL=1` only: a canary stage reached `RATCHET_MAX_STAGE_AUDITS` audits without enough evidence either way (`v4 retired after 400 audits at canary 50% without enough evidence either way (366/400 agree); 95% CS [0.865, 0.953]; ...`). The canary is `retired`, traffic is back on the live version, and Night School trains again | Usually a version right at the floor. If it repeats, compare its golden precision with the confidence sequence; a raised audit rate (`RATCHET_CANARY_AUDIT_RATE`) decides sooner |
+| `alert` | `tick` | **Live** version's audited precision since it went live is clearly below 0.92: by default an e-value of 100 or more (`live v4: 0/3 audits agree; e-value 268 >= 100 (anytime-valid, alpha 1%); ...`), with `RATCHET_ALERT_EPROCESS=0` the Wilson upper bound. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
 | `student_error` | `Ratchet.handle` | A student call raised; the request fell back to the teacher (route `student_error`). Logged on the 1st, 10th, 100th and 1000th failure. Detail is the version and the exception's class, with the HTTP status and code for an HTTP error (`v3: UpstreamError 503`), never its message, which can quote the request. `AdapterMissing 404` in the detail means vLLM lost the adapter (an endpoint restart); the gateway reloads it by itself | See [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
 | `circuit` | `Ratchet` (student and teacher breakers) | A breaker changed state. `student: closed->open after 5 failures (<error>)`: the endpoint kept failing, so requests now go straight to the teacher (route `student_breaker`) without waiting on it. `open->half_open`: one probe request is trying it again. `half_open->open for 60 s after a failed probe`: still down; the wait doubles up to 300 s. Once the wait is 300 s, that pair is logged only for the 1st, 10th, 100th and 1000th probe at that wait (the event says which), so a long outage leaves the rest of the log in view. `half_open->closed`: the endpoint is back (always logged). A `shadow:` breaker guards only the shadow candidate's calls. A `teacher:` breaker (`teacher: closed->open after 5 failures (UpstreamError 503)`) means Token Factory kept failing: requests that need the teacher now get a 503 `teacher_circuit_open` at once, and audits and arbitrations are skipped; a `fallback_teacher:` breaker guards the fallback teacher | `student:` or `shadow:` `open` that does not close within a few minutes: see [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost); `teacher:` see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `adapter_reloaded` | the gateway's `AdapterReloader` | vLLM answered 404 for a version's adapter, and the gateway loaded it again (`/v1/load_lora_adapter`) | None. Several at once usually mean the endpoint restarted |
@@ -55,7 +56,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
-The `alert` event is written once per live version per process (a restart can write it again), not on every tick.
+The `alert` event is written once per live version per process (a restart can write it again), not on every tick. An `inconclusive` canary is retired, not rolled back: it was not shown to be worse.
 
 ## Manual interventions
 
@@ -157,7 +158,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### Precision alert on live
 
-**Symptoms:** `alert` events saying "live vN audited precision X% (n=…) below floor".
+**Symptoms:** `alert` events saying "live vN: S/N audits agree; e-value E >= 100 (anytime-valid, alpha 1%); 95% CS [lo, hi]" (the default rule; [Reading an e-value event](#reading-an-e-value-event)), or with `RATCHET_ALERT_EPROCESS=0` "live vN audited precision X% (n=…) below floor".
 
 **Steps:**
 
@@ -172,9 +173,23 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 5. Let Night School retrain. The disagreements are already training data.
 
+### Reading an e-value event
+
+With the anytime-valid rules ([ADR 0025](adr/0025-anytime-valid-release-gate.md)), `rollback`, `alert`, `canary`, `live` and `inconclusive` events carry the evidence the gate decided on, for example:
+
+```
+v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 95% CS [0.041, 0.908]; traffic back to live v1
+```
+
+- `3/7 audits agree`: the counts. For a rollback they cover every audit of the canary's life; for an alert, the audits since the version went live; for a promotion (`canary`, `live`) and `inconclusive`, the current stage.
+- `e-value 64.9 >= 20`: how strongly the audits contradict "precision is at least the floor" (for a promotion: "at most the floor"). 1 means no evidence either way; the threshold is 1/alpha (`RATCHET_ALPHA_ROLLBACK` 0.05 → 20, `RATCHET_ALPHA_ALERT` 0.01 → 100, `RATCHET_ALPHA_PROMOTE` 0.05 → 20). The chance that a version whose precision stays at or above the floor ever reaches it is at most alpha, however often the gate runs. Small counts can be decisive: 0 agreeing out of 2 gives 29.8.
+- `95% CS [0.041, 0.908]`: an anytime-valid 95% confidence sequence for the version's precision (computed on a 0.001 grid). Its upper end below the floor means the version is worse; a range that straddles the floor after hundreds of audits is what `inconclusive` means.
+- Re-check any of these from the counts: `python -c "from ratchet import stats; print(stats.e_bernoulli(3, 7, 0.92, 'below'), stats.confidence_sequence(3, 7))"`, or read `versions[].evidence` in `GET /ratchet/stats` for the canary and the live version.
+- `python -m sim.simulate --bad-deploy-version 3 --compare-release` shows both rules on the same simulated traffic (mock models).
+
 ### Bad deploy / rollback
 
-**Symptoms:** a `rollback` event. The system has already moved traffic back.
+**Symptoms:** a `rollback` event. The system has already moved traffic back. The event names the evidence: the Wilson bound and `n` by default, or the counts, e-value and confidence sequence under `RATCHET_SEQUENTIAL=1` ([Reading an e-value event](#reading-an-e-value-event)). The answers the version served before it was rolled back are its requests with `served_by='student'` (`Ledger.served_counts()`).
 
 **Steps:**
 
@@ -249,7 +264,7 @@ All request messages escalated or audited to the teacher are stored in `examples
 
 ### Startup refused: a reserved setting
 
-The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`).
+The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`). One that names `RATCHET_PROMOTE_EVIDENCE` or `RATCHET_MAX_STAGE_AUDITS` is a sequential-gate setting that would decide nothing (evidence-based promotion without `RATCHET_SEQUENTIAL=1`, or a cap that would retire every canary); the message says how many audits are needed. `RATCHET_CANARY_AUDIT_RATE` must be more than 0 and at most 1.
 
 ## Backups
 

@@ -38,7 +38,9 @@ DAY_KEYS = ("day", "requests", "student_share", "escalation_rate", "savings_pct"
 VERSION_KEYS = ("id", "state", "traffic_pct", "train_examples")
 # Night School and release-gate decisions, in order. Other kinds (student errors, anything added later) are left
 # out, so a new kind of log line is not mistaken for a change in behaviour.
-RELEASE_KINDS = frozenset({"trained", "skip", "rejected", "shadow", "canary", "live", "retired", "rollback", "alert"})
+RELEASE_KINDS = frozenset(
+    {"trained", "skip", "rejected", "shadow", "canary", "live", "retired", "rollback", "alert", "inconclusive"}
+)
 _VERSION = re.compile(r"\bv(\d+)\b")
 DECIMALS = 4
 

@@ -721,6 +721,21 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:stats",
     ),
     "FR-15.4": ("ratchet.cost:_recommend", "ratchet.cost:_explain"),
+    # 6.16 Verifiable evidence
+    "FR-16.1": (
+        "ratchet.release:ReleaseGate._sequential_canary",
+        "ratchet.release:ReleaseGate.evidence",
+        "ratchet.release:ReleasePolicy._check_sequential",
+        "ratchet.ledger:Ledger.audit_counts",
+        "ratchet.ledger:Ledger.served_counts",
+        "ratchet.stats:log_e_bernoulli",
+        "ratchet.stats:confidence_sequence",
+        "ratchet.config:Settings.checked_canary_audit_rate",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.gateway:stats",
+        "sim.simulate:compare_release",
+    ),
+    "FR-16.2": ("ratchet.release:ReleaseGate._tick_live", "ratchet.stats:log_e_bernoulli"),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (
@@ -1094,7 +1109,8 @@ def rule_routes_documented(ctx: Context) -> list[str]:
     return [f"{m} {p}: not in {API_DOC}; add it to the endpoint table" for m, p in routes if (m, p) not in documented]
 
 
-ENV_HELPERS = {"_env", "_int", "_float", "_bool"}  # config.py readers: _env(name, default), _int(name, default), ...
+# config.py readers: _env(name, default), _int(name, default), ..., _float_or_none(name)
+ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none"}
 
 
 def _env_name(node: ast.AST) -> str | None:

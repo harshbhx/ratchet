@@ -1,17 +1,21 @@
-"""The release gate's rules (golden gate, one candidate in flight, shadow, canary, rollback) and the router's side of a
-release: shadow arbitration and the canary traffic split."""
+"""The release gate's rules (golden gate, one candidate in flight, shadow, canary, rollback, the anytime-valid canary and
+live alert) and the router's side of a release: shadow arbitration, the canary traffic split and audit focusing."""
 
 from __future__ import annotations
 
 import json
+import math
+import random
 from collections import Counter
 
 import pytest
 from fakes import OPEN_TEACHER, RecordingProvider, _audit, _shadow, _version
+from fastapi.testclient import TestClient
 
+from ratchet import stats
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
-from ratchet.release import CANARY_STEPS, ReleaseGate, ReleasePolicy, wilson
+from ratchet.release import CANARY_STEPS, CS_ALPHA, ReleaseGate, ReleasePolicy, wilson
 from ratchet.router import Ratchet
 
 GOOD = {"precision": 0.98, "coverage": 0.60, "threshold": 0.5}
@@ -417,3 +421,327 @@ def test_canary_traffic_split():
         r = Ratchet(Settings(teacher_model=OPEN_TEACHER), led, RecordingProvider("t"), lambda v: (None, ""), seed=7)
         picked = {v.id if v else None for v in (r._pick_version() for _ in range(500))}
         assert picked == want, (pct, live_state)
+
+
+# ---------- the anytime-valid gate (FR-16.1, FR-16.2, ADR 0025) ----------
+def _gate(policy: ReleasePolicy, live: bool = True) -> tuple[Ledger, ReleaseGate, int | None, int]:
+    """A ledger with a live version (unless `live` is False: cold start) and a canary at 10%, under `policy`."""
+    led = Ledger(":memory:")
+    live_id = _version(led, "live", GOOD) if live else None
+    return led, ReleaseGate(led, policy), live_id, _version(led, "canary", GOOD)
+
+
+@pytest.mark.req("FR-16.1", "US-6")
+def test_sequential_canary_rolls_back_after_two_failures():
+    """With no minimum audit count, two disagreeing audits are enough evidence (e-value 29.8 >= 20 at alpha 5%); one
+    (4.22) is not, and no audit is no decision. The Wilson rule holds on the same two audits until it has min_audits."""
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=1, min_audits=15))
+    gate.tick()
+    assert led.version(cand).state == "canary" and not _kinds(led, "rollback")  # no audits: no decision
+    _audit(led, cand, 1, agree_every=1)
+    gate.tick()
+    assert led.version(cand).state == "canary"  # 0/1: e = 4.22
+    _audit(led, cand, 1, agree_every=1)
+    gate.tick()
+    v = led.version(cand)
+    assert (v.state, v.traffic_pct) == ("rolled_back", 0) and led.live().id == live
+    (detail,) = [e["detail"] for e in _kinds(led, "rollback")]
+    assert detail == (
+        f"v{cand} rolled back: 0/2 audits agree; e-value 29.8 >= 20 (anytime-valid, alpha 5%); 95% CS [0.001, 0.931]; "
+        f"traffic back to live v{live}"
+    )
+    assert not _kinds(led, "canary", "live", "alert")
+
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=0, min_audits=15))  # the default rule: Wilson, opt-in stays off
+    _audit(led, cand, 2, agree_every=1)
+    for _ in range(3):
+        gate.tick()
+    assert led.version(cand).state == "canary" and not _kinds(led, "rollback")
+
+
+@pytest.mark.req("FR-16.1", "US-6")
+def test_sequential_rollback_at_cold_start_returns_traffic_to_the_teacher():
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=1), live=False)
+    _audit(led, cand, 3, agree_every=1)
+    gate.tick()
+    assert led.version(cand).state == "rolled_back" and led.live() is None
+    assert _kinds(led, "rollback")[0]["detail"].endswith("traffic back to the teacher")
+
+
+@pytest.mark.req("FR-16.1")
+def test_sequential_rollback_counts_every_audit_of_the_canarys_life():
+    """Rollback is one e-process over the canary's whole life, never restarted per stage, so its error rate needs no
+    union bound over stages: 40 agreeing audits at 10% still count at 50%, where 2 failures alone would have reached 20.
+    The price is that a long good stage dilutes later failures: here it takes 11."""
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=1))
+    _audit(led, cand, 40)
+    gate.tick()
+    assert led.version(cand).traffic_pct == CANARY_STEPS[1]
+    _audit(led, cand, 2, agree_every=1)
+    gate.tick()
+    assert stats.e_bernoulli(0, 2, 0.92, "below") >= 20 > stats.e_bernoulli(40, 42, 0.92, "below")
+    assert led.version(cand).state == "canary"  # held: 40/42 over its life, and 0/2 is below the floor
+    _audit(led, cand, 8, agree_every=1)
+    gate.tick()
+    assert led.version(cand).state == "canary"  # 40/50: e = 11.1
+    _audit(led, cand, 1, agree_every=1)
+    gate.tick()
+    assert led.version(cand).state == "rolled_back" and led.live().id == live
+    assert _kinds(led, "rollback")[0]["detail"].startswith(f"v{cand} rolled back: 40/51 audits agree; e-value 23.2 >= 20")
+
+
+@pytest.mark.req("FR-16.1", "FR-6.5")
+def test_sequential_promotion_needs_evidence():
+    """With promote_evidence=1 a stage advances only on an e-value of at least 1/alpha_promote that precision is above the
+    floor: 20 agreeing audits give 2.57 and hold; 60 give 27.6 and advance. The count restarts in each stage, and 56
+    agreeing audits (21.3) is the fewest that pass at a 92% floor and alpha 5% (55 give 19.996)."""
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=1, promote_evidence=1))
+    _audit(led, cand, 20)
+    gate.tick()
+    assert led.version(cand).traffic_pct == CANARY_STEPS[0] and not _kinds(led, "canary", "live")
+    assert gate.evidence(led.version(cand))["e_promote"] == pytest.approx(2.573, abs=1e-3)
+    _audit(led, cand, 40)
+    gate.tick()
+    assert led.version(cand).traffic_pct == CANARY_STEPS[1]
+    (step,) = [e["detail"] for e in _kinds(led, "canary")]
+    assert step.startswith(f"v{cand} audited precision 100.0% (n=60); canary 50%; ")  # the old text, then the evidence
+    assert step.endswith("; e-value 27.6 >= 20 (anytime-valid, alpha 5%) that precision is above 92%; 95% CS [0.916, 0.999]")
+    _audit(led, cand, 55)
+    gate.tick()
+    assert led.version(cand).state == "canary"  # this stage's 55 agreeing audits: e = 19.996
+    _audit(led, cand, 1)
+    gate.tick()
+    assert led.live().id == cand and led.version(live).state == "retired"
+    (promoted,) = [e["detail"] for e in _kinds(led, "live")]
+    assert promoted.startswith(f"v{cand} promoted to 100% (audited precision 100.0%, n=56); e-value 21.3 >= 20")
+
+    # The point rule (promote_evidence=0) promotes on 20 agreeing audits, as the Wilson rule does.
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=1))
+    _audit(led, cand, 20)
+    gate.tick()
+    assert led.version(cand).traffic_pct == CANARY_STEPS[1]
+    assert _kinds(led, "canary")[0]["detail"].endswith("; point estimate at or above 92%; 95% CS [0.741, 0.999]")
+
+
+@pytest.mark.req("FR-16.1")
+@pytest.mark.parametrize(
+    "policy, audits, disagree_every",
+    [
+        (ReleasePolicy(sequential=1, max_stage_audits=50), 50, 10),  # 45/50: below the floor, no evidence it is worse
+        (ReleasePolicy(sequential=1, promote_evidence=1, max_stage_audits=60), 60, 12),  # 55/60: neither e-value
+    ],
+)
+def test_futility_retires_inconclusive_canary(policy, audits, disagree_every):
+    led, gate, live, cand = _gate(policy)
+    _audit(led, cand, audits - 1, agree_every=disagree_every)
+    gate.tick()
+    assert led.version(cand).state == "canary"  # one audit short of the cap: holds
+    _audit(led, cand, 1)
+    gate.tick()
+    v = led.version(cand)
+    assert (v.state, v.traffic_pct) == ("retired", 0) and led.live().id == live and led.by_state("canary") is None
+    (detail,) = [e["detail"] for e in _kinds(led, "inconclusive")]
+    agreed = audits - math.ceil((audits - 1) / disagree_every)
+    lo, hi = stats.confidence_sequence(agreed, audits)
+    assert detail == (
+        f"v{cand} retired after {audits} audits at canary 10% without enough evidence either way ({agreed}/{audits} agree); "
+        f"95% CS [{lo:.3f}, {hi:.3f}]; traffic back to live v{live}"
+    )
+    assert not _kinds(led, "rollback", "canary", "live")
+
+
+@pytest.mark.req("FR-16.1")
+def test_futility_counts_audits_not_time():
+    """A canary that gets no audits holds, however often the gate runs (as under the Wilson rule)."""
+    led, gate, _, cand = _gate(ReleasePolicy(sequential=1, max_stage_audits=20))
+    for i in range(500):  # served, never audited
+        led.log_request(task="t", served_by="student", student_version=cand, audited=0, cost_usd=0.0, baseline_cost_usd=0.0)
+        if i % 50 == 0:
+            gate.tick()
+    assert led.version(cand).state == "canary" and not _kinds(led, "inconclusive", "rollback")
+
+
+@pytest.mark.req("FR-16.1")
+def test_sequential_policy_refuses_settings_that_decide_nothing():
+    with pytest.raises(ValueError, match="RATCHET_PROMOTE_EVIDENCE=1 needs RATCHET_SEQUENTIAL=1"):
+        ReleasePolicy(promote_evidence=1)
+    with pytest.raises(ValueError, match="RATCHET_MAX_STAGE_AUDITS=10 is below RATCHET_MIN_AUDITS=20"):
+        ReleasePolicy(sequential=1, max_stage_audits=10)
+    with pytest.raises(ValueError, match="a stage needs 56 audits that all agree"):
+        ReleasePolicy(sequential=1, promote_evidence=1, max_stage_audits=50)
+    with pytest.raises(ValueError, match="RATCHET_MAX_STAGE_AUDITS=400 is too few.*needs 450 audits"):
+        ReleasePolicy(sequential=1, promote_evidence=1, live_floor=0.99)
+    for ok in (
+        ReleasePolicy(sequential=1, promote_evidence=1, max_stage_audits=56),
+        ReleasePolicy(sequential=1, promote_evidence=1, max_stage_audits=0),  # no cap
+        ReleasePolicy(sequential=1, max_stage_audits=20),
+        ReleasePolicy(max_stage_audits=5),  # the cap applies only to the sequential rule
+    ):
+        assert ok.sequential in (0, 1)
+    for field in ("alpha_rollback", "alpha_promote", "alpha_alert"):
+        for bad in (0.0, 1.0):
+            with pytest.raises(ValueError, match=f"RATCHET_{field.upper()}.*strictly between 0 and 1"):
+                ReleasePolicy(**{field: bad})
+    for field in ("sequential", "promote_evidence", "alert_eprocess"):
+        with pytest.raises(ValueError, match=f"RATCHET_{field.upper()}.*0 or 1"):
+            ReleasePolicy(**{field: 2})
+
+
+@pytest.mark.req("FR-16.2", "FR-6.7")
+def test_live_alert_uses_the_e_process():
+    """The live alert's default rule: once the e-value against 'precision >= floor' over the audits since the version
+    went live reaches 1/alpha_alert (100): 0/2 (29.8) does not, 0/3 (268) does, with no minimum count. Audits from
+    before it went live do not count, and a version that keeps agreeing is never alerted on."""
+    led = Ledger(":memory:")
+    gate = ReleaseGate(led, ReleasePolicy())  # alert_eprocess=1, alpha_alert=0.01
+    vid = _version(led, "canary", GOOD)
+    _audit(led, vid, 5, agree_every=1)  # as a canary: not the live alert's business
+    led.set_version(vid, "live", 100)
+    _audit(led, vid, 2, agree_every=1)
+    gate.tick()
+    assert not _kinds(led, "alert")
+    _audit(led, vid, 1, agree_every=1)
+    for _ in range(3):
+        gate.tick()
+    (detail,) = [e["detail"] for e in _kinds(led, "alert")]
+    assert detail == (
+        f"live v{vid}: 0/3 audits agree; e-value 268 >= 100 (anytime-valid, alpha 1%); 95% CS [0.001, 0.843]; "
+        "investigate or roll back manually (docs/RUNBOOK.md)"
+    )
+    assert led.version(vid).state == "live"  # never rolled back automatically
+
+    good = Ledger(":memory:")
+    gate = ReleaseGate(good, ReleasePolicy())
+    vid = _version(good, "live", GOOD)
+    for _ in range(20):
+        _audit(good, vid, 20, agree_every=20)  # 19 of 20 at a time: above the floor
+        gate.tick()
+    assert not _kinds(good, "alert")
+
+    # alert_eprocess=0 keeps the Wilson rule: no alert before min_audits, however bad.
+    led = Ledger(":memory:")
+    gate = ReleaseGate(led, ReleasePolicy(alert_eprocess=0))
+    vid = _version(led, "live", GOOD)
+    _audit(led, vid, 19, agree_every=1)
+    gate.tick()
+    assert not _kinds(led, "alert")
+    _audit(led, vid, 1, agree_every=1)
+    gate.tick()
+    assert _kinds(led, "alert")[0]["detail"].startswith(f"live v{vid} audited precision 0.0% (n=20) below floor")
+
+
+@pytest.mark.req("FR-16.1", "FR-16.2")
+def test_evidence_is_recomputed_from_the_counts():
+    """`evidence` stores nothing: every number comes from the version's audit counts over its life and in its current
+    stage, so anyone can re-check a decision, and every value is finite JSON."""
+    led, gate, live, cand = _gate(ReleasePolicy(sequential=1, promote_evidence=1))
+    _audit(led, cand, 12, agree_every=6)  # 10 of 12 at 10%
+    gate.tick()
+    assert led.version(cand).state == "canary"
+    _audit(led, live, 30, agree_every=10)  # 27 of 30 for the live version
+    ev = gate.evidence(led.version(cand))
+    assert ev == {
+        "rule": "sequential",
+        "promote_rule": "evidence",
+        "alert_rule": "eprocess",
+        "floor": 0.92,
+        "n": 12,
+        "s": 10,
+        "e_rollback": stats.e_bernoulli(10, 12, 0.92, "below"),
+        "n_stage": 12,
+        "s_stage": 10,
+        "e_promote": stats.e_bernoulli(10, 12, 0.92, "above"),
+        "e_alert": stats.e_bernoulli(10, 12, 0.92, "below"),
+        "thresholds": {"rollback": 20.0, "promote": 20.0, "alert": 100.0},
+        "cs": list(stats.confidence_sequence(10, 12, CS_ALPHA)),
+        "wilson": list(wilson(10, 12)),
+    }
+    lv = gate.evidence(led.version(live))
+    assert (lv["n"], lv["s"], lv["n_stage"], lv["s_stage"]) == (30, 27, 30, 27)
+    assert json.loads(json.dumps(lv, allow_nan=False)) == lv
+    # A long history stays finite: the e-value is capped, and a vanishing one is still a number.
+    big = Ledger(":memory:")
+    vid = _version(big, "live", GOOD)
+    _audit(big, vid, 3000, agree_every=1)
+    ev = ReleaseGate(big, ReleasePolicy(alert_eprocess=0)).evidence(big.version(vid))
+    assert ev["e_rollback"] == math.exp(stats.LOG_E_CAP) and 0.0 <= ev["e_promote"] < 1e-30 and ev["alert_rule"] == "wilson"
+    assert json.dumps(ev, allow_nan=False)
+    fresh = Ledger(":memory:")
+    empty = ReleaseGate(fresh).evidence(fresh.version(_version(fresh, "canary", GOOD)))  # no audits yet
+    assert (empty["n"], empty["e_rollback"], empty["cs"], empty["wilson"]) == (0, 1.0, [0.0, 1.0], [0.0, 1.0])
+
+
+@pytest.mark.req("FR-16.1", "FR-6.5")
+def test_canary_audit_rate_focuses_audits_on_the_canary():
+    """RATCHET_CANARY_AUDIT_RATE audits a canary's answers at its own rate and live answers at the audit rate, with still
+    exactly one random draw per served answer: the same seed sends the same requests to the canary with it and without
+    it. The rate each request was drawn at is logged as `label_p`."""
+    a = json.dumps({"category": "billing", "priority": "high"})
+
+    class CountingRandom(random.Random):
+        draws = 0
+
+        def random(self) -> float:
+            self.draws += 1
+            return super().random()
+
+    def run(canary_rate: float | None) -> tuple[list[tuple], int]:
+        led = Ledger(":memory:")
+        _version(led, "live", {"threshold": 0.5})
+        _version(led, "canary", {"threshold": 0.5}, pct=50)
+        s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0, canary_audit_rate=canary_rate)
+        provider = RecordingProvider(a)
+        r = Ratchet(s, led, provider, lambda v: (provider, v.adapter_uri), seed=5)
+        r.rng = CountingRandom(5)
+        for i in range(200):
+            assert r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage").served_by == "student"
+        rows = led.db.execute("SELECT student_version, audited, label_p FROM requests ORDER BY id").fetchall()
+        return [tuple(row) for row in rows], r.rng.draws
+
+    focused, draws = run(1.0)
+    plain, plain_draws = run(None)
+    assert draws == plain_draws == 400  # the canary pick and the audit draw, per request
+    assert [v for v, _, _ in focused] == [v for v, _, _ in plain]  # the same requests reached the canary
+    by_version = Counter((v, audited, label_p) for v, audited, label_p in focused)
+    assert set(by_version) == {(1, 0, 0.0), (2, 1, 1.0)} and min(by_version.values()) > 50
+    assert {(v, audited, label_p) for v, audited, label_p in plain} == {(1, 0, 0.0), (2, 0, 0.0)}
+
+
+@pytest.mark.req("FR-16.1")
+def test_label_p_is_the_designed_labelling_probability():
+    """`label_p` (FR-16.5's propensity): the audit rate a served answer was drawn at, 1.0 when the student answered and
+    the request escalated (the teacher's answer labels it), NULL without a student answer (cold start)."""
+    a = json.dumps({"category": "billing", "priority": "high"})
+    led = Ledger(":memory:")
+    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.25)
+    provider = RecordingProvider(a)
+    r = Ratchet(s, led, provider, lambda v: (provider, v.adapter_uri), seed=1)
+    msgs = [{"role": "user", "content": "ticket"}]
+    assert r.handle(msgs, "ticket-triage").route == "cold_start"
+    vid = _version(led, "live", {"threshold": 1.01})  # serves nothing
+    assert r.handle(msgs, "ticket-triage").route == "confidence"
+    led.update_eval(vid, {"threshold": 0.5})
+    assert r.handle(msgs, "ticket-triage").route == "student"
+    labels = [row[0] for row in led.db.execute("SELECT label_p FROM requests ORDER BY id")]
+    assert labels == [None, 1.0, 0.25]
+
+
+@pytest.mark.req("FR-16.1", "FR-16.2")
+def test_stats_versions_carry_the_gates_evidence(gw_env, monkeypatch):
+    """/ratchet/stats: the canary's and the live version's entries carry `evidence` (what the gate reads, from their
+    counts), every other version's is null. Mock mode reads RATCHET_<FIELD> too, with min_audits 15 unless set."""
+    monkeypatch.delenv("RATCHET_MIN_AUDITS", raising=False)
+    gw = gw_env(RATCHET_SEQUENTIAL="1")
+    assert (gw.rt.gate.policy.sequential, gw.rt.gate.policy.min_audits) == (1, 15)
+    led = gw.rt.ledger
+    old = _version(led, "retired", GOOD)
+    live = _version(led, "live", GOOD)
+    cand = _version(led, "canary", GOOD)
+    _audit(led, cand, 4, agree_every=4)
+    versions = {v["id"]: v for v in TestClient(gw.app).get("/ratchet/stats").json()["versions"]}
+    assert versions[old]["evidence"] is None
+    assert versions[live]["evidence"] == gw.rt.gate.evidence(led.version(live))
+    ev = versions[cand]["evidence"]
+    assert ev == gw.rt.gate.evidence(led.version(cand)) and (ev["rule"], ev["n"], ev["s"]) == ("sequential", 4, 3)
+    gw = gw_env(RATCHET_SEQUENTIAL="0", RATCHET_MIN_AUDITS="30")
+    assert (gw.rt.gate.policy.sequential, gw.rt.gate.policy.min_audits) == (0, 30)

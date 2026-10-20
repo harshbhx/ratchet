@@ -55,7 +55,8 @@
       "state": "string",
       "traffic_pct": "number",
       "stage_since": "number",
-      "bom": "string|null"
+      "bom": "string|null",
+      "evidence": "object|null"
     },
     "events[]": {
       "id": "number",

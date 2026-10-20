@@ -78,6 +78,7 @@ SPA_INDEX = DIST / "index.html"
 WORKLOADS = ("tickets", "research", "mixed")
 MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
+EVIDENCE_STATES = ("canary", "live")  # versions whose `/ratchet/stats` entry carries the release gate's evidence
 
 
 TRANSPORT_KEYS = ("teacher", "student")
@@ -126,7 +127,8 @@ class Runtime:
             teacher = MockTeacher(s.teacher_reasoning_tokens)
             resolver = self.fleet.resolve
             s.audit_rate = max(s.audit_rate, 0.10)
-            policy = ReleasePolicy(min_audits=15)
+            # RATCHET_<FIELD> works here too (RATCHET_SEQUENTIAL=1 shows the anytime-valid gate); min_audits is 15 unless set.
+            policy = ReleasePolicy.from_env(defaults={"min_audits": 15})
             self.search: SearchTool | None = MockSearch()
             self.guard = Guard(None, 10 * s.scout_runs_per_hour)
             fallback_teacher: OpenAICompatProvider | None = None  # the mock teacher plays any fallback model too
@@ -709,7 +711,11 @@ def stats() -> dict[str, Any]:
         "student_base": rt.settings.student_base_model,
         "days": led.stats_by_day(),
         "tasks": led.stats_by_task(),
-        "versions": [{**v.__dict__, "bom": boms.get(v.id)} for v in led.versions()],
+        # What the release gate reads for the canary and the live version, from their counts (ADR 0025); null otherwise.
+        "versions": [
+            {**v.__dict__, "bom": boms.get(v.id), "evidence": rt.gate.evidence(v) if v.state in EVIDENCE_STATES else None}
+            for v in led.versions()
+        ],
         "events": led.events()[-40:],
         # Every savings figure above and in `totals` prices the student per token; `cost` has the GPU-hour view (NFR-11).
         "totals": {**led.totals(), "cost_model": "per_token"},

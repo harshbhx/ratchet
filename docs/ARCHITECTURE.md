@@ -42,7 +42,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/vocab.py` | The built-in tasks' label vocabularies, shared with the prompts in `sim/tickets.py` and `ratchet/scout/prompts.py` |
 | `ratchet/confidence.py` | `score()` (confidence from samples, agreement counted pairwise) and `calibrate_threshold()` |
 | `ratchet/router.py` | `Ratchet.handle()`: the per-request cascade, audits, shadow, cost accounting |
-| `ratchet/release.py` | `ReleaseGate` (golden gate, shadow, canary, rollback) and `wilson()` |
+| `ratchet/release.py` | `ReleaseGate` (golden gate, shadow, canary, rollback, the anytime-valid canary rule and live alert, `evidence()`) and `wilson()` |
 | `ratchet/ledger.py` | `Ledger`: SQLite storage, provenance, stats |
 | `ratchet/licenses.py` | Teacher license registry; refuses teachers that forbid distillation |
 | `ratchet/redact.py` | `redact()`, `redact_messages()`: PII placeholders before examples are stored |
@@ -274,7 +274,8 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `client` | TEXT | API key name that sent the request; NULL when keys are off and for internal calls (Scout, demo). Indexed with `ts` for the daily quota |
 | `route` | TEXT | How the request was served (`router.ROUTES`): `student`, `confidence`, `cold_start`, `pinned`, `student_error`, `student_breaker`, `degraded`, `fallback_teacher` ([API.md](API.md#get-ratchetstats)). NULL in rows written before v0.5; `stats_by_task` reports those as `unrecorded` |
 | `stored` | INTEGER | 1 if a teacher answer from this request was stored as an example (inserted, or a duplicate's `seen` bumped); 0 if none was (student-served without audit, pinned, or a skipped answer, see [Storage rules](#storage-rules)); NULL in rows written before v0.5 |
-| `threshold`, `label_p`, `student_agree`, `baseline_est_usd` | REAL, REAL, INTEGER, REAL | For the ledger replay (FR-16.5): the threshold the student was held to, the probability a teacher label of its answer was observed (1 when escalated, the audit rate when served), whether its answer agreed with the escalation's or a random audit's teacher answer, and the all-teacher cost by the token formula. NULL until that feature writes them ([ADR 0024](adr/0024-evidence-foundations.md)) |
+| `label_p` | REAL | The designed probability that a teacher label of the student's answer is observed: the audit rate this request was drawn at when the student served (`RATCHET_CANARY_AUDIT_RATE` for a canary when set, else `RATCHET_AUDIT_RATE`), 1.0 when the student answered and the request escalated, NULL without a student answer (cold start, a failed or skipped student call, pinned) and in rows written before v0.5 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)); the ledger replay (FR-16.5) weights by it |
+| `threshold`, `student_agree`, `baseline_est_usd` | REAL, INTEGER, REAL | For the ledger replay (FR-16.5): the threshold the student was held to, whether its answer agreed with the escalation's or a random audit's teacher answer, and the all-teacher cost by the token formula. NULL until that feature writes them ([ADR 0024](adr/0024-evidence-foundations.md)) |
 | `optional_failed` | INTEGER | 1 when an optional teacher call of the request (audit, arbitration) failed; NULL until live readiness writes it |
 
 ### `examples`: teacher-written training data with provenance
@@ -308,7 +309,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `eval` | TEXT (JSON) | `golden_n`, `golden_agreement`, `threshold`, `coverage`, `precision`, `test_n`, optional `judge_pass_rate`, `rechecked_day` |
 | `state` | TEXT | `candidate`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rolled_back` |
 | `traffic_pct` | INTEGER | 10 or 50 in canary, 100 when live, 0 otherwise |
-| `stage_since` | INTEGER | Max `requests.id` when the current stage began; audits are counted only after it |
+| `stage_since` | INTEGER | Max `requests.id` when the current stage began; a stage's audits are counted only after it (`Ledger.audit_counts(id, stage_since)`; the sequential rollback counts from 0) |
 | `bom` | TEXT (JSON) | This adapter's bill of materials document (`manifest`, `sha256`, `signature`), written at training time |
 
 ### `tasks`: tasks written through the admin API
@@ -340,7 +341,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -348,7 +349,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ## 5. Version state machine
 
-Thresholds are the `ReleasePolicy` defaults in `release.py`: `min_precision=0.95`, `min_coverage=0.25`, `tolerance=0.02`, `min_shadow=100`, `min_audits=20`, `live_floor=0.92`. Canary steps are `CANARY_STEPS = [10, 50]`, then 100.
+Thresholds are the `ReleasePolicy` defaults in `release.py`: `min_precision=0.95`, `min_coverage=0.25`, `tolerance=0.02`, `min_shadow=100`, `min_audits=20`, `live_floor=0.92`. Canary steps are `CANARY_STEPS = [10, 50]`, then 100. The canary transitions below are the default (Wilson) rule; with `RATCHET_SEQUENTIAL=1` the anytime-valid rule decides them instead ([ADR 0025](adr/0025-anytime-valid-release-gate.md)), as the notes in parentheses say.
 
 ```mermaid
 stateDiagram-v2
@@ -360,9 +361,9 @@ stateDiagram-v2
     shadow --> canary: ≥100 would-serve answers,\nprecision ≥ 0.95, coverage ≥ live − 0.02\ntraffic 10%
     canary --> canary: ≥20 audits this stage,\naudited precision ≥ 0.92 → 10% → 50%
     canary --> live: at 50%, ≥20 audits, precision ≥ 0.92\n(old live → retired)
-    canary --> rolled_back: ≥20 audits and Wilson upper bound < 0.92
+    canary --> rolled_back: ≥20 audits and Wilson upper bound < 0.92\n(sequential: e-value over its life ≥ 20, any count)
     shadow --> retired: newer candidate admitted
-    canary --> retired: newer candidate admitted
+    canary --> retired: newer candidate admitted\n(sequential: 400 audits in a stage, no decision: inconclusive)
     live --> retired: a canary is promoted
 ```
 
@@ -383,7 +384,7 @@ In practice step 4's retire branch rarely runs, because `run_night` skips traini
 
 Run after every gateway request and by `python -m ratchet.live tick`. It is five steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The drift monitor (FR-16.6) will run first and the teacher watch (FR-16.7) last; both steps are empty today.
 
-1. **Live watch:** take the audits of the live version since it became live. If there are at least `min_audits` and the Wilson upper bound of precision is below `live_floor`, write an `alert` event. No automatic action is taken on the live version.
+1. **Live watch:** take the audits of the live version since it became live (`audit_counts(id, stage_since)`: `s` agreements of `n`). By default (`alert_eprocess=1`, FR-16.2), if `n > 0` and the e-value against "precision ≥ `live_floor`" reaches 1/`alpha_alert` (100), write one `alert` event per version, with the e-value and the 95% confidence sequence ([§6](#anytime-valid-evidence-statslog_e_bernoulli-statsconfidence_sequence)). With `alert_eprocess=0`: at least `min_audits` and the Wilson upper bound below `live_floor`. No automatic action is taken on the live version.
 2. **Shadow:** `shadow_quality(id)` returns `served` (would-serve count), `precision` (mean `shadow_agree` where `shadow_serve=1`, an unarbitrated NULL counting as 0), `coverage = served / n`, `live_coverage` (share of the same requests the live student actually served, leaving out those it never answered: route `student_breaker` or `student_error`, ADR 0015) and `unarbitrated`, over the rows with a shadow verdict (`shadow_serve` not NULL). Once `served ≥ min_shadow` (100):
    - precision < 0.95 → `rejected` (the reason adds "N unarbitrated counted as disagreements" when N > 0);
    - coverage < live_coverage − 0.02 → `rejected`;
@@ -393,6 +394,12 @@ Run after every gateway request and by `python -m ratchet.live tick`. It is five
    - else if `p < 0.92` → hold (no change; keep auditing).
    - else if traffic is 10% → 50% (event `canary`); the stage counter resets because `set_version` updates `stage_since`.
    - else → old live set to `retired`, canary set to `live` at 100% (event `live`).
+
+   With `sequential=1` (`_sequential_canary`), in order; no audit means no decision:
+   - **Rollback:** the e-value against "precision ≥ floor" over every audit the canary has had (`audit_counts(id)`, never reset per stage) reaches 1/`alpha_rollback` (20) → `rolled_back` (event `rollback` with the counts, the e-value and the confidence sequence). No minimum count: 0 of 2 agreeing is enough (e-value 29.8).
+   - **Promotion,** on this stage's audits once there are `min_audits`: the point estimate ≥ floor, or with `promote_evidence=1` the e-value against "precision ≤ floor" over this stage reaching 1/`alpha_promote` (56 agreeing audits at a 0.92 floor). Then advance or promote as above; the event appends the evidence.
+   - **Futility:** `max_stage_audits` (400) audits in this stage and no decision → `retired`, traffic back as on a rollback (event `inconclusive`). It counts audits, not time: a canary without audits holds.
+   - else hold.
 
 ### Shadow reference and arbitration
 
@@ -446,7 +453,25 @@ bounds = [max(0, centre − half), min(1, centre + half)]
 
 Rollback requires the **upper** bound to be below the floor, which means strong evidence the version is worse. With 20 audits and a true precision of 96%, the chance of a false rollback is negligible. With a raw "point estimate < 92%" rule it would have been about 19%. Example: 19/20 gives roughly [0.76, 0.99], so no rollback; 10/20 gives roughly [0.30, 0.70], so rollback.
 
-The interval's 2.5% one-sided error holds for one look at a fixed sample. The gate looks after every request: at a true precision exactly on the floor, checked after every audit, it rolls back about 23% of such versions (simulation, `tests/test_stats.py`). `ratchet/stats.py` has the exact and anytime-valid tools the evidence features use instead (Clopper-Pearson bounds, mixture e-values valid however often they are looked at, confidence sequences; [ADR 0024](adr/0024-evidence-foundations.md)); the gate itself is unchanged until the anytime-valid release gate (FR-16.1) lands.
+The interval's 2.5% one-sided error holds for one look at a fixed sample. The gate looks after every request: at a true precision exactly on the floor, checked after every audit, it rolls back about 22% of such versions within 400 audits (simulation, `tests/test_stats.py`, [ADR 0025](adr/0025-anytime-valid-release-gate.md)). The Wilson rule stays the canary's default, so the reference runs do not move; the anytime-valid rule below fixes this when switched on (`RATCHET_SEQUENTIAL=1`).
+
+### Anytime-valid evidence (`stats.log_e_bernoulli`, `stats.confidence_sequence`)
+
+The sequential canary rule and the live alert decide from two integers per version, audits `n` and agreements `s` (`Ledger.audit_counts`), with a mixture e-value ([ADR 0025](adr/0025-anytime-valid-release-gate.md)):
+
+```
+alternatives  q_j, w_j = stats.alt_grid(p0, side)      # 'below': half the weight on p0 - 0.01 ... p0 - 0.10,
+                                                       #          half on 20 points spread over (0, p0)
+log e(s, n)  = logsumexp_j( ln w_j + s·ln(q_j / p0) + (n − s)·ln((1 − q_j) / (1 − p0)) )     # 0 when n = 0
+```
+
+- `side='below'` tests H0 "precision ≥ p0" (rollback, alert); `'above'` tests H0 "precision ≤ p0" (promotion). The e-value depends on the counts only, not their order, so anyone can recompute it.
+- **Validity:** under H0 each audit multiplies every component by a factor whose conditional mean is at most 1 (for `'below'`: 1 + (q − p0)(q_j/p0 − (1 − q_j)/(1 − p0)) ≤ 1 when q ≥ p0 > q_j), with no independence assumption. So the mixture is a nonnegative supermartingale starting at 1, and by Ville's inequality P(it ever reaches 1/α) ≤ α however often the gate looks.
+- Thresholds: rollback 1/`alpha_rollback` = 20, promotion 1/`alpha_promote` = 20, live alert 1/`alpha_alert` = 100. Reported e-values are capped at e^690, so they stay finite in JSON.
+- **Confidence sequence:** the p on a 0.001 grid where neither `log e(s, n, p, 'below')` nor `'above'` reaches ln(2/0.05); the true precision stays inside at every `n` at once with probability ≥ 95%. Every gate event and `ReleaseGate.evidence()` report it as `95% CS [lo, hi]`; a scan costs about 20 ms and is cached by counts.
+- `ReleaseGate.evidence(v)` (in `/ratchet/stats` for the canary and the live version) recomputes everything from the counts: the rules in force, the floor, `n`/`s` over the version's life and `n_stage`/`s_stage` in its current stage, `e_rollback` (life, `'below'`), `e_alert` (stage, `'below'`), `e_promote` (stage, `'above'`), their thresholds, the confidence sequence over its life and the Wilson interval of its stage.
+
+Examples at a 0.92 floor: 0/2 agreeing → 29.8 (a sequential rollback); 0/3 → 268 (a live alert); 7/17 → 2.6 × 10^5; 20/20 → 2.57 against "precision ≤ 0.92" (no promotion yet); 60/60 → 27.6.
 
 ## 7. Cost accounting
 

@@ -121,10 +121,11 @@ def test_task_names_match_in_full():
         assert tasks.get(bad).name == "default"
 
 
-@pytest.mark.req("FR-6.7")
-def test_live_alert_fires_once_per_version():
+@pytest.mark.req("FR-6.7", "FR-16.2")
+@pytest.mark.parametrize("alert_eprocess", [1, 0])  # the e-process (the default since FR-16.2) and the Wilson rule
+def test_live_alert_fires_once_per_version(alert_eprocess):
     led = Ledger(":memory:")
-    gate = ReleaseGate(led, ReleasePolicy(min_audits=5))
+    gate = ReleaseGate(led, ReleasePolicy(min_audits=5, alert_eprocess=alert_eprocess))
     vid = led.create_version("b", "a", 1, "h", {}, state="live")
     for _ in range(10):
         led.log_request(
@@ -140,6 +141,44 @@ def test_policy_from_env(monkeypatch):
     monkeypatch.setenv("RATCHET_LIVE_FLOOR", "0.9")
     p = ReleasePolicy.from_env()
     assert p.min_audits == 42 and p.live_floor == pytest.approx(0.9)
+
+
+@pytest.mark.req("FR-16.1", "FR-16.2")
+def test_anytime_valid_settings_parse(monkeypatch):
+    """The anytime-valid gate's variables (ADR 0025) parse into the policy and the settings, `defaults` fills only what
+    is unset, and a bad value stops startup naming the variable."""
+    for env in ("RATCHET_SEQUENTIAL", "RATCHET_ALPHA_ROLLBACK", "RATCHET_MIN_AUDITS", "RATCHET_ALERT_EPROCESS"):
+        monkeypatch.delenv(env, raising=False)
+    assert (ReleasePolicy().sequential, ReleasePolicy().alert_eprocess) == (0, 1)  # opt-in rule; the alert's default
+    monkeypatch.setenv("RATCHET_SEQUENTIAL", "1")
+    monkeypatch.setenv("RATCHET_ALPHA_ROLLBACK", "0.01")
+    monkeypatch.setenv("RATCHET_ALERT_EPROCESS", "0")
+    p = ReleasePolicy.from_env(defaults={"min_audits": 15})
+    assert (p.sequential, p.alpha_rollback, p.alert_eprocess, p.min_audits) == (1, 0.01, 0, 15)
+    monkeypatch.setenv("RATCHET_MIN_AUDITS", "30")
+    assert ReleasePolicy.from_env(defaults={"min_audits": 15}).min_audits == 30  # the variable wins
+    for env, value, says in (
+        ("RATCHET_SEQUENTIAL", "2", "0 or 1"),
+        ("RATCHET_SEQUENTIAL", "yes", "whole number"),
+        ("RATCHET_ALPHA_ROLLBACK", "1", "strictly between 0 and 1"),
+    ):
+        monkeypatch.setenv(env, value)
+        with pytest.raises(ValueError, match=f"{env}.*{says}"):
+            ReleasePolicy.from_env()
+        monkeypatch.setenv(env, {"RATCHET_SEQUENTIAL": "1", "RATCHET_ALPHA_ROLLBACK": "0.01"}[env])
+
+    monkeypatch.delenv("RATCHET_CANARY_AUDIT_RATE", raising=False)
+    assert Settings().canary_audit_rate is None and Settings().checked_canary_audit_rate() is None
+    monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", "0.5")
+    assert Settings().checked_canary_audit_rate() == 0.5
+    Ratchet(Settings(teacher_model=OPEN_TEACHER), Ledger(":memory:"), FakeTeacher(), lambda v: (BrokenStudent(), ""))
+    for value in ("0", "1.5", "-0.1", "nan"):
+        monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", value)
+        with pytest.raises(ValueError, match="RATCHET_CANARY_AUDIT_RATE must be more than 0 and at most 1"):
+            Ratchet(Settings(teacher_model=OPEN_TEACHER), Ledger(":memory:"), FakeTeacher(), lambda v: (BrokenStudent(), ""))
+    monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", "lots")
+    with pytest.raises(ValueError, match="RATCHET_CANARY_AUDIT_RATE must be a number"):
+        Settings()
 
 
 # ---------- v0.4 hardening: PII redaction, API keys and quotas, streaming, signed BOMs ----------
@@ -1176,7 +1215,6 @@ def test_committed_leaves_and_sealed_receipts_are_append_only():
 
 # A value other than the default for every reserved setting (config.RESERVED_SETTINGS).
 RESERVED_ENV = {
-    "RATCHET_CANARY_AUDIT_RATE": "0.5",
     "RATCHET_CALIBRATION": "ltt",
     "RATCHET_CERT_TARGET": "0.9",
     "RATCHET_CERT_DELTA": "0.01",
@@ -1203,7 +1241,7 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
     Settings().check_reserved()
     for env, value in {"RATCHET_CERT_TARGET": "0.950", "RATCHET_CALIBRATION": " Point ", "RATCHET_DB_SYNC": "full"}.items():
         monkeypatch.setenv(env, value)
-    monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", "")
+    monkeypatch.setenv("RATCHET_MOCK_TEACHER_REASONING_MEAN", "")  # empty: unset
     Settings().check_reserved()
     for env, value in RESERVED_ENV.items():
         monkeypatch.setenv(env, value)
@@ -1224,13 +1262,6 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
 
 # A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY).
 RESERVED_POLICY_ENV = {
-    "sequential": "1",
-    "alpha_rollback": "0.1",
-    "promote_evidence": "1",
-    "alpha_promote": "0.1",
-    "max_stage_audits": "50",
-    "alert_eprocess": "1",
-    "alpha_alert": "0.05",
     "min_certified_precision": "0.9",
     "paired_gate": "1",
     "regression_alpha": "0.1",
@@ -1250,7 +1281,7 @@ def test_reserved_release_policy_fields_stop_startup(monkeypatch):
     for name in RESERVED_POLICY:
         monkeypatch.delenv(f"RATCHET_{name.upper()}", raising=False)
     assert ReleasePolicy.from_env() == ReleasePolicy()
-    monkeypatch.setenv("RATCHET_MAX_STAGE_AUDITS", "400")  # the default, set explicitly
+    monkeypatch.setenv("RATCHET_REGRESSION_ALPHA", "0.05")  # the default, set explicitly
     monkeypatch.setenv("RATCHET_DRIFT_ALARM", "100")
     assert ReleasePolicy.from_env() == ReleasePolicy()
     for name, value in RESERVED_POLICY_ENV.items():

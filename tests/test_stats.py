@@ -129,6 +129,7 @@ def test_ltt_controls_the_error_rate():
 
 
 # ---------- e-values and confidence sequences ----------
+@pytest.mark.req("FR-16.1")
 def test_e_value_oracles_and_confidence_sequence_oracles():
     for s, n, p0, side, want in ORACLE_E:
         assert stats.e_bernoulli(s, n, p0, side) == pytest.approx(want, rel=0.01), (s, n, side)
@@ -136,6 +137,7 @@ def test_e_value_oracles_and_confidence_sequence_oracles():
     assert stats.confidence_sequence(35, 38) == pytest.approx((0.710, 0.992), abs=0.002)
 
 
+@pytest.mark.req("FR-16.1", "FR-16.2")
 def test_alt_grid_components_are_supermartingales():
     """One trial with true rate q multiplies component j's likelihood ratio by a factor whose mean is
     q q_j / p0 + (1 - q)(1 - q_j) / (1 - p0); under H0 (q >= p0 for 'below', q <= p0 for 'above') it is at most 1."""
@@ -168,6 +170,12 @@ def test_e_values_edges_and_input_checks():
     assert lo < lo2 < 0.5 < hi2 < hi  # narrower with more data
     with pytest.raises(ValueError):
         stats.confidence_sequence(1, 2, step=0.0)
+    # Results are cached by checked counts (the gate's events and /ratchet/stats ask again until a new audit lands): the
+    # cache returns what a scan returns, and input is still checked first.
+    assert stats.confidence_sequence(1, 2) == stats._confidence_sequence.__wrapped__(1, 2, 0.05, 0.001)
+    for bad in [(True, 2), ([1], 2), (1, 2.0), (3, 2)]:
+        with pytest.raises(ValueError):
+            stats.confidence_sequence(*bad)
 
 
 def _components(p0: float, side: str) -> list[tuple[float, float, float]]:
@@ -199,6 +207,7 @@ def _crossings(rng: random.Random, p: float, runs: int, horizon: int) -> tuple[f
     return e_hits / runs, w_hits / runs, cs_hits / runs
 
 
+@pytest.mark.req("FR-16.1", "FR-16.2")
 def test_e_process_false_rollback_rate_and_wilson_peeking():
     """At a true rate exactly on the floor (0.92), checked after every audit: the e-process rolls back at most alpha
     (0.05) of good versions; Wilson's upper bound checked the same way does far more than its nominal 2.5%, the reason
@@ -209,6 +218,7 @@ def test_e_process_false_rollback_rate_and_wilson_peeking():
     assert wilson_rate > 0.10  # a regression guard: peeking at a fixed-sample interval inflates its error
 
 
+@pytest.mark.req("FR-16.1")
 def test_confidence_sequence_covers_the_truth_at_every_step():
     runs = 120
     _, _, cs_miss = _crossings(random.Random(9), 0.95, runs, 200)

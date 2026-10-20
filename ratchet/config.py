@@ -63,7 +63,6 @@ def _float_or_none(name: str) -> float | None:
 # relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
 # checks). docs/CONFIGURATION.md lists them under "Reserved settings".
 RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
-    "canary_audit_rate": ("RATCHET_CANARY_AUDIT_RATE", "", "the anytime-valid release gate (FR-16.1)"),
     "calibration": ("RATCHET_CALIBRATION", "point", "certified precision (FR-16.3)"),
     "cert_target": ("RATCHET_CERT_TARGET", "0.95", "certified precision (FR-16.3)"),
     "cert_delta": ("RATCHET_CERT_DELTA", "0.05", "certified precision (FR-16.3)"),
@@ -307,12 +306,15 @@ class Settings:
     # Mock mode only: hours a day the simulated student endpoint runs (each simulated day records one interval).
     mock_endpoint_hours: float = field(default_factory=lambda: _float("RATCHET_MOCK_ENDPOINT_HOURS", "24"))
 
-    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
-    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the canary's own audit rate (unset = the
-    # audit rate); the golden eval's calibration rule and certificate level; teacher-watch probes and adjudications per
-    # night; the receipts' take rate, audits needed per task and the mock teacher's mean reasoning tokens (unset = the
-    # fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap; the ledger's sync mode.
+    # Audit focusing (FR-16.1, ADR 0025): the canary's own audit rate, more than 0 and at most 1; unset = RATCHET_AUDIT_RATE.
+    # Read with `checked_canary_audit_rate()`.
     canary_audit_rate: float | None = field(default_factory=lambda: _float_or_none("RATCHET_CANARY_AUDIT_RATE"))
+
+    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the golden eval's calibration rule and
+    # certificate level; teacher-watch probes and adjudications per night; the receipts' take rate, audits needed per
+    # task and the mock teacher's mean reasoning tokens (unset = the fixed RATCHET_TEACHER_REASONING_TOKENS); the
+    # backfill's batch API, discount and output cap; the ledger's sync mode.
     calibration: str = field(default_factory=lambda: _env("RATCHET_CALIBRATION", "point"))
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
     cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
@@ -437,6 +439,17 @@ class Settings:
             mock_endpoint_hours=float(hours),
             prices_verified=bool(self.prices_verified),
         )
+
+    def checked_canary_audit_rate(self) -> float | None:
+        """RATCHET_CANARY_AUDIT_RATE, checked: None (unset: a canary is audited at RATCHET_AUDIT_RATE), or more than 0 and
+        at most 1. At 0 a canary would get no audits, so the release gate could never promote, roll back or retire it,
+        and Night School would wait for it forever (INV-5). A bad value raises ValueError, so startup stops."""
+        rate = self.canary_audit_rate
+        if rate is None:
+            return None
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 < rate <= 1:
+            raise ValueError(f"RATCHET_CANARY_AUDIT_RATE must be more than 0 and at most 1 (or unset), not {rate!r}")
+        return float(rate)
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a
