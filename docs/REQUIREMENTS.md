@@ -12,11 +12,12 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Done, untested live | 0 | 10 | 1 | 0 | 0 | 11 |
 | Done, more planned | 0 | 1 | 2 | 0 | 0 | 3 |
 | Partial | 0 | 0 | 1 | 0 | 0 | 1 |
+| Planned | 0 | 16 | 1 | 0 | 0 | 17 |
 | Replaced | 0 | 1 | 0 | 0 | 0 | 1 |
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
 | Invariant | 0 | 0 | 0 | 0 | 14 | 14 |
-| **Total** | **11** | **71** | **10** | **5** | **14** | **111** |
+| **Total** | **11** | **87** | **11** | **5** | **14** | **128** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
@@ -24,8 +25,8 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Known gap | 0 | 11 | 0 | 0 | 0 | 11 |
 | Live check only | 1 | 0 | 0 | 0 | 0 | 1 |
 | Manual check | 0 | 2 | 0 | 0 | 0 | 2 |
-| No check needed | 0 | 1 | 0 | 5 | 0 | 6 |
-| **Total** | **11** | **71** | **10** | **5** | **14** | **111** |
+| No check needed | 0 | 17 | 1 | 5 | 0 | 23 |
+| **Total** | **11** | **87** | **11** | **5** | **14** | **128** |
 
 Known gaps (11): FR-4.5, FR-4.6, FR-5.1, FR-5.5, FR-8.2, FR-8.4, FR-8.5, FR-9.6, FR-10.6, FR-11.1, FR-11.2. These are done requirements without an offline test. `KNOWN_GAPS` in `scripts/reqtrace.py` may only shrink: remove an id when a test marks it.
 
@@ -213,6 +214,36 @@ From [PRD §6.14](PRD.md#614-use-cases).
 
 No requirements in this section yet.
 
+## 6.15 Cost and economics
+
+From [PRD §6.15](PRD.md#615-cost-and-economics).
+
+| ID | Requirement | Status | Code | Tests | Verification/notes |
+|---|---|---|---|---|---|
+| FR-15.1 | Each request's cost is split into student and teacher spend; the existing `cost_usd` stays exactly… | Planned | — | — | not built yet |
+| FR-15.2 | Compute-time ledger: student endpoint uptime and training-job GPU-hours, recorded by a CLI, an auth… | Planned | — | — | not built yet |
+| FR-15.3 | Cost report (`GET /ratchet/cost`, `python -m ratchet.cost report`): savings per token and by GPU-ho… | Planned | — | — | not built yet |
+| FR-15.4 | Self-host recommendation (self-host, hosted fallback, scale to zero, or not enough data) with a pla… | Planned | — | — | not built yet |
+| FR-15.5 | Verified savings receipts per API client: an audit-calibrated baseline with a confidence bound, bot… | Planned | — | — | not built yet |
+
+## 6.16 Verifiable evidence
+
+From [PRD §6.16](PRD.md#616-verifiable-evidence).
+
+| ID | Requirement | Status | Code | Tests | Verification/notes |
+|---|---|---|---|---|---|
+| FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence… | Planned | — | — | not built yet |
+| FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert… | Planned | — | — | not built yet |
+| FR-16.3 | Certified precision: each candidate carries a Clopper–Pearson lower bound on precision at its thres… | Planned | — | — | not built yet |
+| FR-16.4 | Committed training sets: each adapter's BOM commits to its training and golden examples with Merkle… | Planned | — | — | not built yet |
+| FR-16.5 | Ledger time machine: replay past traffic under a different threshold or audit rate from logged prop… | Planned | — | — | not built yet |
+| FR-16.6 | Label-free drift alarm with a bounded false-alarm rate (conformal test martingale on student confid… | Planned | — | — | not built yet |
+| FR-16.7 | Teacher watch: free teacher self-consistency checks from duplicate requests; inconsistent labels ar… | Planned | — | — | not built yet |
+| FR-16.8 | Clean-room backfill: a day-0 student from historical prompts relabelled by the teacher through the… | Planned | — | — | not built yet |
+| FR-16.9 | Provable erasure: forget an example, retrain without it, and issue a signed certificate that the ne… | Planned | — | — | not built yet |
+| FR-16.10 | Guarantee harness: Monte Carlo checks that each statistical guarantee holds at its stated rate | Planned | — | — | not built yet |
+| FR-16.11 | Evidence tour: one command exercises every feature in mock mode and writes a signed evidence bundle | Planned | — | — | not built yet |
+
 ## 7. Non-functional requirements
 
 From [PRD §7](PRD.md#7-non-functional-requirements).
@@ -229,6 +260,7 @@ From [PRD §7](PRD.md#7-non-functional-requirements).
 | NFR-8 | Correctness: Release decisions use held-out data and statistical bounds, not single numbers. | Done (v0.1) | `ratchet.release:wilson`<br>`ratchet.nightschool.evaluate:cascade_eval` | `tests/test_core.py::test_wilson_bounds` | tested |
 | NFR-9 | Licensing: Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License)… | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet | `ratchet.bom:manifest`<br>`LICENSE` | `tests/test_hardening.py::test_signed_bom_per_adapter_verifies_and_detects_tampering` | tested |
 | NFR-10 | Traceability: Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that… | Done (v0.5) | `scripts/reqtrace.py` | `tests/test_traceability.py::test_ids_unique_and_statuses_parse`<br>`tests/test_traceability.py::test_done_requirements_have_tests_or_known_gap`<br>`tests/test_traceability.py::test_known_gaps_and_exemptions_only_shrink`<br>`tests/test_traceability.py::test_markers_cite_known_ids`<br>`tests/test_traceability.py::test_planned_ids_only_in_strict_xfail`<br>`tests/test_traceability.py::test_not_met_metrics_have_strict_xfail`<br>`tests/test_traceability.py::test_code_refs_resolve`<br>`tests/test_traceability.py::test_live_unverified_have_offline_test_and_live_exemption`<br>`tests/test_traceability.py::test_requirements_md_is_current`<br>`tests/test_traceability.py::test_every_route_documented_in_api_md`<br>`tests/test_traceability.py::test_every_env_var_documented`<br>`tests/test_traceability.py::test_doc_test_counts_match`<br>`tests/test_traceability.py::test_ast_count_matches_pytest_collection`<br>`tests/test_traceability.py::test_check_cli_passes_and_writes_the_committed_matrix`<br>`tests/test_traceability.py::test_mini_world_is_clean_and_renders`<br>`tests/test_traceability.py::test_each_mistake_gives_exactly_one_error`<br>`tests/test_traceability.py::test_status_grammar`<br>`tests/test_traceability.py::test_scan_reads_markers_and_counts_cases`<br>`tests/test_traceability.py::test_invariants_keep_their_list_numbers`<br>`tests/test_traceability.py::test_missing_sources_are_findings_not_crashes`<br>`tests/test_traceability.py::test_doc_rules_catch_drift`<br>`tests/test_traceability.py::test_clip_keeps_table_cells_valid` | tested |
+| NFR-11 | Cost honesty: Every savings figure names its cost model. Alongside the per-token view, Ratchet repo… | Planned | — | — | not built yet |
 
 ## 8.1 Product metrics
 
