@@ -50,6 +50,7 @@ UPSTREAM_UNREACHABLE = "upstream_unreachable"
 BAD_RESPONSE = "bad_upstream_response"
 CIRCUIT_OPEN = "circuit_open"
 ADAPTER_MISSING = "adapter_missing"
+TOOL_CALLS_UNSUPPORTED = "tool_calls_unsupported"  # the teacher answered with a tool call (router._ask_teacher)
 
 # Timeouts other than the read timeout: a healthy endpoint accepts a connection and a request body quickly.
 CONNECT_S = 5.0

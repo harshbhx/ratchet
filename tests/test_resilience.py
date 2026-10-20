@@ -16,6 +16,8 @@ A failing student falls back to the teacher (`tests/test_hardening.py`). Here:
   endpoint that keeps failing (route `student_breaker`), probing it again and backing off; a shadow breaker of its own;
   vLLM's 404 for a lost adapter queuing one reload a minute through the live gateway; the mock outage demo; and the
   `route` recorded on every request.
+- Night School's golden eval when the student endpoint refuses a row for a condition stored with it (vLLM's 400 to
+  `tools` without a tool parser): the row scores as not served and the night goes on (FR-5.1, INV-7).
 """
 
 from __future__ import annotations
@@ -33,14 +35,18 @@ from typing import Any
 
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, RecordingTrainer, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.live import AdapterReloader, adapter_reloader
-from ratchet.providers import OpenAICompatProvider, UpstreamError
+from ratchet.nightschool import dataset
+from ratchet.nightschool.evaluate import LiveEvaluator
+from ratchet.nightschool.orchestrate import run_night
+from ratchet.providers import PARAM_FIELDS, GenPolicy, OpenAICompatProvider, UpstreamError
+from ratchet.release import ReleaseGate
 from ratchet.resilience import (
     NO_RETRY,
     AdapterMissing,
@@ -1676,3 +1682,55 @@ def test_every_request_row_has_a_route():
         "research-plan": {"pinned": 1},
     }
     assert list(by_task[TRIAGE])[0] == "student_error"  # most frequent first
+
+
+# ---------- Night School: a golden row the student endpoint refuses (FR-5.1, INV-7) ----------
+TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+NO_TOOL_PARSER = '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set'
+
+
+@pytest.mark.req("FR-5.1", "INV-7", "FR-4.4")
+def test_a_golden_row_the_student_refuses_never_stops_night_school():
+    """vLLM started without a tool parser (deploy/student_endpoint.sh) answers 400 to a request with `tools`. A golden
+    row stored with tools, sampled under an allowlist that forwards them, would escalate in production (INV-7), so the
+    live eval scores it as not served and the night produces a report; the judge does not pass it. Before, the 400
+    stopped every night, because the golden split never changes. The default allowlist does not send tools at all, and
+    an error that refuses every row (401) still stops the night."""
+    inner = FakeOpenAIServer(A)
+
+    def vllm(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body.get("tools") and body.get("tool_choice", "auto") == "auto":
+            refusal = {"object": "error", "message": NO_TOOL_PARSER, "type": "BadRequestError", "code": 400}
+            return httpx.Response(400, json=refusal)
+        return inner(request)
+
+    led = Ledger(":memory:", golden_fraction=0.3)
+    for i in range(60):
+        led.add_example(TRIAGE, _ask(i), A, OPEN_TEACHER, "l", "u", params={"tools": TOOLS} if i % 2 == 0 else None)
+    golden = dataset.rows(led, "golden")
+    with_tools = sum(1 for r in golden if r["params"])
+    assert with_tools >= 2 and len(golden) > with_tools
+
+    student = OpenAICompatProvider("https://student.test/v1", "k", transport=httpx.MockTransport(vllm))
+    forwards_tools = GenPolicy(student_allow=frozenset(PARAM_FIELDS))
+    rep = run_night(led, RecordingTrainer(), LiveEvaluator(student, None, policy=forwards_tools), ReleaseGate(led), "base", 1)
+    assert rep.trained and rep.eval is not None
+    assert (rep.eval["refused_n"], rep.eval["golden_n"]) == (with_tools, len(golden))
+
+    inner.calls.clear()
+    res = LiveEvaluator(student, None, policy=GenPolicy()).evaluate("student-v1", golden)
+    assert res["refused_n"] == 0 and not any("tools" in c.json for c in inner.calls_to("/chat/completions"))
+
+    # The judge's candidate call for a free-text row is refused the same way: that row does not pass.
+    free = Ledger(":memory:", golden_fraction=1.0)
+    free.add_example("default", _ask("bare"), "an answer", OPEN_TEACHER, "l", "u")
+    free.add_example("default", _ask("tools"), "an answer", OPEN_TEACHER, "l", "u", params={"tools": TOOLS})
+    judge = RecordingProvider('{"score": 1, "reason": "same"}')
+    res = LiveEvaluator(student, judge, "judge", policy=forwards_tools).evaluate("student-v1", dataset.rows(free, "golden"))
+    assert (res["refused_n"], res["judge_pass_rate"], len(judge.calls)) == (1, 0.5, 1)
+
+    denied = OpenAICompatProvider("https://student.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(401)))
+    with pytest.raises(UpstreamError) as stopped:
+        LiveEvaluator(denied, None).evaluate("student-v1", golden)
+    assert stopped.value.status == 401

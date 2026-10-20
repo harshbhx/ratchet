@@ -13,6 +13,7 @@ from ratchet.providers import (
     CHECK_DROPS,
     DEFAULT_STUDENT_PARAMS,
     DEFAULT_TEACHER_PARAMS,
+    NOT_YET_FORWARDED,
     PARAM_FIELDS,
     Completion,
     GenParams,
@@ -349,24 +350,44 @@ def test_param_allowlists_parse_and_refuse_what_ratchet_never_forwards():
     assert parse_param_allowlist("all", default) == frozenset(PARAM_FIELDS)
     assert parse_param_allowlist("all, top_k", default) == frozenset(PARAM_FIELDS) | {"top_k"}
     assert parse_param_allowlist("stop, max_completion_tokens,,seed", default) == {"stop", "max_tokens", "seed"}
-    # The model is always Settings.teacher_model (INV-1), and the end user, storage and metadata never go upstream.
-    for bad in ("model", "messages", "n", "stream", "user", "safety_identifier", "store", "metadata", "functions", "none,stop"):
+    # The model is always Settings.teacher_model (INV-1), and the end user, storage, metadata and billing tier never go
+    # upstream.
+    for bad in (
+        "model",
+        "messages",
+        "n",
+        "stream",
+        "user",
+        "safety_identifier",
+        "store",
+        "metadata",
+        "service_tier",
+        "functions",
+        "none,stop",
+        "Model",
+    ):
         with pytest.raises(ValueError, match="cannot be forwarded"):
             parse_param_allowlist(bad, default, "RATCHET_TEACHER_PARAMS")
     for bad in ("max tokens", "stop;seed", "9lives", "x" * 65):
         with pytest.raises(ValueError):
             parse_param_allowlist(bad, default)
-    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS)
-    assert DEFAULT_STUDENT_PARAMS == {
-        "max_tokens",
-        "stop",
-        "seed",
-        "response_format",
+    # Names are matched in any case; a near miss of a standard field is a typo and stops startup, other names are
+    # vendor fields.
+    assert parse_param_allowlist("Stop,MAX_TOKENS,Top_K", default) == {"stop", "max_tokens", "top_k"}
+    for typo, meant in (("max_token", "max_tokens"), ("stops", "stop"), ("temprature", "temperature"), ("tool", "tools")):
+        with pytest.raises(ValueError, match=f"did you mean '{meant}'"):
+            parse_param_allowlist(f"seed,{typo}", default, "RATCHET_STUDENT_PARAMS")
+    vendor = ("top_k", "min_p", "min_tokens", "repetition_penalty", "max_new_tokens", "guided_json")
+    assert parse_param_allowlist(",".join(vendor), default) == frozenset(vendor)
+    # Tool calls and the teacher's logprobs are not forwarded by default: nothing reads them back yet.
+    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS) - {
         "tools",
         "tool_choice",
-        "logit_bias",
+        "parallel_tool_calls",
+        "logprobs",
         "top_logprobs",
     }
+    assert DEFAULT_STUDENT_PARAMS == {"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"}
 
 
 @pytest.mark.req("FR-1.13", "NFR-3")
@@ -382,17 +403,17 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
         "seed": 7,
         "logit_bias": {"50256": -100},
         "response_format": {"type": "json_object"},
-        "tools": client.tools,
-        "tool_choice": "auto",
         "top_logprobs": 2,
     }
     assert policy.student(None) == policy.student(GenParams()) == GenParams(max_tokens=1024)
     assert policy.student(GenParams(max_tokens=10**6)).max_tokens == 1024
 
-    # Teacher serving the answer: every standard field as sent (a vendor field only when listed); temperature 0 when
-    # the client set none.
+    # Teacher serving the answer: every standard field as sent but tools and logprobs (a vendor field only when listed);
+    # temperature 0 when the client set none.
     serve = policy.teacher(client, "serve")
-    assert serve.to_body() == {k: v for k, v in client.to_body().items() if k != "top_k"}
+    assert serve.to_body() == {k: v for k, v in client.to_body().items() if k not in NOT_YET_FORWARDED | {"top_k"}}
+    everything = GenPolicy(teacher_allow=frozenset(PARAM_FIELDS))
+    assert everything.teacher(client).to_body() == {k: v for k, v in client.to_body().items() if k != "top_k"}
     vendor = GenPolicy(teacher_allow=parse_param_allowlist("all,top_k", frozenset()))
     assert vendor.teacher(client).extra == vendor.teacher(client, "audit").extra == {"top_k": 20}
     assert policy.teacher(None).to_body() == {"max_tokens": 8192, "temperature": 0.0}
@@ -400,7 +421,7 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
 
     # Audit and arbitration: deterministic, under the same conditions (length, stops, format, tools, effort).
     for role in ("audit", "arbitrate"):
-        check = policy.teacher(client, role)
+        check = everything.teacher(client, role)
         assert check.temperature == 0.0 and check.max_tokens == 50
         assert (check.stop, check.response_format, check.tools, check.tool_choice) == (
             ("\n\n",),

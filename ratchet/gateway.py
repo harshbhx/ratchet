@@ -59,7 +59,7 @@ from .openai_compat import (
 from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
-from .resilience import RETRY_STATUSES, as_upstream
+from .resilience import RETRY_STATUSES, TOOL_CALLS_UNSUPPORTED, as_upstream
 from .router import Ratchet
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
@@ -449,8 +449,12 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
     the teacher's wait; a timeout is a 504; everything else is a 502. `X-Should-Retry: false` marks the ones a retry
     cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing. A 502 or 504 the client
     may retry carries the teacher's `Retry-After` when it sent one: the provider stops retrying at a wait over its cap,
-    so the client is the one that has to wait."""
+    so the client is the one that has to wait. A teacher answer that is a tool call (`router.Ratchet._ask_teacher`, only
+    when an operator allows `tools`) is a 502 `tool_calls_unsupported` no retry can change."""
     u = as_upstream(e)
+    if u.code == TOOL_CALLS_UNSUPPORTED:
+        message = "The teacher answered with a tool call, which this gateway cannot return yet; send the request without tools."
+        return APIError(502, message, "api_error", TOOL_CALLS_UNSUPPORTED, headers=NO_RETRY)
     if u.status in CLIENT_CAUSED:
         code = u.code or ("request_too_large" if u.status == 413 else None)
         message = u.message or f"The teacher model rejected the request ({u.label})."

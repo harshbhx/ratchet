@@ -24,6 +24,7 @@ import re
 import threading
 from collections import Counter
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -749,7 +750,8 @@ CLIENT = GenParams(
 STUDENT_GETS = GenParams(
     max_tokens=50, stop=("\n\n",), seed=7, logit_bias={"11": 5}, response_format={"type": "json_object"}, top_logprobs=3
 )
-SERVE_GETS = CLIENT  # every standard field as sent (max_tokens already under the 8,192 cap)
+# Every standard field as sent (max_tokens already under the 8,192 cap), but the logprobs: responses carry none yet.
+SERVE_GETS = replace(CLIENT, logprobs=None, top_logprobs=None)
 CHECK_GETS = GenParams(max_tokens=50, temperature=0.0, stop=("\n\n",), response_format={"type": "json_object"})
 
 
@@ -773,7 +775,7 @@ def test_each_call_gets_the_parameters_its_role_allows():
     student, teacher = RecordingProvider(A), RecordingProvider(A)
     _, _, r, _ = _cascade(student, teacher, threshold=0.99)
     assert r.handle(_ask(), TRIAGE, params=CLIENT).route == "confidence"
-    assert _teacher_calls(teacher) == [(0.9, True, SERVE_GETS)]
+    assert _teacher_calls(teacher) == [(0.9, False, SERVE_GETS)]
 
     # Cold start, a pinned task and a teacher-only request serve the teacher's answer the same way.
     teacher = RecordingProvider(A)
@@ -781,7 +783,7 @@ def test_each_call_gets_the_parameters_its_role_allows():
     assert r.handle(_ask(), TRIAGE, params=CLIENT).route == "cold_start"
     assert r.handle(_ask(), "research-plan", params=CLIENT).route == "pinned"
     assert r.teacher_only(_ask(), TRIAGE, params=CLIENT).route == "pinned"
-    assert _teacher_calls(teacher) == [(0.9, True, SERVE_GETS)] * 3
+    assert _teacher_calls(teacher) == [(0.9, False, SERVE_GETS)] * 3
 
     # The shadow samples like the live student; the arbitration of its disagreement is a check.
     led = Ledger(":memory:")
@@ -818,7 +820,7 @@ def test_examples_store_the_conditions_the_teacher_answered_under():
 
     # The same messages without conditions are another example; sampling parameters alone change nothing stored.
     r.handle(_ask(), TRIAGE)
-    r.handle(_ask(), TRIAGE, params=GenParams(temperature=1.5, seed=3, presence_penalty=1.0, max_tokens=900))
+    r.handle(_ask(), TRIAGE, params=GenParams(temperature=0.8, top_p=0.9, seed=3, presence_penalty=0.0, max_tokens=900))
     rows = led.examples()
     assert [(json.loads(e["params"]) if e["params"] else None, e["seen"]) for e in rows] == [(conditions, 1), (None, 2)]
 
