@@ -420,6 +420,9 @@ def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
     ):
         r = c.post(path)
         assert r.status_code == 403 and "mock mode" in r.json()["detail"], (path, r.status_code, r.text)
+    for path in ("/ratchet/demo/sample-example", "/ratchet/demo/sample-example?split=golden&version=1"):  # a read: mock-only too
+        r = c.get(path)
+        assert r.status_code == 403 and "mock mode" in r.json()["detail"], (path, r.status_code, r.text)
     assert (led.day, led.events(), led.versions(), led.totals()) == before
     assert gw.rt.ledger is led  # reset did not rebuild the live runtime
 

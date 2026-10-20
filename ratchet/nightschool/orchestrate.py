@@ -85,9 +85,10 @@ def run_night(
     so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
     (`cost.record_simulated_day`) and pass none. `redact_pii` (`Settings.redact_pii`) goes into the BOM's `redactor`.
 
-    Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
-    set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
-    into the one `bom_extra` dict."""
+    Each version commits to its training and golden rows (FR-16.4, ADR 0027): their leaves are written right after
+    `create_version` (`Ledger.set_version_leaves`, append-only) and their roots signed in the BOM. Later features add
+    their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate, paired evidence right
+    after the candidate's eval, and BOM sections into the one `bom_extra` dict."""
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
@@ -129,6 +130,8 @@ def run_night(
         recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
         ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
 
+    # The set commitments of tonight's rows, built before the paid training job so nothing can fail after it.
+    commitments = {"training": dataset.commitment(train_rows), "golden": dataset.commitment(golden_rows)}
     name = f"student-v{len(ledger.versions()) + 1}"
     now = clock or ledger.now
     job = None
@@ -148,6 +151,10 @@ def run_night(
         if job is not None:  # the GPU time is paid whether or not training worked: close the interval, then re-raise
             note = None if ended is not None else f"adapter {name}: training failed"
             ledger.compute_stop("training_job", ts=ended if ended is not None else now(), interval_id=job, version=vid, note=note)
+    # Set commitments (FR-16.4, ADR 0027): the leaves of the exact rows the adapter was trained and graded on, written
+    # once, before the eval and the BOM, so every signed root has its leaves in the ledger.
+    for section, (_, _, leaves) in commitments.items():
+        ledger.set_version_leaves(vid, bom.COMMITMENT_SPLITS[section], leaves)
     result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
     if live is not None:  # paired evidence, before the eval is stored and the BOM signed, so the BOM carries it
         pair = paired_evidence(recheck, result, live.id)
@@ -159,7 +166,14 @@ def run_night(
     bom_extra: dict[str, Any] = {}
     version = ledger.version(vid)
     assert version is not None
-    m = bom.manifest(version, train_rows, golden_rows, extra=bom_extra or None, redact_pii=redact_pii)
+    m = bom.manifest(
+        version,
+        train_rows,
+        golden_rows,
+        commitments={section: (root, size) for section, (root, size, _) in commitments.items()},
+        extra=bom_extra or None,
+        redact_pii=redact_pii,
+    )
     ledger.set_bom(vid, bom.document(m, signer))
     ledger.event(
         "trained",

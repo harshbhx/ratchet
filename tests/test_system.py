@@ -17,6 +17,24 @@ def sim(*argv):
     return run(args)
 
 
+def sim_kept(*argv):
+    """`sim`, and the run's ledger (its BOMs and committed leaves are read back)."""
+    import sim.simulate as simulate
+    from ratchet.ledger import Ledger
+
+    made: list[Ledger] = []
+
+    class Kept(Ledger):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(simulate, "Ledger", Kept)
+        res = sim(*argv)
+    return res, made[0]
+
+
 @pytest.mark.req("US-2", "US-3", "US-4", "US-9", "FR-2.4", "FR-2.5", "FR-9.2")
 def test_loop_learns_and_saves_money():
     res = sim("--days", "6", "--requests", "1500", "--drift-day", "0")
@@ -35,9 +53,15 @@ BAD_DEPLOY = ("--days", "6", "--requests", "1500", "--drift-day", "0", "--bad-de
 
 
 @pytest.fixture(scope="module")
-def bad_deploy() -> dict:
-    """The corrupted-v3 run under each canary rule (the same seed), shared by the tests below: about 4 s each."""
-    return {rule: sim(*BAD_DEPLOY, "--release", rule) for rule in ("wilson", "sequential")}
+def bad_deploy_runs() -> dict:
+    """The corrupted-v3 run under each canary rule (the same seed) and its ledger, shared by the tests below: about 4 s
+    each."""
+    return {rule: sim_kept(*BAD_DEPLOY, "--release", rule) for rule in ("wilson", "sequential")}
+
+
+@pytest.fixture(scope="module")
+def bad_deploy(bad_deploy_runs) -> dict:
+    return {rule: res for rule, (res, _) in bad_deploy_runs.items()}
 
 
 @pytest.mark.req("FR-9.3", "US-6")
@@ -68,6 +92,32 @@ def test_sequential_gate_reduces_bad_deploy_exposure(bad_deploy):
     (detail,) = [e["detail"] for e in sequential["events"] if e["kind"] == "rollback"]
     assert detail.startswith("v3 rolled back: ") and "e-value" in detail and "95% CS [" in detail
     assert not any(e["kind"] == "inconclusive" for e in wilson["events"])
+
+
+@pytest.mark.req("INV-3", "INV-6", "FR-16.4")
+def test_every_version_proves_its_golden_rows_were_never_trained_on(bad_deploy_runs):
+    """INV-3 machine-checked over six simulated days with a corrupted deploy: for every version, the committed leaves
+    rebuild the roots its BOM signs, and every golden key has a proof of absence from that version's signed training
+    root (simulation, mock models)."""
+    from ratchet import bom, merkle, proof
+
+    res, led = bad_deploy_runs["wilson"]
+    versions = led.versions()
+    assert len(versions) == len(res["versions"]) >= 3 and {v.state for v in versions} & {"rolled_back", "live"}
+    for v in versions:
+        doc = led.version_bom(v.id)
+        train = merkle.KeySet(led.version_leaves(v.id, "train"))
+        golden = merkle.KeySet(led.version_leaves(v.id, "golden"))
+        assert (train.root_hex, train.size) == tuple(bom.commitment(doc["manifest"], "train")[k] for k in ("root", "size"))
+        assert (golden.root_hex, golden.size) == tuple(bom.commitment(doc["manifest"], "golden")[k] for k in ("root", "size"))
+        assert golden.size == doc["manifest"]["golden"]["examples"] > 0 and train.size == v.train_examples
+        assert not set(train.keys()) & set(golden.keys())  # brute force
+        cert = {
+            "golden": {"leaves": [[k.hex(), val.hex()] for k, val in golden.items()]},
+            "proofs": {k.hex(): train.prove(k) for k in golden.keys()},
+        }
+        ok, lines = proof.verify_heldout(cert, doc)  # from the signed roots alone
+        assert ok, (v.id, lines)
 
 
 @pytest.mark.req("FR-9.1")
@@ -151,20 +201,7 @@ CERT_RUN = ("--days", "3", "--requests", "700", "--drift-day", "0")
 @pytest.fixture(scope="module")
 def cert_run():
     """A short run and its ledger (its BOMs are read back), shared by the tests below: about 1 s."""
-    import sim.simulate as simulate
-    from ratchet.ledger import Ledger
-
-    made: list[Ledger] = []
-
-    class Kept(Ledger):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            made.append(self)
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(simulate, "Ledger", Kept)
-        res = sim(*CERT_RUN)
-    return res, made[0]
+    return sim_kept(*CERT_RUN)
 
 
 @pytest.mark.req("FR-16.3", "INV-14")

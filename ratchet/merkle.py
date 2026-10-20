@@ -123,6 +123,14 @@ class KeySet:
         i = self._index.get(_as32(key, "key"))
         return None if i is None else self._values[i]
 
+    def items(self) -> list[tuple[bytes, bytes]]:
+        """Every (key, value) pair, in key order: what a verifier rebuilds the tree from."""
+        return list(zip(self._keys, self._values, strict=True))
+
+    def keys(self) -> list[bytes]:
+        """Every key, in order."""
+        return list(self._keys)
+
     def __len__(self) -> int:
         return self.size
 

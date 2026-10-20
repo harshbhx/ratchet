@@ -25,6 +25,8 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
 | GET | `/ratchet/versions/{id}/certificate` | both | What a version's golden evals certify: the signed and the latest certificate, frontier and per-task bounds, the gate's evidence and the assumptions ([Certificates](#get-ratchetversionsidcertificate)) |
+| POST | `/ratchet/versions/{id}/proof` | both | Whether an example is in a version's committed training (or golden) set, with a membership or non-membership proof against the root its signed BOM carries (admin key; [Committed training sets](#committed-training-sets)) |
+| GET | `/ratchet/versions/{id}/heldout` | both | The held-out certificate: every golden example's proof of absence from the version's training set (admin key) |
 | GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
 | GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
@@ -37,6 +39,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/demo/day` | mock only | Simulate one day of traffic and one night of training |
 | POST | `/ratchet/demo/break-next` | mock only | Make the next trained student deploy corrupted |
 | POST | `/ratchet/demo/student-outage` | mock only | Take the student endpoint down for a while, to show the circuit breaker |
+| GET | `/ratchet/demo/sample-example` | mock only | A committed example's prompt, as a body for the proof endpoint |
 | POST | `/ratchet/demo/reset` | mock only | Start over |
 | GET | `/scout/examples` | both | Example questions and whether free text is allowed |
 | GET | `/scout/status` | both | Budget guard state |
@@ -57,7 +60,7 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
 - `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
-- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
+- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)); and the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` ([Committed training sets](#committed-training-sets)), which would otherwise tell anyone whether a text they can guess was trained on. Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - Pages, `/healthz`, the other `/ratchet/*` routes (reads included: `GET /ratchet/tasks`) and Scout stay public. The read-only `/ratchet/stats` and `/ratchet/bom` are what the dashboard reads; the mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
 The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratchet/demo/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
@@ -530,8 +533,10 @@ The bill of materials of one adapter, written by Night School right after traini
     "created_at": "2026-10-20T00:15:12Z",
     "adapter": {"version": 1, "name": "student-v1", "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "day": 1},
     "training": {"examples": 1029, "dataset_sha256": "478eef…", "tasks": {"ticket-triage": 420, "source-triage": 362, "page-read": 247},
-                 "targets": "teacher answers only", "examples_with_pii_redacted": 0, "origins": {"live": 1029}},
-    "golden": {"examples": 110, "sha256": "cbce0e…", "held_out": true},
+                 "targets": "teacher answers only", "examples_with_pii_redacted": 0, "origins": {"live": 1029},
+                 "commitment": {"alg": "ratchet.smt/v1", "root": "e8ab25…", "size": 1029}},
+    "golden": {"examples": 110, "sha256": "cbce0e…", "held_out": true,
+               "commitment": {"alg": "ratchet.smt/v1", "root": "1f6b2a…", "size": 110}},
     "sources": [{"teacher": "nvidia/Nemotron-3-Ultra-550b-a55b", "license": "OpenMDW-1.1",
                  "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
                  "distill_ok": true, "examples": 1029}],
@@ -546,7 +551,8 @@ The bill of materials of one adapter, written by Night School right after traini
 - `sha256` and the signature cover the **canonical** manifest: JSON with sorted keys, no whitespace, UTF-8 (`ratchet.bom.canonical`).
 - `signature` is `null` when `RATCHET_BOM_SIGNING_KEY` is not set; the `sha256` still detects edits.
 - `training.dataset_sha256` equals the version's `dataset_hash`; `golden.sha256` fingerprints the golden rows the evaluation used. The `eval` block is the evaluation at training time; later re-checks update `/ratchet/stats` but not the signed BOM. Since v0.5 it also carries the certificate, the frontier, the per-task bounds, the per-row outcomes (`test_vector`) and, for a candidate trained while a version was live, the paired comparison with it ([Certificates](#get-ratchetversionsidcertificate)); `python -m ratchet.stats check bom.json` recomputes every one of those numbers from the signed counts.
-- Schema `ratchet.bom/v2` ([ADR 0024](adr/0024-evidence-foundations.md)) keeps every v1 field and adds `training.origins` (training rows by where they came from; `live` for rows that did not record it) and `redactor` (a SHA-256 over the redaction rules, the number of rules, and whether redaction was on; `null` when the writer did not say). Later features add optional sections: `training.commitment` and `golden.commitment` (`{"alg": "ratchet.smt/v1", "root", "size"}`), `teacher`, `backfill_jobs` and `erasures_honored`. Adapters trained before keep their v1 documents, which still verify; any other schema is refused as unknown.
+- Schema `ratchet.bom/v2` ([ADR 0024](adr/0024-evidence-foundations.md)) keeps every v1 field and adds `training.origins` (training rows by where they came from; `live` for rows that did not record it) and `redactor` (a SHA-256 over the redaction rules, the number of rules, and whether redaction was on; `null` when the writer did not say). Later features add optional sections: `teacher`, `backfill_jobs` and `erasures_honored`. Adapters trained before keep their v1 documents, which still verify; any other schema is refused as unknown.
+- `training.commitment` and `golden.commitment` (since v0.5, [ADR 0027](adr/0027-committed-training-sets.md)): `{"alg": "ratchet.smt/v1", "root", "size"}`, the root of a sparse Merkle tree over the split's examples (each example's hash mapped to a hash of its label, teacher, license and redaction count) and how many there are. `size` always equals `examples`. A single example can be proved in or out of either set against these roots ([Committed training sets](#committed-training-sets)). In live mode a copy of the document is also written into the adapter's folder (`adapters/<name>/ratchet_bom.json`), so the weights carry their provenance.
 
 Verify a downloaded BOM against the public key you published:
 
@@ -619,6 +625,78 @@ python -m ratchet.stats check bom.json --public-key "<base64 public key>"
 ```
 
 It exits 1 when the signature or hash fails or when any recomputed number differs from the signed one by more than 1e-9, and 0 for a BOM written before v0.5 (no certificate to check).
+
+## Committed training sets
+
+Every adapter's BOM signs one sparse Merkle root per split ([ADR 0027](adr/0027-committed-training-sets.md)): the keys are the example hashes of exactly the rows it was trained on (`training.commitment`) and graded on (`golden.commitment`), each mapped to the SHA-256 of `{completion, teacher, license, redactions}` (the stored teacher answer, who wrote it, its license and the number of PII placeholders in it). The leaves are written once to the ledger (`version_leaves`, append-only) before the BOM is signed. From them the gateway answers whether one example is in a set, with a proof anyone can check offline against the signed root, and gives a certificate that no golden example was trained on (invariants 3 and 6).
+
+Both endpoints need an admin key ([Authentication](#authentication)): for a text an attacker can guess, a yes-or-no answer about the training set is a leak. **404** for an unknown version, and **404** `commitment not available: version N was trained before set commitments (v0.5)` for a version whose BOM has no commitment.
+
+What a proof shows: the operator's binding commitment, at training time, to the dataset the adapter was trained and graded on. It does not show that the weights came from that dataset.
+
+### POST `/ratchet/versions/{id}/proof?split=train`
+
+`split` is `train` (the default) or `golden`; anything else is **400**. The body names the example in one of two ways:
+
+- `{"key": "<64 hex characters>"}`: the example's hash (`python -m ratchet.proof key` computes it).
+- The chat request itself: `messages` with its `task` (or `metadata.ratchet_task`; default `default`) and any other `/v1/chat/completions` field. It is validated, normalised and, when `RATCHET_REDACT_PII` is on, redacted exactly as the gateway stores a teacher answer to it, and its `stop`, `response_format`, `tools` and `tool_choice` are part of the key (other sampling fields are not). A request with a content part only the teacher reads is **400**: such requests are never stored, so no adapter was trained on one.
+
+Anything else (both forms, neither, a key that is not 64 hex characters, a request the gateway would refuse) is **400** with the reason; a body that is not JSON is **422**.
+
+```bash
+curl -s "localhost:8000/ratchet/versions/3/proof?split=train" -H "Authorization: Bearer $ADMIN_KEY" \
+  -H 'content-type: application/json' -d '{"task": "ticket-triage", "messages": [...]}' > proof.json
+```
+
+```json
+{
+  "version": 3, "split": "train", "key": "009caefc0abdc8dd8033a716ed8e7861762d4a29d033afd88573f6af77967df9",
+  "alg": "ratchet.smt/v1", "root": "e8ab2527eed2c08e…", "size": 1288, "result": "included",
+  "value": "e43228f5b4cc42b4b61ef7fa6128142aa78b7eb2cd67b51e4858397ba615c460",
+  "proof": {"siblings": ["92666e28efca7f96…", "c06a2dd0139ee1f1…", "b4715cc6b4fd8ce2…", "64a62adbe07cb66c…", "a5b2f8637ee380a5…", "d61a9c7573c0131a…"],
+            "terminal": {"leaf": {"key": "009caefc0abdc8dd…", "value": "e43228f5b4cc42b4…"}}},
+  "bom_sha256": "301a48c00a468c60…"
+}
+```
+
+(Mock gateway after four simulated days; hashes shortened here.)
+
+- `result` is `included` or `absent`. `value` (only when included) is the example's leaf value; anyone holding the example's stored answer, teacher, license and redaction count can recompute it.
+- `proof.siblings` are the sibling hashes from the root down (about log2 of `size`); `proof.terminal` is where the key's path ends: `{"leaf": {key, value}}` (the key itself when included; for an absent key, the one example that shares its path, whose key and value hashes the proof therefore discloses) or `{"empty": true}`.
+- `root` and `size` are the ones the version's BOM signs, and `bom_sha256` names that BOM.
+
+### GET `/ratchet/versions/{id}/heldout`
+
+The held-out certificate: the golden set's leaves, and for each golden key a non-membership proof against the training root.
+
+```json
+{
+  "version": 3, "alg": "ratchet.smt/v1",
+  "training": {"root": "e8ab2527eed2c08e…", "size": 1288},
+  "golden": {"root": "1f6b2a205ce04e6b…", "size": 133, "leaves": [["0001a3…", "5c9e10…"], ["…", "…"]]},
+  "proofs": {"0001a3…": {"siblings": ["…"], "terminal": {"leaf": {"key": "…", "value": "…"}}}, "…": {}},
+  "held_out": true,
+  "bom_sha256": "301a48c00a468c60…"
+}
+```
+
+About 113 KB for 133 golden rows against 1,288 training leaves (mock gateway after four simulated days). `held_out` is the gateway's own check; a verifier ignores it and checks the proofs.
+
+When the stored leaves no longer rebuild the root and size the BOM signs (the ledger file was edited outside Ratchet: SQLite's triggers refuse any edit through its API), both endpoints answer **500** and the gateway writes one `integrity` event per version and split; it never serves a proof that would fail against the signed root.
+
+### Checking a proof offline
+
+```bash
+curl -s https://<gateway>/ratchet/versions/3/bom > bom.json
+python -m ratchet.proof verify proof.json --bom bom.json --public-key "<base64 public key>" --expect included
+# OK: example 009caefc0abd IS in the training set of student-v3 (1,288 leaves, 6 siblings); BOM signature valid (Ed25519, key 6cf6bc1a39c4491d, trusted key)
+curl -s https://<gateway>/ratchet/versions/3/heldout -H "Authorization: Bearer $ADMIN_KEY" > heldout.json
+python -m ratchet.proof heldout heldout.json --bom bom.json --public-key "<base64 public key>"
+# OK: all 133 golden examples provably absent from the training set of student-v3 (1,288 leaves); BOM signature valid (...)
+python -m ratchet.proof key --task ticket-triage --messages request.json   # the key a request is stored under
+```
+
+`verify` checks the BOM's hash and signature, that the proof is against the root the BOM signs for that split (never the root, `result` or `value` the file states, which only have to agree), and the proof itself. `heldout` rebuilds the golden root from the certificate's leaves, requires it and the size to match the BOM, and checks that every golden key is absent from the signed training root. Both exit 1 on any failure (a bad signature, a root mismatch, an invalid proof, an unexpected `--expect` result, a file that is not JSON) and 2 on bad input (a missing file). `key` reads a messages list or a request body (`--no-redact` for a gateway with `RATCHET_REDACT_PII=0`) and uses the gateway's settings from the environment. A BOM without commitments (v1, or written before v0.5) has nothing to check against: exit 1, `no set commitment`.
 
 ## GET `/ratchet/bom/public-key`
 
@@ -788,7 +866,7 @@ Remove an API task: `{"deleted": "invoice-extract", "spec_hash": "...", "example
 
 ## Demo controls (mock mode only)
 
-All four return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
+All five return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
 
 The mock demo is shared by every visitor, so the controls protect themselves:
 
@@ -833,6 +911,17 @@ Fault injection for the student circuit breaker: for `seconds` (clamped to 5–3
 ```
 
 Send traffic (Scout, or **Run 1 day + night**) and the release log shows the breaker at work: a `student_error` event for the first failure (`v2: ConnectError`; later ones are logged on the 10th, 100th and 1000th), then, after 5 failures in a row, `circuit` `student: closed->open after 5 failures (ConnectError)`; requests go straight to the teacher (route `student_breaker`); after 30 s one probe (`open->half_open`), which fails while the outage lasts and doubles the wait (`half_open->open for 60 s ...`); once the endpoint is back, a probe succeeds and `half_open->closed`. Calling it again starts a new outage of the given length from now.
+
+### GET `/ratchet/demo/sample-example?split=train&version=3`
+
+A committed example of `version` (default: the live version; **404** `no live version yet` before there is one) from its `split` set (`train` or `golden`, default `train`; anything else is **400**), as a body for [`POST /ratchet/versions/{id}/proof`](#post-ratchetversionsidproofsplittrain): its task, its stored (redacted) messages and the conditions it was stored under, never its answer. It is the first leaf, in key order, whose example is still stored; **404** for an unknown version or one with no such example. Read-only and lock-free.
+
+```json
+{"version": 3, "split": "train", "task": "ticket-triage",
+ "messages": [{"role": "system", "content": "You triage customer support tickets. …"}, {"role": "user", "content": "…"}]}
+```
+
+Post it back with `split=train` for an `included` proof, or take a `golden` sample and post it with `split=train` for an `absent` one.
 
 ### POST `/ratchet/demo/reset`
 

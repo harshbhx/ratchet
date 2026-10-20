@@ -67,7 +67,7 @@ Called "v0.2 hardening" in earlier drafts. Version numbers went to the demo laye
 | PII redaction before storing examples | Real customer data | Pattern-based: done (v0.4). NER-based (Presidio) for names and addresses: planned |
 | Gateway API keys and per-key quotas | Security | Done (v0.4). Per-key spend caps: planned |
 | Streaming responses | Many apps stream | Done (v0.4) |
-| Signed model bill of materials stored with each adapter | Auditable provenance | Done (v0.4). Copy inside the adapter folder in the bucket: planned |
+| Signed model bill of materials stored with each adapter | Auditable provenance | Done (v0.4). Copy inside the adapter folder in the bucket: done (v0.5, with committed training sets, [ADR 0027](adr/0027-committed-training-sets.md)) |
 | GitHub Actions CI with coverage | Open-source adoption | Done (v0.4). PyPI package: planned |
 | Postgres ledger option | Concurrency, durability | Planned |
 | Multiple tasks per deployment with separate golden sets and thresholds | Real workloads mix tasks | Planned |

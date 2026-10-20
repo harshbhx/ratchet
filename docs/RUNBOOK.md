@@ -53,6 +53,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rescored` | `run_night` | A night without enough new data to train re-scored the live version, because a golden task's spec changed since it was scored. The task's student traffic resumes under the new threshold | None |
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
 | `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
+| `integrity` | `POST /ratchet/versions/{id}/proof`, `GET /ratchet/versions/{id}/heldout` | A version's stored `version_leaves` (`v3 train leaves do not rebuild the root its BOM signs; the ledger was changed`) no longer rebuild the set commitment its signed BOM carries. SQLite's triggers refuse any edit through its API (INV-17), so someone edited the database file by other means (or dropped the triggers). The endpoints answer 500 for that version and split and serve no proof. Written once per version and split per process | Treat as tampering: stop the gateway, keep the file for forensics, restore the ledger from a backup ([Backups](#backups)) and compare `version_leaves` with the backup's. The signed BOM still holds the true roots |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -219,6 +220,21 @@ python -m ratchet.stats check bom.json --public-key "<base64 public key>"
 ```
 
 Exit 0 means the signature holds and every bound, verdict, frontier row, per-task row, Learn-then-Test step and paired p-value follows from the signed counts. Exit 1 prints each `FAIL:` line: a signature or hash failure means the document was edited or signed by another key; a number that does not follow from the counts means whoever wrote it computed it differently (or edited the document and re-hashed it). A certificate is about agreement with the teacher on the golden rows; read the `assumptions` before quoting it. When a live version is `not certified` but its audits look fine (`live` evidence), the golden set is usually too small: `python -m ratchet.stats plan` says how many served held-out rows the target needs.
+
+### Proving what an adapter was trained on
+
+Each BOM written since v0.5 signs a root per split over the exact training and golden examples ([ADR 0027](adr/0027-committed-training-sets.md), [API.md](API.md#committed-training-sets)). To answer "was this request used to train adapter 3?" for a customer or an auditor, with an admin key:
+
+```bash
+curl -s localhost:8000/ratchet/versions/3/bom > bom.json
+curl -s "localhost:8000/ratchet/versions/3/proof?split=train" -H "Authorization: Bearer $ADMIN_KEY" \
+  -H 'content-type: application/json' -d @request.json > proof.json    # {"task": ..., "messages": [...]} or {"key": ...}
+python -m ratchet.proof verify proof.json --bom bom.json --public-key "<base64 public key>"
+curl -s localhost:8000/ratchet/versions/3/heldout -H "Authorization: Bearer $ADMIN_KEY" > heldout.json
+python -m ratchet.proof heldout heldout.json --bom bom.json --public-key "<base64 public key>"
+```
+
+Send them `bom.json` and `proof.json` (or `heldout.json`) and the public key you published; they need nothing else. `result: absent` for a request you expected to be included usually means the key differs: the request's task, a `stop`, `response_format` or `tools` field, or the redaction setting (`python -m ratchet.proof key ... [--no-redact]` prints the key the gateway would compute), or the teacher's answer was never stored (`skip_example`, or `requests.stored = 0`). `Ledger.versions_containing(key)` lists every version whose training set holds a key. A 404 `commitment not available` means the version was trained before v0.5. Share a held-out certificate with auditors, not publicly: each non-membership proof names a neighbouring training example's hashes.
 
 ### Teacher answers not stored
 

@@ -191,6 +191,28 @@ def test_load_adapter_tolerates_already_loaded_and_raises_otherwise():
             load(status, text)
 
 
+@pytest.mark.req("FR-16.4")
+def test_bom_copies_never_leave_the_data_folder(tmp_path, monkeypatch, capsys):
+    data = tmp_path / "work" / "data"
+    _live_env(monkeypatch, RATCHET_DATA_DIR=str(data), RATCHET_SYNC_CMD="rclone copy data bucket:ratchet")
+    led = Ledger(":memory:")
+    run = RecordingRun()
+    trainer = live.NebiusTrainer(_live_settings(tmp_path), run=run)
+    for uri in ("../../escaped", "s3://bucket/adapters/x", ".."):
+        vid = _version(led, "candidate", adapter_uri=uri)
+        led.set_bom(vid, bom.document({"schema": bom.SCHEMA, "adapter": {"version": vid, "name": uri}}))
+        assert live.write_boms(led, vid, trainer)
+        assert json.loads((data / "boms" / f"student-v{vid}.json").read_text(encoding="utf-8")) == led.version_bom(vid)
+        assert f"adapter name {uri!r} is not a folder name" in capsys.readouterr().err
+    assert not (data / "adapters").exists() and sorted(p.name for p in tmp_path.rglob("*.json")) == [
+        "student-v1.json",
+        "student-v2.json",
+        "student-v3.json",
+    ]
+    assert run.commands == ["rclone copy data bucket:ratchet"] * 3  # the boms/ copies are still uploaded
+    assert live.write_boms(led, _version(led), trainer) and len(run.calls) == 3  # no BOM yet: nothing to write
+
+
 @pytest.mark.req("NFR-2")
 def test_reload_adapters_loads_live_canary_shadow(tmp_path, monkeypatch):
     _live_env(monkeypatch, RATCHET_ADAPTER_ROOT="/mnt/adapters")
@@ -216,14 +238,16 @@ def test_reload_adapters_loads_live_canary_shadow(tmp_path, monkeypatch):
         live.reload_adapters(s, led, http=httpx.Client(transport=_failing(503)))
 
 
-@pytest.mark.req("FR-8.4", "FR-3.6", "FR-15.2")
+@pytest.mark.req("FR-8.4", "FR-3.6", "FR-15.2", "FR-16.4")
 def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     seed, public_key = bom.keygen()
     data, db = tmp_path / "data", tmp_path / "live.db"
+    sync = "aws s3 sync ./data s3://customer-bucket/ratchet"
     _live_env(
         monkeypatch,
         RATCHET_DB=str(db),
         RATCHET_DATA_DIR=str(data),
+        RATCHET_SYNC_CMD=sync,
         RATCHET_STUDENT_BASE=STUDENT_BASE,
         RATCHET_STUDENT_KEY=STUDENT_KEY,
         RATCHET_TEACHER_BASE=TEACHER_BASE,
@@ -243,7 +267,14 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
         server = vllm if base_url == STUDENT_BASE else token_factory
         return OpenAICompatProvider(base_url, api_key, transport=server.transport, **options)
 
-    run = RecordingRun()
+    copies_at_sync: list[list[str]] = []  # the adapter folders holding a BOM copy each time the bucket is synced
+    run = RecordingRun(
+        on_call=lambda argv: (
+            copies_at_sync.append(sorted(p.parent.name for p in data.glob("adapters/*/ratchet_bom.json")))
+            if " ".join(argv) == sync
+            else None
+        )
+    )
 
     def main(*argv: str) -> str:
         live.main(list(argv), provider_factory=factory, run=run, http=_http(vllm))
@@ -260,6 +291,11 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert (doc["manifest"]["training"]["examples"], doc["manifest"]["golden"]["examples"]) == (60, 6)
     assert bom.verify(doc, public_key)[0]  # signed with RATCHET_BOM_SIGNING_KEY
     assert f"bill of materials: {boms / 'student-v1.json'}" in out and "[trained] v1 on 60 examples" in out
+    # A copy inside the adapter's folder, beside the weights the job wrote there, uploaded by a second sync (FR-16.4).
+    inside = data / "adapters" / "student-v1" / "ratchet_bom.json"
+    assert json.loads(inside.read_text(encoding="utf-8")) == doc and f"in the adapter folder: {inside}" in out
+    assert copies_at_sync == [[], ["student-v1"]]
+    assert doc["manifest"]["training"]["commitment"]["size"] == 60 == len(led.version_leaves(1, "train"))
     assert [v.state for v in led.versions()] == ["canary"]  # cold start: straight to canary
     # The training job's wall-clock time is a compute interval for the cost report (FR-15.2), at the default L40S rate.
     (job,) = led.compute_intervals("training_job")
@@ -272,7 +308,7 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
         (STUDENT_BASE, STUDENT_KEY, {"timeout": timeouts(15.0, connect_s=2.0), "retry": retry}),
         (TEACHER_BASE, TEACHER_KEY, {"timeout": timeouts(120.0), "retry": retry}),
     ]
-    assert run.commands == ["bash deploy/train_job.sh student-v1"]
+    assert run.commands == [sync, "bash deploy/train_job.sh student-v1", sync]
     assert len(train.load_rows(str(data / "night" / "train.jsonl"))) == 60
     # The adapter was hot-loaded, then sampled on the golden set as in production; the judge got JSON mode.
     assert [c.json["lora_name"] for c in vllm.calls_to("/load_lora_adapter")] == ["student-v1"]
@@ -295,10 +331,25 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     main("tick")
     # No command means night: a release is in flight, so nothing trains and no new BOM appears.
     assert "release in flight" in main()
-    assert run.commands == ["bash deploy/train_job.sh student-v1"] and sorted(p.name for p in boms.iterdir()) == [
+    assert run.commands == [sync, "bash deploy/train_job.sh student-v1", sync] and sorted(p.name for p in boms.iterdir()) == [
         "student-v1.json"
     ]
     assert len(Ledger(str(db)).compute_intervals("training_job")) == 1  # no training, no GPU time
+    # The next trained night, with the upload after it failing: the copies stay local and the command fails at the end.
+    led = Ledger(str(db))
+    led.set_version(1, "live", 100)
+    _examples(led, train=60, golden=0, prefix="later")
+
+    def fail_after_training(argv: list[str]) -> None:
+        if " ".join(argv) == sync and (data / "adapters" / "student-v2").is_dir():
+            raise subprocess.CalledProcessError(1, argv)
+
+    run.on_call = fail_after_training
+    with pytest.raises(SystemExit, match="RATCHET_SYNC_CMD failed after the night"):
+        main("night")
+    assert "RATCHET_SYNC_CMD failed (CalledProcessError" in capsys.readouterr().err
+    assert (data / "adapters" / "student-v2" / "ratchet_bom.json").is_file() and (boms / "student-v2.json").is_file()
+    assert Ledger(str(db)).version_bom(2) is not None  # the night itself is done
     with pytest.raises(SystemExit, match="unknown command 'bogus'"):
         live.main(["bogus"], provider_factory=factory, run=run, http=_http(vllm))
 

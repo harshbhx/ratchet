@@ -29,8 +29,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .. import licenses, tasks
+from .. import bom, licenses, tasks
 from ..ledger import Ledger, example_hash
+from ..merkle import KeySet
 
 FREQUENT = 3
 
@@ -99,6 +100,29 @@ def dataset_hash(items: list[dict[str, Any]]) -> str:
     for it in items:
         h.update(it["provenance"]["hash"].encode())
     return h.hexdigest()
+
+
+def leaf_value(row: dict[str, Any]) -> bytes:
+    """A row's leaf value in its split's set commitment (FR-16.4, ADR 0027): the SHA-256 of the canonical JSON of its
+    label (the stored teacher answer, which is the training target), the teacher and license that wrote it, and the
+    number of PII placeholders in it. A proof then binds what an example was trained on and under which license, not
+    only that its key was there; anyone holding the example can recompute the value."""
+    prov = row["provenance"]
+    preimage = {
+        "completion": row["messages"][-1]["content"],
+        "teacher": prov["teacher"],
+        "license": prov["license"],
+        "redactions": int(prov["redactions"]),
+    }
+    return hashlib.sha256(bom.canonical(preimage)).digest()
+
+
+def commitment(items: list[dict[str, Any]]) -> tuple[str, int, list[tuple[str, str]]]:
+    """The set commitment of one split's rows (`merkle.KeySet`, ADR 0027): (root hex, size, the (key hex, value hex)
+    leaves sorted by key). The key is the example's hash (`provenance.hash`, `examples.hash`), so the training and golden
+    sets of one night never share a key (`rows` puts each example in exactly one), and a duplicate raises ValueError."""
+    keyset = KeySet((bytes.fromhex(it["provenance"]["hash"]), leaf_value(it)) for it in items)
+    return keyset.root_hex, keyset.size, [(k.hex(), v.hex()) for k, v in keyset.items()]
 
 
 def write_jsonl(items: list[dict[str, Any]], path: str | Path) -> Path:
