@@ -12,8 +12,12 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
-CATEGORIES = ["billing", "technical", "account", "shipping", "refund", "security"]
-PRIORITIES = ["low", "medium", "high", "urgent"]
+from ratchet.vocab import TICKET_CATEGORIES, TICKET_PRIORITIES
+
+# The ticket-triage task's vocabularies (ratchet/vocab.py), as lists: the prompt offers exactly the labels the task
+# accepts, and the mock student draws from them in this order.
+CATEGORIES = list(TICKET_CATEGORIES)
+PRIORITIES = list(TICKET_PRIORITIES)
 
 SYSTEM = (
     "You triage customer support tickets. Reply with JSON only: "

@@ -599,6 +599,15 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.providers:_completions",
         "ratchet.ledger:SCHEMA",
     ),
+    "FR-2.14": (
+        "ratchet.compare:FieldSpec",
+        "ratchet.tasks:Task.key",
+        "ratchet.tasks:Task.match",
+        "ratchet.confidence:score",
+        "ratchet/vocab.py",
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.nightschool.dataset:rows",
+    ),
     # 6.3 Provenance and licensing
     "FR-3.1": ("ratchet.licenses:REGISTRY", "ratchet.licenses:require_distillable"),
     "FR-3.2": ("ratchet.licenses:CLOSED", "ratchet.licenses:require_distillable"),
@@ -707,7 +716,12 @@ CODE: dict[str, tuple[str, ...]] = {
     "INV-13": ("ratchet.auth:KeyRing.identify",),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
     "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
-    "INV-16": ("ratchet.router:Ratchet._store_example", "ratchet.router:answer_problem", "ratchet.tasks:clean_answer"),
+    "INV-16": (
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.router:answer_problem",
+        "ratchet.tasks:clean_answer",
+        "ratchet.tasks:Task.check",
+    ),
 }
 
 _UI = "dashboard UI: checked in light and dark mode at 1440 and 390 px with Playwright; CI typechecks and builds it"

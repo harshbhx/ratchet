@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 505 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 574 tests (test_core, test_tasks, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -13,6 +13,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | File | Tests |
 |---|---|
 | `tests/test_core.py` | 52 (30 functions; one has 19 cases, one has 5) |
+| `tests/test_tasks.py` | 69 (33 functions; one has 20 cases, one has 18) |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 12 (11 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
@@ -23,11 +24,11 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **505** |
+| **Total** | **574** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
@@ -45,7 +46,7 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 
 | Test | Covers |
 |---|---|
-| `test_task_agree_ignores_free_text_and_reasoning` | `Task.agree` compares only `compare_keys`, case-insensitively, and ignores `<think>` blocks and code fences |
+| `test_task_agree_ignores_free_text_and_reasoning` | `Task.agree` compares only the task's fields (`category` and `priority` as labels), case-insensitively, and ignores `<think>` blocks and code fences |
 | `test_invalid_json_never_agrees` | Two invalid answers never count as agreeing |
 | `test_strip_reasoning_cases` (19 cases) | FR-2.7: `strip_reasoning` removes a full `<think>` pair, everything before a lone `</think>` (also before a fence, which it keeps), an unterminated `<think>` that opens what is left with what follows (`''`, also after whitespace, a pair or a lone `</think>`), but keeps one after answer text (content, such as a reply that mentions the tag), tags in upper or mixed case, nested and repeated blocks (the last `</think>` wins); text without tags is unchanged apart from surrounding whitespace; `None` is `''`; stripping twice changes nothing |
 | `test_clean_answer_unwraps_fences_only_for_structured_tasks` | FR-2.7, FR-2.13: for `ticket-triage`, one fence around the whole answer (`json`, `JSON`, none, single-line, closing fence on the last line) is unwrapped after reasoning is stripped; a free-text task keeps it. Kept as is: a fence whose body is not JSON, two fences, prose around a fence, a four-backtick fence, a body nested too deeply to parse |
@@ -75,6 +76,46 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_served_logprobs_check_every_entry_and_keep_the_clients_top_logprobs` | FR-1.14: `top_logprobs` cut to the client's count (none for 0 or unset), malformed alternatives left out; a malformed entry (no logprob, a string, a boolean, NaN, +Infinity, no token, an unpaired surrogate) makes the list None; -Infinity is -9999.0 (`MIN_LOGPROB`); the server's bytes are kept when they are bytes; the fakes' `token_entries` spell their text |
 | `test_majority_gives_n_agreeing_choices_with_the_best_sample_first` | FR-1.14, FR-2.2: `confidence.majority` gives the best scored sample first, then the other agreeing samples by token probability, never the minority; None when fewer than n agree, a cut-off or invalid sample never fills a choice, and a repeated object counts twice |
 | `test_gen_plan_for_n_choices` | FR-1.14, FR-1.13: `GenPolicy.plan(params, n)`: the serving teacher at 0.7 (`CHOICES_TEMPERATURE`) for n > 1 without a client temperature that reaches it (also when the allowlist leaves temperature out), the client's otherwise; audits at 0; the student's sampling unchanged; the teacher's logprobs only when asked, never in an audit; a bad n is a `ValueError` |
+
+### `tests/test_tasks.py`
+
+Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Pure logic on `compare.FieldSpec` and `tasks.Task`, plus small ledgers and `RecordingProvider` for what the cascade, the golden eval and the dataset do with an answer the spec refuses.
+
+| Test | Covers |
+|---|---|
+| `test_exact_is_the_v04_rule` | `exact`: strings stripped and lower-cased; `1` and `1.0`, `true` and `1`, lists in another order differ |
+| `test_label_normalises_and_checks_its_vocabulary` | `label`: NFKC, case, trailing sentence punctuation and separators; a value outside `values` is invalid; `c#` is not `c` |
+| `test_label_aliases` | `P1` is `urgent`, `SEV-2` is `high`; an alias outside the vocabulary is refused |
+| `test_bool_reads_words_and_json` | `yes`/`no`/`y`/`n`/`1`/`0` and JSON booleans; `maybe` and `2` invalid |
+| `test_number_reads_money_separators_and_tolerances` | `1,234.50` == 1234.5 with `abs_tol` 0.01; `1.234,50 €` with `decimal=","`; `(5)` == -5; relative tolerance; percent as number or fraction |
+| `test_parse_number_cases` (20 cases) | Thousands groupings (also Indian, apostrophe, space), `US$`, ISO codes, exponents, signs; ambiguous `1,5`, lower-case codes, units, NaN, infinities, `1_000`, double signs refused |
+| `test_number_refuses_non_finite_and_non_numbers` | Strings, booleans, lists, `1e999`, NaN and an integer too large for a float are invalid |
+| `test_ordinal_tolerance` | `low` and `medium` agree with tolerance 1, `low` and `high` do not; an unknown label is invalid; `order` is required |
+| `test_text_modes` | `loose` with suffixes (`Acme Corp.` == `ACME corp` == `Acme, Inc.`, a two-token suffix), a suffix that is the whole name kept, `exact`, `token_set` |
+| `test_date_formats` | Six written forms == `2026-10-03`; month first by default, `day_first`; the local day of a datetime; UTC datetimes; impossible dates invalid |
+| `test_language_codes_and_names` | `English` == `en` == `eng` == `en-US`, `Deutsch`, `日本語`; unknown languages invalid; `values` restricts |
+| `test_set_order_case_and_jaccard` | Order, case and duplicates ignored; Jaccard 0.8 boundary; `empty_values`; `split` with number elements; a string without `split` is invalid |
+| `test_records_unordered_keyed_and_ordered` | Greedy and keyed pairing across order, `ordered=True`, a changed field or length, duplicate keys and a missing sub-field invalid |
+| `test_ranking_top_k` | Top-3 in order and as a set; an id ranked twice is invalid |
+| `test_root_label_text_format` | A text task's `$` label: `Positive.` == `positive`, reasoning removed; other paths refused |
+| `test_top_level_array_with_dollar_path` | A `$` set over a top-level array (fenced, after a sentence, after reasoning), a `$` number, dot paths into nested objects |
+| `test_empty_json_is_invalid_when_fields_required` | `{}` is invalid for `ticket-triage` (score 0), but still valid for a `compare_keys` task, as in v0.4 |
+| `test_out_of_vocab_label_invalid` | INV-16: `check` reasons (`invalid field category`, `invalid field priority`, `invalid answer`, `empty answer`); every answer the mock world writes is valid |
+| `test_nullable_field_accepts_null` | Required, nullable and optional fields and how null and missing agree |
+| `test_bad_specs_fail_when_defined` (18 cases) | Reserved and unknown types, bad paths, options on the wrong type, duplicate labels, tolerances on set elements, record keys, the value, field and format limits, policy keys and ranges, `tools` |
+| `test_records_nest_at_most_four_deep_and_hold_at_most_200` | Depth 4 allowed and 5 refused; 200 records valid and 201 invalid; the 200 count across nesting |
+| `test_spec_hash_covers_the_rules_not_the_name` | Same rules, same hash, whatever the name or source; a vocabulary or `pinned` changes it; `dataclasses.replace` recomputes it; `policy` is read-only |
+| `test_legacy_compare_keys_canonical_byte_identical` | FR-2.6: a `compare_keys` task's `canonical` and `agree` equal v0.4's on 25 answers with fences, `<think>`, nulls, `1` vs `1.0`, nested values, NaN and deep nesting |
+| `test_pairwise_score_equals_counter_score_for_exact_tasks` | FR-2.2: on 600 seeded random sample sets (invalid and cut-off samples, ties, missing logprobs), the pairwise score equals v0.4's `Counter` score: the same answer object, confidence, agreement and token probability; `majority`'s choices agree |
+| `test_builtin_task_agreement_decisions_unchanged` | On mock answers for the three built-in tasks, the typed specs decide agreement, confidence and the best sample exactly as v0.4's exact keys |
+| `test_tolerance_non_transitive` | 0, 0.6, 1.2 with `abs_tol` 1: the middle sample, agreement 1.0, even at a lower token probability; `majority`; two groups tie and the first wins |
+| `test_default_compares_json_canonically` | Key order, spacing, case, NFKC and `1` vs `1.0` agree when both are JSON; list order and `true` vs `1` do not; the text rule otherwise; deep nesting compared as text; a `json` task without fields |
+| `test_comparators_are_linear_on_adversarial_answers` | Long labels, suffix runs, token sets, numbers, dates, languages and sets normalise at once, 200 records pair in the worst order, all under 2 s |
+| `test_comparators_never_raise_on_junk` | INV-7: 3,000 seeded junk values (odd strings, NaN, huge integers, nested lists and objects) never make a comparator raise, and every valid value matches itself |
+| `test_invalid_teacher_answer_served_but_not_stored` | FR-2.13, INV-16: an out-of-vocabulary or incomplete teacher answer is served, not stored, `skip_example` names the field; an invalid student answer is never served; `store=False` stores nothing without a skip |
+| `test_invalid_audit_not_counted` | INV-16: an audit whose teacher answer the spec refuses is `audited=0`, not stored |
+| `test_cascade_eval_skips_invalid_golden_refs` | INV-6: rows with invalid references are not sampled and are counted in `golden_invalid_refs`; the halves alternate over the scored rows |
+| `test_dataset_rows_skip_invalid` | INV-2, INV-16: train rows stored under a looser spec are left out and counted (`skipped_invalid`, also in `manifest.json`); golden rows stay |
 
 ### `tests/test_nightschool.py`
 
@@ -286,7 +327,7 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 | `test_n_choices_are_scored_as_calibrated_and_choice_zero_is_the_one_choice_answer` | FR-1.14, FR-2.1, FR-2.2, NFR-3: with scripted samples, n = 1 to 4 draws `max(3, n)` samples and reports and logs the one-choice confidence; served choices are the best scored sample then the agreeing ones by token probability, with usage (prompt once, every choice), breakdown, cost and baseline to the token; a confident student that cannot fill n escalates with route `n_choices`, the teacher writes n choices at 0.7, cost and baseline price the whole call, and only choice 0 is stored; an unsure student escalates on `confidence` |
 | `test_teacher_writes_n_choices_and_only_choice_zero_is_stored` | FR-1.14, FR-4.3, INV-2, INV-10, FR-2.5: an escalation gets n choices at 0.7 or the client's temperature, and its example is bumped once per request; cold start, pinned and teacher-only requests get n choices, pinned ones stored never; a teacher returning fewer choices gives fewer; an audit of an n = 2 student answer is one answer at temperature 0 without logprobs, judged against choice 0, with a baseline of one audit-sized answer per choice; the shadow samples 3 while the live student draws 4, and its disagreement with choice 0 is arbitrated |
 | `test_logprobs_come_back_only_when_asked_and_match_the_score` | FR-1.14, FR-2.2: choice 0's token logprobs spell its text and their mean probability is `Scored.token_prob`, with the client's `top_logprobs` alternatives (the student got `top_logprobs`); none without `logprobs`, the student sampled as before; each of n choices carries its own; the teacher gets `logprobs` and `top_logprobs` only when asked, an audit never; a teacher that sends none gives None |
-| `test_empty_json_answer_scores_zero` | Strict xfail (TASK-COMPARATORS): three `{}` answers to `ticket-triage` score 0.98 today and `{}` agrees with `{}` |
+| `test_empty_json_answer_scores_zero` | FR-2.2, FR-2.6, FR-2.14: three `{}` answers to `ticket-triage` score 0 and `{}` never agrees with `{}` (a strict xfail until field comparators made the built-in fields required) |
 | `test_o_series_prefixes_refused` (4 cases) | FR-3.2, US-8, INV-1: `o1-preview`, `o3-mini`, `o4-mini` and `openai/o3-mini` are refused under the OpenAI terms |
 | `test_closed_teacher_fails_at_startup` | FR-3.2, INV-1: `Ratchet(...)` raises for `gpt-4o` and for an unknown teacher; the gateway's `Runtime` refuses to start with `gpt-4o` in live and mock mode |
 | `test_closed_fallback_teacher_fails_at_startup` | FR-3.2, INV-1, FR-2.12: `Ratchet(...)` raises `LicenseError` for a fallback teacher that is closed (`gpt-4o`, `openai/gpt-4o`, `o3-mini`, a Claude and a Gemini model) or unknown; the gateway's `Runtime` refuses to start with it in live and mock mode; a distillable fallback is licensed up front (`Ratchet.licenses`) |
@@ -412,12 +453,12 @@ Found while writing them: without `RATCHET_STUDENT_BASE`, `NebiusTrainer` ran th
 
 ## Contract tests
 
-`tests/test_contract.py` was written before the v0.5 rewrites of `Ratchet.handle` and `gateway.chat` (request validation and normalisation, field comparators), as their regression net. Request validation has landed (`tests/test_openai_compat.py`) and its four strict xfails now pass as ordinary tests. Each test pins behaviour that someone outside the module depends on: an OpenAI client (status codes, `/v1/models`, task selection), the dashboard (`/ratchet/stats`), an auditor (`/ratchet/bom`, license fields), or the operator's bill (cost to the token).
+`tests/test_contract.py` was written before the v0.5 rewrites of `Ratchet.handle` and `gateway.chat` (request validation and normalisation, field comparators), as their regression net. Both have landed (`tests/test_openai_compat.py`, `tests/test_tasks.py`), and their five strict xfails now pass as ordinary tests. Each test pins behaviour that someone outside the module depends on: an OpenAI client (status codes, `/v1/models`, task selection), the dashboard (`/ratchet/stats`), an auditor (`/ratchet/bom`, license fields), or the operator's bill (cost to the token).
 
 Rules:
 
 - **The stats keys only grow.** `tests/fixtures/stats_keys.json` lists every key the dashboard reads from `/ratchet/stats` (it mirrors `Stats` in `web/src/lib/api.ts`) with its JSON type; a `[]` key is a list whose every item is checked. A change may add keys to the payload and to the fixture. It must not remove or retype one, so the React dashboard and other clients keep working. The test also fails if the fixture loses one of the keys this contract started with.
-- **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (today `TASK-COMPARATORS`; `API-VALIDATE-NORMALIZE` has landed and removed its four). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
+- **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (none today: `API-VALIDATE-NORMALIZE` removed its four and `TASK-COMPARATORS` its one). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
 - Cost assertions are token-exact: each model gets distinct token counts, and the expected cost is built from `Settings.price(...)`, so a term billed with the wrong tokens, price or multiplicity fails.
 - The dashboard's rendering is still checked by hand ([web/CLAUDE.md](../web/CLAUDE.md)); `test_stats_contract` proves the data it renders. FR-7.6 (light and dark mode, phone width) stays a manual check.
 

@@ -9,8 +9,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-SOURCE_TYPES = ["docs", "paper", "blog", "forum", "news", "other"]
-FACT_TYPES = ["definition", "number", "date", "name", "none"]
+from .. import vocab
+
+# The source-triage and page-read tasks' vocabularies (ratchet/vocab.py): the prompts offer exactly the labels the tasks
+# accept.
+SOURCE_TYPES = list(vocab.SOURCE_TYPES)
+FACT_TYPES = list(vocab.FACT_TYPES)
 
 PLAN_SYSTEM = (
     "You are the planner in a research team. Given a question, write 3 short web search queries "

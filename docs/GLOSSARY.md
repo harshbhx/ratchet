@@ -10,9 +10,10 @@
 | **Confidence** | A score from 0 to 1: 0.4 × token probability of the best majority sample + 0.6 × agreement among samples. Invalid-format answers score 0. |
 | **Threshold** | The confidence at or above which the student's answer is served. Calibrated per version. |
 | **Calibration** | Picking the lowest threshold whose served answers reach a target precision (97%) on held-out data. |
-| **Self-consistency / agreement** | How many of the student's n samples (default 3) give the same answer. |
+| **Self-consistency / agreement** | How many of the student's n samples (default 3) give the same answer, compared pairwise with the task's field comparators. |
 | **Logprobs** | The model's log-probabilities for each generated token. Used to estimate how sure it is. |
-| **Task** | A named kind of call (for example `ticket-triage`) that defines which answer fields must match for two answers to agree, and whether it is pinned. Chosen with the `X-Ratchet-Task` header. |
+| **Task** | A named kind of call (for example `ticket-triage`) that defines which answer fields must match for two answers to agree, which answers are valid, and whether it is pinned. Chosen with the `X-Ratchet-Task` header. |
+| **Field comparator** | How one field of a task's answer is normalised and compared (`label` over a vocabulary, `number` with a tolerance, `date`, `set`, `records`, ...). A required field that is missing, or a value that does not normalise, makes the answer invalid. |
 | **Distillable task** | A task whose teacher answers become training data, so the student can take it over. Example: `source-triage`. Every task is distillable unless it is pinned. |
 | **Pinned task** | A task that always goes to the teacher and is never stored as training data (`Task.pinned`). Used for open-ended work such as planning and writing. Examples: `research-plan`, `research-write`. |
 | **Audit** | The teacher re-answers a random share of student-served requests (`audit_rate`) to measure live quality. |

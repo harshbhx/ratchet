@@ -229,7 +229,8 @@ class EchoTeacher:
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         self.seen.append(messages)
-        return [Completion(text='{"category": "account", "reply": "Mailed you at bob@example.com"}', model=model)]
+        text = '{"category": "account", "priority": "high", "reply": "Mailed you at bob@example.com"}'
+        return [Completion(text=text, model=model)]
 
 
 @pytest.mark.req("FR-4.7", "NFR-4", "INV-12")
@@ -734,13 +735,13 @@ def test_answers_that_quote_think_tags_are_served_and_stored_whole():
     """Review finding: cutting at any `<think>` or `</think>` served a complete triage reply that mentions the tag as
     broken JSON and stored nothing (`invalid answer`), took the vote from student samples quoting `</think>`, and cut a
     free-text answer short."""
-    reply = '{"category": "bug", "priority": "high", "reply": "Your model output shows a stray <think> tag; we fix it."}'
+    reply = '{"category": "technical", "priority": "high", "reply": "Your model output shows a stray <think> tag; we fix it."}'
     led, r = _hygiene(RecordingProvider(reply))
     assert r.handle(_ask("My model prints a stray tag"), "ticket-triage").text == reply
     assert [ex["completion"] for ex in led.examples()] == [reply]
     assert _row(led)["stored"] == 1 and _skips(led) == []
 
-    closing = '{"category":"bug","priority":"high","reply":"Strip everything up to the </think> tag before parsing."}'
+    closing = '{"category":"technical","priority":"high","reply":"Strip everything up to the </think> tag before parsing."}'
     led, r = _hygiene(RecordingProvider("unused"), student=RecordingProvider(closing), threshold=0.5)
     out = r.handle(_ask("How do I parse it?"), "ticket-triage")
     assert (out.served_by, out.text, out.confidence > 0.9) == ("student", closing, True)

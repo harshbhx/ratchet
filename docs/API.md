@@ -75,7 +75,7 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 
 | Header | Meaning |
 |---|---|
-| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. Unknown names create a plain-text task on the fly (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); a header that is not a valid name means `default`. Missing means `metadata.ratchet_task`, else `default` |
+| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. Unknown names create a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); a header that is not a valid name means `default`. Missing means `metadata.ratchet_task`, else `default` |
 
 #### Messages
 
@@ -91,7 +91,7 @@ A message keeps `role`, `content` and `name`, plus `refusal`, `tool_calls` and `
 
 Content parts: `{"type": "text", "text": "..."}` in any message, and `{"type": "refusal", "refusal": "..."}` in assistant messages. A message made only of text parts is turned into one string, the parts joined by newlines, before anything else happens, so it is answered, deduplicated and stored exactly like the same text sent as a string. Messages already in the plain form pass through unchanged. Other part types (`image_url`, `input_audio`, `file`) get **400** `unsupported_content_type`, unless `RATCHET_TEACHER_MODALITIES` lists them ([CONFIGURATION.md](CONFIGURATION.md#request-limits-and-openai-compatibility)): then the request goes to the teacher only, with the parts as sent, and nothing is stored as a training example. `RATCHET_MERGE_SYSTEM=1` merges consecutive leading system messages into one.
 
-The task decides how answers are compared. `ticket-triage` compares only the JSON fields `category` and `priority`; `default` compares the whole normalised text. Pinned tasks (`research-plan`, `research-write`) skip the student and always go to the teacher; their answers are not stored as training examples. The full list is in [CONFIGURATION.md](CONFIGURATION.md#tasks).
+The task decides how answers are compared and which answers are valid. `ticket-triage` compares only the JSON fields `category` and `priority`, labels that must be in the task's vocabulary (an answer without them, or with another label, is never served by the student or stored); `default` compares whole answers: canonical JSON when both are JSON, else the normalised text. Pinned tasks (`research-plan`, `research-write`) skip the student and always go to the teacher; their answers are not stored as training examples. The full list is in [CONFIGURATION.md](CONFIGURATION.md#tasks).
 
 #### Generation parameters
 

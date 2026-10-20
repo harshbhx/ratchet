@@ -195,38 +195,99 @@ Other constants:
 
 ## Tasks
 
-A task tells Ratchet when two answers "agree" (`ratchet/tasks.py`):
+A task tells Ratchet when two answers "agree" and which answers are valid (`ratchet/tasks.py`, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Its `fields` list the parts of the answer that must match, each a path and a typed comparator (`ratchet/compare.py`); anything else in the answer, such as a free-text `reply`, is ignored.
 
-| Task | `compare_keys` | `pinned` | Agreement rule |
+| Task | Fields | `pinned` | Agreement rule |
 |---|---|---|---|
-| `default` | none | no | Whole text equal after removing reasoning (`tasks.strip_reasoning`), lower-casing and collapsing whitespace; an empty answer never agrees |
-| `ticket-triage` | `category`, `priority` | no | Parse JSON (tolerates reasoning, code fences and surrounding text), compare only those fields, case-insensitive. Free-text fields such as `reply` are ignored |
-| `source-triage` | `relevant`, `source_type` | no | Scout's triage agent. Same JSON rule; `reason` is ignored |
-| `page-read` | `answers_question`, `fact_type` | no | Scout's reader agent. Same JSON rule; `key_fact` is ignored |
+| `default` | none | no | Whole answer: when both are a JSON object or array, canonical JSON (sorted keys; strings, keys included, NFKC-normalised, case-folded and stripped; numbers as floats); otherwise the text after removing reasoning (`tasks.strip_reasoning`), lower-cased with whitespace collapsed. An empty answer never agrees |
+| `ticket-triage` | `category` (label over `billing`, `technical`, `account`, `shipping`, `refund`, `security`), `priority` (label over `low`, `medium`, `high`, `urgent`) | no | Parse JSON (tolerates reasoning, code fences and surrounding text) and compare both labels. Both are required: `{}`, a missing `priority` or a category outside the list is invalid. `reply` is ignored |
+| `source-triage` | `relevant` (bool), `source_type` (label over `docs`, `paper`, `blog`, `forum`, `news`, `other`) | no | Scout's triage agent. Same JSON rule; `reason` is ignored |
+| `page-read` | `answers_question` (bool), `fact_type` (label over `definition`, `number`, `date`, `name`, `none`) | no | Scout's reader agent. Same JSON rule; `key_fact` is ignored |
 | `research-plan` | none | **yes** | Scout's planner. Always answered by the teacher |
 | `research-write` | none | **yes** | Scout's writer. Always answered by the teacher |
 
+The built-in vocabularies are in `ratchet/vocab.py`; the prompts that ask for these labels (`sim/tickets.py`, `ratchet/scout/prompts.py`) import the same lists.
+
+**Valid answers.** Every field is required unless it says `required=False`, and may be null only when `nullable=True`. An answer is invalid when it is empty after cleaning, does not parse in the task's format, lacks a required field, or has a value its type cannot normalise (a label outside `values`, a date that is not one). An invalid answer never counts: a student sample gets no vote (all invalid: confidence 0, never served), a teacher answer is served but not stored (`skip_example` `invalid field <path>`) and is not an audit, a golden reference is skipped (`golden_invalid_refs` in the eval), and a stored train row the current spec refuses is left out of training (`skipped_invalid` in the dataset manifest). An optional field that is missing or null agrees only with missing or null.
+
+**Agreement is pairwise.** `confidence.score` compares every pair of samples with the task's comparators, so a tolerance works: under `abs_tol=1`, samples 0, 0.6 and 1.2 agree through 0.6 (agreement 1.0), and 0.6 is the answer served ([ARCHITECTURE.md](ARCHITECTURE.md#score-confidencescore)).
+
+### Field types
+
+`FieldSpec(path, type, ...)`. `path` is `$` (the whole answer) or a dot path into nested objects (`customer.address.city`); a missing path is a missing field.
+
+| Type | Accepts | Normalised to | Agree when | Options |
+|---|---|---|---|---|
+| `exact` | any JSON value | strings stripped and lower-cased, anything else as it is (v0.4's rule) | equal as JSON text: `1` and `1.0` differ, so do `true` and `1` | none |
+| `label` | a string (or an integer) | NFKC, case-folded, trailing `.`, `,`, `;`, `:`, `!`, `?` dropped, runs of spaces, `_` and `-` as one `_` (`Very High.` is `very_high`), then `aliases` | equal; a label outside `values` is invalid | `values`, `aliases` (`{"P1": "urgent"}`; each alias must name a value) |
+| `bool` | `true`/`false`, `yes`/`no`, `y`/`n`, `1`/`0`, as JSON or as a string | true or false | equal | none |
+| `number` | a JSON number, or a string with currency symbols (`$`, `€`, `₹`, any Unicode currency sign), an ISO 4217 code in capitals before or after (`USD 12`, `12.50 EUR`), thousands separators that fit `decimal` (`1,234.50`; `1.234,50` with `decimal=","`; spaces, apostrophes, Indian grouping), `(12.00)` for a negative, a trailing `%` | a float; NaN, infinities, ambiguous groupings (`1,5` under `decimal="."`) and strings over 100 characters are invalid | `abs(a − b) <= max(abs_tol, rel_tol × max(abs(a), abs(b)))`; exact with both tolerances 0 (`1` equals `1.0`) | `abs_tol`, `rel_tol`, `decimal` (`.` or `,`), `percent` (`number`: `12%` is 12; `fraction`: 0.12) |
+| `ordinal` | a label in `order` | its position | positions at most `tolerance` apart | `order` (required, lowest first), `tolerance`, `aliases` |
+| `text` | a string (or an integer) | `exact`: case-folded, whitespace collapsed; `loose` (default): NFKC, case-folded, punctuation dropped (`U.S.A.` is `usa`), whitespace collapsed, trailing `strip_suffixes` tokens dropped while another token is left; `token_set`: the set of loose tokens | equal | `mode`, `strip_suffixes` (`("inc", "ltd", "llc", "gmbh", "pvt ltd")`) |
+| `date` | ISO date or datetime (`2026-10-03`, `2026-10-03T12:00:00Z`, offsets), `2026/10/03`, `3 Oct 2026`, `3 October 2026`, `Oct 3 2026`, `October 3rd, 2026`, `3.10.2026`, `10/03/2026` (month first) | the ISO date; with `granularity="datetime"`, the ISO datetime in UTC (naive times read as UTC) | equal | `day_first` (`03/10/2026` is 3 October), `granularity` (`date`: the day as written, even with a time zone; `datetime`) |
+| `language` | an ISO 639-1, 639-2 or 639-3 code, a locale tag (`en-US`, `pt_BR`), or an English or native name (`English`, `Deutsch`, `日本語`) of about 80 languages | the 639-1 code | equal; an unknown language, or one outside `values`, is invalid | `values` |
+| `set` | a list, or a string split on `split` | the set of normalised elements, duplicates and `empty_values` removed | Jaccard overlap at least `min_jaccard` (default 1.0: equal); two empty sets agree | `item` (element spec or type name; default a label over the set's `values` and `aliases`), `min_jaccard`, `split`, `empty_values` (`("none", "n/a")`) |
+| `records` | a list of objects | each object's sub-`fields` | same length, and each record matches its partner: paired by the `key` fields, by position (`ordered=True`), or greedily | `fields` (required), `key`, `ordered` |
+| `ranking` | a list of ids | the normalised ids; an id ranked twice is invalid | `prefix` (default): the first `k` in order; `set`: the first `k` as a set (`k=0`: all) | `k`, `mode`, `item` |
+
+`similarity` (free text) and `tool_calls` are reserved type names for later releases, as are the formats `tool_calls` and `sql`; a spec that uses them is refused. A set's elements and a record's `key` fields compare by their normalised value only, so an element type with a tolerance is refused (use `records`).
+
+Limits: 64 fields per task (counting the fields inside records), records nested at most 4 deep, at most 2,000 `values`, `aliases`, `order` entries, suffixes or empty values per field, at most 200 records in one answer (at any depth) and 2,000 elements in one set or ranking. A spec that breaks a rule raises `ValueError` when the task is defined, so a broken spec stops the gateway at startup.
+
+### Task options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `fields` | none | The `FieldSpec`s above. A task without fields compares whole answers (the `default` rule) |
+| `compare_keys` | none | The v0.4 shortcut: each key becomes `FieldSpec(key, "exact", required=False)`, so answers compare, validate and canonicalise exactly as in v0.4. Give `compare_keys` or `fields`, not both |
+| `format` | `json` with fields, else `text` | `json`: fields are paths into the JSON answer, and a code fence around the whole answer is unwrapped; with a `$` field the answer may be any JSON value (a list, a number). `text`: the answer is plain text and its one field is `$`, the text without trailing `.!,;:` (`Positive.` is the label `positive`) |
+| `pinned` | false | Always the teacher, never training data (below) |
+| `store` | true | False: the task's teacher answers are served but never stored as training examples |
+| `policy` | `{}` | `samples` (1 to 16), `audit_rate`, `target_precision`, `min_precision` (0 to 1): part of the spec and its hash, read by later releases (per-task sampling, audits and precision targets) |
+| `routing` | `{}` | Routing rules for a later release; part of the spec and its hash |
+| `tools` | `teacher` | `teacher` or `distill` (opt-in tool-call distillation, a later release) |
+
+`Task.spec_hash` is 16 hex digits of SHA-256 over the task's rules (`Task.spec()`: everything above except the name), so a changed vocabulary or tolerance changes it and a renamed task keeps it.
+
 **Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data.
 
-Every answer is cleaned the same way before it is compared, served or stored (`tasks.clean_answer`): reasoning is removed (`<think>` blocks, anything before a lone `</think>`, an unterminated `<think>` that opens what is left and what follows), and for a task with `compare_keys` (a structured task) a code fence around the whole answer is unwrapped when its body is JSON; an answer that is one JSON object is kept whole, tags quoted in its strings included. A teacher answer is stored as a training example only when it is complete (`finish_reason` `stop` or `tool_calls`), not empty, and, for a structured task, valid JSON (invariant 16); otherwise it is served and logged as a `skip_example` event. So a structured task's system prompt should ask for JSON only.
+Every answer is cleaned the same way before it is compared, served or stored (`tasks.clean_answer`): reasoning is removed (`<think>` blocks, anything before a lone `</think>`, an unterminated `<think>` that opens what is left and what follows), and for a JSON task (any task with fields, unless its format is `text`) a code fence around the whole answer is unwrapped when its body is JSON; an answer that is one JSON object is kept whole, tags quoted in its strings included. A teacher answer is stored as a training example only when it is complete (`finish_reason` `stop` or `tool_calls`), not empty, and valid under the task (invariant 16); otherwise it is served and logged as a `skip_example` event. So a JSON task's system prompt should ask for JSON only, and list the allowed values of each label.
 
-Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name gets a temporary `default`-style task with that name (not added to the registry), so its data stays separate. Names must match `[A-Za-z0-9_.-]{1,64}`; anything else becomes `default`.
+Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name gets a temporary task without fields with that name (`source` `adhoc`, not added to the registry), so its data stays separate. Names must match `[A-Za-z0-9_.-]{1,64}`; anything else becomes `default`.
 
 ### Adding a task
 
 1. Register it in `ratchet/tasks.py`:
 
    ```python
-   REGISTRY["invoice-extract"] = Task("invoice-extract", compare_keys=["vendor", "total", "currency", "due_date"])
+   REGISTRY["invoice-extract"] = Task(
+       "invoice-extract",
+       fields=(
+           FieldSpec("vendor", "text", strip_suffixes=("inc", "ltd", "llc", "gmbh")),
+           FieldSpec("total", "number", abs_tol=0.01),
+           FieldSpec("currency", "label", values=("USD", "EUR", "INR"), aliases={"$": "USD", "€": "EUR"}),
+           FieldSpec("due_date", "date", nullable=True),
+           FieldSpec(
+               "lines",
+               "records",
+               key=("sku",),
+               required=False,
+               fields=(
+                   FieldSpec("sku", "label"),
+                   FieldSpec("qty", "number"),
+               ),
+           ),
+       ),
+   )
    # or, for a task that must always stay on the teacher:
    REGISTRY["contract-summary"] = Task("contract-summary", pinned=True)
    ```
 
-2. Make the system prompt ask for JSON with those keys.
+2. Make the system prompt ask for JSON with those keys, and list each label's allowed values (put the lists in `ratchet/vocab.py` when a prompt and a task share them).
 3. Send traffic with `X-Ratchet-Task: invoice-extract`.
-4. Optional: for free-text tasks (no `compare_keys`), `LiveEvaluator` adds a judge score (`judge_pass_rate`) using the judge model. The release gate does not use that score yet.
+4. Optional: for free-text tasks (no fields), `LiveEvaluator` adds a judge score (`judge_pass_rate`) using the judge model. The release gate does not use that score yet.
 
-Choose keys that are verifiable (labels, IDs, numbers). Exact comparison on these fields is what keeps evaluation free of judge bias.
+Choose fields that are verifiable (labels, IDs, numbers, dates). Typed comparison on these fields is what keeps evaluation free of judge bias; pick the loosest type that is still right (a `number` with a tolerance for amounts, a `set` for tags), because a field that is too strict escalates good answers and lowers measured precision.
 
 ## Teacher licenses
 
