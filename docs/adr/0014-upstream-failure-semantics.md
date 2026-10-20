@@ -35,12 +35,14 @@ Every model call goes through `OpenAICompatProvider`: the teacher and judge on T
   | 401, 403 | 502 | `api_error` / `upstream_auth_error` | `false` |
   | 404 | 502 | `api_error` / `upstream_not_found` | `false` |
   | 429 | 429, `Retry-After` 1 to 60 s | `rate_limit_error` / `upstream_rate_limited` | (SDK default: retry after the wait) |
-  | 504, timeout | 504 | `api_error` / `teacher_timeout` | (SDK default: retry) |
-  | anything else | 502 | `api_error` / `teacher_unavailable` | `false` for a redirect or a 4xx no retry fixes (402, 410, ...) |
+  | 504, timeout | 504 | `api_error` / `teacher_timeout` | (SDK default: retry; after `Retry-After` when the teacher sent one) |
+  | anything else | 502 | `api_error` / `teacher_unavailable` | `false` for a redirect or a 4xx no retry fixes (402, 410, ...); otherwise SDK default, after `Retry-After` when the teacher sent one |
 
-  A teacher 404 is the gateway's configuration (the model name or base URL), never the client's, because the request's `model` field does not choose the teacher; so it is a 502 for the operator, not a 400 that blames the client.
+  A 502 or 504 a client may retry carries the teacher's last `Retry-After`, clamped to 1 to 60 s like the 429's: the provider stops retrying when the server asks for more than `cap_s`, so the client is the one that waits, and without the header OpenAI SDKs would come back within a few seconds. A final 502 (`X-Should-Retry: false`) carries none.
+
+  A teacher 404 is the gateway's configuration (the model name or base URL), never the client's, because the request's `model` field does not choose the teacher; so it is a 502 for the operator, not a 400 that blames the client. This departs from the item's spec, which listed 404 with the client-caused 400s.
 - **The daily quota's 429** is `insufficient_quota` / `daily_quota_exceeded`, with `Retry-After` (seconds to 00:00 UTC, rounded up) and `X-Should-Retry: false`; every response under a quota carries `X-RateLimit-Reset-Requests` in OpenAI's duration format (`3h12m5s`).
-- **Events and logs say status and code, never the message.** Optional-call events read `UpstreamError 504 upstream_timeout`; a failed Scout run says `a model or search call failed: upstream 503`.
+- **Events and logs say status and code, never the message.** The message is the endpoint's own text, and a vLLM validation or template error can quote the request, so writing it to `events` would put request text in the public `/ratchet/stats` (invariant 12). `student_error` and the optional-call events read `v3: UpstreamError 503` or `UpstreamError 504 upstream_timeout` (`resilience.describe_failure`); a failed Scout run says `a model or search call failed: upstream 503`. Only the client whose teacher call failed with a 400 sees the teacher's message, in its own response.
 
 Invariant 7 now reads: student failures fall back to the teacher; a teacher failure on the serving path returns a mapped upstream status (400/429 for client causes, 502/503/504 otherwise). 503 is reserved for a teacher circuit breaker that answers fast while the teacher is known to be down.
 
