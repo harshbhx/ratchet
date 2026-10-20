@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 764 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability), ~75 s
+pytest -q                     # 767 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -32,8 +32,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
-| `tests/test_observability.py` | 25 |
-| **Total** | **764** |
+| `tests/test_observability.py` | 28 |
+| **Total** | **767** |
 
 There are three layers:
 
@@ -626,6 +626,8 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 | `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost` | The same through a live gateway: exactly one row (the router's), no URL or message in `error`, and `ratchet_cost_usd_total`, `ratchet_failed_cost_usd_total` and `ratchet_failures_total{stage="teacher"}` rise by it |
 | `test_quota_429_writes_a_quota_row_and_counts_a_rejection` | A quota 429: a `quota` row with the client, task and id (`APIError 429 daily_quota_exceeded`, cost 0), one `quota` rejection, still no requests row |
 | `test_teacher_429_is_a_teacher_failure_not_a_refusal` | A teacher 429 answered as a 429: one `teacher` row and no gateway `rate` row; no rejection counted; `ratchet_requests_total{status="429"}` once |
+| `test_a_bug_on_the_teacher_path_is_a_gateway_failure_not_the_teachers` | A `RuntimeError` in `_store_example` after the student was sampled: a 500 and one `gateway` row (500, `RuntimeError`, the samples' cost), no `teacher` failure counted, the failed spend in the metrics and totals; with a throttle of 0 a row that carries spend is still written; in process, on `handle` and `teacher_only`, the router writes `gateway` rows with no status |
+| `test_gateway_failure_row_exists_before_the_response_starts` | The app called as raw ASGI: when a wrong key's 401 starts, its `auth` row is already in the ledger under the response's `x-request-id` |
 | `test_swallowed_failures_get_rows_and_breaker_refusals_are_sampled` | 30 requests against a failing student: 5 `student` rows for the errors (502), 3 for 25 breaker refusals (503), `ratchet_failures_total` counts all 30, every request answered; a timed-out audit: an `audit` row (504, `ReadTimeout`, cost 0) and the student's answer served |
 | `test_stats_errors_last_hour_and_failed_cost` | `errors.last_hour` by stage leaves out a two-hour-old row; `totals.failed_cost_usd`; `log_failure` refuses an unknown stage or column |
 | `test_gateway_failure_rows_are_throttled_per_stage` | `FailureThrottle` per stage and minute; five wrong keys write two rows but count five rejections and five failures |
@@ -640,6 +642,7 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 | `test_public_live_metrics_scrub_client_labels` | A public live dashboard: anonymous `/metrics` and request lookups show `client-2`, never a client name; a keyed reader sees `globex` |
 | `test_scrape_time_gauges` | Version traffic for the live and canary versions, the student breaker open after a demo outage and the teacher's closed, today's spend |
 | `test_metrics_module_format` | Label and help escaping, a counter refusing to go down or take the wrong label count, duplicate names refused, bad buckets refused, `Gauge.replace` dropping old series, NaN observations ignored, cumulative buckets, `number()` formatting, relabelled series added together, `client_label` |
+| `test_a_failure_never_starts_the_live_ledgers_day_one` | On a fresh live (`auto_day`) file a 401 leaves the origin unset (day 0); day 1 starts at the first request 20 h later; a later failure is filed under day 2; after reopening the file the origin is the same and the next request is still day 1 |
 | `test_old_ledger_gains_request_ids_and_the_failures_table` | An old file gains `request_id`, `client_request_id` and the `failures` table; the lookup uses `requests_request_id`; the stage list; `spend_since` adds answered and failed spend per client since a time |
 
 ## Live-path tests

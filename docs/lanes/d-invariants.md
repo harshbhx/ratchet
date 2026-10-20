@@ -44,10 +44,10 @@ Lane D (operations, security, performance) does not number invariants in CLAUDE.
 
 ## A request that spent money and failed leaves a failures row (OPS-OBSERVABILITY, ADR 0062)
 
-**Text.** When the teacher's answer cannot be had after the student was sampled, `Ratchet` writes a `failures` row with `cost_usd` equal to what the student's samples cost before the error reaches the client, and `Ledger.totals()` counts that spend against `saved_usd` and `savings_pct` (`failed_cost_usd`). A failure around an answered request records `cost_usd = 0`, because its own `requests` row already holds the cost. Never count one spend in both tables.
+**Text.** When the teacher's answer cannot be had after the student was sampled, `Ratchet` writes a `failures` row with `cost_usd` equal to what the student's samples cost before the error reaches the client (stage `teacher` for an HTTP failure; for a bug on that path the gateway writes the `gateway` row with the spend the router left on the request's context, never throttled), and `Ledger.totals()` counts that spend against `saved_usd` and `savings_pct` (`failed_cost_usd`). A failure around an answered request records `cost_usd = 0`, because its own `requests` row already holds the cost. Never count one spend in both tables.
 
 **Why.** NFR-3 says overhead is counted in reported cost; without the row, every teacher outage would make the savings look better than they were.
 
-**Enforcing code.** `ratchet/router.py`: `Ratchet._teacher_failed`, `Ratchet._record_failure`. `ratchet/ledger.py`: `Ledger.log_failure`, `Ledger.totals`.
+**Enforcing code.** `ratchet/router.py`: `Ratchet._teacher_failed`, `Ratchet._record_failure`. `ratchet/gateway.py`: `_failure_row`. `ratchet/obs.py`: `RequestContext.failed_cost_usd`. `ratchet/ledger.py`: `Ledger.log_failure`, `Ledger.totals`.
 
-**Proving tests.** `tests/test_observability.py`: `test_teacher_failure_row_carries_the_student_cost`, `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost`, `test_swallowed_failures_get_rows_and_breaker_refusals_are_sampled` (cost 0 around an answered request); `tests/test_system.py`: `test_reference_workloads_reproduce_v040` (three workloads' totals exactly as v0.4.0 gave them).
+**Proving tests.** `tests/test_observability.py`: `test_teacher_failure_row_carries_the_student_cost`, `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost`, `test_a_bug_on_the_teacher_path_is_a_gateway_failure_not_the_teachers` (a bug's row carries the spend, also past the throttle), `test_swallowed_failures_get_rows_and_breaker_refusals_are_sampled` (cost 0 around an answered request); `tests/test_system.py`: `test_reference_workloads_reproduce_v040` (three workloads' totals exactly as v0.4.0 gave them).

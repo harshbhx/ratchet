@@ -70,7 +70,9 @@ class RequestContext:
     once known, `stage`, `code` and `error` by the code that refused or failed it (for its failures row), `result` by
     the chat route (the fields of its log line), `counted` when the router counted it in `ratchet_requests_total`, and
     `failure_handled` when the router wrote (or, sampling, chose not to write) its failures row, so the gateway does not
-    write another. One object per request, shared with the worker thread the route runs in."""
+    write another, and `failed_cost_usd` when a request that spent money failed with an error that is not the teacher's
+    (a bug), so the gateway's row carries that spend. One object per request, shared with the worker thread the route
+    runs in."""
 
     request_id: str
     hex: str
@@ -89,6 +91,7 @@ class RequestContext:
     result: dict[str, Any] | None = None
     counted: bool = False
     failure_handled: bool = False
+    failed_cost_usd: float = 0.0
 
     @property
     def completion_id(self) -> str:
