@@ -101,9 +101,9 @@ def run_night(
     set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
     into the one `bom_extra` dict.
 
-    New data is the training rows now less the training rows of the largest version so far, plus the training rows that
-    version had which were purged since (`Ledger.train_rows_purged_since`), so deleting data never hides new data
-    (FR-4.4); without purges the count is v0.4's."""
+    New data is the training rows now less the most training rows any version had that are still stored
+    (`Ledger.train_rows_kept`: each version's `train_examples` less its own training rows purged since), so deleting
+    data never hides new data and never makes old data look new (FR-4.4); without purges the count is v0.4's."""
     if retention is not None and retention.enabled:
         privacy.apply_retention(ledger, retention)
     if not store_examples:
@@ -122,8 +122,7 @@ def run_night(
     train_rows = dataset.rows(ledger, "train", task)
     golden_rows = dataset.rows(ledger, "golden", task)
 
-    last = max((v.train_examples for v in ledger.versions()), default=0)
-    new = manifest["train_examples"] - last + ledger.train_rows_purged_since(task)
+    new = manifest["train_examples"] - ledger.train_rows_kept(task)
     hashes = spec_hashes(golden_rows)
     live = ledger.live()
     # Stored answers the current spec refuses (it tightened since): left out of training, and said so where operators

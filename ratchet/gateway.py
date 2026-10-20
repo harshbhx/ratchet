@@ -928,6 +928,9 @@ def _no_train_remove(raw: bytes, client: str | None, admin: str | None) -> dict[
 # ----- erasure by the client (FR-13.3, ADR 0081) -----
 ERASE_EXTRA_KEYS = frozenset({"dry_run", "reason"})
 CLIENT_ERASE_REASON = "end user request"
+# What a keyless caller is not told: whether, and how much, an end user had stored (no membership oracle on an open
+# endpoint, as no-train's `created`).
+ERASE_COUNTS = ("matched", "purged", "kept", "requests_unlinked", "affected_versions")
 
 
 @app.delete("/v1/ratchet/examples")
@@ -937,8 +940,10 @@ async def erase_examples(
     """Erase the stored examples of one of the caller's end users (`{"end_user": "<user or safety_identifier>"}`, as
     for no-train; optional `reason` and `dry_run`, default false): their text goes for good, their hashes are never
     stored again, and the end user's hash is cleared from its request rows (FR-13.3). An API key erases its own end
-    users; an admin key a named client's, or with no `client` every client's. Open where chat completions are, like
-    registering no-train: it only removes data. The end user is read from the body only: a URL with `end_user` is a 400,
+    users; an admin key a named client's, or with no `client` every client's (each configured key, every scope the
+    ledger holds end users in, and the keyless one). Open where chat completions are, like registering no-train: it
+    only removes data. A keyless caller (API keys off) gets the counts as null, so the endpoint cannot tell anyone
+    whether an identifier had stored examples. The end user is read from the body only: a URL with `end_user` is a 400,
     because access logs keep URLs."""
     if "end_user" in request.query_params:  # never echoed; the value may identify someone
         message = "Send 'end_user' in the JSON body; it is never read from the URL, which access logs keep."
@@ -956,8 +961,10 @@ def _erase_examples(raw: bytes, client: str | None, admin: str | None) -> dict[s
     if not isinstance(reason, str):
         raise APIError(400, "Invalid type for 'reason': expected a string.", INVALID_REQUEST, INVALID_TYPE, "reason")
     scopes = _no_train_scopes(client, admin, named, given)
+    if admin is not None and not given:
+        scopes = _every_end_user_scope()
     try:
-        return privacy.erase(
+        result = privacy.erase(
             rt.ledger,
             client=scopes[0] if len(scopes) == 1 else None,
             end_user_raw=end_user,
@@ -970,6 +977,16 @@ def _erase_examples(raw: bytes, client: str | None, admin: str | None) -> dict[s
         )
     except ValueError as e:  # the message never quotes the end user
         raise APIError(400, f"Invalid erasure: {e}.", INVALID_REQUEST, INVALID_VALUE) from e
+    if client is None and admin is None:  # a keyless caller is not told whether the end user had anything stored
+        result.update({k: None for k in ERASE_COUNTS})
+    return result
+
+
+def _every_end_user_scope() -> list[str | None]:
+    """The scopes an admin's erasure of an end user for every client covers: each configured API key name, every scope
+    the ledger holds end users in (a renamed or removed key's rows too, `Ledger.end_user_scopes`) and the keyless one."""
+    stored = {c for c in rt.ledger.end_user_scopes() if c is not None}
+    return [None, *sorted(set(rt.keys.names) | stored)]
 
 
 @app.get("/ratchet/stats")
@@ -1250,9 +1267,9 @@ ERASE_KEYS = frozenset({"client", "end_user", "hashes", "contains", "reason", "d
 @app.post("/ratchet/admin/privacy/erase")
 def admin_erase(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[str, Any]:
     """Erase stored examples for good (`privacy.erase`): by `client`, `end_user` (in `client`'s scope, or with no client
-    in every API key's scope and the keyless one), `hashes` and `contains`, each narrowing the scope; `reason` is
-    required. A dry run unless `dry_run` is false. Needs an admin key (open in mock mode without admin keys, like the
-    other management calls)."""
+    in every API key's scope, every scope the ledger holds end users in and the keyless one), `hashes` and `contains`,
+    each narrowing the scope; `reason` is required. A dry run unless `dry_run` is false. Needs an admin key (open in
+    mock mode without admin keys, like the other management calls)."""
     if not isinstance(body, Mapping):
         raise HTTPException(400, "the body must be a JSON object")
     unknown = sorted(set(body) - ERASE_KEYS)
@@ -1262,7 +1279,7 @@ def admin_erase(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[str
     if not isinstance(dry_run, bool):
         raise HTTPException(400, "dry_run must be true or false")
     client, end_user = body.get("client"), body.get("end_user")
-    clients = [*rt.keys.names, None] if end_user is not None and client is None else None
+    clients = _every_end_user_scope() if end_user is not None and client is None else None
     try:
         return privacy.erase(
             rt.ledger,

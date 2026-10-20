@@ -631,7 +631,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-4.1": ("ratchet.nightschool.dataset:rows", "ratchet.nightschool.dataset:build"),
     "FR-4.2": ("ratchet.nightschool.orchestrate:run_night",),
     "FR-4.3": ("ratchet.ledger:Ledger.add_example", "ratchet.nightschool.dataset:rows"),
-    "FR-4.4": ("ratchet.nightschool.orchestrate:run_night", "ratchet.ledger:Ledger.train_rows_purged_since"),
+    "FR-4.4": ("ratchet.nightschool.orchestrate:run_night", "ratchet.ledger:Ledger.train_rows_kept"),
     "FR-4.5": (
         "ratchet.nightschool.train:main",
         "ratchet.nightschool.train:parse_args",

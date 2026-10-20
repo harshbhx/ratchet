@@ -480,17 +480,17 @@ curl -X POST localhost:8000/ratchet/admin/privacy/erase -H "Authorization: Beare
 | Field | Meaning |
 |---|---|
 | `client` | An API key name (also one whose key was since removed): the examples it sent, first or later |
-| `end_user` | The value requests are attributed to (`safety_identifier` when a request sent one, else `user`): hashed in `client`'s scope, or with no `client` in every API key's scope and the keyless one; never quoted back |
+| `end_user` | The value requests are attributed to (`safety_identifier` when a request sent one, else `user`): hashed in `client`'s scope, or with no `client` in every configured API key's scope, every scope the ledger holds end users in (a renamed or removed key's too) and the keyless one; never quoted back |
 | `hashes` | Up to 10,000 example hashes (64 lowercase hex characters each, as in an export) |
 | `contains` | 1 to 1,000 characters matched with LIKE in the stored messages, answer and conditions (case-insensitive for ASCII letters; `%` and `_` are literal). Stored text is already redacted, so an identifier the redactor replaced is not there to find |
 | `reason` | Required, 1 to 500 characters; stored redacted |
 | `dry_run` | Default `true`: nothing changes, `id` is `null`, and the counts say what would happen |
 
-Every selector given narrows the scope; at least one is needed. A bad scope is a **400** that never quotes an end user or the text to match. `matched` counts the examples selected (ones an earlier erasure took are left out), `purged` those whose text this erasure removed or whose retention tombstone it made final, `kept` the shared ones kept and unlinked, `requests_unlinked` the request rows whose end-user hash was cleared.
+Every selector given narrows the scope; at least one is needed. A bad scope is a **400** that never quotes an end user or the text to match. The erasure is logged with the admin key's name as its actor (`python -m ratchet.admin erase --actor` takes a name of the same characters, never free text, because the `erase` event is public in `/ratchet/stats`). `matched` counts the examples selected (ones an earlier erasure took are left out), `purged` those whose text this erasure removed or whose retention tombstone it made final, `kept` the shared ones kept and unlinked, `requests_unlinked` the request rows whose end-user hash was cleared.
 
 ### DELETE `/v1/ratchet/examples`
 
-An API key erases the stored examples of one of its own end users, with the same JSON body as `/v1/ratchet/no-train` plus optional `reason` (default `end user request`) and `dry_run` (default `false`, unlike the admin call: a `DELETE` deletes). An admin key may name a `client`, or leave it out for every client. Open wherever chat completions are (it only removes data); keyless without API keys. The end user is read from the body only: a URL with `end_user` is a **400** (`end_user_in_url`), because access logs keep URLs. The response is the admin call's. Errors use OpenAI's envelope (400, 401, 403 as for no-train).
+An API key erases the stored examples of one of its own end users, with the same JSON body as `/v1/ratchet/no-train` plus optional `reason` (default `end user request`) and `dry_run` (default `false`, unlike the admin call: a `DELETE` deletes). An admin key may name a `client`, or leave it out for every client. Open wherever chat completions are (it only removes data); keyless without API keys. The end user is read from the body only: a URL with `end_user` is a **400** (`end_user_in_url`), because access logs keep URLs (the item's spec proposed `?end_user=`; see ADR 0081). The response is the admin call's, except that a keyless caller (API keys off) gets `matched`, `purged`, `kept`, `requests_unlinked` and `affected_versions` as `null`, for a dry run too: an open endpoint must not tell anyone whether an identifier had anything stored (as no-train's `created`). Errors use OpenAI's envelope (400, 401, 403 as for no-train).
 
 ```bash
 curl -X DELETE localhost:8000/v1/ratchet/examples -H "Authorization: Bearer $KEY" \

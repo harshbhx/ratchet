@@ -259,7 +259,7 @@ Check `/ratchet/stats` → `privacy.not_stored_by_reason` and the response's `ra
 | Who asks | Do |
 |---|---|
 | An end user of one client | The client calls `DELETE /v1/ratchet/examples` with `{"end_user": "<value>"}` and its API key (after registering no-train, so nothing new is stored) |
-| An end user, through you | `python -m ratchet.admin erase --reason "<request id>" --end-user -` (every client's scope; add `--client <name>` for one), check the dry run, then `--apply` |
+| An end user, through you | `python -m ratchet.admin erase --reason "<request id>" --end-user -` (every scope the ledger holds end users in; add `--client <name>` for one), check the dry run, then `--apply`. Run it with the gateway's environment (`docker compose exec -T ratchet ...` on the demo VM): it hashes with the gateway's `RATCHET_END_USER_KEY` (or the key generated into the ledger when the gateway has none) and refuses, without writing anything, when the key it finds is not the one the ledger recorded |
 | A client leaving | `python -m ratchet.admin export examples --client <name> --out <file>` if the contract says so, then `python -m ratchet.admin erase --reason "<why>" --client <name> --apply`. `RATCHET_ERASURE_SHARED=keep` keeps examples another client sent too |
 
 Keep `RATCHET_END_USER_KEY` stable: changing it unlinks every no-train registration (an `end_user_key` event) and every end user's stored examples, which an erasure by end user then cannot find.

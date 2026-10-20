@@ -350,6 +350,7 @@ DAY_SECONDS = 86400
 DAY_ORIGIN_META = "day_origin"  # meta row: when day 1 started on a live ledger, kept once request retention deletes rows
 PURGE_REASONS = ("retention", "erasure")  # examples.purge_reason
 FOLD_CHUNK = 20000  # request rows folded per transaction, so a large fold never holds the ledger lock for long
+PURGE_CHUNK = 5000  # examples retention purges per transaction (`privacy.apply_retention`), for the same reason
 SQL_CHUNK = 500  # values per `IN (...)` list (SQLite's limit on bound variables is 999 in older builds)
 # daily_rollup's sums (FR-13.4): what every stats reader needs from folded request rows, as `ROLLUP_INSERT` computes them
 # from `requests` with the same expressions the readers use on live rows.
@@ -946,16 +947,20 @@ class Ledger:
         return sorted(out, key=lambda r: r["id"])
 
     @_locked
-    def retention_candidates(self, cutoff: float, client: str | None = None) -> list[sqlite3.Row]:
+    def retention_candidates(self, cutoff: float, client: str | None = None, limit: int | None = None) -> list[sqlite3.Row]:
         """Examples that still have their text and were last stored or seen before `cutoff` (golden ones too), oldest
-        first; with `client`, only those that API client sent (first or later)."""
+        first; with `client`, only those that API client sent (first or later); with `limit`, at most that many."""
         cutoff = _check_ts(cutoff, "cutoff")
         q = "SELECT * FROM examples WHERE purged_ts IS NULL AND (last_seen_ts < ? OR (last_seen_ts IS NULL AND ts < ?))"
         args: list[Any] = [cutoff, cutoff]
         if client is not None:
             q += " AND (client = ? OR hash IN (SELECT hash FROM example_clients WHERE client = ?))"
             args += [client, client]
-        return list(self.db.execute(q + " ORDER BY id", args))
+        q += " ORDER BY id"
+        if limit is not None:
+            q += " LIMIT ?"
+            args.append(int(limit))
+        return list(self.db.execute(q, args))
 
     @_locked
     def purge_examples(self, rows: Mapping[str, bool], reason: str, now: float | None = None) -> int:
@@ -1128,23 +1133,41 @@ class Ledger:
         return n
 
     @_locked
-    def train_rows_purged_since(self, task: str | None = None) -> int:
-        """Training rows lost since the version Night School compares new data with (the one with the most training
-        examples, the latest on a tie): examples that counted as training rows when purged, stored before that version
-        was created and purged after it. `run_night` adds them back to the new-data count, so deletions never hide new
-        data (FR-4.4); without purges it is 0 and the count is v0.4's."""
-        ref = self.db.execute(
-            "SELECT created_ts FROM versions WHERE train_examples = (SELECT MAX(train_examples) FROM versions)"
-            " ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if ref is None or ref["created_ts"] is None:
-            return 0
-        q = "SELECT COUNT(*) FROM examples WHERE purged_train = 1 AND purged_ts > ? AND ts <= ?"
-        args: list[Any] = [ref["created_ts"], ref["created_ts"]]
+    def end_user_scopes(self) -> list[str | None]:
+        """Every scope an end-user hash is stored in (the API key names of examples and request rows that name an end
+        user, configured now or not) and the keyless scope (None), keyless first. Erasing an end user for every client
+        hashes it in each of these, so a renamed or removed key's rows are reached too, whatever keys the caller has."""
+        rows = self.db.execute(
+            "SELECT DISTINCT client FROM examples WHERE end_user IS NOT NULL AND client IS NOT NULL"
+            " UNION SELECT DISTINCT client FROM requests WHERE end_user IS NOT NULL AND client IS NOT NULL"
+        ).fetchall()
+        return [None, *sorted(str(r[0]) for r in rows)]
+
+    @_locked
+    def train_rows_kept(self, task: str | None = None) -> int:
+        """The most training rows any version had that are still stored: for each version, its `train_examples` less its
+        training rows purged since (examples that counted as training rows when purged, stored before it was created and
+        purged after it), and the largest of those. `run_night` counts new data from it, so deletions never hide new
+        data and never make old data look new (FR-4.4). Each version is measured against its own purges: measuring every
+        version against the largest one's would add the same purged rows back every night once a later version trained
+        on fewer rows. Without purges it is the largest `train_examples`, v0.4's count. `purged_train` errs toward
+        counting a row (`dataset.counts_as_train`), so a purged row that was not in a version's set can raise the next
+        night's count once, by one; the version trained that night resets it."""
+        versions = self.db.execute("SELECT train_examples, created_ts FROM versions ORDER BY train_examples DESC, id DESC")
+        q = "SELECT COUNT(*) FROM examples WHERE purged_train = 1 AND ts <= ? AND purged_ts > ?"
         if task:
             q += " AND task=?"
-            args.append(task)
-        return int(self.db.execute(q, args).fetchone()[0])
+        best = 0
+        for v in versions.fetchall():
+            trained = int(v["train_examples"] or 0)
+            if trained <= best:
+                break  # sorted by size: no later version can keep more than it trained on
+            if v["created_ts"] is None:
+                best = trained
+                continue
+            args: list[Any] = [v["created_ts"], v["created_ts"], *([task] if task else [])]
+            best = max(best, trained - int(self.db.execute(q, args).fetchone()[0]))
+        return best
 
     def fold_requests(
         self,
