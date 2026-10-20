@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (453 tests, ~40 s, no network, no GPU)
+make test           # pytest -q (462 tests, ~40 s, no network, no GPU)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -113,7 +113,7 @@ Always run `make lint test` before committing.
 ## Current status (Oct 20, 2026)
 
 - Unreleased: generation parameters by role (FR-1.13): the client's `max_tokens`, `stop`, `seed`, `temperature`, `response_format`, `tools` and the rest reach the serving teacher, the student (shaping fields only, its own sampling kept) and audits (temperature 0) through allowlists, with per-call output caps and an optional reasoning headroom; examples store the conditions that define the target without changing any v0.4 hash; the golden eval samples under them; the response's `finish_reason` is real; `RequestMeta` for later items ([ADR 0017](docs/adr/0017-generation-parameters-by-role.md)).
-- Unreleased: answer hygiene (INV-16, FR-2.7, FR-2.13): reasoning is stripped also before a lone `</think>` and from an unterminated `<think>`, a structured answer loses a code fence around it, and only complete, valid teacher answers are stored (`finish_reason` read per choice; `skip_example` events; `requests.stored`); a cut-off student sample gets no vote ([ADR 0016](docs/adr/0016-store-only-complete-valid-teacher-answers.md)).
+- Unreleased: answer hygiene (INV-16, FR-2.7, FR-2.13): reasoning is stripped also before a lone `</think>` and from an unterminated `<think>` that opens what is left (a tag inside an answer is content), a structured answer loses a code fence around it, and only complete, valid teacher answers are stored (`finish_reason` read per choice; `skip_example` events; `requests.stored`); a cut-off student sample gets no vote ([ADR 0016](docs/adr/0016-store-only-complete-valid-teacher-answers.md)).
 - Unreleased: requirements traceability. Every PRD row and invariant maps to code and tests in the generated [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), checked by `make lint` and CI; done requirements without a test are listed there as known gaps (none left).
 - Unreleased: the live entry points are tested offline (`tests/test_live.py`): `ratchet.live`, the gateway's live `Runtime`, `LiveEvaluator`, `train.py`'s arguments, the Scout and simulator CLIs, the mock warm-up, `RATCHET_TRUST_PROXY`, the day-1 check and the deploy scripts. The student's sampling is one constant, `confidence.STUDENT_SAMPLING`.
 - Unreleased: a student circuit breaker (FR-2.11): after 5 endpoint failures in a row requests skip the student for 30 s (doubling to 300 s per failed probe), with a separate shadow breaker and `circuit` events; vLLM's 404 for a lost adapter queues an automatic reload (once a minute per adapter); every request row records its `route`, reported per task in `/ratchet/stats`; mock-only `POST /ratchet/demo/student-outage` shows it ([ADR 0015](docs/adr/0015-student-circuit-breaker-and-adapter-reload.md)).

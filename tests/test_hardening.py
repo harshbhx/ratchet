@@ -701,6 +701,54 @@ def test_invalid_shadow_reference_leaves_shadow_agree_null():
     assert led.shadow_quality(cand)["unarbitrated"] == 2
 
 
+@pytest.mark.req("FR-2.13", "INV-16", "FR-6.3", "FR-2.10")
+def test_unusable_audit_answer_is_no_shadow_reference():
+    """Review finding: a cut-off audit answer left `shadow_agree` NULL, so a shadow that agreed with the served answer
+    counted as a disagreement, while the same request without the audit scored 1. Such an audit is now no reference at
+    all: the shadow is compared with the served answer, and a disagreement still goes to the teacher, whose cut-off
+    ruling settles nothing (NULL)."""
+    teacher = RecordingProvider(TRIAGE_OBJ, finish_reason="length")
+    student = RecordingProvider(TRIAGE_OBJ)
+    led, r = _hygiene(teacher, student=student, threshold=0.5, shadow=RecordingProvider(TRIAGE_OBJ), audit_rate=1.0)
+    cand = led.by_state("shadow").id
+    assert r.handle(_ask(), "ticket-triage").served_by == "student"
+    row = _row(led)
+    assert (row["audited"], row["shadow_serve"], row["shadow_agree"], row["stored"]) == (0, 1, 1, 0)
+    assert len(teacher.calls) == 1  # the audit only: there was no disagreement to arbitrate
+    assert (led.shadow_quality(cand)["precision"], led.shadow_quality(cand)["unarbitrated"]) == (1.0, 0)
+
+    other = '{"category": "refund", "priority": "low", "reply": "x"}'
+    teacher = RecordingProvider(TRIAGE_OBJ, finish_reason="length")
+    led, r = _hygiene(teacher, student=student, threshold=0.5, shadow=RecordingProvider(other), audit_rate=1.0)
+    r.handle(_ask(), "ticket-triage")
+    row = _row(led)
+    assert (row["audited"], row["shadow_serve"], row["shadow_agree"], row["stored"]) == (0, 1, None, 0)
+    assert len(teacher.calls) == 2  # the audit, then the arbitration, cut off too
+    assert led.shadow_quality(led.by_state("shadow").id)["unarbitrated"] == 1
+
+
+@pytest.mark.req("FR-2.7", "FR-2.13", "INV-16")
+def test_answers_that_quote_think_tags_are_served_and_stored_whole():
+    """Review finding: cutting at any `<think>` or `</think>` served a complete triage reply that mentions the tag as
+    broken JSON and stored nothing (`invalid answer`), took the vote from student samples quoting `</think>`, and cut a
+    free-text answer short."""
+    reply = '{"category": "bug", "priority": "high", "reply": "Your model output shows a stray <think> tag; we fix it."}'
+    led, r = _hygiene(RecordingProvider(reply))
+    assert r.handle(_ask("My model prints a stray tag"), "ticket-triage").text == reply
+    assert [ex["completion"] for ex in led.examples()] == [reply]
+    assert _row(led)["stored"] == 1 and _skips(led) == []
+
+    closing = '{"category":"bug","priority":"high","reply":"Strip everything up to the </think> tag before parsing."}'
+    led, r = _hygiene(RecordingProvider("unused"), student=RecordingProvider(closing), threshold=0.5)
+    out = r.handle(_ask("How do I parse it?"), "ticket-triage")
+    assert (out.served_by, out.text, out.confidence > 0.9) == ("student", closing, True)
+
+    prose = "Reasoning models open their chain of thought with a <think> tag. Strip it before showing the answer."
+    led, r = _hygiene(RecordingProvider(prose))
+    assert r.handle(_ask("What is a think tag?"), "default").text == prose
+    assert [ex["completion"] for ex in led.examples()] == [prose]
+
+
 @pytest.mark.req("FR-2.13", "INV-16", "INV-12")
 def test_skip_example_events_are_throttled_per_reason():
     """Like the failure events: the 1st, 10th, 100th and 1000th skip of each reason, counted exactly under threads (Scout
@@ -874,6 +922,8 @@ def test_provider_parses_finish_reason_reasoning_tokens_and_per_choice_tokens():
     [
         pytest.param("absent", "stop", id="absent"),
         pytest.param(None, "stop", id="null"),
+        pytest.param("", "stop", id="empty"),  # a missing value, not an unknown one, which would store nothing
+        pytest.param("  ", "stop", id="blank"),
         pytest.param("stop", "stop", id="stop"),
         pytest.param(" LENGTH ", "length", id="upper-case-padded"),
         pytest.param("tool_calls", "tool_calls", id="tool-calls"),
@@ -884,8 +934,8 @@ def test_provider_parses_finish_reason_reasoning_tokens_and_per_choice_tokens():
     ],
 )
 def test_finish_reason_values_are_read_safely(value, want):
-    """Missing or null is `stop` (servers that leave it out); anything that is not a short word is `unknown`, which is
-    never stored, and nothing a server sends reaches an event unbounded."""
+    """Missing, null or empty is `stop` (servers that leave it out); anything that is not a short word is `unknown`, which
+    is never stored, and nothing a server sends reaches an event unbounded."""
     choice = {"message": {"content": "a"}}
     if value != "absent":
         choice["finish_reason"] = value

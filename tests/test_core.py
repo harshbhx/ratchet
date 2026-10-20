@@ -61,9 +61,14 @@ def test_invalid_json_never_agrees():
         pytest.param("<Think>hmm</tHiNk>answer", "answer", id="mixed-case"),
         pytest.param("A plain answer, no tags.", "A plain answer, no tags.", id="no-tags"),
         pytest.param("  padded  ", "padded", id="no-tags-padded"),
-        pytest.param("billing <think>on second thought", "billing", id="answer-then-unterminated"),
+        # An unclosed tag after answer text is content: a model opens its reasoning before it answers (review finding).
+        pytest.param("billing <think>on second thought", "billing <think>on second thought", id="answer-then-unterminated"),
+        pytest.param("Wrap it in a <think> tag.", "Wrap it in a <think> tag.", id="mentions-opening-tag"),
+        pytest.param("  <think>cut off", "", id="unterminated-after-whitespace"),
+        pytest.param("<think>a</think>\n<think>cut off", "", id="pair-then-unterminated"),
         pytest.param("plan</think>a<think>b</think>c", "ac", id="closing-then-pair"),
-        pytest.param("plan</think>answer<think>cut", "answer", id="closing-then-unterminated"),
+        pytest.param("plan</think>answer<think>cut", "answer<think>cut", id="closing-then-answer-then-unterminated"),
+        pytest.param("plan</think> <think>cut", "", id="closing-then-unterminated"),
         pytest.param("<think>a<think>b</think>c</think>answer", "answer", id="nested"),
         pytest.param("<think>a</think>first</think>second", "second", id="last-closing-wins"),
         pytest.param("", "", id="empty"),
@@ -100,6 +105,29 @@ def test_clean_answer_unwraps_fences_only_for_structured_tasks():
     assert TRIAGE.canonical(f"```json\n{obj}\n```") == TRIAGE.canonical(obj) != tasks.INVALID
 
 
+@pytest.mark.req("FR-2.7", "FR-2.13")
+def test_answers_that_mention_think_tags_keep_their_text():
+    """Review finding: cutting at any tag served complete answers that quote one (a support reply about a stray tag, a
+    page Scout read about reasoning models) truncated, structured ones as broken JSON, and stored none of them. A JSON
+    object can hold a tag only inside a string, so a structured answer that is one object, before or after its reasoning
+    and in a fence or not, is kept whole."""
+    opening = '{"category": "bug", "priority": "high", "reply": "Your model output shows a stray <think> tag; we fix it."}'
+    closing = '{"category":"bug","priority":"high","reply":"Strip everything up to the </think> tag before parsing."}'
+    for answer in (opening, closing):
+        for said in (answer, f"```json\n{answer}\n```", f"<think>bug, high</think>\n{answer}", f"bug, high</think>{answer}"):
+            assert tasks.clean_answer(TRIAGE, said) == answer, said
+            assert TRIAGE.canonical(said) == '{"category": "bug", "priority": "high"}', said
+            assert tasks.parse_json(said) == json.loads(answer), said
+        assert tasks.clean_answer(TRIAGE, answer) == answer  # cleaning twice changes nothing
+    free = tasks.get("default")
+    prose = "Reasoning models open their chain of thought with a <think> tag. Strip it before showing the answer."
+    assert tasks.clean_answer(free, prose) == tasks.clean_answer(free, f"<think>explain</think>\n{prose}") == prose
+    # Reasoning that was cut off is still nothing, even when it holds a JSON object or quotes a tag.
+    for cut in (f"<think>{opening}", f"plan</think> <think>{opening}", f"<think>maybe {closing}"):
+        assert TRIAGE.canonical(cut) == tasks.INVALID, cut
+    assert tasks.clean_answer(TRIAGE, f"<think>{opening}") == tasks.clean_answer(TRIAGE, f"x</think> <think>{opening}") == ""
+
+
 @pytest.mark.req("FR-2.2", "FR-2.13")
 def test_empty_answers_are_invalid_for_every_task():
     free = tasks.get("default")
@@ -132,11 +160,13 @@ def test_all_invalid_scores_zero():
 
 @pytest.mark.req("FR-2.2", "FR-2.13")
 def test_length_samples_are_invalid_in_score():
-    """A sample cut off by the token limit (or a content filter) gets no vote and is never the answer, even when its
+    """A sample that did not end by itself (the token limit, a content filter, or any `finish_reason` but `stop` and
+    `tool_calls`, the rule a teacher answer must pass to be stored) gets no vote and is never the answer, even when its
     visible text parses."""
     cut = score(TRIAGE, [comp(A, 0.99, finish_reason="length")] * 3)
     assert (cut.confidence, cut.agreement, cut.valid) == (0.0, 0.0, False)
-    assert not score(TRIAGE, [comp(A, 0.99, finish_reason="content_filter")] * 3).valid
+    for reason in ("content_filter", "abort", "unknown", "eos_token"):
+        assert not score(TRIAGE, [comp(A, 0.99, finish_reason=reason)] * 3).valid, reason
     # Two cut-off samples of A and one complete B: B is the only vote, with agreement 1/3.
     s = score(TRIAGE, [comp(A, 0.99, finish_reason="length"), comp(B, 0.9), comp(A, 0.99, finish_reason="length")])
     assert s.answer.text == B and s.agreement == pytest.approx(1 / 3) and s.valid

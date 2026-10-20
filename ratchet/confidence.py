@@ -3,8 +3,9 @@
 Small models are poorly calibrated, so Ratchet never trusts a single signal. It combines:
   1. token probability: exp(mean token logprob) of the best sample, from vLLM
   2. self-consistency: how many of n samples agree with the majority answer
-  3. validity: an answer that fails the task's format, is empty, or was cut off (`finish_reason` `length` or
-     `content_filter`) gets no vote, and when no sample is valid the score is 0 and nothing is served
+  3. validity: an answer that fails the task's format, is empty, or did not end by itself (a `finish_reason` other
+     than `stop` or `tool_calls`, the rule a teacher answer must pass to be stored) gets no vote, and when no sample is
+     valid the score is 0 and nothing is served
 The threshold that turns the score into "serve" vs "escalate" is set on a labelled
 dev set (see `calibrate_threshold`).
 """
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from .providers import CUT_OFF, Completion
+from .providers import COMPLETE, Completion
 from .tasks import INVALID, Task
 
 # How the student is sampled for a confidence score: in production (`Ratchet._sample`), in the live golden eval
@@ -42,8 +43,9 @@ class Scored:
 
 
 def _key(task: Task, sample: Completion) -> str:
-    """A sample's canonical answer; `INVALID` when it was cut off, because a truncated answer is never a vote."""
-    return INVALID if sample.finish_reason in CUT_OFF else task.canonical(sample.text)
+    """A sample's canonical answer; `INVALID` when it did not end by itself (`length`, `content_filter`, vLLM's `abort`,
+    ...), because a cut-off answer is never a vote. The same `COMPLETE` rule as for teacher answers (`answer_problem`)."""
+    return task.canonical(sample.text) if sample.finish_reason in COMPLETE else INVALID
 
 
 def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: float = 0.6) -> Scored:
