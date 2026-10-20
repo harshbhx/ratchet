@@ -15,7 +15,9 @@
 | **Task** | A named kind of call (for example `ticket-triage`) that defines which answer fields must match for two answers to agree, which answers are valid, and whether it is pinned. Chosen with the `X-Ratchet-Task` header. |
 | **Field comparator** | How one field of a task's answer is normalised and compared (`label` over a vocabulary, `number` with a tolerance, `date`, `set`, `records`, ...). A required field that is missing, or a value that does not normalise, makes the answer invalid. |
 | **Distillable task** | A task whose teacher answers become training data, so the student can take it over. Example: `source-triage`. Every task is distillable unless it is pinned. |
-| **Pinned task** | A task that always goes to the teacher and is never stored as training data (`Task.pinned`). Used for open-ended work such as planning and writing. Examples: `research-plan`, `research-write`. |
+| **Pinned task** | A task that always goes to the teacher and is never stored as training data (`Task.pinned`). Used for open-ended work such as planning and writing. Examples: `research-plan`, `research-write`. Only an operator's spec pins a task, never a request. |
+| **Task registry** | The tasks a request can name: the built-in ones, the tasks of `RATCHET_TASKS_FILE` and the ones written through the admin API (`/ratchet/tasks`). A name that is not registered follows `RATCHET_UNKNOWN_TASKS` ([ADR 0022](adr/0022-task-registry.md)). |
+| **Task spec** | A task written as data (`name`, `fields`, `pinned`, `policy`, `clients`, ...), in a tasks file or an admin API body. Its `spec_hash` covers the rules that decide agreement; a change sends the task to the teacher until a night recalibrates it. |
 | **Audit** | The teacher re-answers a random share of student-served requests (`audit_rate`) to measure live quality. |
 | **Precision** | Of the answers a student serves (or would serve), the share that agree with the teacher. |
 | **Coverage** | The share of requests a student serves (or would serve). Higher coverage = more savings. |

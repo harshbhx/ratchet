@@ -6,9 +6,10 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom
-from ..ledger import Ledger
+from .. import bom, tasks
+from ..ledger import Ledger, Version
 from ..release import ReleaseGate
+from ..resilience import describe_failure
 from . import dataset
 
 
@@ -33,6 +34,22 @@ class NightReport:
     eval: dict[str, Any] | None = None
 
 
+def spec_hashes(golden_rows: list[dict[str, Any]]) -> dict[str, str]:
+    """{task: spec_hash} of the tasks in the golden rows, under their current specs: recorded in every eval this night
+    writes (`eval['spec_hashes']`), so `Ratchet.threshold` sends a task whose spec changed since to the teacher until a
+    night re-scores the version under the new spec (FR-2.15)."""
+    return {name: tasks.get(name).spec_hash for name in sorted({r["task"] for r in golden_rows})}
+
+
+def stale_tasks(version: Version, hashes: dict[str, str]) -> list[str]:
+    """The tasks whose spec changed since `version` was last scored: recorded in its eval with another hash than
+    `hashes` (the current ones). A version scored before spec hashes were recorded has none."""
+    recorded = version.eval.get("spec_hashes")
+    if not isinstance(recorded, dict):
+        return []
+    return sorted(t for t, h in hashes.items() if t in recorded and recorded[t] != h)
+
+
 def run_night(
     ledger: Ledger,
     trainer: Trainer,
@@ -55,25 +72,37 @@ def run_night(
 
     last = max((v.train_examples for v in ledger.versions()), default=0)
     new = manifest["train_examples"] - last
+    hashes = spec_hashes(golden_rows)
+    live = ledger.live()
     if new < min_new_examples:
         ledger.event("skip", f"only {new} new examples (< {min_new_examples}); no training tonight")
+        # A task whose spec changed is on the teacher until the live version is scored under the new spec; without new
+        # data that would wait for a training night, so score it now (the same re-score a training night starts with).
+        changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
+        if live is not None and changed:
+            try:
+                recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
+            except Exception as e:  # noqa: BLE001 - a skip night stays a skip night; the tasks stay on the teacher
+                ledger.event("rescore_failed", f"v{live.id}: {describe_failure(e)}; spec changed for {', '.join(changed)}")
+            else:
+                ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
+                ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
         return NightReport(False, None, False, "not enough new data")
     if not golden_rows:
         ledger.event("skip", "no golden examples yet; no training tonight")
         return NightReport(False, None, False, "no golden set")
 
-    # Champion vs challenger on the SAME golden set: re-score the live version first.
-    live = ledger.live()
+    # Champion vs challenger on the SAME golden set (and the same specs): re-score the live version first.
     if live is not None:
         recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
-        ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day})
+        ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
 
     name = f"student-v{len(ledger.versions()) + 1}"
     adapter_uri = trainer.train(train_rows, base_model, name)
     vid = ledger.create_version(
         base_model, adapter_uri, manifest["train_examples"], manifest["dataset_sha256"], {}, state="candidate"
     )
-    result = evaluator.evaluate(adapter_uri, golden_rows)
+    result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
     ledger.update_eval(vid, result)
     # The adapter's own bill of materials, written now, while we know exactly what it was trained on.
     version = ledger.version(vid)

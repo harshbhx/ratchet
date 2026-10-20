@@ -1,9 +1,9 @@
-"""Gateway API keys for `/v1/*`.
+"""Gateway keys: API keys for `/v1/*` and admin keys for management writes.
 
-Keys come from `RATCHET_API_KEYS` as `name:key,name:key`. The name is what the ledger records
-per request (so cost and savings can be reported per client); the key itself is never stored
-or logged. Keys are compared as SHA-256 digests with `hmac.compare_digest`, so lookup time does
-not depend on how much of a guessed key is right.
+API keys come from `RATCHET_API_KEYS` and admin keys from `RATCHET_ADMIN_KEYS`, both as `name:key,name:key`. The name is
+what the ledger records (per request, or as `updated_by` of a task an admin wrote), so cost and changes can be reported
+per name; the key itself is never stored or logged (INV-13). Keys are compared as SHA-256 digests with
+`hmac.compare_digest`, so lookup time does not depend on how much of a guessed key is right.
 """
 
 from __future__ import annotations
@@ -21,7 +21,11 @@ def _digest(key: str) -> bytes:
 
 
 class KeyRing:
-    def __init__(self, spec: str = ""):
+    """Named keys from one variable (`env`, which error messages name). A bad spec raises ValueError, so a typo stops
+    the gateway at startup."""
+
+    def __init__(self, spec: str = "", env: str = "RATCHET_API_KEYS"):
+        self.env = env
         self._keys: list[tuple[bytes, str]] = []
         for i, entry in enumerate(e.strip() for e in spec.split(",")):
             if not entry:
@@ -31,11 +35,11 @@ class KeyRing:
                 name, key = f"key{i + 1}", entry
             name, key = name.strip(), key.strip()
             if not _NAME.match(name):
-                raise ValueError(f"RATCHET_API_KEYS: bad client name {name!r} (letters, digits, '_', '.', '-')")
+                raise ValueError(f"{env}: bad name {name!r} (letters, digits, '_', '.', '-')")
             if len(key) < MIN_KEY_CHARS:
-                raise ValueError(f"RATCHET_API_KEYS: the key for {name!r} is shorter than {MIN_KEY_CHARS} characters")
+                raise ValueError(f"{env}: the key for {name!r} is shorter than {MIN_KEY_CHARS} characters")
             if any(n == name for _, n in self._keys):
-                raise ValueError(f"RATCHET_API_KEYS: client name {name!r} appears twice")
+                raise ValueError(f"{env}: name {name!r} appears twice")
             self._keys.append((_digest(key), name))
 
     @property
@@ -56,6 +60,12 @@ class KeyRing:
             if hmac.compare_digest(d, digest):
                 found = name
         return found
+
+    def shared(self, other: KeyRing) -> list[str]:
+        """The names in this ring whose key is also a key in `other`: an admin key that is also an API key would let a
+        client change what the gateway does, so the gateway refuses that at startup."""
+        theirs = {digest for digest, _ in other._keys}
+        return [name for digest, name in self._keys if digest in theirs]
 
 
 def bearer(authorization: str | None, x_api_key: str | None = None) -> str | None:

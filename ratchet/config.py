@@ -29,6 +29,10 @@ def _env(name: str, default: str) -> str:
 
 # RATCHET_ON_TEACHER_FAILURE: what a request whose teacher call failed gets (ADR 0019).
 TEACHER_FAILURE_MODES = ("error", "serve_student")
+# RATCHET_UNKNOWN_TASKS: what a request naming a task that is not registered gets (ADR 0022). `distill`: a task without
+# fields made up for the name, distilled like any other (v0.4); `teacher`: the teacher answers and nothing is stored;
+# `reject`: a 400 that lists the registered tasks.
+UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -155,6 +159,19 @@ class Settings:
     api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
     # Requests per key per UTC day on /v1/chat/completions. 0 = unlimited.
     api_key_daily_requests: int = field(default_factory=lambda: int(_env("RATCHET_API_KEY_DAILY_REQUESTS", "0")))
+    # Admin keys for management writes (PUT and DELETE /ratchet/tasks/...): "name:key,name:key", like RATCHET_API_KEYS
+    # and never the same keys. Empty: the admin API is off in live mode and open in mock mode (ADR 0022). Not the Caddy
+    # edge guard's RATCHET_ADMIN_TOKEN.
+    admin_keys: str = field(default_factory=lambda: _env("RATCHET_ADMIN_KEYS", ""))
+
+    # Tasks (ratchet/taskspec.py, ADR 0022). A JSON (or YAML, with PyYAML) file of task specs registered at startup; a bad
+    # file stops startup with every error listed. Empty = the built-in tasks and the ones the admin API stored.
+    tasks_file: str = field(default_factory=lambda: _env("RATCHET_TASKS_FILE", ""))
+    # What a request naming an unregistered task gets: UNKNOWN_TASK_POLICIES.
+    unknown_tasks: str = field(default_factory=lambda: _env("RATCHET_UNKNOWN_TASKS", "distill"))
+    # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
+    # any other file on the host.
+    fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
 
     # Request limits on the OpenAI-compatible API (ratchet/openai_compat.py), checked before any model call. 0 = no limit.
     # The body limit applies to every POST, PUT and PATCH; the other two to /v1/chat/completions.
@@ -220,6 +237,17 @@ class Settings:
             choices = " or ".join(TEACHER_FAILURE_MODES)
             raise ValueError(f"RATCHET_ON_TEACHER_FAILURE must be {choices}, not {self.on_teacher_failure!r}")
         return mode == "serve_student"
+
+    def unknown_task_policy(self) -> str:
+        """RATCHET_UNKNOWN_TASKS: `distill` (the default, also when set but empty), `teacher` or `reject`. Anything else
+        raises ValueError, so a typo stops the gateway at startup instead of distilling tasks the operator meant to keep
+        on the teacher."""
+        mode = self.unknown_tasks.strip().lower() if isinstance(self.unknown_tasks, str) else None
+        if mode == "":
+            mode = "distill"
+        if mode not in UNKNOWN_TASK_POLICIES:
+            raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
+        return mode
 
     def limits(self) -> Limits:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,

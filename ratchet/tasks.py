@@ -10,6 +10,12 @@ compares whole answers: canonical JSON when both are JSON, else the text, lower-
 Every answer is cleaned the same way before it is compared, stored or served (`clean_answer`): reasoning is removed
 (`strip_reasoning`), and a JSON task's answer loses a code fence wrapped around the whole of it. A JSON answer that is
 already one JSON object is kept as it is, so a reply that mentions a `<think>` tag keeps its text.
+
+The registry (FR-2.15, ADR 0022): `REGISTRY` holds the tasks a request can name, by name. It starts with `BUILTIN` (the
+tasks defined here); `taskspec.install` adds the tasks of RATCHET_TASKS_FILE (which may replace a built-in one) and the
+ones the admin API stored (which may replace neither). Writers (`register`, `unregister`, `reset_builtin`) take a lock
+and publish a new dict, so `get` on the request path reads without one. Only an operator's spec (built-in, file or API)
+can pin a task; nothing in a request can.
 """
 
 from __future__ import annotations
@@ -17,9 +23,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import unicodedata
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -38,6 +46,15 @@ SOURCES = ("builtin", "file", "api", "auto", "adhoc")
 TOOLS = ("teacher", "distill")  # who answers tool calls for this task (distill: opt-in for a later release)
 # A task's own release policy; later releases read it (samples, audit rate and precision targets per task).
 POLICY_KEYS = ("samples", "audit_rate", "target_precision", "min_precision")
+# How a request without a task name may be matched to this task (a later release reads them): its system message starts
+# with `system_prefix`, its `response_format.json_schema.name` is `schema_name`, or its tools are exactly `tools`. Plain
+# comparisons, never a pattern a request could make slow.
+MATCH_KEYS = ("system_prefix", "schema_name", "tools")
+MAX_DESCRIPTION = 1000  # characters
+MAX_PREFIX = 2000  # characters of `match.system_prefix`
+MAX_MATCH_TOOLS = 128  # OpenAI's limit on a request's tools
+MAX_CLIENTS = 256
+_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")  # OpenAI's rule for a function name and a json_schema name
 _TEXT_TRAILING = frozenset(".!,;:")
 
 
@@ -47,8 +64,12 @@ class Task:
     `store`, `tools`). `compare_keys` is the v0.4 shortcut: each key becomes an optional `exact` field, and such a task
     compares, validates and canonicalises answers exactly as v0.4 did. `spec_hash` is derived from the spec (not from
     the name or `source`), so evaluations can tell when a task's rules changed; it cannot be set, so it never drifts
-    from the rules (`dataclasses.replace` computes it again). Immutable: `policy` and `routing` are read-only mappings.
-    Invalid specs raise ValueError."""
+    from the rules (`dataclasses.replace` computes it again). Immutable: `policy`, `routing` and `match_rules` are
+    read-only mappings. Invalid specs raise ValueError.
+
+    `description`, `clients` (the API key names that may use the task; empty: every key) and `match_rules` (a spec
+    file's `match`) say who uses the task and how a request finds it, not how its answers compare, so they are left
+    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration."""
 
     name: str
     compare_keys: Sequence[str] = ()
@@ -62,6 +83,9 @@ class Task:
     store: bool = True  # False: the task's teacher answers are served but never stored as training examples
     tools: str = "teacher"
     source: str = "builtin"
+    description: str = ""
+    clients: Sequence[str] = ()  # API key names (RATCHET_API_KEYS) allowed to use this task; empty: every key
+    match_rules: Mapping[str, Any] = field(default_factory=dict)  # MATCH_KEYS; a spec file's `match`
     spec_hash: str = field(init=False, default="")  # sha256 of `spec()`, 16 hex digits
     _root: bool = field(init=False, repr=False, compare=False, default=False)  # a field at '$'
 
@@ -110,6 +134,21 @@ class Task:
             fail(f"tools must be one of {', '.join(TOOLS)}")
         if self.source not in SOURCES:
             fail(f"source must be one of {', '.join(SOURCES)}")
+        if self.pinned and self.source in ("auto", "adhoc"):
+            fail("only an operator's spec (built-in, file or API) can pin a task; auto and adhoc tasks are never pinned")
+        if not isinstance(self.description, str) or len(self.description) > MAX_DESCRIPTION:
+            fail(f"description must be a string of at most {MAX_DESCRIPTION} characters")
+        problem = clients_problem(self.clients)
+        if problem is not None:
+            fail(f"clients {problem}")
+        put("clients", tuple(self.clients))
+        if not isinstance(self.match_rules, Mapping):
+            fail("match must be a mapping")
+        for key, value in self.match_rules.items():
+            problem = match_problem(key, value)
+            if problem is not None:
+                fail(f"match.{key} {problem}")
+        put("match_rules", MappingProxyType({k: tuple(v) if k == "tools" else v for k, v in self.match_rules.items()}))
         put("policy", MappingProxyType(_policy(self.policy, fail)))
         if not isinstance(self.routing, Mapping) or not all(isinstance(k, str) for k in self.routing):
             fail("routing must be a mapping with string keys")
@@ -133,6 +172,17 @@ class Task:
             "policy": dict(self.policy),
             "routing": dict(self.routing),
         }
+
+    @property
+    def verifiable(self) -> bool:
+        """The task names fields that can be checked (labels, numbers, dates, ...). A task without fields compares whole
+        answers, which tells little about free text."""
+        return bool(self.fields)
+
+    def allows(self, client: str | None) -> bool:
+        """Whether the API key named `client` may use this task: always without `clients`; with them, only a key they
+        name, never a request without a key (the allow-list cannot be checked, so it is refused)."""
+        return not self.clients or (client is not None and client in self.clients)
 
     @property
     def structured(self) -> bool:
@@ -210,24 +260,68 @@ class Task:
         return json.dumps({p: jsonable(v) for p, v in key.items()}, sort_keys=True)
 
 
+def policy_problem(key: Any, value: Any) -> str | None:
+    """Why `value` cannot be policy `key` (`samples` a whole number from 1 to 16, the rates in [0, 1]), or None. One key
+    at a time, so a spec file can name every bad key (`taskspec`)."""
+    if key not in POLICY_KEYS:
+        return f"unknown key; use {', '.join(POLICY_KEYS)}"
+    if key == "samples":
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 16:
+            return "must be a whole number from 1 to 16"
+    elif isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        return "must be a number from 0 to 1"
+    return None
+
+
 def _policy(policy: Any, fail: Any) -> dict[str, Any]:
-    """A task's policy, checked: only `POLICY_KEYS`, `samples` a whole number from 1 to 16, the rates in [0, 1]."""
+    """A task's policy, checked by `policy_problem`; an unknown key is reported first."""
     if not isinstance(policy, Mapping):
         fail("policy must be a mapping")
     out = dict(policy)
-    unknown = sorted(set(out) - set(POLICY_KEYS))
+    unknown = sorted(str(k) for k in out if k not in POLICY_KEYS)
     if unknown:
         fail(f"unknown policy key {unknown[0]!r}; use {', '.join(POLICY_KEYS)}")
-    if "samples" in out:
-        n = out["samples"]
-        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 16:
-            fail("policy.samples must be a whole number from 1 to 16")
-    for name in ("audit_rate", "target_precision", "min_precision"):
-        if name in out:
-            v = out[name]
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
-                fail(f"policy.{name} must be a number from 0 to 1")
+    for key, value in out.items():
+        problem = policy_problem(key, value)
+        if problem is not None:
+            fail(f"policy.{key} {problem}")
     return out
+
+
+def match_problem(key: Any, value: Any) -> str | None:
+    """Why `value` cannot be `match.<key>`, or None."""
+    if key not in MATCH_KEYS:
+        return f"unknown key; use {', '.join(MATCH_KEYS)}"
+    if key == "system_prefix":
+        if not isinstance(value, str) or not value or len(value) > MAX_PREFIX:
+            return f"must be a non-empty string of at most {MAX_PREFIX} characters"
+    elif key == "schema_name":
+        if not isinstance(value, str) or not _TOOL_NAME.fullmatch(value):
+            return "must be a JSON schema name: 1 to 64 letters, digits, '_' or '-'"
+    else:  # tools
+        if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)) or not value:
+            return "must be a non-empty list of tool names"
+        if len(value) > MAX_MATCH_TOOLS:
+            return f"must name at most {MAX_MATCH_TOOLS} tools"
+        if not all(isinstance(t, str) and _TOOL_NAME.fullmatch(t) for t in value):
+            return "must hold tool names: 1 to 64 letters, digits, '_' or '-'"
+        if len(set(value)) != len(value):
+            return "names a tool twice"
+    return None
+
+
+def clients_problem(value: Any) -> str | None:
+    """Why `value` cannot be a task's `clients` (a list of API key names, each at most once), or None."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        return "must be a list of API key names"
+    if len(value) > MAX_CLIENTS:
+        return f"must name at most {MAX_CLIENTS} keys"
+    for name in value:
+        if not isinstance(name, str) or not valid_name(name):
+            return f"must hold API key names (letters, digits, '_', '.', '-'), not {name!r}"
+    if len(set(value)) != len(value):
+        return "names a key twice"
+    return None
 
 
 # What `Task.canonical` returns for an answer that cannot count: it never agrees, and gets no vote in `confidence.score`.
@@ -446,29 +540,6 @@ def _parse_any(text: str | None) -> Any:
     return _NOT_JSON
 
 
-REGISTRY: dict[str, Task] = {
-    "default": Task("default"),
-    "ticket-triage": Task(
-        "ticket-triage",
-        fields=(
-            FieldSpec("category", "label", values=vocab.TICKET_CATEGORIES),
-            FieldSpec("priority", "label", values=vocab.TICKET_PRIORITIES),
-        ),
-    ),
-    # Scout, the multi-agent research demo (docs/SCOUT.md).
-    "source-triage": Task(
-        "source-triage",
-        fields=(FieldSpec("relevant", "bool"), FieldSpec("source_type", "label", values=vocab.SOURCE_TYPES)),
-    ),
-    "page-read": Task(
-        "page-read",
-        fields=(FieldSpec("answers_question", "bool"), FieldSpec("fact_type", "label", values=vocab.FACT_TYPES)),
-    ),
-    "research-plan": Task("research-plan", pinned=True),
-    "research-write": Task("research-write", pinned=True),
-}
-
-
 _NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
@@ -477,10 +548,172 @@ def valid_name(name: str) -> bool:
     return _NAME.fullmatch(name) is not None
 
 
+# The tasks defined in code. `reset_builtin` puts REGISTRY back to exactly these.
+BUILTIN: Mapping[str, Task] = MappingProxyType(
+    {
+        "default": Task("default"),
+        "ticket-triage": Task(
+            "ticket-triage",
+            fields=(
+                FieldSpec("category", "label", values=vocab.TICKET_CATEGORIES),
+                FieldSpec("priority", "label", values=vocab.TICKET_PRIORITIES),
+            ),
+        ),
+        # Scout, the multi-agent research demo (docs/SCOUT.md).
+        "source-triage": Task(
+            "source-triage",
+            fields=(FieldSpec("relevant", "bool"), FieldSpec("source_type", "label", values=vocab.SOURCE_TYPES)),
+        ),
+        "page-read": Task(
+            "page-read",
+            fields=(FieldSpec("answers_question", "bool"), FieldSpec("fact_type", "label", values=vocab.FACT_TYPES)),
+        ),
+        "research-plan": Task("research-plan", pinned=True),
+        "research-write": Task("research-write", pinned=True),
+    }
+)
+
+# The tasks a request can name. Writers build a new dict under _REGISTRY_LOCK and publish it in one assignment, so a
+# reader (`get`, on every request) never takes the lock and never sees a half-made registry. Read it as
+# `tasks.REGISTRY`, never `from .tasks import REGISTRY` (that keeps the dict of the moment).
+REGISTRY: dict[str, Task] = dict(BUILTIN)
+_REGISTRY_LOCK = threading.Lock()
+MAX_TASKS = 500  # registered tasks of every source, built-in ones included
+# The registered tasks a new one may replace, by the new one's source: the tasks file may replace a built-in task (the
+# operator's configuration wins); the admin API replaces only its own tasks and auto tasks (it answers 403 for a
+# built-in or file task, which the code or the file defines); an auto task replaces only another auto task.
+_REPLACES: Mapping[str, frozenset[str]] = MappingProxyType(
+    {"file": frozenset({"builtin", "file"}), "api": frozenset({"api", "auto"}), "auto": frozenset({"auto"})}
+)
+_OWNER = {"builtin": "built in", "file": "defined in RATCHET_TASKS_FILE", "api": "an API task", "auto": "an auto task"}
+_LISTED = 20  # registered names an UnknownTask message lists
+
+
+class TaskConflict(ValueError):
+    """A task cannot replace (or remove) the one registered under its name. `existing` is that task's source."""
+
+    def __init__(self, message: str, name: str, existing: str) -> None:
+        super().__init__(message)
+        self.name = name
+        self.existing = existing
+
+
+class RegistryFull(ValueError):
+    """MAX_TASKS tasks are registered already."""
+
+
+class UnknownTask(ValueError):
+    """A request named a task that is not registered, and RATCHET_UNKNOWN_TASKS is `reject`. The message lists the
+    registered tasks the caller may use (`known`), at most 20 of them."""
+
+    def __init__(self, name: str, known: Iterable[str] = ()) -> None:
+        names = sorted(known)
+        listed = ", ".join(names[:_LISTED]) or "none"
+        more = f" and {len(names) - _LISTED} more" if len(names) > _LISTED else ""
+        super().__init__(f'unknown task "{name}"; registered: {listed}{more}')
+        self.name = name
+
+
+class TaskForbidden(PermissionError):
+    """The task's `clients` do not name the API key that sent the request (or the request had no key)."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"task {name!r} is not allowed for this key")
+        self.name = name
+
+
+def register(task: Task, source: str | None = None) -> Task | None:
+    """Add `task` to the registry, or replace the task registered under its name; returns the task it replaced, if any.
+    `source` (default `task.source`) is `file`, `api` or `auto`: built-in tasks come only from `reset_builtin`, and
+    adhoc tasks are never registered. Raises TaskConflict when the registered task may not be replaced by one from this
+    source (`_REPLACES`), RegistryFull for a new name past MAX_TASKS, and ValueError for a name a request could not
+    send."""
+    global REGISTRY
+    if source is not None and source != task.source:  # a compare_keys task keeps its keys (they make its fields)
+        task = replace(task, source=source, fields=()) if task.compare_keys else replace(task, source=source)
+    allowed = _REPLACES.get(task.source)
+    if allowed is None:
+        raise ValueError(f"task {task.name!r}: a {task.source} task cannot be registered; use file, api or auto")
+    if not isinstance(task.name, str) or not valid_name(task.name):
+        raise ValueError(f"task {task.name!r}: a name is 1 to 64 letters, digits, '_', '.' or '-'")
+    with _REGISTRY_LOCK:
+        current = REGISTRY.get(task.name)
+        if current is not None and current.source not in allowed:
+            article = "an" if task.source[0] in "aeiou" else "a"
+            message = f"task {task.name!r} is {_OWNER[current.source]}; {article} {task.source} task cannot replace it"
+            raise TaskConflict(message, task.name, current.source)
+        if current is None and len(REGISTRY) >= MAX_TASKS:
+            raise RegistryFull(f"the task registry is full ({MAX_TASKS} tasks); delete a task first")
+        new = dict(REGISTRY)
+        new[task.name] = task
+        REGISTRY = new
+    return current
+
+
+def unregister(name: str) -> Task | None:
+    """Remove an API or auto task and return it; None when no task has that name. A built-in or file task cannot be
+    removed (TaskConflict): the code or the tasks file defines it."""
+    global REGISTRY
+    with _REGISTRY_LOCK:
+        current = REGISTRY.get(name)
+        if current is None:
+            return None
+        if current.source not in ("api", "auto"):
+            raise TaskConflict(f"task {name!r} is {_OWNER[current.source]}; it cannot be removed", name, current.source)
+        new = dict(REGISTRY)
+        del new[name]
+        REGISTRY = new
+    return current
+
+
+def restore(name: str, previous: Task | None) -> None:
+    """Put back what was registered under `name` before a write that could not be completed (None: nothing)."""
+    global REGISTRY
+    with _REGISTRY_LOCK:
+        new = dict(REGISTRY)
+        if previous is None:
+            new.pop(name, None)
+        else:
+            new[name] = previous
+        REGISTRY = new
+
+
+def reset_builtin() -> None:
+    """Make the registry the built-in tasks again (at startup, before the tasks file and the stored API tasks are
+    registered, and in tests)."""
+    global REGISTRY
+    with _REGISTRY_LOCK:
+        REGISTRY = dict(BUILTIN)
+
+
+def lookup(name: Any) -> Task | None:
+    """The registered task called `name`, or None. Never makes one up (see `get`)."""
+    return REGISTRY.get(name) if isinstance(name, str) else None
+
+
+def registered() -> list[Task]:
+    """Every registered task: the built-in ones first, then the file's, then the API's, as they were registered."""
+    return list(REGISTRY.values())
+
+
+def names_for(client: str | None) -> list[str]:
+    """The names of the registered tasks the API key `client` may use (`Task.allows`), sorted."""
+    return sorted(name for name, task in REGISTRY.items() if task.allows(client))
+
+
+def load_file(path: str | Path, known_clients: Iterable[str] | None = None) -> list[Task]:
+    """The tasks of a tasks file, JSON or (with PyYAML) YAML: `taskspec.load_file`. Raises `taskspec.SpecError` (a
+    ValueError) listing every error with its path. Registers nothing (`taskspec.install` does)."""
+    from .taskspec import load_file as _load_file  # taskspec imports this module
+
+    return _load_file(path, known_clients)
+
+
 def get(name: str | None) -> Task:
-    """Known tasks come from REGISTRY. Unknown names get a task without fields (whole answers compared) that is NOT
-    stored, so arbitrary client headers cannot grow the registry (`source` 'adhoc'). Invalid names fall back to
-    'default'."""
+    """The registered task called `name`. An unknown valid name gets a task without fields (whole answers compared) that
+    is NOT registered, so arbitrary client headers cannot grow the registry (`source` 'adhoc', never pinned); what a
+    request for it gets is RATCHET_UNKNOWN_TASKS's call (`router.Ratchet.task_for`). Invalid names fall back to
+    'default'. Night School uses this too, so a stored example always has a task to compare with."""
     if not name or not valid_name(name):
         return REGISTRY["default"]
     return REGISTRY.get(name) or Task(name, source="adhoc")

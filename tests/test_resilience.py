@@ -1656,7 +1656,7 @@ def test_demo_student_outage_opens_and_closes_the_breaker(gw_env, monkeypatch):
     assert any(e["kind"] == "circuit" for e in stats["events"])
 
 
-@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12")
+@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12", "FR-2.15")
 def test_every_request_row_has_a_route():
     clock = FakeClock()
     led = Ledger(":memory:")
@@ -1671,12 +1671,14 @@ def test_every_request_row_has_a_route():
         student_breaker_cooldown_s=30,
         teacher_fallback_model=FALLBACK_TEACHER,
         on_teacher_failure="serve_student",
+        unknown_tasks="teacher",
     )
     r = Ratchet(s, led, teacher, lambda v: (student, v.adapter_uri), seed=1, clock=clock, fallback_teacher=fallback)
 
     seen = [r.handle(_ask("cold"), TRIAGE).route]  # no version yet
     seen.append(r.handle([{"role": "user", "content": "Question: what is LoRA?"}], "research-plan").route)
     seen.append(r.teacher_only(_ask("image"), TRIAGE).route)  # the pinned path
+    seen.append(r.handle(_ask("not registered"), "unregistered-task").route)  # RATCHET_UNKNOWN_TASKS=teacher
     live = _version(led, "live", {"threshold": 0.5})
     seen.append(r.handle(_ask("sure"), TRIAGE).route)
     student.text = [A, A, A, B]  # confident on its 3 scored samples, but only 3 of the 4 drawn agree
@@ -1695,6 +1697,7 @@ def test_every_request_row_has_a_route():
         "cold_start",
         "pinned",
         "pinned",
+        "unknown_task",
         "student",
         "n_choices",
         "confidence",
@@ -1720,6 +1723,7 @@ def test_every_request_row_has_a_route():
             "n_choices": 1,
         },
         "research-plan": {"pinned": 1},
+        "unregistered-task": {"unknown_task": 1},
     }
     assert list(by_task[TRIAGE])[0] == "student_error"  # most frequent first
     assert [(d["degraded"], d["fallback_teacher"]) for d in led.stats_by_day()] == [(1, 1)]

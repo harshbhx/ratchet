@@ -22,13 +22,13 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 import anyio
 import httpx
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live
+from . import __version__, live, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import Settings
@@ -107,6 +107,7 @@ class Runtime:
         self.transports = dict(transports or {})
         self.sleep = sleep
         self.clock = clock
+        self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
         self.reset()
 
     def reset(self) -> None:
@@ -176,6 +177,17 @@ class Runtime:
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
         self.keys = KeyRing(s.api_keys)
+        # Admin keys for management writes (ADR 0022); never the same keys as an API client's.
+        self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
+        both = self.admin_keys.shared(self.keys)
+        if both:
+            raise ValueError(f"RATCHET_ADMIN_KEYS: the key for {both[0]!r} is also an API key; give admins their own keys")
+        # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
+        # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
+        with self.tasks_lock:
+            skipped = taskspec.install(self.ledger, s.tasks_file, self.known_clients())
+        for line in skipped:
+            self.ledger.event("task_skipped", line)
         self.signer = bomdoc.Signer(s.bom_signing_key) if s.bom_signing_key else None
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         self.modalities = parse_modalities(s.teacher_modalities)
@@ -195,6 +207,10 @@ class Runtime:
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
+
+    def known_clients(self) -> list[str] | None:
+        """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
+        return self.keys.names if self.keys.enabled else None
 
     # ----- mock-mode simulation helpers -----
     def simulate_day(self, requests: int, workload: str = "tickets") -> NightReport:
@@ -587,8 +603,13 @@ async def chat(
 def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
+    try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
+        task = rt.ratchet.task_for(header_task or req.task, client)
+    except tasks.UnknownTask as e:  # RATCHET_UNKNOWN_TASKS=reject
+        raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
+    except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
+        raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
     headers = _quota(client)
-    task = header_task or req.task  # the header wins over metadata.ratchet_task
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
@@ -729,6 +750,196 @@ def version_bom(vid: int) -> dict[str, Any]:
     if doc is None:
         raise HTTPException(404, f"no bill of materials for version {vid}")
     return doc
+
+
+# ----- tasks (FR-2.15, ADR 0022) -----
+MOCK_ADMIN = "mock-admin"  # the admin's name in mock mode without RATCHET_ADMIN_KEYS
+MOCK_MAX_API_TASKS = 50  # the shared mock demo holds at most this many API tasks; a reset clears them
+
+
+def _admin(authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)) -> str:
+    """The admin's name for a management call, from `Authorization: Bearer <key>` or `X-API-Key`. With
+    RATCHET_ADMIN_KEYS set: 401 for a missing or wrong key, 403 for a regular API key. Without them: 403 in live mode
+    (the admin API is off) and `mock-admin` in mock mode, whose demo has nothing to protect. Only the name is ever
+    stored or logged (INV-13)."""
+    key = bearer(authorization, x_api_key)
+    if rt.admin_keys.enabled:
+        name = rt.admin_keys.identify(key)
+        if name is not None:
+            return name
+        if rt.keys.identify(key) is not None:
+            raise HTTPException(403, "this is an API key; management calls need an admin key (RATCHET_ADMIN_KEYS)")
+        raise HTTPException(401, "invalid or missing admin key", headers={"WWW-Authenticate": "Bearer"})
+    if rt.settings.mode != "mock":
+        raise HTTPException(403, "admin API disabled: set RATCHET_ADMIN_KEYS")
+    return MOCK_ADMIN
+
+
+def _task_entry(t: tasks.Task, stats: Mapping[str, Any] | None, live_version: Version | None) -> dict[str, Any]:
+    """One task as GET /ratchet/tasks lists it: its spec (`taskspec.document`, which PUT takes back), where it was
+    defined, its spec_hash, whether it names fields that can be checked, its traffic, and whether the live version was
+    scored under another spec of it (so the teacher answers it until a night re-scores the version)."""
+    return {
+        **taskspec.document(t),
+        "source": t.source,
+        "spec_hash": t.spec_hash,
+        "verifiable": t.verifiable,
+        "requests": int(stats["requests"]) if stats else 0,
+        "student_share": float(stats["student_share"]) if stats else 0.0,
+        "recalibrating": live_version is not None and rt.ratchet.spec_changed(live_version, t),
+    }
+
+
+def _task_stats() -> dict[str, dict[str, Any]]:
+    return {r["task"]: r for r in rt.ledger.stats_by_task()}
+
+
+def _spec_errors(errors: list[str]) -> JSONResponse:
+    return JSONResponse({"detail": "invalid task spec", "errors": errors}, status_code=422)
+
+
+def _not_yours(t: tasks.Task) -> HTTPException:
+    """403 for a task the admin API does not own: the code or the tasks file defines it."""
+    if t.source == "file":
+        return HTTPException(403, f"task {t.name!r} is defined in RATCHET_TASKS_FILE; edit the file")
+    if t.source == "builtin":
+        return HTTPException(403, f"task {t.name!r} is built in; use another name (a spec may extend it)")
+    return HTTPException(403, f"task {t.name!r} is an {t.source} task; only API tasks can be changed here")
+
+
+@app.get("/ratchet/tasks")
+def list_tasks() -> dict[str, Any]:
+    """Every registered task (`_task_entry`), the unknown-task policy, the registry's cap, and the names requests used
+    that are not registered (candidates to register or pin)."""
+    stats = _task_stats()
+    live_version = rt.ledger.live()
+    registered = tasks.registered()
+    names = {t.name for t in registered}
+    return {
+        "unknown_tasks": rt.ratchet.unknown_tasks,
+        "max_tasks": tasks.MAX_TASKS,
+        "tasks": [_task_entry(t, stats.get(t.name), live_version) for t in registered],
+        "unregistered": [{"name": n, "requests": int(r["requests"])} for n, r in stats.items() if n not in names],
+    }
+
+
+@app.get("/ratchet/tasks/{name}")
+def get_task(name: str) -> dict[str, Any]:
+    """One registered task; an API task also says when it was written and by which admin (the key's name)."""
+    t = tasks.lookup(name)
+    if t is None:
+        raise HTTPException(404, f"no registered task is named {name!r}")
+    entry = _task_entry(t, _task_stats().get(name), rt.ledger.live())
+    saved = rt.ledger.saved_task(name) if t.source in ("api", "auto") else None
+    if saved is not None:
+        entry.update({k: saved[k] for k in ("created_ts", "updated_ts", "updated_by")})
+    return entry
+
+
+@app.post("/ratchet/tasks/validate")
+async def validate_tasks(request: Request, admin: str = Depends(_admin)) -> dict[str, Any]:
+    """A dry run: the errors a body would get, with no side effects. `{"tasks": [...]}` is checked as a tasks file (it
+    may adjust a built-in task); one task spec is checked as PUT would take it."""
+    raw = await request.body()
+    return await anyio.to_thread.run_sync(_validate_tasks, raw)
+
+
+def _validate_tasks(raw: bytes) -> dict[str, Any]:
+    try:
+        obj = taskspec.loads(raw)
+        if isinstance(obj, Mapping) and "tasks" in obj:
+            parsed = taskspec.parse_document(obj, "file", known_clients=rt.known_clients())
+            errors: list[str] = []
+        else:
+            parsed = [taskspec.parse_spec(obj, "api", known_clients=rt.known_clients())]
+            current = tasks.lookup(parsed[0].name)
+            errors = [f"name: {_not_yours(current).detail}"] if current is not None and current.source != "api" else []
+    except taskspec.SpecError as e:
+        return {"valid": False, "errors": e.errors, "tasks": []}
+    found = []
+    for t in parsed:
+        current = tasks.lookup(t.name)
+        found.append({"name": t.name, "spec_hash": t.spec_hash, "registered": current.source if current else None})
+    return {"valid": not errors, "errors": errors, "tasks": found}
+
+
+@app.put("/ratchet/tasks/{name}", response_model=None)
+async def put_task(name: str, request: Request, admin: str = Depends(_admin)) -> dict[str, Any] | JSONResponse:
+    """Create or replace an API task: 200 `{task, spec_hash, changed, created}`, 422 `{errors}` for a bad spec, 403 for
+    a built-in or file task, 409 when the registry (or the mock demo's share of it) is full."""
+    raw = await request.body()
+    return await anyio.to_thread.run_sync(functools.partial(_put_task, name, raw, admin))
+
+
+def _put_task(name: str, raw: bytes, admin: str) -> dict[str, Any] | JSONResponse:
+    if not tasks.valid_name(name):
+        return _spec_errors([f"name: {name!r} is not a task name (1 to 64 letters, digits, '_', '.', '-')"])
+    try:
+        obj = taskspec.loads(raw)
+    except taskspec.SpecError as e:
+        return _spec_errors(e.errors)
+    if not isinstance(obj, Mapping):
+        return _spec_errors(["$: must be an object (one task spec)"])
+    if "name" in obj and obj["name"] != name:
+        return _spec_errors([f"name: the body names {obj['name']!r} but the URL names {name!r}"])
+    with rt.tasks_lock:
+        current = tasks.lookup(name)
+        if current is not None and current.source not in ("api", "auto"):
+            raise _not_yours(current)
+        try:
+            task = taskspec.parse_spec({**obj, "name": name}, "api", known_clients=rt.known_clients())
+        except taskspec.SpecError as e:
+            return _spec_errors(e.errors)
+        doc = taskspec.document(task)
+        if current is not None and current.source == "api" and taskspec.document(current) == doc:
+            return _put_result(task, changed=False, created=False)
+        if (current is None or current.source != "api") and rt.settings.mode == "mock":
+            if sum(1 for t in tasks.registered() if t.source == "api") >= MOCK_MAX_API_TASKS:
+                raise HTTPException(409, f"the mock demo holds at most {MOCK_MAX_API_TASKS} API tasks; delete one or reset")
+        try:
+            tasks.register(task)
+        except tasks.TaskConflict as e:  # cannot happen under tasks_lock after the check above; refuse it all the same
+            raise HTTPException(403, str(e)) from e
+        except tasks.RegistryFull as e:
+            raise HTTPException(409, str(e)) from e
+        try:
+            created, old_hash = rt.ledger.save_task(name, doc, task.spec_hash, "api", admin)
+        except BaseException:
+            tasks.restore(name, current)  # the registry and the table never disagree
+            raise
+        if created:
+            rt.ledger.event("task_registered", f"{name} (spec {task.spec_hash}) by {admin}")
+        elif old_hash != task.spec_hash:
+            rt.ledger.event("task_changed", f"{name}: spec {old_hash} -> {task.spec_hash} by {admin}")
+        else:
+            rt.ledger.event("task_changed", f"{name}: spec {task.spec_hash} kept; description, clients or match by {admin}")
+    return _put_result(task, changed=True, created=created)
+
+
+def _put_result(task: tasks.Task, changed: bool, created: bool) -> dict[str, Any]:
+    entry = _task_entry(task, _task_stats().get(task.name), rt.ledger.live())
+    return {"task": entry, "spec_hash": task.spec_hash, "changed": changed, "created": created}
+
+
+@app.delete("/ratchet/tasks/{name}")
+def delete_task(name: str, admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Remove an API task. Its stored examples stay, for provenance; requests that name it then get the unknown-task
+    policy (RATCHET_UNKNOWN_TASKS)."""
+    with rt.tasks_lock:
+        current = tasks.lookup(name)
+        if current is None:
+            raise HTTPException(404, f"no registered task is named {name!r}")
+        if current.source != "api":
+            raise _not_yours(current)
+        tasks.unregister(name)
+        try:
+            rt.ledger.delete_task(name)
+        except BaseException:
+            tasks.restore(name, current)
+            raise
+        kept = rt.ledger.example_count(name)
+        rt.ledger.event("task_deleted", f"{name} (spec {current.spec_hash}) by {admin}; {kept} stored examples kept")
+    return {"deleted": name, "spec_hash": current.spec_hash, "examples_kept": kept}
 
 
 # ----- demo controls (mock mode only) -----

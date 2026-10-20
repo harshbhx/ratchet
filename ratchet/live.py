@@ -30,7 +30,7 @@ from typing import Any
 
 import httpx
 
-from . import bom
+from . import bom, taskspec
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset
@@ -223,6 +223,10 @@ def main(
 ) -> None:
     s = Settings(mode="live")
     led, gate = build(s)
+    # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
+    # file stops here with every error listed.
+    for line in taskspec.install(led, s.tasks_file):
+        print(f"task skipped: {line}", file=sys.stderr)
     cmd = argv[0] if argv else "night"
     if cmd == "tick":
         gate.tick()

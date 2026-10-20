@@ -16,7 +16,7 @@ from typing import Any, NamedTuple
 import httpx
 
 from . import licenses, tasks
-from .confidence import STUDENT_SAMPLING, Scored, majority, score
+from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
 from .providers import (
@@ -55,7 +55,8 @@ EVENT_ON_FAILURE = (1, 10, 100, 1000)
 # answer because the teacher was unavailable (`degraded`, RATCHET_ON_TEACHER_FAILURE=serve_student); the fallback
 # teacher because the primary was unavailable (`fallback_teacher`, RATCHET_TEACHER_FALLBACK_MODEL; ADR 0019); or the
 # teacher because the student was confident but fewer than the client's n of its samples gave that answer, so it could
-# not fill n choices (`n_choices`, FR-1.14, ADR 0020).
+# not fill n choices (`n_choices`, FR-1.14, ADR 0020); or the teacher alone because the task is not registered and
+# RATCHET_UNKNOWN_TASKS is `teacher` (`unknown_task`, FR-2.15, ADR 0022).
 ROUTES = (
     "student",
     "confidence",
@@ -66,6 +67,7 @@ ROUTES = (
     "degraded",
     "fallback_teacher",
     "n_choices",
+    "unknown_task",
 )
 # Routes whose answer is not the primary teacher's or a confident student's: such a request runs no shadow, so release
 # statistics never rest on a stand-in's answer (ADR 0019).
@@ -314,6 +316,8 @@ class Ratchet:
             self.fallback_teacher = fallback_teacher if fallback_teacher is not None else teacher
         # RATCHET_ON_TEACHER_FAILURE; a bad value stops startup here.
         self.serve_student_on_failure = settings.serve_student_on_teacher_failure()
+        # RATCHET_UNKNOWN_TASKS: distill, teacher or reject (ADR 0022); a bad value stops startup here.
+        self.unknown_tasks = settings.unknown_task_policy()
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
@@ -636,12 +640,28 @@ class Ratchet:
         """The price of one call that returned these choices: the prompt once, every choice's output."""
         return self.s.price(model).cost(choices[0].in_tokens, sum(c.out_tokens for c in choices))
 
-    def threshold(self, version: Version, model: str | None = None) -> float:
+    def threshold(self, version: Version, model: str | None = None, task: tasks.Task | str | None = None) -> float:
         """Each version carries its own threshold, calibrated on the golden set at training time.
-        The hosted untuned fallback model was never calibrated, so it uses the global default."""
+        The hosted untuned fallback model was never calibrated, so it uses the global default. For a `task` whose spec
+        changed since the version was scored (`spec_changed`) it is SERVE_NOTHING: the threshold was calibrated under
+        other rules, so the teacher answers until a night re-scores the version under the new spec (FR-2.15)."""
         if model is not None and model == self.s.fallback_student_model:
             return self.s.confidence_threshold
+        if task is not None and self.spec_changed(version, task):
+            return SERVE_NOTHING
         return float(version.eval.get("threshold", self.s.confidence_threshold))
+
+    @staticmethod
+    def spec_changed(version: Version, task: tasks.Task | str) -> bool:
+        """Whether `version` was scored under another spec of `task` than the current one: its eval records the task's
+        `spec_hash` (`eval['spec_hashes']`, written by `run_night`) and it differs. A version without a record for the
+        task (scored before hashes were recorded, or with no golden rows of it) has nothing to compare."""
+        recorded = version.eval.get("spec_hashes")
+        if not isinstance(recorded, dict):
+            return False
+        t = _task(task)
+        h = recorded.get(t.name)
+        return h is not None and h != t.spec_hash
 
     def _sample(
         self,
@@ -688,24 +708,26 @@ class Ratchet:
         cost = self.s.price("student").cost(samples[0].in_tokens, sum(s.out_tokens for s in samples))
         return samples, cost, model
 
-    def _pinned(
+    def _teacher_only(
         self,
         task: tasks.Task,
         messages: list[dict[str, Any]],
         client: str | None = None,
         plan: GenPlan | None = None,
         params: GenParams | None = None,
+        route: str = "pinned",
     ) -> Result:
-        """Pinned tasks always go to the teacher. They are logged but never stored as training
-        examples, so they cannot leak into a student that was never meant to do them (INV-10). When the primary teacher
-        is unavailable, the fallback teacher may answer (route `fallback_teacher`); the student never does, so this path
-        never degrades. The baseline is the primary teacher's price for the same tokens. `params` are the client's, for
-        the logprobs it asked to get back."""
+        """The teacher alone: a pinned task, a request the student cannot take (`teacher_only`), or an unregistered
+        task under RATCHET_UNKNOWN_TASKS=teacher (`route` `unknown_task`). The request is logged, but the answer is never
+        stored as a training example, so it cannot leak into a student that was never meant to do it (INV-10), and the
+        student is never sampled. When the primary teacher is unavailable, the fallback teacher may answer (route
+        `fallback_teacher`); the student never does, so this path never degrades. The baseline is the primary teacher's
+        price for the same tokens. `params` are the client's, for the logprobs it asked to get back."""
         plan = plan or self._plain
         served, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n)
         c = served[0]
         model = self._teacher_model(fallback)
-        route = "fallback_teacher" if fallback else "pinned"
+        route = "fallback_teacher" if fallback else route
         cost = self._call_cost(model, served)
         baseline = self._call_cost(self.s.teacher_model, served) if fallback else cost
         self.ledger.log_request(
@@ -757,8 +779,27 @@ class Ratchet:
         """A request the student cannot take, such as one with an image part the teacher reads
         (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers (or the fallback teacher, when the primary
         is unavailable), the request is logged, and nothing is stored as a training example. No student, audit or shadow
-        call, so it never degrades. `n` choices, as for `handle`."""
-        return self._pinned(_task(task), messages, client, self.plan(params, n), params)
+        call, so it never degrades. `n` choices, as for `handle`. An unregistered task under RATCHET_UNKNOWN_TASKS=reject
+        raises `tasks.UnknownTask`."""
+        task = _task(task)
+        self._admit(task, client)
+        return self._teacher_only(task, messages, client, self.plan(params, n), params)
+
+    def task_for(self, task: str | tasks.Task | None, client: str | None = None) -> tasks.Task:
+        """The task a request names, as the gateway admits it before any quota or model call: a registered task, or for
+        an unregistered name a task without fields made up for it (`tasks.get`), which RATCHET_UNKNOWN_TASKS decides
+        about (`reject` raises `tasks.UnknownTask`, listing the tasks this client may use). A task with `clients`
+        raises `tasks.TaskForbidden` for any other API key, and for a request without one. Lookups only."""
+        t = _task(task)
+        self._admit(t, client)
+        if not t.allows(client):
+            raise tasks.TaskForbidden(t.name)
+        return t
+
+    def _admit(self, task: tasks.Task, client: str | None = None) -> None:
+        """Raise `tasks.UnknownTask` for an unregistered task under RATCHET_UNKNOWN_TASKS=reject."""
+        if task.source == "adhoc" and self.unknown_tasks == "reject":
+            raise tasks.UnknownTask(task.name, tasks.names_for(client))
 
     # ------------------------------------------------------------------
     def handle(
@@ -785,11 +826,18 @@ class Ratchet:
         When the teacher answer an escalation needs cannot be had (ADR 0019), the fallback teacher answers if one is set
         (route `fallback_teacher`), else, with RATCHET_ON_TEACHER_FAILURE=serve_student, the student's own valid answer
         (route `degraded`; for `n` > 1 only when `n` of its samples agree), else the teacher's error is raised for the
-        gateway to map (INV-7)."""
+        gateway to map (INV-7).
+
+        A pinned task, and an unregistered one under RATCHET_UNKNOWN_TASKS=teacher (route `unknown_task`), go to the
+        teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. The client
+        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key."""
         task = _task(task)
         plan = self.plan(params, n)
+        self._admit(task, client)
+        if task.source == "adhoc" and self.unknown_tasks == "teacher":  # not registered: never distilled (ADR 0022)
+            return self._teacher_only(task, messages, client, plan, params, route="unknown_task")
         if task.pinned:
-            return self._pinned(task, messages, client, plan, params)
+            return self._teacher_only(task, messages, client, plan, params)
         version = self._pick_version()
         cost = 0.0
         latency = 0.0
@@ -833,7 +881,7 @@ class Ratchet:
                 confidence = sc.confidence
                 student_c = sc.answer
         if version is not None and sc is not None:
-            threshold = self.threshold(version, model_used)
+            threshold = self.threshold(version, model_used, task)
             # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid).
             if sc.valid and sc.confidence >= threshold and picked is not None:
                 served, served_by, route, served_choices = sc.answer, "student", "student", picked
@@ -868,7 +916,8 @@ class Ratchet:
                 teacher_failed = True
                 served, served_by, route, degraded = sc.answer, "student", "degraded", TEACHER_UNAVAILABLE
                 served_choices = picked
-                fp = fingerprint("student", model_used, version.id, version.dataset_hash, self.threshold(version, model_used))
+                threshold = self.threshold(version, model_used, task)
+                fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
                 self._count_failure("degraded_answers", "degraded", f"{task.name}: {describe_failure(e)}")
             else:
                 teacher_c, stored = answer.completion, answer.stored
@@ -915,7 +964,7 @@ class Ratchet:
             cost += c
             s_sc = score(task, s_samples)
             shadow_vid = shadow.id
-            shadow_serve = int(s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model))
+            shadow_serve = int(s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model, task))
             reference: Completion | None = teacher_c if served_by == "teacher" or audited else None
             arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):

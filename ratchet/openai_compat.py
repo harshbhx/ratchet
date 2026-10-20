@@ -146,7 +146,7 @@ def parse_body(raw: bytes | str) -> Any:
     except ValueError as e:  # JSONDecodeError, UnicodeDecodeError, NaN, integers too long to convert
         raise APIError(400, f"The request body is not valid JSON: {e}.", code=INVALID_JSON) from e
     if MAYBE_SURROGATE.search(text):  # rare: skip the walk for almost every request
-        found = _lone_surrogate(body)
+        found = lone_surrogate(body)
         if found is not None:
             param, char = found
             where = f" in '{param}'" if param else ""
@@ -155,7 +155,7 @@ def parse_body(raw: bytes | str) -> Any:
     return body
 
 
-def _lone_surrogate(value: Any) -> tuple[str | None, str] | None:
+def lone_surrogate(value: Any) -> tuple[str | None, str] | None:
     """(JSON path, character) of the first string, value or object key, that holds a surrogate code point. A key's path
     is its object's. Iterative, so any nesting `json.loads` accepted is fine here."""
     stack: list[tuple[Any, Any]] = [(value, None)]  # (value, where): where is (parent's where, key or index) or None

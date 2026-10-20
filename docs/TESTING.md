@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 574 tests (test_core, test_tasks, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 601 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -14,6 +14,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 |---|---|
 | `tests/test_core.py` | 52 (30 functions; one has 19 cases, one has 5) |
 | `tests/test_tasks.py` | 69 (33 functions; one has 20 cases, one has 18) |
+| `tests/test_registry.py` | 27 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 12 (11 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
@@ -24,7 +25,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **574** |
+| **Total** | **601** |
 
 There are three layers:
 
@@ -116,6 +117,40 @@ Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators
 | `test_invalid_audit_not_counted` | INV-16: an audit whose teacher answer the spec refuses is `audited=0`, not stored |
 | `test_cascade_eval_skips_invalid_golden_refs` | INV-6: rows with invalid references are not sampled and are counted in `golden_invalid_refs`; the halves alternate over the scored rows |
 | `test_dataset_rows_skip_invalid` | INV-2, INV-16: train rows stored under a looser spec are left out and counted (`skipped_invalid`, also in `manifest.json`); golden rows stay |
+
+### `tests/test_registry.py`
+
+The task registry (FR-2.15, [ADR 0022](adr/0022-task-registry.md)): specs from `RATCHET_TASKS_FILE` and the admin API, the admin key, operator-only pinning, the unknown-task policy, client allow-lists, pinned rows left out of Night School, and spec changes. Gateway tests use `gw_env` (mock) or a live `Runtime` on a file database with the teacher behind `FakeOpenAIServer`; unit tests use `taskspec`, `tasks` and a small ledger. The registry is module state, so `tests/conftest.py` resets it after every test.
+
+| Test | Covers |
+|---|---|
+| `test_tasks_file_loads_and_registers` | FR-1.3, FR-2.9: a file's tasks (one extending and adjusting the built-in `default`, one pinned) listed by `GET /ratchet/tasks` with their source and spec; a request distilled under the file task, the pinned one answered by the teacher and not stored |
+| `test_tasks_file_in_yaml` | The same in YAML (skipped without PyYAML); `clients` checked against the API key names; a syntax error with its line; bare `yes`/`no` read as booleans refused |
+| `test_tasks_file_unknown_key_fails_startup_with_path` | A bad file stops `Runtime` and `python -m ratchet.live` with every error and its path (`tasks[0].feilds`); a missing file, broken JSON and NaN refused |
+| `test_yaml_without_pyyaml_message` | A `.yaml` file without PyYAML is an error that says so; JSON needs nothing extra |
+| `test_spec_errors_list_every_problem_with_its_path` | One document with 35 mistakes (unknown keys and options, options for another type, bad paths, ranges, reserved types and formats, policy, match, routing, clients, names, duplicates, `extends` cycles and missing bases, records nested too deep) gives exactly 35 errors, in file order |
+| `test_spec_parser_never_raises_anything_but_spec_error` | 3,000 seeded junk specs (wrong types, unhashable values, unknown types, nesting) in `parse_spec` and `parse_document` give `SpecError` or a task, never another exception |
+| `test_specs_round_trip_and_every_option_is_checked` | Every `FieldSpec` option has a check; a spec with every type, and every built-in task, survives `document` and `parse_spec` with the same hash; `description`, `clients` and `match` leave the hash alone, field order does not; the ledger keeps the order |
+| `test_extends_copies_and_merges` | `extends` within a file (forward too), from a built-in task, a file adjusting a built-in task of the same name, a copy of that, through the API on the task's own name; `fields`, `policy` and `match` merge, null removes, `name` and `description` are not inherited |
+| `test_registry_precedence_and_sources` | A file task replaces a built-in one; the API never replaces a built-in or file task; an auto task never shadows a registered one; adhoc and built-in tasks cannot be registered; removal and restore; `names_for` and allow-lists; an adhoc task is never pinned |
+| `test_registry_reads_never_see_a_half_made_registry` | Lock-free reads under 4 writer threads registering, removing and resetting |
+| `test_registry_cap` | `MAX_TASKS` refuses a new name but not a replacement; a file with too many tasks; 409 for the mock cap and the registry cap |
+| `test_put_task_requires_admin_key` | INV-13, FR-1.7: 401 without or with a wrong admin key, 403 with an API key, for PUT, DELETE and validate; reads stay open; only the admin's name reaches the ledger and the events (the database dump holds no key) |
+| `test_admin_keys_are_their_own` | INV-13: a key in both `RATCHET_ADMIN_KEYS` and `RATCHET_API_KEYS` stops startup; errors name the right variable |
+| `test_admin_disabled_in_live_without_keys` | Live mode without admin keys: 403 `admin API disabled` for every write; mock mode: open, as `mock-admin` |
+| `test_put_builtin_task_forbidden` | INV-13: 403 for a built-in or file task (PUT and DELETE), 404 for an unknown one; `validate` says the same |
+| `test_client_cannot_pin_via_header_metadata_model_or_schema` | INV-10, FR-2.9: pin-like headers, metadata, `model` and a `response_format` with `x-ratchet` never pin; the tasks are distilled; nor can a header unpin `research-write`; `Task` refuses a pinned adhoc or auto task |
+| `test_task_lifecycle_through_the_admin_api` | Create, an identical PUT (`changed: false`, no event), traffic, a changed spec (`task_changed` with both hashes), a metadata-only change, `recalibrating`, every 422 (bad JSON, NaN, an unpaired surrogate, another name, not an object, a bad option, 65 fields, a bad URL name), delete (examples kept), the name then following the unknown-task policy and listed as unregistered |
+| `test_api_task_persists_across_runtime_restart` | A live `Runtime` on a file database: an API task registered again after a restart with the same hash and `updated_by`; a change logs both hashes; a deleted task stays gone, its examples kept |
+| `test_stored_task_that_no_longer_parses_is_skipped` | A stored task that no longer parses, one whose name the file now has, and a garbled row are skipped with `task_skipped` events; the gateway starts |
+| `test_validate_endpoint_has_no_side_effects` | One spec and a document, valid and not; a document may adjust a built-in task, a single spec may not; the registry, the events and the tasks table are unchanged |
+| `test_concurrent_admin_writes_keep_the_registry_and_the_table_in_step` | 8 threads creating, changing and deleting tasks: the registry, the table and the event counts agree |
+| `test_unknown_tasks_teacher_policy_stores_nothing` | FR-1.3, INV-10: `teacher` answers an unregistered task with the teacher only (route `unknown_task`, no student call even with a live and a shadow version, nothing stored); registered tasks still distil; a typo stops startup; the same through the gateway |
+| `test_unknown_tasks_reject_policy_400` | FR-1.3: `reject` is a 400 `unknown_task` listing the registered tasks (`param` for metadata), logs nothing and uses no quota; direct callers get the same; at most 20 names listed |
+| `test_clients_allow_list_403` | INV-13: a `clients` name that is not an API key is a 422; another key gets 403 `task_not_allowed` before the quota; the named key is served; rejection messages list only tasks the key may use |
+| `test_pinning_task_excludes_existing_examples_from_dataset_and_eval` | INV-10, FR-2.9, INV-2: pinning a task with data leaves its rows out of `dataset.rows`, the manifest (`excluded_pinned`), `cascade_eval` and `run_night`'s trainer and evaluator; the eval records `spec_hashes`; unpinning brings them back |
+| `test_spec_change_forces_teacher_until_recalibrated` | FR-2.3, INV-4: a changed spec makes the threshold 1.01 for that task only; the next night (even without enough data to train) re-scores the live version and records the new hash (`rescored`), and the student serves again; nothing to re-score the night after; a failed re-score keeps the task on the teacher (`rescore_failed`) |
+| `test_fixture_paths_resolve_inside_the_fixtures_dir` | `resolve_fixture` refuses `..`, absolute paths, empty and NUL paths and a symlink out of `RATCHET_FIXTURES_DIR` |
 
 ### `tests/test_nightschool.py`
 

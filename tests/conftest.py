@@ -1,5 +1,5 @@
-"""Shared fixtures: the reloaded mock gateway (`gw`, `gw_env`), scripts loaded by path (`sim_reference`, `day1_check`)
-and the pinned reference simulation (`reference_run`).
+"""Shared fixtures: the reloaded mock gateway (`gw`, `gw_env`), scripts loaded by path (`sim_reference`, `day1_check`),
+the pinned reference simulation (`reference_run`) and a task registry put back to the built-in tasks after every test.
 
 Test doubles and ledger builders live in tests/fakes.py (`from fakes import ...`).
 """
@@ -26,6 +26,16 @@ def _load_script(name: str) -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(autouse=True)
+def builtin_tasks():
+    """The task registry is module state (`tasks.REGISTRY`): whatever a test registers is gone after it, so no test sees
+    another's tasks. Torn down last, after `gw_env` has reloaded the default gateway."""
+    yield
+    from ratchet import tasks
+
+    tasks.reset_builtin()
 
 
 @pytest.fixture()

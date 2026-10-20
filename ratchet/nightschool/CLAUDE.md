@@ -5,9 +5,9 @@ One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)
 1. Skip if a version is in `shadow` or `canary` (release in flight).
 2. Build the dataset (`dataset.build`): train rows + golden rows + `manifest.json` with the bill of materials.
 3. Skip if fewer than `min_new_examples` new train examples, or no golden rows.
-4. Re-score the **live** version on the current golden set (champion vs challenger).
+4. Re-score the **live** version on the current golden set (champion vs challenger), recording `spec_hashes` (`orchestrate.spec_hashes`: each golden task's current `spec_hash`) in its eval. A night skipped for too few new examples still re-scores the live version when its recorded hashes are stale (`stale_tasks`; event `rescored`, or `rescore_failed` without failing the night), because `Ratchet.threshold` keeps a changed task on the teacher until then (FR-2.15).
 5. `trainer.train(...)` → adapter name (e.g. `student-v4`).
-6. `evaluator.evaluate(adapter, golden_rows)` → `{precision, coverage, threshold, golden_agreement, ...}`.
+6. `evaluator.evaluate(adapter, golden_rows)` → `{precision, coverage, threshold, golden_agreement, ...}`, plus `spec_hashes`.
 7. `gate.admit(vid)`.
 
 ## Interfaces
@@ -24,5 +24,6 @@ One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)
 - `ratchet.live.NebiusTrainer` checks `RATCHET_STUDENT_BASE` before it syncs or starts the paid job; keep checks that can fail before any spend at the top.
 - Rows carry `provenance` (teacher, license, hash) and `params` (the stored conditions, or None). Keep `provenance` all the way to `ratchet_manifest.json` next to the adapter. `train.py` renders the messages only and ignores every stored condition (`stop`, `response_format`, `tools`, `tool_choice`), so `dataset.rows` leaves a row with a `stop` out of training (the answer ends where the client's stop cut it, and the student would learn to stop there on the bare prompt); it still serves as a golden row. Change that rule only together with `train.py`.
 - A train row whose answer is not valid under its task's current spec (`Task.valid`, FR-2.14) is left out and counted (`rows(..., counts=)`, `skipped_invalid` in `manifest.json`); golden rows stay, and `cascade_eval` skips a row whose reference is invalid before sampling the student and reports `golden_invalid_refs` (the halves alternate over the scored rows). The ledger keeps such rows, so loosening a spec brings them back.
+- A row of a task that is pinned **now** is left out of both sets (`dataset.rows`, counted as `excluded_pinned` in `manifest.json`) and out of `cascade_eval` (`excluded_pinned` in the eval, only when there are some): INV-10 at read time, so pinning a task that already has data keeps it from the student and from the threshold. The ledger keeps the rows; unpinning brings them back. The registry decides (`tasks.get(name).pinned`), so Night School runs after `taskspec.install` (`live.main` calls it).
 - Every variant of a prompt (the same task and messages under other conditions) shares its split (`Ledger._split`) and, for the frequent rule, its `seen` count: `dataset.rows` sums `seen` over the hash without conditions (`_prompt_key`).
 - Each rule above has a direct test in `tests/test_nightschool.py` (skip reasons, held-out golden rows, variants sharing a split and a count, stop rows held out of training, cumulative retraining from the base, held-out grading, refused rows, champion re-score). Use `RecordingTrainer` and `RecordingEvaluator` from `tests/fakes.py` to test a new rule.

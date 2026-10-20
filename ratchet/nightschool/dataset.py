@@ -16,6 +16,9 @@
   left out and counted (`skipped_invalid` in manifest.json): the spec may have tightened since the
   answer was stored (a smaller vocabulary, a field that became required). Golden rows stay, and
   `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`).
+- A row of a task that is pinned NOW is left out of both sets and counted (`excluded_pinned` in
+  manifest.json; INV-10 at read time): pinning a task that already has data keeps that data from the
+  student, and unpinning it brings the rows back, because the ledger keeps them.
 """
 
 from __future__ import annotations
@@ -40,7 +43,8 @@ def _prompt_key(r: Any) -> str:
 
 def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
     """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
-    gains `skipped_invalid`: train rows left out because the answer is not valid under the task's current spec."""
+    gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec) and
+    `excluded_pinned` (rows left out because their task is pinned now), each only when it happens."""
     out = []
     specs: dict[str, tasks.Task] = {}
     examples = ledger.examples(task=task)
@@ -53,13 +57,17 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
         effective = "train" if (r["split"] == "train" or frequent) else "golden"
         if effective != split:
             continue
+        spec = specs.get(r["task"]) or specs.setdefault(r["task"], tasks.get(r["task"]))
+        if spec.pinned:  # INV-10 at read time: the task was pinned after these rows were stored
+            if counts is not None:
+                counts["excluded_pinned"] = counts.get("excluded_pinned", 0) + 1
+            continue
         params = json.loads(r["params"]) if r["params"] else None
         if effective == "train" and params and "stop" in params:
             continue  # train.py ignores the stop, so the cut answer would teach the bare prompt to stop there
         lic = licenses.lookup(r["teacher_model"])
         if lic is None or not lic.distill_ok:
             continue
-        spec = specs.get(r["task"]) or specs.setdefault(r["task"], tasks.get(r["task"]))
         if effective == "train" and not spec.valid(r["completion"]):
             if counts is not None:
                 counts["skipped_invalid"] = counts.get("skipped_invalid", 0) + 1
@@ -102,8 +110,9 @@ def write_jsonl(items: list[dict[str, Any]], path: str | Path) -> Path:
 
 def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[str, Any]:
     counts: dict[str, int] = {}
+    golden_counts: dict[str, int] = {}
     train = rows(ledger, "train", task, counts)
-    golden = rows(ledger, "golden", task)
+    golden = rows(ledger, "golden", task, golden_counts)
     out = Path(out_dir)
     write_jsonl(train, out / "train.jsonl")
     write_jsonl(golden, out / "golden.jsonl")
@@ -112,6 +121,7 @@ def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[
         "golden_examples": len(golden),
         "dataset_sha256": dataset_hash(train),
         "skipped_invalid": counts.get("skipped_invalid", 0),
+        "excluded_pinned": counts.get("excluded_pinned", 0) + golden_counts.get("excluded_pinned", 0),
         "bill_of_materials": ledger.bill_of_materials(),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))

@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS versions (
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, kind TEXT, detail TEXT
 );
+CREATE TABLE IF NOT EXISTS tasks (
+    name TEXT PRIMARY KEY,
+    spec TEXT,                 -- JSON: the task as a spec file writes it (taskspec.document); rules, never request text
+    spec_hash TEXT,
+    source TEXT,               -- 'api' (the admin API) | 'auto' (derived from requests)
+    created_ts REAL, updated_ts REAL,
+    updated_by TEXT            -- the admin key's name (RATCHET_ADMIN_KEYS), never the key
+);
 """
 
 
@@ -250,6 +258,11 @@ class Ledger:
         return list(self.db.execute(q + " ORDER BY id", args))
 
     @_locked
+    def example_count(self, task: str) -> int:
+        """Stored examples of one task (what deleting the task keeps, for provenance)."""
+        return int(self.db.execute("SELECT COUNT(*) FROM examples WHERE task=?", (task,)).fetchone()[0])
+
+    @_locked
     def bill_of_materials(self) -> dict[str, Any]:
         """Model bill of materials: which teachers and licenses produced the training data."""
         rows = self.db.execute(
@@ -364,6 +377,58 @@ class Ledger:
     def by_state(self, state: str) -> Version | None:
         vs = self.versions([state])
         return vs[-1] if vs else None
+
+    # ---------- tasks (the admin API's and auto tasks; built-in and file tasks are never stored) ----------
+    @_locked
+    def save_task(
+        self, name: str, spec: Mapping[str, Any], spec_hash: str, source: str, updated_by: str
+    ) -> tuple[bool, str | None]:
+        """Insert or replace a stored task: `spec` as `taskspec.document` writes it, `updated_by` the admin's key name
+        (never the key, INV-13). Returns (created, the spec_hash it had before). The JSON keeps the order of `spec`,
+        because the order of `fields` is part of the task's spec_hash."""
+        now = time.time()
+        text = json.dumps(spec, ensure_ascii=False)
+        row = self.db.execute("SELECT spec_hash FROM tasks WHERE name=?", (name,)).fetchone()
+        if row is None:
+            self.db.execute(
+                "INSERT INTO tasks (name, spec, spec_hash, source, created_ts, updated_ts, updated_by) VALUES (?,?,?,?,?,?,?)",
+                (name, text, spec_hash, source, now, now, updated_by),
+            )
+        else:
+            self.db.execute(
+                "UPDATE tasks SET spec=?, spec_hash=?, source=?, updated_ts=?, updated_by=? WHERE name=?",
+                (text, spec_hash, source, now, updated_by, name),
+            )
+        self.db.commit()
+        return row is None, (row["spec_hash"] if row is not None else None)
+
+    @_locked
+    def delete_task(self, name: str) -> bool:
+        """Forget a stored task (its examples stay, for provenance). False when none had that name."""
+        cur = self.db.execute("DELETE FROM tasks WHERE name=?", (name,))
+        self.db.commit()
+        return cur.rowcount > 0
+
+    @_locked
+    def saved_task(self, name: str) -> dict[str, Any] | None:
+        """One stored task (`saved_tasks`' shape), or None."""
+        r = self.db.execute("SELECT * FROM tasks WHERE name=?", (name,)).fetchone()
+        return self._task_row(r) if r is not None else None
+
+    @_locked
+    def saved_tasks(self) -> list[dict[str, Any]]:
+        """Every stored task, oldest first: name, spec (a dict), spec_hash, source, created_ts, updated_ts, updated_by. A
+        row whose spec is not JSON comes back with spec None, for the caller to skip."""
+        return [self._task_row(r) for r in self.db.execute("SELECT * FROM tasks ORDER BY created_ts, name")]
+
+    @staticmethod
+    def _task_row(r: sqlite3.Row) -> dict[str, Any]:
+        out = dict(r)
+        try:
+            out["spec"] = json.loads(r["spec"]) if r["spec"] else None
+        except ValueError:
+            out["spec"] = None
+        return out
 
     # ---------- events + stats ----------
     @_locked
