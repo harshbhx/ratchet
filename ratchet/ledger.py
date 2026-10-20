@@ -345,12 +345,17 @@ class Ledger:
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:
-        """How a shadow candidate would have done on real traffic, next to the live student."""
+        """How a shadow candidate would have done on real traffic, next to the live student.
+
+        A row without a verdict (`shadow_serve` NULL) counts toward nothing. A would-serve answer whose arbitration
+        failed (`shadow_agree` NULL, `unarbitrated`) counts as a disagreement: arbitration only runs on disagreements,
+        so leaving those rows out would raise the precision of the candidate that disagrees most (ADR 0013)."""
         r = self.db.execute(
             """SELECT COUNT(*) n, SUM(shadow_serve) served,
-                      AVG(CASE WHEN shadow_serve=1 THEN shadow_agree END) prec,
+                      AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
+                      SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
                       AVG(served_by='student') live_cov
-               FROM requests WHERE shadow_version=?""",
+               FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL""",
             (vid,),
         ).fetchone()
         n = int(r["n"] or 0)
@@ -361,6 +366,7 @@ class Ledger:
             "precision": float(r["prec"]) if r["prec"] is not None else 0.0,
             "coverage": served / n if n else 0.0,
             "live_coverage": float(r["live_cov"]) if r["live_cov"] is not None else None,
+            "unarbitrated": int(r["unarbitrated"] or 0),
         }
 
     @_locked

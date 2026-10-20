@@ -122,6 +122,17 @@ Details that matter:
 7. **Logging**: one row in `requests` per call (columns below), with the API client's name when keys are on.
 8. **Gate tick**: the gateway calls `rt.tick()` (which runs `gate.tick()` under a lock) after every `/v1/chat/completions` request and after every Scout run. In live mode, `python -m ratchet.live tick` can also be run from cron.
 
+**Failure handling** (INV-7, INV-15, [ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)). A request fails only when the call whose answer it needs fails: the teacher on the escalation, cold-start, pinned or teacher-only path. That raises out of `handle`, and the gateway answers 502 (`teacher unavailable: <class>`); nothing is logged for the request. Every other upstream call fails open:
+
+| Call | When it raises | Recorded |
+|---|---|---|
+| Student samples | Escalate to the teacher | `escalated=1`; `student_errors`; `student_error` event |
+| Teacher audit | Serve the student's answer; no arbitration call for this request either, since the teacher just failed | `audited=0`, `audit_agree` NULL, no cost for the call; `audit_errors`; `audit_error` event |
+| Shadow samples | Serve as if no shadow ran | No shadow fields; `shadow_errors`; `shadow_error` event (`sampling`) |
+| Shadow arbitration | Serve the live answer | `shadow_serve=1`, `shadow_agree` NULL; `shadow_errors`; `shadow_error` event (`arbitration`) |
+
+The counters are per process and thread-safe; `Ratchet.health()` returns them. Each event is written on the 1st, 10th, 100th and 1000th failure of its kind, so an outage cannot flood the release log, and an optional-call event names the exception class and HTTP status, never the message (an httpx message holds the endpoint URL). In the release gate, a failed audit is simply not an audit: audits are sampled at random, so dropping one shrinks the sample without biasing it. A failed arbitration is different, because arbitration only runs when the shadow disagrees with the served answer: `Ledger.shadow_quality` counts such a row in `n`, coverage and the would-serve evidence, and as a disagreement in precision (`unarbitrated` in its result), so a failing teacher can get a candidate rejected but never promoted. A row whose shadow verdict is unknown (`shadow_serve` NULL) counts toward nothing.
+
 The response text is the served answer with reasoning tags removed. With `stream: true` the gateway sends it as OpenAI `chat.completion.chunk` events after the cascade has decided; the cascade cannot stream the student's tokens as they arrive, because confidence is scored on the whole answer ([API.md](API.md#streaming)).
 
 ### PII redaction
@@ -189,11 +200,11 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `student_version` | INTEGER | Version that was tried first; NULL on cold start |
 | `confidence` | REAL | Student confidence; NULL if no student was tried |
 | `escalated` | INTEGER | 1 if the student was below threshold |
-| `audited` | INTEGER | 1 if the teacher double-checked a student answer |
+| `audited` | INTEGER | 1 if the teacher double-checked a student answer (0 when the audit call failed) |
 | `audit_agree` | INTEGER | 1/0 for audited rows, NULL otherwise |
 | `shadow_version` | INTEGER | Shadow candidate that ran, if any |
 | `shadow_serve` | INTEGER | 1 if the shadow would have served |
-| `shadow_agree` | INTEGER | 1 if the shadow agreed with the best available reference |
+| `shadow_agree` | INTEGER | 1 if the shadow agreed with the best available reference; NULL when its disagreement could not be arbitrated |
 | `latency_ms` | REAL | Student latency (max over samples) plus teacher latency if called |
 | `cost_usd` | REAL | Actual cost of this request (student + teacher + audit + shadow + arbitration) |
 | `baseline_cost_usd` | REAL | Estimated cost if the teacher had answered alone |
@@ -232,7 +243,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `gateway_error`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -276,8 +287,8 @@ In practice step 4's retire branch rarely runs, because `run_night` skips traini
 Run after every gateway request and by `python -m ratchet.live tick`.
 
 1. **Live watch:** take the audits of the live version since it became live. If there are at least `min_audits` and the Wilson upper bound of precision is below `live_floor`, write an `alert` event. No automatic action is taken on the live version.
-2. **Shadow:** `shadow_quality(id)` returns `served` (would-serve count), `precision` (mean `shadow_agree` where `shadow_serve=1`), `coverage = served / n`, and `live_coverage` (share of the same requests the live student actually served). Once `served ≥ min_shadow` (100):
-   - precision < 0.95 → `rejected`;
+2. **Shadow:** `shadow_quality(id)` returns `served` (would-serve count), `precision` (mean `shadow_agree` where `shadow_serve=1`, an unarbitrated NULL counting as 0), `coverage = served / n`, `live_coverage` (share of the same requests the live student actually served) and `unarbitrated`, over the rows with a shadow verdict (`shadow_serve` not NULL). Once `served ≥ min_shadow` (100):
+   - precision < 0.95 → `rejected` (the reason adds "N unarbitrated counted as disagreements" when N > 0);
    - coverage < live_coverage − 0.02 → `rejected`;
    - otherwise → `canary` at 10%.
 3. **Canary:** `version_live_quality(id)` counts audits of answers this version served since `stage_since`. With `n ≥ min_audits` (20) and audited precision `p`:
@@ -291,10 +302,10 @@ Run after every gateway request and by `python -m ratchet.live tick`.
 For each request while a shadow exists, the shadow candidate is sampled and scored like a real student. `shadow_serve = confidence ≥ shadow threshold`. The reference for agreement is chosen in this order:
 
 1. The teacher's answer, if the teacher was called for this request (escalation or audit).
-2. If the shadow would serve and disagrees with the served answer, the teacher is called to **arbitrate** (stored as training data) and its answer is the reference.
+2. If the shadow would serve and disagrees with the served answer, the teacher is called to **arbitrate** (stored as training data) and its answer is the reference. If that call fails, or is skipped because the audit already failed in this request, there is no reference: `shadow_agree` stays NULL and the gate counts it as a disagreement.
 3. Otherwise the served answer (the live student's).
 
-So disagreements are always settled by the teacher, while agreements with the live student are accepted as-is.
+So disagreements are always settled by the teacher (or counted against the shadow when it cannot be reached), while agreements with the live student are accepted as-is.
 
 ## 6. Confidence and calibration
 
@@ -367,6 +378,7 @@ Rollback requires the **upper** bound to be below the floor, which means strong 
 | [0010](adr/0010-signed-adapter-bom.md) | A signed bill of materials per adapter |
 | [0011](adr/0011-requirements-traceability.md) | Requirements traceability from PRD rows and test markers, checked in CI |
 | [0012](adr/0012-openai-request-validation-and-error-envelope.md) | Validate and normalise OpenAI requests at the gateway; OpenAI's error envelope on `/v1/*` |
+| [0013](adr/0013-optional-teacher-calls-fail-open.md) | Optional teacher calls fail open for the request and count against the shadow in the release gate |
 
 ## 10. Scout (multi-agent demo)
 

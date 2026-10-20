@@ -37,6 +37,8 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rollback` | `tick` | Canary audited precision has a Wilson upper bound below 0.92; traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
 | `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
 | `student_error` | `Ratchet.handle` | A student call raised; the request fell back to the teacher. Logged on the 1st, 10th, 100th and 1000th failure | See [Student endpoint down](#student-endpoint-down-or-restarted) |
+| `audit_error` | `Ratchet.handle` | A teacher audit of a served student answer raised; the student's answer was served and the request is logged with `audited=0`. Detail is the task and the exception's class (with the HTTP status for an HTTP error), never its message. Logged on the 1st, 10th, 100th and 1000th failure | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
+| `shadow_error` | `Ratchet.handle` | A shadow call raised: `sampling` (the shadow's own samples; no shadow record for that request) or `arbitration` (the teacher's arbitration; the disagreement counts against the shadow). The request was not affected. Same detail and throttling as `audit_error` | `sampling`: the shadow's adapter may be missing, see [Student endpoint down](#student-endpoint-down-or-restarted). `arbitration`: see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `gateway_error` | the gateway's error handler | An unhandled exception in a request: a bug, not a client mistake. The client got a 500 (`api_error` on `/v1/*`). Detail is the exception's class and how many there have been, never its message. Logged on the 1st, 10th, 100th, ... occurrence since the last restart | Read the traceback in the gateway's log (`docker compose logs ratchet` on the demo VM) and fix the bug |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
@@ -82,17 +84,15 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### Teacher API down (Token Factory errors or timeouts)
 
-**Symptoms:** `/v1/chat/completions` returns **502** ("teacher unavailable"). Every cold-start, escalated and audited request needs the teacher.
+**Symptoms:** `/v1/chat/completions` returns **502** ("teacher unavailable") for cold-start, escalated and pinned requests, which need the teacher's answer. `audit_error` events in the release log, and `shadow_error` events (`arbitration`) while a shadow runs, each logged on the 1st, 10th, 100th and 1000th failure.
 
-**Impact:** requests the student would serve with confidence still fail, if they happen to be picked for an audit.
+**Impact:** requests the student serves with confidence still succeed (INV-15): when the audit or the shadow's arbitration fails, the student's answer is served and the failure is counted. But each failed audit waits for the teacher's timeout first, so audited requests are slow. A failed audit is not counted as an audit, so canary promotion and rollback pause until the teacher is back. A shadow's disagreements go unarbitrated and count against it, so a shadow running through a long outage will likely be rejected; the reason says how many were unarbitrated, and the next night trains a new candidate.
 
 **Steps:**
 
 1. Check the Token Factory status page and `scripts/day1_check.py`.
-2. Short outage: tell your app to retry. Long outage: set `RATCHET_AUDIT_RATE=0` and restart the gateway, so confident student answers stop calling the teacher. Escalations will still fail.
+2. Short outage: tell your app to retry the 502s. Long outage: set `RATCHET_AUDIT_RATE=0` and restart the gateway, so confident student answers stop waiting on the teacher for audits. Escalations will still fail. Restore the audit rate afterwards: audits drive canary promotion and rollback.
 3. Don't run Night School during the outage.
-
-**Planned fix (v0.3):** when the student has a confident answer and only the audit failed, serve the student answer and skip the audit instead of returning 502.
 
 ### Student endpoint down or restarted
 
@@ -144,6 +144,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 - "golden coverage < 25%": too few examples per pattern. Wait for more data, or lower `min_coverage` in code.
 - "regresses vs live": live is already good. This is expected and harmless.
 - "shadow precision/coverage": real traffic differs from the golden set. Check for drift.
+- "shadow precision ... (N unarbitrated counted as disagreements)": the teacher failed some arbitrations (`shadow_error` events). If N explains the shortfall, the candidate may be fine; the next night trains a new one.
 
 ### Cost spike
 

@@ -159,7 +159,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-1.5 | Reject missing or empty `messages` with HTTP 400 | Done (v0.1) |
 | FR-1.6 | Streaming responses: `stream: true` returns OpenAI `chat.completion.chunk` events and `[DONE]`, sent once the cascade has decided | Done (v0.4) |
 | FR-1.7 | API keys / auth on the gateway: named keys (`RATCHET_API_KEYS`), per-key daily quota, cost and savings per client. The demo VM also has an opt-in edge guard in Caddy | Done (v0.4) |
-| FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors return HTTP 502 | Done (v0.1.1) |
+| FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors where the teacher's answer is needed return HTTP 502 (a failed audit or arbitration does not: FR-2.10) | Done (v0.1.1) |
 | FR-1.9 | Web pages: landing page at `/`, Scout at `/scout`, dashboard at `/dashboard` | Done (v0.2) |
 | FR-1.10 | Strict request validation and normalisation on `/v1/chat/completions`: a malformed request (wrong types, unknown role, bad `metadata`, out-of-range parameters, bad JSON) gets HTTP 400 before any model call, never a 500, and is neither logged nor counted against a quota; errors on `/v1/*` use OpenAI's envelope (`error.message`, `type`, `param`, `code`), so SDKs raise typed exceptions; limits on body size (413), messages per request and input characters; the `developer` role and text content parts are accepted and normalised to the plain form, so they match plain requests in the ledger; other content parts are refused unless the teacher takes them (`RATCHET_TEACHER_MODALITIES`), and then the request goes to the teacher only and is never stored; unknown top-level fields are ignored | Done (v0.5) |
 
@@ -176,6 +176,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-2.7 | Strip `<think>` reasoning and code fences before comparing or storing | Done (v0.1) |
 | FR-2.8 | Canary traffic split by `traffic_pct` | Done (v0.1) |
 | FR-2.9 | Pinned tasks: always answered by the teacher, logged, never stored as training examples | Done (v0.2) |
+| FR-2.10 | Optional calls never fail a request the student already answered: when the teacher's audit, the shadow's samples or the teacher's arbitration raise, the student's answer is served; each failure is counted (`Ratchet.health()`) and logged as a throttled `audit_error` or `shadow_error` event naming the exception class, never its message; a failed audit is not counted as an audit, and an unarbitrated shadow disagreement counts as a disagreement in the release gate ([ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)) | Done (v0.5) |
 
 ### 6.3 Provenance and licensing
 
@@ -322,7 +323,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | ID | Area | Requirement | Status |
 |---|---|---|---|
 | NFR-1 | Latency | Student path adds at most one student call (n samples in one request). Target p50 under 1 s for student-served requests. Escalated requests cost one student call plus one teacher call. | Done (v0.1), untested (live) |
-| NFR-2 | Availability | If the student endpoint errors, requests fall back to the teacher automatically (v0.1.1); with `RATCHET_STUDENT_BASE` unset, the hosted untuned Nano is used with the default threshold. `python -m ratchet.live reload` restores adapters after an endpoint restart. A demo URL must stay live through judging (Dec 1–15, 2026). | Done (v0.1.1); a demo URL that stays live through judging planned |
+| NFR-2 | Availability | If the student endpoint errors, requests fall back to the teacher automatically (v0.1.1); if the teacher errors during an audit or a shadow arbitration, the student's answer is served (v0.5, FR-2.10); with `RATCHET_STUDENT_BASE` unset, the hosted untuned Nano is used with the default threshold. `python -m ratchet.live reload` restores adapters after an endpoint restart. A demo URL must stay live through judging (Dec 1–15, 2026). | Done (v0.1.1); a demo URL that stays live through judging planned |
 | NFR-3 | Cost | Shadow, audit, and arbitration overhead is counted in reported cost. No training while a release is in flight. | Done (v0.1) |
 | NFR-4 | Privacy | Prompts and teacher answers are stored in SQLite with identifiers (emails, phones, cards, IBANs, national IDs, IPs, secrets) replaced by placeholders (v0.4). Use synthetic data only in demos. | Done (v0.4); NER-based redaction (Presidio) and zero-retention options planned |
 | NFR-5 | Security | Secrets come from environment variables only. The student endpoint uses token auth. Named gateway API keys (`RATCHET_API_KEYS`, v0.4) protect `/v1/*`, each with an optional daily request quota (`RATCHET_API_KEY_DAILY_REQUESTS`, 429 past it). Keys are compared as constant-time digests and are never stored or logged: the ledger and `/ratchet/stats` see only key names. `/healthz`, the pages, Scout and `/ratchet/*` take no key; on the demo VM, Caddy can guard `/v1/*` and `/ratchet/demo/*` with an admin token. See [Threat model](THREAT_MODEL.md). | Done (v0.4) |

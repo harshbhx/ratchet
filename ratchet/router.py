@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import random
+import threading
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
 
 from . import licenses, tasks
 from .confidence import STUDENT_SAMPLING, score
@@ -17,6 +20,17 @@ from .redact import redact, redact_messages
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
 StudentResolver = Callable[[Version], tuple[Provider, str]]
+
+# A failing upstream call is logged as an event on these occurrences only, so an outage cannot flood the release log.
+EVENT_ON_FAILURE = (1, 10, 100, 1000)
+
+
+def _failure(e: BaseException) -> str:
+    """What an event may say about a failed call: the exception's class and, for an HTTP error, the status. Never the
+    message: an httpx message carries the endpoint URL, and other messages can carry request text."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"{type(e).__name__} {e.response.status_code}"
+    return type(e).__name__
 
 
 @dataclass
@@ -42,7 +56,24 @@ class Ratchet:
         self.resolve_student = student_resolver
         self.rng = random.Random(seed)
         self.teacher_license = licenses.require_distillable(settings.teacher_model)
-        self.student_errors = 0
+        # Failed upstream calls since start (health()). Scout calls handle from several threads, hence the lock.
+        self.student_errors = 0  # student calls that raised; the teacher answered instead
+        self.audit_errors = 0  # teacher audits that raised; the student's answer was served anyway (INV-15)
+        self.shadow_errors = 0  # shadow samples or arbitrations that raised; the request never noticed
+        self._errors_lock = threading.Lock()
+
+    def health(self) -> dict[str, int]:
+        """Failed upstream calls since start, by kind (for /readyz and /metrics)."""
+        with self._errors_lock:
+            return {"student_errors": self.student_errors, "audit_errors": self.audit_errors, "shadow_errors": self.shadow_errors}
+
+    def _count_failure(self, counter: str, kind: str, detail: str) -> None:
+        """Add one to `counter` and write a `kind` event on its 1st, 10th, 100th and 1000th failure."""
+        with self._errors_lock:
+            n = getattr(self, counter) + 1
+            setattr(self, counter, n)
+        if n in EVENT_ON_FAILURE:
+            self.ledger.event(kind, detail)
 
     # ------------------------------------------------------------------
     def _pick_version(self) -> Version | None:
@@ -68,6 +99,15 @@ class Ratchet:
             redactions=sum(found.values()),
         )
         return c
+
+    def _arbitrate(self, task: tasks.Task, messages: list[dict[str, Any]], shadow: Version) -> Completion | None:
+        """The teacher settles a disagreement between the shadow and the served answer. A failed call returns None and
+        leaves the disagreement unarbitrated; the request it belongs to is already answered (INV-15)."""
+        try:
+            return self._call_teacher(task, messages)
+        except Exception as e:  # optional call: count it, never fail the request
+            self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} arbitration: {_failure(e)}")
+            return None
 
     def _cost(self, model: str, c: Completion, n_out: int = 1) -> float:
         return self.s.price(model).cost(c.in_tokens, c.out_tokens * n_out)
@@ -132,15 +172,14 @@ class Ratchet:
         served_by = "teacher"
         teacher_c: Completion | None = None
         student_c: Completion | None = None
+        teacher_failed = False  # an audit already failed: arbitration would only wait out the same outage
 
         sc = None
         if version is not None:
             try:
                 samples, c, model_used = self._sample(version, messages)
             except Exception as e:  # student endpoint down or erroring: the teacher still answers
-                self.student_errors += 1
-                if self.student_errors in (1, 10, 100, 1000):
-                    self.ledger.event("student_error", f"v{version.id}: {type(e).__name__}: {e}"[:300])
+                self._count_failure("student_errors", "student_error", f"v{version.id}: {type(e).__name__}: {e}"[:300])
                 escalated = True
             else:
                 latency += max(s.latency_ms for s in samples)
@@ -151,10 +190,15 @@ class Ratchet:
         if version is not None and sc is not None:
             if sc.confidence >= self.threshold(version, model_used):
                 served, served_by = sc.answer, "student"
-                if self.rng.random() < self.s.audit_rate:
-                    teacher_c = self._call_teacher(task, messages)  # audit = quality signal + free training data
-                    cost += self._cost(self.s.teacher_model, teacher_c)
-                    audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
+                if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
+                    try:
+                        teacher_c = self._call_teacher(task, messages)
+                    except Exception as e:  # optional call: the student's answer is served (INV-15)
+                        teacher_failed = True
+                        self._count_failure("audit_errors", "audit_error", f"{task.name}: {_failure(e)}")
+                    else:
+                        cost += self._cost(self.s.teacher_model, teacher_c)
+                        audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
             else:
                 escalated = True
         if served_by == "teacher":
@@ -175,24 +219,33 @@ class Ratchet:
         # Shadow: the candidate runs the same cascade silently. We record whether it would have
         # served, and if so whether it agrees with the best reference we have. When it disagrees
         # with an answer the live student served, the teacher arbitrates (and that becomes training data).
+        # Neither the shadow's samples nor the arbitration can fail the request (INV-15). A failed sample
+        # leaves no shadow record; a failed arbitration leaves shadow_agree NULL, which the release gate
+        # counts as a disagreement (Ledger.shadow_quality).
         shadow = self.ledger.by_state("shadow")
         shadow_vid = shadow_serve = shadow_agree = None
         if shadow is not None:
             try:
                 s_samples, c, s_model = self._sample(shadow, messages)
-            except Exception:
+            except Exception as e:  # optional call: count it, never fail the request
                 s_samples = None
+                self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} sampling: {_failure(e)}")
         if shadow is not None and s_samples is not None:
             cost += c
             s_sc = score(task, s_samples)
             shadow_vid = shadow.id
             shadow_serve = int(s_sc.confidence >= self.threshold(shadow, s_model))
-            reference = teacher_c
+            reference: Completion | None = teacher_c
+            arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):
-                reference = self._call_teacher(task, messages)
-                cost += self._cost(self.s.teacher_model, reference)
-            ref_text = reference.text if reference is not None else served.text
-            shadow_agree = int(task.agree(s_sc.answer.text, ref_text))
+                reference = None if teacher_failed else self._arbitrate(task, messages, shadow)
+                if reference is None:
+                    arbitrated = False
+                else:
+                    cost += self._cost(self.s.teacher_model, reference)
+            if arbitrated:
+                ref_text = reference.text if reference is not None else served.text
+                shadow_agree = int(task.agree(s_sc.answer.text, ref_text))
 
         self.ledger.log_request(
             task=task.name,

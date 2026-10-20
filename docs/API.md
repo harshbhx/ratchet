@@ -152,7 +152,7 @@ Standard `chat.completion` plus a `ratchet` block:
 | `student_version` | Version that answered; `null` when the teacher answered (including escalations) |
 | `confidence` | Student confidence if a student was tried, else `null` |
 | `escalated` | `true` if the student was tried and was below its threshold |
-| `cost_usd` | Actual cost of this request, including audit, shadow and arbitration calls |
+| `cost_usd` | Actual cost of this request, including audit, shadow and arbitration calls (a call that failed adds nothing) |
 | `all_teacher_cost_usd` | Estimated cost if the teacher had answered alone |
 | `latency_ms` | Student latency plus teacher latency when the teacher answered |
 
@@ -205,7 +205,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
 | 429 | `rate_limit_error` | `null` | The key's daily quota is used up (`daily request quota of N used up for 'acme'; resets at 00:00 UTC`); `Retry-After` and `X-Should-Retry: false` | No: the response tells them not to |
 | 500 | `api_error` | `null` | A bug in the gateway (`The server had an error while processing your request.`). The message never includes request text; the ledger records a `gateway_error` event with the exception's class at the 1st, 10th, 100th, ... occurrence | Yes |
-| 502 | `api_error` | `null` | Live mode: the teacher call failed (`teacher unavailable: ConnectError`). Student failures do not cause errors: they fall back to the teacher. See [RUNBOOK.md](RUNBOOK.md#playbooks) | Yes |
+| 502 | `api_error` | `null` | Live mode: a teacher call whose answer was needed failed (`teacher unavailable: ConnectError`): an escalation, a cold start, a pinned task or a teacher-only request. Student failures do not cause errors: they fall back to the teacher. Neither do a failed audit or shadow arbitration: the student's answer is served ([ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)). See [RUNBOOK.md](RUNBOOK.md#playbooks) | Yes |
 
 OpenAI's Python and Node SDKs retry connection errors, 408, 409, 429 and 5xx responses twice by default, with backoff, unless the response carries `x-should-retry`. Set `max_retries=0` on the client to turn that off.
 
