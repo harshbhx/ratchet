@@ -19,9 +19,14 @@ The item's spec called this INV-17; that number already means "committed leaves 
 
 **Enforcing code.**
 
-- `ratchet.router:Ratchet.store_opt_out` (the rule: global, task, the caller's verdict, the no-train lookup)
-- `ratchet.router:Ratchet._opted_out` and `ratchet.router:Ratchet.handle` (settled once, recorded per request)
-- `ratchet.router:Ratchet._store_example` (asks again before `Ledger.add_example`)
+- `ratchet.router:Ratchet.store_opt_out` (the rule: global, task, the caller's verdict, the no-train lookup on every
+  hash the request's end user may be registered under: `end_user` and `end_user_aliases`)
+- `ratchet.router:Ratchet._opted_out` and `ratchet.router:Ratchet.handle` (settled once on the request's own copy of its
+  meta, recorded per request)
+- `ratchet.router:Ratchet._store_example` (asks again before `Ledger.add_example`, and writes an opt-out found then onto
+  the request's meta, so the row and the response report it)
+- `ratchet.privacy:end_user_ids` and `ratchet.privacy:EndUsers.aliases` (both identifiers a request carries, and the
+  every-client scope an admin registers in)
 - `ratchet.gateway:_request_meta` and `ratchet.privacy:request_opts_out` (the key's and the request's opt-outs;
   any one wins)
 - `ratchet.nightschool.orchestrate:run_night` (`store_examples=False` skips the night)
@@ -33,9 +38,20 @@ The item's spec called this INV-17; that number already means "committed leaves 
 - `test_zero_retention_stores_nothing_for_any_caller`
 - `test_store_header_metadata_and_key_opt_outs`: `store: true`, `X-Ratchet-Store: 1` and `metadata.ratchet_store: "true"`
   never undo an opt-out
-- `test_no_train_end_users_are_never_stored_even_when_registered_mid_request`
+- `test_no_train_end_users_are_never_stored_even_when_registered_mid_request`: also reported as `end_user`
+- `test_a_no_train_registration_holds_whichever_identifier_a_request_sends`
+- `test_no_train_registrations_across_key_renames_and_keys_added_later`
 - `test_opt_outs_hold_under_concurrent_requests`
 - `test_zero_retention_mode_night_skips`, `test_live_night_skips_under_zero_retention`
+- `test_every_add_example_caller_honours_storage_opt_outs`: every entry of INV-2's `ALLOWED_ADD_EXAMPLE_CALLERS` calls
+  `store_opt_out` before `add_example`
+
+**For the integrator.** `Ratchet._store_example` is the only writer of examples in this branch. Every other entry that
+joins `ALLOWED_ADD_EXAMPLE_CALLERS` at the merge (lane F's clean-room backfill, which writes examples with origin
+`backfill`) must ask `Ratchet.store_opt_out` before `Ledger.add_example`: at least zero retention (`global`) and no-store
+tasks (`task`), which need no request meta (`store_opt_out(task, None)`), and the request's end user when the source row
+has one. `test_every_add_example_caller_honours_storage_opt_outs` fails until it does; also add a behaviour test that a
+backfill under `RATCHET_STORE_EXAMPLES=0`, and one for a no-store task, stores nothing.
 
 ## End users are stored only as keyed hashes
 
@@ -49,14 +65,14 @@ invariant 13 for API keys. See [ADR 0080](../adr/0080-storage-opt-outs-and-pseud
 
 - `ratchet.gateway:_request_meta` (the only place the raw value is read after validation)
 - `ratchet.privacy:EndUsers.hash`, `ratchet.privacy:end_users`
-- `ratchet.openai_compat:_end_user` (the length error never quotes the value)
+- `ratchet.openai_compat:_end_user` (the type error never quotes the value)
 - `ratchet.gateway:_no_train_add`, `ratchet.gateway:_no_train_remove` (events carry counts and names only)
 
 **Proving tests** (`tests/test_privacy.py`).
 
 - `test_end_user_is_an_hmac_and_the_raw_value_is_stored_nowhere`: every text value of every table, with redaction off
 - `test_after_no_train_registration_escalations_are_not_stored`: no hash or value in the `no_train` events
-- `test_no_train_requests_are_validated`: an over-long value is never echoed
+- `test_no_train_requests_are_validated`: a long value is accepted and never echoed
 
 ## Erasure is final and leaves hashes only
 

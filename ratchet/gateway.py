@@ -42,7 +42,7 @@ from . import bom as bomdoc
 from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
 from .config import Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
-from .ledger import Ledger, Version
+from .ledger import Ledger, NoTrainFull, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
@@ -200,6 +200,8 @@ class Runtime:
         self.key_limits: dict[str, KeyLimits] = parse_key_limits(s.key_limits, self.keys.names)
         # End users are hashed with this deployment's key (FR-13.2): RATCHET_END_USER_KEY, or one kept in the ledger.
         self.end_users = privacy.end_users(self.ledger, s.end_user_key)
+        # No-train registrations scoped to a key name that is gone match nothing: say so (an event, once per change).
+        privacy.check_no_train_scopes(self.ledger, self.known_clients())
         # Admin keys for management writes (ADR 0022); never the same keys as an API client's.
         self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
         both = self.admin_keys.shared(self.keys)
@@ -667,21 +669,24 @@ async def _body(request: Request) -> bytes:
 def _request_meta(req: Any, client: str | None, header_store: str | None) -> RequestMeta:
     """What the cascade needs to know about storage and the end user (FR-13.1, FR-13.2): whether the API key
     (RATCHET_KEY_LIMITS `store=0`) or the request (`store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`)
-    opts out, broadest first, and the end user's hash scoped to the key. A bad `X-Ratchet-Store` is a 400. The raw
-    `user` / `safety_identifier` goes no further than this function. Zero retention, no-store tasks and no-train end
-    users are the cascade's own checks (`Ratchet.store_opt_out`), so they hold for every caller."""
+    opts out, broadest first, and the end user's hash scoped to the key, with the other hashes a no-train registration
+    of that end user may use (`user` beside `safety_identifier`, the every-client scope). A bad `X-Ratchet-Store` is a
+    400. The raw `user` / `safety_identifier` goes no further than this function. Zero retention, no-store tasks and
+    no-train end users are the cascade's own checks (`Ratchet.store_opt_out`), so they hold for every caller."""
     try:
         header = privacy.store_header(header_store)
     except ValueError as e:  # the value is not quoted back
         raise APIError(400, f"Invalid value for header 'X-Ratchet-Store': {e}.", INVALID_REQUEST, INVALID_VALUE) from e
-    raw_user = privacy.end_user_of(req.user, req.safety_identifier)
-    end_user = rt.end_users.hash(raw_user, client) if raw_user is not None else None
+    ids = privacy.end_user_ids(req.user, req.safety_identifier)
+    who: dict[str, Any] = {}
+    if ids:
+        who = {"end_user": rt.end_users.hash(ids[0], client), "end_user_aliases": rt.end_users.aliases(ids, client)}
     limits = rt.key_limits.get(client) if client is not None else None
     if limits is not None and not limits.store:
-        return RequestMeta(storable=False, store_opt_out="key", end_user=end_user)
+        return RequestMeta(storable=False, store_opt_out="key", **who)
     if privacy.request_opts_out(req.store, req.metadata, header):
-        return RequestMeta(storable=False, store_opt_out="request", end_user=end_user)
-    return RequestMeta(end_user=end_user)
+        return RequestMeta(storable=False, store_opt_out="request", **who)
+    return RequestMeta(**who)
 
 
 def _complete(
@@ -820,8 +825,8 @@ def _no_train_body(raw: bytes, extra: frozenset[str] = frozenset()) -> tuple[str
         raise APIError(400, "Missing required parameter: 'end_user'.", INVALID_REQUEST, MISSING, "end_user")
     if not isinstance(end_user, str):
         raise APIError(400, "Invalid type for 'end_user': expected a string.", INVALID_REQUEST, INVALID_TYPE, "end_user")
-    if not end_user or len(end_user) > privacy.END_USER_MAX_CHARS:  # never quoted: it identifies a person
-        message = f"Invalid value for 'end_user': 1 to {privacy.END_USER_MAX_CHARS} characters, as sent in 'user'."
+    if not end_user:  # any length, hashed whole, as `user` and `safety_identifier` are; never quoted back
+        message = "Invalid value for 'end_user': the value sent as 'user' or 'safety_identifier', not empty."
         raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, "end_user")
     client = body.get("client")
     if client is not None and not isinstance(client, str):
@@ -830,8 +835,9 @@ def _no_train_body(raw: bytes, extra: frozenset[str] = frozenset()) -> tuple[str
 
 
 def _no_train_scopes(client: str | None, admin: str | None, named: str | None, given: bool) -> list[str | None]:
-    """The key scopes a no-train call acts on. A client acts on its own end users only (403 for another client's). An
-    admin acts on the client it names, or with none on every API key's end users and the keyless scope's."""
+    """The key scopes a no-train call (or a client's erasure) acts on. A client acts on its own end users only (403 for
+    another client's). An admin acts on the client it names, or with none on every API key's end users and the keyless
+    scope's (a no-train registration then uses the every-client scope instead, `_no_train_add`)."""
     if admin is None:
         if given and named != client:
             raise HTTPException(403, "an API key manages its own end users only; an admin key may name another client")
@@ -848,9 +854,11 @@ async def no_train_add(
     request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
 ) -> dict[str, Any]:
     """Register an end user (`{"end_user": "<user or safety_identifier>"}`) as no-train: from now on that user's
-    requests are answered as usual but never stored (FR-13.2). Only the HMAC is kept, and it is not returned: the
-    endpoint must not become a way to compute hashes. Open where chat completions are (an opt-out only removes
-    storage); an admin may name a `client`, or register the user for every client."""
+    requests are answered as usual but never stored (FR-13.2), whether a request names the user in `user` or in
+    `safety_identifier`. Only the HMAC is kept, and it is not returned: the endpoint must not become a way to compute
+    hashes. Open where chat completions are (an opt-out only removes storage); an admin may name a `client`, or
+    register the user for every client, also those added later (the every-client scope). Whether the end user was
+    registered before (`created`) is told to an API key or an admin key only: without keys anyone may call this."""
     client, admin = _no_train_caller(authorization, x_api_key)
     raw = await _body(request)
     return await anyio.to_thread.run_sync(functools.partial(_no_train_add, raw, client, admin))
@@ -858,17 +866,21 @@ async def no_train_add(
 
 def _no_train_add(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
     end_user, named, given, _ = _no_train_body(raw)
-    scopes = _no_train_scopes(client, admin, named, given)
+    # An admin's registration for every client is one hash in the every-client scope, so keys added later are covered.
+    scopes = [privacy.EVERY_CLIENT] if admin is not None and not given else _no_train_scopes(client, admin, named, given)
     entries = rt.end_users.hashes(end_user, scopes)
-    if rt.settings.mode == "mock" and rt.ledger.no_train_count() + len(entries) > MOCK_MAX_NO_TRAIN:
-        raise HTTPException(409, f"the mock demo holds at most {MOCK_MAX_NO_TRAIN} no-train registrations; reset it")
-    created = rt.ledger.no_train_add(entries, admin=admin)
+    limit = MOCK_MAX_NO_TRAIN if rt.settings.mode == "mock" else None
+    try:
+        created = rt.ledger.no_train_add(entries, admin=admin, limit=limit)
+    except NoTrainFull as e:
+        raise HTTPException(409, f"the mock demo holds at most {e.limit} no-train registrations; reset it") from e
     who = f"admin {admin}" if admin is not None else (client or "a client without a key")
     if any(created):  # counts and names only: never the end user or its hash (/ratchet/stats is public)
         rt.ledger.event("no_train", f"{sum(created)} end user registration(s) by {who}")
+    told = client is not None or admin is not None  # a keyless caller is not told whether it was registered before
     return {
         "object": "ratchet.no_train",
-        "end_users": [{"client": c, "created": new} for (_, c), new in zip(entries, created, strict=True)],
+        "end_users": [{"client": c, "created": new if told else None} for (_, c), new in zip(entries, created, strict=True)],
     }
 
 
@@ -877,8 +889,11 @@ async def no_train_remove(
     request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
 ) -> dict[str, Any]:
     """Remove a no-train registration (the same JSON body as POST; never a query string, which access logs keep). An API
-    key removes its own end users' registrations, not one an admin made; an admin removes any. Without API keys this needs
-    an admin key in live mode, so nobody can switch storage back on for someone else's users."""
+    key removes its own end users' registrations, not one an admin made; an admin removes any: for a named `client`, or
+    with none in every scope (each configured key, the keyless one, every scope a registration is stored in and the
+    every-client one). While an admin's every-client registration stays, the other scopes report `kept`. Without API
+    keys this needs an admin key in live mode, so nobody can switch storage back on for someone else's users; the
+    mock demo's keyless callers get no status, as they get no `created` from POST."""
     client, admin = _no_train_caller(authorization, x_api_key)
     if admin is None and not rt.keys.enabled and rt.settings.mode != "mock":
         raise HTTPException(403, "removing a no-train registration needs an API key or an admin key")
@@ -888,14 +903,25 @@ async def no_train_remove(
 
 def _no_train_remove(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
     end_user, named, given, _ = _no_train_body(raw)
-    entries = rt.end_users.hashes(end_user, _no_train_scopes(client, admin, named, given))
-    outcomes = rt.ledger.no_train_remove([h for h, _ in entries], admin=admin is not None)
+    scopes = _no_train_scopes(client, admin, named, given)
+    if admin is not None and not given:  # every scope, also a renamed key's, and the every-client registration
+        scopes = list(dict.fromkeys([*scopes, *rt.ledger.no_train_scopes_stored(), privacy.EVERY_CLIENT]))
+    entries = rt.end_users.hashes(end_user, scopes)
+    every = rt.end_users.hash(end_user, privacy.EVERY_CLIENT)
+    with rt.ledger.locked():  # the removal and the every-client check see the same rows
+        outcomes = rt.ledger.no_train_remove([h for h, _ in entries], admin=admin is not None)
+        covered = rt.ledger.is_no_train(every)
     if "removed" in outcomes:
         who = f"admin {admin}" if admin is not None else (client or "a client without a key")
         rt.ledger.event("no_train", f"{outcomes.count('removed')} end user registration(s) removed by {who}")
+    if covered:  # still no-train in every scope while an admin's every-client registration stays
+        outcomes = [o if h == every else "kept" for (h, _), o in zip(entries, outcomes, strict=True)]
+    told = client is not None or admin is not None
     return {
         "object": "ratchet.no_train",
-        "end_users": [{"client": c, "status": status} for (_, c), status in zip(entries, outcomes, strict=True)],
+        "end_users": [
+            {"client": c, "status": status if told else None} for (_, c), status in zip(entries, outcomes, strict=True)
+        ],
     }
 
 
@@ -967,6 +993,8 @@ def stats() -> dict[str, Any]:
             "redaction": rt.settings.redact_pii,
             **led.privacy_stats(),
             **led.opt_out_stats(),
+            # No-train registrations whose scope no request can be hashed in now (a renamed or removed key name).
+            "no_train_unmatched": sum(led.no_train_unmatched(privacy.no_train_scopes(rt.known_clients())).values()),
             # Storage opt-outs in force (FR-13.1) and where the end-user key lives (FR-13.2); names only.
             "store_examples": rt.settings.store_examples,
             "no_store_tasks": sorted(rt.ratchet.no_store_tasks | {t.name for t in tasks.registered() if not t.store}),

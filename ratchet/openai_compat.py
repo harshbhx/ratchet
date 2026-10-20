@@ -35,7 +35,6 @@ MAX_LOGIT_BIAS = 100
 MAX_METADATA = 16
 MAX_METADATA_KEY = 64
 MAX_METADATA_VALUE = 512
-MAX_END_USER = 128  # `user` and `safety_identifier` (FR-13.2); a longer value is a 400 and is never echoed
 # `metadata.ratchet_store`, in any case (FR-13.1): "false" or "0" keeps the request's teacher answers out of the
 # training set; "true" or "1" is the default spelled out. Anything else is a 400, so a typo cannot store by accident.
 STORE_METADATA = {"true": True, "1": True, "false": False, "0": False}
@@ -559,12 +558,10 @@ def _metadata(value: Any) -> dict[str, str] | None:
 
 
 def _end_user(body: Mapping[str, Any], key: str) -> str | None:
-    """`user` or `safety_identifier`: a string of at most MAX_END_USER characters. The message never quotes it: it
-    identifies a person, and errors are logged."""
-    v = _opt_str(body, key)
-    if v is not None and len(v) > MAX_END_USER:
-        raise _bad(key, f"Invalid value for '{key}': at most {MAX_END_USER} characters, but got {len(v)}.")
-    return v
+    """`user` or `safety_identifier`: any string, as before Ratchet read them (only the body limit bounds it); the
+    gateway hashes it whole (FR-13.2). The type error never quotes the value: it identifies a person, and errors are
+    logged."""
+    return _opt_str(body, key)
 
 
 def _response_format(value: Any) -> dict[str, Any] | None:

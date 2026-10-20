@@ -22,10 +22,10 @@ import pytest
 from fakes import OPEN_TEACHER, RecordingEvaluator, RecordingProvider, RecordingRun, RecordingTrainer, _version
 from fastapi.testclient import TestClient
 
-from ratchet import live, privacy, tasks
+from ratchet import live, privacy, tasks, taskspec
 from ratchet.auth import KeyLimits, parse_key_limits
 from ratchet.config import Settings
-from ratchet.ledger import GOVERNANCE_TABLES, INDEXES, Ledger
+from ratchet.ledger import GOVERNANCE_TABLES, INDEXES, Ledger, NoTrainFull
 from ratchet.nightschool.orchestrate import run_night
 from ratchet.release import ReleaseGate
 from ratchet.router import Ratchet, RequestMeta
@@ -285,8 +285,13 @@ def test_no_train_end_users_are_never_stored_even_when_registered_mid_request():
         return A
 
     r2 = Ratchet(_settings(), led2, RecordingProvider(answer), lambda v: (RecordingProvider(A), v.adapter_uri))
-    out = r2.handle(_ask(), TRIAGE, meta=RequestMeta(end_user="e" * 16))
+    mine = RequestMeta(end_user="e" * 16)
+    out = r2.handle(_ask(), TRIAGE, meta=mine)
     assert out.stored is False and led2.examples() == [] and _rows(led2)[0]["stored"] == 0
+    # ... and is reported like an opt-out found at the start: the client, the row and the stats give the reason.
+    assert out.store_opt_out == "end_user" and _rows(led2)[0]["store_opt_out"] == "end_user"
+    assert led2.opt_out_stats()["not_stored_requests"] == 1
+    assert (mine.storable, mine.store_opt_out) == (True, None)  # the caller's object is not changed
 
 
 @pytest.mark.req("FR-13.1", "INV-10")
@@ -386,6 +391,10 @@ def test_store_header_metadata_and_key_opt_outs(gw_env):
     stats = c.get("/ratchet/stats").json()
     assert stats["privacy"]["no_store_clients"] == ["acme"]
     assert stats["privacy"]["not_stored_by_reason"] == {"request": 7, "key": 2}
+    # An empty header is a header left unset, as some clients send it: the default, not a 400.
+    r = ask(12, headers={"X-Ratchet-Store": ""})
+    assert r.status_code == 200 and r.json()["ratchet"]["stored"] is True
+    assert (privacy.store_header(""), privacy.store_header("  "), privacy.store_header(None)) == (None, None, None)
 
 
 @pytest.mark.req("FR-13.2", "INV-12", "INV-13", "NFR-4")
@@ -403,13 +412,18 @@ def test_end_user_is_an_hmac_and_the_raw_value_is_stored_nowhere(gw_env):
     assert c.post(CHAT, json={"messages": _ask(2), "user": raw}, headers=_auth(GLOBEX_KEY)).status_code == 200
     assert c.post(CHAT, json={"messages": _ask(3), "user": ""}, headers=_auth(GLOBEX_KEY)).status_code == 200
     assert c.post(NO_TRAIN, json={"end_user": "carol-raw-id-99"}, headers=_auth(ACME_KEY)).status_code == 200
-    long = "q" * 129
+    # Any length is accepted, as before Ratchet read the field, and hashed whole: never cut, so two long values that
+    # share a prefix are two end users. A value of the wrong type is a 400 that does not quote it.
+    long = "tenant-7/" + "q" * 300
     r = c.post(CHAT, json={"messages": _ask(4), "user": long}, headers=_auth(ACME_KEY))
-    assert r.status_code == 400 and _error(r)["param"] == "user" and long not in r.text  # never echoed
+    assert r.status_code == 200 and long not in r.text
+    r = c.post(CHAT, json={"messages": _ask(5), "safety_identifier": {"id": raw}}, headers=_auth(ACME_KEY))
+    assert r.status_code == 400 and _error(r)["param"] == "safety_identifier" and raw not in r.text
 
     rows = _rows(led)
     hashes = [x["end_user"] for x in rows]
-    assert hashes == [users.hash(raw, "acme"), users.hash(sid, "acme"), users.hash(raw, "globex"), None]
+    assert hashes == [users.hash(raw, "acme"), users.hash(sid, "acme"), users.hash(raw, "globex"), None, users.hash(long, "acme")]
+    assert users.hash(long, "acme") != users.hash(long[:128], "acme")
     assert all(HEX16.fullmatch(h) for h in hashes[:3]) and len(set(hashes[:3])) == 3  # scoped per key
     assert [e["end_user"] for e in led.examples()] == hashes
     for value in _dump(led):
@@ -418,7 +432,7 @@ def test_end_user_is_an_hmac_and_the_raw_value_is_stored_nowhere(gw_env):
     events = " ".join(e["detail"] for e in led.events())
     assert users.hash("carol-raw-id-99", "acme") not in events  # counts only: /ratchet/stats is public
     stats = c.get("/ratchet/stats").json()
-    assert [(x["client"], x["end_users"]) for x in stats["clients"]] == [("acme", 2), ("globex", 1)]
+    assert [(x["client"], x["end_users"]) for x in stats["clients"]] == [("acme", 3), ("globex", 1)]
     assert stats["privacy"]["no_train_end_users"] == 1 and stats["privacy"]["end_user_key"] == "ledger"
 
 
@@ -477,23 +491,30 @@ def test_after_no_train_registration_escalations_are_not_stored(gw_env):
     r = c.post(NO_TRAIN, json={"end_user": "bob", "client": "globex"}, headers=_auth(ACME_KEY))
     assert r.status_code == 403 and _error(r)["type"] == "permission_error"
     assert c.post(NO_TRAIN, json={"end_user": "bob", "client": "acme"}, headers=_auth(ACME_KEY)).status_code == 200
-    r = c.post(NO_TRAIN, json={"end_user": "carol"}, headers=_auth(ADMIN_KEY))
-    assert [(x["client"], x["created"]) for x in r.json()["end_users"]] == [("acme", True), ("globex", True), (None, True)]
+    r = c.post(NO_TRAIN, json={"end_user": "carol"}, headers=_auth(ADMIN_KEY))  # one hash for every client, now and later
+    assert [(x["client"], x["created"]) for x in r.json()["end_users"]] == [(privacy.EVERY_CLIENT, True)]
     r = c.post(NO_TRAIN, json={"end_user": "dave", "client": "globex"}, headers=_auth(ADMIN_KEY))
     assert [x["client"] for x in r.json()["end_users"]] == ["globex"]
     r = c.post(NO_TRAIN, json={"end_user": "dave", "client": "nobody"}, headers=_auth(ADMIN_KEY))
     assert r.status_code == 400 and _error(r)["param"] == "client"
     assert chat(4, "carol", GLOBEX_KEY)["store_opt_out"] == "end_user"
-    assert led.no_train_count() == 5
+    assert chat(40, "carol")["store_opt_out"] == "end_user"
+    assert led.no_train_count() == 3  # bob for acme, carol for every client, dave for globex
 
     # Removing: a client cannot remove what an admin registered; an admin can remove anything.
     r = c.request("DELETE", NO_TRAIN, json={"end_user": "carol"}, headers=_auth(ACME_KEY))
-    assert r.status_code == 200 and r.json()["end_users"][0]["status"] == "kept"
+    assert r.status_code == 200 and r.json()["end_users"] == [{"client": "acme", "status": "kept"}]
+    assert chat(41, "carol")["store_opt_out"] == "end_user"
     r = c.request("DELETE", NO_TRAIN, json={"end_user": "bob"}, headers=_auth(ACME_KEY))
     assert r.json()["end_users"] == [{"client": "acme", "status": "removed"}] and not led.is_no_train(users.hash("bob", "acme"))
     assert chat(5, "bob")["stored"] is True  # storage is back on for bob
+    # An admin removing for one client leaves the every-client registration, so that client's scope is still `kept`.
+    r = c.request("DELETE", NO_TRAIN, json={"end_user": "carol", "client": "acme"}, headers=_auth(ADMIN_KEY))
+    assert r.json()["end_users"] == [{"client": "acme", "status": "kept"}]
     r = c.request("DELETE", NO_TRAIN, json={"end_user": "carol"}, headers=_auth(ADMIN_KEY))
-    assert [x["status"] for x in r.json()["end_users"]] == ["removed", "removed", "removed"]
+    statuses = {x["client"]: x["status"] for x in r.json()["end_users"]}
+    assert statuses == {"acme": "absent", "globex": "absent", None: "absent", privacy.EVERY_CLIENT: "removed"}
+    assert chat(42, "carol")["stored"] is True
     r = c.request("DELETE", NO_TRAIN, json={"end_user": "nobody-at-all"}, headers=_auth(GLOBEX_KEY))
     assert r.json()["end_users"][0]["status"] == "absent"
     assert led.no_train_count() == 1  # dave, for globex
@@ -518,23 +539,34 @@ def test_no_train_requests_are_validated(gw_env):
         ({}, "missing_required_parameter", "end_user"),
         ({"end_user": 5}, "invalid_type", "end_user"),
         ({"end_user": ""}, "invalid_value", "end_user"),
-        ({"end_user": "x" * 129}, "invalid_value", "end_user"),
         ({"end_user": "bob", "extra": 1}, "unknown_parameter", "extra"),
         ({"end_user": "bob", "client": 3}, "invalid_type", "client"),
     ):
         r = c.post(NO_TRAIN, json=body)
         assert (r.status_code, _error(r)["code"], _error(r)["param"]) == (400, code, param), body
-        assert "x" * 129 not in r.text
     assert _error(c.post(NO_TRAIN, json=["bob"]))["code"] == "invalid_type"
     assert _error(c.post(NO_TRAIN, content=b"{bad json"))["code"] == "invalid_json"
     # Without keys, a caller is in the keyless scope and may not name a client.
     assert c.post(NO_TRAIN, json={"end_user": "bob", "client": "acme"}).status_code == 403
-    r = c.post(NO_TRAIN, json={"end_user": "bob"})
-    assert r.json()["end_users"][0]["client"] is None
-    # The shared mock demo holds a bounded number of registrations.
+    # Anyone may call it then, so nobody is told whether an identifier was registered before.
+    for _ in range(2):
+        assert c.post(NO_TRAIN, json={"end_user": "bob"}).json()["end_users"] == [{"client": None, "created": None}]
+    for _ in range(2):  # the mock demo's keyless DELETE says nothing either
+        r = c.request("DELETE", NO_TRAIN, json={"end_user": "bob"})
+        assert r.json()["end_users"] == [{"client": None, "status": None}]
+    assert gw.rt.ledger.no_train_count() == 0
+    # Any length, as `user` takes any length; the value is never quoted back.
+    long = "x" * 5000
+    r = c.post(NO_TRAIN, json={"end_user": long})
+    assert r.status_code == 200 and long not in r.text and gw.rt.ledger.is_no_train(gw.rt.end_users.hash(long))
+    # The shared mock demo holds a bounded number of registrations; one already there does not count again.
     gw.MOCK_MAX_NO_TRAIN = 2
     assert c.post(NO_TRAIN, json={"end_user": "two"}).status_code == 200
     assert c.post(NO_TRAIN, json={"end_user": "three"}).status_code == 409
+    assert c.post(NO_TRAIN, json={"end_user": "two"}).status_code == 200
+    assert gw.rt.ledger.no_train_count() == 2
+    with pytest.raises(NoTrainFull):  # nothing of a refused batch is written
+        gw.rt.ledger.no_train_add([("1" * 16, None), (gw.rt.end_users.hash("two"), None)], limit=2)
     assert gw.rt.ledger.no_train_count() == 2
 
 
@@ -549,7 +581,160 @@ def test_removing_a_registration_needs_a_key_in_live_mode(gw_env, tmp_path):
     r = c.request("DELETE", NO_TRAIN, json={"end_user": "bob"})
     assert r.status_code == 403 and gw.rt.ledger.no_train_count() == 1
     r = c.request("DELETE", NO_TRAIN, json={"end_user": "bob"}, headers=_auth(ADMIN_KEY))
-    assert r.status_code == 200 and [x["status"] for x in r.json()["end_users"]] == ["removed"]
+    assert r.status_code == 200 and r.json()["end_users"] == [
+        {"client": None, "status": "removed"},
+        {"client": privacy.EVERY_CLIENT, "status": "absent"},
+    ]
+
+
+@pytest.mark.req("FR-13.2")
+def test_a_no_train_registration_holds_whichever_identifier_a_request_sends(gw_env):
+    """A client that registered an end user by its `user` value and then starts sending `safety_identifier` too (OpenAI's
+    advice) keeps the opt-out; so does one registered by `safety_identifier`, and an admin's registration for every
+    client. The request is still attributed to `safety_identifier`; `user` is only looked up."""
+    gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{ACME_KEY},globex:{GLOBEX_KEY}", RATCHET_ADMIN_KEYS=f"ops:{ADMIN_KEY}")
+    _escalating(gw)
+    c = TestClient(gw.app)
+    led, users = gw.rt.ledger, gw.rt.end_users
+
+    def chat(i: int, key: str = ACME_KEY, **who: str) -> dict[str, Any]:
+        r = c.post(CHAT, json={"messages": _ask(i), **who}, headers=_auth(key))
+        assert r.status_code == 200, r.text
+        return r.json()["ratchet"]
+
+    assert c.post(NO_TRAIN, json={"end_user": "bob"}, headers=_auth(ACME_KEY)).status_code == 200
+    assert chat(0, user="bob")["store_opt_out"] == "end_user"
+    assert chat(1, user="bob", safety_identifier="sid-bob")["store_opt_out"] == "end_user"
+    assert chat(2, safety_identifier="sid-bob")["stored"] is True  # `user` not sent: nothing names bob
+    assert chat(3, user="bob", safety_identifier="sid-bob", key=GLOBEX_KEY)["stored"] is True  # another client's bob
+    assert c.post(NO_TRAIN, json={"end_user": "sid-carol"}, headers=_auth(ACME_KEY)).status_code == 200
+    assert chat(4, user="carol", safety_identifier="sid-carol")["store_opt_out"] == "end_user"
+    assert c.post(NO_TRAIN, json={"end_user": "dave"}, headers=_auth(ADMIN_KEY)).status_code == 200
+    assert chat(5, user="dave", safety_identifier="sid-dave", key=GLOBEX_KEY)["store_opt_out"] == "end_user"
+    assert chat(6, user="same", safety_identifier="same")["stored"] is True
+    # Attribution is unchanged: a request that sends both is logged under its safety_identifier's hash only.
+    rows = _rows(led)
+    both = {1: ("sid-bob", "acme"), 3: ("sid-bob", "globex"), 4: ("sid-carol", "acme"), 5: ("sid-dave", "globex")}
+    assert {i: rows[i]["end_user"] for i in both} == {i: users.hash(sid, key) for i, (sid, key) in both.items()}
+    aliases = {users.hash("dave", "globex"), users.hash("dave", privacy.EVERY_CLIENT), users.hash("carol", "acme")}
+    assert not aliases & ({x["end_user"] for x in rows} | {e["end_user"] for e in led.examples()})
+    assert privacy.end_user_ids("bob", "sid-bob") == ["sid-bob", "bob"] and privacy.end_user_ids("x", "x") == ["x"]
+    assert privacy.end_user_ids("", None) == [] and privacy.end_user_of("bob", "") == "bob"
+
+
+@pytest.mark.req("FR-13.2")
+def test_no_train_registrations_across_key_renames_and_keys_added_later(gw_env, tmp_path):
+    """Hashes are scoped to the API key name. An admin's registration for every client is one hash in the every-client
+    scope, so a key added later is covered; a client's own registration lapses when its key is renamed, and the gateway
+    says so at startup (a `no_train_unmatched` event, once per change, and a count in /ratchet/stats) until the name is
+    back. Keyless registrations lapse the same way once keys are on."""
+    live = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "live.db"), "RATCHET_STUDENT_BASE": "", "NEBIUS_API_KEY": ""}
+    admin = {"RATCHET_ADMIN_KEYS": f"ops:{ADMIN_KEY}"}
+
+    def load(keys: str) -> tuple[Any, TestClient]:
+        gw = _gateway(gw_env, **live, **admin, RATCHET_API_KEYS=keys)
+        student, teacher = RecordingProvider(A), RecordingProvider(A)
+        if gw.rt.ledger.live() is None:
+            _version(gw.rt.ledger, "live", {"threshold": 0.99})
+        gw.rt.ratchet.teacher = teacher
+        gw.rt.ratchet.resolve_student = lambda v: (student, v.adapter_uri)
+        return gw, TestClient(gw.app)
+
+    def chat(c: TestClient, i: int, user: str, key: str) -> dict[str, Any]:
+        r = c.post(CHAT, json={"messages": _ask(i), "user": user}, headers=_auth(key))
+        assert r.status_code == 200, r.text
+        return r.json()["ratchet"]
+
+    def unmatched(gw: Any) -> tuple[int, list[str]]:
+        events = [e["detail"] for e in gw.rt.ledger.events() if e["kind"] == "no_train_unmatched"]
+        return TestClient(gw.app).get("/ratchet/stats").json()["privacy"]["no_train_unmatched"], events
+
+    gw, c = load("")  # keys off: a keyless registration
+    assert c.post(NO_TRAIN, json={"end_user": "erin"}).status_code == 200
+    assert unmatched(gw) == (0, [])
+
+    gw, c = load(f"acme:{ACME_KEY}")  # keys on: the keyless scope matches nothing now
+    assert unmatched(gw)[0] == 1 and "1 no-train registrations" in unmatched(gw)[1][-1] and "keyless" in unmatched(gw)[1][-1]
+    assert c.post(NO_TRAIN, json={"end_user": "carol"}, headers=_auth(ACME_KEY)).status_code == 200
+    r = c.post(NO_TRAIN, json={"end_user": "dave"}, headers=_auth(ADMIN_KEY))
+    assert r.json()["end_users"] == [{"client": privacy.EVERY_CLIENT, "created": True}]
+    assert chat(c, 0, "carol", ACME_KEY)["store_opt_out"] == "end_user"
+
+    # acme renamed to acme-prod (same secret), globex added after dave's registration.
+    gw, c = load(f"acme-prod:{ACME_KEY},globex:{GLOBEX_KEY}")
+    assert chat(c, 1, "dave", GLOBEX_KEY)["store_opt_out"] == "end_user"  # a key added later is covered
+    assert chat(c, 2, "dave", ACME_KEY)["store_opt_out"] == "end_user"
+    assert chat(c, 3, "carol", ACME_KEY)["stored"] is True  # scoped to the name acme: it lapsed, and that is reported
+    n, events = unmatched(gw)
+    assert n == 2 and len(events) == 2 and "2 no-train registrations" in events[-1]
+    assert "acme, keyless" in events[-1] and "carol" not in events[-1]
+    gw, c = load(f"acme-prod:{ACME_KEY},globex:{GLOBEX_KEY}")  # the same keys again: nothing new to say
+    assert unmatched(gw) == (2, events)
+
+    gw, c = load(f"acme:{ACME_KEY},globex:{GLOBEX_KEY}")  # the name is back, and so is carol's registration
+    assert chat(c, 4, "carol", ACME_KEY)["store_opt_out"] == "end_user"
+    n, events = unmatched(gw)
+    assert n == 1 and len(events) == 3
+    # An admin's removal for every client reaches every stored scope, also one no key is named after now.
+    r = c.request("DELETE", NO_TRAIN, json={"end_user": "erin"}, headers=_auth(ADMIN_KEY))
+    assert {x["client"]: x["status"] for x in r.json()["end_users"]}[None] == "removed"
+    assert unmatched(gw)[0] == 0 and gw.rt.ledger.no_train_scopes_stored() == [privacy.EVERY_CLIENT, "acme"]
+
+
+@pytest.mark.req("FR-13.1", "FR-2.15")
+def test_zero_retention_still_rescores_a_task_whose_spec_changed():
+    """Under RATCHET_STORE_EXAMPLES=0 the night does not train, but a task whose spec changed is still re-scored on the
+    stored golden rows (which writes no example), so it does not stay on the teacher for good."""
+    from fakes import _examples
+
+    led = Ledger(":memory:")
+    spec = {"name": "amounts", "fields": {"total": {"type": "number"}}}
+    tasks.register(taskspec.parse_spec(spec, "file"))
+    old = tasks.get("amounts").spec_hash
+    vid = _version(led, "live", {"threshold": 0.5, "spec_hashes": {"amounts": old}})
+    _examples(led, 0, 2, task="amounts", prefix="amount")
+    tasks.register(taskspec.parse_spec({**spec, "fields": {"total": {"type": "number", "abs_tol": 0.01}}}, "file"))
+    new = tasks.get("amounts").spec_hash
+    evaluator = RecordingEvaluator({"threshold": 0.5, "precision": 1.0, "coverage": 1.0, "golden_n": 2})
+    trainer = RecordingTrainer()
+    examples = len(led.examples())
+    rep = run_night(led, trainer, evaluator, ReleaseGate(led), "base", store_examples=False)
+    assert (rep.trained, rep.reason) == (False, "storage disabled") and trainer.calls == []
+    assert [call.adapter_uri for call in evaluator.calls] == ["student-v1"]
+    assert led.version(vid).eval["spec_hashes"] == {"amounts": new} and len(led.examples()) == examples
+    assert [e["kind"] for e in led.events()][-2:] == ["skip", "rescored"]
+    run_night(led, trainer, evaluator, ReleaseGate(led), "base", store_examples=False)
+    assert len(evaluator.calls) == 1  # nothing changed since: nothing to re-score
+    # A release in flight: no re-score, as on any other night that cannot train.
+    tasks.register(taskspec.parse_spec(spec, "file"))
+    _version(led, "shadow")
+    run_night(led, trainer, evaluator, ReleaseGate(led), "base", store_examples=False)
+    assert len(evaluator.calls) == 1
+
+
+@pytest.mark.req("FR-13.1")
+def test_every_add_example_caller_honours_storage_opt_outs():
+    """Every function allowed to call `Ledger.add_example` (INV-2's allowlist) asks `store_opt_out` before it writes, so
+    a new writer of examples (such as a backfill) added to the allowlist fails here until it honours opt-outs too."""
+    import ast
+    import importlib
+    import inspect
+    import textwrap
+
+    from test_nightschool import ALLOWED_ADD_EXAMPLE_CALLERS
+
+    for caller in sorted(ALLOWED_ADD_EXAMPLE_CALLERS):
+        module, qual = caller.split(":")
+        fn: Any = importlib.import_module(module)
+        for part in qual.split("."):
+            fn = getattr(fn, part)
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+        lines = {
+            name: min((n.lineno for n in calls if n.func.attr == name), default=None) for name in ("store_opt_out", "add_example")
+        }
+        assert lines["store_opt_out"] is not None, f"{caller} writes examples without asking Ratchet.store_opt_out"
+        assert lines["add_example"] is None or lines["store_opt_out"] < lines["add_example"], caller
 
 
 @pytest.mark.req("FR-13.1", "FR-7.7")

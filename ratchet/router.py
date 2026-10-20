@@ -122,7 +122,10 @@ class RequestMeta:
     `storable=False` keeps every teacher answer of the request out of the training set (no example is inserted or
     bumped); the request is still answered, audited and logged, with `store_opt_out` (one of `privacy.OPT_OUTS`, `request`
     when not given) as the reason. `end_user` is the end user's HMAC (`privacy.EndUsers.hash`), never the raw value: it is
-    logged with the request and the example, and an end user registered as no-train stores nothing (FR-13.2)."""
+    logged with the request and the example, and an end user registered as no-train stores nothing (FR-13.2).
+    `end_user_aliases` are the other hashes that end user may be registered as no-train under (`privacy.EndUsers.aliases`:
+    the request's `user` when `safety_identifier` names the end user, and the every-client scope): looked up, never
+    logged or stored."""
 
     request_id: str | None = None
     client_request_id: str | None = None
@@ -131,6 +134,7 @@ class RequestMeta:
     end_user: str | None = None
     idempotency_key: str | None = None
     store_opt_out: str | None = None
+    end_user_aliases: tuple[str, ...] = ()
 
 
 # The model calls of one request, as `Result.usage_breakdown` names them: the student's samples (one call, n choices),
@@ -573,8 +577,9 @@ class Ratchet:
         """Why this request's teacher answers may not be stored (`privacy.OPT_OUTS`, broadest first), or None when they
         may (FR-13.1): zero retention (RATCHET_STORE_EXAMPLES=0), a no-store task (its spec's `store`, or
         RATCHET_NO_STORE_TASKS), the caller's verdict (`meta.storable` False, from the API key or the request), or an end
-        user registered as no-train. Attribute checks, plus one primary-key lookup when the request names an end user
-        and nothing else opted it out. Nothing here can turn an opt-out back into storage."""
+        user registered as no-train under any of its hashes (`end_user` and `end_user_aliases`). Attribute checks, plus
+        one primary-key lookup when the request names an end user and nothing else opted it out. Nothing here can turn
+        an opt-out back into storage."""
         if not self.s.store_examples:
             return "global"
         if not task.store or task.name in self.no_store_tasks:
@@ -583,19 +588,23 @@ class Ratchet:
             return None
         if not meta.storable:
             return meta.store_opt_out or "request"
-        if meta.end_user is not None and self.ledger.is_no_train(meta.end_user):
+        if (meta.end_user is not None or meta.end_user_aliases) and self.ledger.is_no_train(
+            meta.end_user, *meta.end_user_aliases
+        ):
             return "end_user"
         return None
 
-    def _opted_out(self, task: tasks.Task, meta: RequestMeta | None) -> tuple[RequestMeta | None, str | None]:
-        """The request's meta with its opt-out settled once (`store_opt_out`), so the request is logged with its reason
-        and every later store check stops at `storable` without another lookup."""
+    def _opted_out(self, task: tasks.Task, meta: RequestMeta | None) -> tuple[RequestMeta, str | None]:
+        """The request's own copy of its meta with the opt-out settled once (`store_opt_out`), so the request is logged
+        with its reason and every later store check stops at `storable` without another lookup. A copy, never the
+        caller's object: `_store_example` marks it when an opt-out arrives while the request runs."""
         reason = self.store_opt_out(task, meta)
+        mine = replace(meta) if meta is not None else RequestMeta()
         if reason is None:
-            return meta, None
-        if meta is None:
-            return RequestMeta(storable=False, store_opt_out=reason), reason
-        return replace(meta, storable=False, store_opt_out=reason), reason
+            mine.storable, mine.store_opt_out = True, None
+            return mine, None
+        mine.storable, mine.store_opt_out = False, reason
+        return mine, reason
 
     def _store_example(
         self,
@@ -621,8 +630,13 @@ class Ratchet:
         teacher's), and then with its own model and license (INV-1). An answer that is not valid under the task's spec
         (`Task.check`: a required field missing, a label outside its vocabulary) is served but skipped, with the field's
         path as the reason (FR-2.14). The example records `client` (the API key name) and the end user's hash. An example
-        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3)."""
-        if self.store_opt_out(task, meta) is not None:
+        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3). An opt-out that arrived while
+        the request ran (an end user registered as no-train meanwhile) is written onto `meta`, the request's own copy
+        (`_opted_out`), so the row and the Result report it like one found at the start."""
+        late = self.store_opt_out(task, meta)
+        if late is not None:
+            if meta is not None and meta.storable:
+                meta.storable, meta.store_opt_out = False, late
             return False
         if fallback and not self.s.store_fallback_teacher:
             return False
@@ -911,7 +925,8 @@ class Ratchet:
 
         Whether the request's teacher answers may be stored is settled once, up front (`store_opt_out`, FR-13.1): under an
         opt-out the cascade runs exactly as it would otherwise (audits, shadows and arbitrations included), nothing is
-        inserted or bumped, and the row records the reason (`requests.store_opt_out`) and the end user's hash."""
+        inserted or bumped, and the row records the reason (`requests.store_opt_out`) and the end user's hash. An opt-out
+        made while the request runs is caught by the store check and reported the same way."""
         task = _task(task)
         plan = self.plan(params, n)
         self._admit(task, client)
@@ -1080,6 +1095,8 @@ class Ratchet:
                 ref_text = reference.text if reference is not None else served.text
                 shadow_agree = int(task.agree(s_sc.answer.text, ref_text))
 
+        # Settled at the start, or by a store check that found an opt-out made while the request ran (`_store_example`).
+        opt_out = meta.store_opt_out if not meta.storable else None
         request_id = self.ledger.log_request(
             task=task.name,
             served_by=served_by,
@@ -1101,7 +1118,7 @@ class Ratchet:
             client=client,
             route=route,
             stored=int(stored),
-            end_user=meta.end_user if meta is not None else None,
+            end_user=meta.end_user,
             store_opt_out=opt_out,
         )
         choices = _choices(task, served_choices, params)

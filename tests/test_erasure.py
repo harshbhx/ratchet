@@ -444,7 +444,8 @@ def test_contains_matches_the_stored_text_literally():
         ({"client": "acme", "reason": ""}, "reason must be"),
         ({"client": "acme", "actor": ""}, "actor must be"),
         ({"end_user_raw": "secret-person-77"}, "needs the deployment's end-user key"),
-        ({"end_user_raw": "x" * 200, "hasher": privacy.EndUsers(KEY, "env")}, "1 to 128 characters"),
+        ({"end_user_raw": "", "hasher": privacy.EndUsers(KEY, "env")}, "non-empty string"),
+        ({"end_user_raw": 5, "hasher": privacy.EndUsers(KEY, "env")}, "non-empty string"),
         ({"client": "acme", "shared": "maybe"}, "shared must be delete or keep"),
     ],
 )
@@ -510,14 +511,15 @@ def test_admin_erase_endpoint_needs_an_admin_key_and_is_a_dry_run_by_default(gw_
         {"client": "acme", "reason": "x", "dry_run": "no"},
         {"hashes": "abc", "reason": "x"},
         {"hashes": [{"a": 1}], "reason": "x"},
-        {"end_user": "person-9" * 40, "reason": "x"},
+        {"end_user": "", "reason": "x"},
+        {"end_user": ["person-9"], "reason": "x"},
         ["not", "an", "object"],
     ):
         r = c.post(ERASE, json=bad, headers=_auth(ADMIN_KEY))
         assert r.status_code == 400, (bad, r.text)
         assert "person-9" not in r.text
 
-    # An end user without a client: every API key's scope and the keyless one, as an admin's no-train registration.
+    # An end user without a client: every API key's scope and the keyless one (the scopes requests are attributed in).
     r = c.post(ERASE, json={"end_user": "person-9", "reason": "DSR 7", "dry_run": False}, headers=_auth(ADMIN_KEY))
     assert r.json()["purged"] == 2 and r.json()["scope"]["end_users"] == 2
     assert _row(led, keyed)["messages"] is None and _row(led, keyless)["messages"] is None

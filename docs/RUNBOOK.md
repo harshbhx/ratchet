@@ -29,7 +29,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Kind | Written by | Meaning | Action |
 |---|---|---|---|
 | `trained` | `run_night` | A new version was trained and scored on the golden set | None |
-| `skip` | `run_night` | No training tonight: storage disabled (`RATCHET_STORE_EXAMPLES=0`), release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight and storage on |
+| `skip` | `run_night` | No training tonight: storage disabled (`RATCHET_STORE_EXAMPLES=0`; a task whose spec changed is still re-scored), release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight and storage on |
 | `rejected` | `admit` / `tick` | Candidate failed the golden gate or shadow (reason in detail) | Repeated rejections: see [Persistent rejections](#persistent-rejections) |
 | `shadow` | `admit` | Candidate passed the golden gate and is running silently | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
@@ -53,6 +53,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
 | `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
 | `no_train` | `POST` / `DELETE /v1/ratchet/no-train` | End users were registered as no-train, or registrations removed: a count and who (`2 end user registration(s) by admin ops`, `1 ... removed by acme`), never the end user or its hash | None. See [Opt-out requests](#opt-out-requests-an-end-user-or-a-client) |
+| `no_train_unmatched` | gateway startup (`privacy.check_no_train_scopes`) | No-train registrations match no request under the current API keys: their scope is a key name no longer in `RATCHET_API_KEYS` (renamed or removed), or keyless while keys are on. The detail gives the count and the scopes (names only); written once per change, and `/ratchet/stats` → `privacy.no_train_unmatched` keeps the count | If a key was renamed by mistake, restore its name and restart. Otherwise have those end users registered again under the new name, or by an admin for every client |
 | `end_user_key` | gateway startup (`privacy.end_users`) | The end-user HMAC key differs from the one the ledger last saw (`RATCHET_END_USER_KEY` set, changed or removed): every earlier end-user hash, and the no-train registrations the detail counts, no longer match, so those end users' requests are stored again | If unintended, restore the previous key and restart. If intended, have every no-train end user registered again |
 | `erase` | `privacy.erase` (`POST /ratchet/admin/privacy/erase`, `DELETE /v1/ratchet/examples`, `python -m ratchet.admin erase`) | Stored examples were erased for good: the erasure's id, what selected them (`client`, `end user`, `hashes`, `content`), who asked, how many were purged, shared ones kept, request rows unlinked, and the versions that may have been trained on them (`may be held by v4, v5 (reported, not changed)`). Never a hash, an end user or the text | If versions are named, decide whether to retire them or wait for the next night's version, which is trained without the erased rows. See [PII leak](#pii-leak) |
 | `purge` | retention (`privacy.apply_retention`: the live gateway hourly, a live night, `python -m ratchet.live purge`) | Examples not seen within `RATCHET_EXAMPLE_RETENTION_DAYS` lost their text, and request rows older than `RATCHET_REQUEST_RETENTION_DAYS` were folded into daily sums; counts, and the client for a `--client` run | None |
@@ -85,7 +86,7 @@ for v in led.versions():
 | Cancel an in-flight shadow so tonight's training runs | `led.set_version(<shadow id>, "retired", 0)` |
 
 | Check an adapter's bill of materials | `curl -s $GATEWAY/ratchet/versions/<id>/bom > bom.json && python -m ratchet.bom verify bom.json --public-key <published key>` |
-| Add or rotate a client's API key | Edit `RATCHET_API_KEYS` (`name:key,...`) and restart the gateway. Keep the same name so per-client stats continue; the old key stops working at once |
+| Add or rotate a client's API key | Edit `RATCHET_API_KEYS` (`name:key,...`) and restart the gateway. Keep the same name so per-client stats, end-user hashes and the client's no-train registrations continue (renaming unlinks them; a `no_train_unmatched` event says how many); the old key stops working at once |
 | Add, change or remove a task | Edit `RATCHET_TASKS_FILE` and restart, or use the admin API with a key from `RATCHET_ADMIN_KEYS`: `curl -X PUT $GATEWAY/ratchet/tasks/<name> -H "Authorization: Bearer $ADMIN_KEY" -d @spec.json` (check it first with `POST /ratchet/tasks/validate`). [CONFIGURATION.md](CONFIGURATION.md#adding-a-task) has the spec format |
 | Keep a task on the teacher | Set `"pinned": true` in its spec (file or API). Its stored examples stay in the ledger but leave training and the golden eval from the next night on (`excluded_pinned` in the manifest) |
 | Stop distilling task names nobody registered | `RATCHET_UNKNOWN_TASKS=teacher` (teacher only, nothing stored) or `reject` (a 400 that lists the registered tasks); `GET /ratchet/tasks` lists the unregistered names requests used |
@@ -247,11 +248,11 @@ Opt-outs only remove storage; requests are still answered, audited and logged ([
 
 | Who asks | Do |
 |---|---|
-| An end user of one client | The client calls `POST /v1/ratchet/no-train` with `{"end_user": "<the value it sends as user or safety_identifier>"}` and its API key |
-| An end user, through you (a data subject request) | `POST /v1/ratchet/no-train` with an admin key and no `client`: registered for every API key's end users. Remove with `DELETE` and the same body |
+| An end user of one client | The client calls `POST /v1/ratchet/no-train` with `{"end_user": "<the value it sends as user or safety_identifier>"}` and its API key. A request is matched on both fields it sends. The registration is scoped to the key's name: keep the name when rotating the key |
+| An end user, through you (a data subject request) | `POST /v1/ratchet/no-train` with an admin key and no `client`: one registration (scope `*`) for every API key, also keys added later, and keyless requests. Remove with `DELETE` and the same body |
 | A client, for all its traffic | Add `name:store=0` to `RATCHET_KEY_LIMITS` and restart |
 | A task's data owner | `store: false` in the task's spec (`PUT /ratchet/tasks/<name>`), or the name in `RATCHET_NO_STORE_TASKS` and restart |
-| Everyone (zero retention) | `RATCHET_STORE_EXAMPLES=0` and restart; Night School then skips every night |
+| Everyone (zero retention) | `RATCHET_STORE_EXAMPLES=0` and restart; Night School then skips every night (a task whose spec changed is still re-scored, on the golden rows stored before) |
 
 Check `/ratchet/stats` → `privacy.not_stored_by_reason` and the response's `ratchet.store_opt_out`. An opt-out does not delete what was stored before; to remove that too, erase it:
 
