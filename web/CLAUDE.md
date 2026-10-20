@@ -10,12 +10,14 @@ make demo                                        # gateway on :8000 (serves the 
 make web-dev                                     # hot reload on :5173, API proxied to :8000
 RATCHET_API=http://localhost:8831 npx vite       # dev server against another gateway
 npx tsc --noEmit -p .                            # typecheck
+npm test                                         # tests/*.test.mjs: pure helpers under Node's test runner (Node 22.6+)
 ```
 
 ## Rules
 
 - **The build is committed.** `ratchet/web/dist` ships inside the Python package so `pip install .` and the Docker image serve the UI without Node. After any change in `web/`, run `make web` and commit `ratchet/web/dist`. CI fails if the committed build is stale.
 - The gateway serves `dist/index.html` for `/`, `/scout`, `/dashboard` and mounts `/assets`. If `dist` is missing, it falls back to the hand-written pages, which also stay at `/lite`, `/lite/scout`, `/lite/dashboard`. New top-level routes need a matching route in `ratchet/gateway.py`.
+- **Pure helpers get tests.** A `*-model.ts` file that turns report numbers into what the page prints (scales, tick labels, labels, empty states) can be tested in `tests/*.test.mjs` with `node:test`; `tests/ts-hooks.mjs` resolves `@/` and strips the types, so the module must not import JSX. `npm test` runs them, CI's `web` job runs it, and `test_economics_panel_helpers` runs it from `make test` when Node 22.6+ and `node_modules` are present.
 - API types live in `src/lib/api.ts` and mirror [docs/API.md](../docs/API.md) and [docs/SCOUT.md](../docs/SCOUT.md). Change both sides together.
 - Color carries meaning: `owned` (blue) = the student you own, `rented` (orange) = the teacher you rent. Status colors (`good`/`warn`/`bad`) are for state only and always come with an icon or a word.
 - Every number is live from the API, labelled **Simulation** (`src/lib/sim.ts`), or a linked third-party fact. No invented numbers, testimonials or logos.

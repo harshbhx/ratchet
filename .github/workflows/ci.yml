@@ -46,6 +46,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit -p .
+      - name: Dashboard helpers (Node test runner)
+        run: npm test
       - run: npm run build
       - name: Built UI is committed and up to date
         run: git diff --stat --exit-code -- ../ratchet/web/dist || (echo "Run 'make web' and commit ratchet/web/dist" && exit 1)
