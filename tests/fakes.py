@@ -94,18 +94,23 @@ class RecordingProvider:
 
     It returns `n` identical choices, so a student built from it is unanimous and its confidence depends on `logprob`
     (-0.05 is a token probability of about 0.95: confident). Like a real endpoint, it returns token logprobs only when
-    asked (`logprobs=True`). Calls to a model in `raise_on` are recorded and then raise `httpx.ConnectError`, the way
-    an unreachable endpoint fails. Thread-safe, because Scout calls the router from several threads."""
+    asked (`logprobs=True`); `logprob=None` plays an endpoint that never returns them. A list for `text` or `logprob`
+    scripts the choices instead: choice i gets item i (cycling), so `RecordingProvider([A, A, B], [log(.6), log(.9),
+    log(.99)])` is a 2-of-3 majority with known token probabilities. Calls to a model in `raise_on` are recorded and
+    then raise `httpx.ConnectError`, the way an unreachable endpoint fails. Thread-safe, because Scout calls the router
+    from several threads."""
 
     def __init__(
         self,
-        text: str | Callable[[Messages, str], str],
-        logprob: float = -0.05,
+        text: str | list[str] | Callable[[Messages, str], str],
+        logprob: float | list[float | None] | None = -0.05,
         in_tokens: int = 10,
         out_tokens: int = 5,
         raise_on: Collection[str] = frozenset(),
         latency_ms: float = 1.0,
     ) -> None:
+        if (isinstance(text, list) and not text) or (isinstance(logprob, list) and not logprob):
+            raise ValueError("a scripted text or logprob list needs at least one item")
         self.text = text
         self.logprob = logprob
         self.in_tokens = in_tokens
@@ -116,8 +121,11 @@ class RecordingProvider:
         self._lock = threading.Lock()
 
     def answer(self, messages: Messages, model: str) -> str:
-        """What this provider says to `messages` (lets a test compute the expected output of a recorded call)."""
-        return self.text(messages, model) if callable(self.text) else self.text
+        """What this provider says to `messages` (lets a test compute the expected output of a recorded call); the
+        first choice when the choices are scripted."""
+        if callable(self.text):
+            return self.text(messages, model)
+        return _nth(self.text, 0)
 
     def complete(self, messages: Messages, model: str, *args: Any, **kwargs: Any) -> list[Completion]:
         if len(args) > len(_POSITIONAL):
@@ -127,10 +135,18 @@ class RecordingProvider:
             self.calls.append(ProviderCall(copy.deepcopy(messages), model, dict(kwargs)))
         if model in self.raise_on:
             raise httpx.ConnectError(f"{model} is down")
-        text = self.answer(messages, model)
-        logprobs = [self.logprob] * self.out_tokens if kwargs.get("logprobs") else []
-        n = int(kwargs.get("n") or 1)
-        return [Completion(text, model, self.in_tokens, self.out_tokens, self.latency_ms, list(logprobs)) for _ in range(n)]
+        said = self.text(messages, model) if callable(self.text) else self.text
+        out = []
+        for i in range(int(kwargs.get("n") or 1)):
+            lp = _nth(self.logprob, i)
+            logprobs = [lp] * self.out_tokens if kwargs.get("logprobs") and lp is not None else []
+            out.append(Completion(_nth(said, i), model, self.in_tokens, self.out_tokens, self.latency_ms, logprobs))
+        return out
+
+
+def _nth(value: Any, i: int) -> Any:
+    """Item i of a scripted list (cycling), or the value itself for every choice."""
+    return value[i % len(value)] if isinstance(value, list) else value
 
 
 class FakeClock:

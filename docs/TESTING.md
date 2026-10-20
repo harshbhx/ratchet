@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 131 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_traceability), ~25 s
+pytest -q                     # 164 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_contract, test_traceability), ~27 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -18,8 +18,9 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_system.py` | 8 |
 | `tests/test_hardening.py` | 23 |
 | `tests/test_scout.py` | 15 |
+| `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| **Total** | **131** |
+| **Total** | **164** |
 
 There are three layers:
 
@@ -27,7 +28,9 @@ There are three layers:
 2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`): the whole loop over simulated days, the gateway API, the HTTP clients, and Scout end to end. One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
-Shared fixtures (`gw`, `gw_env`, `reference_run`) are in `tests/conftest.py`; the recording provider, trainer and evaluator, `FakeClock` and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
+Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
+
+Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) are in `tests/conftest.py`; the recording provider, trainer and evaluator, `FakeClock` and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
 
 Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
@@ -143,6 +146,35 @@ The `gw` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with 
 | `test_stats_mark_pinned_tasks` | `/ratchet/stats` `tasks` reports `pinned` for the planner and writer tasks only |
 | `test_react_app_is_served_with_lite_fallback` | With the committed build, `/`, `/scout` and `/dashboard` return the React shell and `/assets/*` is served; `/lite*` return the hand-written pages; without a build `/` falls back to the lite page |
 
+### `tests/test_contract.py`
+
+The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_env`; cascade tests build a small ledger with `_version` and script the models with `RecordingProvider`, with every setting they depend on passed explicitly.
+
+| Test | Covers |
+|---|---|
+| `test_v1_models_lists_ratchet` | FR-1.2: `GET /v1/models` returns a `list` with a `ratchet` model; with API keys on it needs a key (401) and answers the same with one |
+| `test_task_from_metadata_and_header_precedence` | FR-1.3: the ledger's `task` column is `default` with neither, the metadata task alone, the header alone, and the header when both are set (both orders); other metadata keys are ignored |
+| `test_missing_or_malformed_messages` (9 cases) | FR-1.5: missing, `null`, empty, string, object and number `messages` get 400 and log nothing. An unknown role, a number as content and `null` user content give 500 today: strict xfail until API-VALIDATE-NORMALIZE |
+| `test_messages_items_must_be_objects_400` | Strict xfail (API-VALIDATE-NORMALIZE): `["hi"]`, `[null]`, `[1]` and a nested list as messages give 500 today instead of 400 |
+| `test_bad_metadata_is_400` | Strict xfail (API-VALIDATE-NORMALIZE): `metadata` as a string, a list, or with a non-string `ratchet_task` gives 500 today instead of 400 |
+| `test_text_content_parts_answered_in_mock` | Strict xfail (API-VALIDATE-NORMALIZE): a demo ticket sent as OpenAI text content parts should get the same answer as the string form and the same stored example (`seen` 2); today it is a 500 |
+| `test_bom_endpoint_counts_by_split_and_fingerprint_changes` | FR-3.5, US-7: `/ratchet/bom` counts per split equal the ledger's; every source names the configured teacher and its license; `examples_sha256` is the documented SHA-256 over the sorted example hashes, stable between reads and equal to the stats block; a repeated request changes nothing, a new one changes the fingerprint and adds one |
+| `test_stats_contract` | FR-7.1 to FR-7.4, FR-7.7, US-9: every key in `tests/fixtures/stats_keys.json`, with its JSON type, on a fresh gateway (lists empty) and after two simulated days and nights plus a keyed request (every list has items, each item checked); the fixture still holds the keys this item named; totals, days, tasks and clients add up to the same requests and dollars, and the savings are positive |
+| `test_demo_endpoints_are_403_in_live_mode` | INV-8: in live mode `POST /ratchet/demo/day` (also with bad arguments), `break-next` and `reset` get 403 and change nothing in the ledger |
+| `test_student_sampled_once_with_production_params` | FR-2.1, NFR-1: one student call per request with `n = Settings.samples` (3 and 5), temperature 0.7 and logprobs on, to the version's adapter with the request as sent; an escalated or audited request adds exactly one teacher call |
+| `test_confidence_formula_exact` | FR-2.2: two of three samples agreeing, the best majority sample at p = 0.9, give 0.4 × 0.9 + 0.6 × 2/3 (not the minority's 0.99, not the weaker majority sample's 0.6), from `score()` and from the router, which logs the same number |
+| `test_confidence_without_logprobs_is_agreement` | FR-2.2: without token logprobs the confidence is the agreement: 2/3 for a split, exactly 1.0 for a unanimous student whose endpoint ignores `logprobs=True` |
+| `test_threshold_boundary_serves_at_equality_and_escalates_below` | FR-2.3, FR-2.4, US-3: for a calibrated threshold and for the global default, a confidence equal to the threshold is served by the student (no teacher call, nothing stored) and one a float step below escalates (teacher answers once, its answer stored, the version still logged as the one that tried) |
+| `test_audit_rate_zero_and_one` | FR-2.5, US-4: rate 0 never calls the teacher on served answers; rate 1 audits every one, logs each verdict, stores each answer and never changes what the user gets, and `version_live_quality` reads the result; an escalation is never counted as an audit |
+| `test_audit_rate_is_respected_statistically` | FR-2.5, US-4: at rate 0.2 over 2,000 served requests (seeded), the audited share is inside the 99% Wilson interval, with one teacher call and one stored example per audit |
+| `test_cost_includes_audit_shadow_and_arbitration` | NFR-3: cost and all-teacher baseline to the token in 11 cases (served, audited, escalated, student endpoint down, cold start, pinned task, shadow agreeing, unsure and arbitrated, an audit or an escalation as the shadow's reference), with distinct token counts per model; the ledger row equals the result |
+| `test_concurrent_requests_keep_the_ledger_consistent` | NFR-6: 8 threads × 40 requests through one `Ratchet`: no request lost or logged twice, one teacher call and one example per audit, each row's cost matches its own path, totals equal the sum |
+| `test_empty_json_answer_scores_zero` | Strict xfail (TASK-COMPARATORS): three `{}` answers to `ticket-triage` score 0.98 today and `{}` agrees with `{}` |
+| `test_o_series_prefixes_refused` (4 cases) | FR-3.2, US-8, INV-1: `o1-preview`, `o3-mini`, `o4-mini` and `openai/o3-mini` are refused under the OpenAI terms |
+| `test_closed_teacher_fails_at_startup` | FR-3.2, INV-1: `Ratchet(...)` raises for `gpt-4o` and for an unknown teacher; the gateway's `Runtime` refuses to start with `gpt-4o` in live and mock mode |
+| `test_examples_record_license_url` | FR-3.3: for two registered teachers, the stored example has the teacher, license name and URL from the registry, the request hash, a split, and the BOM lists exactly that source |
+| `test_configured_models_are_licensed_and_day1_checked` | INV-9 (offline proxy): every priced model in `config.py` except `student` is in `licenses.REGISTRY` and in `WANT` in `scripts/day1_check.py`, and the default teacher, judge and fallback student are priced |
+
 ### `tests/test_traceability.py`
 
 Every test here carries `NFR-10` through a module-level `pytestmark`.
@@ -177,6 +209,17 @@ The React app itself is checked with `npx tsc --noEmit` and a production build i
 Not covered by tests yet: `RATCHET_TRUST_PROXY`, the mock warm-up at startup (it runs the same `simulate_day` the tests exercise), and the live-mode BOM file written by `python -m ratchet.live night`.
 
 During development the v0.4 features were also checked end to end against a running gateway with the official OpenAI Python SDK (401 on a wrong key, streaming text identical to the non-streaming answer, the quota cutting one key off at its limit while another kept working, a signed BOM verifying with `python -m ratchet.bom verify` and failing once edited), and the dashboard's Trust and privacy panel with Playwright in light and dark mode at desktop and phone widths.
+
+## Contract tests
+
+`tests/test_contract.py` was written before the v0.5 rewrites of `Ratchet.handle` and `gateway.chat` (request validation and normalisation, field comparators), as their regression net. Each test pins behaviour that someone outside the module depends on: an OpenAI client (status codes, `/v1/models`, task selection), the dashboard (`/ratchet/stats`), an auditor (`/ratchet/bom`, license fields), or the operator's bill (cost to the token).
+
+Rules:
+
+- **The stats keys only grow.** `tests/fixtures/stats_keys.json` lists every key the dashboard reads from `/ratchet/stats` (it mirrors `Stats` in `web/src/lib/api.ts`) with its JSON type; a `[]` key is a list whose every item is checked. A change may add keys to the payload and to the fixture. It must not remove or retype one, so the React dashboard and other clients keep working. The test also fails if the fixture loses one of the keys this contract started with.
+- **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (`API-VALIDATE-NORMALIZE`, `TASK-COMPARATORS`). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
+- Cost assertions are token-exact: each model gets distinct token counts, and the expected cost is built from `Settings.price(...)`, so a term billed with the wrong tokens, price or multiplicity fails.
+- The dashboard's rendering is still checked by hand ([web/CLAUDE.md](../web/CLAUDE.md)); `test_stats_contract` proves the data it renders. FR-7.6 (light and dark mode, phone width) stays a manual check.
 
 ## Simulation methodology
 
@@ -388,6 +431,7 @@ To change behaviour:
 ## Adding tests
 
 - Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`); Night School rules in `test_nightschool.py`; release-gate and router release behaviour in `test_release.py`. Set up states with the builders in `tests/fakes.py` (`_version`, `_audit`, `_shadow`, `_examples`) and fake models with `RecordingProvider`, `RecordingTrainer` and `RecordingEvaluator`, rather than new local helpers.
+- A change to what clients or the dashboard see (a status code, a `/ratchet/stats` key, cost accounting) goes in `test_contract.py`. New stats keys also go in `tests/fixtures/stats_keys.json`; existing ones stay.
 - Scout, the research world and the guard go in `test_scout.py`. Use the `gw` fixture (mock gateway, no warm-up) and fake clocks for the guard.
 - Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests. The exception is the pinned reference run; reuse the `reference_run` fixture instead of starting another 10-day simulation.
 - A new `Ledger.add_example` call under `ratchet/` needs a reviewed edit to `ALLOWED_ADD_EXAMPLE_CALLERS` in `test_nightschool.py`.

@@ -16,6 +16,7 @@ import httpx
 
 BASE = os.environ.get("RATCHET_TEACHER_BASE", "https://api.tokenfactory.nebius.com/v1").rstrip("/")
 KEY = os.environ.get("NEBIUS_API_KEY", "")
+# Every priced model in ratchet/config.py (DEFAULT_PRICES, except "student") must be here: test_contract.py checks it.
 WANT = [
     "nvidia/Nemotron-3-Ultra-550b-a55b",
     "nvidia/nemotron-3-super-120b-a12b",
