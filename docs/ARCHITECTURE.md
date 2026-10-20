@@ -225,18 +225,21 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
  │                                       version first when a golden task's spec changed: "rescored"), stop
  │     no golden rows ────────────────────────────────────────────▶ event "skip", stop
  ├─ champion re-check: evaluate the LIVE version on today's golden set, overwrite its eval (+ spec_hashes)
+ ├─ dataset.commitment(train_rows), dataset.commitment(golden_rows): root, size and sorted leaves of each
+ │     split's set commitment (a duplicate key stops the night here, before any GPU time)
  ├─ trainer.train(train_rows, base_model, name="student-v{N+1}") → adapter_uri
  ├─ ledger.create_version(state="candidate")
+ ├─ ledger.set_version_leaves(): the train and golden leaves, written once (append-only, INV-17)
  ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, certificate, ...} + spec_hashes
  ├─ live version? paired_evidence(): the candidate's test vector vs the re-check's → eval["paired"]
  ├─ ledger.update_eval(), then ledger.set_bom(): bill of materials from the exact train and golden rows,
- │     with the eval (certificate, frontier, paired counts), signed if a key is set
+ │     with the eval (certificate, frontier, paired counts) and both set commitments, signed if a key is set
  ├─ event "trained"
  └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow
 ```
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
-- **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it.
+- **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it. After a night that trained, `python -m ratchet.live night` writes the BOM to `boms/student-vN.json` and into the adapter's folder (`adapters/<name>/ratchet_bom.json`) and runs `RATCHET_SYNC_CMD` again (`live.write_boms`), so the bucket's copy of the adapter carries its provenance.
 
 ### Datasets (`nightschool/dataset.py`)
 
@@ -325,7 +328,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### Evidence tables
 
-Created by `SCHEMA` for the evidence features, so later items change no migration; nothing writes them yet ([ADR 0024](adr/0024-evidence-foundations.md)).
+Created by `SCHEMA` for the evidence features, so later items change no migration ([ADR 0024](adr/0024-evidence-foundations.md)). `version_leaves` is written by committed training sets (FR-16.4, [ADR 0027](adr/0027-committed-training-sets.md)): `run_night` writes each new version's leaves once, right after `create_version`; nothing writes the other tables yet.
 
 | Table | Columns | Feature |
 |---|---|---|
@@ -344,7 +347,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `integrity`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -544,7 +547,24 @@ Worked example with unverified list prices: an L40S at $1.55 per hour and about 
 ## 8. Provenance
 
 - `GET /ratchet/bom` returns `Ledger.bill_of_materials()`: counts grouped by teacher, license, license URL and split, plus `examples_sha256` (a SHA-256 over all example hashes in sorted order).
-- **Per adapter** ([ADR 0010](adr/0010-signed-adapter-bom.md)): after training and evaluation, `run_night` builds a `ratchet.bom/v2` manifest ([ADR 0024](adr/0024-evidence-foundations.md)) from the exact rows used: sources (teacher, license, URL, count, `distill_ok`), tasks, `dataset_sha256`, a hash of the golden rows, the evaluation, the number of redacted examples, `training.origins` (rows by where they came from) and `redactor` (a SHA-256 over the redaction rules and whether redaction was on). Optional v2 sections come with later features: a set commitment per split (`training.commitment`, `golden.commitment`: `{alg: ratchet.smt/v1, root, size}`, a `merkle.KeySet` root) and `teacher`, `backfill_jobs`, `erasures_honored`. Stored v1 documents stay as they are and still verify. `bom.document()` adds the SHA-256 of the canonical JSON and, when `RATCHET_BOM_SIGNING_KEY` is set, an Ed25519 signature with the public key and key id. It is stored in `versions.bom`, served at `/ratchet/versions/{id}/bom`, and in live mode written to `data/boms/student-vN.json`. `python -m ratchet.bom verify` checks it offline.
+- **Per adapter** ([ADR 0010](adr/0010-signed-adapter-bom.md)): after training and evaluation, `run_night` builds a `ratchet.bom/v2` manifest ([ADR 0024](adr/0024-evidence-foundations.md)) from the exact rows used: sources (teacher, license, URL, count, `distill_ok`), tasks, `dataset_sha256`, a hash of the golden rows, the evaluation, the number of redacted examples, `training.origins` (rows by where they came from), `redactor` (a SHA-256 over the redaction rules and whether redaction was on) and a set commitment per split (below). Optional v2 sections come with later features: `teacher`, `backfill_jobs`, `erasures_honored`. Stored v1 documents stay as they are and still verify. `bom.document()` adds the SHA-256 of the canonical JSON and, when `RATCHET_BOM_SIGNING_KEY` is set, an Ed25519 signature with the public key and key id. It is stored in `versions.bom`, served at `/ratchet/versions/{id}/bom`, and in live mode written to `data/boms/student-vN.json` and into the adapter's folder (`data/adapters/<name>/ratchet_bom.json`), both uploaded by `RATCHET_SYNC_CMD`. `python -m ratchet.bom verify` checks it offline.
+
+  The v2 manifest, abridged (every v1 field is still there):
+
+  ```
+  schema: ratchet.bom/v2
+  adapter: {version, name, base_model, day}
+  training: {examples, dataset_sha256, tasks, targets, examples_with_pii_redacted, origins,
+             commitment: {alg: ratchet.smt/v1, root, size}}
+  golden: {examples, sha256, held_out, commitment: {alg: ratchet.smt/v1, root, size}}
+  sources: [{teacher, license, license_url, distill_ok, examples}]
+  redactor: {sha256, rules, redact_pii}
+  eval: {..., certificate, frontier, per_task, test_vector, paired}
+  teacher | backfill_jobs | erasures_honored: later features, optional
+  ```
+- **Committed training sets** (FR-16.4, [ADR 0027](adr/0027-committed-training-sets.md)). Each split's `commitment` is the root of a `merkle.KeySet` (a collapsed sparse Merkle tree) over the rows the trainer and the golden eval were handed: key = the example hash (`examples.hash`), value = `dataset.leaf_value(row)`, the SHA-256 of the canonical JSON of `{completion, teacher, license, redactions}`. `dataset.commitment(rows)` builds it before training; `Ledger.set_version_leaves` writes the sorted leaves once, right after `create_version` (append-only, INV-17; `version_leaves(vid, split)` reads them back, `versions_containing(key)` lists the versions trained on an example, on the `version_leaves_key` index); `bom.manifest(commitments=)` signs root and size, and refuses a size that is not the split's row count.
+  - `POST /ratchet/versions/{id}/proof` (admin key) resolves the example key from `{"key"}` or from the chat request itself, validated, normalised and redacted as the gateway stores it (`proof.resolve_key`), and returns a membership or non-membership proof from a cached `KeySet` (`gateway._keyset`: per runtime, the last 8 trees, each cached only when it rebuilds the root and size the BOM signs, else a 500 and one `integrity` event). `GET /ratchet/versions/{id}/heldout` (admin key) returns the golden leaves and every golden key's proof of absence from the training root. Mock mode adds `GET /ratchet/demo/sample-example`, a committed example's prompt.
+  - `python -m ratchet.proof verify|heldout|key` checks a proof or certificate against the root the BOM signs (never the file's own claims), with the BOM's signature, from the files alone (exit 0, 1 on a failed check, 2 on bad input). Non-membership is sound even against the operator who built the tree; a sorted-list tree would not be (ADR 0027). A proof shows the operator's signed commitment to the dataset at training time, not that the weights came from it.
 - `train.py` writes `ratchet_manifest.json` next to each adapter, listing the base model, example count and the (teacher, license) pairs.
 - `licenses.require_distillable()` refuses unknown teachers and any model whose ID (after the last `/`) starts with `gpt`, `o1`, `o3`, `o4`, `claude` or `gemini`.
 

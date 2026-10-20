@@ -45,3 +45,29 @@ Invariants lane F proposes for the numbered list in [CLAUDE.md](../../CLAUDE.md#
 **Enforcing code.** `ratchet/certificate.py`: `recheck`, `paired_stats`; `ratchet/stats.py`: `main` (`check`); `ratchet/release.py`: `_below_certified_floor`, `_certified_text`, `_paired_counts`.
 
 **Proving tests.** `tests/test_core.py::test_recheck_recomputes_every_number_from_the_counts`, `test_recheck_follows_the_ltt_trace`; `tests/test_provenance.py::test_certificate_endpoint_and_stats_check_on_a_signed_bom`; `tests/test_release.py::test_min_certified_precision_rejects_a_weak_certificate`.
+
+## Committed training sets (item committed-training-sets, FR-16.4, ADR 0027)
+
+### Every signed set commitment has its leaves in the ledger, from the exact rows
+
+**Text.** For every version it trains, `run_night` builds the set commitment of exactly the rows it hands to `trainer.train` (split `train`) and to `evaluator.evaluate` (split `golden`) before the training job, writes their leaves once right after `create_version` and before the eval and the BOM, and the BOM signs exactly those roots and sizes (a size that is not the split's row count is refused). Leaves are never written for a version that already has them and never changed afterwards (the append-only triggers); a night whose training fails writes no version and no leaves. Changing what a leaf binds (`dataset.leaf_value`) or how the tree hashes needs a new `alg` and an ADR.
+
+**Enforcing code.** `ratchet/nightschool/orchestrate.py`: `run_night`; `ratchet/nightschool/dataset.py`: `commitment`, `leaf_value`; `ratchet/ledger.py`: `Ledger.set_version_leaves`, the `version_leaves` triggers; `ratchet/bom.py`: `manifest`, `_commitment`.
+
+**Proving tests.** `tests/test_provenance.py::test_night_commits_the_exact_rows_it_trained_and_graded_on`, `test_version_leaves_are_written_once_and_found_by_key`, `test_a_failed_training_job_commits_nothing`, `test_commitment_binds_each_examples_label_teacher_license_and_redactions`; `tests/test_system.py::test_every_version_proves_its_golden_rows_were_never_trained_on` (invariants 3 and 6 checked from the signed roots over a simulated bad deploy).
+
+### Proofs are judged against the signed root only
+
+**Text.** A membership or non-membership proof, and a held-out certificate, is checked against the root and size the version's BOM signs, never against the root, `result` or `value` the proof file states, and the verifiers return a failure (never an exception) for any malformed input. The gateway serves a proof only from a tree that rebuilds the signed root and size; leaves that do not (a ledger edited outside Ratchet) get a 500 and an `integrity` event, never a proof.
+
+**Enforcing code.** `ratchet/proof.py`: `verify_proof`, `verify_heldout`; `ratchet/bom.py`: `commitment`; `ratchet/merkle.py`: `verify`; `ratchet/gateway.py`: `_keyset`.
+
+**Proving tests.** `tests/test_provenance.py::test_an_edited_leaf_fails_against_the_signed_root`, `test_verifiers_never_raise_on_malformed_files`, `test_proofs_and_the_held_out_certificate_through_the_gateway`, `test_tampered_proofs_never_prove_inclusion`.
+
+### Training-set proofs are admin-only, and their key is the stored key
+
+**Text.** `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` take the admin dependency (`_admin`: 401, 403, off in live mode without `RATCHET_ADMIN_KEYS`), because with guessable texts they are a membership oracle for the training data; the sample endpoint is mock-only. The key a proof request resolves to is computed exactly as `Ratchet._store_example` stores a teacher answer (validated, normalised, redacted when redaction is on, with the stored conditions), so an `absent` answer is never an artefact of a different hash.
+
+**Enforcing code.** `ratchet/gateway.py`: `version_proof`, `version_heldout`, `demo_sample_example` (`_mock_only`); `ratchet/proof.py`: `request_key`, `resolve_key`.
+
+**Proving tests.** `tests/test_provenance.py::test_proof_endpoints_need_an_admin_key_in_live_mode`, `test_request_key_is_the_stored_hash`, `test_resolve_key_validates_like_the_gateway`; `tests/test_contract.py::test_demo_endpoints_are_403_in_live_mode`.

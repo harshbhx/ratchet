@@ -251,6 +251,16 @@ _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\
 # each of them.
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
+LEAF_SPLITS = ("train", "golden")  # the splits a version commits to (version_leaves.split)
+_HEX32 = re.compile(r"[0-9a-f]{64}")
+
+
+def _hex32(value: object, what: str) -> str:
+    """A leaf's key or value: 64 lowercase hex characters (32 bytes), as `merkle.KeySet` and the BOM write them."""
+    if not isinstance(value, str) or _HEX32.fullmatch(value) is None:
+        raise ValueError(f"a leaf {what} must be 64 lowercase hex characters, not {value!r}")
+    return value
+
 
 DAY_SECONDS = 86400
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
@@ -708,6 +718,57 @@ class Ledger:
     def set_bom(self, vid: int, doc: dict[str, Any]) -> None:
         self.db.execute("UPDATE versions SET bom=? WHERE id=?", (json.dumps(doc, ensure_ascii=False), vid))
         self.db.commit()
+
+    # ---------- committed training sets (FR-16.4, ADR 0027) ----------
+    @_locked
+    def set_version_leaves(self, vid: int, split: str, pairs: Iterable[tuple[str, str]]) -> int:
+        """Write version `vid`'s committed leaves for one split ('train' or 'golden'): (key hex, value hex) pairs, each
+        64 lowercase hex characters, keys unique. Leaves are written once (INV-17): ValueError when the split already
+        has leaves, the version does not exist or a pair is malformed, and nothing is written then. One transaction, so a
+        reader sees all of a split's leaves or none. Returns how many were written (an empty split writes nothing; its
+        BOM commitment says size 0)."""
+        if split not in LEAF_SPLITS:
+            raise ValueError(f"split must be one of {', '.join(LEAF_SPLITS)}, not {split!r}")
+        rows = [(vid, split, _hex32(k, "key"), _hex32(v, "value")) for k, v in pairs]
+        keys = [r[2] for r in rows]
+        if len(set(keys)) != len(keys):
+            raise ValueError(f"duplicate keys in the {split} leaves of version {vid}")
+        self._begin()
+        try:
+            if self.db.execute("SELECT 1 FROM versions WHERE id=?", (vid,)).fetchone() is None:
+                raise ValueError(f"no version {vid}")
+            if self.db.execute("SELECT 1 FROM version_leaves WHERE version_id=? AND split=? LIMIT 1", (vid, split)).fetchone():
+                raise ValueError(f"version {vid} already has {split} leaves; committed leaves are written once (INV-17)")
+            self.db.executemany("INSERT INTO version_leaves (version_id, split, key, value) VALUES (?,?,?,?)", rows)
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return len(rows)
+
+    @_locked
+    def version_leaves(self, vid: int, split: str) -> list[tuple[str, str]]:
+        """Version `vid`'s committed (key hex, value hex) leaves of one split, in key order; empty when it has none (an
+        empty split, or a version trained before v0.5: its BOM says which)."""
+        q = "SELECT key, value FROM version_leaves WHERE version_id=? AND split=? ORDER BY key"
+        return [(r["key"], r["value"]) for r in self.db.execute(q, (vid, split))]
+
+    @_locked
+    def versions_containing(self, key: str, split: str = "train") -> list[int]:
+        """The ids of the versions whose committed `split` set holds the example `key` (hex), oldest first: the adapters
+        trained on it (split 'train'), on the `version_leaves_key` index."""
+        q = "SELECT version_id FROM version_leaves WHERE key=? AND split=? ORDER BY version_id"
+        return [int(r["version_id"]) for r in self.db.execute(q, (key.lower(), split))]
+
+    @_locked
+    def leaf_example(self, vid: int, split: str) -> sqlite3.Row | None:
+        """The stored example behind the first of version `vid`'s `split` leaves (in key order) that is still in the
+        examples table, or None: the mock demo's sample of a committed example (prompt only goes out)."""
+        q = (
+            "SELECT e.task, e.messages, e.params, e.hash FROM version_leaves l JOIN examples e ON e.hash = l.key"
+            " WHERE l.version_id=? AND l.split=? ORDER BY l.key LIMIT 1"
+        )
+        return self.db.execute(q, (vid, split)).fetchone()
 
     @_locked
     def version_bom(self, vid: int) -> dict[str, Any] | None:

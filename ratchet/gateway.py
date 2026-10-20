@@ -21,7 +21,7 @@ import re
 import threading
 import time
 import uuid
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
@@ -37,12 +37,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, certificate, live, tasks, taskspec
+from . import __version__, certificate, live, merkle, proof, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
+from .merkle import KeySet
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
@@ -112,6 +113,7 @@ class Runtime:
         self.sleep = sleep
         self.clock = clock
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
+        self.keysets_lock = threading.Lock()  # the committed-set cache (`_keyset`)
         self.reset()
 
     def reset(self) -> None:
@@ -205,6 +207,10 @@ class Runtime:
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
+        # Committed sets the proof endpoints read (`_keyset`), by (version, split), least recently used last. A reset
+        # makes a new ledger whose version ids start again, so the cache starts again too.
+        self.keysets: OrderedDict[tuple[int, str], tuple[Ledger, KeySet]] = OrderedDict()
+        self.integrity_reported: set[tuple[int, str]] = set()
         reload = self.reloader.request if self.reloader is not None else None
         self.ratchet = Ratchet(
             s,
@@ -1048,6 +1054,120 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
     return {"state": state, "changed": changed, "interval": interval, "summary": summary}
 
 
+# ----- committed training sets (FR-16.4, ADR 0027) -----
+KEYSET_CACHE = 8  # committed (version, split) trees kept in memory; their leaves never change (INV-17)
+
+
+def _committed(vid: int, split: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(the version's BOM document, the commitment it signs for `split`); 404 for an unknown version or one without a
+    commitment (trained before v0.5)."""
+    if rt.ledger.version(vid) is None:
+        raise HTTPException(404, f"no version {vid}")
+    doc = rt.ledger.version_bom(vid)
+    committed = bomdoc.commitment(doc.get("manifest") if isinstance(doc, dict) else None, split)
+    if doc is None or committed is None:
+        raise HTTPException(404, f"commitment not available: version {vid} was trained before set commitments (v0.5)")
+    return doc, committed
+
+
+def _keyset(vid: int, split: str) -> tuple[KeySet, dict[str, Any], dict[str, Any]]:
+    """(the `merkle.KeySet` of version `vid`'s committed `split` leaves, the commitment its BOM signs, the BOM). Built
+    from `version_leaves` once and kept (`KEYSET_CACHE`, least recently used out), but only when it rebuilds the root and
+    size the BOM signs: leaves edited outside Ratchet (the triggers stop any edit through SQLite's API, INV-17) are a 500
+    and one `integrity` event, never a proof that would fail against the signed root."""
+    doc, committed = _committed(vid, split)
+    led, cache = rt.ledger, rt.keysets
+    with rt.keysets_lock:
+        hit = cache.get((vid, split))
+        if hit is not None and hit[0] is led:  # a demo reset makes a new ledger with the same version ids
+            cache.move_to_end((vid, split))
+            return hit[1], committed, doc
+    try:
+        keyset = KeySet(led.version_leaves(vid, split))
+    except ValueError:  # a malformed or duplicate leaf: only possible in a file edited outside Ratchet
+        keyset = None
+    if keyset is None or (keyset.root_hex, keyset.size) != (committed["root"], committed["size"]):
+        with rt.keysets_lock:
+            first = (vid, split) not in rt.integrity_reported
+            rt.integrity_reported.add((vid, split))
+        if first:
+            led.event("integrity", f"v{vid} {split} leaves do not rebuild the root its BOM signs; the ledger was changed")
+        raise HTTPException(500, f"the stored {split} leaves of version {vid} do not match the commitment its BOM signs")
+    with rt.keysets_lock:
+        cache[(vid, split)] = (led, keyset)
+        cache.move_to_end((vid, split))
+        while len(cache) > KEYSET_CACHE:
+            cache.popitem(last=False)
+    return keyset, committed, doc
+
+
+def _split(split: str) -> str:
+    if split not in proof.SPLITS:
+        raise HTTPException(400, f"split must be one of {list(proof.SPLITS)}")
+    return split
+
+
+@app.post("/ratchet/versions/{vid}/proof")
+def version_proof(vid: int, split: str = "train", body: Any = Body(...), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Whether an example is in version `vid`'s committed training (or golden) set, with an O(log n) membership or
+    non-membership proof against the root its signed BOM carries (FR-16.4, ADR 0027). The body names the example by
+    `key` (its hash) or as the chat request it came from (`task`, `messages`, and any other `/v1/chat/completions`
+    field), which is validated, normalised and redacted as the gateway stores it. An admin call: with guessable texts
+    the endpoint is a membership oracle for the training data. Check the answer offline with `python -m ratchet.proof
+    verify`."""
+    _split(split)
+    if rt.ledger.version(vid) is None:
+        raise HTTPException(404, f"no version {vid}")
+    try:
+        key = proof.resolve_key(
+            body,
+            redact_pii=rt.settings.redact_pii,
+            policy=rt.ratchet.gen,
+            limits=rt.limits,
+            modalities=rt.modalities,
+            merge_system=rt.settings.merge_system,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    keyset, committed, doc = _keyset(vid, split)
+    p = keyset.prove(key)
+    out: dict[str, Any] = {
+        "version": vid,
+        "split": split,
+        "key": key,
+        "alg": committed["alg"],
+        "root": committed["root"],
+        "size": committed["size"],
+        "result": merkle.verify(keyset.root, key, p),
+        "proof": p,
+        "bom_sha256": doc.get("sha256"),
+    }
+    value = keyset.value(key)
+    if value is not None:
+        out["value"] = value.hex()
+    return out
+
+
+@app.get("/ratchet/versions/{vid}/heldout")
+def version_heldout(vid: int, admin: str = Depends(_admin)) -> dict[str, Any]:
+    """The held-out certificate of version `vid` (FR-16.4, INV-3, INV-6): its golden set's leaves and, for each golden
+    key, a non-membership proof against the training root its signed BOM carries. `python -m ratchet.proof heldout`
+    rebuilds the golden root from the leaves and checks every proof, so nobody has to trust that the golden rows were
+    never trained on. An admin call, like the proofs."""
+    training, train_c, doc = _keyset(vid, "train")
+    golden, golden_c, _ = _keyset(vid, "golden")
+    keys = golden.keys()
+    return {
+        "version": vid,
+        "alg": train_c["alg"],
+        "training": {"root": train_c["root"], "size": train_c["size"]},
+        "golden": {"root": golden_c["root"], "size": golden_c["size"], "leaves": [[k.hex(), v.hex()] for k, v in golden.items()]},
+        "proofs": {k.hex(): training.prove(k) for k in keys},
+        "held_out": not any(k in training for k in keys),
+        "bom_sha256": doc.get("sha256"),
+    }
+
+
 # ----- demo controls (mock mode only) -----
 # The public demo is shared by every visitor, so controls run one at a time and reset has a cooldown.
 _demo_lock = threading.Lock()
@@ -1099,6 +1219,23 @@ def demo_student_outage(seconds: int = 60) -> dict[str, Any]:
     rt.fleet.student_outage(seconds)
     rt.ledger.event("fault", f"student endpoint down for {seconds} s (demo fault injection)")
     return {"seconds": seconds, "until": time.time() + seconds}
+
+
+@app.get("/ratchet/demo/sample-example")
+def demo_sample_example(split: str = "train", version: int | None = None) -> dict[str, Any]:
+    """A committed example of `version` (default: the live version) from its `split` set, as a body for
+    `POST /ratchet/versions/{id}/proof`: its task, its stored (redacted) messages and the conditions it was stored under,
+    never its answer. The first leaf, in key order, whose example is still stored."""
+    _mock_only()
+    _split(split)
+    v = rt.ledger.version(version) if version is not None else rt.ledger.live()
+    if v is None:
+        raise HTTPException(404, f"no version {version}" if version is not None else "no live version yet")
+    row = rt.ledger.leaf_example(v.id, split)
+    if row is None:
+        raise HTTPException(404, f"version {v.id} has no committed {split} example still stored")
+    params = json.loads(row["params"]) if row["params"] else {}
+    return {"version": v.id, "split": split, "task": row["task"], "messages": json.loads(row["messages"]), **params}
 
 
 @app.post("/ratchet/demo/reset")
