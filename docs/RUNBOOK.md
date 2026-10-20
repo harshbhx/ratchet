@@ -181,7 +181,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 - `empty answer`: the teacher never left its reasoning (`<think>` without `</think>`), or the endpoint returned the answer in a reasoning field only. Check the model ID and whether a reasoning parser is on.
 - `invalid answer`: the teacher does not answer a structured task with JSON. Check the task's system prompt (it must ask for JSON only), and have the client send `response_format: {"type": "json_object"}`, which reaches the teacher (and is stored with the example).
 - `invalid after redaction`: a redaction pattern matched a number outside quotes in the JSON (a card-like order id). Make the prompt ask for ids as strings.
-- `finish_reason other` or `unknown`: the teacher endpoint reports a stop reason other than `stop`, `tool_calls` or the usual ones. `scripts/day1_check.py` prints each model's `finish_reason`; look at a raw response before changing anything, because storing only complete answers is invariant 16.
+- `finish_reason other` or `unknown`: the teacher endpoint reports a stop reason other than `stop`, `tool_calls` or the usual ones (a missing, null or empty one is read as `stop`). The student's samples with such a value get no vote either, so the student escalates everything. `scripts/day1_check.py` prints each model's `finish_reason`; look at a raw response before changing anything, because storing only complete answers is invariant 16.
 
 ### Cost spike
 

@@ -27,7 +27,6 @@ from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_u
 
 __all__ = [
     "COMPLETE",
-    "CUT_OFF",
     "Completion",
     "GenParams",
     "GenPlan",
@@ -39,11 +38,10 @@ __all__ = [
     "parse_param_allowlist",
 ]
 
-# `Completion.finish_reason` values. The model ended its answer itself (`stop`) or with a tool call (`tool_calls`): only
-# such a teacher answer can be stored (INV-16). The answer was cut off, by the token limit or a content filter: a
-# student sample like that gets no vote (`confidence.score`).
+# `Completion.finish_reason` values for an answer the model ended itself (`stop`) or with a tool call (`tool_calls`).
+# Only such a teacher answer can be stored (INV-16), and only such a student sample gets a vote (`confidence.score`);
+# any other value (`length`, `content_filter`, vLLM's `abort`, `unknown`) means the answer may be cut off.
 COMPLETE = ("stop", "tool_calls")
-CUT_OFF = ("length", "content_filter")
 
 
 @dataclass
@@ -459,10 +457,11 @@ _FINISH = re.compile(r"[a-z0-9_.-]{1,40}")
 
 
 def _finish_reason(choice: dict[str, Any]) -> str:
-    """Why the model stopped, lower-cased: `stop` when the server leaves it out (or null), `unknown` when it is not a
-    short word. Never longer than 40 characters, so it is safe to put in an event."""
+    """Why the model stopped, lower-cased: `stop` when the server leaves it out (null, or an empty string), `unknown`
+    when it is not a short word. Never longer than 40 characters, so it is safe to put in an event. An empty value is
+    a missing one, not an unknown one: read as `unknown`, every answer from such a server would go unstored."""
     value = choice.get("finish_reason")
-    if value is None:
+    if value is None or (isinstance(value, str) and not value.strip()):
         return "stop"
     if isinstance(value, str) and _FINISH.fullmatch(value.strip().lower()):
         return value.strip().lower()

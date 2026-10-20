@@ -488,9 +488,10 @@ class Ratchet:
         # served, and if so whether it agrees with the best reference we have. When it disagrees
         # with an answer the live student served, the teacher arbitrates (and that becomes training data).
         # Neither the shadow's samples nor the arbitration can fail the request (INV-15). A failed sample
-        # leaves no shadow record; a failed arbitration, or a reference the teacher cut off or got wrong
-        # (INV-16), leaves shadow_agree NULL, which the release gate counts as a disagreement
-        # (Ledger.shadow_quality).
+        # leaves no shadow record; a failed arbitration, or an escalation or arbitration answer the teacher
+        # cut off or got wrong (INV-16), leaves shadow_agree NULL, which the release gate counts as a
+        # disagreement (Ledger.shadow_quality). An audit answer like that is no reference at all: the shadow
+        # is compared with the served answer, as when no audit ran.
         shadow = self.ledger.by_state("shadow")
         shadow_vid = shadow_serve = shadow_agree = None
         if shadow is not None:
@@ -508,7 +509,7 @@ class Ratchet:
             s_sc = score(task, s_samples)
             shadow_vid = shadow.id
             shadow_serve = int(s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model))
-            reference: Completion | None = teacher_c
+            reference: Completion | None = teacher_c if served_by == "teacher" or audited else None
             arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):
                 ruling = None if teacher_failed else self._arbitrate(task, messages, shadow, plan, meta)

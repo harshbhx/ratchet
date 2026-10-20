@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 453 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 462 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -12,18 +12,18 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 
 | File | Tests |
 |---|---|
-| `tests/test_core.py` | 43 (25 functions; one has 15 cases, one has 5) |
+| `tests/test_core.py` | 48 (26 functions; one has 19 cases, one has 5) |
 | `tests/test_nightschool.py` | 15 (11 functions; one has 5 cases) |
 | `tests/test_release.py` | 11 (10 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 56 (44 functions; one has 9 cases, one has 4, one has 2) |
+| `tests/test_hardening.py` | 60 (46 functions; one has 11 cases, one has 4, one has 2) |
 | `tests/test_resilience.py` | 75 (37 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 38 (27 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 134 (28 functions; one has 86 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **453** |
+| **Total** | **462** |
 
 There are three layers:
 
@@ -47,13 +47,14 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 |---|---|
 | `test_task_agree_ignores_free_text_and_reasoning` | `Task.agree` compares only `compare_keys`, case-insensitively, and ignores `<think>` blocks and code fences |
 | `test_invalid_json_never_agrees` | Two invalid answers never count as agreeing |
-| `test_strip_reasoning_cases` (15 cases) | FR-2.7: `strip_reasoning` removes a full `<think>` pair, everything before a lone `</think>` (also before a fence, which it keeps), an unterminated `<think>` with what follows (`''`), tags in upper or mixed case, nested and repeated blocks (the last `</think>` wins); text without tags is unchanged apart from surrounding whitespace; `None` is `''`; stripping twice changes nothing |
+| `test_strip_reasoning_cases` (19 cases) | FR-2.7: `strip_reasoning` removes a full `<think>` pair, everything before a lone `</think>` (also before a fence, which it keeps), an unterminated `<think>` that opens what is left with what follows (`''`, also after whitespace, a pair or a lone `</think>`), but keeps one after answer text (content, such as a reply that mentions the tag), tags in upper or mixed case, nested and repeated blocks (the last `</think>` wins); text without tags is unchanged apart from surrounding whitespace; `None` is `''`; stripping twice changes nothing |
 | `test_clean_answer_unwraps_fences_only_for_structured_tasks` | FR-2.7, FR-2.13: for `ticket-triage`, one fence around the whole answer (`json`, `JSON`, none, single-line, closing fence on the last line) is unwrapped after reasoning is stripped; a free-text task keeps it. Kept as is: a fence whose body is not JSON, two fences, prose around a fence, a four-backtick fence, a body nested too deeply to parse |
+| `test_answers_that_mention_think_tags_keep_their_text` | FR-2.7, FR-2.13: a structured answer that is one JSON object quoting `<think>` or `</think>` in a string is kept whole, bare, fenced, after a reasoning pair or after a lone `</think>`; its canonical labels and `parse_json` value are right, and cleaning it twice changes nothing; a free-text answer that mentions `<think>` keeps it; reasoning cut off while holding an object or quoting a tag is still `<invalid>` (review finding) |
 | `test_empty_answers_are_invalid_for_every_task` | FR-2.13: an answer that is empty after cleaning (whitespace, unterminated or reasoning-only) is `<invalid>` for free-text and structured tasks, never agrees, and three of them score 0 with `valid` false |
 | `test_unanimous_confident_samples_score_high` | 3 identical samples at p=0.95 give agreement 1.0 and confidence above 0.9 |
 | `test_disagreement_lowers_confidence` | 2-of-3 majority gives agreement 2/3, confidence below 0.85, and the majority answer is chosen |
 | `test_all_invalid_scores_zero` | All invalid samples give confidence 0 |
-| `test_length_samples_are_invalid_in_score` | FR-2.13: samples with `finish_reason` `length` or `content_filter` get no vote even when their text parses (three of them: confidence 0, `valid` false); with two cut-off samples and one complete one, the complete one is the answer at agreement 1/3; `tool_calls` votes as usual |
+| `test_length_samples_are_invalid_in_score` | FR-2.13: samples with `finish_reason` `length`, `content_filter`, `abort`, `unknown` or another value but `stop` and `tool_calls` get no vote even when their text parses (three of them: confidence 0, `valid` false); with two cut-off samples and one complete one, the complete one is the answer at agreement 1/3; `tool_calls` votes as usual |
 | `test_calibrate_threshold_hits_target_precision` | The calibrated threshold actually reaches the target precision, **including ties** (the regression test for bug 5 below) |
 | `test_closed_teachers_are_refused` (5 cases) | `gpt-5.6-sol`, `openai/gpt-4o`, `claude-opus-5-5`, `anthropic/claude-haiku`, `gemini-3.1-pro` all raise `LicenseError` |
 | `test_open_teacher_allowed_and_unknown_refused` | Ultra maps to OpenMDW-1.1; an unknown model is refused |
@@ -153,13 +154,15 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_redaction_that_breaks_a_structured_answer_is_not_stored` | FR-2.13, INV-16, INV-12: a card-like number outside quotes becomes `[CARD]` and breaks the JSON, so the answer is served but not stored (`invalid after redaction`); with redaction off it is stored as is |
 | `test_unusable_teacher_answer_is_not_an_audit` | FR-2.13, INV-16: an audit whose teacher answer was cut off gives `audited = 0`, `audit_agree` NULL, `stored = 0`, no audit for the version, and a cost that still includes the teacher's call; a complete answer is an audit and an example again |
 | `test_invalid_shadow_reference_leaves_shadow_agree_null` | FR-2.13, INV-16, FR-6.3: a shadow disagreeing with the live student, arbitrated with prose, gets `shadow_agree` NULL and one unarbitrated row, nothing stored; a valid arbitration settles the next one and is stored; an escalation whose teacher answer was cut off leaves `shadow_agree` NULL too |
+| `test_unusable_audit_answer_is_no_shadow_reference` | FR-2.13, INV-16, FR-6.3: with a cut-off audit answer, a shadow that agrees with the served answer gets `shadow_agree = 1` (no arbitration, precision 1.0), as without the audit; a disagreeing shadow is still arbitrated, and the cut-off ruling leaves NULL (review finding) |
+| `test_answers_that_quote_think_tags_are_served_and_stored_whole` | FR-2.7, FR-2.13, INV-16: a triage reply that mentions a stray `<think>` tag is served and stored whole with no skip; a confident student quoting `</think>` in its reply is served; a free-text answer that mentions `<think>` is served and stored whole (review finding) |
 | `test_skip_example_events_are_throttled_per_reason` | FR-2.13, INV-16, INV-12: 200 cut-off answers from 8 threads write exactly 3 events (1st, 10th, 100th); `empty answer` and an unnamed finish reason (`other`) are counted apart; no event quotes the answer; every row has `stored = 0` |
 | `test_stored_column_marks_requests_that_stored_an_example` | FR-2.13, FR-3.4: an escalation and its duplicate (`seen` 2) both have `stored = 1`; pinned and an unaudited student answer have 0; an audited one has 1 |
 | `test_v05_database_gets_the_stored_column` | A ledger from before answer hygiene gains `requests.stored`; its old row keeps NULL and a new escalation records 1 |
 | `test_answers_nested_too_deeply_are_invalid_not_a_crash` | FR-2.2, FR-2.7: `parse_json` returns None instead of raising `RecursionError` on deeply nested JSON, so such a student answer is invalid and the request escalates (route `confidence`) instead of failing with a 500 |
 | `test_answer_cleaning_is_linear_on_adversarial_answers` | FR-2.7, NFR-1: 20,000 unclosed `<think>` tags, 100,000 spaces, 100,000 `{`, a long space run before a fence, and stray closing tags followed by unclosed ones are each cleaned and judged invalid in well under 2 s (seconds each before, from regexes that rescanned every position); a fenced object after a sentence still parses |
 | `test_provider_parses_finish_reason_reasoning_tokens_and_per_choice_tokens` | FR-2.13, FR-1.11, NFR-7: per choice, the text is `content` only (never `reasoning_content` or `reasoning`), `finish_reason` is read, output tokens follow the logprob counts and add up to `usage.completion_tokens` (in proportion when the counts do not, evenly with the remainder first when a choice has no logprobs, the counts as they are without usage), and reasoning tokens are split evenly; a single teacher choice gets the whole bill |
-| `test_finish_reason_values_are_read_safely` (9 cases) | FR-2.13, FR-1.11: a missing or null `finish_reason` is `stop`; a word is lower-cased and trimmed; a number, a phrase or more than 40 characters is `unknown` |
+| `test_finish_reason_values_are_read_safely` (11 cases) | FR-2.13, FR-1.11: a missing, null, empty or blank `finish_reason` is `stop`; a word is lower-cased and trimmed; a number, a phrase or more than 40 characters is `unknown` |
 | `test_provider_sends_params_and_its_explicit_arguments_win` | FR-1.13, FR-1.11: `OpenAICompatProvider.complete(params=...)` adds the fields to the body; the explicit temperature, `n`, logprobs (off also drops `top_logprobs`) and `response_format` win; without params the body is v0.4's, and an unknown keyword argument is ignored; `allow` narrows what is sent |
 
 ### `tests/test_resilience.py`
