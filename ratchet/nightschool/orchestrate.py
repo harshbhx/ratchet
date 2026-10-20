@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .. import bom
 from ..ledger import Ledger
 from ..release import ReleaseGate
 from . import dataset
@@ -40,6 +41,7 @@ def run_night(
     base_model: str,
     min_new_examples: int = 50,
     task: str | None = None,
+    signer: bom.Signer | None = None,
 ) -> NightReport:
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
@@ -73,6 +75,10 @@ def run_night(
     )
     result = evaluator.evaluate(adapter_uri, golden_rows)
     ledger.update_eval(vid, result)
+    # The adapter's own bill of materials, written now, while we know exactly what it was trained on.
+    version = ledger.version(vid)
+    assert version is not None
+    ledger.set_bom(vid, bom.document(bom.manifest(version, train_rows, golden_rows), signer))
     ledger.event(
         "trained",
         f"v{vid} on {manifest['train_examples']} examples; "

@@ -15,6 +15,7 @@ Environment (in addition to ratchet.config):
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -24,6 +25,7 @@ from typing import Any
 
 import httpx
 
+from . import bom
 from .config import Settings
 from .ledger import Ledger
 from .nightschool import dataset
@@ -101,7 +103,14 @@ def main(argv: list[str]) -> None:
         student = OpenAICompatProvider(s.student_base, s.student_api_key)
         judge = OpenAICompatProvider(s.teacher_base, s.teacher_api_key)
         evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples)
-        rep = run_night(led, NebiusTrainer(s), evaluator, gate, s.student_base_model)
+        signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        rep = run_night(led, NebiusTrainer(s), evaluator, gate, s.student_base_model, signer=signer)
+        if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
+            doc = led.version_bom(rep.version)
+            out = Path(os.environ.get("RATCHET_DATA_DIR", "data")) / "boms" / f"student-v{rep.version}.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
+            print(f"bill of materials: {out}")
         print(rep)
     else:
         raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick' or 'reload'")

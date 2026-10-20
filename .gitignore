@@ -9,3 +9,4 @@ data/
 # Web app
 web/node_modules/
 web/*.tsbuildinfo
+*.egg-info/

@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS requests (
     audit_agree INTEGER,
     shadow_version INTEGER, shadow_serve INTEGER, shadow_agree INTEGER,
     latency_ms REAL,
-    cost_usd REAL, baseline_cost_usd REAL
+    cost_usd REAL, baseline_cost_usd REAL,
+    client TEXT                -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS examples (
     messages TEXT, completion TEXT,
     teacher_model TEXT, license TEXT, license_url TEXT,
     split TEXT,                -- 'train' | 'golden'
-    seen INTEGER DEFAULT 1     -- how often this exact request occurred (drives the frequent-request rule)
+    seen INTEGER DEFAULT 1,    -- how often this exact request occurred (drives the frequent-request rule)
+    redactions INTEGER DEFAULT 0  -- PII placeholders inserted before storing (ratchet/redact.py)
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,7 +47,8 @@ CREATE TABLE IF NOT EXISTS versions (
     eval TEXT,                 -- JSON
     state TEXT,                -- candidate|rejected|shadow|canary|live|retired|rolled_back
     traffic_pct INTEGER DEFAULT 0,
-    stage_since INTEGER DEFAULT 0  -- last request id before the current stage began
+    stage_since INTEGER DEFAULT 0, -- last request id before the current stage began
+    bom TEXT                   -- JSON: this adapter's bill of materials, signed when a key is set (ratchet/bom.py)
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, kind TEXT, detail TEXT
@@ -74,10 +77,12 @@ class Version:
 
 # Columns added after v0.1's first schema; existing database files are migrated on open.
 MIGRATIONS: dict[str, dict[str, str]] = {
-    "requests": {"shadow_serve": "INTEGER"},
-    "examples": {"seen": "INTEGER DEFAULT 1"},
-    "versions": {"stage_since": "INTEGER DEFAULT 0"},
+    "requests": {"shadow_serve": "INTEGER", "client": "TEXT"},
+    "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0"},
+    "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }
+# Created after migrations, because they index columns that old files only get from MIGRATIONS.
+INDEXES = ["CREATE INDEX IF NOT EXISTS requests_client_ts ON requests (client, ts)"]
 
 DAY_SECONDS = 86400
 
@@ -117,6 +122,8 @@ class Ledger:
             for col, decl in cols.items():
                 if col not in have:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        for ddl in INDEXES:
+            self.db.execute(ddl)
         self.db.commit()
 
     def _tick_day(self, ts: float) -> None:
@@ -138,6 +145,11 @@ class Ledger:
         self.db.commit()
         return int(cur.lastrowid)
 
+    @_locked
+    def client_requests_since(self, client: str, ts: float) -> int:
+        """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
+        return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
+
     # ---------- examples (provenance) ----------
     @_locked
     def add_example(
@@ -148,15 +160,17 @@ class Ledger:
         teacher_model: str,
         license_name: str,
         license_url: str,
+        redactions: int = 0,
     ) -> bool:
-        """Store a teacher-labelled example. Returns False if it was a duplicate."""
+        """Store a teacher-labelled example. Returns False if it was a duplicate.
+        `messages` and `completion` arrive already redacted; `redactions` counts the placeholders."""
         h = example_hash(task, messages)
         # Deterministic split from the hash, so an example never moves between sets.
         split = "golden" if int(h[:8], 16) / 0xFFFFFFFF < self.golden_fraction else "train"
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model,"
-                " license, license_url, split) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " license, license_url, split, redactions) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     time.time(),
                     self.day,
@@ -168,6 +182,7 @@ class Ledger:
                     license_name,
                     license_url,
                     split,
+                    redactions,
                 ),
             )
             self.db.commit()
@@ -204,6 +219,13 @@ class Ledger:
             "sources": [dict(r) for r in rows],
         }
 
+    @_locked
+    def privacy_stats(self) -> dict[str, int]:
+        r = self.db.execute(
+            "SELECT COUNT(*) n, SUM(redactions > 0) redacted, COALESCE(SUM(redactions), 0) placeholders FROM examples"
+        ).fetchone()
+        return {"examples": int(r["n"]), "redacted_examples": int(r["redacted"] or 0), "placeholders": int(r["placeholders"])}
+
     # ---------- versions ----------
     @_locked
     def create_version(
@@ -238,6 +260,24 @@ class Ledger:
                 "UPDATE versions SET state=?, traffic_pct=?, stage_since=? WHERE id=?", (state, traffic_pct, since, vid)
             )
         self.db.commit()
+
+    @_locked
+    def set_bom(self, vid: int, doc: dict[str, Any]) -> None:
+        self.db.execute("UPDATE versions SET bom=? WHERE id=?", (json.dumps(doc, ensure_ascii=False), vid))
+        self.db.commit()
+
+    @_locked
+    def version_bom(self, vid: int) -> dict[str, Any] | None:
+        r = self.db.execute("SELECT bom FROM versions WHERE id=?", (vid,)).fetchone()
+        return json.loads(r["bom"]) if r and r["bom"] else None
+
+    @_locked
+    def bom_status(self) -> dict[int, str]:
+        """{version id: 'signed' | 'unsigned'} for versions that have a BOM."""
+        out = {}
+        for r in self.db.execute("SELECT id, bom FROM versions WHERE bom IS NOT NULL"):
+            out[int(r["id"])] = "signed" if json.loads(r["bom"]).get("signature") else "unsigned"
+        return out
 
     @_locked
     def versions(self, states: Iterable[str] | None = None) -> list[Version]:
@@ -375,6 +415,29 @@ class Ledger:
                     "baseline_usd": base,
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                     "avg_latency_ms": r["latency_ms"],
+                }
+            )
+        return out
+
+    @_locked
+    def stats_by_client(self) -> list[dict[str, Any]]:
+        """Per API key: requests, cost and savings (the basis for per-client receipts)."""
+        rows = self.db.execute(
+            """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
+                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline
+               FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
+        ).fetchall()
+        out = []
+        for r in rows:
+            cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
+            out.append(
+                {
+                    "client": r["client"],
+                    "requests": r["requests"],
+                    "student_share": (r["student_served"] or 0) / (r["requests"] or 1),
+                    "cost_usd": cost,
+                    "baseline_usd": base,
+                    "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                 }
             )
         return out

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -12,6 +13,7 @@ from .confidence import score
 from .config import Settings
 from .ledger import Ledger, Version
 from .providers import Completion, Provider, approx_tokens
+from .redact import redact, redact_messages
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
 StudentResolver = Callable[[Version], tuple[Provider, str]]
@@ -53,8 +55,17 @@ class Ratchet:
     def _call_teacher(self, task: tasks.Task, messages: list[dict[str, Any]]) -> Completion:
         c = self.teacher.complete(messages, self.s.teacher_model)[0]
         clean = tasks.strip_reasoning(c.text)
+        stored, found = messages, Counter()
+        if self.s.redact_pii:  # the teacher saw the original; the training set gets placeholders
+            stored, clean = redact_messages(messages, found), redact(clean, found)
         self.ledger.add_example(
-            task.name, messages, clean, self.s.teacher_model, self.teacher_license.name, self.teacher_license.url
+            task.name,
+            stored,
+            clean,
+            self.s.teacher_model,
+            self.teacher_license.name,
+            self.teacher_license.url,
+            redactions=sum(found.values()),
         )
         return c
 
@@ -76,7 +87,7 @@ class Ratchet:
         cost = self.s.price("student").cost(samples[0].in_tokens, sum(s.out_tokens for s in samples))
         return samples, cost, model
 
-    def _pinned(self, task: tasks.Task, messages: list[dict[str, Any]]) -> Result:
+    def _pinned(self, task: tasks.Task, messages: list[dict[str, Any]], client: str | None = None) -> Result:
         """Pinned tasks always go to the teacher. They are logged but never stored as training
         examples, so they cannot leak into a student that was never meant to do them."""
         c = self.teacher.complete(messages, self.s.teacher_model)[0]
@@ -95,14 +106,16 @@ class Ratchet:
             latency_ms=c.latency_ms,
             cost_usd=cost,
             baseline_cost_usd=cost,
+            client=client,
         )
         return Result(tasks.strip_reasoning(c.text), "teacher", None, None, False, cost, cost, c.latency_ms, c.model)
 
     # ------------------------------------------------------------------
-    def handle(self, messages: list[dict[str, Any]], task_name: str | None = None) -> Result:
+    def handle(self, messages: list[dict[str, Any]], task_name: str | None = None, client: str | None = None) -> Result:
+        """`client` is the API key name that sent the request (None for internal calls and open gateways)."""
         task = tasks.get(task_name)
         if task.pinned:
-            return self._pinned(task, messages)
+            return self._pinned(task, messages, client)
         version = self._pick_version()
         cost = 0.0
         latency = 0.0
@@ -189,6 +202,7 @@ class Ratchet:
             latency_ms=latency,
             cost_usd=cost,
             baseline_cost_usd=baseline,
+            client=client,
         )
         return Result(
             text=tasks.strip_reasoning(served.text),

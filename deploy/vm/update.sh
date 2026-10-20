@@ -35,9 +35,9 @@ for _ in $(seq 1 60); do
 done
 echo "container health: $status"
 
-echo "== GET /v1/models (inside the container)"
+echo "== GET /healthz (inside the container)"
 docker compose exec -T ratchet python -c \
-  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5).read().decode())"
+  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).read().decode())"
 
 domain="$(env_get RATCHET_DOMAIN)"
 fail=0
