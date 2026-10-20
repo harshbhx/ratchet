@@ -559,14 +559,19 @@ class Ledger:
     def log_failure(self, **row: Any) -> int:
         """One `failures` row (FAILURE_COLUMNS; `stage` one of FAILURE_STAGES, `error` a class, status and code, never a
         message). `cost_usd` is what a request that left no `requests` row spent, so `totals()` can count it; a failure
-        around an answered request (its cost is in its own row) records 0. Returns the row id."""
+        around an answered request (its cost is in its own row) records 0. A failure never starts a live ledger's day 1
+        (a scanner's 401, a teacher down during bring-up): `__init__` rebuilds the origin from `requests` alone, so a
+        failure-made origin would move back on a restart. Until the first request a live ledger files a failure under
+        `self.day` (0 on a fresh file).
+        Returns the row id."""
         unknown = set(row) - FAILURE_COLUMNS
         if unknown:
             raise ValueError(f"failures has no columns {sorted(unknown)}")
         if row.get("stage") not in FAILURE_STAGES:
             raise ValueError(f"failure stage must be one of {', '.join(FAILURE_STAGES)}, not {row.get('stage')!r}")
         row.setdefault("ts", time.time())
-        self._tick_day(row["ts"])
+        if self._t0 is not None:  # only a request starts the clock
+            self._tick_day(row["ts"])
         row.setdefault("day", self.day)
         row.setdefault("cost_usd", 0.0)
         cols = ",".join(row)

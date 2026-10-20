@@ -569,11 +569,39 @@ def _log_chat(ctx: obs.RequestContext, status: int) -> None:
     )
 
 
+async def _failure_row(ctx: obs.RequestContext, status: int) -> None:
+    """The failures row of a 401, 413, 429 or 5xx that no deeper code decided (`failure_handled`), and of any error
+    status of a request that spent money no `requests` row holds (`failed_cost_usd`: a bug after the student was
+    sampled). Written before the response starts, so a client that looks its request id up as soon as the error arrives
+    finds the row. Throttled per stage, except a row that carries spend; written in a worker thread, so the event loop
+    never waits for the ledger lock. Never raises: a failures row must not fail the request it describes."""
+    try:
+        spent = ctx.failed_cost_usd
+        if ctx.failure_handled or not (status in FAILURE_STATUSES or status >= 500 or (spent > 0 and status >= 400)):
+            return
+        stage = ctx.stage or DEFAULT_STAGES.get(status) or ("upstream" if status in (502, 503, 504) else "gateway")
+        metrics.FAILURES.inc(stage)  # every one, also when the row is throttled
+        if spent > 0 or rt.failure_rows.allow(stage):
+            row = {
+                "request_id": ctx.request_id,
+                "client": ctx.client,
+                "task": ctx.task,
+                "stage": stage,
+                "error": ctx.error or f"HTTP {status}",
+                "status": status,
+                "latency_ms": ctx.elapsed_ms(),
+                "cost_usd": spent if spent > 0 else 0.0,
+            }
+            await anyio.to_thread.run_sync(functools.partial(rt.ledger.log_failure, **row))
+    except Exception:  # noqa: BLE001 - observability never fails the response it describes
+        pass
+
+
 async def _after_response(ctx: obs.RequestContext, status: int) -> None:
     """Once the response is sent: a chat request that ended in an error is counted (the cascade counted an answered
-    one), a refusal before the cascade is counted by reason, the chat request's log line is written, and a 401, 413, 429
-    or 5xx that no deeper code decided gets a failures row (throttled per stage, written in a worker thread so the event
-    loop never waits for the ledger lock). Nothing here may fail the request: its response is already out."""
+    one), a refusal before the cascade is counted by reason, and the chat request's log line is written (its failures
+    row, if any, was written before the response, `_failure_row`). Nothing here may fail the request: its response is
+    already out."""
     try:
         if ctx.path == CHAT_PATH:
             if not ctx.counted:
@@ -582,20 +610,6 @@ async def _after_response(ctx: obs.RequestContext, status: int) -> None:
                 if 400 <= status < 500 and not ctx.failure_handled:  # the cascade's own failure is no refusal
                     metrics.REJECTIONS.inc(_rejection(ctx, status))
             _log_chat(ctx, status)
-        if (status in FAILURE_STATUSES or status >= 500) and not ctx.failure_handled:
-            stage = ctx.stage or DEFAULT_STAGES.get(status) or ("upstream" if status in (502, 503, 504) else "gateway")
-            metrics.FAILURES.inc(stage)  # every one, also when the row is throttled
-            if rt.failure_rows.allow(stage):
-                row = {
-                    "request_id": ctx.request_id,
-                    "client": ctx.client,
-                    "task": ctx.task,
-                    "stage": stage,
-                    "error": ctx.error or f"HTTP {status}",
-                    "status": status,
-                    "latency_ms": ctx.elapsed_ms(),
-                }
-                await anyio.to_thread.run_sync(functools.partial(rt.ledger.log_failure, **row))
     except Exception:  # noqa: BLE001 - observability never fails a response that was already sent
         pass
 
@@ -603,9 +617,10 @@ async def _after_response(ctx: obs.RequestContext, status: int) -> None:
 class ObservabilityMiddleware:
     """Gives every request its context (`obs.new_context`: the server's `req_<hex>` id, a valid client request id, a
     valid W3C traceparent) in the `request_ctx` context variable and in `scope["state"]`, adds `x-request-id` and
-    `openai-processing-ms` to every response, and runs `_after_response` once the response is sent (also after an
-    unhandled error, before the 500 handler answers: that handler adds the same headers itself). Outermost of the
-    gateway's middlewares; plain ASGI, so streamed answers still stream."""
+    `openai-processing-ms` to every response, writes an error's failures row just before its response starts
+    (`_failure_row`) and runs `_after_response` once the response is sent (after an unhandled error both run before the
+    500 handler answers: that handler adds the same headers itself). Outermost of the gateway's middlewares; plain
+    ASGI, so streamed answers still stream."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -624,7 +639,9 @@ class ObservabilityMiddleware:
 
         async def send_with_ids(message: Message) -> None:
             if message["type"] == "http.response.start":
-                started.append(int(message["status"]))
+                status = int(message["status"])
+                started.append(status)
+                await _failure_row(ctx, status)  # before the client has the error and its id to look up
                 out = MutableHeaders(scope=message)
                 out["x-request-id"] = ctx.request_id
                 out["openai-processing-ms"] = str(round(ctx.elapsed_ms()))
@@ -636,8 +653,11 @@ class ObservabilityMiddleware:
             except Exception as e:
                 if not started:  # the 500 handler answers it, outside this middleware
                     ctx.error = ctx.error or type(e).__name__
+                    await _failure_row(ctx, 500)
                 await _after_response(ctx, started[0] if started else 500)
                 raise
+            if not started:  # the app sent nothing: the server answers 500
+                await _failure_row(ctx, 500)
             await _after_response(ctx, started[0] if started else 500)
         finally:
             obs.request_ctx.reset(token)

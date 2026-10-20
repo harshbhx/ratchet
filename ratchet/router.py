@@ -558,11 +558,22 @@ class Ratchet:
     ) -> None:
         """A request whose teacher answer could not be had, about to raise for the gateway to map (INV-7): its failures
         row carries what it already spent (the student's samples, NFR-3), which also counts in `ratchet_cost_usd_total`
-        and `ratchet_failed_cost_usd_total`."""
-        self._record_failure("teacher", e, task, client, meta, t0, cost, final=True)
+        and `ratchet_failed_cost_usd_total`. Only an HTTP failure (`obs.failure_status` is not None) is the teacher's: an
+        error of another kind is a bug in Ratchet (or the mock world not knowing a request), so it gets no `teacher` row,
+        which would send the operator to a teacher outage. The gateway writes that request's row by the status it answers
+        (a 500 is `gateway`), with the spend handed over in `RequestContext.failed_cost_usd`; outside a gateway request
+        the router writes the `gateway` row itself."""
         label = metrics.client_label(client)
         _spend(metrics.COST, label, cost)
         _spend(metrics.FAILED_COST, label, cost)
+        if obs.failure_status(e) is not None:
+            self._record_failure("teacher", e, task, client, meta, t0, cost, final=True)
+            return
+        ctx = self._own_context(meta)
+        if ctx is not None:
+            ctx.failed_cost_usd += cost
+        else:
+            self._record_failure("gateway", e, task, client, meta, t0, cost)
 
     # ------------------------------------------------------------------
     def _pick_version(self) -> Version | None:

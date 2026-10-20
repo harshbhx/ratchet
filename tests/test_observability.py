@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import pytest
 from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, _audit, _shadow, _version
@@ -450,6 +451,104 @@ def test_teacher_429_is_a_teacher_failure_not_a_refusal(gw_env, tmp_path, monkey
     assert row == {"stage": "teacher", "status": 429, "client": "acme", "task": TRIAGE, "request_id": r.headers["x-request-id"]}
     assert {reason: metrics.REJECTIONS.value(reason) for reason in before} == before
     assert metrics.REQUESTS.value(TRIAGE, "none", "none", "429") - counted == 1
+
+
+@pytest.mark.req("FR-12.4", "NFR-3", "INV-7")
+def test_a_bug_on_the_teacher_path_is_a_gateway_failure_not_the_teachers(gw_env, tmp_path, monkeypatch):
+    """Only an HTTP failure is the teacher's. A bug after the student was sampled (here in `_store_example`, after the
+    teacher answered) is a 500 filed under `gateway` with what the samples cost, so the teacher-failure alert does not
+    send the operator to a teacher outage. Outside a gateway request the router files it under `gateway` itself."""
+    student = FakeOpenAIServer(A, logprob=math.log(0.3))  # unsure, so the request escalates
+    settings = _live(tmp_path, student_base="https://student.test/v1", student_api_key="student-endpoint-token")
+    gw, rt = _live_gateway(gw_env, monkeypatch, settings, teacher=FakeOpenAIServer(A).transport, student=student.transport)
+    _version(rt.ledger, "live", {"threshold": 0.9})
+
+    def bug(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"bug while storing {MARKER}")
+
+    monkeypatch.setattr(rt.ratchet, "_store_example", bug)
+    teacher_failures, gateway_failures = metrics.FAILURES.value("teacher"), metrics.FAILURES.value("gateway")
+    failed_before = metrics.FAILED_COST.value("acme")
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    r = c.post(CHAT, json={"messages": _ask()}, headers={**ACME, "X-Ratchet-Task": TRIAGE})
+    assert r.status_code == 500
+    spent = rt.settings.price("student").cost(10, 15)  # the three samples; the teacher's own spend is past the bug
+    (row,) = _rows(rt.ledger, "SELECT request_id, stage, status, error, client, task, cost_usd FROM failures")
+    assert row == {
+        "request_id": r.headers["x-request-id"],
+        "stage": "gateway",
+        "status": 500,
+        "error": "RuntimeError",
+        "client": "acme",
+        "task": TRIAGE,
+        "cost_usd": pytest.approx(spent),
+    }
+    assert spent > 0 and metrics.FAILURES.value("teacher") == teacher_failures
+    assert metrics.FAILURES.value("gateway") - gateway_failures == 1
+    assert metrics.FAILED_COST.value("acme") - failed_before == pytest.approx(spent)
+    assert rt.ledger.totals()["failed_cost_usd"] == pytest.approx(spent)
+
+    # A row that carries spend is never throttled away.
+    rt.failure_rows = gw.FailureThrottle(per_minute=0)
+    assert c.post(CHAT, json={"messages": _ask(1)}, headers={**ACME, "X-Ratchet-Task": TRIAGE}).status_code == 500
+    assert len(_rows(rt.ledger, "SELECT * FROM failures WHERE stage='gateway' AND cost_usd > 0")) == 2
+
+    # In process, on the escalation and the teacher-only paths: the router's own `gateway` row, no status.
+    teacher = RecordingProvider(A, raise_on={OPEN_TEACHER}, exc=lambda m: RuntimeError(m))
+    led, cascade = _cascade(RecordingProvider(A, logprob=math.log(0.3)), teacher, threshold=0.99)
+    with pytest.raises(RuntimeError):
+        cascade.handle(_ask(), TRIAGE, client="acme")
+    with pytest.raises(RuntimeError):
+        cascade.teacher_only(_ask(1), TRIAGE, client="acme")
+    rows = _rows(led, "SELECT stage, status, error, cost_usd FROM failures")
+    assert [(x["stage"], x["status"], x["error"]) for x in rows] == [("gateway", None, "RuntimeError")] * 2
+    assert rows[0]["cost_usd"] == pytest.approx(cascade.s.price("student").cost(10, 15)) and rows[1]["cost_usd"] == 0.0
+
+
+@pytest.mark.req("FR-12.4", "FR-1.60")
+def test_gateway_failure_row_exists_before_the_response_starts(gw_env):
+    """A client may look its refused request up as soon as the error arrives (API.md, RUNBOOK): under a real server the
+    response is out before the app returns, so the gateway writes the row before the response starts."""
+    gw = gw_env(RATCHET_API_KEYS=f"acme:{ACME_KEY}")
+    seen: list[tuple[int, str, list[dict[str, Any]]]] = []
+    body = json.dumps({"messages": _demo(gw)}).encode()
+
+    async def call() -> None:
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": CHAT,
+            "raw_path": CHAT.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"authorization", b"Bearer nope-0123456789abcdef"),
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+            "client": ("127.0.0.1", 50000),
+            "server": ("testserver", 80),
+        }
+        messages = [{"type": "http.request", "body": body, "more_body": False}]
+
+        async def receive() -> dict[str, Any]:
+            return messages.pop(0) if messages else {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                rid = dict(message["headers"])[b"x-request-id"].decode()
+                seen.append((message["status"], rid, gw.rt.ledger.failures_for(rid)))
+
+        await gw.app(scope, receive, send)
+
+    anyio.run(call)
+    ((status, rid, rows),) = seen
+    assert status == 401 and REQUEST_ID.fullmatch(rid)
+    assert [(x["stage"], x["status"]) for x in rows] == [("auth", 401)]
 
 
 @pytest.mark.req("FR-12.4", "INV-15")
@@ -897,6 +996,33 @@ def test_metrics_module_format():
 
 
 # ---------- the ledger ----------
+@pytest.mark.req("FR-12.4")
+def test_a_failure_never_starts_the_live_ledgers_day_one(tmp_path):
+    """A scanner's 401 (or a teacher down during bring-up) before the first request must not become day 1's origin:
+    `Ledger.__init__` rebuilds the origin from `requests` alone, so a restart would move it back and day numbers would go
+    backwards. Once requests have started the clock, a failure is filed under the day they count."""
+    path, t, hour = str(tmp_path / "live.db"), 1_000_000.0, 3600.0
+
+    def request(led: Ledger, ts: float) -> None:
+        led.log_request(ts=ts, task=TRIAGE, served_by="teacher", cost_usd=0.0, baseline_cost_usd=0.0)
+
+    led = Ledger(path, auto_day=True)
+    led.log_failure(ts=t, stage="auth", error="HTTPException 401", status=401)
+    assert led._t0 is None and led.day == 0
+    request(led, t + 20 * hour)  # day 1 starts here, not at the 401
+    request(led, t + 30 * hour)
+    led.log_failure(ts=t + 50 * hour, stage="teacher", error="UpstreamError 502", status=502)
+    assert led.day_start(1) == t + 20 * hour
+    led.close()
+
+    again = Ledger(path, auto_day=True)
+    assert again.day_start(1) == t + 20 * hour  # the same origin after a restart
+    request(again, t + 31 * hour)
+    assert [r["day"] for r in _rows(again, "SELECT day FROM requests ORDER BY id")] == [1, 1, 1]
+    assert [r["day"] for r in _rows(again, "SELECT day FROM failures ORDER BY id")] == [0, 2]
+    assert again.day == 1
+
+
 @pytest.mark.req("FR-1.60", "FR-12.4")
 def test_old_ledger_gains_request_ids_and_the_failures_table(tmp_path):
     db = tmp_path / "old.db"
