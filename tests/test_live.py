@@ -442,7 +442,7 @@ def test_production_and_both_evaluators_share_student_sampling(monkeypatch):
     led = Ledger(":memory:")
     _version(led, "live", {"threshold": 0.5})
     Ratchet(
-        Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0),
+        Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0, student_params="", student_max_tokens=1024),
         led,
         RecordingProvider(LABELS),
         lambda v: (student, v.adapter_uri),
