@@ -14,7 +14,7 @@ from . import licenses, tasks
 from .confidence import STUDENT_SAMPLING, score
 from .config import Settings
 from .ledger import Ledger, Version
-from .providers import Completion, Provider, UpstreamError, approx_tokens
+from .providers import COMPLETE, Completion, Provider, UpstreamError, approx_tokens
 from .redact import redact, redact_messages
 from .resilience import BAD_RESPONSE, AdapterMissing, Breaker, CircuitOpen, describe_failure, endpoint_down, names_model
 
@@ -28,6 +28,23 @@ EVENT_ON_FAILURE = (1, 10, 100, 1000)
 # because no version serves yet (`cold_start`), because the task is pinned (`pinned`), because the student call raised
 # (`student_error`), or because the student's breaker was open (`student_breaker`).
 ROUTES = ("student", "confidence", "cold_start", "pinned", "student_error", "student_breaker")
+
+# finish_reason values a `skip_example` event names as they are; any other is `other`, so the reasons stay a short list.
+_FINISH_NAMED = frozenset({"length", "content_filter", "function_call", "abort", "error", "unknown"})
+
+
+def answer_problem(task: tasks.Task, c: Completion) -> str | None:
+    """Why a teacher answer can be neither a training example nor a reference for the student (INV-16), or None when it
+    can: it did not end by itself (`finish_reason length`, ...), nothing is left once reasoning is stripped (`empty
+    answer`), or a structured task's answer is not valid JSON (`invalid answer`). String operations only."""
+    if c.finish_reason not in COMPLETE:
+        return f"finish_reason {c.finish_reason if c.finish_reason in _FINISH_NAMED else 'other'}"
+    clean = tasks.clean_answer(task, c.text)
+    if not clean:
+        return "empty answer"
+    if task.structured and task.canonical(clean) == tasks.INVALID:
+        return "invalid answer"
+    return None
 
 
 def _endpoint(provider: Provider) -> str:
@@ -80,6 +97,7 @@ class Ratchet:
         self.audit_errors = 0  # teacher audits that raised; the student's answer was served anyway (INV-15)
         self.shadow_errors = 0  # shadow samples or arbitrations that raised; the request never noticed
         self._errors_lock = threading.Lock()
+        self._skipped: Counter[str] = Counter()  # teacher answers not stored, by reason (throttles `skip_example`)
         # One breaker per (role, endpoint), made on first use: live and canary on one endpoint share 'student'; shadow
         # calls have their own ('shadow'), so a bad staging adapter cannot open the breaker live traffic depends on.
         self._breakers: dict[tuple[str, str], Breaker] = {}
@@ -150,12 +168,28 @@ class Ratchet:
             return canary
         return live  # None on cold start -> teacher
 
-    def _call_teacher(self, task: tasks.Task, messages: list[dict[str, Any]]) -> Completion:
+    def _call_teacher(self, task: tasks.Task, messages: list[dict[str, Any]]) -> tuple[Completion, bool]:
+        """The teacher's answer, and whether it was stored as a training example (`_store_example`)."""
         c = self.teacher.complete(messages, self.s.teacher_model)[0]
-        clean = tasks.strip_reasoning(c.text)
+        return c, self._store_example(task, messages, c)
+
+    def _store_example(self, task: tasks.Task, messages: list[dict[str, Any]], c: Completion) -> bool:
+        """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
+        is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
+        `Settings.redact_pii`, with identifiers in the messages and the answer replaced (INV-12). Returns True when an
+        example was inserted or a duplicate's `seen` bumped; False, with a throttled `skip_example` event, when not."""
+        problem = answer_problem(task, c)
+        if problem is not None:
+            self._skip_example(task, problem)
+            return False
+        clean = tasks.clean_answer(task, c.text)
         stored, found = messages, Counter()
         if self.s.redact_pii:  # the teacher saw the original; the training set gets placeholders
             stored, clean = redact_messages(messages, found), redact(clean, found)
+            # A placeholder can break a structured answer (a card-like number outside quotes): never store that.
+            if found and task.structured and task.canonical(clean) == tasks.INVALID:
+                self._skip_example(task, "invalid after redaction")
+                return False
         self.ledger.add_example(
             task.name,
             stored,
@@ -165,11 +199,21 @@ class Ratchet:
             self.teacher_license.url,
             redactions=sum(found.values()),
         )
-        return c
+        return True
 
-    def _arbitrate(self, task: tasks.Task, messages: list[dict[str, Any]], shadow: Version) -> Completion | None:
-        """The teacher settles a disagreement between the shadow and the served answer. A failed call returns None and
-        leaves the disagreement unarbitrated; the request it belongs to is already answered (INV-15)."""
+    def _skip_example(self, task: tasks.Task, reason: str) -> None:
+        """Count a teacher answer that was not stored, and write a `skip_example` event on the 1st, 10th, 100th and
+        1000th time for that reason. The detail is the task and the reason, never the answer (INV-12)."""
+        with self._errors_lock:
+            self._skipped[reason] += 1
+            n = self._skipped[reason]
+        if n in EVENT_ON_FAILURE:
+            self.ledger.event("skip_example", f"{task.name}: {reason}")
+
+    def _arbitrate(self, task: tasks.Task, messages: list[dict[str, Any]], shadow: Version) -> tuple[Completion, bool] | None:
+        """The teacher settles a disagreement between the shadow and the served answer: its answer and whether it was
+        stored. A failed call returns None and leaves the disagreement unarbitrated; the request it belongs to is
+        already answered (INV-15)."""
         try:
             return self._call_teacher(task, messages)
         except Exception as e:  # optional call: count it, never fail the request
@@ -239,8 +283,10 @@ class Ratchet:
             baseline_cost_usd=cost,
             client=client,
             route="pinned",
+            stored=0,
         )
-        return Result(tasks.strip_reasoning(c.text), "teacher", None, None, False, cost, cost, c.latency_ms, c.model, "pinned")
+        text = tasks.clean_answer(task, c.text)
+        return Result(text, "teacher", None, None, False, cost, cost, c.latency_ms, c.model, "pinned")
 
     def teacher_only(self, messages: list[dict[str, Any]], task_name: str | None = None, client: str | None = None) -> Result:
         """A request the student cannot take, such as one with an image part the teacher reads
@@ -266,6 +312,7 @@ class Ratchet:
         student_c: Completion | None = None
         teacher_failed = False  # an audit already failed: arbitration would only wait out the same outage
         route = "cold_start"
+        stored = False  # a teacher answer became (or bumped) a training example in this request
 
         sc = None
         if version is not None:
@@ -286,21 +333,24 @@ class Ratchet:
                 confidence = sc.confidence
                 student_c = sc.answer
         if version is not None and sc is not None:
-            if sc.confidence >= self.threshold(version, model_used):
+            # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid).
+            if sc.valid and sc.confidence >= self.threshold(version, model_used):
                 served, served_by, route = sc.answer, "student", "student"
                 if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
                     try:
-                        teacher_c = self._call_teacher(task, messages)
+                        teacher_c, stored = self._call_teacher(task, messages)
                     except Exception as e:  # optional call: the student's answer is served (INV-15)
                         teacher_failed = True
                         self._count_failure("audit_errors", "audit_error", f"{task.name}: {describe_failure(e)}")
                     else:
                         cost += self._cost(self.s.teacher_model, teacher_c)
-                        audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
+                        # A cut-off, empty or invalid teacher answer measures nothing: not an audit (INV-16).
+                        if answer_problem(task, teacher_c) is None:
+                            audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
             else:
                 escalated, route = True, "confidence"
         if served_by == "teacher":
-            teacher_c = self._call_teacher(task, messages)
+            teacher_c, stored = self._call_teacher(task, messages)
             cost += self._cost(self.s.teacher_model, teacher_c)
             latency += teacher_c.latency_ms
             served = teacher_c
@@ -318,8 +368,9 @@ class Ratchet:
         # served, and if so whether it agrees with the best reference we have. When it disagrees
         # with an answer the live student served, the teacher arbitrates (and that becomes training data).
         # Neither the shadow's samples nor the arbitration can fail the request (INV-15). A failed sample
-        # leaves no shadow record; a failed arbitration leaves shadow_agree NULL, which the release gate
-        # counts as a disagreement (Ledger.shadow_quality).
+        # leaves no shadow record; a failed arbitration, or a reference the teacher cut off or got wrong
+        # (INV-16), leaves shadow_agree NULL, which the release gate counts as a disagreement
+        # (Ledger.shadow_quality).
         shadow = self.ledger.by_state("shadow")
         shadow_vid = shadow_serve = shadow_agree = None
         if shadow is not None:
@@ -336,15 +387,18 @@ class Ratchet:
             cost += c
             s_sc = score(task, s_samples)
             shadow_vid = shadow.id
-            shadow_serve = int(s_sc.confidence >= self.threshold(shadow, s_model))
+            shadow_serve = int(s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model))
             reference: Completion | None = teacher_c
             arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):
-                reference = None if teacher_failed else self._arbitrate(task, messages, shadow)
-                if reference is None:
+                ruling = None if teacher_failed else self._arbitrate(task, messages, shadow)
+                if ruling is None:
                     arbitrated = False
                 else:
+                    reference, stored = ruling
                     cost += self._cost(self.s.teacher_model, reference)
+            if reference is not None and answer_problem(task, reference) is not None:
+                arbitrated = False  # a cut-off, empty or invalid teacher answer settles nothing (INV-16)
             if arbitrated:
                 ref_text = reference.text if reference is not None else served.text
                 shadow_agree = int(task.agree(s_sc.answer.text, ref_text))
@@ -365,9 +419,10 @@ class Ratchet:
             baseline_cost_usd=baseline,
             client=client,
             route=route,
+            stored=int(stored),
         )
         return Result(
-            text=tasks.strip_reasoning(served.text),
+            text=tasks.clean_answer(task, served.text),
             served_by=served_by,
             version=version.id if (version and served_by == "student") else None,
             confidence=confidence,

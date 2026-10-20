@@ -4,15 +4,17 @@ issues found while testing the live entry points offline (v0.5)."""
 import hashlib
 import json
 import sqlite3
+import threading
+import time
 
 import httpx
 import pytest
-from fakes import FakeOpenAIServer, RecordingRun, _version
+from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, RecordingRun, _version
 
 from ratchet import live, tasks
 from ratchet.config import Settings
 from ratchet.ledger import DAY_SECONDS, Ledger
-from ratchet.providers import Completion
+from ratchet.providers import Completion, OpenAICompatProvider
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
 
@@ -476,3 +478,379 @@ def test_live_night_checks_the_student_endpoint_before_paid_work(tmp_path, monke
     with pytest.raises(RuntimeError, match="RATCHET_STUDENT_BASE is not set"):
         live.reload_adapters(s, led, http=httpx.Client(transport=vllm.transport))
     assert vllm.calls == []
+
+
+# ---------- answer hygiene (v0.5, FR-2.7, FR-2.13, INV-16) ----------
+# Before v0.5 a lone `</think>` (the chat template opened the reasoning in the prompt), a code fence and an answer cut
+# off by the token limit were all stored as training targets, and the reasoning before a lone `</think>` was served.
+TRIAGE_OBJ = '{"category": "billing", "priority": "high", "reply": "We are on it."}'
+
+
+def _hygiene(teacher, student=None, threshold=None, shadow=None, **settings):
+    """A ledger and a cascade with `teacher`. With `student`, a live version at `threshold` serves through it (and a
+    shadow version through `shadow`, when given); without, every request is a cold start."""
+    led = Ledger(":memory:")
+    s = Settings(
+        **{
+            "teacher_model": OPEN_TEACHER,
+            "samples": 3,
+            "audit_rate": 0.0,
+            "redact_pii": True,
+            "teacher_reasoning_tokens": 0,
+            **settings,
+        }
+    )
+    models = {}
+    if student is not None:
+        models[_version(led, "live", {"threshold": threshold})] = student
+    if shadow is not None:
+        models[_version(led, "shadow", {"threshold": threshold})] = shadow
+    return led, Ratchet(s, led, teacher, lambda v: (models[v.id], v.adapter_uri), seed=1)
+
+
+def _row(led):
+    return dict(led.db.execute("SELECT * FROM requests ORDER BY id DESC LIMIT 1").fetchone())
+
+
+def _skips(led):
+    return [e["detail"] for e in led.events() if e["kind"] == "skip_example"]
+
+
+def _ask(text="I was charged twice this month"):
+    return [{"role": "user", "content": text}]
+
+
+@pytest.mark.req("FR-2.7", "FR-2.13", "INV-2", "INV-16")
+@pytest.mark.parametrize(
+    "said",
+    [
+        pytest.param(f"<think>Charged twice: billing, high.</think>\n```json\n{TRIAGE_OBJ}\n```", id="think-block"),
+        pytest.param(f"Charged twice, so billing and high.</think>\n\n```json\n{TRIAGE_OBJ}\n```", id="lone-closing-tag"),
+    ],
+)
+def test_teacher_reasoning_and_fences_are_not_stored_or_served(said):
+    led, r = _hygiene(RecordingProvider(said))
+    out = r.handle(_ask(), "ticket-triage")
+    assert out.served_by == "teacher" and out.text == TRIAGE_OBJ and "</think>" not in out.text
+    (ex,) = led.examples()
+    assert ex["completion"] == TRIAGE_OBJ  # bare JSON: the training target the student should learn to write
+    assert _row(led)["stored"] == 1 and _skips(led) == []
+
+
+@pytest.mark.req("FR-2.7", "INV-10")
+def test_served_text_is_clean_on_the_student_and_pinned_paths():
+    fenced = f"<think>billing</think>\n```json\n{TRIAGE_OBJ}\n```"
+    led, r = _hygiene(RecordingProvider("unused"), student=RecordingProvider(fenced), threshold=0.5)
+    out = r.handle(_ask(), "ticket-triage")
+    assert (out.served_by, out.text) == ("student", TRIAGE_OBJ)
+
+    plan = '```json\n{"queries": ["LoRA rank", "LoRA alpha"]}\n```'  # a free-text task: the fence is content
+    led, r = _hygiene(RecordingProvider(f"Plan the search.</think>\n{plan}"))
+    for out in (r.handle(_ask("Question: LoRA?"), "research-plan"), r.teacher_only(_ask("look at this"), "default")):
+        assert (out.route, out.text) == ("pinned", plan)
+        assert _row(led)["stored"] == 0
+    assert led.examples() == [] and _skips(led) == []  # pinned answers are never stored, and that is not a skip
+
+
+@pytest.mark.req("FR-2.13", "INV-16", "FR-1.8")
+def test_truncated_teacher_answer_is_not_stored():
+    """A teacher answer cut off by the token limit is served (it is all there is) but never stored, even when the
+    visible part parses; the provider reads `finish_reason` from Token Factory's response."""
+    server = FakeOpenAIServer(f"<think>billing</think>{TRIAGE_OBJ}", finish_reason="length")
+    teacher = OpenAICompatProvider("https://teacher.test/v1", "tf-key", transport=server.transport)
+    led, r = _hygiene(teacher)
+    out = r.handle(_ask(), "ticket-triage")
+    assert (out.served_by, out.route, out.text) == ("teacher", "cold_start", TRIAGE_OBJ)
+    out = r.handle(_ask("Where is my order?"), "default")
+    assert out.served_by == "teacher" and out.text == TRIAGE_OBJ
+    assert led.examples() == []
+    assert [row["stored"] for row in led.db.execute("SELECT stored FROM requests")] == [0, 0]
+    assert _skips(led) == ["ticket-triage: finish_reason length"]  # the second is the 2nd of that reason: no event
+    assert len(server.calls_to("/chat/completions")) == 2
+
+
+@pytest.mark.req("FR-2.13", "INV-16")
+@pytest.mark.parametrize(
+    "said",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("  \n\t ", id="whitespace"),
+        pytest.param("<think>The customer was charged twice, so", id="never-left-its-reasoning"),
+        pytest.param("<think>billing, high</think>", id="reasoning-only"),
+    ],
+)
+def test_empty_teacher_answer_not_stored(said):
+    for task in ("ticket-triage", "default"):
+        led, r = _hygiene(RecordingProvider(said))
+        out = r.handle(_ask(), task)
+        assert (out.served_by, out.text) == ("teacher", "")
+        assert led.examples() == [] and _row(led)["stored"] == 0
+        assert _skips(led) == [f"{task}: empty answer"]
+
+
+@pytest.mark.req("FR-2.13", "INV-16")
+def test_invalid_json_teacher_answer_for_ticket_triage_not_stored():
+    for said in ("Category: billing. Priority: high.", '{"category": "billing", "priority": "hi', '["billing", "high"]'):
+        led, r = _hygiene(RecordingProvider(said))
+        assert r.handle(_ask(), "ticket-triage").text == said  # still served: the client asked
+        assert led.examples() == [] and _row(led)["stored"] == 0
+        assert _skips(led) == ["ticket-triage: invalid answer"]
+        # The same text is a fine answer for a free-text task.
+        assert r.handle(_ask(), "default").text == said
+        assert [ex["completion"] for ex in led.examples()] == [said] and _row(led)["stored"] == 1
+
+
+@pytest.mark.req("FR-2.13", "INV-16", "INV-12", "FR-4.7")
+def test_redaction_that_breaks_a_structured_answer_is_not_stored():
+    """A card-like number outside quotes becomes `[CARD]`, which is not JSON: the redacted answer is never stored."""
+    said = '{"category": "billing", "priority": "high", "order": 4111111111111111}'
+    led, r = _hygiene(RecordingProvider(said))
+    assert r.handle(_ask(), "ticket-triage").text == said
+    assert led.examples() == [] and _skips(led) == ["ticket-triage: invalid after redaction"]
+    assert _row(led)["stored"] == 0
+    raw, r = _hygiene(RecordingProvider(said), redact_pii=False)
+    r.handle(_ask(), "ticket-triage")
+    assert [ex["completion"] for ex in raw.examples()] == [said]
+
+
+@pytest.mark.req("FR-2.13", "INV-16", "FR-2.5")
+def test_unusable_teacher_answer_is_not_an_audit():
+    """An audit whose teacher answer was cut off counts neither for nor against the student: `audited=0`. The teacher
+    was still paid, so the cost includes the call."""
+    teacher = RecordingProvider(TRIAGE_OBJ, finish_reason="length", in_tokens=50, out_tokens=20)
+    led, r = _hygiene(teacher, student=RecordingProvider(TRIAGE_OBJ), threshold=0.5, audit_rate=1.0)
+    live = led.live().id
+    out = r.handle(_ask(), "ticket-triage")
+    assert out.served_by == "student" and len(teacher.calls) == 1
+    row = _row(led)
+    assert (row["audited"], row["audit_agree"], row["stored"]) == (0, None, 0)
+    s = r.s
+    assert row["cost_usd"] == pytest.approx(s.price("student").cost(10, 5 * 3) + s.price(OPEN_TEACHER).cost(50, 20))
+    assert led.version_live_quality(live) == (0, None) and led.examples() == []
+    assert _skips(led) == ["ticket-triage: finish_reason length"]
+
+    teacher.finish_reason = "stop"  # a complete answer is an audit again, and a training example
+    r.handle(_ask("again"), "ticket-triage")
+    assert (_row(led)["audited"], _row(led)["audit_agree"], _row(led)["stored"]) == (1, 1, 1)
+    assert led.version_live_quality(live) == (1, 1.0)
+
+
+@pytest.mark.req("FR-2.13", "INV-16", "FR-6.3", "FR-2.10")
+def test_invalid_shadow_reference_leaves_shadow_agree_null():
+    """The shadow disagrees with the live student, and the teacher's arbitration is not valid JSON: nothing settles the
+    disagreement, so `shadow_agree` is NULL (counted against the shadow) and nothing is stored. The same holds when the
+    teacher's escalation answer was cut off."""
+    other = '{"category": "refund", "priority": "low", "reply": "x"}'
+    teacher = RecordingProvider("billing, I think")
+    led, r = _hygiene(teacher, student=RecordingProvider(TRIAGE_OBJ), threshold=0.5, shadow=RecordingProvider(other))
+    cand = led.by_state("shadow").id
+    assert r.handle(_ask(), "ticket-triage").served_by == "student" and len(teacher.calls) == 1
+    row = _row(led)
+    assert (row["shadow_version"], row["shadow_serve"], row["shadow_agree"], row["stored"]) == (cand, 1, None, 0)
+    assert led.shadow_quality(cand)["unarbitrated"] == 1 and led.examples() == []
+
+    teacher.text = other  # a valid arbitration settles it: the shadow was right, and the answer is stored
+    r.handle(_ask("again"), "ticket-triage")
+    assert (_row(led)["shadow_agree"], _row(led)["stored"]) == (1, 1)
+
+    teacher.text, teacher.finish_reason = other, "length"  # an escalation whose answer was cut off
+    led.update_eval(led.live().id, {"threshold": 0.99})
+    out = r.handle(_ask("third"), "ticket-triage")
+    assert out.served_by == "teacher" and out.escalated
+    row = _row(led)
+    assert (row["shadow_serve"], row["shadow_agree"], row["stored"]) == (1, None, 0)
+    assert led.shadow_quality(cand)["unarbitrated"] == 2
+
+
+@pytest.mark.req("FR-2.13", "INV-16", "INV-12")
+def test_skip_example_events_are_throttled_per_reason():
+    """Like the failure events: the 1st, 10th, 100th and 1000th skip of each reason, counted exactly under threads (Scout
+    calls handle from several), naming the task and the reason, never the answer."""
+    teacher = RecordingProvider("secret-answer@example.com", finish_reason="length")
+    led, r = _hygiene(teacher)
+
+    def worker(k):
+        for i in range(25):
+            r.handle(_ask(f"thread {k} request {i}"), "default")
+
+    threads = [threading.Thread(target=worker, args=(k,)) for k in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert _skips(led) == ["default: finish_reason length"] * 3  # 200 skips: the 1st, 10th and 100th
+    teacher.finish_reason, teacher.text = "stop", ""
+    r.handle(_ask(), "ticket-triage")
+    teacher.finish_reason = "eos_token"  # a value the router does not name is "other", so reasons stay a short list
+    r.handle(_ask(), "default")
+    assert _skips(led)[3:] == ["ticket-triage: empty answer", "default: finish_reason other"]
+    assert led.examples() == [] and "secret" not in json.dumps(led.events())
+    assert led.db.execute("SELECT COUNT(*), SUM(stored) FROM requests").fetchone()[:] == (202, 0)
+
+
+@pytest.mark.req("FR-2.13", "FR-3.4")
+def test_stored_column_marks_requests_that_stored_an_example():
+    teacher = RecordingProvider(TRIAGE_OBJ)
+    led, r = _hygiene(teacher)
+    r.handle(_ask(), "ticket-triage")
+    r.handle(_ask(), "ticket-triage")  # a duplicate bumps `seen`: still stored
+    assert [row[0] for row in led.db.execute("SELECT stored FROM requests ORDER BY id")] == [1, 1]
+    assert [ex["seen"] for ex in led.examples()] == [2]
+    r.handle(_ask("plan"), "research-plan")  # pinned: never stored
+    assert _row(led)["stored"] == 0
+
+    led, r = _hygiene(teacher, student=RecordingProvider(TRIAGE_OBJ), threshold=0.5)
+    r.handle(_ask(), "ticket-triage")  # served by the student, no audit
+    assert (_row(led)["served_by"], _row(led)["stored"]) == ("student", 0)
+    r.s.audit_rate = 1.0
+    r.handle(_ask(), "ticket-triage")  # audited: the teacher's answer is stored
+    assert (_row(led)["audited"], _row(led)["stored"]) == (1, 1)
+
+
+@pytest.mark.req("FR-2.13", "NFR-6")
+def test_v05_database_gets_the_stored_column(tmp_path):
+    """A ledger from before answer hygiene (requests with `route`, no `stored`) opens and gains the column; its old rows
+    keep NULL, which means "not recorded"."""
+    db = tmp_path / "v05-pre.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, served_by TEXT, student_version INTEGER,
+            confidence REAL, escalated INTEGER, audited INTEGER, audit_agree INTEGER, shadow_version INTEGER,
+            shadow_serve INTEGER, shadow_agree INTEGER, latency_ms REAL, cost_usd REAL, baseline_cost_usd REAL,
+            client TEXT, route TEXT
+        );
+        INSERT INTO requests (ts, day, task, served_by, cost_usd, baseline_cost_usd, route)
+            VALUES (1800000000, 1, 'ticket-triage', 'teacher', 0.01, 0.01, 'cold_start');
+    """)
+    con.commit()
+    con.close()
+    led = Ledger(str(db))
+    assert "stored" in {r["name"] for r in led.db.execute("PRAGMA table_info(requests)")}
+    Ratchet(Settings(teacher_model=OPEN_TEACHER), led, FakeTeacher(), lambda v: (BrokenStudent(), "")).handle(
+        _ask(), "ticket-triage"
+    )
+    assert [row[0] for row in led.db.execute("SELECT stored FROM requests ORDER BY id")] == [None, 1]
+
+
+@pytest.mark.req("FR-2.2", "FR-2.7")
+def test_answers_nested_too_deeply_are_invalid_not_a_crash():
+    """`json.loads` raises RecursionError on very deep nesting; `parse_json` let it out, so a student answering
+    `[[[[...` crashed `confidence.score` and the request was a 500 instead of an escalation."""
+    deep = "[" * 100_000 + "]" * 100_000
+    triage = tasks.get("ticket-triage")
+    assert tasks.parse_json(deep) is None and tasks.parse_json("{" + deep + "}") is None
+    assert triage.canonical(deep) == tasks.INVALID
+    led, r = _hygiene(RecordingProvider(TRIAGE_OBJ), student=RecordingProvider(deep), threshold=0.5)
+    out = r.handle(_ask(), "ticket-triage")
+    assert (out.served_by, out.route, out.confidence) == ("teacher", "confidence", 0.0)
+
+
+@pytest.mark.req("FR-2.7", "NFR-1")
+def test_answer_cleaning_is_linear_on_adversarial_answers():
+    """Each of these took seconds on the request path (about 10 s for 20,000 unclosed `<think>` tags, 14 s for 100,000
+    spaces in a structured answer), because a regex rescanned from every position: an answer a client can make a model
+    write. Each now takes milliseconds; the bound leaves a wide margin for a slow CI machine."""
+    triage = tasks.get("ticket-triage")
+    answers = [
+        "<think>" * 20_000,
+        "a" + " " * 100_000 + "b",
+        "{" * 100_000,
+        " " * 50_000 + "x```",
+        "x</think>" * 20_000 + "<think>" * 20_000,
+    ]
+    for answer in answers:
+        t0 = time.perf_counter()
+        assert triage.canonical(answer) == tasks.INVALID and tasks.parse_json(answer) is None
+        tasks.get("default").canonical(answer)
+        assert time.perf_counter() - t0 < 2.0, answer[:20]
+    assert tasks.parse_json('Here it is:\n```json\n{"category": "billing"}\n```\n') == {"category": "billing"}
+
+
+@pytest.mark.req("FR-2.13", "FR-1.11", "NFR-7")
+def test_provider_parses_finish_reason_reasoning_tokens_and_per_choice_tokens():
+    """Per choice: the text is `content` only (vLLM's and Token Factory's `reasoning_content` / `reasoning` never reach
+    it), `finish_reason`, and output tokens from the logprob counts, so the parts add up to `usage.completion_tokens`;
+    reasoning tokens from `completion_tokens_details` are split evenly (no per-choice figure exists)."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=bodies.pop(0))
+
+    def lp(n):
+        return {"content": [{"token": "t", "logprob": -0.1}] * n}
+
+    p = OpenAICompatProvider("https://student.test/v1", "k", transport=httpx.MockTransport(handler))
+    usage = {"prompt_tokens": 12, "completion_tokens": 8, "completion_tokens_details": {"reasoning_tokens": 5}}
+    bodies.append(
+        {
+            "usage": usage,
+            "choices": [
+                {"message": {"content": "a", "reasoning_content": "SECRET plan"}, "logprobs": lp(3), "finish_reason": "stop"},
+                {"message": {"content": None, "reasoning": "SECRET plan"}, "logprobs": lp(5), "finish_reason": "length"},
+            ],
+        }
+    )
+    out = p.complete(_ask(), "student-v1", n=2, logprobs=True)
+    assert [(c.text, c.finish_reason, c.out_tokens, c.reasoning_tokens, c.in_tokens) for c in out] == [
+        ("a", "stop", 3, 3, 12),
+        ("", "length", 5, 2, 12),
+    ]
+    assert "SECRET" not in repr(out)
+
+    # Logprob counts that do not add up to the bill (a server that leaves reasoning out of them) split it in proportion.
+    bodies.append(
+        {
+            "usage": {"completion_tokens": 12},
+            "choices": [{"message": {"content": "a"}, "logprobs": lp(3)}, {"message": {"content": "b"}, "logprobs": lp(5)}],
+        }
+    )
+    assert [c.out_tokens for c in p.complete(_ask(), "m", n=2, logprobs=True)] == [5, 7]
+    # A choice without logprobs: an even split, the remainder on the first choices. No usage: the counts as they are.
+    bodies.append(
+        {
+            "usage": {"completion_tokens": 9},
+            "choices": [{"message": {"content": "a"}, "logprobs": lp(3)}, {"message": {"content": "b"}}],
+        }
+    )
+    assert [c.out_tokens for c in p.complete(_ask(), "m", n=2)] == [5, 4]
+    bodies.append(
+        {"choices": [{"message": {"content": "a"}, "logprobs": lp(4)}, {"message": {"content": "b"}, "logprobs": lp(2)}]}
+    )
+    assert [(c.out_tokens, c.reasoning_tokens) for c in p.complete(_ask(), "m", n=2)] == [(4, 0), (2, 0)]
+    # A teacher answer (n=1) with no logprobs gets the whole bill and every reasoning token.
+    bodies.append(
+        {
+            "usage": {"completion_tokens": 340, "completion_tokens_details": {"reasoning_tokens": 300}},
+            "choices": [{"message": {"content": "a"}, "finish_reason": "stop"}],
+        }
+    )
+    (c,) = p.complete(_ask(), OPEN_TEACHER)
+    assert (c.out_tokens, c.reasoning_tokens, c.finish_reason) == (340, 300, "stop")
+
+
+@pytest.mark.req("FR-2.13", "FR-1.11")
+@pytest.mark.parametrize(
+    ("value", "want"),
+    [
+        pytest.param("absent", "stop", id="absent"),
+        pytest.param(None, "stop", id="null"),
+        pytest.param("stop", "stop", id="stop"),
+        pytest.param(" LENGTH ", "length", id="upper-case-padded"),
+        pytest.param("tool_calls", "tool_calls", id="tool-calls"),
+        pytest.param("eos_token", "eos_token", id="other-word"),
+        pytest.param(123, "unknown", id="number"),
+        pytest.param("stop sequence hit", "unknown", id="not-a-word"),
+        pytest.param("x" * 41, "unknown", id="too-long"),
+    ],
+)
+def test_finish_reason_values_are_read_safely(value, want):
+    """Missing or null is `stop` (servers that leave it out); anything that is not a short word is `unknown`, which is
+    never stored, and nothing a server sends reaches an event unbounded."""
+    choice = {"message": {"content": "a"}}
+    if value != "absent":
+        choice["finish_reason"] = value
+    p = OpenAICompatProvider(
+        "https://m.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"choices": [choice]}))
+    )
+    assert p.complete(_ask(), "m")[0].finish_reason == want

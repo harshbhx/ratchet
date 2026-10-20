@@ -633,6 +633,7 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
             {
                 "message": {"content": '<think>billing</think>```json\n{"category": "billing", "priority": "high"}\n```'},
                 "logprobs": {"content": [{"token": "{", "logprob": -0.1}]},
+                "finish_reason": "stop",
             }
         ],
         "usage": {"prompt_tokens": 40, "completion_tokens": 12},
@@ -663,7 +664,7 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     out = capsys.readouterr().out
     assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out
     assert "'nvidia/Some-Other-Nemotron'" in out and "llama" not in out  # lists the NVIDIA models it does have
-    assert f"[ok] {want[0]}: json ok, logprobs=yes" in out
+    assert f"[ok] {want[0]}: json ok, logprobs=yes, finish_reason=stop" in out  # INV-16 stores only these
     assert f"[ok] {want[1]}: json NOT parseable, logprobs=NO" in out  # reported; confidence falls back to agreement
     assert f"[FAIL] {want[2]}: HTTP 500 upstream error" in out and "Some checks failed" in out
     assert [(r.method, r.url.path) for r in seen] == [("GET", "/v1/models")] + [("POST", "/v1/chat/completions")] * (

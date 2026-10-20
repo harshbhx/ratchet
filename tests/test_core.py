@@ -11,8 +11,10 @@ from ratchet.providers import Completion
 from ratchet.release import ReleaseGate, ReleasePolicy, wilson
 
 
-def comp(text, p=0.9, n=5):
-    return Completion(text=text, model="m", in_tokens=10, out_tokens=n, token_logprobs=[math.log(p)] * n)
+def comp(text, p=0.9, n=5, finish_reason="stop"):
+    return Completion(
+        text=text, model="m", in_tokens=10, out_tokens=n, token_logprobs=[math.log(p)] * n, finish_reason=finish_reason
+    )
 
 
 TRIAGE = tasks.get("ticket-triage")
@@ -34,6 +36,68 @@ def test_invalid_json_never_agrees():
     assert not TRIAGE.agree("not json", "not json")
 
 
+@pytest.mark.req("FR-2.7")
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        pytest.param('<think>billing, surely</think>{"a": 1}', '{"a": 1}', id="full-pair"),
+        pytest.param('Let me think about it</think>\n{"a": 1}', '{"a": 1}', id="closing-only"),
+        # The fence stays: strip_reasoning removes reasoning only; clean_answer unwraps fences for structured tasks.
+        pytest.param('Let me think</think>\n```json\n{"a":1}\n```', '```json\n{"a":1}\n```', id="closing-only-fenced"),
+        pytest.param("<think>the answer is billing, high", "", id="unterminated"),
+        pytest.param('<THINK>hmm</THINK> {"a": 1} ', '{"a": 1}', id="uppercase"),
+        pytest.param("<Think>hmm</tHiNk>answer", "answer", id="mixed-case"),
+        pytest.param("A plain answer, no tags.", "A plain answer, no tags.", id="no-tags"),
+        pytest.param("  padded  ", "padded", id="no-tags-padded"),
+        pytest.param("billing <think>on second thought", "billing", id="answer-then-unterminated"),
+        pytest.param("plan</think>a<think>b</think>c", "ac", id="closing-then-pair"),
+        pytest.param("plan</think>answer<think>cut", "answer", id="closing-then-unterminated"),
+        pytest.param("<think>a<think>b</think>c</think>answer", "answer", id="nested"),
+        pytest.param("<think>a</think>first</think>second", "second", id="last-closing-wins"),
+        pytest.param("", "", id="empty"),
+        pytest.param(None, "", id="none"),
+    ],
+)
+def test_strip_reasoning_cases(text, want):
+    assert tasks.strip_reasoning(text) == want
+    assert tasks.strip_reasoning(want) == want  # idempotent: nothing left to strip
+
+
+@pytest.mark.req("FR-2.7", "FR-2.13")
+def test_clean_answer_unwraps_fences_only_for_structured_tasks():
+    free = tasks.get("default")
+    obj = '{"category": "billing", "priority": "high"}'
+    for fenced in (f"```json\n{obj}\n```", f"```\n{obj}\n```", f"```JSON\n{obj}\n```", f"```{obj}```", f"```json\n{obj}```"):
+        assert tasks.clean_answer(TRIAGE, fenced) == obj, fenced
+        assert tasks.clean_answer(free, fenced) == fenced  # a code block is content in a free-text answer
+    assert tasks.clean_answer(TRIAGE, f"<think>billing</think>\n```json\n{obj}\n```") == obj
+    assert tasks.clean_answer(TRIAGE, f"Let me see.</think>```json\n{obj}\n```") == obj
+    assert tasks.clean_answer(free, "<think>x</think>```py\nprint(1)\n```") == "```py\nprint(1)\n```"
+    # Unwrapped only when one fence is the whole answer and its body is JSON.
+    for kept in (
+        "```json\nbilling, high\n```",  # body is not JSON
+        f"```json\n{obj}\n```\nand\n```json\n{obj}\n```",  # two fences
+        f"Here it is: ```json\n{obj}\n```",  # prose around the fence
+        f"````json\n{obj}\n````",  # a four-backtick fence is not unwrapped
+        "``````",
+        obj,
+    ):
+        assert tasks.clean_answer(TRIAGE, kept) == kept, kept
+    deep = "```\n" + "[" * 100_000 + "]" * 100_000 + "\n```"  # too deep for the JSON parser: kept, never a crash
+    assert tasks.clean_answer(TRIAGE, deep) == deep
+    assert TRIAGE.canonical(f"```json\n{obj}\n```") == TRIAGE.canonical(obj) != tasks.INVALID
+
+
+@pytest.mark.req("FR-2.2", "FR-2.13")
+def test_empty_answers_are_invalid_for_every_task():
+    free = tasks.get("default")
+    for empty in ("", "   \n", "<think>still thinking", "<think>done</think>"):
+        assert free.canonical(empty) == TRIAGE.canonical(empty) == tasks.INVALID
+        assert not free.agree(empty, empty)
+    s = score(free, [comp("<think>never finished")] * 3)
+    assert (s.confidence, s.agreement, s.valid) == (0.0, 0.0, False)
+
+
 # ---------- confidence ----------
 @pytest.mark.req("FR-2.2")
 def test_unanimous_confident_samples_score_high():
@@ -52,6 +116,21 @@ def test_disagreement_lowers_confidence():
 @pytest.mark.req("FR-2.2")
 def test_all_invalid_scores_zero():
     assert score(TRIAGE, [comp("nope")] * 3).confidence == 0.0
+
+
+@pytest.mark.req("FR-2.2", "FR-2.13")
+def test_length_samples_are_invalid_in_score():
+    """A sample cut off by the token limit (or a content filter) gets no vote and is never the answer, even when its
+    visible text parses."""
+    cut = score(TRIAGE, [comp(A, 0.99, finish_reason="length")] * 3)
+    assert (cut.confidence, cut.agreement, cut.valid) == (0.0, 0.0, False)
+    assert not score(TRIAGE, [comp(A, 0.99, finish_reason="content_filter")] * 3).valid
+    # Two cut-off samples of A and one complete B: B is the only vote, with agreement 1/3.
+    s = score(TRIAGE, [comp(A, 0.99, finish_reason="length"), comp(B, 0.9), comp(A, 0.99, finish_reason="length")])
+    assert s.answer.text == B and s.agreement == pytest.approx(1 / 3) and s.valid
+    # Complete answers vote as before, including ones that end in a tool call.
+    full = score(TRIAGE, [comp(A, 0.95), comp(A, 0.95, finish_reason="tool_calls"), comp(A, 0.95)])
+    assert full.agreement == 1.0 and full.confidence > 0.9
 
 
 @pytest.mark.req("FR-5.2", "FR-2.3")

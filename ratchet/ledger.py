@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS requests (
     latency_ms REAL,
     cost_usd REAL, baseline_cost_usd REAL,
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
-    route TEXT                 -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | ...
+    route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | ...
+    stored INTEGER             -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,7 +79,7 @@ class Version:
 
 # Columns added after v0.1's first schema; existing database files are migrated on open.
 MIGRATIONS: dict[str, dict[str, str]] = {
-    "requests": {"shadow_serve": "INTEGER", "client": "TEXT", "route": "TEXT"},
+    "requests": {"shadow_serve": "INTEGER", "client": "TEXT", "route": "TEXT", "stored": "INTEGER"},
     "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0"},
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }

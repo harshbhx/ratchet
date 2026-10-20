@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (385 tests, ~35 s, no network, no GPU)
+make test           # pytest -q (430 tests, ~35 s, no network, no GPU)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -95,6 +95,7 @@ Always run `make lint test` before committing.
 13. **API keys are never stored or logged.** The ledger and `/ratchet/stats` see the key's *name* only; compare keys with `KeyRing.identify` (constant-time digests). `/healthz` stays public.
 14. **A BOM is written once, at training time,** from the exact train and golden rows (`run_night` → `bom.manifest`). Never rewrite a stored BOM; a signature covers the canonical JSON (`bom.canonical`), so any change must produce a new document. See [ADR 0010](docs/adr/0010-signed-adapter-bom.md).
 15. **Optional teacher calls (audit, shadow arbitration) never fail a request the student already answered.** Neither do the shadow's own samples. A failure is counted (`Ratchet.health()`), logged as a throttled `audit_error` or `shadow_error` event naming the exception class (never its message), and the student's answer is served; a failed audit is not an audit, and an unarbitrated shadow disagreement counts against the shadow. A teacher failure on the escalation path still returns an upstream error. See [ADR 0013](docs/adr/0013-optional-teacher-calls-fail-open.md).
+16. **Only complete, valid teacher answers are stored.** `Ratchet._store_example` (the one caller of `Ledger.add_example`) stores a teacher answer only when its `finish_reason` is `stop` or `tool_calls`, it is not empty once reasoning is stripped, and it is valid under the task (a structured task's answer parses as JSON, also after redaction). Anything else is still served, but not stored, not counted as an audit and never the reference for a shadow; it is logged as a throttled `skip_example` event and `requests.stored = 0`. Clean answers with `tasks.clean_answer`, never by hand. See [ADR 0016](docs/adr/0016-store-only-complete-valid-teacher-answers.md).
 
 ## Conventions
 
@@ -111,6 +112,7 @@ Always run `make lint test` before committing.
 
 ## Current status (Oct 20, 2026)
 
+- Unreleased: answer hygiene (INV-16, FR-2.7, FR-2.13): reasoning is stripped also before a lone `</think>` and from an unterminated `<think>`, a structured answer loses a code fence around it, and only complete, valid teacher answers are stored (`finish_reason` read per choice; `skip_example` events; `requests.stored`); a cut-off student sample gets no vote ([ADR 0016](docs/adr/0016-store-only-complete-valid-teacher-answers.md)).
 - Unreleased: requirements traceability. Every PRD row and invariant maps to code and tests in the generated [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), checked by `make lint` and CI; done requirements without a test are listed there as known gaps (none left).
 - Unreleased: the live entry points are tested offline (`tests/test_live.py`): `ratchet.live`, the gateway's live `Runtime`, `LiveEvaluator`, `train.py`'s arguments, the Scout and simulator CLIs, the mock warm-up, `RATCHET_TRUST_PROXY`, the day-1 check and the deploy scripts. The student's sampling is one constant, `confidence.STUDENT_SAMPLING`.
 - Unreleased: a student circuit breaker (FR-2.11): after 5 endpoint failures in a row requests skip the student for 30 s (doubling to 300 s per failed probe), with a separate shadow breaker and `circuit` events; vLLM's 404 for a lost adapter queues an automatic reload (once a minute per adapter); every request row records its `route`, reported per task in `/ratchet/stats`; mock-only `POST /ratchet/demo/student-outage` shows it ([ADR 0015](docs/adr/0015-student-circuit-breaker-and-adapter-reload.md)).

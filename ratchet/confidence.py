@@ -3,7 +3,8 @@
 Small models are poorly calibrated, so Ratchet never trusts a single signal. It combines:
   1. token probability: exp(mean token logprob) of the best sample, from vLLM
   2. self-consistency: how many of n samples agree with the majority answer
-  3. validity: an answer that fails the task's format scores 0
+  3. validity: an answer that fails the task's format, is empty, or was cut off (`finish_reason` `length` or
+     `content_filter`) gets no vote, and when no sample is valid the score is 0 and nothing is served
 The threshold that turns the score into "serve" vs "escalate" is set on a labelled
 dev set (see `calibrate_threshold`).
 """
@@ -17,8 +18,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from .providers import Completion
-from .tasks import Task
+from .providers import CUT_OFF, Completion
+from .tasks import INVALID, Task
 
 # How the student is sampled for a confidence score: in production (`Ratchet._sample`), in the live golden eval
 # (`LiveEvaluator.evaluate`) and in the mock one (`MockFleet.evaluate`). One constant, so the eval cannot drift from
@@ -33,12 +34,23 @@ class Scored:
     agreement: float
     token_prob: float | None
 
+    @property
+    def valid(self) -> bool:
+        """At least one sample was a valid answer. When none was, `answer` is only a placeholder and must never be
+        served, whatever the threshold (even 0)."""
+        return self.agreement > 0
+
+
+def _key(task: Task, sample: Completion) -> str:
+    """A sample's canonical answer; `INVALID` when it was cut off, because a truncated answer is never a vote."""
+    return INVALID if sample.finish_reason in CUT_OFF else task.canonical(sample.text)
+
 
 def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: float = 0.6) -> Scored:
     if not samples:
         raise ValueError("no samples")
-    canon = [task.canonical(s.text) for s in samples]
-    counts = Counter(c for c in canon if c != "<invalid>")
+    canon = [_key(task, s) for s in samples]
+    counts = Counter(c for c in canon if c != INVALID)
     if not counts:
         return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob)
     majority, votes = counts.most_common(1)[0]
