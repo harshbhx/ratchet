@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 179 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_contract, test_traceability, test_live), ~30 s
+pytest -q                     # 296 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -16,22 +16,23 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_release.py` | 9 (8 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 24 |
+| `tests/test_hardening.py` | 25 |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
+| `tests/test_openai_compat.py` | 116 (22 functions; one has 76 cases, one has 20) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **179** |
+| **Total** | **296** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`, `tests/test_live.py`): the whole loop over simulated days, the gateway API, the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
 
-Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) are in `tests/conftest.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
+Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) are in `tests/conftest.py`; `make_openai_client(app)` (the OpenAI SDK wired to the gateway in-process) is in `tests/sdk_bridge.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
 
 Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
@@ -103,7 +104,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 
 ### `tests/test_hardening.py`
 
-Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)).
+Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`. `test_task_names_match_in_full` covers a bug found while building request validation: a task name with a trailing newline passed the `^...$` check. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)).
 
 The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
 
@@ -125,6 +126,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_healthz_stays_public_when_keys_are_on` | `/healthz` answers 200 while `/v1/models` needs a key |
 | `test_redact_preview_endpoint` | `POST /ratchet/redact` returns the redacted text and counts; over-long or missing text gets 400 |
 | `test_live_night_checks_the_student_endpoint_before_paid_work` | Without `RATCHET_STUDENT_BASE`, `NebiusTrainer.train` raises before the sync, the training job or any file write; `reload` with adapters to load raises the same clear error (and with none, returns an empty list) |
+| `test_task_names_match_in_full` | `tasks.valid_name` matches the whole name: a trailing newline, 65 characters, an empty string, a space or a tab is not a name, and `tasks.get` falls back to `default` for each |
 
 ### `tests/test_scout.py`
 
@@ -156,10 +158,10 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 |---|---|
 | `test_v1_models_lists_ratchet` | FR-1.2: `GET /v1/models` returns a `list` with a `ratchet` model; with API keys on it needs a key (401) and answers the same with one |
 | `test_task_from_metadata_and_header_precedence` | FR-1.3: the ledger's `task` column is `default` with neither, the metadata task alone, the header alone, and the header when both are set (both orders); other metadata keys are ignored |
-| `test_missing_or_malformed_messages` (9 cases) | FR-1.5: missing, `null`, empty, string, object and number `messages` get 400 and log nothing. An unknown role, a number as content and `null` user content give 500 today: strict xfail until API-VALIDATE-NORMALIZE |
-| `test_messages_items_must_be_objects_400` | Strict xfail (API-VALIDATE-NORMALIZE): `["hi"]`, `[null]`, `[1]` and a nested list as messages give 500 today instead of 400 |
-| `test_bad_metadata_is_400` | Strict xfail (API-VALIDATE-NORMALIZE): `metadata` as a string, a list, or with a non-string `ratchet_task` gives 500 today instead of 400 |
-| `test_text_content_parts_answered_in_mock` | Strict xfail (API-VALIDATE-NORMALIZE): a demo ticket sent as OpenAI text content parts should get the same answer as the string form and the same stored example (`seen` 2); today it is a 500 |
+| `test_missing_or_malformed_messages` (9 cases) | FR-1.5: missing, `null`, empty, string, object and number `messages`, an unknown role, a number as content and `null` user content get 400 and log nothing (the last three were 500s until v0.5) |
+| `test_messages_items_must_be_objects_400` | FR-1.5: `["hi"]`, `[null]`, `[1]` and a nested list as messages get 400 and log nothing |
+| `test_bad_metadata_is_400` | FR-1.3: `metadata` as a string, a list, or with a non-string `ratchet_task` gets 400 and logs nothing |
+| `test_text_content_parts_answered_in_mock` | FR-1.1: a demo ticket sent as OpenAI text content parts gets the same answer as the string form and the same stored example (`seen` 2) |
 | `test_bom_endpoint_counts_by_split_and_fingerprint_changes` | FR-3.5, US-7: `/ratchet/bom` counts per split equal the ledger's; every source names the configured teacher and its license; `examples_sha256` is the documented SHA-256 over the sorted example hashes, stable between reads and equal to the stats block; a repeated request changes nothing, a new one changes the fingerprint and adds one |
 | `test_stats_contract` | FR-7.1 to FR-7.4, FR-7.7, US-9: every key in `tests/fixtures/stats_keys.json`, with its JSON type, on a fresh gateway (lists empty) and after two simulated days and nights plus a keyed request (every list has items, each item checked); the fixture still holds the keys this item named; totals, days, tasks and clients add up to the same requests and dollars, and the savings are positive |
 | `test_demo_endpoints_are_403_in_live_mode` | INV-8: in live mode `POST /ratchet/demo/day` (also with bad arguments), `break-next` and `reset` get 403 and change nothing in the ledger |
@@ -176,6 +178,35 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 | `test_closed_teacher_fails_at_startup` | FR-3.2, INV-1: `Ratchet(...)` raises for `gpt-4o` and for an unknown teacher; the gateway's `Runtime` refuses to start with `gpt-4o` in live and mock mode |
 | `test_examples_record_license_url` | FR-3.3: for two registered teachers, the stored example has the teacher, license name and URL from the registry, the request hash, a split, and the BOM lists exactly that source |
 | `test_configured_models_are_licensed_and_day1_checked` | INV-9 (offline proxy): every priced model in `config.py` except `student` is in `licenses.REGISTRY` and in `WANT` in `scripts/day1_check.py`, and the default teacher, judge and fallback student are priced |
+
+### `tests/test_openai_compat.py`
+
+OpenAI compatibility of `/v1/chat/completions` (FR-1.5, FR-1.10, US-1; [ADR 0012](adr/0012-openai-request-validation-and-error-envelope.md)): request validation, message normalisation, the error envelope, the limits, and the rule that a client mistake is never a 500. Gateway tests reload the mock gateway with every setting they depend on pinned; the SDK tests drive the real `openai` package through `tests/sdk_bridge.py` (skipped if it is not installed).
+
+| Test | Covers |
+|---|---|
+| `test_bad_request_gets_an_openai_error` (20 cases) | `["hi"]` as messages, `metadata: "x"`, a missing role, role `robot`, temperature 3, `n` 0 and 2, five stop strings, `top_logprobs` without `logprobs`, `json_schema` without a name, bad JSON (incl. `NaN`, 100,000 nested brackets, bad UTF-8, an empty body), a non-object body, a body over 2 MiB (413), 120,001 characters of input, an image part, and a bad field with `stream: true`: each gets the expected status, `code` and `param` in the envelope (with `detail` repeating the message), as JSON, with nothing logged |
+| `test_no_client_mistake_gives_500` | Every value of a request that uses every field (developer role, text parts, tool calls, metadata, `json_schema`, tools) swapped for one of eight kinds of junk, or deleted: always a 400 envelope, never a 500, nothing logged |
+| `test_unknown_v1_path_and_wrong_method` | Unknown paths under `/v1` and `/openai` get 404 `not_found_error` / `unknown_url` with `Unknown request URL: METHOD path.`; `GET /v1/chat/completions` gets 405 with `Allow: POST`; other paths keep `{"detail": "Not Found"}` |
+| `test_unhandled_error_is_a_500_envelope_and_an_event` | A crash in the cascade gives 500 `api_error` without the exception's message; the ledger gets `gateway_error` events (class name only) at the 1st and 10th crash; a crash outside `/v1` keeps the plain-text 500 and is counted but not written (11th); when the ledger itself fails at the 100th, the 500 still goes out |
+| `test_mock_keyerror_is_400_and_live_keyerror_is_500` | In mock mode an unknown request, a request without a user message and a Scout writer request without JSON facts get 400 `mock mode only answers demo requests`; in live mode a `KeyError` from the cascade is a 500 |
+| `test_framework_validation_errors_become_400_on_v1_only` | FastAPI's validation errors are 400 envelopes with `param` and `code` on `/v1`, and stay 422 `{"detail": [...]}` elsewhere |
+| `test_ratchet_routes_keep_detail` | `/ratchet/redact` (400, and 413 over a 1,000-byte limit), `/ratchet/versions/999/bom`, `/ratchet/demo/day` and `/scout/run` errors keep `{"detail": ...}` |
+| `test_checks_run_in_order_and_refusals_cost_nothing` | With a key and a quota of 1: no key and a bad body is 401 (`invalid_api_key`, `WWW-Authenticate` kept); a bad body with a key is 400 and uses no quota; the next good request is 200; the one after is 429 `rate_limit_error` with `Retry-After` and `X-Should-Retry: false`; a bad body at the quota is still 400; one ledger row |
+| `test_body_limit_declared_and_streamed` | A declared `Content-Length` over the limit is 413; a chunked body driven straight into the ASGI app is refused at the chunk that passes the limit, with the rest left unread; outside `/v1` the 413 is `{"detail"}`; a chunked body under the limit is answered; a client that disconnects halfway through its body gets a 400, not a 500; `0` turns the limit off |
+| `test_message_and_input_limits_come_from_settings` | `RATCHET_MAX_MESSAGES` and `RATCHET_MAX_INPUT_CHARS` (text parts added up) give 400; `0` turns both off |
+| `test_developer_role_reaches_the_teacher_as_system` | A `developer` message reaches the teacher, and the stored example, as `system`; `RATCHET_MERGE_SYSTEM=1` merges the leading system messages with a blank line |
+| `test_text_parts_ticket_matches_the_string_form` | A demo ticket sent as text parts gets the same message back as the string form, and one stored example, seen twice, under the string form's hash |
+| `test_multimodal_parts_go_to_the_teacher_only` | With `RATCHET_TEACHER_MODALITIES=text,image_url` and a live student, an image request reaches the teacher with its parts as sent, never the student, stores nothing and logs one teacher row; a text request on the same gateway is still served by the student; audio stays refused; the mock teacher gives a 400 for the image request |
+| `test_openai_sdk_round_trip_and_errors` | The real OpenAI SDK: a `ChatCompletion` with the `ratchet` block, the same answer for text parts and the developer role, and `BadRequestError` with `code` and `param` for temperature 3 and for too much input |
+| `test_openai_sdk_auth_and_quota_errors` | The SDK raises `AuthenticationError` with code `invalid_api_key`, and `RateLimitError` for the daily quota without retrying it (two requests sent with `max_retries=2`) |
+| `test_chat_request_fields` | `ChatRequest`: `max_completion_tokens` wins over `max_tokens`, a string `stop` becomes a list, `null` fields are unset, unknown fields are kept in `extra`; conversations with tool calls, tool answers, legacy function calls and assistant messages dumped from a response (unused fields `null`) pass; valid forms of every optional field come back as sent; a non-string `metadata` key from a Python caller is refused |
+| `test_validation_rules` (76 cases) | One case per rule in [API.md](API.md#request-validation): the body, messages, roles, content and parts, tool messages, every sampling range, `n`, `stop`, `logit_bias`, `logprobs`, `metadata` (17 keys, long keys and values, task names incl. a trailing newline), `response_format` and `json_schema` (name, type, depth 17, over 64 KB, `strict`), `tools` (129, custom type, names, parameters, over 64 KB), `tool_choice`, the legacy function fields and the string and boolean fields: each gives a 400 with the documented `code` and `param` |
+| `test_limits_and_their_off_switch` | `Limits`: too many messages, too many characters in a string, in text parts and in a refusal part; exactly at the limit passes; `0` means no limit; `max_n` |
+| `test_parse_body_and_error_helpers` | Strict JSON (`Infinity`, `NaN`, bad UTF-8 refused); the status-to-type table for plain HTTP errors (401 `invalid_api_key`, 403, 404 `unknown_url` only for the router's own 404, 409, 413, 429, 5xx `api_error`); headers kept; FastAPI validation errors turned into a JSON path |
+| `test_normalize_rewrites_only_what_it_must` | `developer` → `system` (other keys kept), text parts joined by newlines, a refusal part becomes text, assistant `audio` dropped, plain messages returned as the same objects, the caller's list never changed, and merging leading system messages |
+| `test_non_text_parts_need_a_teacher_modality` | `image_url`, `input_audio` and `file` parts, and a refusal part from the user, are refused with their exact `param`; with `image_url` allowed the message comes back as sent and `multimodal` is set; `parse_modalities` |
+| `test_normalize_is_identity_on_the_mock_world` | Every mock ticket (every template, drift too) and every Scout request in the research world comes back as the same objects, with or without merging, and passes validation with its task, so example hashes, golden splits and the reference simulation cannot move |
 
 ### `tests/test_traceability.py`
 
@@ -252,12 +283,12 @@ Found while writing them: without `RATCHET_STUDENT_BASE`, `NebiusTrainer` ran th
 
 ## Contract tests
 
-`tests/test_contract.py` was written before the v0.5 rewrites of `Ratchet.handle` and `gateway.chat` (request validation and normalisation, field comparators), as their regression net. Each test pins behaviour that someone outside the module depends on: an OpenAI client (status codes, `/v1/models`, task selection), the dashboard (`/ratchet/stats`), an auditor (`/ratchet/bom`, license fields), or the operator's bill (cost to the token).
+`tests/test_contract.py` was written before the v0.5 rewrites of `Ratchet.handle` and `gateway.chat` (request validation and normalisation, field comparators), as their regression net. Request validation has landed (`tests/test_openai_compat.py`) and its four strict xfails now pass as ordinary tests. Each test pins behaviour that someone outside the module depends on: an OpenAI client (status codes, `/v1/models`, task selection), the dashboard (`/ratchet/stats`), an auditor (`/ratchet/bom`, license fields), or the operator's bill (cost to the token).
 
 Rules:
 
 - **The stats keys only grow.** `tests/fixtures/stats_keys.json` lists every key the dashboard reads from `/ratchet/stats` (it mirrors `Stats` in `web/src/lib/api.ts`) with its JSON type; a `[]` key is a list whose every item is checked. A change may add keys to the payload and to the fixture. It must not remove or retype one, so the React dashboard and other clients keep working. The test also fails if the fixture loses one of the keys this contract started with.
-- **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (`API-VALIDATE-NORMALIZE`, `TASK-COMPARATORS`). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
+- **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (today `TASK-COMPARATORS`; `API-VALIDATE-NORMALIZE` has landed and removed its four). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
 - Cost assertions are token-exact: each model gets distinct token counts, and the expected cost is built from `Settings.price(...)`, so a term billed with the wrong tokens, price or multiplicity fails.
 - The dashboard's rendering is still checked by hand ([web/CLAUDE.md](../web/CLAUDE.md)); `test_stats_contract` proves the data it renders. FR-7.6 (light and dark mode, phone width) stays a manual check.
 

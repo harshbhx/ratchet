@@ -15,6 +15,8 @@
 
 Keep `handle` free of I/O beyond the providers and the ledger. Anything slow belongs in Night School.
 
+`teacher_only(messages, task, client)` is the pinned path (`_pinned`) for a request the student cannot take (a multimodal part, `RATCHET_TEACHER_MODALITIES`): the teacher answers, the request is logged, nothing is stored.
+
 ## Release (`release.py`)
 
 States: `candidate → rejected | shadow | canary(10) → canary(50) → live`; `canary → rolled_back`; old versions → `retired`.
@@ -38,7 +40,7 @@ States: `candidate → rejected | shadow | canary(10) → canary(50) → live`; 
 - `redact.py`: `PATTERNS` is an ordered list of `(label, regex, check)`; earlier patterns win, so put specific formats (with checksums) before broad ones like `PHONE`. Every new pattern needs a positive test **and** must keep `test_redact_leaves_ordinary_text_alone` and `test_redaction_is_a_no_op_on_the_mock_world` passing (mock lookups match exact text).
 - `auth.py`: `KeyRing(spec)` raises `ValueError` on a bad spec, so a typo stops the gateway at startup. `identify()` compares SHA-256 digests with `hmac.compare_digest` over every key.
 - `bom.py`: `manifest()` from the exact train and golden rows, `document()` wraps it with `sha256` and an optional Ed25519 signature over `canonical()`. `Signer` imports `cryptography` lazily (the `sign` extra). Change the manifest shape only with a new `SCHEMA` version.
-- Gateway: `_client()` (401) then `_quota()` (429) run before the cascade on `/v1/chat/completions`; `/healthz` is public. Streaming runs the cascade first, then yields chunks (`_chunks`), so errors are ordinary HTTP errors.
+- Gateway: on `/v1/chat/completions`, `BodyLimitMiddleware` (413), `_client()` (401), `validate_chat_request` + `normalize_messages` (400), then `_quota()` (429) run before the cascade, so a refused request is never logged or counted; `/healthz` is public. Streaming runs the cascade first, then yields chunks (`_chunks`), so errors are ordinary HTTP errors.
 
 ## Licenses (`licenses.py`)
 
@@ -55,6 +57,14 @@ To add a teacher, add it to `REGISTRY` with its real license name and URL. `CLOS
 `Runtime(settings, transports={"teacher": ..., "student": ...})` puts an `httpx.BaseTransport` under the live providers, so tests (and later items) run live mode offline; any other key raises, and mock mode ignores it. The other live entry points take their network and commands the same way, as default arguments that production code never passes: `OpenAICompatProvider(transport=)`, `live.load_adapter(client=)`, `NebiusTrainer(run=, http=)`, `live.reload_adapters(http=)`, `live.main(argv, provider_factory=, run=, http=)`, `scout.agents.http_caller(client=)` and the Scout CLI's `main(argv, client)`. `tests/test_live.py` uses them; keep new live code testable the same way.
 
 Pages: the React build in `web/dist` (source in `/web`, see [web/CLAUDE.md](../web/CLAUDE.md)) at `/`, `/scout` and `/dashboard`. The hand-written static pages (`web/landing.html`, `web/scout.html`, `dashboard.html`) are served at `/lite*` and as a fallback when the build is missing. Both are package data (`pyproject.toml`).
+
+**OpenAI compatibility (`openai_compat.py`, [ADR 0012](../docs/adr/0012-openai-request-validation-and-error-envelope.md)).** Standard library only. `chat` is `async`: it checks the key, reads the body, and runs `_complete` (parse, validate, normalise, quota, cascade, response) in one worker thread with `anyio.to_thread.run_sync`, on the default pool sync routes use.
+
+- Validate everything Ratchet reads or will forward, with an OpenAI `code` and a JSON-path `param`; keep unknown top-level keys in `ChatRequest.extra` (never refuse them). New request fields go into `ChatRequest` and `validate_chat_request` together, with a case in `VALIDATION_CASES` (`tests/test_openai_compat.py`) and a row in API.md's validation table.
+- `normalize_messages` must return a plain message as the **same object** (and the same list when nothing changes), or example hashes, golden splits, mock lookups and the reference simulation move. `test_normalize_is_identity_on_the_mock_world` checks every mock request.
+- Errors on `/v1/*` and `/openai/*` use the envelope (`APIError`, `_http_error`, `_validation_error`, `_unhandled_error`); every other route keeps `{"detail": ...}`, which the dashboard reads. Raise `APIError` for a client mistake; a plain `HTTPException` is mapped by status (`openai_compat.STATUS_TYPES`). Never let a client mistake reach `_unhandled_error`: that is a 500 and a `gateway_error` event.
+- A `KeyError` from the cascade is a 400 only in mock mode (`sim.world.lookup` does not know the request); in live mode it is a bug (500).
+- A content part listed in `RATCHET_TEACHER_MODALITIES` sends the request to `Ratchet.teacher_only` (the pinned path: no student, nothing stored).
 
 Demo controls are shared by every visitor: `day` and `reset` take `_demo_lock` without blocking (busy → 409), and `reset` has a 30 s cooldown (429).
 

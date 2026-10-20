@@ -105,6 +105,16 @@ def test_unknown_tasks_do_not_grow_registry():
     assert tasks.get("bad name with spaces!").name == "default"
 
 
+@pytest.mark.req("FR-1.3")
+def test_task_names_match_in_full():
+    """`^...$` with `re.match` accepted a trailing newline, so `metadata.ratchet_task: "ticket-triage\n"` became a new
+    task with a newline in its name. Names now match in full; the gateway refuses such a name with a 400."""
+    assert tasks.valid_name("ticket-triage") and tasks.valid_name("a" * 64)
+    for bad in ("ticket-triage\n", "a" * 65, "", "two words", "tab\t"):
+        assert not tasks.valid_name(bad), repr(bad)
+        assert tasks.get(bad).name == "default"
+
+
 @pytest.mark.req("FR-6.7")
 def test_live_alert_fires_once_per_version():
     led = Ledger(":memory:")

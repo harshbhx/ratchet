@@ -1,0 +1,32 @@
+# ADR 0012: Validate and normalise OpenAI requests at the gateway, and answer errors in OpenAI's envelope
+
+- Status: Accepted
+- Date: 2026-10-20
+
+## Context
+
+Ratchet's first promise is "change only your base URL" (PRD US-1). Up to v0.4, `/v1/chat/completions` took the body as an untyped dict and checked only that `messages` was a non-empty list. Everything else went straight into the cascade, so ordinary client mistakes crashed it: `{"messages": ["hi"]}`, `"metadata": "x"` and OpenAI text content parts (`[{"type": "text", "text": ...}]`, which current SDKs and frameworks send) all returned HTTP 500. Errors used FastAPI's `{"detail": ...}`, which the OpenAI SDKs cannot read: an unknown `/v1` path gave a `NotFoundError` whose `code`, `type` and `param` were all `None`. There was no size limit at all, so one large body or a 2 MB prompt reached the teacher and its bill (threat model T11).
+
+## Decision
+
+- **One standard-library module, `ratchet/openai_compat.py`, owns the request contract.** `parse_body` (strict JSON), `validate_chat_request` (returns a typed `ChatRequest`) and `normalize_messages` run in the gateway before the quota check and before anything is logged, billed or sent to a model. Validation is O(body) and does no I/O. The order on `/v1/chat/completions` is: a declared body size (413, from `Content-Length`, before anything else), API key (401), the body read and counted (413 for a chunked body over the limit), JSON and validation (400), daily quota (429), cascade. A refused request writes no ledger row and uses no quota.
+- **Strict about what Ratchet reads or will forward, lenient about the rest.** Messages, roles, content parts, `metadata`, sampling ranges, `n`, `stop`, `logit_bias`, `response_format`, `tools` and friends are checked against OpenAI's documented shapes, and each 400 names the problem with a JSON path in `param` (`messages[2].content`) and a code (`invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `invalid_json`, `context_length_exceeded`, `unsupported_content_type`). Unknown top-level fields are kept in `ChatRequest.extra` and ignored, so a newer SDK or a third-party client that sends a field Ratchet does not know is not refused.
+- **Normalise to the plain form, and leave plain requests untouched.** `developer` becomes `system`; a content list of text parts becomes one string; an assistant refusal part becomes text; assistant `audio` is dropped; `RATCHET_MERGE_SYSTEM=1` merges leading system messages. A message that is already plain comes back as the same object, so example hashes, golden splits, mock lookups and the pinned reference simulation do not move, and a request sent as text parts dedupes with the same request sent as a string. Other content parts are refused (`unsupported_content_type`) unless `RATCHET_TEACHER_MODALITIES` lists them; then the request goes to the teacher only, on the pinned path, and nothing is stored, so no image bytes reach the ledger or a text-only student.
+- **OpenAI's error envelope on `/v1/*` and `/openai/*` only.** `{"error": {"message", "type", "param", "code"}}` for validation errors (`APIError`), plain HTTP errors (401 `invalid_api_key`, 404 `unknown_url`, 413 `request_too_large`, 429 `rate_limit_error`, 5xx `api_error`), framework validation errors (400) and unhandled exceptions (500, with a `gateway_error` ledger event at the 1st, 10th, 100th, ... occurrence, class name only). The body also repeats the message as `detail` for one release, for clients and tests written against `{"detail": ...}`. Every other route (`/ratchet/*`, Scout, pages) keeps FastAPI's shape, which the dashboard reads.
+- **Limits are settings, not constants**: `RATCHET_MAX_BODY_BYTES` (2 MiB, enforced by `BodyLimitMiddleware` from `Content-Length` and while counting chunked bodies), `RATCHET_MAX_MESSAGES` (256), `RATCHET_MAX_INPUT_CHARS` (120,000). `n` above 1 is `unsupported_value` until the gateway can return several choices.
+- **The daily-quota 429 carries `Retry-After` and `X-Should-Retry: false`**, because OpenAI SDKs retry every 429 by default and a daily quota cannot recover before midnight.
+
+## Consequences
+
+- Client mistakes are 4xx with a readable reason; `openai.BadRequestError` has `.code` and `.param`. A 500 now means a bug in Ratchet, and the ledger records that it happened.
+- `metadata.ratchet_task` must be a valid task name; before, an invalid one silently became `default`. The `X-Ratchet-Task` header keeps its old leniency (invalid names become `default`) and still wins over `metadata`.
+- The chat route reads its body by hand, so FastAPI no longer validates it; the route declares an `openapi_extra` request body so `/docs` still shows one. Validation, the quota check and the cascade run in one worker thread, so neither a large body nor the ledger lock blocks the event loop.
+- In live mode a `KeyError` from the cascade is a 500, not the mock-mode "only answers demo requests" 400.
+- Later items extend the same module: forwarding generation parameters, tools, structured outputs, `n > 1`. `ChatRequest` already carries every field they need.
+
+## Alternatives considered
+
+- **Pydantic models for the request.** FastAPI would answer with its own 422 shape, `extra="forbid"` refuses unknown fields while `extra="allow"` hides them, and JSON-path `param`s and OpenAI's codes would need a translation layer anyway. A small hand-written validator is faster, has no hidden coercion (`"1"` is not a number), and reads like OpenAI's documentation.
+- **Reject unknown fields.** Safer in theory, but every SDK release adds fields (`service_tier`, `prompt_cache_key`, `verbosity`); refusing them would break the drop-in promise for no gain, since Ratchet does not act on them.
+- **Envelope on every route.** The dashboard and Scout pages read `detail`; changing them is UI work with no client benefit.
+- **Limits only at the proxy (Caddy).** The demo VM has a proxy, but a local or Docker deployment does not, and the input-character limit needs the parsed body.

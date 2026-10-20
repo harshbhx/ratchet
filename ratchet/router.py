@@ -110,6 +110,12 @@ class Ratchet:
         )
         return Result(tasks.strip_reasoning(c.text), "teacher", None, None, False, cost, cost, c.latency_ms, c.model)
 
+    def teacher_only(self, messages: list[dict[str, Any]], task_name: str | None = None, client: str | None = None) -> Result:
+        """A request the student cannot take, such as one with an image part the teacher reads
+        (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers, the request is logged, and nothing is
+        stored as a training example. No student, audit or shadow call."""
+        return self._pinned(tasks.get(task_name), messages, client)
+
     # ------------------------------------------------------------------
     def handle(self, messages: list[dict[str, Any]], task_name: str | None = None, client: str | None = None) -> Result:
         """`client` is the API key name that sent the request (None for internal calls and open gateways)."""

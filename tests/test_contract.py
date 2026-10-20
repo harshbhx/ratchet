@@ -56,10 +56,6 @@ PINNED_ENV = {
     "RATCHET_API_KEY_DAILY_REQUESTS": "0",
 }
 
-# API-VALIDATE-NORMALIZE (a v0.5 work item) gives every malformed request a 400 before the cascade runs. The xfail
-# marks are written out at each use, because the traceability scan reads marks literally (an xfail is never proof).
-BAD_REQUEST_BUG = "known bug: a malformed request reaches the cascade and gives HTTP 500; fixed by API-VALIDATE-NORMALIZE"
-
 
 # ---------- helpers ----------
 def _settings(**overrides: Any) -> Settings:
@@ -156,21 +152,9 @@ def test_task_from_metadata_and_header_precedence(gw_env):
         pytest.param({"messages": "hi"}, id="string"),
         pytest.param({"messages": {"role": "user", "content": "hi"}}, id="object"),
         pytest.param({"messages": 3}, id="number"),
-        pytest.param(
-            {"messages": [{"role": "robot", "content": "hi"}]},
-            marks=pytest.mark.xfail(strict=True, reason=BAD_REQUEST_BUG),
-            id="unknown-role",
-        ),
-        pytest.param(
-            {"messages": [{"role": "user", "content": 5}]},
-            marks=pytest.mark.xfail(strict=True, reason=BAD_REQUEST_BUG),
-            id="number-content",
-        ),
-        pytest.param(
-            {"messages": [{"role": "user", "content": None}]},
-            marks=pytest.mark.xfail(strict=True, reason=BAD_REQUEST_BUG),
-            id="null-user-content",
-        ),
+        pytest.param({"messages": [{"role": "robot", "content": "hi"}]}, id="unknown-role"),
+        pytest.param({"messages": [{"role": "user", "content": 5}]}, id="number-content"),
+        pytest.param({"messages": [{"role": "user", "content": None}]}, id="null-user-content"),
     ],
 )
 def test_missing_or_malformed_messages(gw_env, body):
@@ -182,7 +166,6 @@ def test_missing_or_malformed_messages(gw_env, body):
 
 
 @pytest.mark.req("FR-1.5")
-@pytest.mark.xfail(strict=True, reason=BAD_REQUEST_BUG)
 def test_messages_items_must_be_objects_400(gw_env):
     gw = _gateway(gw_env)
     c = TestClient(gw.app, raise_server_exceptions=False)
@@ -193,7 +176,6 @@ def test_messages_items_must_be_objects_400(gw_env):
 
 
 @pytest.mark.req("FR-1.3")
-@pytest.mark.xfail(strict=True, reason=BAD_REQUEST_BUG)
 def test_bad_metadata_is_400(gw_env):
     gw = _gateway(gw_env)
     c = TestClient(gw.app, raise_server_exceptions=False)
@@ -205,11 +187,6 @@ def test_bad_metadata_is_400(gw_env):
 
 
 @pytest.mark.req("FR-1.1")
-@pytest.mark.xfail(
-    strict=True,
-    reason="known bug: OpenAI text content parts reach the mock lookup as a list and give HTTP 500; "
-    "fixed by API-VALIDATE-NORMALIZE (text-only parts become one string)",
-)
 def test_text_content_parts_answered_in_mock(gw_env):
     gw = _gateway(gw_env)
     c = TestClient(gw.app, raise_server_exceptions=False)

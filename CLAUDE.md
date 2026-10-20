@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (179 tests, ~30 s, no network, no GPU)
+make test           # pytest -q (296 tests, ~35 s, no network, no GPU)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -50,7 +50,7 @@ Always run `make lint test` before committing.
 
 | Path | What |
 |---|---|
-| `ratchet/gateway.py` | FastAPI app: `/v1/chat/completions` (API keys, per-key quota, streaming), `/healthz`, `/ratchet/stats`, `/ratchet/bom`, `/ratchet/versions/{id}/bom`, `/ratchet/redact`, mock-only demo endpoints, pages (`/`, `/scout`, `/dashboard`), Scout endpoints (`/scout/*`) |
+| `ratchet/gateway.py` | FastAPI app: `/v1/chat/completions` (API keys, request validation, per-key quota, streaming; OpenAI error envelope on `/v1/*`, body limit), `/healthz`, `/ratchet/stats`, `/ratchet/bom`, `/ratchet/versions/{id}/bom`, `/ratchet/redact`, mock-only demo endpoints, pages (`/`, `/scout`, `/dashboard`), Scout endpoints (`/scout/*`) |
 | `ratchet/router.py` | The cascade (`Ratchet.handle`): pinned tasks → teacher; otherwise student → confidence → teacher, audits, shadow arbitration, cost accounting |
 | `ratchet/confidence.py` | Confidence score (logprob + self-consistency) and threshold calibration |
 | `ratchet/release.py` | `ReleaseGate`: golden gate, shadow, canary, rollback (Wilson bounds); `ReleasePolicy` |
@@ -58,6 +58,7 @@ Always run `make lint test` before committing.
 | `ratchet/licenses.py` | Teacher license registry; closed-model teachers are refused |
 | `ratchet/redact.py` | PII redaction (`[EMAIL]`, `[CARD]`, …) applied before examples are stored |
 | `ratchet/auth.py` | `KeyRing`: named gateway API keys from `RATCHET_API_KEYS` |
+| `ratchet/openai_compat.py` | OpenAI request contract (standard library only): `validate_chat_request` → `ChatRequest`, `normalize_messages` (developer → system, text parts → string), `APIError` and the error envelope, `Limits`. See [ADR 0012](docs/adr/0012-openai-request-validation-and-error-envelope.md) |
 | `ratchet/bom.py` | Per-adapter bill of materials, Ed25519 signing and verification, `python -m ratchet.bom` |
 | `ratchet/tasks.py` | Task registry: answer comparison (`compare_keys`) and `pinned` |
 | `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs) |
@@ -73,7 +74,7 @@ Always run `make lint test` before committing.
 | `scripts/day1_check.py` | Verifies model IDs, logprobs, JSON mode on Token Factory |
 | `scripts/regen_sim_reference.py` | Regenerates (or `--check`s) `tests/fixtures/sim_reference_seed7.json`, the pinned reference simulation that `test_reference_simulation_unchanged` compares exactly |
 | `scripts/reqtrace.py` | Requirements traceability: PRD rows and invariants → code (`CODE`) and `@pytest.mark.req` tests; writes and checks `docs/REQUIREMENTS.md` (generated, never edit by hand) |
-| `tests/conftest.py`, `tests/fakes.py` | Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) and test doubles (`RecordingProvider`, `RecordingTrainer`, `RecordingEvaluator`, `FakeClock`, ledger builders). See [tests/CLAUDE.md](tests/CLAUDE.md) |
+| `tests/conftest.py`, `tests/fakes.py`, `tests/sdk_bridge.py` | Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`), test doubles (`RecordingProvider`, `RecordingTrainer`, `RecordingEvaluator`, `FakeClock`, ledger builders) and `make_openai_client(app)` (the real OpenAI SDK against the gateway in-process). See [tests/CLAUDE.md](tests/CLAUDE.md) |
 | `docs/` | PRD, the generated requirements matrix (`REQUIREMENTS.md`), architecture, API, config, Scout, deployment (incl. the demo VM), runbook, threat model, testing, ADRs, business docs |
 
 ## Invariants (do not break these)
@@ -97,7 +98,7 @@ Always run `make lint test` before committing.
 
 - Python ≥ 3.10, type hints, `from __future__ import annotations`. Ruff, line length 130.
 - Plain, short docstrings that say *why*. No hype words in docs or UI copy.
-- Tests: pure logic in `tests/test_core.py`; Night School rules (INV-1 to INV-6, incl. the `add_example` allowlist) in `tests/test_nightschool.py`; the release gate, shadow arbitration and the canary split in `tests/test_release.py`; loop behaviour via `sim.simulate.run` in `tests/test_system.py`; regressions in `tests/test_hardening.py`; Scout, the research world and the guard in `tests/test_scout.py`; what clients, the dashboard and the license rules rely on (the gateway contract, the cascade's sampling, confidence, threshold, audit and cost semantics, the `/ratchet/stats` keys in `tests/fixtures/stats_keys.json`, which only grow) in `tests/test_contract.py`; the traceability check in `tests/test_traceability.py`; live mode, the CLIs and the deploy scripts, run offline through default-argument seams (`transport=`, `transports=`, `client=`, `run=`), in `tests/test_live.py`. Shared fixtures are in `tests/conftest.py`, fakes and ledger builders in `tests/fakes.py`. Assert on trends, not exact simulation numbers; the one exception is `test_reference_simulation_unchanged`, which pins the reference run exactly (regenerate it only with `scripts/regen_sim_reference.py` and a CHANGELOG line). Never call real APIs in tests (use `httpx.MockTransport` or `RecordingProvider`).
+- Tests: pure logic in `tests/test_core.py`; Night School rules (INV-1 to INV-6, incl. the `add_example` allowlist) in `tests/test_nightschool.py`; the release gate, shadow arbitration and the canary split in `tests/test_release.py`; loop behaviour via `sim.simulate.run` in `tests/test_system.py`; regressions in `tests/test_hardening.py`; Scout, the research world and the guard in `tests/test_scout.py`; what clients, the dashboard and the license rules rely on (the gateway contract, the cascade's sampling, confidence, threshold, audit and cost semantics, the `/ratchet/stats` keys in `tests/fixtures/stats_keys.json`, which only grow) in `tests/test_contract.py`; OpenAI request validation, normalisation, the error envelope and the limits (incl. the real OpenAI SDK) in `tests/test_openai_compat.py`; the traceability check in `tests/test_traceability.py`; live mode, the CLIs and the deploy scripts, run offline through default-argument seams (`transport=`, `transports=`, `client=`, `run=`), in `tests/test_live.py`. Shared fixtures are in `tests/conftest.py`, fakes and ledger builders in `tests/fakes.py`. Assert on trends, not exact simulation numbers; the one exception is `test_reference_simulation_unchanged`, which pins the reference run exactly (regenerate it only with `scripts/regen_sim_reference.py` and a CHANGELOG line). Never call real APIs in tests (use `httpx.MockTransport` or `RecordingProvider`).
 - A new call to `Ledger.add_example` under `ratchet/` fails `test_add_example_called_only_from_allowed_callers` until it is added to `ALLOWED_ADD_EXAMPLE_CALLERS` in a reviewed change (INV-2, INV-10).
 - Behaviour change: update the PRD row and mark the proving test with `@pytest.mark.req("FR-a.b")`, then run `make trace`. A new requirement or invariant needs a `CODE` entry in `scripts/reqtrace.py`; ids never change (INV-n is the list number). Statuses follow the grammar in [PRD §6](docs/PRD.md#6-functional-requirements). `KNOWN_GAPS` only shrinks: remove an id when its test lands. See [docs/TESTING.md](docs/TESTING.md#traceability).
 - Simulation numbers are **mock**. Label them as simulation anywhere they appear (README, docs, video).
@@ -110,6 +111,7 @@ Always run `make lint test` before committing.
 
 - Unreleased: requirements traceability. Every PRD row and invariant maps to code and tests in the generated [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), checked by `make lint` and CI; done requirements without a test are listed there as known gaps (none left).
 - Unreleased: the live entry points are tested offline (`tests/test_live.py`): `ratchet.live`, the gateway's live `Runtime`, `LiveEvaluator`, `train.py`'s arguments, the Scout and simulator CLIs, the mock warm-up, `RATCHET_TRUST_PROXY`, the day-1 check and the deploy scripts. The student's sampling is one constant, `confidence.STUDENT_SAMPLING`.
+- Unreleased: strict `/v1/chat/completions` validation and normalisation (FR-1.10): client mistakes are 400s in OpenAI's error envelope, never 500s, and cost nothing; body, message and input limits; the developer role and text content parts work ([ADR 0012](docs/adr/0012-openai-request-validation-and-error-envelope.md)).
 - Unreleased: a test safety net before refactoring: INV-1 to INV-6, the Night School skip and retrain rules, every release-gate rule, shadow arbitration and the canary split are tested directly, and a pinned reference simulation must stay byte-identical. Contract tests pin the gateway, the cascade's semantics, the `/ratchet/stats` keys and the license rules before the router and gateway rewrites; known bugs there are strict xfails naming the item that fixes them.
 - v0.4.0: PII redaction before training, gateway API keys with per-key quotas, streaming, a signed bill of materials per adapter, `/healthz`, coverage in CI, and the dashboard's Trust and privacy panel; 87% line coverage at release.
 - v0.3.0: React web app (story landing page, Scout, dashboard) replaces the hand-written pages, which stay at `/lite*`.

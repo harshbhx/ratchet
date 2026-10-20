@@ -4,15 +4,18 @@
     RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app  # real Token Factory teacher
 
 Point any OpenAI SDK at http://localhost:8000/v1. Choose the task with the
-`X-Ratchet-Task` header (or `metadata.ratchet_task` in the body). With `RATCHET_API_KEYS`
-set, `/v1/*` needs `Authorization: Bearer <key>`.
+`X-Ratchet-Task` header (or `metadata.ratchet_task` in the body; the header wins). With `RATCHET_API_KEYS`
+set, `/v1/*` needs `Authorization: Bearer <key>`. Errors on `/v1/*` use OpenAI's envelope
+(`ratchet/openai_compat.py`); every other route keeps FastAPI's `{"detail": ...}`.
 Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
 """
 
 from __future__ import annotations
 
 import calendar
+import functools
 import json
+import math
 import queue
 import re
 import threading
@@ -23,10 +26,16 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 from fastapi import Body, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
 from . import bom as bomdoc
@@ -34,6 +43,16 @@ from .auth import KeyRing, bearer
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
+from .openai_compat import (
+    APIError,
+    Limits,
+    from_validation_errors,
+    http_error,
+    normalize_messages,
+    parse_body,
+    parse_modalities,
+    validate_chat_request,
+)
 from .providers import OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
@@ -108,6 +127,9 @@ class Runtime:
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
         self.keys = KeyRing(s.api_keys)
         self.signer = bomdoc.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        self.limits = Limits(max_messages=s.max_messages, max_input_chars=s.max_input_chars)
+        self.modalities = parse_modalities(s.teacher_modalities)
+        self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
         self.ratchet = Ratchet(s, self.ledger, teacher, resolver, seed=7)
         self.gate = ReleaseGate(self.ledger, policy)
         self.gate_lock = threading.Lock()
@@ -159,8 +181,117 @@ class Runtime:
         return Scout(call, self.search, max_results=self.settings.scout_max_results)
 
 
+# ----- errors and limits -----
+API_PREFIXES = ("/v1/", "/openai/")
+BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
+def _api_path(path: str) -> bool:
+    """OpenAI-style errors on the OpenAI-compatible routes; every other route keeps FastAPI's `{"detail": ...}`."""
+    return path.startswith(API_PREFIXES) or path in ("/v1", "/openai")
+
+
+class BodyTooLarge(HTTPException):
+    def __init__(self, limit: int) -> None:
+        super().__init__(413, f"The request body is larger than this gateway's limit of {limit} bytes.")
+
+
+def _http_error_response(path: str, method: str, exc: StarletteHTTPException) -> JSONResponse:
+    """The response for an HTTP error, in OpenAI's envelope on API paths and as `{"detail": ...}` elsewhere."""
+    if _api_path(path):
+        err = http_error(exc.status_code, str(exc.detail), method=method, path=path, headers=exc.headers)
+        return JSONResponse(err.body(), status_code=err.status, headers=err.headers or None)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+
+
+def _content_length(headers: list[tuple[bytes, bytes]]) -> int | None:
+    for name, value in headers:
+        if name == b"content-length":
+            try:
+                return int(value)
+            except ValueError:
+                return None  # the server rejects a malformed length before the app sees it
+    return None
+
+
+class BodyLimitMiddleware:
+    """413 for a request body over `max_bytes` (RATCHET_MAX_BODY_BYTES; 0 = no limit), before it is parsed. A declared
+    Content-Length over the limit is refused without reading anything; a chunked body is counted as it arrives and
+    refused once it passes the limit, so a client cannot stream an unbounded body into memory."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or self.max_bytes <= 0 or scope["method"] not in BODY_METHODS:
+            await self.app(scope, receive, send)
+            return
+        declared = _content_length(scope["headers"])
+        if declared is not None and declared > self.max_bytes:
+            response = _http_error_response(scope["path"], scope["method"], BodyTooLarge(self.max_bytes))
+            await response(scope, receive, send)
+            return
+        received = 0
+
+        async def counted() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise BodyTooLarge(self.max_bytes)  # an HTTPException, so the error handlers render it
+            return message
+
+        await self.app(scope, counted, send)
+
+
 rt = Runtime()
 app = FastAPI(title="Ratchet", version=__version__)
+app.add_middleware(BodyLimitMiddleware, max_bytes=rt.settings.max_body_bytes)
+
+
+@app.exception_handler(APIError)
+async def _api_error(request: Request, exc: APIError) -> JSONResponse:
+    return JSONResponse(exc.body(), status_code=exc.status, headers=exc.headers or None)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
+    if not _api_path(request.url.path):
+        return await http_exception_handler(request, exc)
+    return _http_error_response(request.url.path, request.method, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> Response:
+    if not _api_path(request.url.path):
+        return await request_validation_exception_handler(request, exc)
+    return await _api_error(request, from_validation_errors(exc.errors()))
+
+
+def _power_of_ten(n: int) -> bool:
+    digits = str(n)
+    return digits[0] == "1" and set(digits[1:]) <= {"0"}
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error(request: Request, exc: Exception) -> Response:
+    """A bug, not a client mistake: 500 (`api_error` on API paths). The server still logs the traceback. The ledger gets
+    a `gateway_error` event with the exception's class name only (a message could hold request text) at the 1st,
+    10th, 100th, ... occurrence, so a crash loop cannot flood it."""
+    rt.gateway_errors += 1  # handlers run on the event loop, one at a time
+    if _power_of_ten(rt.gateway_errors):
+        detail = f"{type(exc).__name__} (unhandled error {rt.gateway_errors})"
+        try:  # in a worker thread: the ledger lock may be held by a request in progress
+            await anyio.to_thread.run_sync(rt.ledger.event, "gateway_error", detail)
+        except Exception:  # noqa: BLE001 - the ledger may be what failed; the 500 must still go out
+            pass
+    if _api_path(request.url.path):
+        return await _api_error(request, APIError(500, "The server had an error while processing your request.", "api_error"))
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
+
 if (DIST / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
@@ -235,13 +366,21 @@ def _utc_midnight(now: float) -> float:
 
 
 def _quota(client: str | None) -> dict[str, str]:
-    """Rate-limit headers for this client; 429 when its daily quota is used up."""
+    """Rate-limit headers for this client; 429 when its daily quota is used up. The 429 says when it resets and tells
+    OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight)."""
     limit = rt.settings.api_key_daily_requests
     if client is None or limit <= 0:
         return {}
-    used = rt.ledger.client_requests_since(client, _utc_midnight(time.time()))
+    now = time.time()
+    midnight = _utc_midnight(now)
+    used = rt.ledger.client_requests_since(client, midnight)
     if used >= limit:
-        headers = {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Remaining-Requests": "0"}
+        headers = {
+            "X-RateLimit-Limit-Requests": str(limit),
+            "X-RateLimit-Remaining-Requests": "0",
+            "Retry-After": str(max(1, math.ceil(midnight + 86400 - now))),
+            "X-Should-Retry": "false",
+        }
         raise HTTPException(429, f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC", headers=headers)
     return {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
 
@@ -264,23 +403,43 @@ def models(authorization: str | None = Header(default=None), x_api_key: str | No
     return {"object": "list", "data": [{"id": "ratchet", "object": "model", "owned_by": "you"}]}
 
 
-@app.post("/v1/chat/completions", response_model=None)
-def chat(
-    body: dict[str, Any] = Body(...),
+# The body is read by hand (for the 400 on bad JSON and the size limit), so describe it for /docs.
+CHAT_BODY = {"requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object"}}}}}
+
+
+@app.post("/v1/chat/completions", response_model=None, openapi_extra=CHAT_BODY)
+async def chat(
+    request: Request,
     x_ratchet_task: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
 ) -> JSONResponse | StreamingResponse:
+    """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the body read and
+    counted (413 for a chunked body over the limit), JSON and request validation (400), daily quota (429), then the
+    cascade. A refused request writes no ledger row and uses no quota. Everything after reading the body runs in a
+    worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks the event
+    loop."""
     client = _client(authorization, x_api_key)
-    messages = body.get("messages")
-    if not isinstance(messages, list) or not messages:
-        raise HTTPException(400, "messages is required")
-    headers = _quota(client)
-    task = x_ratchet_task or (body.get("metadata") or {}).get("ratchet_task")
     try:
-        r = rt.ratchet.handle(messages, task, client=client)
-    except KeyError as e:  # mock mode only knows the synthetic tickets
-        raise HTTPException(400, f"mock mode only answers demo tickets: {e}") from e
+        raw = await request.body()
+    except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
+        raise APIError(400, "The client disconnected before the request body was complete.") from e
+    return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client))
+
+
+def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+    req = validate_chat_request(parse_body(raw), rt.limits)
+    messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
+    headers = _quota(client)
+    task = header_task or req.task  # the header wins over metadata.ratchet_task
+    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
+    serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
+    try:
+        r = serve(messages, task, client=client)
+    except KeyError as e:
+        if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
+            raise
+        raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e  # sim.world.lookup
     except httpx.HTTPError as e:  # the teacher itself failed: nothing left to fall back to
         raise HTTPException(502, f"teacher unavailable: {type(e).__name__}") from e
     rt.tick()
@@ -295,7 +454,7 @@ def chat(
     }
     cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
-    if not body.get("stream"):
+    if not req.stream:
         payload = {
             "id": cid,
             "object": "chat.completion",

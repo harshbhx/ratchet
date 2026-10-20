@@ -9,6 +9,8 @@ RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app --port 8000
 
 FastAPI also serves interactive docs at `/docs` and the schema at `/openapi.json`.
 
+Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed exceptions with `code` and `param` ([Errors](#errors)); every other route answers errors as `{"detail": ...}`. Every `POST`, `PUT` and `PATCH` body is limited to `RATCHET_MAX_BODY_BYTES` (2 MiB by default; larger is **413**).
+
 | Method | Path | Mode | Purpose |
 |---|---|---|---|
 | GET | `/` | both | Story page: the React app (`ratchet/web/dist/index.html`); falls back to `ratchet/web/landing.html` if the build is missing |
@@ -43,9 +45,9 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 ```
 
 - Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`) or as `X-API-Key: <key>`.
-- A missing or wrong key returns **401** `invalid or missing API key` with `WWW-Authenticate: Bearer`.
+- A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
-- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests`; past the cap the gateway returns **429** until 00:00 UTC. Concurrent requests can overshoot the cap by the number in flight.
+- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests`; past the cap the gateway returns **429** until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs do not retry it. Only answered requests count: a request refused with 400 or 413 uses no quota. Concurrent requests can overshoot the cap by the number in flight.
 - Pages, `/healthz`, `/ratchet/*` and Scout stay public. The read-only `/ratchet/stats` and `/ratchet/bom` are what the dashboard reads; the mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
 The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratchet/demo/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
@@ -58,17 +60,64 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `messages` | array of `{role, content}` | yes | Must be a non-empty list, or the response is 400 |
+| `messages` | array of message objects | yes | 1 to `RATCHET_MAX_MESSAGES` (256) messages ([Messages](#messages)) |
 | `model` | string | no | Ignored; Ratchet chooses the model. Use `"ratchet"` |
 | `stream` | bool | no | `true` returns Server-Sent Events in the OpenAI chunk format ([Streaming](#streaming)) |
-| `metadata.ratchet_task` | string | no | Task name, used if the header is absent |
-| any other field | | no | Ignored (`temperature`, `max_tokens`, `tools`, … are not forwarded yet) |
+| `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent |
+| `n` | integer | no | Must be 1 (one choice per request for now); 2 or more is a 400 `unsupported_value` |
+| `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `logprobs`, `top_logprobs`, `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `functions`, `function_call`, `user`, `safety_identifier`, `store`, `reasoning_effort`, `stream_options` | | no | Checked against OpenAI's rules ([Request validation](#request-validation)), so a malformed value is a 400 rather than a surprise later, but not forwarded to the models yet. `max_completion_tokens` wins over `max_tokens`; a string `stop` counts as a one-item list |
+| any other field | | no | Ignored on purpose: unknown fields are kept and ignored, not refused, so newer OpenAI SDKs and third-party clients that send fields Ratchet does not know (`service_tier`, `prompt_cache_key`, …) keep working |
+
+`null` for any optional field means it is not set.
 
 | Header | Meaning |
 |---|---|
-| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`. Unknown names create a plain-text task on the fly (see [CONFIGURATION.md](CONFIGURATION.md#tasks)). Missing means `default` |
+| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. Unknown names create a plain-text task on the fly (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); a header that is not a valid name means `default`. Missing means `metadata.ratchet_task`, else `default` |
+
+#### Messages
+
+| Role | Content | Notes |
+|---|---|---|
+| `system`, `user` | string or array of content parts | |
+| `developer` | string or array of content parts | OpenAI's newer name for `system`; Ratchet sends and stores it as `system` |
+| `assistant` | string, array of parts, or `null` with `tool_calls` or `function_call` | `refusal` parts become text; `audio` is dropped |
+| `tool` | string or array of text parts | Needs `tool_call_id` |
+| `function` | string | Legacy |
+
+Content parts: `{"type": "text", "text": "..."}` in any message, and `{"type": "refusal", "refusal": "..."}` in assistant messages. A message made only of text parts is turned into one string, the parts joined by newlines, before anything else happens, so it is answered, deduplicated and stored exactly like the same text sent as a string. Messages already in the plain form pass through unchanged. Other part types (`image_url`, `input_audio`, `file`) get **400** `unsupported_content_type`, unless `RATCHET_TEACHER_MODALITIES` lists them ([CONFIGURATION.md](CONFIGURATION.md#request-limits-and-openai-compatibility)): then the request goes to the teacher only, with the parts as sent, and nothing is stored as a training example. `RATCHET_MERGE_SYSTEM=1` merges consecutive leading system messages into one.
 
 The task decides how answers are compared. `ticket-triage` compares only the JSON fields `category` and `priority`; `default` compares the whole normalised text. Pinned tasks (`research-plan`, `research-write`) skip the student and always go to the teacher; their answers are not stored as training examples. The full list is in [CONFIGURATION.md](CONFIGURATION.md#tasks).
+
+#### Request validation
+
+Every rule runs before the quota check and before any model call; a refused request is not logged and costs nothing. Each 400 names the first problem: `param` is a JSON path to the field (`messages[2].content`, `response_format.json_schema.name`) and `code` says what is wrong (`invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`).
+
+| Field | Rule | `code` when broken |
+|---|---|---|
+| (body) | At most `RATCHET_MAX_BODY_BYTES` (2 MiB) | 413 `request_too_large` |
+| (body) | Strict JSON (no `NaN` or `Infinity`), and a JSON object | `invalid_json`; `invalid_type` |
+| `messages` | A non-empty array of at most `RATCHET_MAX_MESSAGES` (256) objects | `missing_required_parameter`, `invalid_type`, `invalid_value` |
+| `messages[i].role` | `system`, `developer`, `user`, `assistant`, `tool` or `function` | `invalid_value` |
+| `messages[i].content` | A string, a non-empty array of content parts each with a string `type` (`text` parts need a string `text`, `refusal` parts a string `refusal`), or `null` only in an assistant message with `tool_calls` or `function_call` | `invalid_type`, `missing_required_parameter` |
+| `messages[i].content[j].type` | `text`, `refusal` (assistant only) or a type in `RATCHET_TEACHER_MODALITIES` | `unsupported_content_type` |
+| `messages[i].tool_call_id` | Required, a string, when the role is `tool` | `missing_required_parameter` |
+| `messages[i].name`, `.tool_calls`, `.function_call` | A string; an array of objects; an object | `invalid_type` |
+| all message text | At most `RATCHET_MAX_INPUT_CHARS` (120,000) characters, strings and text parts added up (`param`: `messages`) | `context_length_exceeded` |
+| `temperature` / `top_p` | A number from 0 to 2 / from 0 to 1 | `invalid_type`, `invalid_value` |
+| `n` | 1 (an integer below 1 is `invalid_value`) | `unsupported_value` |
+| `max_tokens`, `max_completion_tokens` | An integer of at least 1 | `invalid_type`, `invalid_value` |
+| `stop` | A string or an array of at most 4 strings | `invalid_type`, `invalid_value` |
+| `presence_penalty`, `frequency_penalty` | A number from -2 to 2 | `invalid_type`, `invalid_value` |
+| `seed` | An integer | `invalid_type` |
+| `logprobs` / `top_logprobs` | A boolean / an integer from 0 to 20, only with `logprobs: true` | `invalid_type`, `invalid_value` |
+| `logit_bias` | An object of integers from -100 to 100 | `invalid_type`, `invalid_value` |
+| `metadata` | An object of at most 16 string values; keys up to 64 characters, values up to 512; `ratchet_task` 1 to 64 letters, digits, `_`, `.` or `-` | `invalid_type`, `invalid_value` |
+| `response_format` | `type` is `text`, `json_object` or `json_schema`. `json_schema` needs a `name` matching `^[A-Za-z0-9_-]{1,64}$`; its `schema`, if sent, must be an object of at most 64 KB and 16 levels | `missing_required_parameter`, `invalid_type`, `invalid_value` |
+| `tools` | At most 128 entries of `{"type": "function", "function": {"name": ...}}` (name as above), at most 64 KB in all. Other tool types are `unsupported_value` | `invalid_type`, `invalid_value`, `unsupported_value` |
+| `tool_choice` | `none`, `auto`, `required` or `{"type": "function", "function": {"name": ...}}` | `invalid_type`, `invalid_value` |
+| `functions`, `function_call` | The legacy forms: functions named as above; `none`, `auto` or `{"name": ...}` | `invalid_type`, `invalid_value` |
+| `stream`, `parallel_tool_calls`, `store` | Booleans | `invalid_type` |
+| `model`, `user`, `safety_identifier`, `reasoning_effort` / `stream_options` | Strings / an object | `invalid_type` |
 
 ### Response (200)
 
@@ -125,7 +174,7 @@ data: {"id":"chatcmpl-…","object":"chat.completion.chunk",…,"choices":[{"ind
 data: [DONE]
 ```
 
-The cascade has to see the student's whole answer to score its confidence before it decides who serves, so the answer is complete before the first chunk is sent: time to first token equals the full latency. Streaming exists so that clients built for streaming work unchanged. Errors (400, 401, 429, 502) are returned as normal HTTP errors before the stream starts.
+The cascade has to see the student's whole answer to score its confidence before it decides who serves, so the answer is complete before the first chunk is sent: time to first token equals the full latency. Streaming exists so that clients built for streaming work unchanged. Errors (400, 401, 413, 429, 502) are returned as normal JSON HTTP errors before the stream starts.
 
 ```python
 for chunk in client.chat.completions.create(model="ratchet", messages=msgs, stream=True):
@@ -134,14 +183,40 @@ for chunk in client.chat.completions.create(model="ratchet", messages=msgs, stre
 
 ### Errors
 
-| Status | When | Body `detail` |
-|---|---|---|
-| 400 | `messages` missing, not a list, or empty | `messages is required` |
-| 401 | API keys are on and the key is missing or wrong | `invalid or missing API key` |
-| 429 | The key's daily quota is used up | `daily request quota of N used up for 'acme'; resets at 00:00 UTC` |
-| 400 | Mock mode, the last user message is not a synthetic demo ticket or a Scout request from the mock research world | `mock mode only answers demo tickets: '...'` |
-| 422 | Body is not JSON | FastAPI validation error |
-| 502 | Live mode: the teacher call failed (`httpx` error) | `{"detail": "teacher unavailable: ConnectError"}`. Student failures do not cause errors: they fall back to the teacher. See [RUNBOOK.md](RUNBOOK.md#playbooks) |
+Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDKs turn into typed exceptions (`openai.BadRequestError`, `AuthenticationError`, `NotFoundError`, `RateLimitError`, `InternalServerError`, …) with `.code`, `.param` and `.type`:
+
+```json
+{
+  "error": {"message": "Invalid value for 'temperature': expected a number from 0 to 2, but got 3 instead.",
+            "type": "invalid_request_error", "param": "temperature", "code": "invalid_value"},
+  "detail": "Invalid value for 'temperature': expected a number from 0 to 2, but got 3 instead."
+}
+```
+
+`detail` repeats `error.message` for one release (v0.5), for clients written against earlier versions, then goes away: read `error`. Routes outside `/v1` (`/ratchet/*`, Scout, pages) keep FastAPI's `{"detail": ...}`.
+
+| Status | `type` | `code` | When | Retried by OpenAI SDKs? |
+|---|---|---|---|---|
+| 400 | `invalid_request_error` | `invalid_json`, `invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `context_length_exceeded`, `unsupported_content_type` | The request breaks a rule in [Request validation](#request-validation); `param` names the field | No |
+| 400 | `invalid_request_error` | `null` | Mock mode only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`) | No |
+| 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
+| 404 | `not_found_error` | `unknown_url` | No such route: `Unknown request URL: POST /v1/foo.` | No |
+| 405 | `invalid_request_error` | `null` | A route called with the wrong method (`Allow` names the right one) | No |
+| 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
+| 429 | `rate_limit_error` | `null` | The key's daily quota is used up (`daily request quota of N used up for 'acme'; resets at 00:00 UTC`); `Retry-After` and `X-Should-Retry: false` | No: the response tells them not to |
+| 500 | `api_error` | `null` | A bug in the gateway (`The server had an error while processing your request.`). The message never includes request text; the ledger records a `gateway_error` event with the exception's class at the 1st, 10th, 100th, ... occurrence | Yes |
+| 502 | `api_error` | `null` | Live mode: the teacher call failed (`teacher unavailable: ConnectError`). Student failures do not cause errors: they fall back to the teacher. See [RUNBOOK.md](RUNBOOK.md#playbooks) | Yes |
+
+OpenAI's Python and Node SDKs retry connection errors, 408, 409, 429 and 5xx responses twice by default, with backoff, unless the response carries `x-should-retry`. Set `max_retries=0` on the client to turn that off.
+
+```python
+import openai
+
+try:
+    client.chat.completions.create(model="ratchet", messages=msgs, temperature=3)
+except openai.BadRequestError as e:
+    print(e.status_code, e.code, e.param)  # 400 invalid_value temperature
+```
 
 ### Examples
 
