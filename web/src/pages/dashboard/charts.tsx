@@ -144,7 +144,7 @@ export function CostChart({ days, emptyAction }: { days: DayStats[]; emptyAction
     <Panel
       id="cost"
       title="Cost per 1,000 requests"
-      description="What you paid per day, against sending every request to the teacher."
+      description="What you paid per day, with the student priced per token, against sending every request to the teacher."
       actions={days.length > 0 && <ViewToggle table={table} onChange={setTable} label="cost per 1,000 requests" />}
     >
       {days.length === 0 ? (

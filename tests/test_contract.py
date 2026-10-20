@@ -2,8 +2,9 @@
 `gateway.chat` are rewritten.
 
 - Gateway: `/v1/models`, task selection (the header wins over `metadata`), request validation, `/ratchet/bom`, the
-  `/ratchet/stats` keys the dashboard reads (tests/fixtures/stats_keys.json: add keys, never remove them) and the demo
-  controls refusing live mode.
+  `/ratchet/stats` keys the dashboard reads (tests/fixtures/stats_keys.json: add keys, never remove them), the
+  `/ratchet/cost` keys its Economics panel reads (tests/fixtures/cost_keys.json, the same rule) and the demo controls
+  refusing live mode.
 - Cascade: one student call per request with the production sampling parameters, the confidence formula, the threshold
   boundary, the audit rate, cost accounting to the token, and a consistent ledger under concurrent requests. The
   client's generation parameters as each call receives them (student, serving teacher, audit, arbitration, pinned),
@@ -40,6 +41,7 @@ from ratchet.release import wilson
 from ratchet.router import ROUTES, USAGE_PARTS, Ratchet, RequestMeta, fingerprint
 
 STATS_KEYS = Path(__file__).resolve().parent / "fixtures" / "stats_keys.json"
+COST_KEYS = Path(__file__).resolve().parent / "fixtures" / "cost_keys.json"
 CHAT = "/v1/chat/completions"
 KEY = "contract-test-key-0123456789abcdef"
 TRIAGE = "ticket-triage"
@@ -393,6 +395,96 @@ def test_stats_contract(gw_env):
     for task in stats["tasks"]:  # every request has a route (FR-2.11)
         assert sum(task["routes"].values()) == task["requests"] and set(task["routes"]) <= set(ROUTES), task
     assert stats["versions"][0]["bom"] == "unsigned"
+
+
+# The keys the Economics panel started with: cost_keys.json may grow, but it must keep these.
+COST_MINIMUM = [
+    "views.per_token.total_usd",
+    "views.per_token.savings_usd",
+    "views.per_token.savings_pct",
+    "views.gpu_hours.total_usd",
+    "views.gpu_hours.savings_usd",
+    "views.gpu_hours.savings_pct",
+    "baseline_usd",
+    "recommendation",
+    "explanation",
+    "prices.verified",
+    "observed_student_requests_per_endpoint_hour",
+    "break_even_student_requests_per_gpu_hour",
+    "self_host_beats_hosted_above_requests_per_hour",
+    "daily[].savings_pct_per_token",
+    "daily[].savings_pct_gpu_hours",
+    "warnings",
+]
+COST_PINNED = {  # the cost settings the report depends on, so the shell cannot move this test
+    "RATCHET_STUDENT_COST_MODEL": "per_token",
+    "RATCHET_STUDENT_GPU_USD_PER_HOUR": "1.55",
+    "RATCHET_STUDENT_GPUS": "1",
+    "RATCHET_TRAIN_GPU_USD_PER_HOUR": "1.55",
+    "RATCHET_TRAIN_GPUS": "1",
+    "RATCHET_MOCK_ENDPOINT_HOURS": "24",
+    "RATCHET_PRICES_VERIFIED": "0",
+}
+
+
+@pytest.mark.req("FR-7.20", "FR-15.3")
+def test_cost_report_contract(gw_env):
+    """GET /ratchet/cost carries every key the dashboard's Economics panel reads, with its type, and the sums the panel
+    shows add up: each view's breakdown to its total, savings to baseline less total, and each day's dollars (which the
+    panel derives, web/src/pages/dashboard/economics-model.ts `dailySavings`) to the report's daily shares."""
+    spec = json.loads(COST_KEYS.read_text(encoding="utf-8"))["keys"]
+    assert _spec_errors(spec) == []
+    lost = sorted(set(COST_MINIMUM) - set(_spec_paths(spec)))
+    assert not lost, f"cost_keys.json lost {lost}: add keys, never remove them"
+
+    gw = _gateway(gw_env, **COST_PINNED)
+    c = TestClient(gw.app)
+    # A fresh gateway: every key is there, and the report is empty the way the panel's empty state tests for.
+    fresh = c.get("/ratchet/cost").json()
+    assert _contract_errors(spec, fresh, "cost", allow_empty=True) == []
+    assert (fresh["requests"], fresh["endpoint_hours"], fresh["training_hours"], fresh["daily"]) == (0, 0.0, 0.0, [])
+    assert fresh["recommendation"] == "insufficient_data" and fresh["views"]["gpu_hours"]["savings_pct"] is None
+
+    # Two simulated days and nights (endpoint hours, a training job) and a training job left open for 13 hours: now
+    # the open intervals and warnings have items too, and every list item is checked.
+    for _ in range(2):
+        gw.rt.simulate_day(600, "tickets")
+    led = gw.rt.ledger
+    led.compute_start("training_job", 1.55, 1, "cli", ts=led.now() - 13 * 3600)
+    r = c.get("/ratchet/cost").json()
+    assert _contract_errors(spec, r, "cost") == []
+    assert all(isinstance(w, str) for w in r["warnings"]) and any("training_job" in w for w in r["warnings"])
+    assert r["prices"] == {**r["prices"], "verified": False, "label": "unverified list prices"}
+
+    # The panel's breakdown rows add up to each view's total, and savings are the baseline less the total (never clamped).
+    tok, gpu = r["views"]["per_token"], r["views"]["gpu_hours"]
+    assert tok["total_usd"] == pytest.approx(r["teacher_usd"] + r["student_per_token_usd"])
+    assert gpu["total_usd"] == pytest.approx(r["teacher_usd"] + r["endpoint_usd"] + r["training_usd"] + r["hosted_student_usd"])
+    for view in (tok, gpu):
+        assert view["savings_usd"] == pytest.approx(r["baseline_usd"] - view["total_usd"])
+        assert view["savings_pct"] == pytest.approx(view["savings_usd"] / r["baseline_usd"])
+    assert gpu["savings_usd"] < 0 < tok["savings_usd"]  # simulation: a 24 h endpoint at 600 requests a day does not pay
+
+    # Each day in dollars as the panel derives them, against the report's own shares.
+    assert r["daily"] and [d["day"] for d in r["daily"]] == sorted(d["day"] for d in r["daily"])
+    for d in r["daily"]:
+        per_token = d["baseline_usd"] - (d["teacher_usd"] + d["student_per_token_usd"])
+        hosted = d["student_per_token_usd"] if d["endpoint_hours"] <= 0 else 0.0
+        by_gpu = d["baseline_usd"] - (d["teacher_usd"] + d["endpoint_usd"] + d["training_usd"] + hosted)
+        if d["baseline_usd"] > 0:
+            assert per_token == pytest.approx(d["baseline_usd"] * d["savings_pct_per_token"]), d
+            assert by_gpu == pytest.approx(d["baseline_usd"] * d["savings_pct_gpu_hours"]), d
+        else:
+            assert d["savings_pct_per_token"] is d["savings_pct_gpu_hours"] is None, d
+    assert sum(d["endpoint_hours"] for d in r["daily"]) == pytest.approx(r["endpoint_hours"])
+
+    # The summary the panel falls back to (/ratchet/stats `cost`) is the same report; the open job keeps counting, so
+    # its GPU-hour share moves a little between the two calls.
+    summary = c.get("/ratchet/stats").json()["cost"]
+    assert (summary["model"], summary["recommendation"]) == (r["model"], r["recommendation"])
+    assert summary["endpoint_hours"] == pytest.approx(r["endpoint_hours"])
+    assert summary["gpu_hours_savings_pct"] == pytest.approx(gpu["savings_pct"], rel=1e-3)
+    assert summary["break_even_student_requests_per_gpu_hour"] == pytest.approx(r["break_even_student_requests_per_gpu_hour"])
 
 
 # ---------- gateway: mock-only controls ----------

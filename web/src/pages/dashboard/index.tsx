@@ -9,6 +9,7 @@ import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
+import { EconomicsPanel, hasEconomics } from "./economics";
 import { KpiSkeleton, Kpis } from "./kpis";
 import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
 import { Pipeline } from "./pipeline";
@@ -17,7 +18,7 @@ import { ReleaseLog } from "./release-log";
 import { TasksTable, VersionsTable } from "./tables";
 import { TrustPanel } from "./trust";
 import { DetailText, KindChip } from "./ui";
-import { useDashboardStats, useNow } from "./use-dashboard";
+import { useCostReport, useDashboardStats, useNow } from "./use-dashboard";
 
 const POLL_MS = 15000;
 const DAY_REQUESTS = 1500;
@@ -216,6 +217,7 @@ function Reveal({ children, className, delay = 0 }: { children: ReactNode; class
 
 export default function DashboardPage() {
   const { stats, error, updatedAt, loading, refreshing, refresh } = useDashboardStats(POLL_MS);
+  const cost = useCostReport(updatedAt);
   const [workload, setWorkload] = useState<Workload>("mixed");
   const [busy, setBusy] = useState<Busy>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -364,6 +366,12 @@ export default function DashboardPage() {
                   <CostChart days={stats.days} />
                   <ShareChart days={stats.days} />
                 </Reveal>
+
+                {hasEconomics(stats, cost) && (
+                  <Reveal delay={0.11}>
+                    <EconomicsPanel stats={stats} cost={cost} />
+                  </Reveal>
+                )}
 
                 <Reveal delay={0.12}>
                   <VersionsTable versions={stats.versions} />

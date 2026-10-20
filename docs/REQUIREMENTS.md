@@ -8,7 +8,7 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Status | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Done | 0 | 73 | 7 | 0 | 0 | 80 |
+| Done | 0 | 74 | 7 | 0 | 0 | 81 |
 | Done, untested live | 0 | 11 | 1 | 0 | 0 | 12 |
 | Done, more planned | 0 | 1 | 2 | 0 | 0 | 3 |
 | Partial | 0 | 0 | 1 | 0 | 0 | 1 |
@@ -17,14 +17,14 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
 | Invariant | 0 | 0 | 0 | 0 | 17 | 17 |
-| **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
+| **Total** | **11** | **99** | **11** | **5** | **17** | **143** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 84 | 11 | 0 | 17 | 123 |
+| Tested | 11 | 85 | 11 | 0 | 17 | 124 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
 | No check needed | 0 | 13 | 0 | 5 | 0 | 18 |
-| **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
+| **Total** | **11** | **99** | **11** | **5** | **17** | **143** |
 
 ## 5. User stories and acceptance criteria
 
@@ -155,6 +155,7 @@ From [PRD §6.7](PRD.md#67-dashboard).
 | FR-7.6 | Light and dark mode; works at phone width | Done (v0.1) | `web/src/styles/globals.css`<br>`web/src/components/layout/site-header.tsx` | — | manual check: `web/CLAUDE.md` (dashboard UI: checked in light and dark mode at 1440 and 390 px with Playwright; CI typechecks and builds it) |
 | FR-7.7 | By task table (requests, student share, escalations, savings, route) from `tasks` in… | Done (v0.2) | `ratchet.ledger:Ledger.stats_by_task`<br>`web/src/pages/dashboard/tables.tsx` | `tests/test_contract.py::test_stats_contract`<br>`tests/test_scout.py::test_gateway_scout_routes`<br>`tests/test_scout.py::test_stats_mark_pinned_tasks` | tested |
 | FR-7.8 | Traffic selector for Run 1 day + night (tickets, Scout research calls, both); demo controls run one… | Done (v0.2) | `ratchet.gateway:demo_day`<br>`ratchet.gateway:demo_reset`<br>`web/src/pages/dashboard/controls.tsx` | `tests/test_scout.py::test_gateway_scout_routes`<br>`tests/test_scout.py::test_demo_controls_are_serialised_and_reset_has_a_cooldown` | tested |
+| FR-7.20 | Economics panel from `GET /ratchet/cost`: savings per token and by GPU-hours paid side by side agai… | Done (v0.5) | `web/src/pages/dashboard/economics.tsx`<br>`web/src/pages/dashboard/economics-model.ts`<br>`ratchet.gateway:cost` | `tests/test_contract.py::test_cost_report_contract` | tested |
 
 ## 6.8 Live operations on Nebius
 
@@ -229,7 +230,7 @@ From [PRD §6.15](PRD.md#615-cost-and-economics).
 |---|---|---|---|---|---|
 | FR-15.1 | Each request's cost is split into student and teacher spend (`requests.student_cost_usd`,… | Done (v0.5) | `ratchet.router:Ratchet.handle`<br>`ratchet.router:Ratchet._teacher_only`<br>`ratchet.router:Result`<br>`ratchet.ledger:SCHEMA`<br>`ratchet.ledger:MIGRATIONS` | `tests/test_cost.py::test_split_is_exact_on_every_cost_path`<br>`tests/test_cost.py::test_pinned_and_teacher_only_requests_are_all_teacher_cost`<br>`tests/test_cost.py::test_split_holds_on_every_row_of_simulated_days`<br>`tests/test_cost.py::test_v04_database_gets_the_cost_columns_and_table` | tested |
 | FR-15.2 | Compute-time ledger: student endpoint uptime and training-job GPU-hours (`compute_intervals`), reco… | Done (v0.5), untested (on Nebius) | `ratchet.ledger:Ledger.compute_start`<br>`ratchet.ledger:Ledger.compute_stop`<br>`ratchet.ledger:Ledger.compute_intervals`<br>`ratchet.cost:segments`<br>`ratchet.cost:record_endpoint`<br>`ratchet.cost:record_simulated_day`<br>`ratchet.gateway:cost_endpoint`<br>`ratchet.nightschool.orchestrate:run_night`<br>`deploy/student_endpoint.sh` | `tests/test_cost.py::test_split_holds_on_every_row_of_simulated_days`<br>`tests/test_cost.py::test_overlapping_and_nested_intervals_are_not_double_counted`<br>`tests/test_cost.py::test_open_interval_counts_to_now_and_to_the_window`<br>`tests/test_cost.py::test_endpoint_start_is_idempotent_and_stop_closes_it`<br>`tests/test_cost.py::test_concurrent_endpoint_starts_keep_one_open_interval`<br>`tests/test_cost.py::test_bad_compute_records_are_refused`<br>`tests/test_cost.py::test_training_interval_is_closed_when_train_raises`<br>`tests/test_cost.py::test_simulated_endpoint_hours_follow_the_setting`<br>`tests/test_cost.py::test_post_endpoint_records_uptime_with_an_admin_key`<br>`tests/test_cost.py::test_post_endpoint_is_open_in_mock_capped_and_off_in_live`<br>`tests/test_cost.py::test_cli_records_and_reports`<br>`tests/test_cost.py::test_deploy_script_records_uptime_and_never_fails_on_it`<br>`tests/test_cost.py::test_v04_database_gets_the_cost_columns_and_table`<br>`tests/test_live.py::test_live_main_tick_reload_night_offline` | offline test; live check: `deploy/student_endpoint.sh` (real endpoint uptime and the `nebius ai endpoint` flags need a Nebius project; recording is tested with a stub) |
-| FR-15.3 | Cost report (`GET /ratchet/cost`, `python -m ratchet.cost report`): savings per token and by GPU-ho… | Done (v0.5) | `ratchet.cost:cost_report`<br>`ratchet.cost:main`<br>`ratchet.ledger:Ledger.cost_by_day`<br>`ratchet.gateway:cost`<br>`ratchet.gateway:stats` | `tests/test_cost.py::test_report_math_on_a_hand_built_ledger`<br>`tests/test_cost.py::test_live_ledger_days_count_from_the_first_request`<br>`tests/test_cost.py::test_student_answers_without_recorded_uptime_are_priced_per_token`<br>`tests/test_cost.py::test_report_warnings_and_daily_cap`<br>`tests/test_cost.py::test_mock_demo_with_a_24h_endpoint_does_not_pay`<br>`tests/test_cost.py::test_cli_records_and_reports`<br>`tests/test_cost.py::test_cli_runs_as_a_module_with_the_environment`<br>`tests/test_cost.py::test_bad_cost_settings_stop_startup_naming_the_variable`<br>`tests/test_live.py::test_sim_cli_writes_json_and_table` | tested |
+| FR-15.3 | Cost report (`GET /ratchet/cost`, `python -m ratchet.cost report`): savings per token and by GPU-ho… | Done (v0.5) | `ratchet.cost:cost_report`<br>`ratchet.cost:main`<br>`ratchet.ledger:Ledger.cost_by_day`<br>`ratchet.gateway:cost`<br>`ratchet.gateway:stats` | `tests/test_contract.py::test_cost_report_contract`<br>`tests/test_cost.py::test_report_math_on_a_hand_built_ledger`<br>`tests/test_cost.py::test_live_ledger_days_count_from_the_first_request`<br>`tests/test_cost.py::test_student_answers_without_recorded_uptime_are_priced_per_token`<br>`tests/test_cost.py::test_report_warnings_and_daily_cap`<br>`tests/test_cost.py::test_mock_demo_with_a_24h_endpoint_does_not_pay`<br>`tests/test_cost.py::test_cli_records_and_reports`<br>`tests/test_cost.py::test_cli_runs_as_a_module_with_the_environment`<br>`tests/test_cost.py::test_bad_cost_settings_stop_startup_naming_the_variable`<br>`tests/test_live.py::test_sim_cli_writes_json_and_table` | tested |
 | FR-15.4 | Self-host recommendation (self-host, hosted fallback, scale to zero, or not enough data) with a pla… | Done (v0.5) | `ratchet.cost:_recommend`<br>`ratchet.cost:_explain` | `tests/test_cost.py::test_report_math_on_a_hand_built_ledger`<br>`tests/test_cost.py::test_recommendation_for_each_branch`<br>`tests/test_cost.py::test_mock_demo_with_a_24h_endpoint_does_not_pay` | tested |
 | FR-15.5 | Verified savings receipts per API client: an audit-calibrated baseline with a confidence bound, bot… | Planned | — | — | not built yet |
 
