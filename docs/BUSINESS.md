@@ -76,8 +76,27 @@ Natural acquirers for Ratchet: Nebius (fills its continuous-optimization roadmap
 | Crowded field, funded rivals | License-clean wedge, release safety, Nebius/NVIDIA alignment |
 | Frontier cheap tiers shrink savings | Sell quality on the task, latency, ownership, compliance |
 | Platform terms (Token Factory ToS 5(f)) | Written clarification requested Oct 19, 2026; build as a Nebius-native product |
+| Self-hosting does not pay at low volume | Report savings by GPU-hours actually paid, not only per token; recommend the hosted fallback or scale-to-zero below break-even (see §10) |
 | Single founder bandwidth | Open-source contributors; co-founder search after hackathon |
 
 ## 10. Unit economics sketch (simulation-based, illustrative)
 
 From the simulation (mock models): all-teacher cost was about $1.09 per 1,000 ticket-triage requests and Ratchet's steady-state cost about $0.15–0.16, an 85–87% saving. At a 25% share of savings, a customer sending 10M such requests a month would save about $9,300 and pay about $2,300. GPU costs for training and serving must come out of that; confirm with live numbers before quoting to customers.
+
+### When self-hosting pays (utilization-aware)
+
+The figures above price the self-hosted student per token, using the hosted Nano price as a stand-in. A Nebius Serverless Endpoint bills GPU-hours while it runs, whether or not requests arrive, so the per-token view flatters the student whenever the endpoint sits idle. Nebius's own Serverless AI Builders Challenge reached the same conclusion: its second-place project found that self-hosting beats Token Factory on cost only at high utilization ([winners post](https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners)).
+
+The break-even point is simple:
+
+```
+break-even student-served requests per GPU-hour = GPU price per hour ÷ teacher cost avoided per student-served request
+```
+
+Worked example with **unverified list prices** (confirm on day 1): an L40S at about $1.55/hour, and about $0.001 of Ultra spend avoided per ticket-triage request (the simulation's all-teacher cost of $1.09 per 1,000). Break-even is about 1,500 student-served requests per GPU-hour, roughly 36,000 a day.
+
+- **At demo volume (1,500 requests a day) a 24/7 endpoint loses money.** Below break-even, use the hosted, untuned Nano fallback on Token Factory (pay per token), or run the endpoint only while traffic arrives (scale to zero).
+- **At customer volume the case holds.** 10M requests a month is about 14,000 an hour, far above break-even: a GPU running all month (about $1,100 at the price above) is small next to about $9,300 of avoided Ultra spend.
+- **The levers:** serve many LoRA adapters (tasks or customers) from one GPU with vLLM multi-LoRA, scale to zero between bursts, and fall back to the hosted model below break-even.
+
+Ratchet will report this itself: v0.5 adds utilization-aware cost accounting (endpoint uptime and training GPU-hours, savings computed both ways, the break-even volume and a self-host recommendation). See [ROADMAP.md](ROADMAP.md).
