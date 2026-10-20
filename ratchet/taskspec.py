@@ -14,10 +14,11 @@ lists every problem with its path (`tasks[2].fields.total.abs_tol: must be a num
 The comparator rules stay in `compare.FieldSpec` and `tasks.Task`, which check the spec again when it is built, so this
 module cannot admit a spec they refuse.
 
-`extends` copies another task's spec when the task is defined (a task earlier or later in the same file, or a
-registered one), then applies this one's keys: `fields`, `policy` and `match` merge by key (null removes the base's
-entry), every other key replaces the base's, and `name` and `description` are never inherited. The result is what is
-registered and stored, so later changes to the base do not reach a task that extended it.
+`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `policy` and
+`match` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and `description`
+are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
+because startup reads the file before it registers the stored API tasks; an API body may extend any registered task.
+The result is what is registered and stored, so later changes to the base do not reach a task that extended it.
 """
 
 from __future__ import annotations
@@ -434,15 +435,16 @@ def parse_document(
     doc: Any,
     source: str = "file",
     *,
-    lookup: LookupFn | None = None,
     known_clients: Iterable[str] | None = None,
     origin: str = "",
 ) -> list[tasks.Task]:
-    """A tasks document ({"tasks": [...]}) as Tasks with `source`, in its order. A task may extend another one of the
-    document, before or after it, or a registered one (`lookup`); a name extending itself extends the registered task of
-    that name (a file adjusting a built-in task). Names are unique, at most `tasks.MAX_TASKS`. Raises SpecError with
-    every problem of every task; `origin` (the file) heads its message."""
-    lookup = tasks.lookup if lookup is None else lookup
+    """A tasks document ({"tasks": [...]}) as Tasks with `source`, in its order, checked as startup reads
+    RATCHET_TASKS_FILE (`load_file`, and POST /ratchet/tasks/validate for a document). A task may extend another one of
+    the document, before or after it, or a built-in task; a name extending itself extends the built-in task of that
+    name (a file adjusting a built-in task). Never an API task: startup registers the file before the stored API tasks,
+    so a file that extends one would not start. Names are unique, and the document's tasks with the built-in tasks it
+    does not replace fit in `tasks.MAX_TASKS`. Raises SpecError with every problem of every task; `origin` (the file)
+    heads its message."""
     known = _clients(known_clients)
     if not isinstance(doc, Mapping):
         raise SpecError(["$: must be an object with a 'tasks' list"], origin)
@@ -468,6 +470,12 @@ def parse_document(
             continue
         raw[name] = (where, item)
         order.append(name)
+    kept = [name for name in tasks.BUILTIN if name not in raw]  # startup registers the file over the built-in tasks
+    if len(raw) + len(kept) > tasks.MAX_TASKS:
+        errs.append(
+            f"tasks: {len(raw)} tasks and the {len(kept)} built-in tasks this file does not replace come to "
+            f"{len(raw) + len(kept)}; the registry holds at most {tasks.MAX_TASKS}"
+        )
 
     built: dict[str, tuple[dict[str, Any], tasks.Task] | None] = {}
 
@@ -494,12 +502,12 @@ def parse_document(
                 else:
                     spec = _merge(base[0], item)
             else:
-                registered = lookup(base_name)
-                if registered is None:
-                    errs.append(f"{at}: no task is named {base_name!r} in this file or the registry")
+                builtin = tasks.BUILTIN.get(base_name)
+                if builtin is None:
+                    errs.append(f"{at}: no task is named {base_name!r} in this file or the built-in tasks")
                     spec = None
                 else:
-                    spec = _merge(document(registered), item)
+                    spec = _merge(document(builtin), item)
         task = _build(spec, where, source, known, errs) if spec is not None else None
         built[name] = (spec, task) if spec is not None and task is not None else None
         return built[name]
@@ -617,9 +625,10 @@ def _load_yaml(text: str, origin: str) -> Any:
     return doc
 
 
-def load_file(path: str | Path, known_clients: Iterable[str] | None = None, lookup: LookupFn | None = None) -> list[tasks.Task]:
+def load_file(path: str | Path, known_clients: Iterable[str] | None = None) -> list[tasks.Task]:
     """The tasks of a tasks file, with source `file`: YAML for a `.yaml` or `.yml` file (PyYAML must be installed),
-    JSON otherwise. Raises SpecError, which names the file and lists every error. Registers nothing."""
+    JSON otherwise (`parse_document`'s rules). Raises SpecError, which names the file and lists every error. Registers
+    nothing."""
     p = Path(path)
     origin = f"RATCHET_TASKS_FILE {p}"
     try:
@@ -633,33 +642,36 @@ def load_file(path: str | Path, known_clients: Iterable[str] | None = None, look
             doc = loads(text)
         except SpecError as e:
             raise SpecError(e.errors, origin) from None
-    return parse_document(doc, "file", lookup=lookup, known_clients=known_clients, origin=origin)
+    return parse_document(doc, "file", known_clients=known_clients, origin=origin)
 
 
 def install(ledger: Ledger, path: str | Path = "", known_clients: Iterable[str] | None = None) -> list[str]:
     """Set up the registry for a gateway or a Night School run: the built-in tasks, then the tasks file's (`path`, which
-    may replace a built-in task), then the API and auto tasks stored in the ledger's `tasks` table. A bad file raises
-    SpecError (startup stops, every error listed). A stored task that no longer parses, or whose name a built-in or file
-    task now has, is skipped: the returned lines say which and why, for the caller to log (stored tasks are data, so
-    one of them must not stop the gateway the admin API would fix it through)."""
-    tasks.reset_builtin()
+    may replace a built-in task), then the API and auto tasks stored in the ledger's `tasks` table. The registry is
+    built aside and published in one assignment (`tasks.replace_all`), so a request on another thread (a mock demo
+    reset) never sees it without the file's tasks, and a bad file leaves it as it was. A bad file raises SpecError
+    (startup stops, every error listed). A stored task that no longer parses, or whose name a built-in or file task now
+    has, is skipped: the returned lines say which and why, for the caller to log (stored tasks are data, so one of them
+    must not stop the gateway the admin API would fix it through)."""
     path = str(path).strip() if path else ""
+    registry = tasks.builtin_registry()
     for task in load_file(path, known_clients) if path else []:
-        tasks.register(task)
+        tasks.add(registry, task)
     skipped = []
     for row in ledger.saved_tasks():
         name, source = row["name"], row["source"]
         try:
-            task = parse_spec(row["spec"], source if source in ("api", "auto") else "api")
+            task = parse_spec(row["spec"], source if source in ("api", "auto") else "api", lookup=registry.get)
             if task.name != name:
                 raise SpecError([f"name: the stored spec names {task.name!r}"])
-            tasks.register(task)
+            tasks.add(registry, task)
         except SpecError as e:
             skipped.append(f"{name}: the stored spec is no longer valid ({e.errors[0]}); it is not registered")
         except tasks.TaskConflict as e:
             skipped.append(f"{name}: {e}; the stored {source} task is not registered")
         except (tasks.RegistryFull, ValueError) as e:
             skipped.append(f"{name}: {e}; it is not registered")
+    tasks.replace_all(registry)
     return skipped
 
 
