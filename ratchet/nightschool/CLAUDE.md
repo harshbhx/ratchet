@@ -22,3 +22,4 @@ One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)
 - Train from the base model on the cumulative dataset every night; do not stack adapters.
 - `train.py` runs inside the GPU container only. It is excluded from tests. LoRA target modules for Nemotron-H must be confirmed on day 1 (`--targets`).
 - Rows carry `provenance` (teacher, license, hash). Keep it all the way to `ratchet_manifest.json` next to the adapter.
+- Each rule above has a direct test in `tests/test_nightschool.py` (skip reasons, held-out golden rows, cumulative retraining from the base, held-out grading, champion re-score). Use `RecordingTrainer` and `RecordingEvaluator` from `tests/fakes.py` to test a new rule.

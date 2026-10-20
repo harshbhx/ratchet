@@ -23,6 +23,7 @@ Rules:
 
 - These parameters are assumptions, not measurements. Never present simulation output as real model quality.
 - If you change mock parameters, re-run `make sim` (and `--workload research`, `--workload mixed`) with seeds 1, 2, 3, 7, 11 and update [docs/TESTING.md](../docs/TESTING.md) if the trend changes.
+- `make sim` (seed 7, 10 days × 2,000, drift day 5, corrupted v3) is pinned exactly by `tests/fixtures/sim_reference_seed7.json` and `test_reference_simulation_unchanged`. Any change to the mock models, the streams or the loop that moves it fails that test. If the move is intended, run `python scripts/regen_sim_reference.py` and add a CHANGELOG line that says why ([tests/CLAUDE.md](../tests/CLAUDE.md#the-reference-simulation-fixture)).
 - Keep it deterministic: all randomness goes through seeded `random.Random` or `_rng(...)`.
 - **Do not change the order of random draws for tickets.** `TicketStream.sample`, the key order of `Ticket.label_space` (`category`, then `priority`) and the draw order in `MockStudent.complete` decide every ticket number. With them unchanged, `make sim` still reproduces the v0.1 table in README and TESTING exactly. Give new workloads their own RNG (as `ResearchStream` and `MixedStream` do) instead of drawing from the ticket stream's.
 - Scout messages in `research.py` must be built with `ratchet/scout/prompts.py`, never by hand, or mock lookups break.

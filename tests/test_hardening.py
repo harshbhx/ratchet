@@ -135,26 +135,6 @@ KEY_A = "a" * 32
 KEY_B = "b-" + "x" * 30
 
 
-@pytest.fixture()
-def gw_env(monkeypatch):
-    """A freshly loaded gateway in mock mode with extra settings; restores the default gateway afterwards."""
-    import importlib
-
-    import ratchet.gateway as gw
-
-    def load(**env):
-        monkeypatch.setenv("RATCHET_MODE", "mock")
-        monkeypatch.setenv("RATCHET_MOCK_WARMUP_DAYS", "0")
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-        importlib.reload(gw)
-        return gw
-
-    yield load
-    monkeypatch.undo()
-    importlib.reload(gw)
-
-
 @pytest.mark.req("FR-4.7", "NFR-4")
 def test_redact_finds_each_kind_and_checks_checksums():
     c = Counter()

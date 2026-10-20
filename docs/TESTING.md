@@ -2,27 +2,32 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 108 tests (test_core, test_system, test_hardening, test_scout, test_traceability), ~20 s
+pytest -q                     # 131 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_scout, test_traceability), ~25 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
+python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
 ```
 
 | File | Tests |
 |---|---|
 | `tests/test_core.py` | 19 (15 functions; one has 5 cases) |
-| `tests/test_system.py` | 7 |
+| `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
+| `tests/test_release.py` | 9 (8 functions; one has 2 cases) |
+| `tests/test_system.py` | 8 |
 | `tests/test_hardening.py` | 23 |
 | `tests/test_scout.py` | 15 |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| **Total** | **108** |
+| **Total** | **131** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`): the pure logic of each module.
-2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`): the whole loop over simulated days, the gateway API, the HTTP clients, and Scout end to end.
+1. **Unit tests** (`tests/test_core.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`): the whole loop over simulated days, the gateway API, the HTTP clients, and Scout end to end. One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
+
+Shared fixtures (`gw`, `gw_env`, `reference_run`) are in `tests/conftest.py`; the recording provider, trainer and evaluator, `FakeClock` and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
 
 Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
@@ -50,6 +55,35 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_canary_advances_then_goes_live` | 12 clean audits move canary 10 → 50; with no new audits it **holds** at 50 (per-stage counting); 12 more promote it to live and retire the old one |
 | `test_canary_rolls_back_on_strong_evidence` | 20 audits at 50% precision cause a rollback; live is unchanged; a `rollback` event is written |
 
+### `tests/test_nightschool.py`
+
+The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or `cascade_eval` on a small ledger with a `RecordingTrainer` and a `RecordingEvaluator`, so it can assert on exactly which rows reached the trainer and which golden rows were scored.
+
+| Test | Covers |
+|---|---|
+| `test_training_targets_are_teacher_answers_only` | INV-2: a student that answers `STUDENT-ONLY` with high confidence serves 200 requests with `audit_rate=1` and a shadow present, then 200 more without audits where a disagreeing shadow (`SHADOW-ONLY`) makes the teacher arbitrate and unparseable answers escalate. All 400 stored examples and dataset rows hold exactly the teacher's answer to their own request, and neither marker appears anywhere |
+| `test_add_example_called_only_from_allowed_callers` | INV-2, INV-10: an AST scan of `ratchet/` finds every use of `add_example` (a call, a bound method passed on, or `getattr(..., "add_example")`); each must sit in a function in `ALLOWED_ADD_EXAMPLE_CALLERS` (today only `Ratchet._call_teacher`), and every listed caller must still use it |
+| `test_add_example_guard_sees_indirect_uses` | The scanner itself, on a throwaway package: a direct call, `getattr` inside a nested function and a bound method in a module-level lambda are found and named; a docstring that mentions `add_example` is not |
+| `test_golden_rows_never_reach_the_trainer_except_frequent` | INV-3: the trainer gets the train split plus the golden requests seen at least `FREQUENT` (3) times; the evaluator gets the other golden rows; the two never overlap; a golden request seen twice stays held out; the stored split never changes |
+| `test_closed_teacher_rows_are_dropped_at_dataset_build` | INV-1: rows from `openai/gpt-4o` and an unregistered teacher in the ledger never reach `dataset.rows`, `train.jsonl`, `golden.jsonl`, the trainer, the evaluator or the adapter's BOM |
+| `test_night_skips_with_reason` (5 cases) | FR-4.4, INV-5: 49 new examples, 40 new since the last version, no golden set, a shadow in flight and a canary in flight each skip with their reason and a `skip` event; the trainer and evaluator are never called (not even to re-score the champion) and no version changes |
+| `test_retrain_from_base_on_cumulative_data` | FR-4.2: three nights (the first with exactly 50 new examples) all train from the same base model, never a previous adapter; each night's rows contain every earlier night's rows, and their counts (50, 100, 175) equal each version's `train_examples` |
+| `test_cascade_eval_measures_on_held_out_half` | INV-6: with right answers on even golden rows and wrong ones on odd rows at the same confidence, precision is 0.0 (graded on the odd half only), `test_n` is half of `golden_n` and all report keys are present; the mirror image calibrates on wrong answers and serves nothing (threshold 1.01) |
+| `test_champion_rescored_on_same_golden_set` | INV-4: the live version is evaluated first, on the same golden list as the candidate; its stored eval now holds the re-checked precision and coverage, with `rechecked_day` = the ledger's day; the candidate, which would regress against the stale eval, is admitted to shadow against the fresh one |
+
+### `tests/test_release.py`
+
+| Test | Covers |
+|---|---|
+| `test_gate_rejects_low_coverage` | Golden coverage one point under `min_coverage` is rejected; an eval without coverage is rejected (fails closed); exactly `min_coverage` passes |
+| `test_gate_tolerance_boundary` (2 cases) | For precision and for coverage: a candidate exactly `tolerance` worse than live is admitted to shadow; a hair more is rejected as a regression |
+| `test_admit_retires_older_inflight` | A rejected candidate leaves the shadow and canary in flight alone; an admitted one retires both (traffic 0, one `retired` event each) and is the only version in flight |
+| `test_shadow_promotes_and_both_rejections` | 99 would-serve answers hold; at 100, precision exactly 95% and live's coverage it moves to canary 10%; 90% precision is rejected; 50% coverage against a live student at 100% is rejected, but passes against a live student that also serves 50% |
+| `test_canary_holds_without_strong_evidence` | 18 of 20 audits (90%, under the 92% floor, Wilson upper bound above it) neither roll back nor advance, over several ticks; 20 more agreeing audits move it to 50% |
+| `test_rollback_without_live_returns_traffic_to_teacher` | A cold-start canary at 50% audited precision is rolled back with "traffic back to the teacher"; afterwards 50 requests are all answered by the teacher and the student is never called |
+| `test_shadow_arbitration_calls_teacher_once_and_stores_example` | A shadow that would serve a different answer than the live student triggers exactly one teacher call, whose answer is stored as the example, while the user keeps the live answer; agreeing or unsure shadows trigger none; with an audit, the audit is the reference and no second call is made; a shadow whose endpoint is down (`raise_on`) leaves the request untouched, with no shadow record and no extra cost (INV-7). Reported cost includes the shadow's samples, the arbitration and the audit (NFR-3) |
+| `test_canary_traffic_split` | `Ratchet._pick_version` with a seeded RNG: over 4,000 picks at 10% and at 50%, the canary's share is inside the 99% Wilson interval; 0% never picks it, 100% always does, and at cold start the rest of the traffic gets `None` (the teacher) |
+
 ### `tests/test_system.py`
 
 | Test | Covers |
@@ -57,6 +91,7 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_loop_learns_and_saves_money` | 6 days × 1,500 requests with no drift: day 1 is 0% student; final day is above 80% student and above 60% savings; a version reaches `live`; daily audited agreement never falls below 85% |
 | `test_bad_deploy_is_rolled_back_and_users_return_to_live` | Fault-injects `student-v3`; v3 ends `rolled_back` and v1 stays `live` (skips if v3 was rejected before deploy for that seed) |
 | `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
+| `test_reference_simulation_unchanged` | The pinned reference run equals `tests/fixtures/sim_reference_seed7.json` exactly: inputs, daily numbers, release events and final versions ([below](#the-pinned-reference-simulation)) |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
 | `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request that fails validation gets a normal HTTP 400 before any stream starts |
@@ -66,7 +101,7 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 
 Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`.
 
-The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
+The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
 
 | Test | Covers |
 |---|---|
@@ -88,7 +123,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 
 ### `tests/test_scout.py`
 
-The `gw` fixture reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0`.
+The `gw` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0`. The guard tests use `FakeClock`.
 
 | Test | Covers |
 |---|---|
@@ -206,6 +241,8 @@ Research items use the same skill model, per result template. Scout's pinned pla
 
 ### Typical result (seed 7, 10 days, 2,000/day, drift day 5, bad deploy v3)
 
+This run is the pinned reference ([below](#the-pinned-reference-simulation)), so these numbers cannot drift silently.
+
 ```
 day  student  escal. audit ok     $/1k all-Ultra  saved
   1       0%      0%        -    1.093     1.093     0%
@@ -281,6 +318,8 @@ Running the loop end to end exposed design flaws that unit tests would not have 
 | 5 | Threshold promised 95% precision but delivered 94% | `calibrate_threshold` checked precision before including all points tied at the same confidence | Walk down in groups of equal confidence; return `inf` (serve nothing) if no threshold qualifies; `cascade_eval` caps it at 1.01 |
 | 6 | Golden coverage 94% vs real coverage 80% | Deduplication meant the golden set over-represented rare phrasings, and the threshold was calibrated and measured on the same rows | `seen` count stored per example; **calibrate on one half of the golden set, measure on the other**; frequent requests handled by fix 3 |
 
+Fixes 1, 3, 4 and 6 also have direct tests now: `test_champion_rescored_on_same_golden_set`, `test_golden_rows_never_reach_the_trainer_except_frequent`, `test_night_skips_with_reason` and `test_cascade_eval_measures_on_held_out_half`; fix 2 is covered by `test_shadow_promotes_and_both_rejections` and `test_shadow_arbitration_calls_teacher_once_and_stores_example`.
+
 Two more problems were fixed earlier in development. A fixed global threshold let about 10% wrong answers through, which led to per-version calibration ([ADR 0003](adr/0003-per-request-cascade-with-calibrated-confidence.md)). A point-estimate rollback rule would have rolled back healthy canaries about 19% of the time at n=20, which led to the Wilson upper bound ([ADR 0005](adr/0005-shadow-canary-rollback-with-wilson-bounds.md)).
 
 ## Issues found while documenting, and their fixes
@@ -301,6 +340,14 @@ Writing these docs turned up ten gaps in v0.1. Each one is fixed in v0.1.1 and c
 | 10 | Unsloth LoRA targets might miss Nemotron-H Mamba layers | `train.py --targets` (default adds `in_proj,out_proj`); confirm names on day 1 | Manual (GPU) |
 
 Still open: `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` run without a shell, so pipes and `&&` do not work; wrap them in a script.
+
+## The pinned reference simulation
+
+`tests/fixtures/sim_reference_seed7.json` holds one run of the simulator with every input pinned (seed 7, 10 days × 2,000 requests, drift day 5, corrupted v3, mock models; the same run as `make sim`): the inputs, each day's requests, student share, escalation rate, savings and audited agreement rounded to 4 decimal places, the ordered Night School and release events as (day, kind, version), and each version's final state, traffic and training-set size. `test_reference_simulation_unchanged` runs it once per session (the session-scoped `reference_run` fixture, about 7 s) and compares exactly.
+
+It is the one deliberate exception to "assert on trends, not numbers". Refactors and new features that claim to leave the legacy behaviour untouched prove it by keeping this test green. When a change is meant to move the simulation, run `python scripts/regen_sim_reference.py`, review the JSON diff (one day or event per line), commit it with the change and add a CHANGELOG line saying why; never edit the file by hand. `--check` compares without writing.
+
+The run unsets every `RATCHET_*` variable while it runs, so settings in your shell cannot move it, and it depends only on seeded `random.Random` streams, SHA-256-derived seeds and SQLite arithmetic. When the fixture was made it was identical on CPython 3.10, 3.11, 3.12 and 3.13 (Linux, the CI matrix) and under different `PYTHONHASHSEED` values. If it fails on one platform only, compare the first differing day before regenerating anything. The numbers are simulation output, not measurements.
 
 ## Traceability
 
@@ -340,8 +387,9 @@ To change behaviour:
 
 ## Adding tests
 
-- Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`). Use `_version()` and `_audit()` to set up release states.
+- Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`); Night School rules in `test_nightschool.py`; release-gate and router release behaviour in `test_release.py`. Set up states with the builders in `tests/fakes.py` (`_version`, `_audit`, `_shadow`, `_examples`) and fake models with `RecordingProvider`, `RecordingTrainer` and `RecordingEvaluator`, rather than new local helpers.
 - Scout, the research world and the guard go in `test_scout.py`. Use the `gw` fixture (mock gateway, no warm-up) and fake clocks for the guard.
-- Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests.
+- Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests. The exception is the pinned reference run; reuse the `reference_run` fixture instead of starting another 10-day simulation.
+- A new `Ledger.add_example` call under `ratchet/` needs a reviewed edit to `ALLOWED_ADD_EXAMPLE_CALLERS` in `test_nightschool.py`.
 - Never call real APIs in tests. Use `httpx.MockTransport` as in `test_openai_compat_provider_parses_logprobs_and_usage`.
 - Mark every new test with the requirement ids it proves (`@pytest.mark.req`), keep `parametrize` lists literal so the suite can be counted statically, and update the test counts above ([Traceability](#traceability)).

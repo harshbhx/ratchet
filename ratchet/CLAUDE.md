@@ -29,6 +29,7 @@ States: `candidate → rejected | shadow | canary(10) → canary(50) → live`; 
 - Every public method is wrapped in `@_locked` (one `threading.RLock`), because Scout's agents call `Ratchet.handle` from several threads and share one SQLite connection (`check_same_thread=False`). Add `@_locked` to any new public method. Re-entrant, so locked methods may call each other.
 - `stats_by_task()` feeds `tasks` in `/ratchet/stats` and the dashboard's **By task** table.
 - `examples.hash` is unique per (task, messages); duplicates increment `seen`.
+- Only the functions in `ALLOWED_ADD_EXAMPLE_CALLERS` (`tests/test_nightschool.py`; today `Ratchet._call_teacher`) may call `add_example`. An AST test fails on any other use under `ratchet/` until the allowlist is changed in a reviewed edit (INV-2, INV-10).
 - `split` is deterministic from the hash (`golden_fraction`), so an example never moves between sets, except via the `FREQUENT` rule applied in `nightschool/dataset.py`.
 - Schema changes need both `SCHEMA` and `MIGRATIONS`. Indexes on migrated columns go in `INDEXES` (created after migrations), not in `SCHEMA`.
 
