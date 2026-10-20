@@ -126,31 +126,34 @@ def _split(v: Any, t: str) -> str | None:
     return None if isinstance(v, str) and v else "must be a non-empty string"
 
 
-_ALL = frozenset(compare.TYPES) - compare.RESERVED_TYPES
-# option -> (check, the types that take it). `item` and `fields` hold field specs and are parsed by `_item` and `_fields`.
+# option -> how its value is checked. `item` and `fields` hold field specs and are parsed by `_item` and `_fields`.
+_CHECKS: Mapping[str, Callable[[Any, str], str | None] | None] = {
+    "required": _bool,
+    "nullable": _bool,
+    "values": _strings,
+    "aliases": _aliases,
+    "abs_tol": _tolerance,
+    "rel_tol": _tolerance,
+    "decimal": _one_of(".", ","),
+    "percent": _one_of("number", "fraction"),
+    "order": _strings,
+    "tolerance": _count,
+    "mode": _mode,
+    "strip_suffixes": _strings,
+    "day_first": _bool,
+    "granularity": _one_of("date", "datetime"),
+    "item": None,
+    "min_jaccard": _share,
+    "split": _split,
+    "empty_values": _scalars,
+    "fields": None,
+    "key": _strings,
+    "ordered": _bool,
+    "k": _count,
+}
+# option -> (check, the types that take it: `compare.OPTION_TYPES`, the table FieldSpec itself enforces).
 OPTIONS: Mapping[str, tuple[Callable[[Any, str], str | None] | None, frozenset[str]]] = {
-    "required": (_bool, _ALL),
-    "nullable": (_bool, _ALL),
-    "values": (_strings, frozenset({"label", "language", "set", "ranking"})),
-    "aliases": (_aliases, frozenset({"label", "ordinal", "set", "ranking"})),
-    "abs_tol": (_tolerance, frozenset({"number"})),
-    "rel_tol": (_tolerance, frozenset({"number"})),
-    "decimal": (_one_of(".", ","), frozenset({"number"})),
-    "percent": (_one_of("number", "fraction"), frozenset({"number"})),
-    "order": (_strings, frozenset({"ordinal"})),
-    "tolerance": (_count, frozenset({"ordinal"})),
-    "mode": (_mode, frozenset({"text", "ranking"})),
-    "strip_suffixes": (_strings, frozenset({"text"})),
-    "day_first": (_bool, frozenset({"date"})),
-    "granularity": (_one_of("date", "datetime"), frozenset({"date"})),
-    "item": (None, frozenset({"set", "ranking"})),
-    "min_jaccard": (_share, frozenset({"set"})),
-    "split": (_split, frozenset({"set"})),
-    "empty_values": (_scalars, frozenset({"set"})),
-    "fields": (None, frozenset({"records"})),
-    "key": (_strings, frozenset({"records"})),
-    "ordered": (_bool, frozenset({"records"})),
-    "k": (_count, frozenset({"ranking"})),
+    name: (_CHECKS[name], types) for name, types in compare.OPTION_TYPES.items()
 }
 _TYPE_LIST = ", ".join(t for t in compare.TYPES if t not in compare.RESERVED_TYPES)
 

@@ -58,24 +58,34 @@ def _prob(s: Completion) -> float:
 
 def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: float = 0.6) -> Scored:
     """Each valid sample's votes are the valid samples it matches, itself included (`Task.match`, keys computed once per
-    sample, at most n^2 matches and no I/O). The majority is the first sample with the most votes, its members the
-    samples it matches, and agreement its votes over all n samples. The answer is the member with the highest token
-    probability among the members that have as many votes as the majority (the first on ties). For comparators that are
-    transitive (every built-in task's) the members are one group of equal answers, so this is exactly a count of equal
-    canonical answers with `Counter.most_common`'s tie-break, as before field comparators. With a tolerance (0, 0.6 and
-    1.2 under abs_tol 1) the answer is the sample that agrees with every member (0.6), never one at the edge."""
+    sample; every comparator is symmetric, so each pair is compared once: at most n(n+1)/2 matches and no I/O). The
+    majority is the first sample with the most votes, its members the samples it matches, and agreement its votes over
+    all n samples. The answer is the member with the highest token probability among the members that have as many
+    votes as the majority (the first on ties), so the answer has the top vote count itself and `agreement` is its own.
+    For comparators that are transitive (every built-in task's) the members are one group of equal answers, so this is
+    exactly a count of equal canonical answers with `Counter.most_common`'s tie-break, as before field comparators.
+    With a tolerance (0, 0.6 and 1.2 under abs_tol 1) the answer is 0.6, the only sample with three votes, never one
+    at the edge; with four or more samples it need not match every member (0, 0.6, 1.2 and 1.8: 0.6 and 1.2 both have
+    three votes, and 1.2 does not match 0)."""
     if not samples:
         raise ValueError("no samples")
     keys = [_key(task, s) for s in samples]
     valid = [i for i, k in enumerate(keys) if k is not INVALID]
     if not valid:
         return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob)
-    votes = {i: sum(1 for j in valid if task.match(keys[i], keys[j])) for i in valid}
+    pairs = {(i, j): task.match(keys[i], keys[j]) for x, i in enumerate(valid) for j in valid[x:]}
+
+    def agree(i: int, j: int) -> bool:
+        return pairs[(i, j) if i <= j else (j, i)]
+
+    votes = {i: sum(1 for j in valid if agree(i, j)) for i in valid}
     top = max(votes.values())
+    if top == 0:  # no key matched even itself (a comparator that is not reflexive): nothing can be served
+        return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob)
     m = next(i for i in valid if votes[i] == top)
-    members = [j for j in valid if task.match(keys[m], keys[j])]
     agreement = top / len(samples)
-    best = max((samples[j] for j in members if votes[j] == top), key=_prob)  # max keeps the first on ties
+    # The members with the top count; m is one of them even if it did not match itself.
+    best = max((samples[j] for j in valid if votes[j] == top and (j == m or agree(m, j))), key=_prob)  # first on ties
     p = best.mean_prob
     conf = agreement if p is None else w_prob * p + w_agree * agreement
     return Scored(best, conf, agreement, p)

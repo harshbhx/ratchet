@@ -104,12 +104,16 @@ class Task:
         specs = self.fields
         if isinstance(specs, FieldSpec) or not isinstance(specs, (tuple, list)):
             fail("fields must be a list of FieldSpecs")
-        if keys and specs:
-            fail("give compare_keys or fields, not both")
         if keys:
             if not all(isinstance(k, str) for k in keys):
                 fail("compare_keys must be strings")
-            specs = tuple(FieldSpec(k, "exact", required=False) for k in dict.fromkeys(keys))
+            for k in keys:  # v0.4 read each key at the top level; a path would read another value
+                if not k or k == "$" or "." in k:
+                    fail(f"compare key {k!r} is not a plain top-level key ('.' and '$' are path syntax); use fields")
+            derived = tuple(FieldSpec(k, "exact", required=False) for k in dict.fromkeys(keys))
+            if specs and tuple(specs) != derived:  # equal ones come from dataclasses.replace, which passes both
+                fail("give compare_keys or fields, not both")
+            specs = derived
         specs = tuple(specs)
         if not all(isinstance(f, FieldSpec) for f in specs):
             fail("fields must be FieldSpecs")
@@ -337,10 +341,11 @@ def _rstrip(text: str, chars: frozenset[str]) -> str:
 
 
 def _canon(v: Any) -> Any:
-    """A JSON value as a task without fields compares it: strings (keys too) NFKC-normalised, case-folded and stripped,
-    numbers as floats. Raises ValueError when two keys become one, and RecursionError when nested too deeply."""
+    """A JSON value as a task without fields compares it: strings (keys too) NFKC-normalised, case-folded and with
+    whitespace collapsed (as v0.4's text rule did, so "x  y" is "x y"), numbers as floats. Raises ValueError when two
+    keys become one, and RecursionError when nested too deeply."""
     if isinstance(v, str):
-        return unicodedata.normalize("NFKC", v).casefold().strip()
+        return " ".join(unicodedata.normalize("NFKC", v).casefold().split())
     if isinstance(v, bool) or v is None or isinstance(v, float):
         return v
     if isinstance(v, int):
@@ -629,8 +634,8 @@ def register(task: Task, source: str | None = None) -> Task | None:
     source (`_REPLACES`), RegistryFull for a new name past MAX_TASKS, and ValueError for a name a request could not
     send."""
     global REGISTRY
-    if source is not None and source != task.source:  # a compare_keys task keeps its keys (they make its fields)
-        task = replace(task, source=source, fields=()) if task.compare_keys else replace(task, source=source)
+    if source is not None and source != task.source:
+        task = replace(task, source=source)
     allowed = _REPLACES.get(task.source)
     if allowed is None:
         raise ValueError(f"task {task.name!r}: a {task.source} task cannot be registered; use file, api or auto")

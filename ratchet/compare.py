@@ -7,7 +7,10 @@ exactly, so 1 and 1.0 disagreed, "1,234.50" was not 1234.5, a list in another or
 with itself (every key None == None). Types fix the first three; `required` fixes the last.
 
 Standard library only, no I/O: every student sample is normalised here on the request path, so each type is linear in
-the size of its value, records pair greedily, and one answer may hold at most `MAX_RECORDS` records at any depth.
+the size of its value and one answer may hold at most `MAX_RECORDS` records at any depth. Records pair by key or by
+position in linear time; without either, by their fields without a tolerance in linear time, and by the fields with one
+through a maximum bipartite matching, which is quadratic in the records of a group (give records a `key` when they
+have one).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import json
 import math
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import MISSING as _NO_DEFAULT
 from dataclasses import dataclass, field, fields
@@ -63,7 +67,7 @@ SCALAR_TYPES = frozenset({"exact", "label", "bool", "number", "ordinal", "text",
 MAX_FIELDS = 64  # per task, counting the fields inside records
 MAX_DEPTH = 4  # records inside records
 MAX_VALUES = 2000  # values, aliases, order entries, suffixes or empty values of one field
-MAX_RECORDS = 200  # records in one answer, at any depth (greedy pairing is quadratic in them)
+MAX_RECORDS = 200  # records in one answer, at any depth (pairing records with a tolerance is quadratic in them)
 MAX_ITEMS = 2000  # elements of one set or ranking
 MAX_SCALAR_CHARS = 100  # a number, date or language written longer than this is not one
 
@@ -366,19 +370,30 @@ for _code, _others, _names in _LANGUAGE_TABLE:
         LANGUAGE_CODES[_c] = _code
     for _n in _names.split("|"):
         LANGUAGE_NAMES[_language_key(_n)] = _code
-_LOCALE = re.compile(r"([a-z]{2,3})[-_ ]")  # "en-US", "pt_BR", "zh-Hant-TW": the language is the first subtag
+# A locale tag, as BCP 47 writes it (or POSIX, with '_'): a language subtag, then an optional script ('Hant'), region
+# ('US', '419') and variants ('valencia', '1996'): "en-US", "pt_BR", "zh-Hant-TW", "es-419". Only '-' and '_' separate
+# subtags, and the whole value must be the tag, so prose is never one ("It is English" would otherwise be Italian).
+_LOCALE = re.compile(r"([a-z]{2,3})(?:[-_][a-z]{4})?(?:[-_](?:[a-z]{2}|\d{3}))?(?:[-_](?:[a-z0-9]{5,8}|\d[a-z0-9]{3}))*")
+# The 3-letter codes BCP 47 takes as a tag's language: individual languages of a macrolanguage in the table ('cmn-Hans',
+# 'fil-PH'). A language with a 639-1 code is tagged with it, so a 639-2 code ('ger-DE', 'spa-ES') is no tag, and neither
+# is a retired 639-1 code: 'in' and 'iw' would make 'in-depth' Indonesian.
+_LOCALE_THREE = frozenset("als arb azj cmn ekk fil khk lvs npi pes swh uzn zsm".split())
+_RETIRED = frozenset({"in", "iw"})
 _PARENS = re.compile(r"\([^()]*\)")
 
 
 def language_code(text: str) -> str | None:
     """The ISO 639-1 code of a language written as a 639-1/2/3 code, a locale tag ('en-US'), or its English or native
-    name ('English', 'Deutsch'); None for one the table does not know."""
+    name ('English', 'Deutsch'); None for one the table does not know, and for anything else, such as a sentence that
+    starts with a code ('It is English', 'no idea')."""
     if len(text) > MAX_SCALAR_CHARS:
         return None
     t = _language_key(_PARENS.sub(" ", text))
     found = LANGUAGE_CODES.get(t) or LANGUAGE_NAMES.get(t)
-    if found is None and (m := _LOCALE.match(t)) is not None:
-        found = LANGUAGE_CODES.get(m.group(1))
+    if found is None and (m := _LOCALE.fullmatch(t)) is not None:
+        lang = m.group(1)
+        if (len(lang) == 2 and lang not in _RETIRED) or lang in _LOCALE_THREE:
+            found = LANGUAGE_CODES.get(lang)
     return found
 
 
@@ -386,11 +401,32 @@ def language_code(text: str) -> str | None:
 # Free text
 
 
+_APOSTROPHES = frozenset("'‘’ʼ`´")
+
+
 def loose_text(text: str) -> str:
-    """Text as the 'loose' mode compares it: NFKC, case-folded, Unicode punctuation dropped ('U.S.A.' is 'usa',
-    'Acme, Inc.' is 'acme inc') and whitespace collapsed."""
+    """Text as the 'loose' mode compares it: NFKC, case-folded, whitespace collapsed, and Unicode punctuation read as a
+    space between words ('Acme,Inc.' and 'Acme, Inc.' are 'acme inc', 'hello-world' is 'hello world'), except
+    apostrophes, which are dropped ("O'Brien" is 'obrien'), and the dots of initials ('U.S.A.' is 'usa', 'e.g.' is
+    'eg'). Linear: one pass over the characters, one over the words."""
     t = unicodedata.normalize("NFKC", text).casefold()
-    return " ".join("".join(ch for ch in t if not unicodedata.category(ch).startswith("P")).split())
+    chars = []
+    for ch in t:
+        if ch == "." or not unicodedata.category(ch).startswith("P"):
+            chars.append(ch)  # a dot is resolved per word below
+        elif ch not in _APOSTROPHES:
+            chars.append(" ")
+    words: list[str] = []
+    for chunk in "".join(chars).split():
+        if "." not in chunk:
+            words.append(chunk)
+            continue
+        parts = [p for p in chunk.split(".") if p]
+        if len(parts) > 1 and all(len(p) == 1 and p.isalpha() for p in parts):
+            words.append("".join(parts))  # initials: 'u.s.a.'
+        else:
+            words.extend(parts)  # 'inc.', 'acme.inc', '3.5'
+    return " ".join(words)
 
 
 class Record(dict):  # type: ignore[type-arg]
@@ -426,6 +462,42 @@ def _valid_path(path: str) -> bool:
     return path == "$" or (0 < len(path) <= 256 and all(path.split(".")))
 
 
+_EVERY_TYPE = frozenset(TYPES) - RESERVED_TYPES
+# The types that use each FieldSpec option. Any other type must leave the option at its default, so a spec never holds
+# a setting that silently does nothing (`FieldSpec.__post_init__`; `taskspec.OPTIONS` reads this table too).
+OPTION_TYPES: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "required": _EVERY_TYPE,
+        "nullable": _EVERY_TYPE,
+        "values": frozenset({"label", "language", "set", "ranking"}),
+        "aliases": frozenset({"label", "ordinal", "set", "ranking"}),
+        "abs_tol": frozenset({"number"}),
+        "rel_tol": frozenset({"number"}),
+        "decimal": frozenset({"number"}),
+        "percent": frozenset({"number"}),
+        "order": frozenset({"ordinal"}),
+        "tolerance": frozenset({"ordinal"}),
+        "mode": frozenset({"text", "ranking"}),
+        "strip_suffixes": frozenset({"text"}),
+        "day_first": frozenset({"date"}),
+        "granularity": frozenset({"date"}),
+        "item": frozenset({"set", "ranking"}),
+        "min_jaccard": frozenset({"set"}),
+        "split": frozenset({"set"}),
+        "empty_values": frozenset({"set"}),
+        "fields": frozenset({"records"}),
+        "key": frozenset({"records"}),
+        "ordered": frozenset({"records"}),
+        "k": frozenset({"ranking"}),
+    }
+)
+
+
+def _default(f: Any) -> Any:
+    """A dataclass field's default value."""
+    return f.default_factory() if f.default is _NO_DEFAULT else f.default
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """One field of a task's answer that must agree, and how. `path` is '$' or a dot path into nested objects; `type`
@@ -455,7 +527,7 @@ class FieldSpec:
     split: str | None = None  # set: a string is split on this (otherwise a set must be a list)
     empty_values: tuple[Any, ...] = ()  # set: elements dropped before comparing ('none', 'n/a')
     fields: tuple[FieldSpec, ...] = ()  # records: the fields of each record
-    key: tuple[str, ...] = ()  # records: the fields that pair records (otherwise greedy, or by position if `ordered`)
+    key: tuple[str, ...] = ()  # records: the fields that pair records (else in any order, or by position if `ordered`)
     ordered: bool = False  # records: pair by position
     k: int = 0  # ranking: how many leading ids are compared (0: all)
 
@@ -467,6 +539,11 @@ class FieldSpec:
     _suffixes: Mapping[str, tuple[tuple[str, ...], ...]] = field(init=False, repr=False, compare=False, default_factory=dict)
     _item_spec: FieldSpec | None = field(init=False, repr=False, compare=False, default=None)
     _empty: frozenset[Any] = field(init=False, repr=False, compare=False, default=frozenset())
+    # Two values match exactly when their `_token`s are equal (no tolerance anywhere inside), so records can be grouped
+    # by such fields in linear time. For records: the sub-fields that do, and the ones that do not.
+    _by_equality: bool = field(init=False, repr=False, compare=False, default=True)
+    _eq_fields: tuple[FieldSpec, ...] = field(init=False, repr=False, compare=False, default=())
+    _tol_fields: tuple[FieldSpec, ...] = field(init=False, repr=False, compare=False, default=())
     depth: int = field(init=False, repr=False, compare=False, default=0)  # records nesting: 0 for other types
     size: int = field(init=False, repr=False, compare=False, default=1)  # this field and every field inside it
 
@@ -524,20 +601,9 @@ class FieldSpec:
         self._set("_segments", () if self.path == "$" else tuple(self.path.split(".")))
 
         t = self.type
-        uses = {
-            "values": t in ("label", "language", "set", "ranking"),
-            "aliases": t in ("label", "ordinal", "set", "ranking"),
-            "order": t == "ordinal",
-            "strip_suffixes": t == "text",
-            "item": t in ("set", "ranking"),
-            "empty_values": t == "set",
-            "split": t == "set",
-            "fields": t == "records",
-            "key": t == "records",
-        }
-        for name, used in uses.items():
-            if not used and getattr(self, name) not in ((), {}, None):
-                self._fail(f"{name} does not apply to this type")
+        for f in fields(self):
+            if f.init and f.name in OPTION_TYPES and t not in OPTION_TYPES[f.name] and getattr(self, f.name) != _default(f):
+                self._fail(f"{f.name} does not apply to this type")
 
         if t == "text" and self.mode not in ("exact", "loose", "token_set"):
             self._fail("mode must be 'exact', 'loose' or 'token_set'")
@@ -568,9 +634,21 @@ class FieldSpec:
             self._items()
         elif t == "records":
             self._records()
+        if t == "number":
+            self._set("_by_equality", not self.abs_tol and not self.rel_tol)
+        elif t == "ordinal":
+            self._set("_by_equality", not self.tolerance)
+        elif t == "set":
+            self._set("_by_equality", self.min_jaccard >= 1)
+        elif t == "records":
+            self._set("_eq_fields", tuple(f for f in self.fields if f._by_equality))
+            self._set("_tol_fields", tuple(f for f in self.fields if not f._by_equality))
+            self._set("_by_equality", not self._tol_fields)
 
     def _labels(self) -> None:
-        """label and ordinal: the normalised vocabulary (`values`, or `order` with each label's position) and aliases."""
+        """label and ordinal: the normalised vocabulary (`values`, or `order` with each label's position) and aliases.
+        With a vocabulary, an alias must name one of its labels and must not be one itself (unless it names itself):
+        `{"high": "urgent"}` would silently stop 'high' from meaning high."""
         vocab = self.order if self.type == "ordinal" else self.values
         if self.type == "ordinal" and not vocab:
             self._fail("order must list the labels, lowest first")
@@ -578,9 +656,16 @@ class FieldSpec:
         if len(set(normal)) != len(normal):
             self._fail("two entries are the same label once normalised")
         allowed = frozenset(normal) if normal else None
-        aliases = {label_text(a): label_text(b) for a, b in self.aliases.items()}
-        if allowed is not None and any(b not in allowed for b in aliases.values()):
-            self._fail("an alias names a label outside the vocabulary")
+        aliases: dict[str, str] = {}
+        for a, b in self.aliases.items():
+            ka, kb = label_text(a), label_text(b)
+            if allowed is not None and kb not in allowed:
+                self._fail("an alias names a label outside the vocabulary")
+            if allowed is not None and ka in allowed and ka != kb:
+                self._fail(f"alias {a!r} is a label of the vocabulary itself")
+            if aliases.get(ka, kb) != kb:
+                self._fail(f"alias {a!r} names two labels once normalised")
+            aliases[ka] = kb
         self._set("_allowed", allowed)
         self._set("_alias_map", aliases)
         if self.type == "ordinal":
@@ -675,8 +760,7 @@ class FieldSpec:
             if not f.init or f.name in ("path", "type"):
                 continue
             v = getattr(self, f.name)
-            default = f.default_factory() if f.default is _NO_DEFAULT else f.default  # type: ignore[misc]
-            if v == default:
+            if v == _default(f):
                 continue
             if isinstance(v, FieldSpec):
                 v = v.spec()
@@ -897,7 +981,10 @@ def _m_equal(spec: FieldSpec, a: Any, b: Any) -> bool:
 
 
 def _m_exact(spec: FieldSpec, a: Any, b: Any) -> bool:
-    """Equal as JSON text, as v0.4's canonical JSON compared them: 1 and 1.0 differ, and so do true and 1."""
+    """Equal as JSON text, as v0.4's canonical JSON compared them: 1 and 1.0 differ, and so do true and 1. A value always
+    matches itself, even one that `json.dumps` cannot write from a deeper stack than it was normalised on."""
+    if a is b:
+        return True
     if type(a) is type(b) and isinstance(a, str):
         return a == b
     ja = _json_text(a)
@@ -919,6 +1006,83 @@ def _m_set(spec: FieldSpec, a: frozenset[Any], b: frozenset[Any]) -> bool:
     return shared >= spec.min_jaccard * (len(a) + len(b) - shared) - 1e-9
 
 
+def _token(spec: FieldSpec, v: Any) -> Any:
+    """A hashable stand-in for a normalised value: for a field that compares by equality (`FieldSpec._by_equality`), two
+    values match exactly when their tokens are equal; for any field, equal tokens mean equal values, which match because
+    every value matches itself. None (an absent optional field) is its own token."""
+    t = spec.type
+    if v is None:
+        return None
+    if t == "exact":
+        if isinstance(v, str):
+            return ("s", v)
+        text = _json_text(v)
+        return ("j", text) if text is not None else object()  # cannot be written: equal to nothing, as in _m_exact
+    if t == "ranking":
+        top = v[: spec.k] if spec.k else v
+        return top if spec.mode == "prefix" else frozenset(top)
+    if t == "records":
+        tokens = [tuple(_token(f, r[f.path]) for f in spec.fields) for r in v]
+        # Keyed records have unique keys, so for them too a match is the same multiset of records.
+        return ("o", tuple(tokens)) if spec.ordered else ("u", frozenset(Counter(tokens).items()))
+    return v  # label, bool, number and ordinal without a tolerance, text, date, language, set with min_jaccard 1
+
+
+def _perfect_matching(xs: list[Record], ys: list[Record], ok: Callable[[Record, Record], bool]) -> bool:
+    """Whether every record of `xs` can take its own partner in `ys` (equal lengths) under `ok`: a maximum bipartite
+    matching, so the answer never depends on the order the records are listed in (a tolerance makes a first-fit pairing
+    miss one: 1 taking 0.5 leaves 0 nothing, where 0 with 0.5 and 1 with 2 pair everything). A first-fit pass pairs
+    the usual case; each record it leaves over gets an augmenting path (Kuhn's algorithm, iterative, so nested records
+    never deepen the stack), and the first that has none settles it. At most len² calls of `ok`."""
+    n = len(xs)
+    owner = [-1] * n  # owner[j]: the record of xs paired with ys[j]
+    left = []
+    for i, x in enumerate(xs):
+        for j, y in enumerate(ys):
+            if owner[j] < 0 and ok(x, y):
+                owner[j] = i
+                break
+        else:
+            left.append(i)
+    rows: dict[int, list[int]] = {}
+
+    def adjacent(i: int) -> list[int]:
+        row = rows.get(i)
+        if row is None:
+            row = rows[i] = [j for j, y in enumerate(ys) if ok(xs[i], y)]
+        return row
+
+    for root in left:
+        seen = [False] * n
+        stack = [(root, 0)]  # (record of xs, where its scan of adjacent(record) resumes)
+        path: list[int] = []  # path[d]: the ys index taken at depth d
+        done = False
+        while stack and not done:
+            i, start = stack[-1]
+            row = adjacent(i)
+            for pos in range(start, len(row)):
+                j = row[pos]
+                if seen[j]:
+                    continue
+                seen[j] = True
+                stack[-1] = (i, pos + 1)
+                path.append(j)
+                if owner[j] < 0:  # a free partner: shift every record on the path to the partner it reached
+                    for (ii, _), jj in zip(stack, path, strict=True):
+                        owner[jj] = ii
+                    done = True
+                else:
+                    stack.append((owner[j], 0))
+                break
+            else:
+                stack.pop()
+                if path:
+                    path.pop()
+        if not done:
+            return False
+    return True
+
+
 def _m_records(spec: FieldSpec, a: tuple[Record, ...], b: tuple[Record, ...]) -> bool:
     if len(a) != len(b):
         return False
@@ -936,15 +1100,37 @@ def _m_records(spec: FieldSpec, a: tuple[Record, ...], b: tuple[Record, ...]) ->
             if y is None or not same(x, y):
                 return False
         return True
-    used = [False] * len(b)
-    for x in a:  # greedy: each record takes the first unused record it matches
-        for j, y in enumerate(b):
-            if not used[j] and same(x, y):
-                used[j] = True
-                break
-        else:
+    # Unordered without a key. Two records can pair only when their fields without a tolerance are equal, so group the
+    # records by those fields' tokens (linear), then match the fields with a tolerance inside each group.
+    groups: dict[tuple[Any, ...], tuple[list[Record], list[Record]]] = {}
+    for x in a:
+        groups.setdefault(tuple(_token(f, x[f.path]) for f in spec._eq_fields), ([], []))[0].append(x)
+    for y in b:
+        group = groups.get(tuple(_token(f, y[f.path]) for f in spec._eq_fields))
+        if group is None:
+            return False
+        group[1].append(y)
+    loose = spec._tol_fields
+
+    def close(x: Record, y: Record) -> bool:
+        return all(f.match(x[f.path], y[f.path]) for f in loose)
+
+    for xs, ys in groups.values():
+        if len(xs) != len(ys):
+            return False
+        if not loose or _same_values(loose, xs, ys):  # the same records in another order pair with themselves
+            continue
+        if not _perfect_matching(xs, ys, close):
             return False
     return True
+
+
+def _same_values(subs: tuple[FieldSpec, ...], xs: list[Record], ys: list[Record]) -> bool:
+    """Whether `xs` and `ys` hold the same values of `subs`, as multisets (linear). Then each record can pair with its
+    equal, because every value matches itself."""
+    return Counter(tuple(_token(f, x[f.path]) for f in subs) for x in xs) == Counter(
+        tuple(_token(f, y[f.path]) for f in subs) for y in ys
+    )
 
 
 def _m_ranking(spec: FieldSpec, a: tuple[Any, ...], b: tuple[Any, ...]) -> bool:

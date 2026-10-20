@@ -74,8 +74,12 @@ def run_night(
     new = manifest["train_examples"] - last
     hashes = spec_hashes(golden_rows)
     live = ledger.live()
+    # Stored answers the current spec refuses (it tightened since): left out of training, and said so where operators
+    # look, because the manifest itself is a temporary file.
+    invalid = manifest.get("skipped_invalid", 0)
+    left_out = f" ({invalid} stored answers invalid under the current spec left out)" if invalid else ""
     if new < min_new_examples:
-        ledger.event("skip", f"only {new} new examples (< {min_new_examples}); no training tonight")
+        ledger.event("skip", f"only {new} new examples (< {min_new_examples}){left_out}; no training tonight")
         # A task whose spec changed is on the teacher until the live version is scored under the new spec; without new
         # data that would wait for a training night, so score it now (the same re-score a training night starts with).
         changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
@@ -110,7 +114,7 @@ def run_night(
     ledger.set_bom(vid, bom.document(bom.manifest(version, train_rows, golden_rows), signer))
     ledger.event(
         "trained",
-        f"v{vid} on {manifest['train_examples']} examples; "
+        f"v{vid} on {manifest['train_examples']} examples{left_out}; "
         f"golden agreement {result.get('golden_agreement', 0):.1%} "
         f"(n={result.get('golden_n', 0)})",
     )
