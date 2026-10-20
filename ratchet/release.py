@@ -236,7 +236,8 @@ class ReleaseGate:
 
     def _tick_canary(self, live: Version | None) -> None:
         """Roll the canary back when the Wilson upper bound of its audited precision in this stage is below the floor;
-        hold while the point estimate is below it; otherwise advance a stage, or promote it to live over `live`."""
+        hold while the point estimate is below it; otherwise advance a stage, or promote it to live over `live`, which
+        is retired with a `live_retired` event."""
         p = self.policy
         canary = self.ledger.by_state("canary")
         if not canary:
@@ -262,6 +263,9 @@ class ReleaseGate:
             else:
                 if live:
                     self.ledger.set_version(live.id, "retired", 0)
+                    # Its own event (ADR 0062), so every version transition is in the log. A kind of its own too: the
+                    # v0.4 kind `retired` names candidates replaced at admission, which the pinned reference runs count.
+                    self.ledger.event("live_retired", f"v{live.id} retired: v{canary.id} replaces it as live")
                 self.ledger.set_version(canary.id, "live", 100)
                 self.ledger.event("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n})")
 

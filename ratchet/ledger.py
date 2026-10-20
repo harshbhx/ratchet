@@ -10,7 +10,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS requests (
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
     student_agree INTEGER,     -- 1/0: the student's answer agreed with the escalation's or a random audit's (FR-16.5)
     baseline_est_usd REAL,     -- the all-teacher cost by the token formula, also when the teacher answered (FR-16.5)
-    optional_failed INTEGER    -- 1: an optional teacher call of this request (audit, arbitration) failed
+    optional_failed INTEGER,   -- 1: an optional teacher call of this request (audit, arbitration) failed
+    -- Request ids (ADR 0062): the gateway's id ('req_' + 32 hex, also in x-request-id) and the client's own
+    -- (X-Request-Id or X-Client-Request-Id, validated); NULL for internal calls and older rows.
+    request_id TEXT,
+    client_request_id TEXT
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,6 +87,18 @@ CREATE TABLE IF NOT EXISTS compute_intervals (
     version INTEGER,           -- the version a training job produced; NULL otherwise
     source TEXT,               -- 'cli' | 'api' | 'deploy' | 'night' | 'simulation'
     note TEXT
+);
+CREATE TABLE IF NOT EXISTS failures (  -- what failed, with what it spent (ADR 0062); metadata only, never text
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER,
+    request_id TEXT,           -- the gateway's request id; NULL for a call outside a gateway request (Scout, simulator)
+    client TEXT,               -- API key name; NULL when unknown (a 401), when keys are off, or for internal calls
+    task TEXT,                 -- NULL when the request failed before naming one
+    stage TEXT,                -- FAILURE_STAGES: where it failed
+    error TEXT,                -- the exception's class, status and code (resilience.describe_failure); never a message
+    status INTEGER,            -- the HTTP status of the stage that failed (an upstream's for upstream stages)
+    latency_ms REAL,           -- from the start of the request (or the cascade) to the failure
+    cost_usd REAL              -- what a request that left no requests row spent (its student samples); 0 otherwise
 );
 CREATE TABLE IF NOT EXISTS tasks (
     name TEXT PRIMARY KEY,
@@ -223,6 +239,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "baseline_est_usd": "REAL",
         "optional_failed": "INTEGER",
         "wall_ms": "REAL",
+        "request_id": "TEXT",
+        "client_request_id": "TEXT",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -250,6 +268,11 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
+    # Request lookups by id, the failures of the last hour (/ratchet/stats) and today's spend per client (/metrics).
+    "CREATE INDEX IF NOT EXISTS requests_request_id ON requests (request_id)",
+    "CREATE INDEX IF NOT EXISTS failures_request_id ON failures (request_id)",
+    "CREATE INDEX IF NOT EXISTS failures_ts ON failures (ts)",
+    "CREATE INDEX IF NOT EXISTS failures_client_ts ON failures (client, ts)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -258,6 +281,12 @@ EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spen
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 
 DAY_SECONDS = 86400
+# Where a request failed (`failures.stage`, ADR 0062). Upstream stages: the serving teacher (also the fallback teacher),
+# the student's samples, a teacher audit, the shadow's samples or its arbitration, and an upstream a gateway route called
+# itself (Scout's models and search). Gateway stages: the daily quota, an API, admin or dashboard key, the Scout budget
+# guard, a rate limit of the gateway's own, and the gateway itself (a 413, an unhandled error).
+FAILURE_STAGES = ("teacher", "student", "audit", "shadow", "quota", "auth", "budget", "rate", "upstream", "gateway")
+FAILURE_COLUMNS = frozenset({"ts", "day", "request_id", "client", "task", "stage", "error", "status", "latency_ms", "cost_usd"})
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -416,6 +445,7 @@ class Ledger:
         # stats_by_day's percentiles per day: (count, highest id, request generation) -> (p50 student, p95).
         self._day_latency: dict[int | None, tuple[tuple[int, int, int | None], float | None, float | None]] = {}
         self._digest: tuple[tuple[int, int | None, int | None], str] | None = None  # bill_of_materials' sha
+        self._listeners: list[Callable[[dict[str, Any]], object]] = []  # event listeners (add_event_listener)
         self._watch()
         self._ro, self._ro_lock = self._reader()
         self._rdb = self._ro if self._ro is not None else self.db
@@ -524,6 +554,63 @@ class Ledger:
         cur = self.db.execute(f"INSERT INTO requests ({cols}) VALUES ({qs})", list(row.values()))
         self.db.commit()
         return int(cur.lastrowid)
+
+    @_locked
+    def log_failure(self, **row: Any) -> int:
+        """One `failures` row (FAILURE_COLUMNS; `stage` one of FAILURE_STAGES, `error` a class, status and code, never a
+        message). `cost_usd` is what a request that left no `requests` row spent, so `totals()` can count it; a failure
+        around an answered request (its cost is in its own row) records 0. Returns the row id."""
+        unknown = set(row) - FAILURE_COLUMNS
+        if unknown:
+            raise ValueError(f"failures has no columns {sorted(unknown)}")
+        if row.get("stage") not in FAILURE_STAGES:
+            raise ValueError(f"failure stage must be one of {', '.join(FAILURE_STAGES)}, not {row.get('stage')!r}")
+        row.setdefault("ts", time.time())
+        self._tick_day(row["ts"])
+        row.setdefault("day", self.day)
+        row.setdefault("cost_usd", 0.0)
+        cols = ",".join(row)
+        qs = ",".join("?" for _ in row)
+        cur = self.db.execute(f"INSERT INTO failures ({cols}) VALUES ({qs})", list(row.values()))
+        self.db.commit()
+        return int(cur.lastrowid)
+
+    @_reads
+    def request_record(self, request_id: str) -> dict[str, Any] | None:
+        """The `requests` row (metadata only: the table holds no text) the gateway logged under `request_id`, or None."""
+        r = self._rdb.execute("SELECT * FROM requests WHERE request_id=? ORDER BY id LIMIT 1", (request_id,)).fetchone()
+        return dict(r) if r is not None else None
+
+    @_reads
+    def failures_for(self, request_id: str) -> list[dict[str, Any]]:
+        """The `failures` rows of one request, oldest first: a failed request's, or the failed optional calls around an
+        answered one."""
+        rows = self._rdb.execute("SELECT * FROM failures WHERE request_id=? ORDER BY id", (request_id,))
+        return [dict(r) for r in rows]
+
+    @_reads
+    def failure_counts(self, since: float) -> dict[str, int]:
+        """Failures since `since` (a wall-clock time) by stage, most frequent first."""
+        rows = self._rdb.execute(
+            "SELECT stage, COUNT(*) n FROM failures WHERE ts>=? GROUP BY stage ORDER BY n DESC, stage", (since,)
+        )
+        return {r["stage"]: int(r["n"]) for r in rows}
+
+    @_reads
+    def spend_since(self, since: float, clients: Iterable[str | None]) -> dict[str | None, float]:
+        """US dollars each client in `clients` (an API key name, or None for requests without one) spent since `since`,
+        answered and failed requests together: one indexed range per client and table (`requests_client_ts`,
+        `failures_client_ts`), so a scrape stays cheap on a large ledger."""
+        out: dict[str | None, float] = {}
+        for client in dict.fromkeys(clients):
+            where = "client IS NULL" if client is None else "client=?"
+            args: tuple[Any, ...] = (since,) if client is None else (client, since)
+            total = 0.0
+            for table in ("requests", "failures"):
+                q = f"SELECT COALESCE(SUM(cost_usd), 0.0) FROM {table} WHERE {where} AND ts>=?"
+                total += float(self._rdb.execute(q, args).fetchone()[0])
+            out[client] = total
+        return out
 
     @_locked
     def client_requests_since(self, client: str, ts: float) -> int:
@@ -742,6 +829,11 @@ class Ledger:
             self.db.commit()
             return False
 
+    def split_of(self, task: str, messages: list[dict[str, Any]]) -> str:
+        """The split ('train' or 'golden') `add_example` puts these messages in, under any conditions: a pure function of
+        the task and the messages (`_split`), for the metrics. Reads nothing."""
+        return self._split(example_hash(task, messages))
+
     def _split(self, key: str) -> str:
         """'golden' or 'train', deterministic from `key`, the hash of an example's task and messages without its
         conditions (`example_hash(task, messages)`), so an example never moves between sets and every variant of one
@@ -959,10 +1051,29 @@ class Ledger:
         return out
 
     # ---------- events + stats ----------
-    @_locked
     def event(self, kind: str, detail: str) -> None:
-        self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail))
-        self.db.commit()
+        """Append to the release log, then hand the row ({id, ts, day, kind, detail}) to every listener
+        (`add_event_listener`), outside the lock when the caller does not hold it. A failing listener is ignored: the
+        event is already stored, and a log handler must never fail what wrote it."""
+        with self._lock:
+            ts, day = time.time(), self.day
+            cur = self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (ts, day, kind, detail))
+            self.db.commit()
+            listeners = tuple(self._listeners)
+        if listeners:
+            row = {"id": int(cur.lastrowid), "ts": ts, "day": day, "kind": kind, "detail": detail}
+            for fn in listeners:
+                try:
+                    fn(row)
+                except Exception:  # noqa: BLE001 - the event is stored; a listener (the log) must not undo that
+                    pass
+
+    def add_event_listener(self, fn: Callable[[dict[str, Any]], object]) -> None:
+        """Call `fn(row)` after every event this ledger writes (the gateway mirrors them to the log, ADR 0062). Adding the
+        same function twice calls it once."""
+        with self._lock:
+            if fn not in self._listeners:
+                self._listeners.append(fn)
 
     @_reads
     def events(self, last: int | None = None) -> list[dict[str, Any]]:
@@ -1186,12 +1297,19 @@ class Ledger:
 
     @_reads
     def totals(self) -> dict[str, float]:
+        """Requests, cost and baseline over the whole ledger. `failed_cost_usd` is what failed requests spent without
+        leaving a `requests` row (the student's samples before a teacher failure, NFR-3); it counts against the savings:
+        `saved_usd` = baseline - cost - failed cost, `savings_pct` = 1 - (cost + failed cost) / baseline. A ledger without
+        failures gives exactly v0.4's numbers."""
         r = self._rdb.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone()
         c, b = r["c"] or 0.0, r["b"] or 0.0
+        failed = float(self._rdb.execute("SELECT COALESCE(SUM(cost_usd), 0.0) FROM failures").fetchone()[0])
+        spent = c + failed
         return {
             "requests": r["n"],
             "cost_usd": c,
             "baseline_usd": b,
-            "saved_usd": b - c,
-            "savings_pct": 0.0 if b == 0 else 1 - c / b,
+            "saved_usd": b - spent,
+            "savings_pct": 0.0 if b == 0 else 1 - spent / b,
+            "failed_cost_usd": failed,
         }

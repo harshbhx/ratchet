@@ -31,3 +31,23 @@ Lane D (operations, security, performance) does not number invariants in CLAUDE.
 **Enforcing code.** `ratchet/access.py`: `ROUTES`, `PREFIXES`, `route_access`, `scrub_stats`, `scrub_task`, `scrub_detail`, `pseudonyms`. `ratchet/gateway.py`: `_access` (a global dependency of the app), `_scrubbed`, `Runtime._set_access`, `_admin`. `ratchet/config.py`: `Settings.access`, `Access.scrubs`, `_bool`.
 
 **Proving tests.** `tests/test_security.py`: `test_every_route_has_an_access_level`, `test_private_live_dashboard_needs_an_admin_or_dashboard_key`, `test_private_dashboard_without_reader_keys_is_closed_to_everyone`, `test_public_live_stats_are_scrubbed_for_anonymous_readers`, `test_live_mode_without_api_keys_does_not_start`, `test_each_key_has_one_role`.
+
+## Logs, metrics and failures rows carry no content (OPS-OBSERVABILITY, ADR 0062)
+
+**Text.** A log line, a metric label or sample, and a `failures` row hold ids, names, numbers and statuses only: never message or answer text, a URL, an exception's message or a key (invariants 12 and 13). Log through `obs.log` (or `obs.upstream_failure`, which names the exception's class, role and status), write failures through `Ledger.log_failure` with `error` from `resilience.describe_failure` or an exception's class, and mirror events only through `obs.mirror_event`, which scrubs them like a public dashboard (`access.scrub_detail`). A client's own request id is kept only when it matches `obs.CLIENT_REQUEST_ID`; a metric's task label is a registered name, `other` or `none` (`router.task_label`) and its client label a key name, `none` or `other` (`metrics.client_label`), so no request can add text or a series. Never pass a message, a completion, `str(exception)` or a header value other than a validated id to any of them.
+
+**Why.** Logs and metrics leave the ledger's protections: they are shipped to collectors, kept for months and read by people who may not read the ledger. A prompt or a key in a log line is a leak the redaction and the key digests were built to prevent.
+
+**Enforcing code.** `ratchet/obs.py`: `log`, `upstream_failure`, `mirror_event`, `client_request_id`, `JsonFormatter` and `TextFormatter` (an attached exception as its class only). `ratchet/ledger.py`: `Ledger.log_failure` (`FAILURE_COLUMNS`, `FAILURE_STAGES`). `ratchet/router.py`: `Ratchet._record_failure`, `task_label`. `ratchet/metrics.py`: `client_label`. `ratchet/gateway.py`: `_note_error`, `_log_chat`.
+
+**Proving tests.** `tests/test_observability.py`: `test_json_log_lines_carry_no_content_and_no_keys` (a marker from a message and from an answer, a card number, an API key, the teacher key and both endpoint hosts never reach a line), `test_error_responses_carry_x_request_id_and_envelope_request_id` (a 500 whose exception message holds a marker leaves only the class), `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost` (an upstream message with a URL never reaches the row), `test_request_id_echoed_and_client_id_stored` (malformed client ids are dropped), `test_metrics_parse_count_and_bound_their_labels` (an ad-hoc task name is never a label), `test_metrics_401_in_live_mode_without_a_key_or_token` (the token reaches no row).
+
+## A request that spent money and failed leaves a failures row (OPS-OBSERVABILITY, ADR 0062)
+
+**Text.** When the teacher's answer cannot be had after the student was sampled, `Ratchet` writes a `failures` row with `cost_usd` equal to what the student's samples cost before the error reaches the client, and `Ledger.totals()` counts that spend against `saved_usd` and `savings_pct` (`failed_cost_usd`). A failure around an answered request records `cost_usd = 0`, because its own `requests` row already holds the cost. Never count one spend in both tables.
+
+**Why.** NFR-3 says overhead is counted in reported cost; without the row, every teacher outage would make the savings look better than they were.
+
+**Enforcing code.** `ratchet/router.py`: `Ratchet._teacher_failed`, `Ratchet._record_failure`. `ratchet/ledger.py`: `Ledger.log_failure`, `Ledger.totals`.
+
+**Proving tests.** `tests/test_observability.py`: `test_teacher_failure_row_carries_the_student_cost`, `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost`, `test_swallowed_failures_get_rows_and_breaker_refusals_are_sampled` (cost 0 around an answered request); `tests/test_system.py`: `test_reference_workloads_reproduce_v040` (three workloads' totals exactly as v0.4.0 gave them).

@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 739 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security), ~75 s
+pytest -q                     # 764 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -32,12 +32,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
-| **Total** | **739** |
+| `tests/test_observability.py` | 25 |
+| **Total** | **764** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), and who may call each route ([`tests/test_security.py`](#teststest_securitypy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), and request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -608,6 +609,38 @@ Endpoint access, scrubbed public stats, the OpenAPI switch, the live-mode auth g
 | `test_access_switches_resolve_by_mode_and_refuse_typos` | Mock and live defaults; explicit 0 and 1; set but empty is the default; `yes`, `true`, `2`, `on` stop startup naming the variable; a CSP with a line break is refused; `Access.scrubs` for every case |
 | `test_openapi_is_off_in_live_mode` | Live: `/openapi.json`, `/docs` and `/redoc` are 404, back with `RATCHET_OPENAPI=1`; mock serves the schema, `0` removes it |
 | `test_security_headers_on_every_response` | `nosniff` and `no-referrer` on a page, health, stats, a chat completion, a stream, a 400, a 404, a 413 from the body limit, Scout, and both 500s (sent outside the middleware); no CSP by default; `RATCHET_CSP` adds it |
+
+### `tests/test_observability.py`
+
+Request ids, the failures table, structured logs, Prometheus metrics, trace forwarding and version-transition events ([ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md), FR-1.60, FR-12.4, NFR-6, NFR-3, INV-12, INV-13). Gateways run in mock mode or as private live gateways through `Runtime(transports=)` with `FakeOpenAIServer` and `httpx.MockTransport` teachers; the cascade runs on `RecordingProvider`s. `parse_metrics` is a small parser of the text format 0.0.4 that fails on any malformed line or duplicate series.
+
+| Test | Covers |
+|---|---|
+| `test_request_id_echoed_and_client_id_stored` | `x-request-id` (`req_` + 32 hex) and `openai-processing-ms` on a completion; `id` is `chatcmpl-` + the same digits and `ratchet.request_id` the id; a valid `X-Request-Id` or `X-Client-Request-Id` lands in `requests.client_request_id`; spaces, 129 characters, `;` and non-ASCII bytes are ignored without an error; every page and 404 gets its own id, never the client's |
+| `test_streamed_answer_carries_the_request_id` | A stream's header, every chunk's `id` and the last chunk's `ratchet.request_id` |
+| `test_error_responses_carry_x_request_id_and_envelope_request_id` | A 400, 401, 413 and 500 carry the header and `request_id` beside OpenAI's untouched four-field `error`; the 400 writes no failures row, the 401 an `auth` row (`HTTPException 401 invalid_api_key`, no client), the 413 a `gateway` row, the 500 a `gateway` row naming the class only; a non-`/v1` 404 keeps `{"detail"}` with the header |
+| `test_request_context_parsing` | `new_context`: a padded client id, a valid `traceparent` and `tracestate`; the second header when the first is invalid; upper case, all-zero ids, version `ff`, extra fields on version `00` and a short parent id refused; a later version's extra fields accepted; a 600-character `tracestate` dropped; `lookup_hex`; no headers outside a request |
+| `test_traceparent_forwarded_to_the_teacher_with_a_new_span` | Each teacher attempt (a 503, then the retry) carries the trace id, flags and `tracestate` with its own new span id, never the client's; a malformed or missing `traceparent` sends none |
+| `test_request_lookup_own_request_and_another_clients` | `GET /v1/ratchet/requests/{id}` by either id form: the own request's metadata (no text); another key's request and an unknown id are the same 404 `request_not_found`; malformed ids 404; no key 401; a quota 429 is found by its failures row alone; `GET /ratchet/requests/{id}` reads any request |
+| `test_teacher_failure_row_carries_the_student_cost` | An escalation whose teacher fails: no requests row, one `teacher` row with the student's sample cost, status 502, the client, task, both ids and `UpstreamError 502 teacher_down`; `totals` counts it in `failed_cost_usd`, `saved_usd` and `savings_pct` |
+| `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost` | The same through a live gateway: exactly one row (the router's), no URL or message in `error`, and `ratchet_cost_usd_total`, `ratchet_failed_cost_usd_total` and `ratchet_failures_total{stage="teacher"}` rise by it |
+| `test_quota_429_writes_a_quota_row_and_counts_a_rejection` | A quota 429: a `quota` row with the client, task and id (`APIError 429 daily_quota_exceeded`, cost 0), one `quota` rejection, still no requests row |
+| `test_teacher_429_is_a_teacher_failure_not_a_refusal` | A teacher 429 answered as a 429: one `teacher` row and no gateway `rate` row; no rejection counted; `ratchet_requests_total{status="429"}` once |
+| `test_swallowed_failures_get_rows_and_breaker_refusals_are_sampled` | 30 requests against a failing student: 5 `student` rows for the errors (502), 3 for 25 breaker refusals (503), `ratchet_failures_total` counts all 30, every request answered; a timed-out audit: an `audit` row (504, `ReadTimeout`, cost 0) and the student's answer served |
+| `test_stats_errors_last_hour_and_failed_cost` | `errors.last_hour` by stage leaves out a two-hour-old row; `totals.failed_cost_usd`; `log_failure` refuses an unknown stage or column |
+| `test_gateway_failure_rows_are_throttled_per_stage` | `FailureThrottle` per stage and minute; five wrong keys write two rows but count five rejections and five failures |
+| `test_json_log_lines_carry_no_content_and_no_keys` | A live gateway at INFO: no marker from a message or an answer, card number, API key, teacher key or endpoint host in any line; the `chat` lines have every expected key, the ids, the client name and trace id; the 502's line has `served_by` null; one `upstream_error` warning (role, class, status); a mirrored event cut to its exception class |
+| `test_log_settings_formats_and_handlers` | `log_settings` defaults by mode, case-insensitive values, typos stop startup; `config` and `obs` agree on the values; `configure` never doubles a handler; the text format quotes values with spaces or quotes; JSON lines; levels filter |
+| `test_event_listeners_see_every_event_and_cannot_fail_it` | A listener added twice runs once and gets the stored row; a failing listener does not stop the event |
+| `test_every_version_transition_writes_an_event` | Cold start to canary to live, shadow to canary to live over the old live, a candidate replaced by a newer one, a rolled-back canary and a rejected candidate: all 14 `set_version` calls (9 kinds of transition) are each followed by an event naming the version, one of them `live_retired` |
+| `test_metrics_parse_count_and_bound_their_labels` | `/metrics` parses, has `# TYPE` for every family and the 0.0.4 content type; a request counts under its task, an ad-hoc task as `other` (its name never a label), a 400 as `none`/`400` and an `invalid_request` rejection; an example counted by split; cost and baseline rise; `ratchet_info`; histogram buckets cumulative, ending at `+Inf` equal to `_count` |
+| `test_cascade_metrics_for_upstreams_audits_and_examples` | Upstream `ok`, `timeout` and `circuit_open` outcomes, audits by result, escalations, stored examples and upstream latency observations counted exactly; `task_label` |
+| `test_metrics_401_in_live_mode_without_a_key_or_token` | Live: no key or a wrong token 401, an API key 403; the metrics token, a dashboard key and an admin key 200 with key names in the labels; the token reads nothing else; without reader keys the token alone opens it, and without the token too it is 403 |
+| `test_metrics_token_is_checked_at_startup` | A short token, or one that is also an API, admin or dashboard key, stops startup |
+| `test_public_live_metrics_scrub_client_labels` | A public live dashboard: anonymous `/metrics` and request lookups show `client-2`, never a client name; a keyed reader sees `globex` |
+| `test_scrape_time_gauges` | Version traffic for the live and canary versions, the student breaker open after a demo outage and the teacher's closed, today's spend |
+| `test_metrics_module_format` | Label and help escaping, a counter refusing to go down or take the wrong label count, duplicate names refused, bad buckets refused, `Gauge.replace` dropping old series, NaN observations ignored, cumulative buckets, `number()` formatting, relabelled series added together, `client_label` |
+| `test_old_ledger_gains_request_ids_and_the_failures_table` | An old file gains `request_id`, `client_request_id` and the `failures` table; the lookup uses `requests_request_id`; the stage list; `spend_since` adds answered and failed spend per client since a time |
 
 ## Live-path tests
 

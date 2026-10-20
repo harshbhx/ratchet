@@ -18,6 +18,7 @@ import calendar
 import functools
 import itertools
 import json
+import logging
 import math
 import queue
 import re
@@ -41,10 +42,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, tasks, taskspec
+from . import __version__, live, metrics, obs, tasks, taskspec
 from . import access as acl
 from . import bom as bomdoc
-from .auth import KeyRing, bearer
+from .auth import KeyRing, Token, bearer
 from .config import Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
@@ -66,7 +67,7 @@ from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
-from .router import Choice, Ratchet
+from .router import Choice, Ratchet, RequestMeta, task_label
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
 from .scout.prompts import EXAMPLE_QUESTIONS
@@ -156,6 +157,8 @@ class Runtime:
     def reset(self) -> None:
         s = self.settings
         self._set_access(s)  # first, so a live gateway without keys stops before it opens anything (ADR 0061)
+        obs.configure(*s.log_settings())  # a bad RATCHET_LOG_FORMAT or RATCHET_LOG_LEVEL stops startup here (ADR 0062)
+        self.failure_rows = FailureThrottle(clock=self.clock)
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         # The hot path (ADR 0060); a bad RATCHET_DB_SYNC, RATCHET_TICK_INTERVAL_S or RATCHET_STATS_TTL_S stops startup here.
         sync = s.ledger_sync()
@@ -226,6 +229,7 @@ class Runtime:
             policy = ReleasePolicy.from_env()
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
+        self.ledger.add_event_listener(obs.mirror_event)  # every release-log event also as a log line (ADR 0062)
         # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
         # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
         with self.tasks_lock:
@@ -253,9 +257,9 @@ class Runtime:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
 
     def _set_access(self, s: Settings) -> None:
-        """The key rings and who may read what (ADR 0061). A bad key spec or switch, a key in two rings, or live mode
-        without RATCHET_API_KEYS (unless RATCHET_ALLOW_UNAUTHENTICATED=1) raises ValueError, so the gateway stops at
-        startup."""
+        """The key rings, the metrics token and who may read what (ADR 0061, ADR 0062). A bad key spec or switch, a key in
+        two rings, a metrics token that is short or also a key, or live mode without RATCHET_API_KEYS (unless
+        RATCHET_ALLOW_UNAUTHENTICATED=1) raises ValueError, so the gateway stops at startup."""
         self.access = s.access()
         self.keys = KeyRing(s.api_keys)
         # Admin keys for management writes (ADR 0022) and read-only dashboard keys (ADR 0061). Each key has one role: an
@@ -278,6 +282,16 @@ class Runtime:
             )
         csp = {"Content-Security-Policy": self.access.csp} if self.access.csp else {}
         self.security_headers: dict[str, str] = {**SECURITY_HEADERS, **csp}
+        # A Prometheus scraper's bearer token for GET /metrics (ADR 0062): a role of its own, so never one of the keys.
+        self.metrics_token = Token(s.metrics_token, env="RATCHET_METRICS_TOKEN")
+        token = s.metrics_token.strip() if isinstance(s.metrics_token, str) else ""
+        for ring in (self.keys, self.admin_keys, self.dashboard_keys):
+            name = ring.identify(token) if token else None
+            if name is not None:
+                raise ValueError(
+                    f"RATCHET_METRICS_TOKEN is also the key for {name!r} in {ring.env}; give the scraper its own token"
+                )
+        metrics.set_clients(self.keys.names)  # a metric's client label is a key name, `none` or `other`
 
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
@@ -372,10 +386,13 @@ class BodyTooLarge(HTTPException):
 
 
 def _http_error_response(path: str, method: str, exc: StarletteHTTPException) -> JSONResponse:
-    """The response for an HTTP error, in OpenAI's envelope on API paths and as `{"detail": ...}` elsewhere."""
+    """The response for an HTTP error, in OpenAI's envelope (with the request's id) on API paths and as
+    `{"detail": ...}` elsewhere."""
     if _api_path(path):
         err = http_error(exc.status_code, str(exc.detail), method=method, path=path, headers=exc.headers)
-        return JSONResponse(err.body(), status_code=err.status, headers=err.headers or None)
+        _note_error(exc, err.status, err.code)
+        return JSONResponse(_with_request_id(err.body()), status_code=err.status, headers=err.headers or None)
+    _note_error(exc, exc.status_code)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 
@@ -453,6 +470,179 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
+# ----- request ids, failures, logs and metrics (ADR 0062) -----
+CHAT_PATH = "/v1/chat/completions"
+CTX_KEY = "ratchet_request"  # where the request's context sits in `scope["state"]` (`request.state`)
+# Responses that get a failures row when no deeper code decided it: a key refused, a body too large, a limit hit, and
+# every server-side error. A validation 400 is only counted in the metrics, so a malformed client cannot drive writes.
+FAILURE_STATUSES = frozenset({401, 413, 429})
+# The stage of such a row when the code that answered named none (`RequestContext.stage`).
+DEFAULT_STAGES = {401: "auth", 413: "gateway", 429: "rate", 500: "gateway"}
+# Why a chat request was refused before the cascade (`ratchet_rejections_total`): by error code, then by status.
+REJECTION_CODES = {
+    "invalid_api_key": "auth",
+    "unknown_task": "unknown_task",
+    "task_not_allowed": "task_not_allowed",
+    "daily_quota_exceeded": "quota",
+    "request_too_large": "too_large",
+    "client_disconnected": "disconnected",
+}
+REJECTION_STATUSES = {400: "invalid_request", 401: "auth", 403: "forbidden", 413: "too_large", 429: "quota"}
+FAILURE_ROWS_PER_MINUTE = 120  # per stage, from the gateway; the router's rows that spent money are never held back
+
+
+class FailureThrottle:
+    """At most `per_minute` gateway-written failures rows per stage in each minute on `clock`: a key guessed in a loop or a
+    client hammering past its quota is counted in the metrics but cannot fill the disk with rows. Thread-safe."""
+
+    def __init__(self, per_minute: int = FAILURE_ROWS_PER_MINUTE, clock: Callable[[], float] = time.monotonic) -> None:
+        self.per_minute = per_minute
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._windows: dict[str, tuple[int, int]] = {}  # stage -> (minute, rows written in it)
+
+    def allow(self, stage: str) -> bool:
+        minute = int(self.clock() // 60)
+        with self._lock:
+            seen, n = self._windows.get(stage, (minute, 0))
+            if seen != minute:
+                n = 0
+            if n >= self.per_minute:
+                return False
+            self._windows[stage] = (minute, n + 1)
+            return True
+
+
+def _context(request: Request | None = None) -> obs.RequestContext | None:
+    """The request's context: from the running context variable, or from `scope["state"]` once the middleware has
+    reset it (the 500 handler runs outside every middleware)."""
+    ctx = obs.current()
+    if ctx is None and request is not None:
+        state = request.scope.get("state")
+        ctx = state.get(CTX_KEY) if isinstance(state, dict) else None
+    return ctx
+
+
+def _note_error(exc: Exception, status: int, code: str | None = None, request: Request | None = None) -> None:
+    """Record what refused or failed the request, for its failures row: the exception's class, the status and the error
+    code, never the message (which can quote request text)."""
+    ctx = _context(request)
+    if ctx is not None:
+        ctx.code = ctx.code or code
+        ctx.error = ctx.error or (f"{type(exc).__name__} {status} {code}" if code else f"{type(exc).__name__} {status}")
+
+
+def _with_request_id(body: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
+    """An OpenAI error envelope with the request's id beside `error` (the error object keeps OpenAI's four fields)."""
+    ctx = _context(request)
+    if ctx is not None:
+        body["request_id"] = ctx.request_id
+    return body
+
+
+def _rejection(ctx: obs.RequestContext, status: int) -> str:
+    return REJECTION_CODES.get(ctx.code or "") or REJECTION_STATUSES.get(status, "other")
+
+
+def _log_chat(ctx: obs.RequestContext, status: int) -> None:
+    """The chat request's one INFO line: ids, names, numbers and the status; never message or answer text, a URL or a
+    key (invariants 12 and 13)."""
+    if not obs.LOGGER.isEnabledFor(logging.INFO):
+        return
+    r = ctx.result or {}
+    obs.log(
+        logging.INFO,
+        "chat",
+        client_request_id=ctx.client_request_id,
+        client=ctx.client,
+        task=ctx.task,
+        served_by=r.get("served_by"),
+        route=r.get("route"),
+        version=r.get("version"),
+        confidence=r.get("confidence"),
+        escalated=r.get("escalated"),
+        audited=r.get("audited"),
+        latency_ms=r.get("latency_ms"),
+        wall_ms=r.get("wall_ms"),
+        cost_usd=r.get("cost_usd"),
+        status=status,
+    )
+
+
+async def _after_response(ctx: obs.RequestContext, status: int) -> None:
+    """Once the response is sent: a chat request that ended in an error is counted (the cascade counted an answered
+    one), a refusal before the cascade is counted by reason, the chat request's log line is written, and a 401, 413, 429
+    or 5xx that no deeper code decided gets a failures row (throttled per stage, written in a worker thread so the event
+    loop never waits for the ledger lock). Nothing here may fail the request: its response is already out."""
+    try:
+        if ctx.path == CHAT_PATH:
+            if not ctx.counted:
+                metrics.REQUESTS.inc(task_label(ctx.task), "none", "none", str(status))
+                metrics.REQUEST_SECONDS.observe(ctx.elapsed_ms() / 1000, "none")
+                if 400 <= status < 500 and not ctx.failure_handled:  # the cascade's own failure is no refusal
+                    metrics.REJECTIONS.inc(_rejection(ctx, status))
+            _log_chat(ctx, status)
+        if (status in FAILURE_STATUSES or status >= 500) and not ctx.failure_handled:
+            stage = ctx.stage or DEFAULT_STAGES.get(status) or ("upstream" if status in (502, 503, 504) else "gateway")
+            metrics.FAILURES.inc(stage)  # every one, also when the row is throttled
+            if rt.failure_rows.allow(stage):
+                row = {
+                    "request_id": ctx.request_id,
+                    "client": ctx.client,
+                    "task": ctx.task,
+                    "stage": stage,
+                    "error": ctx.error or f"HTTP {status}",
+                    "status": status,
+                    "latency_ms": ctx.elapsed_ms(),
+                }
+                await anyio.to_thread.run_sync(functools.partial(rt.ledger.log_failure, **row))
+    except Exception:  # noqa: BLE001 - observability never fails a response that was already sent
+        pass
+
+
+class ObservabilityMiddleware:
+    """Gives every request its context (`obs.new_context`: the server's `req_<hex>` id, a valid client request id, a
+    valid W3C traceparent) in the `request_ctx` context variable and in `scope["state"]`, adds `x-request-id` and
+    `openai-processing-ms` to every response, and runs `_after_response` once the response is sent (also after an
+    unhandled error, before the 500 handler answers: that handler adds the same headers itself). Outermost of the
+    gateway's middlewares; plain ASGI, so streamed answers still stream."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers: dict[str, str] = {}
+        for name, value in scope.get("headers") or ():
+            headers.setdefault(name.decode("latin-1").lower(), value.decode("latin-1"))
+        ctx = obs.new_context(headers, scope.get("path", ""), scope.get("method", ""))
+        scope.setdefault("state", {})[CTX_KEY] = ctx
+        token = obs.request_ctx.set(ctx)
+        started: list[int] = []
+
+        async def send_with_ids(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                started.append(int(message["status"]))
+                out = MutableHeaders(scope=message)
+                out["x-request-id"] = ctx.request_id
+                out["openai-processing-ms"] = str(round(ctx.elapsed_ms()))
+            await send(message)
+
+        try:
+            try:
+                await self.app(scope, receive, send_with_ids)
+            except Exception as e:
+                if not started:  # the 500 handler answers it, outside this middleware
+                    ctx.error = ctx.error or type(e).__name__
+                await _after_response(ctx, started[0] if started else 500)
+                raise
+            await _after_response(ctx, started[0] if started else 500)
+        finally:
+            obs.request_ctx.reset(token)
+
+
 def _reader(key: str | None) -> tuple[str, str] | None:
     """Whose key this is among the dashboard's readers: ("admin", name), ("dashboard", name) or None. Both rings are
     checked every time, so the time taken does not say which one matched."""
@@ -468,20 +658,24 @@ async def _access(request: Request) -> None:
     """The dashboard API's gate, run before every route (ADR 0061). A route whose level (`access.route_access`; DASHBOARD
     for a route nobody classified) is DASHBOARD or BOM needs an admin or dashboard key, from `Authorization: Bearer` or
     `X-API-Key`, unless RATCHET_PUBLIC_DASHBOARD=1 (BOM: or RATCHET_PUBLIC_BOM=1): 401 for a missing or wrong key, 403
-    for an API key, and 403 when no admin or dashboard keys are set. The reader it found (`request.state.reader`) decides
-    whether a public read is scrubbed. Other levels check their callers themselves. Async, so the chat path pays no
-    thread hop for it."""
+    for an API key, and 403 when no admin or dashboard keys are set. METRICS (GET /metrics) also takes
+    RATCHET_METRICS_TOKEN (ADR 0062), and is closed to everyone only when that is unset too. The reader it found
+    (`request.state.reader`) decides whether a public read is scrubbed. Other levels check their callers themselves.
+    Async, so the chat path pays no thread hop for it."""
     route = request.scope.get("route")
     level = acl.route_access(request.method, getattr(route, "path", request.url.path)) or acl.DASHBOARD
     if level not in acl.READER_LEVELS:
         return
     key = bearer(request.headers.get("authorization"), request.headers.get("x-api-key"))
     reader = _reader(key)
+    token = level == acl.METRICS and rt.metrics_token.matches(key)  # checked whatever `_reader` found, like the rings
+    if reader is None and token:
+        reader = ("metrics", "token")  # a Prometheus scraper (RATCHET_METRICS_TOKEN, ADR 0062)
     request.state.reader = reader
     a = rt.access
     if reader is not None or a.public_dashboard or (level == acl.BOM and a.public_bom):
         return
-    if not (rt.admin_keys.enabled or rt.dashboard_keys.enabled):
+    if not (rt.admin_keys.enabled or rt.dashboard_keys.enabled or (level == acl.METRICS and rt.metrics_token.enabled)):
         raise HTTPException(
             403, "the dashboard API is private: set RATCHET_DASHBOARD_KEYS or RATCHET_ADMIN_KEYS, or RATCHET_PUBLIC_DASHBOARD=1"
         )
@@ -509,17 +703,21 @@ rt = Runtime()
 _DOCS: dict[str, Any] = {} if rt.access.openapi else {"docs_url": None, "redoc_url": None, "openapi_url": None}
 app = FastAPI(title="Ratchet", version=__version__, dependencies=[Depends(_access)], **_DOCS)
 app.add_middleware(BodyLimitMiddleware, max_bytes=rt.settings.max_body_bytes)
-app.add_middleware(SecurityHeadersMiddleware, headers=lambda: rt.security_headers)  # outermost: a 413 carries them too
+app.add_middleware(SecurityHeadersMiddleware, headers=lambda: rt.security_headers)  # a 413 carries them too
+app.add_middleware(ObservabilityMiddleware)  # outermost: every response, a 413 included, carries x-request-id
 
 
 @app.exception_handler(APIError)
 async def _api_error(request: Request, exc: APIError) -> JSONResponse:
-    return JSONResponse(exc.body(), status_code=exc.status, headers=exc.headers or None)
+    """OpenAI's envelope, with the request's id beside `error` (ADR 0062)."""
+    _note_error(exc, exc.status, exc.code, request)
+    return JSONResponse(_with_request_id(exc.body(), request), status_code=exc.status, headers=exc.headers or None)
 
 
 @app.exception_handler(StarletteHTTPException)
 async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
     if not _api_path(request.url.path):
+        _note_error(exc, exc.status_code, request=request)
         return await http_exception_handler(request, exc)
     return _http_error_response(request.url.path, request.method, exc)
 
@@ -538,9 +736,10 @@ def _power_of_ten(n: int) -> bool:
 
 @app.exception_handler(Exception)
 async def _unhandled_error(request: Request, exc: Exception) -> Response:
-    """A bug, not a client mistake: 500 (`api_error` on API paths). The server still logs the traceback. The ledger gets
-    a `gateway_error` event with the exception's class name only (a message could hold request text) at the 1st,
-    10th, 100th, ... occurrence, so a crash loop cannot flood it."""
+    """A bug, not a client mistake: 500 (`api_error` on API paths, with the request's id). The server still logs the
+    traceback. The ledger gets a `gateway_error` event with the exception's class name only (a message could hold request
+    text) at the 1st, 10th, 100th, ... occurrence, so a crash loop cannot flood it; every one gets a failures row
+    (`ObservabilityMiddleware`)."""
     rt.gateway_errors += 1  # handlers run on the event loop, one at a time
     if _power_of_ten(rt.gateway_errors):
         detail = f"{type(exc).__name__} (unhandled error {rt.gateway_errors})"
@@ -553,6 +752,10 @@ async def _unhandled_error(request: Request, exc: Exception) -> Response:
     else:
         response = PlainTextResponse("Internal Server Error", status_code=500)
     response.headers.update(rt.security_headers)  # sent outside SecurityHeadersMiddleware
+    ctx = _context(request)  # and outside ObservabilityMiddleware, which already wrote its failures row
+    if ctx is not None:
+        response.headers["x-request-id"] = ctx.request_id
+        response.headers["openai-processing-ms"] = str(round(ctx.elapsed_ms()))
     return response
 
 
@@ -616,12 +819,16 @@ def favicon() -> FileResponse:
 
 # ----- OpenAI-compatible API -----
 def _client(authorization: str | None, x_api_key: str | None) -> str | None:
-    """The API client's name, or None when keys are off. 401 when keys are on and this one is wrong."""
+    """The API client's name, or None when keys are off. 401 when keys are on and this one is wrong. The name (never the
+    key) goes on the request's context, for its log line and failures row."""
     if not rt.keys.enabled:
         return None
     name = rt.keys.identify(bearer(authorization, x_api_key))
     if name is None:
         raise HTTPException(401, "invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
+    ctx = obs.current()
+    if ctx is not None:
+        ctx.client = name
     return name
 
 
@@ -656,6 +863,9 @@ def _quota(client: str | None) -> dict[str, str]:
             {"X-RateLimit-Remaining-Requests": "0", "Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
         )
         message = f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC"
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.stage = "quota"
         raise APIError(429, message, "insufficient_quota", "daily_quota_exceeded", headers=headers)
     return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
 
@@ -784,11 +994,15 @@ async def chat(
     try:
         raw = await request.body()
     except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.code = "client_disconnected"
         raise APIError(400, "The client disconnected before the request body was complete.") from e
     return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client))
 
 
 def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+    ctx = obs.current()  # the request's context, copied into this worker thread (ADR 0062)
     req = validate_chat_request(parse_body(raw), rt.limits)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
@@ -797,11 +1011,15 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
+    if ctx is not None:
+        ctx.task = task.name
     headers = _quota(client)
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
+    # The request's ids go into its ledger row (requests.request_id, requests.client_request_id) and failures rows.
+    ids = RequestMeta(request_id=ctx.request_id, client_request_id=ctx.client_request_id) if ctx is not None else None
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
-        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n)
+        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n, meta=ids)
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
@@ -819,11 +1037,26 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         "latency_ms": r.latency_ms,
         "usage_breakdown": r.usage_breakdown,
         "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
+        "request_id": ctx.request_id if ctx is not None else None,  # also x-request-id; GET /v1/ratchet/requests/{id}
     }
+    if ctx is not None:  # the fields of the request's log line (`_log_chat`)
+        ctx.result = {
+            "served_by": r.served_by,
+            "route": r.route,
+            "version": r.version,
+            "confidence": r.confidence,
+            "escalated": r.escalated,
+            "audited": r.audited,
+            "latency_ms": r.latency_ms,
+            "wall_ms": r.wall_ms,
+            "cost_usd": r.cost_usd,
+        }
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
-    cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
+    # The completion id carries the request id's digits, so either finds the request (ADR 0062).
+    cid = ctx.completion_id if ctx is not None else f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
     if r.degraded:
         headers["X-Ratchet-Degraded"] = r.degraded
@@ -920,7 +1153,88 @@ def _stats_payload() -> dict[str, Any]:
             "scrubbed": False,
         },
         "cost": stats_block(cost_report(led, rt.settings)),
+        # Failures of the last hour by stage (ADR 0062); what failed requests spent is in totals.failed_cost_usd.
+        "errors": {"last_hour": led.failure_counts(time.time() - ERRORS_WINDOW_S)},
     }
+
+
+ERRORS_WINDOW_S = 3600.0  # /ratchet/stats' errors.last_hour
+
+
+# ----- request lookups and metrics (ADR 0062) -----
+def _lookup(request_id: str, client: str | None = None, *, own: bool = False) -> dict[str, Any] | None:
+    """A request by the id the gateway gave it (`req_<hex>`, or its completion's `chatcmpl-<hex>`): its `requests` row
+    (metadata only; null when it failed before the cascade logged one) and its `failures` rows, or None when there are
+    neither. With `own`, only what `client` (the caller's key name, None when keys are off) sent."""
+    digits = obs.lookup_hex(request_id)
+    if digits is None:
+        return None
+    rid = obs.REQUEST_PREFIX + digits
+    row = rt.ledger.request_record(rid)
+    failures = rt.ledger.failures_for(rid)
+    if own:
+        row = row if row is not None and row["client"] == client else None
+        failures = [f for f in failures if f["client"] == client]
+    if row is None and not failures:
+        return None
+    return {"request_id": rid, "request": row, "failures": failures}
+
+
+@app.get("/ratchet/requests/{request_id}")
+def request_lookup(request_id: str, request: Request) -> dict[str, Any]:
+    """One request's metadata and failures (`_lookup`), whoever sent it. Read like /ratchet/stats; a scrubbed read gets
+    client pseudonyms (ADR 0061)."""
+    found = _lookup(request_id)
+    if found is None:
+        raise HTTPException(404, "no request has this id")
+    if not _scrubbed(request):
+        return found
+    names = _pseudonyms(c["client"] for c in rt.stats_cache.get(_stats_payload)["clients"])
+    scrub = acl.scrub_client
+    return {
+        **found,
+        "request": scrub(found["request"], names) if found["request"] is not None else None,
+        "failures": [scrub(f, names) for f in found["failures"]],
+    }
+
+
+@app.get("/v1/ratchet/requests/{request_id}")
+def own_request(
+    request_id: str, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """One request this API key sent (`_lookup` with `own`): 404 for an id it did not send, so a key cannot tell another
+    client's request from one that never existed."""
+    client = _client(authorization, x_api_key)
+    found = _lookup(request_id, client, own=True)
+    if found is None:
+        raise APIError(404, "No request with this id was sent with this key.", "not_found_error", "request_not_found")
+    return found
+
+
+def _collect_gauges() -> None:
+    """The scrape-time gauges, from the runtime as it is now: each breaker's state, the routed versions' traffic and
+    today's spend per client (since 00:00 UTC, one indexed query per client and table)."""
+    metrics.INFO.replace([((__version__, rt.settings.mode), 1.0)])
+    breakers = rt.ratchet.health()["breakers"]
+    metrics.CIRCUIT_OPEN.replace([((name,), 0.0 if snap["state"] == "closed" else 1.0) for name, snap in breakers.items()])
+    led = rt.ledger
+    routed = [v for v in (led.live(), led.by_state("canary"), led.by_state("shadow")) if v is not None]
+    metrics.VERSION_TRAFFIC.replace([((f"v{v.id}", v.state), float(v.traffic_pct)) for v in routed])
+    spend = led.spend_since(_utc_midnight(time.time()), [*rt.keys.names, None])
+    metrics.SPEND_TODAY.replace([((metrics.client_label(c),), usd) for c, usd in spend.items()])
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics_endpoint(request: Request) -> Response:
+    """Prometheus metrics in the text format 0.0.4 (`ratchet/metrics.py`). Read with an admin or dashboard key or
+    RATCHET_METRICS_TOKEN, or by anyone when the dashboard is public; a scrubbed read (an anonymous reader of a public
+    live dashboard) gets client pseudonyms in the client labels."""
+    _collect_gauges()
+    relabel: metrics.Relabel | None = None
+    if _scrubbed(request):
+        names = _pseudonyms(c["client"] for c in rt.stats_cache.get(_stats_payload)["clients"])
+        relabel = {"client": lambda v: names.get(v, v if v in ("none", "other") else "client")}
+    return Response(metrics.REGISTRY.render(relabel), media_type=metrics.CONTENT_TYPE)
 
 
 @app.get("/ratchet/bom")
@@ -1302,6 +1616,9 @@ def _scout_precheck(question: str, ip: str) -> tuple[int, str] | None:
         return 503, "Live search is not configured (TAVILY_API_KEY is not set)."
     refused = rt.guard.admit(ip)
     if refused:
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.stage = "budget"  # the Scout budget guard's refusal, for the failures row of /scout/run's 429
         return 429, refused
     return None
 

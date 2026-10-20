@@ -9,8 +9,9 @@ How to operate Ratchet in live mode: what to check every day, what the events me
    - **Cost reduction** should track student share. If share is high but savings are low, audits or shadow are costing more than expected.
    - **Release log**: read every event since yesterday (meanings below).
 2. **Night School log** (`/var/log/ratchet-night.log`): exactly one of `trained` or `skip` per night.
-3. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
-4. **Ledger backup** exists for today (see [Backups](#backups)).
+3. **Failures:** `errors.last_hour` in `/ratchet/stats` should be empty or small, and `totals.failed_cost_usd` should not jump. With Prometheus, the [alerts](#alerts) do this for you.
+4. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
+5. **Ledger backup** exists for today (see [Backups](#backups)).
 
 ## Reading the dashboard
 
@@ -22,6 +23,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Model versions | `versions` | Exactly one `live` once past cold start; at most one `shadow` or `canary` |
 | Release log | last 40 `events` | See below |
 | Provenance | `bill_of_materials` | Only distillable teachers and licenses; fingerprint changes as data grows |
+| (not on the dashboard yet) | `errors.last_hour`, `totals.failed_cost_usd` | Failures of the last hour by stage, and what failed requests spent (it counts against `saved_usd`). See [Failures and request ids](#failures-and-request-ids) |
 | (not on the dashboard yet) | `cost` | The GPU-hour view and the recommendation; `GET /ratchet/cost` has the full report. The panels above price the student per token (`totals.cost_model`) |
 
 ## Event kinds
@@ -34,6 +36,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `shadow` | `admit` | Candidate passed the golden gate and is running silently | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
 | `live` | `tick` | Candidate promoted to 100%; previous live retired | None |
+| `live_retired` | `tick` | Written just before `live`: the previous live version is retired because the canary replaces it (`v4 retired: v5 replaces it as live`) | None |
 | `retired` | `admit` | An in-flight shadow or canary was replaced by a newer candidate | None |
 | `rollback` | `tick` | Canary audited precision has a Wilson upper bound below 0.92; traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
 | `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
@@ -56,6 +59,66 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
 The `alert` event is written once per live version per process (a restart can write it again), not on every tick.
+
+## Failures and request ids
+
+Every request has an id, `req_` and 32 hex digits, in the `x-request-id` response header, in `ratchet.request_id`, in `request_id` of every `/v1/*` error, and in the completion's `id` (`chatcmpl-` and the same digits). OpenAI's SDKs show it as `response._request_id` and `error.request_id`. When a client reports a problem, ask for that id (or their own `X-Request-Id`, stored as `client_request_id`) and look the request up ([API.md](API.md#request-lookups)):
+
+```bash
+curl -s -H "Authorization: Bearer $DASHBOARD_KEY" $GATEWAY/ratchet/requests/req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79 | jq
+# the client itself, with its own API key, sees only its own requests:
+curl -s -H "Authorization: Bearer $API_KEY" $GATEWAY/v1/ratchet/requests/chatcmpl-3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79
+grep req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79 /var/log/ratchet-gateway.log   # its chat line (live mode logs JSON at INFO)
+```
+
+`request` is the ledger row (route, version, confidence, cost, latency; never text). `failures` lists what went wrong, one row per failure, with `stage`, `error` (the exception's class, status and code), `status` and `cost_usd`. A request that failed has no `request` row, only its failure. In SQL: `SELECT stage, error, status, COUNT(*), SUM(cost_usd) FROM failures WHERE ts > strftime('%s','now') - 3600 GROUP BY 1, 2, 3 ORDER BY 4 DESC;`.
+
+| Stage | Written by | The client got | Meaning | Action |
+|---|---|---|---|---|
+| `teacher` | `Ratchet` | 400, 429, 502, 503 or 504 | The teacher's answer was needed and could not be had (after its retries; `CircuitOpen 503 teacher_circuit_open` while its breaker is open, one row in 10). `cost_usd` is what the student's samples already cost. Also written, with the client answered, when the fallback teacher or a degraded student answer stood in | [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts); `UpstreamError 429`: [Rate limited](#rate-limited) |
+| `student` | `Ratchet` | Its answer (the teacher covered) | A student call failed (`UpstreamError 504 upstream_timeout`, `ConnectError`, `AdapterMissing 404`), or its breaker refused it (`CircuitOpen 503`, one row in 10) | [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
+| `audit` | `Ratchet` | Its answer | A teacher audit failed or was skipped by the teacher's breaker; the request is logged with `audited=0` | As `teacher` if it repeats |
+| `shadow` | `Ratchet` | Its answer | `sampling: ...` (the shadow's own call) or `arbitration: ...` (the teacher's ruling; the disagreement counts against the shadow) | As `shadow_error` in [Event kinds](#event-kinds) |
+| `quota` | the gateway | 429 `daily_quota_exceeded` | A key used up `RATCHET_API_KEY_DAILY_REQUESTS` | Raise the quota or talk to the client |
+| `auth` | the gateway | 401 | A wrong or missing API, admin or dashboard key (`client` is empty: the caller is unknown). Many in a row from one place: someone is guessing keys | Check the caller; rotate keys if one leaked |
+| `budget` | the gateway | 429 on `/scout/run` | The Scout demo's budget guard refused a run | None on a public demo |
+| `rate` | the gateway | 429 | Any other 429 the gateway answered | Check the client |
+| `upstream` | the gateway | 502, 503 or 504 | A model or search call a route made itself failed (Scout) | As `teacher` |
+| `gateway` | the gateway | 413 or 500 | A body over `RATCHET_MAX_BODY_BYTES`, or an unhandled error (`RuntimeError`): a bug; the traceback is in the gateway's log | Fix the bug; see `gateway_error` in [Event kinds](#event-kinds) |
+
+The gateway writes at most 120 rows a minute per stage; a 400 for a malformed request writes none (it is counted in `/metrics` only). `errors.last_hour` in `/ratchet/stats` counts the rows of the last hour by stage. Logs: in live mode the gateway writes one JSON line per chat request to stderr (`docker compose logs ratchet` on the demo VM) and one `upstream_error` line per failed model call, and repeats every release-log event; none of them holds prompt or answer text, a URL or a key ([CONFIGURATION.md](CONFIGURATION.md#observability)).
+
+## Alerts
+
+`GET /metrics` serves Prometheus metrics ([API.md](API.md#get-metrics)); give the scraper its own `RATCHET_METRICS_TOKEN`. Counters start at zero when the gateway starts, so alert on `rate()` and `increase()`. Examples to start from (thresholds are guesses until you have a week of live numbers):
+
+```yaml
+groups:
+  - name: ratchet
+    rules:
+      - alert: RatchetEscalationRatioHigh          # the student stopped taking traffic: drift, a bad version or an outage
+        expr: |
+          sum(rate(ratchet_escalations_total[30m]))
+            / sum(rate(ratchet_requests_total{status="200",route!~"pinned|unknown_task|cold_start"}[30m])) > 0.5
+        for: 30m
+      - alert: RatchetStudentErrors                # more than 5% of student calls fail or are refused by the breaker
+        expr: |
+          sum(rate(ratchet_upstream_requests_total{upstream="student",outcome!="ok"}[10m]))
+            / sum(rate(ratchet_upstream_requests_total{upstream="student"}[10m])) > 0.05
+        for: 10m
+      - alert: RatchetBreakerOpen                  # see "Student endpoint down" or "Teacher API down"
+        expr: max by (breaker) (ratchet_circuit_open) == 1
+        for: 5m
+      - alert: RatchetTeacherFailures              # clients are getting errors because the teacher's answer could not be had
+        expr: sum(rate(ratchet_failures_total{stage="teacher"}[10m])) > 0.1
+        for: 10m
+      - alert: RatchetFailedSpend                  # money spent on requests that failed without an answer
+        expr: sum(increase(ratchet_failed_cost_usd_total[1h])) > 0.50
+      - alert: RatchetSpendToday                   # a client's spend since 00:00 UTC
+        expr: max by (client) (ratchet_spend_today_usd) > 20
+```
+
+`totals.failed_cost_usd` in `/ratchet/stats` is the exact failed spend over the whole ledger; `SELECT SUM(cost_usd) FROM failures WHERE ts > strftime('%s','now') - 86400` gives the last day's. In mock mode every figure is simulation output from mock models.
 
 ## Manual interventions
 
