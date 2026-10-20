@@ -220,7 +220,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 
 `model` is the model that produced the served answer: the adapter name (`student-vN`), the teacher model ID, or the fallback teacher's (`RATCHET_TEACHER_FALLBACK_MODEL`) when it answered for an unavailable teacher.
 
-`system_fingerprint` names the configuration that produced the answer: `fp_` and the first 12 hex digits of SHA-256 over `student|<adapter>|<version id>|<training-set hash>|<threshold>` for a student answer, or `teacher|<RATCHET_TEACHER_MODEL>` for a teacher answer (`teacher|<RATCHET_TEACHER_FALLBACK_MODEL>` for the fallback teacher's). A degraded answer carries its version's student fingerprint. It is the same for every answer of one version, and changes when a promotion or a rollback puts another version in front (during a canary, both versions' fingerprints appear) or when a version's threshold changes. `service_tier` is always `default`. `choices[i].logprobs` is `null` unless the request sent `logprobs: true` ([Choices and logprobs](#choices-and-logprobs)), `message.refusal` is `null` and `message.annotations` is empty.
+`system_fingerprint` names the configuration that produced the answer: `fp_` and the first 12 hex digits of SHA-256 over `student|<adapter>|<version id>|<training-set hash>|<threshold>` for a student answer, or `teacher|<RATCHET_TEACHER_MODEL>` for a teacher answer (`teacher|<RATCHET_TEACHER_FALLBACK_MODEL>` for the fallback teacher's). A degraded answer carries its version's student fingerprint. `<threshold>` is the one the answer was held to: since FR-14.1 each task of a version can have its own, so the fingerprint is the same for every answer of one version on one task, and changes when a promotion or a rollback puts another version in front (during a canary, both versions' fingerprints appear) or when that threshold changes. `service_tier` is always `default`. `choices[i].logprobs` is `null` unless the request sent `logprobs: true` ([Choices and logprobs](#choices-and-logprobs)), `message.refusal` is `null` and `message.annotations` is empty.
 
 `message.content` is the served answer after `tasks.clean_answer`: model reasoning is never returned (a `<think>…</think>` block, anything before a lone `</think>`, an unterminated `<think>` that opens what is left and what follows), and for a structured task such as `ticket-triage` a code fence around the whole JSON answer is removed, so the content is bare JSON. A structured answer that is one JSON object is returned whole, so a tag quoted in its strings stays; a `<think>` after answer text is content too. A free-text answer keeps its code blocks. A teacher answer that was cut off by its token limit is still returned (and is not stored as training data), with `finish_reason: "length"`.
 
@@ -433,10 +433,13 @@ Needs a key when `RATCHET_API_KEYS` is set.
   "tasks": [
     {"task": "ticket-triage", "pinned": false, "requests": 12000, "student_share": 0.84, "escalation_rate": 0.06,
      "cost_usd": 3.21, "baseline_usd": 13.1, "savings_pct": 0.75, "avg_latency_ms": 640.0,
-     "routes": {"student": 10080, "cold_start": 1100, "confidence": 720, "student_error": 60, "student_breaker": 40}},
+     "routes": {"student": 10080, "cold_start": 1100, "confidence": 720, "student_error": 60, "student_breaker": 40},
+     "audits": 1008, "audit_agreement": 0.98, "threshold": 0.7412, "precision": 0.98, "coverage": 0.91,
+     "calibrated": true, "disabled": null},
     {"task": "research-plan", "pinned": true, "requests": 3, "student_share": 0.0, "escalation_rate": 0.0,
      "cost_usd": 0.0039, "baseline_usd": 0.0039, "savings_pct": 0.0, "avg_latency_ms": 2400.0,
-     "routes": {"pinned": 3}}
+     "routes": {"pinned": 3}, "audits": 0, "audit_agreement": null, "threshold": null, "precision": null,
+     "coverage": null, "calibrated": null, "disabled": null}
   ],
   "events": [{"id": 57, "ts": 1792400000.0, "day": 9, "kind": "live", "detail": "v5 promoted to 100% (audited precision 94.1%, n=17)"}],
   "totals": {"requests": 13500, "cost_usd": 5.21, "baseline_usd": 14.58, "saved_usd": 9.37, "savings_pct": 0.64,
@@ -470,7 +473,9 @@ Needs a key when `RATCHET_API_KEYS` is set.
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
   Later versions add routes; a client should show an unknown route as it is.
-- `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
+
+  Since FR-14.1 each entry also says how well the student does the task and how it is held to it ([per-task calibration](CONFIGURATION.md#per-task-calibration)). `audits` and `audit_agreement` cover the teacher's audits of the task's student answers over every version (`audit_agreement` is `null` without audits). The rest come from the live version's eval and are `null` without a live version and for a pinned task: `threshold` is the confidence the live student needs to answer the task, as the router applies it (its per-task threshold, 1.01 when the task is disabled, has no held-out rows or its spec changed since the version was scored, else the version's global threshold); `precision` and `coverage` are the task's held-out numbers at that threshold, `calibrated` whether the threshold is the task's own (enough calibration rows) or never below the global one, and `disabled` why the release gate disabled the task on the live version (a string) or `null`. The last four are `null` when the live version has no per-task record for the task (scored before per-task calibration, or no golden rows of it).
+- `versions`: every version, oldest first. `eval` is its golden evaluation (since FR-14.1 with one record per task in `eval.tasks`, [per-task calibration](CONFIGURATION.md#per-task-calibration)). `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off.
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`).
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).

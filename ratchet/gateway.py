@@ -114,12 +114,13 @@ class Runtime:
     def reset(self) -> None:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
+        min_task_n = s.min_task_golden_rows()  # a bad RATCHET_MIN_TASK_GOLDEN stops startup here (FR-14.1)
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
-            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy())
+            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy(), min_task_n=min_task_n)
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}

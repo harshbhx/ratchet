@@ -15,7 +15,7 @@ from typing import Any, NamedTuple
 
 import httpx
 
-from . import licenses, tasks
+from . import calibration, licenses, tasks
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
@@ -652,27 +652,30 @@ class Ratchet:
         return self.s.price(model).cost(choices[0].in_tokens, sum(c.out_tokens for c in choices))
 
     def threshold(self, version: Version, model: str | None = None, task: tasks.Task | str | None = None) -> float:
-        """Each version carries its own threshold, calibrated on the golden set at training time.
-        The hosted untuned fallback model was never calibrated, so it uses the global default. For a `task` whose spec
-        changed since the version was scored (`spec_changed`) it is SERVE_NOTHING: the threshold was calibrated under
-        other rules, so the teacher answers until a night re-scores the version under the new spec (FR-2.15)."""
+        """Each version carries its own threshold, calibrated on the golden set at training time, and since FR-14.1 one
+        per task (`ratchet.calibration.threshold`): the task's own when the version's eval has a record for it under its
+        current spec (1.01, SERVE_NOTHING, when the release gate disabled the task on this version or it had no held-out
+        rows), SERVE_NOTHING when the version was scored under another spec of the task (the teacher answers until a
+        night re-scores it, FR-2.15), else the version's global threshold. A version scored before per-task calibration
+        has only the global one, and one that is not a number serves nothing. The hosted untuned fallback model was never
+        calibrated, so it uses the global default. Dict lookups only."""
         if model is not None and model == self.s.fallback_student_model:
             return self.s.confidence_threshold
-        if task is not None and self.spec_changed(version, task):
-            return SERVE_NOTHING
-        return float(version.eval.get("threshold", self.s.confidence_threshold))
+        raw = version.eval.get("threshold")
+        default = self.s.confidence_threshold if raw is None else calibration.number(raw)
+        if default is None:  # a hand-edited threshold that is not a number: never guess, never fail the request (INV-7)
+            default = SERVE_NOTHING
+        if task is None:
+            return default
+        return calibration.threshold(version.eval, _task(task), default)
 
     @staticmethod
     def spec_changed(version: Version, task: tasks.Task | str) -> bool:
-        """Whether `version` was scored under another spec of `task` than the current one: its eval records the task's
-        `spec_hash` (`eval['spec_hashes']`, written by `run_night`) and it differs. A version without a record for the
-        task (scored before hashes were recorded, or with no golden rows of it) has nothing to compare."""
-        recorded = version.eval.get("spec_hashes")
-        if not isinstance(recorded, dict):
-            return False
-        t = _task(task)
-        h = recorded.get(t.name)
-        return h is not None and h != t.spec_hash
+        """Whether `version` was scored under another spec of `task` than the current one: its per-task record (or the
+        older `eval['spec_hashes']`, which `run_night` still writes) names another `spec_hash`. A version without a
+        record for the task (scored before hashes were recorded, or with no golden rows of it) has nothing to
+        compare."""
+        return calibration.spec_changed(version.eval, _task(task))
 
     def _sample(
         self,

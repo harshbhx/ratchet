@@ -71,9 +71,10 @@ def test_reference_simulation_unchanged(reference_run, sim_reference):
 
 
 def test_reference_workloads_reproduce_v040(reference_run, reference_check):
-    """scripts/reference_check.py pins three workloads captured from v0.4.0 (tickets, mixed, research). The tickets run
-    is the session's reference simulation, so it is checked here at no extra cost; CI and `make reference` run all
-    three. Every input the fixture pins is still the simulator's default, for all three."""
+    """scripts/reference_check.py pins three workloads captured from v0.4.0 (tickets, mixed, research; mixed and research
+    captured again with per-task calibration, ADR 0040). The tickets run is the session's reference simulation, so it is
+    checked here at no extra cost; CI and `make reference` run all three. Every input the fixture pins is still the
+    simulator's default, for all three."""
     doc = reference_check.load()
     assert doc["captured_from"].startswith("v0.4.0") and set(doc["configs"]) == set(reference_check.CONFIGS)
     fresh = reference_check.summarize("tickets-seed7", reference_run)

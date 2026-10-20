@@ -16,10 +16,11 @@ All settings come from environment variables. Defaults live in `ratchet/config.p
 | `RATCHET_STUDENT_BASE` | empty | Base URL of your vLLM endpoint, e.g. `https://<endpoint>/v1` |
 | `RATCHET_STUDENT_KEY` | empty | Token for the student endpoint |
 | `RATCHET_STUDENT_BASE_MODEL` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model that adapters are trained on (also used by the deploy scripts) |
-| `RATCHET_CONFIDENCE_THRESHOLD` | `0.80` | Fallback threshold, used only when a version has no calibrated `threshold` in its eval |
+| `RATCHET_CONFIDENCE_THRESHOLD` | `0.80` | Fallback threshold, used only when a version has no calibrated `threshold` in its eval (and for the hosted, untuned fallback student) |
 | `RATCHET_SAMPLES` | `3` | Student samples per request (self-consistency) and per golden row. A request for more choices (`n`) draws `n` samples, but its confidence is still scored on the first `RATCHET_SAMPLES` of them |
 | `RATCHET_AUDIT_RATE` | `0.05` | Probability that a student-served answer is also sent to the teacher. Mock mode raises it to at least `0.10` |
 | `RATCHET_GOLDEN_FRACTION` | `0.10` | Share of new examples assigned to the golden (held-out) split |
+| `RATCHET_MIN_TASK_GOLDEN` | `20` | Calibration rows (the even half of a task's golden rows) a task needs before its own threshold may go below the version's global one ([per-task calibration](#per-task-calibration), FR-14.1). With fewer it gets the higher of the two and `calibrated: false`. A whole number, 1 or more; anything else stops startup (gateway, simulator, `python -m ratchet.live`) |
 | `RATCHET_TEACHER_REASONING_TOKENS` | `300` | Extra output tokens assumed for the teacher in baseline estimates (and added by the mock teacher) |
 
 ## Request limits and OpenAI compatibility
@@ -196,8 +197,10 @@ The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mo
 | `min_shadow` | `RATCHET_MIN_SHADOW` | 100 | Would-serve shadow answers needed before a shadow decision |
 | `min_audits` | `RATCHET_MIN_AUDITS` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert |
 | `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it. Strictly between 0 and 1 |
+| `min_task_test_n` | `RATCHET_MIN_TASK_TEST_N` | 10 | Held-out (odd-half) golden rows a task needs before the golden gate checks its own numbers ([per-task calibration](#per-task-calibration), FR-14.1). A whole number, 0 or more |
+| `task_mode` | `RATCHET_TASK_MODE` | `disable` | What the golden gate does with a task that fails its own check: `disable` it on the candidate (its threshold becomes 1.01, a `task_disabled` event; the version ships for its other tasks) or `reject` the candidate. Case and surrounding spaces are ignored; empty means the default |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1.
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1, `task_mode` `disable` or `reject`.
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features are in [Reserved settings](#reserved-settings).
 
@@ -208,7 +211,7 @@ Other constants:
 | `CANARY_STEPS` | `release.py` | `[10, 50]` then 100 |
 | `FREQUENT` | `nightschool/dataset.py` | 3: requests seen this often always go to training |
 | `min_new_examples` | `run_night()` | 50 new train rows needed to train |
-| `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration |
+| `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration (`calibration.DEFAULT_TARGET_PRECISION`); a task's `policy.target_precision` overrides it for that task |
 | `floor` | `cascade_eval()` | 0.5: lowest allowed threshold |
 | Confidence weights | `confidence.score()` | 0.4 × token probability + 0.6 × agreement |
 | Student sampling | `router._sample` | `temperature=0.7`, `logprobs=True` |
@@ -315,7 +318,7 @@ Limits: 64 fields per task (counting the fields inside records), records nested 
 | `format` | `json` with fields, else `text` | `json`: fields are paths into the JSON answer, and a code fence around the whole answer is unwrapped; with a `$` field the answer may be any JSON value (a list, a number). `text`: the answer is plain text and its one field is `$`, the text without trailing `.!,;:` (`Positive.` is the label `positive`) |
 | `pinned` | false | Always the teacher, never training data (below) |
 | `store` | true | False: the task's teacher answers are served but never stored as training examples |
-| `policy` | `{}` | `samples` (1 to 16), `audit_rate`, `target_precision`, `min_precision` (0 to 1): part of the spec and its hash, read by later releases (per-task sampling, audits and precision targets) |
+| `policy` | `{}` | `samples` (1 to 16), `audit_rate`, `target_precision`, `min_precision` (0 to 1): part of the spec and its hash. `target_precision` is the precision the task's own threshold is calibrated to (default 0.97) and `min_precision` its floor in the golden gate (default `RATCHET_MIN_PRECISION`) ([per-task calibration](#per-task-calibration)); `samples` and `audit_rate` are read by a later release |
 | `routing` | `{}` | Routing rules for a later release; part of the spec and its hash |
 | `tools` | `teacher` | `teacher` or `distill` (opt-in tool-call distillation, a later release) |
 | `description` | empty | What the task is for, up to 1,000 characters. Shown by `GET /ratchet/tasks` |
@@ -323,7 +326,23 @@ Limits: 64 fields per task (counting the fields inside records), records nested 
 | `match` | `{}` | How a request without a task name may find this task, for a later release: `system_prefix` (the system message starts with it), `schema_name` (`response_format.json_schema.name`), `tools` (exactly these tool names). Plain comparisons, never patterns |
 | `extends` | none | Spec files and the API only: start from another task's spec. In a tasks file, a built-in task or another task of the same file (before or after it; a task's own name extends the built-in task of that name), never an API task, because startup reads the file before it registers the stored API tasks. Through the API, any registered task (the task's own name extends its current version). `fields`, `policy` and `match` merge by key (`null` removes the base's entry); every other key replaces the base's; `name` and `description` are not inherited. Resolved when the task is defined, so later changes to the base do not reach it |
 
-`Task.spec_hash` is 16 hex digits of SHA-256 over the task's rules (`Task.spec()`: `format`, `fields` in their order, `pinned`, `store`, `policy`, `routing`, `tools`), so a changed vocabulary or tolerance changes it and a renamed task keeps it. `description`, `clients` and `match` are left out: they say who uses a task, not how its answers compare. Night School records each golden task's hash in every eval it writes, and a task whose hash changed since the serving version was scored goes to the teacher (threshold 1.01) until a night scores the version under the new spec; `GET /ratchet/tasks` shows it as `recalibrating`.
+`Task.spec_hash` is 16 hex digits of SHA-256 over the task's rules (`Task.spec()`: `format`, `fields` in their order, `pinned`, `store`, `policy`, `routing`, `tools`), so a changed vocabulary or tolerance changes it and a renamed task keeps it. `description`, `clients` and `match` are left out: they say who uses a task, not how its answers compare. Night School records each golden task's hash in every eval it writes (in the task's per-task record, and in `spec_hashes`), and a task whose hash changed since the serving version was scored goes to the teacher (threshold 1.01) until a night scores the version under the new spec; `GET /ratchet/tasks` shows it as `recalibrating`. Because `policy` is part of the hash, changing a task's `target_precision` or `min_precision` also sends it to the teacher until the next night calibrates it under the new target.
+
+### Per-task calibration
+
+When several tasks share one adapter, each gets its own threshold (FR-14.1, [ADR 0040](adr/0040-per-task-calibration.md)). The golden eval scores every row once and splits the rows into the calibration and held-out halves by their global position, as before, then writes one record per task into the version's eval (`eval['tasks'][name]`): `golden_n`, `test_n`, `agreement`, `threshold`, `precision`, `coverage`, `spec_hash`, `target_precision`, `calibrated`, and `disabled` once the release gate disables the task. With one task the record holds exactly the global numbers.
+
+| Rule | Value |
+|---|---|
+| A task's threshold | Calibrated on its own calibration rows to its `policy.target_precision` (default 0.97), never below 0.5 |
+| Fewer than `RATCHET_MIN_TASK_GOLDEN` (20) calibration rows | The higher of its own threshold and the version's global one (`calibrated: false`); the global one when it has none |
+| No held-out row | 1.01: the teacher answers it until a night measures it |
+| Spec changed since the version was scored | 1.01 until a night re-scores the version |
+| Golden gate, per task | Checked once it has `RATCHET_MIN_TASK_TEST_N` (10) held-out rows: it fails when the 95% Wilson upper bound of its precision is below its floor (`policy.min_precision`, else `RATCHET_MIN_PRECISION`) or below the live version's precision on it less `RATCHET_TOLERANCE`. `RATCHET_TASK_MODE=disable` disables it on the candidate; `reject` rejects the candidate. A candidate left answering under `RATCHET_MIN_COVERAGE` of its held-out rows at its per-task thresholds is rejected |
+| A disabled task | Stays disabled for that version's life, through every re-score |
+| Live alert, per task | One `alert` per (version, task) when its audited precision's Wilson upper bound is below `RATCHET_LIVE_FLOOR` with at least `RATCHET_MIN_AUDITS` audits, for the live and canary versions; a version whose audits are all one task's has only its own alert |
+
+A version scored before per-task calibration has no records and keeps its one threshold. `/ratchet/stats` lists each task's threshold, precision and coverage from the live version ([API](API.md#get-ratchetstats)).
 
 **Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data. Only an operator's spec pins a task (built-in, tasks file, admin API): no header, metadata key, `model` value or `response_format` can. Pinning a task that already has stored examples keeps them out of training and out of the golden eval from the next night on (`excluded_pinned` in the dataset manifest); the ledger keeps them, so unpinning brings them back.
 

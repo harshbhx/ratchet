@@ -41,6 +41,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/compare.py` | `FieldSpec`: typed field comparators (`label`, `number`, `date`, `set`, `records`, ...) that normalise a value once and compare two ([ADR 0021](adr/0021-field-comparators-and-task-specs.md)); standard library only |
 | `ratchet/vocab.py` | The built-in tasks' label vocabularies, shared with the prompts in `sim/tickets.py` and `ratchet/scout/prompts.py` |
 | `ratchet/confidence.py` | `score()` (confidence from samples, agreement counted pairwise) and `calibrate_threshold()` |
+| `ratchet/calibration.py` | Reads a version's per-task calibration records (`eval['tasks']`): the threshold rule the router applies per task, spec-change checks, records a re-score must keep disabled ([§6](#per-task-calibration), [ADR 0040](adr/0040-per-task-calibration.md)) |
 | `ratchet/router.py` | `Ratchet.handle()`: the per-request cascade, audits, shadow, cost accounting |
 | `ratchet/release.py` | `ReleaseGate` (golden gate, shadow, canary, rollback) and `wilson()` |
 | `ratchet/ledger.py` | `Ledger`: SQLite storage, provenance, stats |
@@ -120,7 +121,7 @@ Details that matter:
 0. **Task admission** (`Ratchet.task_for`, in the gateway before the quota): an unregistered name under `RATCHET_UNKNOWN_TASKS=reject` is a 400 `unknown_task`, and a task whose `clients` do not name the request's API key is a 403 `task_not_allowed`; neither is logged. Under `teacher`, an unregistered task takes the teacher-only path below with route `unknown_task`. **Pinned tasks** (`Task.pinned`, `_teacher_only`): checked first in `handle`. The teacher answers, the request is logged with `served_by=teacher`, no student version, and `cost_usd = baseline_cost_usd`. The answer is **not** passed to `add_example`, so it never becomes training data. No student, audit or shadow call is made. Scout's planner and writer (`research-plan`, `research-write`) are pinned; see [§10](#10-scout-multi-agent-demo).
 1. **Version choice** (`_pick_version`): if a version is in `canary`, it is chosen with probability `traffic_pct / 100`; otherwise the `live` version is used. With no live version (cold start) and the canary not picked, the request goes straight to the teacher.
 2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3) and `confidence.STUDENT_SAMPLING` (`temperature=0.7`, `logprobs=True`), the constant the golden eval also uses, plus the request's generation parameters as the student's role allows (below). The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name. A request for `n` > `Settings.samples` choices draws `n` samples in the same call, but the confidence is scored on the first `Settings.samples` of them, the statistic the threshold was calibrated on ([n choices](#n-choices-and-token-logprobs)).
-3. **Threshold**: `Ratchet.threshold(version, model, task)` returns `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80). When the version's eval records another `spec_hash` for the task than its current one (`eval["spec_hashes"]`, `Ratchet.spec_changed`), the threshold is 1.01: the student serves nothing for that task until a night scores the version under the new spec. A sample set with no valid answer (`Scored.valid` false: every sample unparseable, empty or cut off) is never served, whatever the threshold. For `n` > 1 choices, at least `n` samples must also share the majority answer (`confidence.majority`); a confident student that cannot fill them escalates with route `n_choices`.
+3. **Threshold**: `Ratchet.threshold(version, model, task)` (`calibration.threshold`) returns the task's own threshold when the version's eval has a per-task record for it under the task's current spec (`eval["tasks"][task]["threshold"]`, [per-task calibration](#per-task-calibration)); 1.01 when that record, or the older `eval["spec_hashes"]`, names another `spec_hash` than the task's current one (`Ratchet.spec_changed`): the student serves nothing for that task until a night scores the version under the new spec; otherwise the version's global `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80). A record the release gate disabled, or one without held-out rows, holds 1.01 too. The hosted untuned fallback student always gets `Settings.confidence_threshold`. A sample set with no valid answer (`Scored.valid` false: every sample unparseable, empty or cut off) is never served, whatever the threshold. For `n` > 1 choices, at least `n` samples must also share the majority answer (`confidence.majority`); a confident student that cannot fill them escalates with route `n_choices`.
 4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data. A teacher answer that cannot be stored ([below](#storage-rules)) is not an audit: `audited=0`.
 5. **Teacher calls** (`_call_teacher` → `_ask_teacher`, then `_store_example`): the teacher answer is cleaned (`tasks.clean_answer`), checked against the [storage rules](#storage-rules), the messages, the answer and the stored conditions are redacted ([PII redaction](#pii-redaction)), and they are stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url, redactions, params)`. The license comes from `Ratchet.licenses`, built when `Ratchet` is constructed with `licenses.require_distillable` for the teacher and the fallback teacher (if set), and looked up by the configured model that wrote the answer. A closed teacher raises `LicenseError` at startup.
 6. **Shadow**: see [state machine](#5-version-state-machine). The shadow candidate never serves.
@@ -223,13 +224,14 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
  │     new < min_new_examples (50) ───────────────────────────────▶ event "skip" (re-score the live
  │                                       version first when a golden task's spec changed: "rescored"), stop
  │     no golden rows ────────────────────────────────────────────▶ event "skip", stop
- ├─ champion re-check: evaluate the LIVE version on today's golden set, overwrite its eval (+ spec_hashes)
+ ├─ champion re-check: evaluate the LIVE version on today's golden set, overwrite its eval (+ spec_hashes;
+ │     tasks the gate disabled on it stay disabled)
  ├─ trainer.train(train_rows, base_model, name="student-v{N+1}") → adapter_uri
  ├─ ledger.create_version(state="candidate")
- ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, ...} + spec_hashes
+ ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, tasks: {...}, ...} + spec_hashes
  ├─ ledger.set_bom(): bill of materials from the exact train and golden rows, signed if a key is set
  ├─ event "trained"
- └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow
+ └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow (tasks that fail their own check disabled)
 ```
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
@@ -305,7 +307,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `adapter_uri` | TEXT | Adapter name, e.g. `student-v3` (also the vLLM model name) |
 | `train_examples` | INTEGER | Size of the train set used |
 | `dataset_hash` | TEXT | `dataset_sha256` from the manifest |
-| `eval` | TEXT (JSON) | `golden_n`, `golden_agreement`, `threshold`, `coverage`, `precision`, `test_n`, optional `judge_pass_rate`, `rechecked_day` |
+| `eval` | TEXT (JSON) | `golden_n`, `golden_agreement`, `threshold`, `coverage`, `precision`, `test_n`, `refused_n`, `golden_invalid_refs`, `tasks` (one record per task, [§6](#per-task-calibration)), `spec_hashes`, optional `judge_pass_rate`, `rechecked_day` |
 | `state` | TEXT | `candidate`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rolled_back` |
 | `traffic_pct` | INTEGER | 10 or 50 in canary, 100 when live, 0 otherwise |
 | `stage_since` | INTEGER | Max `requests.id` when the current stage began; audits are counted only after it |
@@ -340,7 +342,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `task_disabled`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -373,22 +375,24 @@ Using the candidate's `eval` (calibrated on half of the golden set, measured on 
 1. Reject if `precision < 0.95`.
 2. Reject if `coverage < 0.25`.
 3. If a live version exists, reject if `precision < live.precision − 0.02` **or** `coverage < live.coverage − 0.02`. The live numbers were re-measured on the same golden set the same night ([§3](#3-nightly-loop-night-school)).
-4. Otherwise every version in `shadow` or `canary` is set to `retired` (event `retired`). Then:
+4. Per task (`ReleaseGate.task_failures`, FR-14.1), for each per-task record with at least `min_task_test_n` (10) held-out rows that the candidate would answer: the task fails when the 95% Wilson upper bound of its precision (over the answers it would serve) is below its floor (`policy.min_precision`, else `min_precision`), or below the live version's precision on that task less `tolerance` (only where live answers the task under the same spec with as many rows). With `task_mode=reject` a failing task rejects the candidate. With `disable` (the default) it is disabled on the candidate: `Ledger.merge_task_eval` sets its threshold to 1.01 and `disabled` to the reason, and a `task_disabled` event is written. Either way, a candidate with per-task records is rejected when the share of its held-out rows it would still answer, each task at its own threshold and the failing ones off, is below `min_coverage`: a version that serves (almost) nothing would wait in shadow or canary forever, and no night trains meanwhile.
+5. Otherwise every version in `shadow` or `canary` is set to `retired` (event `retired`). Then:
    - no live version → `canary` at 10% (event `canary`, "first student");
    - live version exists → `shadow` (event `shadow`).
 
-In practice step 4's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists.
+In practice step 5's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists.
 
 ### Ticks: `ReleaseGate.tick()`
 
-Run after every gateway request and by `python -m ratchet.live tick`. It is five steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The drift monitor (FR-16.6) will run first and the teacher watch (FR-16.7) last; both steps are empty today.
+Run after every gateway request and by `python -m ratchet.live tick`. It is six steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_tasks`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The drift monitor (FR-16.6) will run first and the teacher watch (FR-16.7) last; both steps are empty today.
 
 1. **Live watch:** take the audits of the live version since it became live. If there are at least `min_audits` and the Wilson upper bound of precision is below `live_floor`, write an `alert` event. No automatic action is taken on the live version.
-2. **Shadow:** `shadow_quality(id)` returns `served` (would-serve count), `precision` (mean `shadow_agree` where `shadow_serve=1`, an unarbitrated NULL counting as 0), `coverage = served / n`, `live_coverage` (share of the same requests the live student actually served, leaving out those it never answered: route `student_breaker` or `student_error`, ADR 0015) and `unarbitrated`, over the rows with a shadow verdict (`shadow_serve` not NULL). Once `served ≥ min_shadow` (100):
+2. **Per-task watch** (FR-14.1): for the live version and the canary, the same rule per task on the audits of the current stage (`Ledger.task_live_quality`), one `alert` per (version, task) (`v3 task page-read: ...`). A version whose audits in the stage are all one task's is left to step 1 and the canary rollback, which say the same. Once-only is read from the events (`Ledger.has_event`), so a new gate, as each `python -m ratchet.live tick` builds, does not repeat it. Nothing is rolled back or disabled; rollback stays per version.
+3. **Shadow:** `shadow_quality(id)` returns `served` (would-serve count), `precision` (mean `shadow_agree` where `shadow_serve=1`, an unarbitrated NULL counting as 0), `coverage = served / n`, `live_coverage` (share of the same requests the live student actually served, leaving out those it never answered: route `student_breaker` or `student_error`, ADR 0015) and `unarbitrated`, over the rows with a shadow verdict (`shadow_serve` not NULL). Once `served ≥ min_shadow` (100):
    - precision < 0.95 → `rejected` (the reason adds "N unarbitrated counted as disagreements" when N > 0);
    - coverage < live_coverage − 0.02 → `rejected`;
    - otherwise → `canary` at 10%.
-3. **Canary:** `version_live_quality(id)` counts audits of answers this version served since `stage_since`. With `n ≥ min_audits` (20) and audited precision `p`:
+4. **Canary:** `version_live_quality(id)` counts audits of answers this version served since `stage_since`. With `n ≥ min_audits` (20) and audited precision `p`:
    - Wilson upper bound of `p` below `live_floor` (0.92) → `rolled_back` (event `rollback`). Traffic returns to the live version, or to the teacher on cold start.
    - else if `p < 0.92` → hold (no change; keep auditing).
    - else if traffic is 10% → 50% (event `canary`); the stage counter resets because `set_version` updates `stage_since`.
@@ -430,7 +434,18 @@ For comparators that are transitive (equality on normalised values, as in every 
 
 A row whose reference (the stored teacher answer) is not valid under its task's current spec is skipped before the student is sampled; the halves alternate over the rows that are scored.
 
-Returned keys: `golden_n`, `golden_agreement` (majority-answer agreement over all rows), `threshold`, `coverage`, `precision`, `test_n`, `refused_n`, `golden_invalid_refs` (rows skipped for an invalid reference), plus `judge_pass_rate` from `LiveEvaluator` when tasks without fields exist.
+Returned keys: `golden_n`, `golden_agreement` (majority-answer agreement over all rows), `threshold`, `coverage`, `precision`, `test_n`, `refused_n`, `golden_invalid_refs` (rows skipped for an invalid reference), `tasks` (below), plus `judge_pass_rate` from `LiveEvaluator` when tasks without fields exist.
+
+### Per-task calibration
+
+Several tasks can share one adapter (Scout's triage and reader calls next to support tickets, UC-06), and the student is rarely equally good at each. One threshold calibrated over the pooled rows then serves the hardest task below the target precision, because the easy tasks' right answers dilute its wrong ones, and holds the easy tasks back when the hard one pushes it up. So `cascade_eval(..., min_task_n=RATCHET_MIN_TASK_GOLDEN)` also writes one record per task with golden rows that is not pinned (FR-14.1, [ADR 0040](adr/0040-per-task-calibration.md)):
+
+1. Each scored row's point also goes into its task's calibration or test list, by the same global parity as above. The global numbers are computed exactly as before, and a single-task eval gives the global numbers in its record.
+2. The task's own threshold is `calibrate_threshold` on its calibration points at its `policy.target_precision` (else `target_precision`), floored at 0.5 and capped at 1.01 as above.
+3. With at least `min_task_n` (20) calibration points that is its threshold (`calibrated: true`). With fewer it is the higher of its own and the global one (`calibrated: false`), so a few lucky rows cannot lower it; with none, the global one. With no test point it is 1.01: no task is served without evidence measured on rows the threshold was not tuned on (INV-6).
+4. `precision` and `coverage` on the task's test points at its threshold; `golden_n`, `test_n`, `agreement`, `spec_hash` (the spec it was scored under), `target_precision`.
+
+The router reads the records through `calibration.threshold` ([§2](#2-request-path)), the golden gate checks them ([§5](#golden-gate-releasegateadmitvid)), `run_night` keeps disabled tasks disabled through every re-score (`calibration.keep_disabled`), and `/ratchet/stats` shows the live version's per task. A version scored before per-task calibration has no `tasks` and keeps its one threshold. The global numbers stay at the global threshold, as the gate's global checks read them; the records say what the version serves.
 
 ### Wilson score interval (`stats.wilson`, also `release.wilson`)
 
@@ -523,6 +538,7 @@ Worked example with unverified list prices: an L40S at $1.55 per hour and about 
 | [0021](adr/0021-field-comparators-and-task-specs.md) | Field comparators and task specs: typed fields, required by default, pairwise confidence |
 | [0022](adr/0022-task-registry.md) | A task registry: specs as data, operator-only pinning, an unknown-task policy and admin keys |
 | [0023](adr/0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation |
+| [0040](adr/0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate on Wilson bounds, per-task alerts |
 
 ## 10. Scout (multi-agent demo)
 

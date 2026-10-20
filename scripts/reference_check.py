@@ -1,4 +1,4 @@
-"""Check that v0.4.0's behaviour is unchanged on three workloads, against tests/fixtures/reference.json.
+"""Check that the pinned behaviour is unchanged on three workloads, against tests/fixtures/reference.json.
 
     python scripts/reference_check.py                       # run each workload and compare (exit 1 on a difference)
     python scripts/reference_check.py --only mixed-seed1    # one workload (repeat --only for more)
@@ -6,9 +6,11 @@
 
 The fixture holds three runs of the simulator with mock models, captured from v0.4.0 (commit 1f9b18c): `tickets-seed7`
 (10 days of 2,000 requests, a product launch on day 5 and a corrupted v3: the reference simulation), `mixed-seed1` and
-`research-seed7` (8 days of 1,500 requests each). For each it pins every simulator input, every v0.4 key of each day's
+`research-seed7` (8 days of 1,500 requests each). The mixed and research runs, where several tasks share one adapter,
+were captured again with per-task calibration (FR-14.1, ADR 0040), which changes what they serve by design; the tickets
+run has one task and is still v0.4.0's. For each it pins every simulator input, every v0.4 key of each day's
 stats (`DAY_KEYS`), the totals, each version's final state, training-set size and dataset hash, and the event log. Every later
-feature defaults to v0.4's behaviour (ADR 0024), so every change must pass this check; CI runs it, and
+feature defaults to the pinned behaviour (ADR 0024), so every change must pass this check; CI runs it, and
 `make reference` runs it locally (about 25 s).
 
 What counts as unchanged:

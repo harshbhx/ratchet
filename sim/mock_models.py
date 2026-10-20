@@ -29,6 +29,7 @@ from typing import Any
 
 import httpx
 
+from ratchet.calibration import MIN_TASK_GOLDEN
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
@@ -200,18 +201,21 @@ class DownStudent:
 
 class MockFleet:
     """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages;
-    `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would."""
+    `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would; `min_task_n` is
+    RATCHET_MIN_TASK_GOLDEN, as `LiveEvaluator` takes it."""
 
     def __init__(
         self,
         corrupt_on_deploy: set[str] | None = None,
         clock: Callable[[], float] = time.monotonic,
         policy: GenPolicy | None = None,
+        min_task_n: int = MIN_TASK_GOLDEN,
     ):
         self.knowledge: dict[str, dict[str, Any]] = {}
         self.corrupt_on_deploy = corrupt_on_deploy or set()
         self.clock = clock
         self.policy = policy or GenPolicy()
+        self.min_task_n = min_task_n  # RATCHET_MIN_TASK_GOLDEN: calibration rows a task needs for its own threshold
         self.outage_until: float | None = None  # on `clock`; None = never down
 
     def student_outage(self, seconds: float) -> float:
@@ -239,7 +243,7 @@ class MockFleet:
             gen = self.policy.student(GenParams.from_stored(params))
             return student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
-        return cascade_eval(sample, golden_rows, samples=3, target_precision=0.97)
+        return cascade_eval(sample, golden_rows, samples=3, target_precision=0.97, min_task_n=self.min_task_n)
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
     def resolve(self, version: Version):
