@@ -251,6 +251,7 @@ def main(
             signer=signer,
             train_gpu=policy.train,
             redact_pii=s.redact_pii,
+            store_examples=s.store_examples,
         )
         if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
             doc = led.version_bom(rep.version)

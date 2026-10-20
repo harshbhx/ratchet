@@ -120,7 +120,9 @@ def _endpoint(provider: Provider) -> str:
 class RequestMeta:
     """What a caller knows about a request besides its messages and parameters; later items fill more of it.
     `storable=False` keeps every teacher answer of the request out of the training set (no example is inserted or
-    bumped); the request is still answered, audited and logged."""
+    bumped); the request is still answered, audited and logged, with `store_opt_out` (one of `privacy.OPT_OUTS`, `request`
+    when not given) as the reason. `end_user` is the end user's HMAC (`privacy.EndUsers.hash`), never the raw value: it is
+    logged with the request and the example, and an end user registered as no-train stores nothing (FR-13.2)."""
 
     request_id: str | None = None
     client_request_id: str | None = None
@@ -128,6 +130,7 @@ class RequestMeta:
     storable: bool = True
     end_user: str | None = None
     idempotency_key: str | None = None
+    store_opt_out: str | None = None
 
 
 # The model calls of one request, as `Result.usage_breakdown` names them: the student's samples (one call, n choices),
@@ -188,6 +191,8 @@ class Result:
     student_cost_usd: float = 0.0  # cost_usd's student part (FR-15.1)
     teacher_cost_usd: float = 0.0  # cost_usd's teacher part
     request_id: int | None = None  # the ledger row (`requests.id`) of this request; not RequestMeta.request_id
+    stored: bool = False  # a teacher answer of this request was stored as an example, or bumped one (`requests.stored`)
+    store_opt_out: str | None = None  # why it could not be stored (`privacy.OPT_OUTS`), or None (FR-13.1)
 
     def __post_init__(self) -> None:
         if not self.choices:
@@ -329,6 +334,11 @@ class Ratchet:
         self.serve_student_on_failure = settings.serve_student_on_teacher_failure()
         # RATCHET_UNKNOWN_TASKS: distill, teacher or reject (ADR 0022); a bad value stops startup here.
         self.unknown_tasks = settings.unknown_task_policy()
+        # RATCHET_STORE_EXAMPLES and RATCHET_NO_STORE_TASKS (FR-13.1): a Settings built in code with anything but a bool,
+        # or a name that is not a task name, stops startup here.
+        if not isinstance(settings.store_examples, bool):
+            raise ValueError(f"RATCHET_STORE_EXAMPLES must be true or false, not {settings.store_examples!r}")
+        self.no_store_tasks = settings.no_store_task_names()
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
@@ -542,6 +552,7 @@ class Ratchet:
         plan: GenPlan | None = None,
         role: str = "serve",
         meta: RequestMeta | None = None,
+        client: str | None = None,
     ) -> TeacherAnswer:
         """The teacher's answer, under the plan's `serve` parameters (with the client's `plan.n` choices) or, to audit or
         arbitrate, its `check` ones (one answer), and whether it was stored as a training example (`_store_example`).
@@ -555,8 +566,36 @@ class Ratchet:
         else:
             gen, fallback = plan.check, False
             cs = self._ask_teacher(task, messages, gen, plan.visible_max)
-        stored = self._store_example(task, messages, cs[0], gen, meta, fallback=fallback)
+        stored = self._store_example(task, messages, cs[0], gen, meta, fallback=fallback, client=client)
         return TeacherAnswer(cs[0], stored, self._teacher_model(fallback), fallback, tuple(cs))
+
+    def store_opt_out(self, task: tasks.Task, meta: RequestMeta | None = None) -> str | None:
+        """Why this request's teacher answers may not be stored (`privacy.OPT_OUTS`, broadest first), or None when they
+        may (FR-13.1): zero retention (RATCHET_STORE_EXAMPLES=0), a no-store task (its spec's `store`, or
+        RATCHET_NO_STORE_TASKS), the caller's verdict (`meta.storable` False, from the API key or the request), or an end
+        user registered as no-train. Attribute checks, plus one primary-key lookup when the request names an end user
+        and nothing else opted it out. Nothing here can turn an opt-out back into storage."""
+        if not self.s.store_examples:
+            return "global"
+        if not task.store or task.name in self.no_store_tasks:
+            return "task"
+        if meta is None:
+            return None
+        if not meta.storable:
+            return meta.store_opt_out or "request"
+        if meta.end_user is not None and self.ledger.is_no_train(meta.end_user):
+            return "end_user"
+        return None
+
+    def _opted_out(self, task: tasks.Task, meta: RequestMeta | None) -> tuple[RequestMeta | None, str | None]:
+        """The request's meta with its opt-out settled once (`store_opt_out`), so the request is logged with its reason
+        and every later store check stops at `storable` without another lookup."""
+        reason = self.store_opt_out(task, meta)
+        if reason is None:
+            return meta, None
+        if meta is None:
+            return RequestMeta(storable=False, store_opt_out=reason), reason
+        return replace(meta, storable=False, store_opt_out=reason), reason
 
     def _store_example(
         self,
@@ -567,6 +606,7 @@ class Ratchet:
         meta: RequestMeta | None = None,
         *,
         fallback: bool = False,
+        client: str | None = None,
     ) -> bool:
         """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
         is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
@@ -575,13 +615,13 @@ class Ratchet:
         under a client's label-altering sampling (`GenParams.unstorable`: `logit_bias`, a penalty, a temperature above 1,
         a vendor field) is not stored either: the client may choose the answer it gets, not the label everyone's student
         learns (threat model T2). Returns True when an example was inserted or a duplicate's `seen` bumped; False, with a
-        throttled `skip_example` event, when not. A request whose `meta.storable` is False stores nothing and is not a
-        skip. A `fallback` teacher's answer is stored only with RATCHET_STORE_FALLBACK_TEACHER=1 (so the golden labels
-        stay the primary teacher's), and then with its own model and license (INV-1). A task with `store=False` stores
-        nothing either, and that is not a skip. An answer that is not valid under the task's spec (`Task.check`: a
-        required field missing, a label outside its vocabulary) is served but skipped, with the field's path as the
-        reason (FR-2.14)."""
-        if (meta is not None and not meta.storable) or not task.store:
+        throttled `skip_example` event, when not. A request under a storage opt-out (`store_opt_out`: zero retention, a
+        no-store task, an opted-out key, request or end user) stores nothing and is not a skip (FR-13.1). A `fallback`
+        teacher's answer is stored only with RATCHET_STORE_FALLBACK_TEACHER=1 (so the golden labels stay the primary
+        teacher's), and then with its own model and license (INV-1). An answer that is not valid under the task's spec
+        (`Task.check`: a required field missing, a label outside its vocabulary) is served but skipped, with the field's
+        path as the reason (FR-2.14). The example records `client` (the API key name) and the end user's hash."""
+        if self.store_opt_out(task, meta) is not None:
             return False
         if fallback and not self.s.store_fallback_teacher:
             return False
@@ -612,6 +652,8 @@ class Ratchet:
             lic.url,
             redactions=sum(found.values()),
             params=conditions,
+            client=client,
+            end_user=meta.end_user if meta is not None else None,
         )
         return True
 
@@ -631,12 +673,13 @@ class Ratchet:
         shadow: Version,
         plan: GenPlan | None = None,
         meta: RequestMeta | None = None,
+        client: str | None = None,
     ) -> tuple[Completion, bool] | None:
         """The teacher settles a disagreement between the shadow and the served answer: its answer and whether it was
         stored. A failed call returns None and leaves the disagreement unarbitrated; the request it belongs to is
         already answered (INV-15). An open teacher breaker skips the call, as a failure would, without counting it."""
         try:
-            ruling = self._call_teacher(task, messages, plan, "arbitrate", meta)
+            ruling = self._call_teacher(task, messages, plan, "arbitrate", meta, client)
         except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
             return None
         except Exception as e:  # optional call: count it, never fail the request
@@ -727,13 +770,16 @@ class Ratchet:
         plan: GenPlan | None = None,
         params: GenParams | None = None,
         route: str = "pinned",
+        meta: RequestMeta | None = None,
+        opt_out: str | None = None,
     ) -> Result:
         """The teacher alone: a pinned task, a request the student cannot take (`teacher_only`), or an unregistered
         task under RATCHET_UNKNOWN_TASKS=teacher (`route` `unknown_task`). The request is logged, but the answer is never
         stored as a training example, so it cannot leak into a student that was never meant to do it (INV-10), and the
         student is never sampled. When the primary teacher is unavailable, the fallback teacher may answer (route
         `fallback_teacher`); the student never does, so this path never degrades. The baseline is the primary teacher's
-        price for the same tokens. `params` are the client's, for the logprobs it asked to get back."""
+        price for the same tokens. `params` are the client's, for the logprobs it asked to get back. The row records the
+        end user's hash and the request's storage opt-out (`opt_out`), as every request does."""
         plan = plan or self._plain
         served, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n)
         c = served[0]
@@ -762,6 +808,8 @@ class Ratchet:
             client=client,
             route=route,
             stored=0,
+            end_user=meta.end_user if meta is not None else None,
+            store_opt_out=opt_out,
         )
         choices = _choices(task, served, params)
         return Result(
@@ -782,6 +830,7 @@ class Ratchet:
             choices=choices,
             teacher_cost_usd=cost,
             request_id=request_id,
+            store_opt_out=opt_out,
         )
 
     def teacher_only(
@@ -801,7 +850,8 @@ class Ratchet:
         task = _task(task)
         self._admit(task, client)
         route = "unknown_task" if task.source == "adhoc" and self.unknown_tasks == "teacher" else "pinned"
-        return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route)
+        meta, opt_out = self._opted_out(task, meta)
+        return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route, meta=meta, opt_out=opt_out)
 
     def task_for(self, task: str | tasks.Task | None, client: str | None = None) -> tasks.Task:
         """The task a request names, as the gateway admits it before any quota or model call: a registered task, or for
@@ -853,14 +903,20 @@ class Ratchet:
 
         A pinned task, and an unregistered one under RATCHET_UNKNOWN_TASKS=teacher (route `unknown_task`), go to the
         teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. The client
-        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key."""
+        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key.
+
+        Whether the request's teacher answers may be stored is settled once, up front (`store_opt_out`, FR-13.1): under an
+        opt-out the cascade runs exactly as it would otherwise (audits, shadows and arbitrations included), nothing is
+        inserted or bumped, and the row records the reason (`requests.store_opt_out`) and the end user's hash."""
         task = _task(task)
         plan = self.plan(params, n)
         self._admit(task, client)
+        # Settled once: whether this request's teacher answers may be stored, and if not why (FR-13.1).
+        meta, opt_out = self._opted_out(task, meta)
         if task.source == "adhoc" and self.unknown_tasks == "teacher":  # not registered: never distilled (ADR 0022)
-            return self._teacher_only(task, messages, client, plan, params, route="unknown_task")
+            return self._teacher_only(task, messages, client, plan, params, route="unknown_task", meta=meta, opt_out=opt_out)
         if task.pinned:
-            return self._teacher_only(task, messages, client, plan, params)
+            return self._teacher_only(task, messages, client, plan, params, meta=meta, opt_out=opt_out)
         version = self._pick_version()
         cost = 0.0
         # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
@@ -918,7 +974,7 @@ class Ratchet:
                 fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
                 if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
                     try:
-                        audit = self._call_teacher(task, messages, plan, "audit", meta)
+                        audit = self._call_teacher(task, messages, plan, "audit", meta, client)
                     except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
                         teacher_failed = True
                     except Exception as e:  # optional call: the student's answer is served (INV-15)
@@ -939,7 +995,7 @@ class Ratchet:
                 escalated, route = True, "confidence"
         if served_by == "teacher":
             try:
-                answer = self._call_teacher(task, messages, plan, "serve", meta)
+                answer = self._call_teacher(task, messages, plan, "serve", meta, client)
             except Exception as e:  # no teacher answer: degraded if allowed, else the gateway maps the error (INV-7)
                 if not self._may_degrade(sc, params, e, picked):
                     raise
@@ -1005,7 +1061,7 @@ class Ratchet:
             reference: Completion | None = teacher_c if served_by == "teacher" or audited else None
             arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):
-                ruling = None if teacher_failed else self._arbitrate(task, messages, shadow, plan, meta)
+                ruling = None if teacher_failed else self._arbitrate(task, messages, shadow, plan, meta, client)
                 if ruling is None:
                     arbitrated = False
                 else:
@@ -1041,6 +1097,8 @@ class Ratchet:
             client=client,
             route=route,
             stored=int(stored),
+            end_user=meta.end_user if meta is not None else None,
+            store_opt_out=opt_out,
         )
         choices = _choices(task, served_choices, params)
         return Result(
@@ -1063,6 +1121,8 @@ class Ratchet:
             student_cost_usd=student_cost,
             teacher_cost_usd=teacher_cost,
             request_id=request_id,
+            stored=stored,
+            store_opt_out=opt_out,
         )
 
     def _may_degrade(

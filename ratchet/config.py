@@ -22,6 +22,7 @@ from .providers import (
     parse_param_allowlist,
 )
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
+from .tasks import valid_name as valid_task_name
 
 
 def _env(name: str, default: str) -> str:
@@ -45,6 +46,23 @@ def _int(name: str, default: str) -> int:
         return int(raw)
     except ValueError:
         raise ValueError(f"{name} must be a whole number, not {raw!r}") from None
+
+
+TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+FALSE_WORDS = frozenset({"0", "false", "no", "off"})
+
+
+def _bool(name: str, default: str) -> bool:
+    """A switch from the environment: 1, true, yes or on, or 0, false, no or off, in any case (empty means the default).
+    Anything else raises ValueError naming the variable: for a privacy switch, a typo must stop startup instead of
+    quietly meaning the other thing."""
+    raw = _env(name, default)
+    word = raw.strip().lower() or default
+    if word in TRUE_WORDS:
+        return True
+    if word in FALSE_WORDS:
+        return False
+    raise ValueError(f"{name} must be 1 or 0 (true/false, yes/no, on/off), not {raw!r}")
 
 
 def _float_or_none(name: str) -> float | None:
@@ -252,6 +270,16 @@ class Settings:
     # Privacy: replace emails, phone numbers, card numbers etc. with placeholders before a
     # request and the teacher's answer are stored as a training example (ratchet/redact.py).
     redact_pii: bool = field(default_factory=lambda: _env("RATCHET_REDACT_PII", "1") != "0")
+    # Storage opt-outs (FR-13.1, ADR 0080). 0 is zero retention: no teacher answer is stored as a training example and
+    # Night School skips every night. The requests table (metadata only) is still written.
+    store_examples: bool = field(default_factory=lambda: _bool("RATCHET_STORE_EXAMPLES", "1"))
+    # Tasks whose teacher answers are never stored, comma-separated: the same as `store: false` in their specs.
+    no_store_tasks: str = field(default_factory=lambda: _env("RATCHET_NO_STORE_TASKS", ""))
+    # End-user attribution (FR-13.2): the HMAC key `user` and `safety_identifier` are hashed with (at least 16
+    # characters). Empty = 32 random bytes generated once and kept in the ledger's meta table.
+    end_user_key: str = field(default_factory=lambda: _env("RATCHET_END_USER_KEY", ""))
+    # Per-key settings for API keys: "name:field=value,...;name:field=value". Only `store` (1 or 0) is built so far.
+    key_limits: str = field(default_factory=lambda: _env("RATCHET_KEY_LIMITS", ""))
 
     # Gateway API keys for /v1/*: "name:key,name:key". Empty = no authentication (v0.3 behaviour).
     api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
@@ -381,6 +409,22 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def no_store_task_names(self) -> frozenset[str]:
+        """RATCHET_NO_STORE_TASKS as a set of task names (FR-13.1). A name need not be registered (an unregistered name
+        may still be used under RATCHET_UNKNOWN_TASKS=distill), but one that is not a task name raises ValueError, so a
+        typo such as a space-separated list stops startup instead of storing what the operator meant to keep out."""
+        raw = self.no_store_tasks if isinstance(self.no_store_tasks, str) else None
+        if raw is None:
+            raise ValueError(f"RATCHET_NO_STORE_TASKS must be comma-separated task names, not {self.no_store_tasks!r}")
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        for name in names:
+            if not valid_task_name(name):
+                raise ValueError(
+                    f"RATCHET_NO_STORE_TASKS: {name!r} is not a task name (1 to 64 letters, digits, '_', '.' or '-'; "
+                    "separate names with commas)"
+                )
+        return frozenset(names)
 
     def limits(self) -> Limits:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,

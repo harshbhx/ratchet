@@ -21,6 +21,8 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/healthz` | both | Liveness check; always public |
 | GET | `/v1/models` | both | OpenAI-style model list (API key when keys are on) |
 | POST | `/v1/chat/completions` | both | The cascade; `stream: true` supported (API key when keys are on) |
+| POST | `/v1/ratchet/no-train` | both | Register an end user whose requests are never stored as training examples ([End users and storage](#end-users-and-storage)) |
+| DELETE | `/v1/ratchet/no-train` | both | Remove a no-train registration (API key, or admin key) |
 | GET | `/ratchet/stats` | both | Everything the dashboard shows |
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
@@ -56,7 +58,7 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
 - `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
-- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
+- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)), and may register or remove a no-train end user for any client ([End users and storage](#end-users-and-storage)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - Pages, `/healthz`, the other `/ratchet/*` routes (reads included: `GET /ratchet/tasks`) and Scout stay public. The read-only `/ratchet/stats` and `/ratchet/bom` are what the dashboard reads; the mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
 The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratchet/demo/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
@@ -73,16 +75,19 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 | `model` | string | no | Ignored; Ratchet chooses the model. Use `"ratchet"` |
 | `stream` | bool | no | `true` returns Server-Sent Events in the OpenAI chunk format ([Streaming](#streaming)) |
 | `stream_options` | object | no | With `stream: true`, `{"include_usage": true}` ends the stream with a chunk that carries `usage` ([Streaming](#streaming)). Other keys are ignored, and so is the object without a stream. Never forwarded |
-| `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent |
+| `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent. `metadata.ratchet_store` `"false"` or `"0"` keeps the request out of the training set ([End users and storage](#end-users-and-storage)). Echoed in the response, never stored |
+| `store` | bool | no | `false` keeps the request's teacher answers out of the training set ([End users and storage](#end-users-and-storage)). Absent or `true` means store: Ratchet's default is the opposite of OpenAI's, because distilling is what it is for. Never forwarded |
+| `user`, `safety_identifier` | string | no | The end user, at most 128 characters: `safety_identifier` if sent, else `user`. Stored only as a keyed hash ([End users and storage](#end-users-and-storage)); never forwarded |
 | `n` | integer | no | Number of choices, 1 (default) to `RATCHET_MAX_N` (4); more is a 400 `unsupported_value` ([Choices and logprobs](#choices-and-logprobs)) |
 | `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `logprobs`, `top_logprobs`, `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `reasoning_effort` | | no | Checked against OpenAI's rules ([Request validation](#request-validation)), then sent to each model as its role allows ([Generation parameters](#generation-parameters)). `max_completion_tokens` wins over `max_tokens`; a string `stop` counts as a one-item list. `logprobs: true` returns each choice's token logprobs ([Choices and logprobs](#choices-and-logprobs)) |
-| `functions`, `function_call`, `user`, `safety_identifier`, `store` | | no | Checked, not forwarded: the end user's identity and the storage choice never go upstream, and the legacy function fields are not mapped to `tools` yet |
+| `functions`, `function_call` | | no | Checked, not forwarded: the legacy function fields are not mapped to `tools` yet |
 | any other field | | no | Ignored on purpose: unknown fields are kept, not refused, so newer OpenAI SDKs and third-party clients that send fields Ratchet does not know (`service_tier`, `prompt_cache_key`, …) keep working. One is forwarded only when `RATCHET_TEACHER_PARAMS` or `RATCHET_STUDENT_PARAMS` names it (vLLM's `top_k`, for example) |
 
 `null` for any optional field means it is not set.
 
 | Header | Meaning |
 |---|---|
+| `X-Ratchet-Store` | `none`, `0` or `false` (any case) keeps the request's teacher answers out of the training set, like `store: false`; `1` or `true` is the default spelled out. Any other value is a 400 `invalid_value` |
 | `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. A name that is not registered ([Tasks](#tasks)) follows `RATCHET_UNKNOWN_TASKS`: by default it creates a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); with `teacher` the teacher answers and nothing is stored; with `reject` it is a 400 `unknown_task`. A task with `clients` answers 403 `task_not_allowed` to any other key. A header that is not a valid name means `default` under `distill`, and is a 400 `unknown_task` under `teacher` and `reject`. Missing means `metadata.ratchet_task`, else `default`. No header, metadata key or other field can pin a task: only an operator's spec does |
 
 #### Messages
@@ -153,13 +158,15 @@ Every rule runs before the quota check and before any model call; a refused requ
 | `seed` | An integer | `invalid_type` |
 | `logprobs` / `top_logprobs` | A boolean / an integer from 0 to 20, only with `logprobs: true` | `invalid_type`, `invalid_value` |
 | `logit_bias` | An object of integers from -100 to 100 | `invalid_type`, `invalid_value` |
-| `metadata` | An object of at most 16 string values; keys up to 64 characters, values up to 512; `ratchet_task` 1 to 64 letters, digits, `_`, `.` or `-` | `invalid_type`, `invalid_value` |
+| `metadata` | An object of at most 16 string values; keys up to 64 characters, values up to 512; `ratchet_task` 1 to 64 letters, digits, `_`, `.` or `-`; `ratchet_store` `true`, `false`, `1` or `0` (any case) | `invalid_type`, `invalid_value` |
+| `user`, `safety_identifier` | Strings of at most 128 characters; the message never quotes the value | `invalid_type`, `invalid_value` |
+| `X-Ratchet-Store` (header) | `none`, `0`, `false`, `1` or `true`, in any case | `invalid_value` |
 | `response_format` | `type` is `text`, `json_object` or `json_schema`. `json_schema` needs a `name` matching `^[A-Za-z0-9_-]{1,64}$`; its `schema`, if sent, must be an object of at most 64 KB and 16 levels | `missing_required_parameter`, `invalid_type`, `invalid_value` |
 | `tools` | At most 128 entries of `{"type": "function", "function": {"name": ...}}` (name as above), at most 64 KB in all. Other tool types are `unsupported_value` | `invalid_type`, `invalid_value`, `unsupported_value` |
 | `tool_choice` | `none`, `auto`, `required` or `{"type": "function", "function": {"name": ...}}` | `invalid_type`, `invalid_value` |
 | `functions`, `function_call` | The legacy forms: functions named as above; `none`, `auto` or `{"name": ...}` | `invalid_type`, `invalid_value` |
 | `stream`, `parallel_tool_calls`, `store` | Booleans | `invalid_type` |
-| `model`, `user`, `safety_identifier`, `reasoning_effort` / `stream_options` | Strings / an object | `invalid_type` |
+| `model`, `reasoning_effort` / `stream_options` | Strings / an object | `invalid_type` |
 | `stream_options.include_usage` | A boolean | `invalid_type` |
 
 ### Response (200)
@@ -201,7 +208,9 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
       "served": {"in": 104, "out": 31},
       "audit": null, "shadow": null, "arbitration": null
     },
-    "degraded": null
+    "degraded": null,
+    "stored": false,
+    "store_opt_out": null
   }
 }
 ```
@@ -216,7 +225,11 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `all_teacher_cost_usd` | Estimated cost if the teacher had answered alone |
 | `latency_ms` | Student latency plus teacher latency when the teacher answered |
 | `degraded` | `null`, or `"teacher_unavailable"` when the teacher (and the fallback teacher, if set) could not answer an escalated request and, with `RATCHET_ON_TEACHER_FAILURE=serve_student`, the student's own answer was served although it was below the version's threshold ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)). Such an answer is never stored, audited or shadowed; `served_by` is `student` and `escalated` is `true` |
+| `stored` | `true` when a teacher answer of this request was stored as a training example, or matched one already stored (its repeat count went up); `false` otherwise, including every student answer that was not audited |
+| `store_opt_out` | `null`, or why this request's teacher answers could not be stored: `global` (`RATCHET_STORE_EXAMPLES=0`), `task` (a no-store task), `key` (the API key has `store=0`), `request` (`store: false`, `X-Ratchet-Store` or `metadata.ratchet_store`) or `end_user` (a no-train end user) ([End users and storage](#end-users-and-storage)) |
 | `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call; every choice, for `n` > 1), `audit`, `shadow` (the candidate's samples) and `arbitration` ([Usage](#usage)) |
+
+A request that sent `metadata` gets it back as a top-level `metadata` field, as OpenAI echoes it (in a stream, on the chunk that carries the `ratchet` block). It is never stored.
 
 `model` is the model that produced the served answer: the adapter name (`student-vN`), the teacher model ID, or the fallback teacher's (`RATCHET_TEACHER_FALLBACK_MODEL`) when it answered for an unavailable teacher.
 
@@ -394,6 +407,46 @@ In mock mode, only the synthetic tickets generated by `sim/tickets.py` and Scout
 
 ---
 
+## End users and storage
+
+[ADR 0080](adr/0080-storage-opt-outs-and-pseudonymous-end-users.md). Every teacher answer of a request (an escalation, a cold start, an audit, a shadow arbitration) becomes training data unless an opt-out applies. The broadest one that applies is recorded with the request (`requests.store_opt_out`) and returned in `ratchet.store_opt_out`:
+
+| Opt-out | Set by | Reason |
+|---|---|---|
+| Zero retention | `RATCHET_STORE_EXAMPLES=0` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)); Night School then skips every night | `global` |
+| A no-store task | `store: false` in the task's spec, or `RATCHET_NO_STORE_TASKS` | `task` |
+| A no-store API key | `store=0` for the key's name in `RATCHET_KEY_LIMITS` | `key` |
+| The request | `store: false`, `X-Ratchet-Store: none` (or `0`, `false`), or `metadata.ratchet_store` `"false"` (or `"0"`) | `request` |
+| A no-train end user | `POST /v1/ratchet/no-train` (below) | `end_user` |
+
+- An opted-out request is answered exactly as any other: the student may serve, the teacher still audits at the usual rate and still settles shadow disagreements, so release decisions never depend on what is stored. Nothing is inserted into the training set and no stored example's repeat count goes up; `ratchet.stored` is `false`.
+- An opt-out only ever removes storage. `store: true`, `X-Ratchet-Store: 1` or `metadata.ratchet_store: "true"` is the default spelled out and cannot undo another opt-out. An absent `store` means store (OpenAI's chat completions default to not storing; Ratchet exists to distill, so it defaults the other way).
+- Pinned tasks and teacher-only requests are never stored anyway; their rows still record the opt-out. Examples stored before an opt-out took effect stay until they are erased.
+- **End users.** The request's `safety_identifier`, else its `user`, names its end user (at most 128 characters; empty means none). Ratchet stores only HMAC-SHA256 of it under the deployment's key (`RATCHET_END_USER_KEY`, or a random key generated once in the ledger), scoped to the API key's name and cut to 16 hex digits, in the request row and in an example it stores. The same identifier sent by two API keys is two people as far as the ledger can tell, and two deployments cannot link their hashes. The raw value is never stored, logged or forwarded upstream.
+- Examples also record the API key name of the request they were first stored from; a later duplicate from another key is recorded too, so a client's data can be found.
+
+### POST `/v1/ratchet/no-train`
+
+```bash
+curl -X POST localhost:8000/v1/ratchet/no-train -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -d '{"end_user": "user-8812"}'
+```
+
+```json
+{"object": "ratchet.no_train", "end_users": [{"client": "acme", "created": true}]}
+```
+
+From then on, requests from that end user are answered as usual but never stored (`store_opt_out` `end_user`), checked once at the start of each request and again just before anything would be stored. The value is the one the client sends as `user` or `safety_identifier`; only its hash is kept, and the response does not return it (the endpoint is not a way to compute hashes). Each entry names the client scope it was registered in (`null` for keyless requests).
+
+- **Who.** Open wherever chat completions are: with `RATCHET_API_KEYS` set it needs an API key and registers that key's own end user; without keys it registers the end user of keyless requests. An admin key (`RATCHET_ADMIN_KEYS`) may add `"client": "<key name>"` to register that client's end user, or leave it out to register the end user for every API key (and for keyless requests), as for a data subject's request.
+- `created` is `false` when the end user was already registered. A registration an admin makes cannot be removed by the client.
+- **Errors.** 400 for a body that is not an object, an unknown field (`unknown_parameter`), a missing, non-string, empty or over-long `end_user` (never quoted back), or a `client` that names no API key; 401 for a wrong key; 403 when an API key names another client; 409 past 1,000 registrations in mock mode (the shared demo; a reset clears them).
+- The event log records a count and who registered (`no_train` events), never the end user or its hash.
+
+### DELETE `/v1/ratchet/no-train`
+
+The same JSON body as `POST`, never a query string (access logs keep URLs). Removes the registration, so that end user's requests are stored again. The response lists each client scope with a `status`: `removed`, `kept` (an admin registered it, and an API key cannot remove it) or `absent`. An API key removes its own end users' registrations; an admin key removes any, for a named `client` or for every client. Without API keys, a live gateway answers 403 unless an admin key is sent, so nobody can switch storage back on for someone else's end users; the mock demo stays open.
+
 ## GET `/healthz`
 
 Always public, also when API keys are on. The demo VM's Docker health check uses it.
@@ -443,9 +496,13 @@ Needs a key when `RATCHET_API_KEYS` is set.
              "cost_model": "per_token"},
   "bill_of_materials": {"generated_at": 1792400000.0, "examples_sha256": "07ac2c…", "sources": [ … ]},
   "clients": [
-    {"client": "acme", "requests": 40, "student_share": 0.95, "cost_usd": 0.0044, "baseline_usd": 0.044, "savings_pct": 0.9}
+    {"client": "acme", "requests": 40, "student_share": 0.95, "cost_usd": 0.0044, "baseline_usd": 0.044, "savings_pct": 0.9,
+     "end_users": 12, "stored_share": 0.05}
   ],
-  "privacy": {"redaction": true, "examples": 2742, "redacted_examples": 12, "placeholders": 19},
+  "privacy": {"redaction": true, "examples": 2742, "redacted_examples": 12, "placeholders": 19,
+              "not_stored_requests": 310, "not_stored_by_reason": {"request": 290, "end_user": 20},
+              "no_train_end_users": 3, "store_examples": true, "no_store_tasks": ["hr-notes"],
+              "no_store_clients": [], "end_user_key": "env"},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
            "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"}
@@ -471,8 +528,8 @@ Needs a key when `RATCHET_API_KEYS` is set.
 
   Later versions add routes; a client should show an unknown route as it is.
 - `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
-- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off.
-- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`).
+- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5).
+- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), and how many end users are registered as no-train; and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one). Counts and names only: no end-user hash is ever shown.
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
@@ -869,7 +926,7 @@ for choice in result.choices:
 
 Tasks for an embedded `Ratchet` come from the same registry: `ratchet.taskspec.install(ledger, "tasks.json")` registers the built-in tasks, a tasks file and the API tasks a ledger stored, and `ratchet.tasks.register(taskspec.parse_spec(spec, "api"))` adds one ([ADR 0022](adr/0022-task-registry.md)). `r.task_for(name, client)` applies `RATCHET_UNKNOWN_TASKS` and a task's `clients` as the gateway does (`tasks.UnknownTask`, `tasks.TaskForbidden`); `handle` applies the unknown-task policy only.
 
-`handle(messages, task=None, client=None, params=None, meta=None, n=1)`: `task` is a task name or a `tasks.Task`; `n` is the number of choices ([Choices and logprobs](#choices-and-logprobs)), and `teacher_only` takes it too; `params` (`providers.GenParams`, `GenParams.from_request(chat_request)` in the gateway) are sent to each call as `Settings.gen_policy()` allows ([Generation parameters](#generation-parameters)); `meta` (`router.RequestMeta`) carries what else the caller knows, and `RequestMeta(storable=False)` keeps the request's teacher answers out of the training set. A provider's `complete(messages, model, n, temperature, logprobs, response_format, params=None, **_)` receives the role's `GenParams`; the explicit arguments win over the same fields in it.
+`handle(messages, task=None, client=None, params=None, meta=None, n=1)`: `task` is a task name or a `tasks.Task`; `n` is the number of choices ([Choices and logprobs](#choices-and-logprobs)), and `teacher_only` takes it too; `params` (`providers.GenParams`, `GenParams.from_request(chat_request)` in the gateway) are sent to each call as `Settings.gen_policy()` allows ([Generation parameters](#generation-parameters)); `meta` (`router.RequestMeta`) carries what else the caller knows: `RequestMeta(storable=False)` keeps the request's teacher answers out of the training set (with `store_opt_out` naming why, `request` by default), and `end_user` is the end user's hash (`privacy.EndUsers.hash`, never the raw value). `Result.stored` and `Result.store_opt_out` say what happened; zero retention, no-store tasks and no-train end users apply to every caller, Scout included. A provider's `complete(messages, model, n, temperature, logprobs, response_format, params=None, **_)` receives the role's `GenParams`; the explicit arguments win over the same fields in it.
 
 `result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)); `result.text` is the answer after `tasks.clean_answer`. `result.choices` are the response's choices (`router.Choice`: `text`, `finish_reason`, and `logprobs`, OpenAI's `logprobs.content` entries when `params.logprobs` was set and they could be given, else None); `result.text` and `result.finish_reason` are choice 0's. `result.prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `cached_tokens` and `total_tokens` are the response's [usage](#usage), `result.usage_breakdown` its `ratchet.usage_breakdown` (keys in `router.USAGE_PARTS`), and `result.fingerprint` its `system_fingerprint` (`router.fingerprint(...)`). Each `Completion` a provider returns carries `finish_reason` (`stop` when the server leaves it out or sends an empty string), `reasoning_tokens`, `cached_tokens` (from `usage.prompt_tokens_details`, 0 when absent) and `logprobs_content` (the choice's `logprobs.content` as the server sent it, or None; `providers.served_logprobs` turns it into what a client gets); only a teacher answer with `finish_reason` `stop` or `tool_calls` that is non-empty and valid for its task is stored (invariant 16), and `requests.stored` says whether a request stored one. `result.degraded` is `"teacher_unavailable"` for a degraded answer, else None. `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`), the answers a stand-in wrote for an unavailable teacher (`degraded_answers`, `fallback_answers`) and `breakers`: each breaker's state by name (`student`, `shadow`, `teacher`, `fallback_teacher`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
 

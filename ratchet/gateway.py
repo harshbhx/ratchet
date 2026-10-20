@@ -37,15 +37,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, tasks, taskspec
+from . import __version__, live, privacy, tasks, taskspec
 from . import bom as bomdoc
-from .auth import KeyRing, bearer
+from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
 from .config import Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
+    INVALID_TYPE,
+    INVALID_VALUE,
+    MISSING,
     SERVICE_TIER,
     APIError,
     Limits,
@@ -61,7 +64,7 @@ from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
-from .router import Choice, Ratchet
+from .router import Choice, Ratchet, RequestMeta
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
 from .scout.prompts import EXAMPLE_QUESTIONS
@@ -179,6 +182,10 @@ class Runtime:
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
         self.keys = KeyRing(s.api_keys)
+        # Per-key settings by name (RATCHET_KEY_LIMITS; so far `store`); a bad value or an unknown name stops startup.
+        self.key_limits: dict[str, KeyLimits] = parse_key_limits(s.key_limits, self.keys.names)
+        # End users are hashed with this deployment's key (FR-13.2): RATCHET_END_USER_KEY, or one kept in the ledger.
+        self.end_users = privacy.end_users(self.ledger, s.end_user_key)
         # Admin keys for management writes (ADR 0022); never the same keys as an API client's.
         self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
         both = self.admin_keys.shared(self.keys)
@@ -237,6 +244,7 @@ class Runtime:
             task=night_task(workload),
             signer=self.signer,
             redact_pii=self.settings.redact_pii,
+            store_examples=self.settings.store_examples,
         )
         trained = self.ledger.version(rep.version) if rep.trained and rep.version is not None else None
         record_simulated_day(self.ledger, self.cost_policy, self.ledger.day, trained)
@@ -591,24 +599,53 @@ CHAT_BODY = {"requestBody": {"required": True, "content": {"application/json": {
 async def chat(
     request: Request,
     x_ratchet_task: str | None = Header(default=None),
+    x_ratchet_store: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
 ) -> JSONResponse | StreamingResponse:
     """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the body read and
-    counted (413 for a chunked body over the limit), JSON and request validation (400), daily quota (429), then the
-    cascade. A refused request writes no ledger row and uses no quota. Everything after reading the body runs in a
-    worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks the event
-    loop."""
+    counted (413 for a chunked body over the limit), JSON and request validation (400, including `X-Ratchet-Store`),
+    daily quota (429), then the cascade. A refused request writes no ledger row and uses no quota. Everything after
+    reading the body runs in a worker thread (the default pool, as for sync routes), so neither a large body nor the
+    ledger lock blocks the event loop."""
     client = _client(authorization, x_api_key)
+    raw = await _body(request)
+    return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client, x_ratchet_store))
+
+
+async def _body(request: Request) -> bytes:
+    """The request body, counted by `BodyLimitMiddleware` as it arrives; a 400 when the client goes away first."""
     try:
-        raw = await request.body()
+        return await request.body()
     except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
         raise APIError(400, "The client disconnected before the request body was complete.") from e
-    return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client))
 
 
-def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+def _request_meta(req: Any, client: str | None, header_store: str | None) -> RequestMeta:
+    """What the cascade needs to know about storage and the end user (FR-13.1, FR-13.2): whether the API key
+    (RATCHET_KEY_LIMITS `store=0`) or the request (`store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`)
+    opts out, broadest first, and the end user's hash scoped to the key. A bad `X-Ratchet-Store` is a 400. The raw
+    `user` / `safety_identifier` goes no further than this function. Zero retention, no-store tasks and no-train end
+    users are the cascade's own checks (`Ratchet.store_opt_out`), so they hold for every caller."""
+    try:
+        header = privacy.store_header(header_store)
+    except ValueError as e:  # the value is not quoted back
+        raise APIError(400, f"Invalid value for header 'X-Ratchet-Store': {e}.", INVALID_REQUEST, INVALID_VALUE) from e
+    raw_user = privacy.end_user_of(req.user, req.safety_identifier)
+    end_user = rt.end_users.hash(raw_user, client) if raw_user is not None else None
+    limits = rt.key_limits.get(client) if client is not None else None
+    if limits is not None and not limits.store:
+        return RequestMeta(storable=False, store_opt_out="key", end_user=end_user)
+    if privacy.request_opts_out(req.store, req.metadata, header):
+        return RequestMeta(storable=False, store_opt_out="request", end_user=end_user)
+    return RequestMeta(end_user=end_user)
+
+
+def _complete(
+    raw: bytes, header_task: str | None, client: str | None, header_store: str | None = None
+) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
+    meta_in = _request_meta(req, client, header_store)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(header_task or req.task, client)
@@ -620,7 +657,7 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
-        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n)
+        r = serve(messages, task, client=client, params=GenParams.from_request(req), meta=meta_in, n=req.n)
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
@@ -638,7 +675,11 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         "latency_ms": r.latency_ms,
         "usage_breakdown": r.usage_breakdown,
         "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
+        "stored": r.stored,  # a teacher answer of this request became (or bumped) a training example
+        "store_opt_out": r.store_opt_out,  # why it could not be stored (privacy.OPT_OUTS), or null (FR-13.1)
     }
+    # OpenAI echoes `metadata`; never stored (FR-13.1).
+    echo = {"metadata": req.metadata} if req.metadata is not None else {}
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
@@ -661,6 +702,7 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
             **_envelope(cid, "chat.completion", created, r.model, r.fingerprint),
             "choices": choices,
             "usage": usage,
+            **echo,
             "ratchet": meta,
         }
         return JSONResponse(payload, headers=headers)
@@ -688,14 +730,128 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
                 yield chunk(i, {"content": piece}, logprobs=logprobs)
             if include_usage or i < last:
                 yield chunk(i, {}, ch.finish_reason)
-            else:  # the ratchet block rides on the last finish chunk
-                yield chunk(i, {}, ch.finish_reason, ratchet=meta)
-        if include_usage:  # one more chunk with no choices, the usage and the ratchet block
-            yield sse({**envelope, "choices": [], "usage": usage, "ratchet": meta})
+            else:  # the ratchet block (and the echoed metadata) ride on the last finish chunk
+                yield chunk(i, {}, ch.finish_reason, **echo, ratchet=meta)
+        if include_usage:  # one more chunk with no choices, the usage, the echoed metadata and the ratchet block
+            yield sse({**envelope, "choices": [], "usage": usage, **echo, "ratchet": meta})
         yield "data: [DONE]\n\n"
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
+
+
+# ----- end users who opt out of training (FR-13.2, ADR 0080) -----
+NO_TRAIN_KEYS = frozenset({"end_user", "client"})
+MOCK_MAX_NO_TRAIN = 1000  # the shared mock demo holds at most this many no-train registrations; a reset clears them
+
+
+def _no_train_caller(authorization: str | None, x_api_key: str | None) -> tuple[str | None, str | None]:
+    """(client, admin) for a no-train call. An admin key (RATCHET_ADMIN_KEYS) gives (None, its name). Otherwise the API
+    key's name, as for chat completions: 401 when keys are on and this one is wrong; (None, None) when keys are off, the
+    keyless scope every unauthenticated request's end users are hashed in."""
+    key = bearer(authorization, x_api_key)
+    if rt.admin_keys.enabled and key:
+        name = rt.admin_keys.identify(key)
+        if name is not None:
+            return None, name
+    return _client(authorization, x_api_key), None
+
+
+def _short_name(key: str) -> str:
+    return key if len(key) <= 64 else key[:61] + "..."
+
+
+def _no_train_body(raw: bytes) -> tuple[str, str | None, bool]:
+    """(end user, client, whether `client` was given) from a no-train body, or a 400. Only an admin names a client."""
+    body = parse_body(raw)
+    if not isinstance(body, dict):
+        raise APIError(400, "The request body must be a JSON object.", INVALID_REQUEST, INVALID_TYPE)
+    unknown = sorted(set(body) - NO_TRAIN_KEYS)
+    if unknown:
+        message = f"Unknown parameter {_short_name(unknown[0])}; use 'end_user' (and 'client' with an admin key)."
+        raise APIError(400, message, INVALID_REQUEST, "unknown_parameter", param=_short_name(unknown[0]))
+    end_user = body.get("end_user")
+    if end_user is None:
+        raise APIError(400, "Missing required parameter: 'end_user'.", INVALID_REQUEST, MISSING, "end_user")
+    if not isinstance(end_user, str):
+        raise APIError(400, "Invalid type for 'end_user': expected a string.", INVALID_REQUEST, INVALID_TYPE, "end_user")
+    if not end_user or len(end_user) > privacy.END_USER_MAX_CHARS:  # never quoted: it identifies a person
+        message = f"Invalid value for 'end_user': 1 to {privacy.END_USER_MAX_CHARS} characters, as sent in 'user'."
+        raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, "end_user")
+    client = body.get("client")
+    if client is not None and not isinstance(client, str):
+        raise APIError(400, "Invalid type for 'client': expected a string.", INVALID_REQUEST, INVALID_TYPE, "client")
+    return end_user, client, "client" in body
+
+
+def _no_train_scopes(client: str | None, admin: str | None, named: str | None, given: bool) -> list[str | None]:
+    """The key scopes a no-train call acts on. A client acts on its own end users only (403 for another client's). An
+    admin acts on the client it names, or with none on every API key's end users and the keyless scope's."""
+    if admin is None:
+        if given and named != client:
+            raise HTTPException(403, "an API key manages its own end users only; an admin key may name another client")
+        return [client]
+    if given:
+        if named is not None and named not in rt.keys.names:
+            raise APIError(400, "Invalid value for 'client': no API key has that name.", INVALID_REQUEST, INVALID_VALUE, "client")
+        return [named]
+    return [*rt.keys.names, None]
+
+
+@app.post("/v1/ratchet/no-train")
+async def no_train_add(
+    request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Register an end user (`{"end_user": "<user or safety_identifier>"}`) as no-train: from now on that user's
+    requests are answered as usual but never stored (FR-13.2). Only the HMAC is kept, and it is not returned: the
+    endpoint must not become a way to compute hashes. Open where chat completions are (an opt-out only removes
+    storage); an admin may name a `client`, or register the user for every client."""
+    client, admin = _no_train_caller(authorization, x_api_key)
+    raw = await _body(request)
+    return await anyio.to_thread.run_sync(functools.partial(_no_train_add, raw, client, admin))
+
+
+def _no_train_add(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
+    end_user, named, given = _no_train_body(raw)
+    scopes = _no_train_scopes(client, admin, named, given)
+    entries = rt.end_users.hashes(end_user, scopes)
+    if rt.settings.mode == "mock" and rt.ledger.no_train_count() + len(entries) > MOCK_MAX_NO_TRAIN:
+        raise HTTPException(409, f"the mock demo holds at most {MOCK_MAX_NO_TRAIN} no-train registrations; reset it")
+    created = rt.ledger.no_train_add(entries, admin=admin)
+    who = f"admin {admin}" if admin is not None else (client or "a client without a key")
+    if any(created):  # counts and names only: never the end user or its hash (/ratchet/stats is public)
+        rt.ledger.event("no_train", f"{sum(created)} end user registration(s) by {who}")
+    return {
+        "object": "ratchet.no_train",
+        "end_users": [{"client": c, "created": new} for (_, c), new in zip(entries, created, strict=True)],
+    }
+
+
+@app.delete("/v1/ratchet/no-train")
+async def no_train_remove(
+    request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Remove a no-train registration (the same JSON body as POST; never a query string, which access logs keep). An API
+    key removes its own end users' registrations, not one an admin made; an admin removes any. Without API keys this needs
+    an admin key in live mode, so nobody can switch storage back on for someone else's users."""
+    client, admin = _no_train_caller(authorization, x_api_key)
+    if admin is None and not rt.keys.enabled and rt.settings.mode != "mock":
+        raise HTTPException(403, "removing a no-train registration needs an API key or an admin key")
+    raw = await _body(request)
+    return await anyio.to_thread.run_sync(functools.partial(_no_train_remove, raw, client, admin))
+
+
+def _no_train_remove(raw: bytes, client: str | None, admin: str | None) -> dict[str, Any]:
+    end_user, named, given = _no_train_body(raw)
+    entries = rt.end_users.hashes(end_user, _no_train_scopes(client, admin, named, given))
+    outcomes = rt.ledger.no_train_remove([h for h, _ in entries], admin=admin is not None)
+    if "removed" in outcomes:
+        who = f"admin {admin}" if admin is not None else (client or "a client without a key")
+        rt.ledger.event("no_train", f"{outcomes.count('removed')} end user registration(s) removed by {who}")
+    return {
+        "object": "ratchet.no_train",
+        "end_users": [{"client": c, "status": status} for (_, c), status in zip(entries, outcomes, strict=True)],
+    }
 
 
 @app.get("/ratchet/stats")
@@ -715,7 +871,16 @@ def stats() -> dict[str, Any]:
         "totals": {**led.totals(), "cost_model": "per_token"},
         "bill_of_materials": led.bill_of_materials(),
         "clients": led.stats_by_client(),
-        "privacy": {"redaction": rt.settings.redact_pii, **led.privacy_stats()},
+        "privacy": {
+            "redaction": rt.settings.redact_pii,
+            **led.privacy_stats(),
+            **led.opt_out_stats(),
+            # Storage opt-outs in force (FR-13.1) and where the end-user key lives (FR-13.2); names only.
+            "store_examples": rt.settings.store_examples,
+            "no_store_tasks": sorted(rt.ratchet.no_store_tasks | {t.name for t in tasks.registered() if not t.store}),
+            "no_store_clients": sorted(name for name, lim in rt.key_limits.items() if not lim.store),
+            "end_user_key": rt.end_users.source,
+        },
         "security": {
             "api_keys": rt.keys.enabled,
             "daily_requests_per_key": rt.settings.api_key_daily_requests or None,
