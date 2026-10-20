@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from .openai_compat import DEFAULT_MAX_N, Limits
+from .openai_compat import AUTO_TASK_MODES, DEFAULT_MAX_N, MODEL_POLICIES, Limits, ModelRouting, parse_aliases
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
     DEFAULT_STUDENT_PARAMS,
@@ -104,6 +104,17 @@ UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
 # `per_token`: the hosted Nano price per token, as every savings figure since v0.1; `gpu_hours`: the GPU-hours the student
 # endpoint and the training jobs ran. Each request's `cost_usd` keeps the per-token price in both, so history never moves.
 COST_MODELS = ("per_token", "gpu_hours")
+
+
+def _choice(value: object, env: str, choices: tuple[str, ...]) -> str:
+    """One of `choices` from a setting, in any case; set but empty means the first (the default). ValueError names the
+    variable otherwise."""
+    mode = value.strip().lower() if isinstance(value, str) else None
+    if mode == "":
+        mode = choices[0]
+    if mode not in choices:
+        raise ValueError(f"{env} must be {' or '.join(choices)}, not {value!r}")
+    return mode
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -273,6 +284,14 @@ class Settings:
     tasks_file: str = field(default_factory=lambda: _env("RATCHET_TASKS_FILE", ""))
     # What a request naming an unregistered task gets: UNKNOWN_TASK_POLICIES.
     unknown_tasks: str = field(default_factory=lambda: _env("RATCHET_UNKNOWN_TASKS", "distill"))
+    # How a request without a task header or metadata finds its task (ratchet/openai_compat.py, ADR 0048). What a `model`
+    # Ratchet does not know gets: 'lenient' serves it as `ratchet`, 'strict' answers 404 `model_not_found`. Model ids that
+    # name a task ('gpt-4o-mini=ticket-triage,gpt-4o=default'). 'system_prompt': a request no other rule places gets an
+    # auto task per first system message, at most RATCHET_MAX_AUTO_TASKS of them ('off': it gets `default`).
+    model_policy: str = field(default_factory=lambda: _env("RATCHET_MODEL_POLICY", "lenient"))
+    model_aliases: str = field(default_factory=lambda: _env("RATCHET_MODEL_ALIASES", ""))
+    auto_task: str = field(default_factory=lambda: _env("RATCHET_AUTO_TASK", "off"))
+    max_auto_tasks: int = field(default_factory=lambda: _int("RATCHET_MAX_AUTO_TASKS", "200"))
     # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
     # any other file on the host.
     fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
@@ -390,6 +409,24 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def model_routing(self) -> ModelRouting:
+        """RATCHET_MODEL_POLICY, RATCHET_MODEL_ALIASES and RATCHET_AUTO_TASK, checked (ADR 0048): in any case, empty meaning
+        the default (`lenient`, no aliases, `off`). Anything else raises ValueError naming the variable, so a typo stops
+        the gateway at startup instead of routing requests to a task nobody chose."""
+        policy = _choice(self.model_policy, "RATCHET_MODEL_POLICY", MODEL_POLICIES)
+        auto = _choice(self.auto_task, "RATCHET_AUTO_TASK", AUTO_TASK_MODES)
+        if not isinstance(self.model_aliases, str):
+            raise ValueError(f"RATCHET_MODEL_ALIASES must be text, not {self.model_aliases!r}")
+        return ModelRouting(policy, parse_aliases(self.model_aliases), auto)
+
+    def auto_task_cap(self) -> int:
+        """RATCHET_MAX_AUTO_TASKS, checked: a whole number, 0 or more (0: no auto task is ever made). Anything else raises
+        ValueError, so the gateway stops at startup."""
+        n = self.max_auto_tasks
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number, 0 or more, not {n!r}")
+        return n
 
     def min_task_golden_rows(self) -> int:
         """RATCHET_MIN_TASK_GOLDEN, checked: a whole number, 1 or more. Anything else raises ValueError, so the gateway,

@@ -1,6 +1,7 @@
 """Gateway keys: API keys for `/v1/*` and admin keys for management writes.
 
-API keys come from `RATCHET_API_KEYS` and admin keys from `RATCHET_ADMIN_KEYS`, both as `name:key,name:key`. The name is
+API keys come from `RATCHET_API_KEYS` and admin keys from `RATCHET_ADMIN_KEYS`, both as `name:key,name:key`. A client
+sends its key as `Authorization: Bearer <key>`, `X-API-Key` or Azure's `api-key` (`bearer`). The name is
 what the ledger records (per request, or as `updated_by` of a task an admin wrote), so cost and changes can be reported
 per name; the key itself is never stored or logged (INV-13). Keys are compared as SHA-256 digests with
 `hmac.compare_digest`, so lookup time does not depend on how much of a guessed key is right.
@@ -68,10 +69,14 @@ class KeyRing:
         return [name for digest, name in self._keys if digest in theirs]
 
 
-def bearer(authorization: str | None, x_api_key: str | None = None) -> str | None:
-    """The key from `Authorization: Bearer <key>` (what OpenAI SDKs send) or `X-API-Key`."""
+def bearer(authorization: str | None, x_api_key: str | None = None, api_key: str | None = None) -> str | None:
+    """The key from `Authorization: Bearer <key>` (what OpenAI SDKs send), `X-API-Key`, or `api-key` (what Azure OpenAI
+    SDKs send), the first one set in that order."""
     if authorization:
         scheme, _, value = authorization.partition(" ")
         if scheme.lower() == "bearer" and value.strip():
             return value.strip()
-    return x_api_key.strip() if x_api_key else None
+    for key in (x_api_key, api_key):
+        if key and key.strip():
+            return key.strip()
+    return None

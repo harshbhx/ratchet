@@ -1,25 +1,32 @@
 """OpenAI chat-completions compatibility: request validation, message normalisation, the error envelope and the
 response's `usage` object.
 
-Standard library only (plus `tasks` for the task-name rule), so it is cheap to import and easy to test without the web
-stack. The gateway runs `parse_body`, `validate_chat_request` and `normalize_messages` before anything is logged,
-billed or sent to a model, and turns `APIError` into the body OpenAI SDKs read: `error.message`, `error.type`,
-`error.param` and `error.code` (docs/API.md#errors, ADR 0012).
+Standard library only (plus `tasks` for the task-name rule and the registry's match rules), so it is cheap to import and
+easy to test without the web stack. The gateway runs `parse_body`, `validate_chat_request` and `normalize_messages`
+before anything is logged, billed or sent to a model, and turns `APIError` into the body OpenAI SDKs read:
+`error.message`, `error.type`, `error.param` and `error.code` (docs/API.md#errors, ADR 0012).
 
 Validation is strict about what Ratchet reads or will forward, and lenient about the rest: unknown top-level keys are
 kept in `ChatRequest.extra` and ignored, so a newer SDK that sends a field Ratchet does not know still works.
 
 Responses carry the fields OpenAI's own do (`usage_object`, `SERVICE_TIER`; the gateway builds the body), so SDKs that
 validate them, and clients that meter by `usage`, work unchanged (docs/API.md#response-200, FR-1.12).
+
+`resolve_task` picks a request's task from the header, the metadata, the `model` field, the model aliases, the tasks'
+match rules or the system prompt (docs/API.md#task-resolution, FR-1.50, ADR 0048). The `model` field only ever names a
+task: it never selects an upstream model.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any
+from types import MappingProxyType
+from typing import Any, NamedTuple
+from urllib.parse import quote
 
 from . import tasks
 
@@ -50,6 +57,7 @@ UNSUPPORTED_VALUE = "unsupported_value"
 INVALID_JSON = "invalid_json"
 CONTEXT_LENGTH = "context_length_exceeded"
 UNSUPPORTED_CONTENT = "unsupported_content_type"
+MODEL_NOT_FOUND = "model_not_found"
 
 
 class APIError(Exception):
@@ -729,6 +737,287 @@ def validate_chat_request(body: Any, limits: Limits | None = None) -> ChatReques
         reasoning_effort=_opt_str(body, "reasoning_effort"),
         extra={k: v for k, v in body.items() if k not in KNOWN_FIELDS},
     )
+
+
+# ---------- task resolution (FR-1.50, ADR 0048) ----------
+RATCHET_MODEL = "ratchet"  # the model id any request may name; the task then comes from the request itself
+# `ratchet/<task>` (or `ratchet:<task>`): a model id that names a task, for clients that can set neither a header nor
+# metadata (a `model=` setting is all many frameworks and no-code tools expose). Matched in full.
+MODEL_TASK = re.compile(r"ratchet[/:]([A-Za-z0-9_.-]{1,64})")
+MODEL_NAMESPACE = ("ratchet/", "ratchet:")  # a model id that starts so names a task, or is a mistake
+MODEL_POLICIES = ("lenient", "strict")  # RATCHET_MODEL_POLICY
+AUTO_TASK_MODES = ("off", "system_prompt")  # RATCHET_AUTO_TASK
+AUTO_SYSTEM_PREFIX = "auto-sys-"  # an auto task per system prompt: this and 10 hex digits of its SHA-256
+AUTO_SYSTEM_DIGITS = 10
+MAX_ALIASES = 256
+MAX_ALIAS_CHARS = 256  # of an alias, and of a model id echoed in X-Ratchet-Model-Alias
+_ALIAS = re.compile(r"[^\s,=]{1,256}")
+# Where a request's task came from, in resolution order (`resolve_task`; the response's `ratchet.task_source`).
+TASK_SOURCES = ("header", "metadata", "deployment", "model", "alias", "match", "auto_system", "default")
+# The request field an `unknown_task` error names, by source (the header and a deployment are not body fields).
+TASK_PARAMS: Mapping[str, str] = MappingProxyType({"metadata": "metadata.ratchet_task", "model": "model", "alias": "model"})
+SHOWN_MODEL_CHARS = 100  # of a model id quoted in an error message
+
+
+def alias_problem(model: Any, task: Any) -> str | None:
+    """Why `model=task` cannot be a model alias (RATCHET_MODEL_ALIASES), or None."""
+    if not isinstance(model, str) or not _ALIAS.fullmatch(model) or not model.isprintable():
+        return f"{model!r} is not a model id (1 to {MAX_ALIAS_CHARS} characters, no spaces, ',' or '=')"
+    if model == RATCHET_MODEL or model.startswith(MODEL_NAMESPACE):
+        return f"{model!r} is a Ratchet model id already; an alias names some other model id"
+    if not isinstance(task, str) or not tasks.valid_name(task):
+        return f"the alias {model!r} names {task!r}, which is not a task name (1 to 64 letters, digits, '_', '.' or '-')"
+    return None
+
+
+def parse_aliases(spec: str) -> dict[str, str]:
+    """RATCHET_MODEL_ALIASES: comma-separated `model=task` pairs ('gpt-4o-mini=ticket-triage,gpt-4o=default'), spaces
+    around each part ignored. One model id names one task; a task may have several aliases. The task need not be
+    registered yet (the admin API may register it later); until it is, requests for the alias follow
+    RATCHET_UNKNOWN_TASKS. ValueError names the variable and the entry, so a typo stops startup."""
+    out: dict[str, str] = {}
+    for entry in (e.strip() for e in (spec or "").split(",")):
+        if not entry:
+            continue
+        model, sep, task = entry.partition("=")
+        model, task = model.strip(), task.strip()
+        if not sep:
+            raise ValueError(f"RATCHET_MODEL_ALIASES: {entry!r} is not model=task")
+        problem = alias_problem(model, task)
+        if problem is not None:
+            raise ValueError(f"RATCHET_MODEL_ALIASES: {problem}")
+        if model in out:
+            raise ValueError(f"RATCHET_MODEL_ALIASES: {model!r} appears twice")
+        out[model] = task
+    if len(out) > MAX_ALIASES:
+        raise ValueError(f"RATCHET_MODEL_ALIASES: at most {MAX_ALIASES} aliases, not {len(out)}")
+    return out
+
+
+@dataclass(frozen=True)
+class ModelRouting:
+    """How the `model` field and the system prompt choose a request's task (`Settings.model_routing()`, ADR 0048):
+    RATCHET_MODEL_POLICY (`lenient`: a model id Ratchet does not know is served as `ratchet`; `strict`: it is a 404
+    `model_not_found`), RATCHET_MODEL_ALIASES (`aliases`: model id -> task name) and RATCHET_AUTO_TASK (`off`, or
+    `system_prompt`: a request no other rule places gets a task of its own per first system message). Checked when
+    built: a bad value raises ValueError naming the variable, so startup stops. Immutable."""
+
+    policy: str = "lenient"
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    auto_task: str = "off"
+
+    def __post_init__(self) -> None:
+        if self.policy not in MODEL_POLICIES:
+            raise ValueError(f"RATCHET_MODEL_POLICY must be {' or '.join(MODEL_POLICIES)}, not {self.policy!r}")
+        if self.auto_task not in AUTO_TASK_MODES:
+            raise ValueError(f"RATCHET_AUTO_TASK must be {' or '.join(AUTO_TASK_MODES)}, not {self.auto_task!r}")
+        if not isinstance(self.aliases, Mapping):
+            raise ValueError("RATCHET_MODEL_ALIASES must map model ids to task names")
+        if len(self.aliases) > MAX_ALIASES:
+            raise ValueError(f"RATCHET_MODEL_ALIASES: at most {MAX_ALIASES} aliases, not {len(self.aliases)}")
+        for model, task in self.aliases.items():
+            problem = alias_problem(model, task)
+            if problem is not None:
+                raise ValueError(f"RATCHET_MODEL_ALIASES: {problem}")
+        object.__setattr__(self, "aliases", MappingProxyType(dict(self.aliases)))
+
+
+class ModelRef(NamedTuple):
+    """What a request's `model` names (`classify_model`). `kind`: `ratchet` (that id, or none sent), `task`
+    (`ratchet/<task>`), `alias` (RATCHET_MODEL_ALIASES), `unknown` (any other id) or `invalid` (in Ratchet's namespace,
+    `ratchet/...`, but not a task name). `task` is the task named, for `task` and `alias`."""
+
+    kind: str
+    task: str | None = None
+
+
+def classify_model(model: str | None, routing: ModelRouting) -> ModelRef:
+    """What `model` names. No I/O: one regex match in full and a dict lookup. A missing or empty model counts as
+    `ratchet`, as before v0.5, so clients that never sent one keep working under either policy."""
+    if not model or model == RATCHET_MODEL:
+        return ModelRef("ratchet")
+    m = MODEL_TASK.fullmatch(model)
+    if m:
+        return ModelRef("task", m.group(1))
+    if model.startswith(MODEL_NAMESPACE):
+        return ModelRef("invalid")
+    target = routing.aliases.get(model)
+    return ModelRef("alias", target) if target is not None else ModelRef("unknown")
+
+
+def model_not_found(model: str, param: str | None = "model", hint: str = "") -> APIError:
+    """404 `model_not_found` in OpenAI's words ("The model 'gpt-4o' does not exist"), quoting at most 100 characters."""
+    shown = model if len(model) <= SHOWN_MODEL_CHARS else model[: SHOWN_MODEL_CHARS - 3] + "..."
+    return APIError(404, f"The model '{shown}' does not exist{hint}.", INVALID_REQUEST, MODEL_NOT_FOUND, param)
+
+
+def check_model(model: str | None, routing: ModelRouting) -> str | None:
+    """Whether a request's `model` may be served, checked before anything is logged or billed. None for `ratchet`, a
+    `ratchet/<task>` id and an alias. For an id Ratchet does not know: under `lenient` the id itself, which the gateway
+    echoes in `X-Ratchet-Model-Alias` while it serves the request as `ratchet`; under `strict` a 404 `model_not_found`.
+    An id in Ratchet's namespace that names no task (`ratchet/bad name`) is a 404 under either policy: whoever writes
+    `ratchet/` means a task, and serving it as another would distill its answers under the wrong one."""
+    ref = classify_model(model, routing)
+    if ref.kind == "invalid":
+        assert model is not None
+        hint = ": a Ratchet model is 'ratchet' or 'ratchet/<task>', a task name being 1 to 64 letters, digits, '_', '.' or '-'"
+        raise model_not_found(model, hint=hint)
+    if ref.kind != "unknown":
+        return None
+    assert model is not None
+    if routing.policy == "strict":
+        raise model_not_found(model)
+    return model
+
+
+def header_value(text: str, limit: int = MAX_ALIAS_CHARS) -> str:
+    """`text` as an HTTP header value: as it is when it is printable ASCII, else percent-encoded UTF-8, so a model id in
+    any script cannot break the response; at most `limit` characters."""
+    out = text if text.isascii() and text.isprintable() else quote(text.encode("utf-8", "replace"), safe="/:@")
+    return out[:limit]
+
+
+def system_text(messages: Iterable[Mapping[str, Any]]) -> str | None:
+    """The text of a request's first system (or developer) message, its text parts joined by newlines as
+    `normalize_messages` joins them; None when it has none. Read from the validated messages, so the answer does not
+    depend on RATCHET_MERGE_SYSTEM."""
+    for m in messages:
+        if m.get("role") not in ("system", "developer"):
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = (p.get("text") for p in content if isinstance(p, Mapping) and p.get("type") == "text")
+            return "\n".join(t for t in parts if isinstance(t, str))
+        return None
+    return None
+
+
+def system_prompt_task(messages: Iterable[Mapping[str, Any]]) -> str | None:
+    """The auto task name for a request's system prompt (RATCHET_AUTO_TASK=system_prompt): `auto-sys-` and the first 10
+    hex digits of SHA-256 over its first system message (`system_text`), the same for every request with that prompt;
+    None without one, or for one of whitespace only. The name holds a digest, never the prompt's text (INV-12)."""
+    text = system_text(messages)
+    if text is None or not text.strip():
+        return None
+    digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+    return AUTO_SYSTEM_PREFIX + digest[:AUTO_SYSTEM_DIGITS]
+
+
+def _schema_name(req: ChatRequest) -> str | None:
+    rf = req.response_format
+    spec = rf.get("json_schema") if isinstance(rf, Mapping) and rf.get("type") == "json_schema" else None
+    name = spec.get("name") if isinstance(spec, Mapping) else None
+    return name if isinstance(name, str) else None
+
+
+def _tool_names(req: ChatRequest) -> frozenset[str] | None:
+    """The function names of a request's `tools` and legacy `functions`; None when it has neither."""
+    names: set[str] = set()
+    for tool in req.tools or ():
+        fn = tool.get("function") if isinstance(tool, Mapping) else None
+        if isinstance(fn, Mapping) and isinstance(fn.get("name"), str):
+            names.add(fn["name"])
+    for fn in req.functions or ():
+        if isinstance(fn, Mapping) and isinstance(fn.get("name"), str):
+            names.add(fn["name"])
+    return frozenset(names) if names else None
+
+
+def _holds(key: str, rule: Any, have: Any) -> bool:
+    """One match rule against the request's feature (`match_task`): plain comparisons only."""
+    if have is None:
+        return False
+    if key == "system_prefix":
+        return have.startswith(rule)
+    if key == "schema_name":
+        return have == rule
+    return have == frozenset(rule)  # tools: exactly that set of names
+
+
+def match_task(req: ChatRequest, client: str | None = None) -> str | None:
+    """The first registered task, in registry order (built-in, then the tasks file's, then API and auto tasks), whose
+    match rules (`Task.match_rules`, a spec's `match`) all hold for the request and that `client` may use
+    (`Task.allows`, so a rule never turns a request that named no task into a 403): `system_prefix` (the first system
+    message starts with it), `schema_name` (`response_format.json_schema.name` is it) and `tools` (the names of the
+    request's `tools` and legacy `functions` are exactly that set). Plain string and set comparisons, never a pattern,
+    so no request can make this slow; each request feature is read at most once, and only for a task that has rules."""
+    seen: dict[str, Any] = {}
+    readers = {"system_prefix": lambda: system_text(req.messages), "schema_name": lambda: _schema_name(req)}
+    for t in tasks.REGISTRY.values():  # a published dict is never changed (`tasks.register` publishes a new one)
+        rules = t.match_rules
+        if not rules or not t.allows(client):
+            continue
+        ok = True
+        for key, rule in rules.items():
+            if key not in seen:
+                seen[key] = readers[key]() if key in readers else _tool_names(req)
+            if not _holds(key, rule, seen[key]):
+                ok = False
+                break
+        if ok:
+            return t.name
+    return None
+
+
+def resolve_task(
+    req: ChatRequest,
+    header: str | None,
+    routing: ModelRouting,
+    *,
+    client: str | None = None,
+    deployment: str | None = None,
+) -> tuple[str, str]:
+    """(task name, source) for a request: the first of these rules that names a task (`TASK_SOURCES`,
+    docs/API.md#task-resolution):
+
+    1. the `X-Ratchet-Task` header (`header`), source `header`;
+    2. `metadata.ratchet_task`, `metadata`;
+    3. a `model` of `ratchet/<task>` or `ratchet:<task>`, `model`; on the Azure-style route the deployment in the URL
+       (`deployment`) instead, `deployment` (the body's `model` is not read there; `ratchet` goes on to rule 5);
+    4. a model alias (RATCHET_MODEL_ALIASES; also for a deployment), `alias`;
+    5. the first registered task whose match rules all hold (`match_task`), `match`;
+    6. (kept for an auto task from a `response_format` json_schema, which the structured-outputs item adds);
+    7. with RATCHET_AUTO_TASK=system_prompt, `auto-sys-<digest>` of the first system message (`system_prompt_task`),
+       `auto_system`;
+    8. `default`.
+
+    A name from rules 1 to 4 may be unregistered, or (a header) not even a task name: `router.Ratchet.task_for` decides
+    about it as RATCHET_UNKNOWN_TASKS says. Only `auto_system` may name a task the caller has to create. No I/O and no
+    registry writes. The model field never selects an upstream model (ADR 0048). Raises APIError 404
+    `model_not_found` for a deployment that is neither `ratchet`, an alias nor a task name."""
+    if header:
+        return header, "header"
+    if req.task is not None:
+        return req.task, "metadata"
+    if deployment is not None:
+        if deployment != RATCHET_MODEL:
+            m = MODEL_TASK.fullmatch(deployment)
+            if m:
+                return m.group(1), "deployment"
+            target = routing.aliases.get(deployment)
+            if target is not None:
+                return target, "alias"
+            if not tasks.valid_name(deployment):
+                raise model_not_found(deployment, param=None, hint=": a deployment names a task")
+            return deployment, "deployment"
+    else:
+        ref = classify_model(req.model, routing)
+        if ref.kind == "task":
+            assert ref.task is not None
+            return ref.task, "model"
+        if ref.kind == "alias":
+            assert ref.task is not None
+            return ref.task, "alias"
+    matched = match_task(req, client)
+    if matched is not None:
+        return matched, "match"
+    if routing.auto_task == "system_prompt":
+        name = system_prompt_task(req.messages)
+        if name is not None:
+            return name, "auto_system"
+    return "default", "default"
 
 
 # ---------- responses ----------
