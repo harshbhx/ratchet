@@ -13,7 +13,7 @@ Path through the product: landing page → Scout run → dashboard. Total runnin
 | 1:27 | Click **Dashboard**. **By task** table | "The dashboard shows it per task: triage and reading moved to our model, planning and writing stay on Ultra by design." |
 | 1:45 | **Model versions** table and release log: shadow → canary 10% → 50% → live | "Every night, a Nebius Serverless Job fine-tunes a new student and grades it on a held-out golden set. It then earns traffic step by step: shadow, 10%, 50%, 100%." |
 | 2:05 | Click **Break next deploy**, then **Run 1 day + night**; rollback event appears | "What if a bad model ships? Ultra audits a sample of every answer. Ratchet sees precision collapse and rolls back automatically." |
-| 2:28 | Provenance panel and `/ratchet/bom` | "Every training example is traceable to an open, license-clean teacher. Distilling GPT or Claude breaks their terms. This doesn't." |
+| 2:28 | Model versions table: click a **Signed** BOM badge; then the **Trust and privacy** redactor with a pasted email and card number | "Every adapter ships with a signed bill of materials: which open teacher, which license, which data. Distilling GPT or Claude breaks their terms. This doesn't. And personal data is stripped before anything is trained on." |
 | 2:42 | Numbers slide (live run) | "Real numbers from our live run: [cost cut], [precision], [latency]." |
 | 2:50 | "Rent today. Own tomorrow." | |
 | 2:55 | End | |

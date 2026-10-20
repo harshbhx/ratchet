@@ -64,6 +64,10 @@ for v in led.versions():
 | Force a candidate to canary (skip shadow) | `led.set_version(<id>, "canary", 10); led.event("canary", "manual")`. Only if you accept the risk |
 | Cancel an in-flight shadow so tonight's training runs | `led.set_version(<shadow id>, "retired", 0)` |
 
+| Check an adapter's bill of materials | `curl -s $GATEWAY/ratchet/versions/<id>/bom > bom.json && python -m ratchet.bom verify bom.json --public-key <published key>` |
+| Add or rotate a client's API key | Edit `RATCHET_API_KEYS` (`name:key,...`) and restart the gateway. Keep the same name so per-client stats continue; the old key stops working at once |
+| Rotate the BOM signing key | `python -m ratchet.bom keygen`, set the new `RATCHET_BOM_SIGNING_KEY`, restart, publish the new public key. Old BOMs keep their old key id and still verify against the old public key, so keep it listed |
+
 Never keep two versions in `live`. `Ledger.live()` returns the newest one, and the other would never be retired automatically.
 
 SQL equivalents (no `stage_since` update, so prefer Python):
@@ -154,7 +158,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### PII leak
 
-All request messages escalated or audited to the teacher are stored in `examples.messages`, and copies go to `night/train.jsonl` in the bucket.
+All request messages escalated or audited to the teacher are stored in `examples.messages`, and copies go to `night/train.jsonl` in the bucket. With `RATCHET_REDACT_PII=1` (the default) emails, phones, cards, IBANs, national IDs, IPs and API secrets are stored as placeholders, so a leak there usually means a name, an address, or an identifier format the redactor does not know. Paste a sample into the dashboard's **Try the redactor** box (or `POST /ratchet/redact`) to see what it catches.
 
 **Steps:**
 
@@ -164,7 +168,7 @@ All request messages escalated or audited to the teacher are stored in `examples
 4. Delete affected files from the bucket, including old adapters and datasets.
 5. Follow your legal and notification duties.
 
-**Prevention** (planned): redaction before logging, and Token Factory zero-data-retention settings. See [THREAT_MODEL.md](THREAT_MODEL.md).
+**Prevention:** keep `RATCHET_REDACT_PII=1`; add a pattern to `ratchet/redact.py` (with a test) for any identifier format you find leaking. Planned: NER-based detection for names and addresses, and Token Factory zero-data-retention settings. See [THREAT_MODEL.md](THREAT_MODEL.md) T4.
 
 ## Backups
 

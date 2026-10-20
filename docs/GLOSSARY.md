@@ -36,6 +36,10 @@
 | **Adapter** | The LoRA weights for one version, stored in the customer's bucket. |
 | **Provenance ledger** | The record of every training example: teacher, license, license URL, hash, split, times seen. |
 | **Model bill of materials (BOM)** | A summary of the provenance ledger: every teacher and license behind the training data, with counts and a SHA-256 fingerprint of the dataset. `GET /ratchet/bom`. |
+| **Adapter BOM** | The bill of materials of one adapter, written at training time from the exact rows it used, with the golden-set hash and its evaluation. Signed with Ed25519 when a signing key is set. `GET /ratchet/versions/{id}/bom`; check it with `python -m ratchet.bom verify`. |
+| **Key id** | The first 16 hex characters of the SHA-256 of an Ed25519 public key. Names which key signed a BOM. |
+| **PII redaction** | Replacing identifiers (emails, phones, cards, IBANs, national IDs, IPs, secrets) with placeholders such as `[EMAIL]` before a request becomes a training example (`ratchet/redact.py`). |
+| **API client** | The name attached to a gateway API key (`RATCHET_API_KEYS=name:key`). Requests, cost and savings are reported per client. |
 | **License-clean distillation** | Distilling only from teachers whose licenses allow training on their outputs. Closed models whose terms forbid it are refused. |
 | **OpenMDW-1.1** | The license of Nemotron 3 Ultra. It places no restrictions on outputs. |
 | **Baseline cost** | What a request would have cost if the teacher answered it alone. Used for savings receipts. |

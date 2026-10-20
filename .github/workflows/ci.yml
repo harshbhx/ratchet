@@ -24,7 +24,7 @@ jobs:
       - run: pip install -e ".[dev]" ruff
       - run: ruff check .
       - run: ruff format --check .
-      - run: pytest -q
+      - run: pytest -q --cov=ratchet --cov=sim --cov-report=term-missing:skip-covered
       - name: Simulation smoke test
         run: python -m sim.simulate --days 6 --requests 800 --bad-deploy-version 3 --out /tmp/sim.json
 

@@ -325,18 +325,23 @@ def test_signed_bom_per_adapter_verifies_and_detects_tampering(gw_env):
 def test_bom_is_stored_unsigned_without_a_key_and_cli_verifies(tmp_path, capsys):
     import json as _json
 
-    from sim.simulate import parser, run
+    from ratchet.nightschool.orchestrate import run_night
+    from sim.simulate import build, parser
+    from sim.world import make_stream
 
-    args = parser().parse_args(["--days", "3", "--requests", "500"])
-    res = run(args, db=str(tmp_path / "s.db"))
-    led = Ledger(str(tmp_path / "s.db"))
-    trained = [v for v in res["versions"]]
-    assert trained
-    for v in trained:
-        doc = led.version_bom(v["id"])
-        assert doc is not None and doc["signature"] is None and bom.verify(doc) == (True, "unsigned; sha256 matches")
+    settings, led, fleet, ratchet, gate = build(parser().parse_args([]))
+    stream = make_stream("tickets", seed=7)
+    led.day = 1
+    for _ in range(500):
+        t = stream.sample(1)
+        ratchet.handle(t.messages(), t.task)
+    rep = run_night(led, fleet, fleet, gate, settings.student_base_model)
+    assert rep.trained and rep.version is not None
+    doc = led.version_bom(rep.version)
+    assert doc is not None and doc["signature"] is None and bom.verify(doc) == (True, "unsigned; sha256 matches")
+    assert doc["manifest"]["training"]["dataset_sha256"] == led.version(rep.version).dataset_hash
     path = tmp_path / "bom.json"
-    path.write_text(_json.dumps(led.version_bom(trained[0]["id"])))
+    path.write_text(_json.dumps(doc))
     assert bom.main(["verify", str(path)]) == 0
     assert bom.main(["keygen"]) == 0
     assert "RATCHET_BOM_SIGNING_KEY=" in capsys.readouterr().out

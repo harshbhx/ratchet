@@ -2,6 +2,27 @@
 
 All notable changes are listed here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.4.0] - 2026-10-20
+
+The offline items of the hardening milestone (PRD FR-1.6, FR-1.7, FR-3.6, FR-4.7).
+
+### Added
+- **PII redaction before training** (`ratchet/redact.py`, [ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md)): emails, phone numbers, card numbers (Luhn), IBANs (mod-97), Aadhaar (Verhoeff), US SSNs, Indian PANs, IPv4 addresses and API secrets become `[LABEL]` placeholders in the request and the teacher's answer before `add_example`. The teacher still sees the original. On by default (`RATCHET_REDACT_PII`).
+- **Gateway API keys** (`ratchet/auth.py`): `RATCHET_API_KEYS=name:key,...` requires `Authorization: Bearer` (or `X-API-Key`) on `/v1/*` (401 otherwise). The key name is logged per request (`requests.client`); `RATCHET_API_KEY_DAILY_REQUESTS` caps each key per UTC day (429, `X-RateLimit-*` headers).
+- **Streaming**: `stream: true` returns OpenAI `chat.completion.chunk` events, a final chunk with the `ratchet` block, and `[DONE]`.
+- **Signed bill of materials per adapter** (`ratchet/bom.py`, [ADR 0010](docs/adr/0010-signed-adapter-bom.md)): written by Night School at training time (sources and licenses, tasks, dataset and golden-set hashes, eval), signed with Ed25519 when `RATCHET_BOM_SIGNING_KEY` is set. `python -m ratchet.bom keygen|verify`. Live mode also writes `data/boms/student-vN.json`.
+- Endpoints: `GET /healthz`, `GET /ratchet/versions/{id}/bom`, `GET /ratchet/bom/public-key`, `POST /ratchet/redact` (preview, stores nothing).
+- `/ratchet/stats`: `clients`, `privacy`, `security`, and `bom` per version.
+- Ledger: `requests.client`, `examples.redactions`, `versions.bom` (with migrations), a `(client, ts)` index, `stats_by_client`, `privacy_stats`, `client_requests_since`.
+- Dashboard: **Trust and privacy** panel (redaction, API keys and quota, BOM signing, per-client usage, a live redactor) and a **BOM** column in Model versions. The landing page's bill-of-materials card mentions per-adapter signatures. README screenshot `docs/img/trust.jpg`.
+- `sign` extra (`cryptography`), installed in the gateway image; `pytest-cov` in `dev`; CI reports coverage.
+- ADRs 0009 and 0010. 15 new tests (64 in total).
+
+### Changed
+- The demo VM's Docker health check and `update.sh` use `/healthz`, which stays public when API keys protect `/v1/*`.
+- `test_gateway_rejects_bad_requests` no longer expects `stream: true` to be rejected.
+- Docs: API, configuration, architecture, threat model (T1, T4, T6, T19, new T21), PRD, roadmap, runbook, deployment, demo VM, testing, glossary, Devpost draft, demo script, README, CLAUDE.md files.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added

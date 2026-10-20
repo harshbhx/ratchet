@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (49 tests, ~10 s, no network, no GPU)
+make test           # pytest -q (64 tests, ~20 s, no network, no GPU)
 make lint           # ruff check + ruff format --check
 make fmt            # ruff format + ruff check --fix
 make sim            # 10-day simulation with a corrupted deploy (mock models)
@@ -37,6 +37,9 @@ RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout CLI
 python -m sim.simulate --workload research --days 8 --requests 1500                     # or --workload mixed
 DRY_RUN=1 bash deploy/vm/create_vm.sh                                                    # demo VM (prints commands only)
+python -m ratchet.bom keygen                                                             # BOM signing key + public key
+python -m ratchet.bom verify bom.json --public-key <key>                                 # check an adapter's BOM
+pytest -q --cov=ratchet --cov=sim                                                        # coverage, as in CI
 ```
 
 Always run `make lint test` before committing.
@@ -45,12 +48,15 @@ Always run `make lint test` before committing.
 
 | Path | What |
 |---|---|
-| `ratchet/gateway.py` | FastAPI app: `/v1/chat/completions`, `/ratchet/stats`, `/ratchet/bom`, mock-only demo endpoints, pages (`/`, `/scout`, `/dashboard`), Scout endpoints (`/scout/*`) |
+| `ratchet/gateway.py` | FastAPI app: `/v1/chat/completions` (API keys, per-key quota, streaming), `/healthz`, `/ratchet/stats`, `/ratchet/bom`, `/ratchet/versions/{id}/bom`, `/ratchet/redact`, mock-only demo endpoints, pages (`/`, `/scout`, `/dashboard`), Scout endpoints (`/scout/*`) |
 | `ratchet/router.py` | The cascade (`Ratchet.handle`): pinned tasks → teacher; otherwise student → confidence → teacher, audits, shadow arbitration, cost accounting |
 | `ratchet/confidence.py` | Confidence score (logprob + self-consistency) and threshold calibration |
 | `ratchet/release.py` | `ReleaseGate`: golden gate, shadow, canary, rollback (Wilson bounds); `ReleasePolicy` |
-| `ratchet/ledger.py` | SQLite ledger: requests, examples (provenance), versions, events; migrations; `auto_day`; `stats_by_task`; one re-entrant lock |
+| `ratchet/ledger.py` | SQLite ledger: requests (with API client), examples (provenance, redaction count), versions (with BOM), events; migrations; `auto_day`; `stats_by_task`, `stats_by_client`, `privacy_stats`; one re-entrant lock |
 | `ratchet/licenses.py` | Teacher license registry; closed-model teachers are refused |
+| `ratchet/redact.py` | PII redaction (`[EMAIL]`, `[CARD]`, …) applied before examples are stored |
+| `ratchet/auth.py` | `KeyRing`: named gateway API keys from `RATCHET_API_KEYS` |
+| `ratchet/bom.py` | Per-adapter bill of materials, Ed25519 signing and verification, `python -m ratchet.bom` |
 | `ratchet/tasks.py` | Task registry: answer comparison (`compare_keys`) and `pinned` |
 | `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs) |
 | `ratchet/nightschool/` | Dataset build, LoRA training script, golden eval, nightly orchestration |
@@ -78,6 +84,9 @@ Always run `make lint test` before committing.
 9. Model IDs and prices in `config.py` are **unverified until `scripts/day1_check.py` passes** with a real key.
 10. **Pinned tasks never become training examples.** `Ratchet._pinned` must not call `add_example`, and pinned tasks never reach the student. See [docs/SCOUT.md](docs/SCOUT.md).
 11. **The demo budget guard must stay on in live mode.** Every Scout run goes through `Guard.admit` before it starts and `Guard.add_spend` after it ends (also on failure). Never pass `daily_budget_usd=None` or skip `_scout_precheck` in live mode. See [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md#switching-from-mock-to-live).
+12. **Redact before storing.** Everything passed to `Ledger.add_example` goes through `redact_messages` / `redact` first when `Settings.redact_pii` is on (the default). Never store raw request text anywhere else (`requests` holds metadata only). See [ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md).
+13. **API keys are never stored or logged.** The ledger and `/ratchet/stats` see the key's *name* only; compare keys with `KeyRing.identify` (constant-time digests). `/healthz` stays public.
+14. **A BOM is written once, at training time,** from the exact train and golden rows (`run_night` → `bom.manifest`). Never rewrite a stored BOM; a signature covers the canonical JSON (`bom.canonical`), so any change must produce a new document. See [ADR 0010](docs/adr/0010-signed-adapter-bom.md).
 
 ## Conventions
 
@@ -92,6 +101,7 @@ Always run `make lint test` before committing.
 
 ## Current status (Oct 20, 2026)
 
+- v0.4.0: PII redaction before training, gateway API keys with per-key quotas, streaming, a signed bill of materials per adapter, `/healthz`, coverage in CI, and the dashboard's Trust and privacy panel. 64 tests, 87% line coverage.
 - v0.3.0: React web app (story landing page, Scout, dashboard) replaces the hand-written pages, which stay at `/lite*`.
 - v0.2.0: loop complete and tested in simulation; Scout, landing page and the Nebius VM deploy kit added ([CHANGELOG.md](CHANGELOG.md)). Live mode, live Scout (Tavily) and the VM kit are written but **not yet run on Nebius**.
 - Waiting on Nebius support's reply about Token Factory ToS §5(f) (email sent Oct 19 from harshbhx@gmail.com).

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Owner | Harsh Bhanushali (DualMind Labs) |
-| Status | v0.2.0 built (hackathon MVP plus Scout demo, landing page, demo VM kit); live Nebius run pending |
+| Status | v0.4.0 built (hackathon MVP, Scout demo, React web app, demo VM kit, privacy and security hardening); live Nebius run pending |
 | Last updated | 2026-10-20 |
 | Related | [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Research summary](RESEARCH_SUMMARY.md) · [Roadmap](ROADMAP.md) |
 
@@ -60,7 +60,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 
 ### 3.2 Non-goals (v0.1)
 
-- Streaming responses.
+- Streaming the student's tokens as they are generated (v0.4 streams the decided answer; see FR-1.6).
 - Multi-tenant SaaS with billing, auth, and per-customer isolation.
 - Open-ended generation tasks (long-form writing, chat). v0.1 targets tasks with checkable structured answers.
 - Closed-model teachers. These are refused by design.
@@ -145,11 +145,11 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | FR-1.1 | `POST /v1/chat/completions` accepts OpenAI-format requests and returns a `chat.completion` object plus a `ratchet` metadata block (served_by, student_version, confidence, escalated, cost_usd, all_teacher_cost_usd, latency_ms) | Done (v0.1) |
 | FR-1.2 | `GET /v1/models` lists a `ratchet` model | Done (v0.1) |
 | FR-1.3 | Task selection via `X-Ratchet-Task` header or `metadata.ratchet_task` | Done (v0.1) |
-| FR-1.4 | Reject `stream: true` with HTTP 400 | Done (v0.1) |
+| FR-1.4 | Reject `stream: true` with HTTP 400 | Replaced by FR-1.6 in v0.4 |
 | FR-1.5 | Reject missing or empty `messages` with HTTP 400 | Done (v0.1) |
-| FR-1.6 | Streaming responses | Planned |
+| FR-1.6 | Streaming responses: `stream: true` returns OpenAI `chat.completion.chunk` events and `[DONE]`, sent once the cascade has decided | Done (v0.4) |
 | FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors return HTTP 502 | Done (v0.1.1) |
-| FR-1.7 | API keys / auth on the gateway | Planned (v0.2 demo VM has an opt-in edge guard in Caddy for `/v1/*`) |
+| FR-1.7 | API keys / auth on the gateway: named keys (`RATCHET_API_KEYS`), per-key daily quota, cost and savings per client | Done (v0.4); the demo VM also has an opt-in edge guard in Caddy |
 | FR-1.9 | Web pages: landing page at `/`, Scout at `/scout`, dashboard at `/dashboard` | Done (v0.2) |
 
 ### 6.2 Cascade and confidence
@@ -175,7 +175,7 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | FR-3.3 | Every example stores teacher, license, license URL, hash, split | Done (v0.1) |
 | FR-3.4 | Duplicates stored once; repeat count kept in `seen` | Done (v0.1) |
 | FR-3.5 | `GET /ratchet/bom` model bill of materials with dataset SHA-256 | Done (v0.1) |
-| FR-3.6 | Signed, exportable BOM attached to each adapter | Planned |
+| FR-3.6 | Signed, exportable BOM attached to each adapter: Ed25519, `/ratchet/versions/{id}/bom`, `python -m ratchet.bom verify` | Done (v0.4) |
 
 ### 6.4 Night School (training)
 
@@ -187,7 +187,7 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | FR-4.4 | Skip training if fewer than 50 new examples, no golden set, or a release is in flight | Done (v0.1) |
 | FR-4.5 | LoRA fine-tune script with Unsloth (fallback: transformers + peft) for Nemotron 3 Nano 4B | Done (v0.1), untested on GPU |
 | FR-4.6 | Run training as a Nebius Serverless Job; wait for adapter in bucket | Done (v0.1), untested on Nebius |
-| FR-4.7 | PII redaction before storing examples | Planned |
+| FR-4.7 | PII redaction before storing examples (pattern-based with checksums; names and addresses not covered) | Done (v0.4); NER-based detection planned |
 
 ### 6.5 Evaluation
 
@@ -271,7 +271,7 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | NFR-1 | Latency | Student path adds at most one student call (n samples in one request). Target p50 under 1 s for student-served requests. Escalated requests cost one student call plus one teacher call. |
 | NFR-2 | Availability | If the student endpoint errors, requests fall back to the teacher automatically (v0.1.1); with `RATCHET_STUDENT_BASE` unset, the hosted untuned Nano is used with the default threshold. `python -m ratchet.live reload` restores adapters after an endpoint restart. A demo URL must stay live through judging (Dec 1–15, 2026). |
 | NFR-3 | Cost | Shadow, audit, and arbitration overhead is counted in reported cost. No training while a release is in flight. |
-| NFR-4 | Privacy | v0.1 stores prompts and teacher answers in SQLite. Use synthetic data only in demos. PII redaction (Presidio) and zero-retention options are planned. |
+| NFR-4 | Privacy | Prompts and teacher answers are stored in SQLite with identifiers (emails, phones, cards, IBANs, national IDs, IPs, secrets) replaced by placeholders (v0.4). Use synthetic data only in demos. NER-based redaction (Presidio) and zero-retention options are planned. |
 | NFR-5 | Security | Secrets come from environment variables only. Student endpoint uses token auth. Gateway auth is planned. See [Threat model](THREAT_MODEL.md). |
 | NFR-6 | Observability | Every request, version change, and release event is logged in the ledger and visible on the dashboard. |
 | NFR-7 | Portability | Any OpenAI-compatible teacher or student endpoint works. Adapters are standard LoRA files the customer can download and run elsewhere. |
@@ -314,8 +314,10 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 |---|---|---|
 | v0.1 (hackathon MVP) | Everything marked Done (v0.1) above; 34 tests passing; simulation and mock dashboard working | Built Oct 19, 2026 |
 | v0.2.0 (demo layer) | Scout, pinned tasks, landing page, By task table, workloads, mock warm-up, Nebius VM deploy kit; 49 tests passing | Built Oct 20, 2026 |
+| v0.3.0 (web app) | React story page, Scout page and dashboard; 49 tests passing | Built Oct 20, 2026 |
+| v0.4.0 (hardening) | PII redaction, gateway API keys and quotas, streaming, signed BOM per adapter, `/healthz`; 64 tests passing | Built Oct 20, 2026 |
 | v0.1 live | Day-1 checks; Nano 4B trained on a Serverless Job; vLLM endpoint; real numbers | Oct 20–28, 2026 |
-| v0.3 | PII redaction, gateway auth, streaming, Postgres ledger, multiple tasks per deployment, signed BOM | After hackathon |
+| v0.5 | Postgres ledger, multiple tasks per deployment, NER-based redaction, per-key spend caps | After hackathon |
 | v1.0 | Managed Ratchet Cloud, multi-tenant, savings-based billing, region choice (EU, India) | Startup track |
 
 See [Roadmap](ROADMAP.md) for dates and exit criteria.
@@ -345,7 +347,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | R6 | Small models are poorly calibrated | Medium | Combined confidence signal; per-version calibration; shadow; audits |
 | R7 | Judge bias (all Nemotron) | Medium | Exact-match labels; reference-based judge only for free text |
 | R8 | Forgetting and drift across retrains | Medium | Retrain from base on cumulative data; golden gate; champion vs challenger |
-| R9 | PII in logs | Low for demo, high for startup | Synthetic data now; Presidio redaction planned |
+| R9 | PII in logs | Low for demo, high for startup | Synthetic data in demos; pattern-based redaction before storing (v0.4); Presidio for names and addresses planned |
 | R10 | Cheap frontier tiers shrink savings to about 2x | Medium | Lead with quality, ownership, license safety, latency |
 | R11 | Funded competitors (Orchestra/Understudy, Experiential Labs, Inference.net) | High for startup | License-clean wedge; release safety; open source first |
 
