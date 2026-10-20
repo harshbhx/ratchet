@@ -487,7 +487,7 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.1 Gateway
     "FR-1.1": ("ratchet.gateway:chat",),
     "FR-1.2": ("ratchet.gateway:models",),
-    "FR-1.3": ("ratchet.gateway:chat", "ratchet.tasks:get"),
+    "FR-1.3": ("ratchet.gateway:chat", "ratchet.tasks:get", "ratchet.router:Ratchet.task_for"),
     "FR-1.5": ("ratchet.gateway:chat", "ratchet.openai_compat:validate_chat_request"),
     "FR-1.6": ("ratchet.gateway:chat", "ratchet.gateway:_chunks"),
     "FR-1.7": (
@@ -561,7 +561,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-2.6": ("ratchet.tasks:Task.agree", "ratchet.tasks:Task.canonical"),
     "FR-2.7": ("ratchet.tasks:strip_reasoning", "ratchet.tasks:clean_answer", "ratchet.tasks:parse_json"),
     "FR-2.8": ("ratchet.router:Ratchet._pick_version",),
-    "FR-2.9": ("ratchet.router:Ratchet._pinned", "ratchet.tasks:Task"),
+    "FR-2.9": ("ratchet.router:Ratchet._teacher_only", "ratchet.tasks:Task", "ratchet.nightschool.dataset:rows"),
     "FR-2.10": (
         "ratchet.router:Ratchet.handle",
         "ratchet.router:Ratchet._arbitrate",
@@ -607,6 +607,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet/vocab.py",
         "ratchet.nightschool.evaluate:cascade_eval",
         "ratchet.nightschool.dataset:rows",
+    ),
+    "FR-2.15": (
+        "ratchet/taskspec.py",
+        "ratchet.taskspec:parse_document",
+        "ratchet.taskspec:install",
+        "ratchet.tasks:register",
+        "ratchet.ledger:Ledger.save_task",
+        "ratchet.gateway:put_task",
+        "ratchet.gateway:_admin",
+        "ratchet.router:Ratchet.task_for",
+        "ratchet.router:Ratchet.threshold",
+        "ratchet.nightschool.orchestrate:run_night",
     ),
     # 6.3 Provenance and licensing
     "FR-3.1": ("ratchet.licenses:REGISTRY", "ratchet.licenses:require_distillable"),
@@ -710,10 +722,15 @@ CODE: dict[str, tuple[str, ...]] = {
     "INV-7": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat", "ratchet.gateway:_map_upstream"),
     "INV-8": ("ratchet.gateway:_mock_only",),
     "INV-9": ("ratchet.config:DEFAULT_PRICES", "scripts/day1_check.py"),
-    "INV-10": ("ratchet.router:Ratchet._pinned",),
+    "INV-10": (
+        "ratchet.router:Ratchet._teacher_only",
+        "ratchet.tasks:Task",
+        "ratchet.nightschool.dataset:rows",
+        "ratchet.nightschool.evaluate:cascade_eval",
+    ),
     "INV-11": ("ratchet.gateway:_scout_precheck", "ratchet.gateway:_run_scout", "ratchet.scout.guard:Guard.admit"),
     "INV-12": ("ratchet.redact:redact_messages", "ratchet.redact:redact_json", "ratchet.router:Ratchet._store_example"),
-    "INV-13": ("ratchet.auth:KeyRing.identify",),
+    "INV-13": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_admin", "ratchet.ledger:Ledger.save_task"),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
     "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
     "INV-16": (

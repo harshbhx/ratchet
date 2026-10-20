@@ -83,9 +83,10 @@ Read in `ratchet/config.py`; used by `ratchet/router.py`, `ratchet/auth.py`, `ra
 | `RATCHET_REDACT_PII` | `1` | Replace emails, phone numbers, card numbers (Luhn-checked), IBANs (mod-97), Aadhaar (Verhoeff), US SSNs, Indian PANs, IPv4 addresses and API secrets with `[LABEL]` placeholders before a request and the teacher's answer are stored as a training example. The teacher still receives the original. `0` stores examples verbatim. Names and street addresses are not detected |
 | `RATCHET_API_KEYS` | empty | `name:key,name:key`. When set, `/v1/*` needs `Authorization: Bearer <key>` or `X-API-Key: <key>`; anything else gets 401. Names: letters, digits, `_`, `.`, `-` (up to 64). Keys: at least 16 characters; generate with `openssl rand -hex 24`. A bare key without `name:` is named `keyN`. The ledger stores the name per request, never the key. A malformed value stops the gateway at startup |
 | `RATCHET_API_KEY_DAILY_REQUESTS` | `0` | Chat completions per key per UTC day; past it a 429 `insufficient_quota` (code `daily_quota_exceeded`) with `Retry-After` until 00:00 UTC and `X-Should-Retry: false` ([API.md](API.md#authentication)). `0` = unlimited. Counted from the ledger, so it survives restarts in live mode |
+| `RATCHET_ADMIN_KEYS` | empty | Admin keys for management writes (`PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate`; [API.md](API.md#tasks)), in the `RATCHET_API_KEYS` syntax: `name:key,name:key`, keys at least 16 characters. Sent as `Authorization: Bearer <key>` or `X-API-Key`; a missing or wrong key gets 401, an API key 403. The ledger and the event log record the name, never the key. A key may not be in both variables (startup error). Empty: the admin API is off in live mode (403 `admin API disabled: set RATCHET_ADMIN_KEYS`) and open in mock mode (the admin is `mock-admin`). Not the Caddy guard's `RATCHET_ADMIN_TOKEN` |
 | `RATCHET_BOM_SIGNING_KEY` | empty | Ed25519 private key as the base64 of its 32-byte seed. Signs each adapter's bill of materials. Generate with `python -m ratchet.bom keygen`, which also prints the public key to publish. Needs the `sign` extra (`pip install "ratchet-distill[sign]"`, included in the gateway image). An invalid value stops the gateway at startup. Empty = BOMs are stored with a SHA-256 but unsigned |
 
-Keep `RATCHET_API_KEYS` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
+Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
 
 ## Scout, the multi-agent demo
 
@@ -197,6 +198,14 @@ Other constants:
 
 A task tells Ratchet when two answers "agree" and which answers are valid (`ratchet/tasks.py`, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Its `fields` list the parts of the answer that must match, each a path and a typed comparator (`ratchet/compare.py`); anything else in the answer, such as a free-text `reply`, is ignored.
 
+Tasks come from three places ([ADR 0022](adr/0022-task-registry.md)): the built-in ones below (`ratchet/tasks.py`), a tasks file, and the admin API ([API.md](API.md#tasks)). Read in `ratchet/config.py`; used by `ratchet/taskspec.py`, `ratchet/router.py` and `ratchet/gateway.py`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_TASKS_FILE` | empty | A file of task specs ([Adding a task](#adding-a-task)), JSON, or YAML for a `.yaml` or `.yml` file (needs PyYAML: `pip install pyyaml`, or the `yaml` extra). Read when the gateway starts (and on a mock demo reset) and by `python -m ratchet.live`. A file task may replace a built-in one. A bad file stops startup with every error and its path (`tasks[2].fields.total.abs_tol: must be a number >= 0`); a YAML file without PyYAML is an error that says so |
+| `RATCHET_UNKNOWN_TASKS` | `distill` | What a request naming a task that is not registered gets. `distill` (v0.4): a task without fields made up for the name, distilled like any other. `teacher`: the teacher answers (route `unknown_task`), the student is not called and nothing is stored. `reject`: 400 `unknown_task`, listing the registered tasks the key may use. Case-insensitive; anything else stops startup |
+| `RATCHET_FIXTURES_DIR` | `fixtures` | Where fixture files a task spec names must live (`taskspec.resolve_fixture`: a path that resolves outside it, through `..` or a symlink, is refused). For the reserved `sql` format |
+
 | Task | Fields | `pinned` | Agreement rule |
 |---|---|---|---|
 | `default` | none | no | Whole answer: when both are a JSON object or array, canonical JSON (sorted keys; strings, keys included, NFKC-normalised, case-folded and stripped; numbers as floats); otherwise the text after removing reasoning (`tasks.strip_reasoning`), lower-cased with whitespace collapsed. An empty answer never agrees |
@@ -246,48 +255,68 @@ Limits: 64 fields per task (counting the fields inside records), records nested 
 | `policy` | `{}` | `samples` (1 to 16), `audit_rate`, `target_precision`, `min_precision` (0 to 1): part of the spec and its hash, read by later releases (per-task sampling, audits and precision targets) |
 | `routing` | `{}` | Routing rules for a later release; part of the spec and its hash |
 | `tools` | `teacher` | `teacher` or `distill` (opt-in tool-call distillation, a later release) |
+| `description` | empty | What the task is for, up to 1,000 characters. Shown by `GET /ratchet/tasks` |
+| `clients` | none | API key names (`RATCHET_API_KEYS`) that may use the task. Any other key gets 403 `task_not_allowed`, and so does a request without a key (with `RATCHET_API_KEYS` off, every request), before any quota or model call. A name must be a configured key when the spec is loaded or written. Empty or absent: every key |
+| `match` | `{}` | How a request without a task name may find this task, for a later release: `system_prefix` (the system message starts with it), `schema_name` (`response_format.json_schema.name`), `tools` (exactly these tool names). Plain comparisons, never patterns |
+| `extends` | none | Spec files and the API only: start from another task's spec (a task of the same file, before or after, or a registered task; the task's own name extends the registered task of that name). `fields`, `policy` and `match` merge by key (`null` removes the base's entry); every other key replaces the base's; `name` and `description` are not inherited. Resolved when the task is defined, so later changes to the base do not reach it |
 
-`Task.spec_hash` is 16 hex digits of SHA-256 over the task's rules (`Task.spec()`: everything above except the name), so a changed vocabulary or tolerance changes it and a renamed task keeps it.
+`Task.spec_hash` is 16 hex digits of SHA-256 over the task's rules (`Task.spec()`: `format`, `fields` in their order, `pinned`, `store`, `policy`, `routing`, `tools`), so a changed vocabulary or tolerance changes it and a renamed task keeps it. `description`, `clients` and `match` are left out: they say who uses a task, not how its answers compare. Night School records each golden task's hash in every eval it writes, and a task whose hash changed since the serving version was scored goes to the teacher (threshold 1.01) until a night scores the version under the new spec; `GET /ratchet/tasks` shows it as `recalibrating`.
 
-**Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data.
+**Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data. Only an operator's spec pins a task (built-in, tasks file, admin API): no header, metadata key, `model` value or `response_format` can. Pinning a task that already has stored examples keeps them out of training and out of the golden eval from the next night on (`excluded_pinned` in the dataset manifest); the ledger keeps them, so unpinning brings them back.
 
 Every answer is cleaned the same way before it is compared, served or stored (`tasks.clean_answer`): reasoning is removed (`<think>` blocks, anything before a lone `</think>`, an unterminated `<think>` that opens what is left and what follows), and for a JSON task (any task with fields, unless its format is `text`) a code fence around the whole answer is unwrapped when its body is JSON; an answer that is one JSON object is kept whole, tags quoted in its strings included. A teacher answer is stored as a training example only when it is complete (`finish_reason` `stop` or `tool_calls`), not empty, and valid under the task (invariant 16); otherwise it is served and logged as a `skip_example` event. So a JSON task's system prompt should ask for JSON only, and list the allowed values of each label.
 
-Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name gets a temporary task without fields with that name (`source` `adhoc`, not added to the registry), so its data stays separate. Names must match `[A-Za-z0-9_.-]{1,64}`; anything else becomes `default`.
+Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. A name that is not registered follows `RATCHET_UNKNOWN_TASKS`: by default it gets a temporary task without fields with that name (`source` `adhoc`, not added to the registry, never pinned), so its data stays separate. Names must match `[A-Za-z0-9_.-]{1,64}`; a header that does not becomes `default` (a bad `metadata.ratchet_task` is a 400). At most 500 tasks are registered, built-in ones included.
 
 ### Adding a task
 
-1. Register it in `ratchet/tasks.py`:
+Define tasks as data, in a tasks file or through the admin API; both take the same spec. A spec has the options above, with `fields` written as `{path: {type, ...options}}` (paths are `$` or dot-separated names of letters, digits and `_`). Unknown keys and options, an option the field's type does not use, a value of the wrong type or out of range are all errors, and every error is reported with its path, so one check finds them all.
 
-   ```python
-   REGISTRY["invoice-extract"] = Task(
-       "invoice-extract",
-       fields=(
-           FieldSpec("vendor", "text", strip_suffixes=("inc", "ltd", "llc", "gmbh")),
-           FieldSpec("total", "number", abs_tol=0.01),
-           FieldSpec("currency", "label", values=("USD", "EUR", "INR"), aliases={"$": "USD", "€": "EUR"}),
-           FieldSpec("due_date", "date", nullable=True),
-           FieldSpec(
-               "lines",
-               "records",
-               key=("sku",),
-               required=False,
-               fields=(
-                   FieldSpec("sku", "label"),
-                   FieldSpec("qty", "number"),
-               ),
-           ),
-       ),
-   )
-   # or, for a task that must always stay on the teacher:
-   REGISTRY["contract-summary"] = Task("contract-summary", pinned=True)
+1. Write the spec. In a file (`tasks.json`; or `tasks.yaml` with PyYAML):
+
+   ```json
+   {"tasks": [
+     {"name": "invoice-extract",
+      "description": "Vendor, total, currency, due date and lines from an invoice",
+      "fields": {
+        "vendor":   {"type": "text", "strip_suffixes": ["inc", "ltd", "llc", "gmbh"]},
+        "total":    {"type": "number", "abs_tol": 0.01},
+        "currency": {"type": "label", "values": ["USD", "EUR", "INR"], "aliases": {"$": "USD", "€": "EUR"}},
+        "due_date": {"type": "date", "nullable": true},
+        "lines":    {"type": "records", "key": ["sku"], "required": false,
+                     "fields": {"sku": {"type": "label"}, "qty": {"type": "number"}}}
+      }},
+     {"name": "invoice-extract-eu", "extends": "invoice-extract",
+      "fields": {"currency": {"type": "label", "values": ["EUR"]}}},
+     {"name": "contract-summary", "pinned": true}
+   ]}
    ```
 
-2. Make the system prompt ask for JSON with those keys, and list each label's allowed values (put the lists in `ratchet/vocab.py` when a prompt and a task share them).
-3. Send traffic with `X-Ratchet-Task: invoice-extract`.
+   ```yaml
+   tasks:
+     - name: invoice-extract
+       fields:
+         total: {type: number, abs_tol: 0.01}
+         currency: {type: label, values: [USD, EUR, INR]}
+   ```
+
+   Then start the gateway with `RATCHET_TASKS_FILE=tasks.json`. Quote YAML strings that look like booleans or dates (`"yes"`, `"2026-10-03"`).
+
+   Or, without a restart, through the admin API (`RATCHET_ADMIN_KEYS` set; the body is one spec, its name in the URL):
+
+   ```bash
+   curl -X POST localhost:8000/ratchet/tasks/validate -H "Authorization: Bearer $ADMIN_KEY" -d @invoice.json   # a dry run
+   curl -X PUT localhost:8000/ratchet/tasks/invoice-extract -H "Authorization: Bearer $ADMIN_KEY" -d @invoice.json
+   ```
+
+   API tasks are stored in the ledger and registered again at every start. The API cannot change a built-in or file task (403): edit the file, or define a task under another name that `extends` it. A file task replaces a built-in one of the same name (`{"name": "ticket-triage", "extends": "ticket-triage", "policy": {"samples": 5}}` adjusts the built-in triage).
+2. Make the system prompt ask for JSON with those keys, and list each label's allowed values.
+3. Send traffic with `X-Ratchet-Task: invoice-extract`. `GET /ratchet/tasks` shows every task with its source, spec hash and traffic, and the unregistered names requests used.
 4. Optional: for free-text tasks (no fields), `LiveEvaluator` adds a judge score (`judge_pass_rate`) using the judge model. The release gate does not use that score yet.
 
-Choose fields that are verifiable (labels, IDs, numbers, dates). Typed comparison on these fields is what keeps evaluation free of judge bias; pick the loosest type that is still right (a `number` with a tolerance for amounts, a `set` for tags), because a field that is too strict escalates good answers and lowers measured precision.
+A built-in task is a `Task` in `tasks.BUILTIN` (`ratchet/tasks.py`), with `FieldSpec`s from `ratchet/compare.py`; put shared vocabularies in `ratchet/vocab.py`. Use that only for tasks the code itself depends on, such as Scout's.
+
+Choose fields that are verifiable (labels, IDs, numbers, dates). Typed comparison on these fields is what keeps evaluation free of judge bias; pick the loosest type that is still right (a `number` with a tolerance for amounts, a `set` for tags), because a field that is too strict escalates good answers and lowers measured precision. Changing a task's rules later is safe: the serving version keeps the task on the teacher until a night has scored it under the new spec.
 
 ## Teacher licenses
 

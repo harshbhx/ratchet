@@ -28,6 +28,8 @@ from .tasks import Task
 # (`LiveEvaluator.evaluate`) and in the mock one (`MockFleet.evaluate`). One constant, so the eval cannot drift from
 # production (FR-5.1). `n` is added by each caller (`Settings.samples`). Read-only.
 STUDENT_SAMPLING: Mapping[str, Any] = MappingProxyType({"temperature": 0.7, "logprobs": True})
+# A threshold no confidence reaches (scores are at most 1): the student serves nothing. Finite, so an eval stays JSON.
+SERVE_NOTHING = 1.01
 
 
 @dataclass

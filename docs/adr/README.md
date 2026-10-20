@@ -25,5 +25,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0019](0019-teacher-breaker-degraded-mode-and-fallback-teacher.md) | When the teacher is down: a teacher breaker, an opt-in degraded mode and an opt-in licensed fallback teacher | Accepted | 2026-10-20 |
 | [0020](0020-n-choices-and-token-logprobs.md) | `n` choices and token logprobs without moving the calibration or the training set | Accepted | 2026-10-20 |
 | [0021](0021-field-comparators-and-task-specs.md) | Field comparators and task specs: typed fields, required by default, pairwise confidence | Accepted | 2026-10-20 |
+| [0022](0022-task-registry.md) | A task registry: specs as data, operator-only pinning, an unknown-task policy and admin keys | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.
