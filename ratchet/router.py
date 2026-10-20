@@ -780,16 +780,22 @@ class Ratchet:
         (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers (or the fallback teacher, when the primary
         is unavailable), the request is logged, and nothing is stored as a training example. No student, audit or shadow
         call, so it never degrades. `n` choices, as for `handle`. An unregistered task under RATCHET_UNKNOWN_TASKS=reject
-        raises `tasks.UnknownTask`."""
+        raises `tasks.UnknownTask`; under `teacher` it is logged with route `unknown_task`, as in `handle`."""
         task = _task(task)
         self._admit(task, client)
-        return self._teacher_only(task, messages, client, self.plan(params, n), params)
+        route = "unknown_task" if task.source == "adhoc" and self.unknown_tasks == "teacher" else "pinned"
+        return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route)
 
     def task_for(self, task: str | tasks.Task | None, client: str | None = None) -> tasks.Task:
         """The task a request names, as the gateway admits it before any quota or model call: a registered task, or for
         an unregistered name a task without fields made up for it (`tasks.get`), which RATCHET_UNKNOWN_TASKS decides
-        about (`reject` raises `tasks.UnknownTask`, listing the tasks this client may use). A task with `clients`
-        raises `tasks.TaskForbidden` for any other API key, and for a request without one. Lookups only."""
+        about (`reject` raises `tasks.UnknownTask`, listing the tasks this client may use). A name that is not a task
+        name (an X-Ratchet-Task header; metadata is checked earlier) means 'default' under `distill`, as in v0.4, and
+        raises `tasks.UnknownTask` under `teacher` and `reject`, so it cannot become 'default' training data there. A
+        task with `clients` raises `tasks.TaskForbidden` for any other API key, and for a request without one. Lookups
+        only."""
+        if isinstance(task, str) and task and not tasks.valid_name(task) and self.unknown_tasks != "distill":
+            raise tasks.UnknownTask(task, tasks.names_for(client), invalid=True)
         t = _task(task)
         self._admit(t, client)
         if not t.allows(client):

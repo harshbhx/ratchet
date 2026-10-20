@@ -605,7 +605,7 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(header_task or req.task, client)
-    except tasks.UnknownTask as e:  # RATCHET_UNKNOWN_TASKS=reject
+    except tasks.UnknownTask as e:  # RATCHET_UNKNOWN_TASKS=reject; or teacher/reject and a header that is not a task name
         raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
@@ -838,8 +838,9 @@ def get_task(name: str) -> dict[str, Any]:
 
 @app.post("/ratchet/tasks/validate")
 async def validate_tasks(request: Request, admin: str = Depends(_admin)) -> dict[str, Any]:
-    """A dry run: the errors a body would get, with no side effects. `{"tasks": [...]}` is checked as a tasks file (it
-    may adjust a built-in task); one task spec is checked as PUT would take it."""
+    """A dry run: the errors a body would get, with no side effects. `{"tasks": [...]}` is checked as startup reads
+    RATCHET_TASKS_FILE (it may adjust or extend a built-in task, never extend an API task, and must fit in the registry
+    with the built-in tasks); one task spec is checked as PUT would take it."""
     raw = await request.body()
     return await anyio.to_thread.run_sync(_validate_tasks, raw)
 
@@ -847,13 +848,14 @@ async def validate_tasks(request: Request, admin: str = Depends(_admin)) -> dict
 def _validate_tasks(raw: bytes) -> dict[str, Any]:
     try:
         obj = taskspec.loads(raw)
-        if isinstance(obj, Mapping) and "tasks" in obj:
+        if isinstance(obj, Mapping) and "tasks" in obj:  # as `taskspec.install` reads it, before any API task exists
             parsed = taskspec.parse_document(obj, "file", known_clients=rt.known_clients())
             errors: list[str] = []
         else:
             parsed = [taskspec.parse_spec(obj, "api", known_clients=rt.known_clients())]
             current = tasks.lookup(parsed[0].name)
-            errors = [f"name: {_not_yours(current).detail}"] if current is not None and current.source != "api" else []
+            yours = current is None or current.source in ("api", "auto")  # what `_put_task` replaces
+            errors = [] if yours else [f"name: {_not_yours(current).detail}"]
     except taskspec.SpecError as e:
         return {"valid": False, "errors": e.errors, "tasks": []}
     found = []

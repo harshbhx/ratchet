@@ -301,7 +301,7 @@ def test_spec_errors_list_every_problem_with_its_path():
         "tasks[2].name: 'bad name!' is not a task name (1 to 64 letters, digits, '_', '.', '-')",
         "tasks[3].extends: 'd' has errors",
         "tasks[4].extends: a cycle: c -> d -> c",
-        "tasks[5].extends: no task is named 'nowhere' in this file or the registry",
+        "tasks[5].extends: no task is named 'nowhere' in this file or the built-in tasks",
         "tasks[6].extends: 'g' has errors",
         f"tasks[7].fields.x.type: 'nope' is not a field type; use one of {types}",
         "tasks[8].name: 'b' is already defined at tasks[1]",
@@ -796,6 +796,73 @@ def test_validate_endpoint_has_no_side_effects(gw_env):
     assert r["valid"] and r["tasks"][0]["registered"] == "builtin"
     assert not c.post("/ratchet/tasks/validate", json={"name": "ticket-triage"}).json()["valid"]
     assert tasks.REGISTRY is registry and gw.rt.ledger.events() == events and gw.rt.ledger.saved_tasks() == stored
+    tasks.register(tasks.Task("auto-x", source="auto"))  # PUT replaces an auto task, so validate takes its name too
+    assert c.post("/ratchet/tasks/validate", json={"name": "auto-x"}).json()["valid"]
+    assert c.put("/ratchet/tasks/auto-x", json={}).status_code == 200
+
+
+def test_validate_checks_a_document_as_startup_reads_it(gw_env, tmp_path, monkeypatch):
+    """A document is valid only when RATCHET_TASKS_FILE would start with it. Startup registers the file before the
+    stored API tasks, so `extends` reaches the built-in tasks and the file's own, never an API task or a task of the
+    file running now; and the file's tasks must fit in the registry with the built-in tasks they do not replace."""
+    gw = gw_env()
+    c = TestClient(gw.app)
+    assert c.put("/ratchet/tasks/invoices", json=INVOICE_BODY).status_code == 200
+    tasks.register(tasks.Task("old-file-task", source="file"))  # the running file's task, which the new file drops
+    for base in ("invoices", "old-file-task"):
+        doc = {"tasks": [{"name": "eu-invoices", "extends": base}]}
+        error = f"tasks[0].extends: no task is named '{base}' in this file or the built-in tasks"
+        assert c.post("/ratchet/tasks/validate", json=doc).json() == {"valid": False, "errors": [error], "tasks": []}
+        with pytest.raises(SpecError) as caught:  # what the restart would say
+            taskspec.install(Ledger(":memory:"), _file(tmp_path, doc))
+        assert caught.value.errors == [error]
+    good = {
+        "tasks": [{"name": "eu", "extends": "base"}, {"name": "base", **INVOICE_BODY}, {"name": "t", "extends": "ticket-triage"}]
+    }
+    assert c.post("/ratchet/tasks/validate", json=good).json()["valid"]
+
+    cap = len(tasks.BUILTIN) + 2
+    monkeypatch.setattr(tasks, "MAX_TASKS", cap)
+    fits = {"tasks": [{"name": "a"}, {"name": "b"}, {"name": "default", "extends": "default"}]}  # a replacement takes no room
+    too_many = {"tasks": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}
+    error = f"tasks: 3 tasks and the {cap - 2} built-in tasks this file does not replace come to {cap + 1}; "
+    error += f"the registry holds at most {cap}"
+    assert c.post("/ratchet/tasks/validate", json=fits).json()["valid"]
+    assert c.post("/ratchet/tasks/validate", json=too_many).json() == {"valid": False, "errors": [error], "tasks": []}
+    with pytest.raises(SpecError) as caught:
+        taskspec.install(Ledger(":memory:"), _file(tmp_path, too_many))
+    assert caught.value.errors == [error]
+    assert taskspec.install(Ledger(":memory:"), _file(tmp_path, fits)) == [] and len(tasks.REGISTRY) == cap
+
+
+def test_install_publishes_the_registry_whole(gw_env, tmp_path, monkeypatch):
+    """`install` builds the registry aside and publishes it in one assignment: a request on another thread (during a
+    mock demo reset) never sees it without the file's or the stored tasks, and a file that went bad leaves it as it was."""
+    path = _file(tmp_path, {"tasks": [{**SUPPORT, "pinned": True}]})
+    led = Ledger(":memory:")
+    notes = tasks.Task("notes", source="api")
+    led.save_task("notes", taskspec.document(notes), notes.spec_hash, "api", "ops")
+    assert taskspec.install(led, path) == []
+    published = tasks.REGISTRY
+    during: list[dict[str, tasks.Task]] = []
+    saved_tasks = led.saved_tasks
+
+    def spy() -> list[dict[str, Any]]:  # runs after the file is parsed, before the stored tasks are added
+        during.append(tasks.REGISTRY)
+        return saved_tasks()
+
+    monkeypatch.setattr(led, "saved_tasks", spy)
+    taskspec.install(led, path)
+    assert during == [published] and during[0] is published  # what requests saw meanwhile: the old registry, whole
+    assert tasks.REGISTRY is not published and set(tasks.REGISTRY) == set(published)
+    assert tasks.lookup("support-triage").pinned and tasks.lookup("notes") == notes
+
+    gw = gw_env(RATCHET_TASKS_FILE=str(path))
+    before = tasks.REGISTRY
+    path.write_text(json.dumps({"tasks": [{"name": "support-triage", "feilds": {}}]}), encoding="utf-8")
+    with pytest.raises(SpecError, match="feilds"):
+        gw.rt.reset()  # a mock demo reset after the file went bad on disk
+    assert tasks.REGISTRY is before and tasks.get("support-triage").pinned  # still the operator's pinned task
 
 
 def test_concurrent_admin_writes_keep_the_registry_and_the_table_in_step(gw_env):
@@ -842,8 +909,20 @@ def test_unknown_tasks_teacher_policy_stores_nothing(gw_env):
     assert _rows(led, "SELECT task, route, stored, served_by FROM requests") == [
         {"task": "brand-new", "route": "unknown_task", "stored": 0, "served_by": "teacher"}
     ]
+    # A request only the teacher reads (a RATCHET_TEACHER_MODALITIES part) keeps the policy's route; a pinned task its own.
+    assert r.teacher_only(_ask(3), "brand-new").route == "unknown_task"
+    assert r.teacher_only(_ask(4), "research-plan").route == "pinned"
+    assert [row["route"] for row in _rows(led, "SELECT route FROM requests ORDER BY id")][1:] == ["unknown_task", "pinned"]
+    assert student.calls == [] and led.examples() == []
     assert r.handle(_ask(2), "ticket-triage").route == "student"  # a registered task is still distilled
     assert r.task_for("brand-new").source == "adhoc"  # admitted, and answered by the teacher alone
+    # A header that is not a task name cannot become 'default' training data under this policy (v0.4 keeps 'default').
+    with pytest.raises(tasks.UnknownTask, match=r"^'bad name!' is not a task name \(1 to 64 letters"):
+        r.task_for("bad name!")
+    with pytest.raises(tasks.UnknownTask, match=r"^'x{37}\.\.\.' is not a task name"):
+        r.task_for("x" * 100 + "!")
+    distill = Ratchet(Settings(teacher_model=OPEN_TEACHER, unknown_tasks="distill"), led, teacher, lambda v: (student, "x"))
+    assert distill.task_for("bad name!").name == "default"
     with pytest.raises(ValueError, match="RATCHET_UNKNOWN_TASKS must be distill, teacher, reject, not 'teach'"):
         Ratchet(Settings(teacher_model=OPEN_TEACHER, unknown_tasks="teach"), led, teacher, lambda v: (student, "x"))
     assert Settings(unknown_tasks="").unknown_task_policy() == "distill"
@@ -854,6 +933,9 @@ def test_unknown_tasks_teacher_policy_stores_nothing(gw_env):
     r = c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "brand-new"})
     assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
     assert gw.rt.ledger.examples() == [] and c.get("/ratchet/tasks").json()["unknown_tasks"] == "teacher"
+    r = c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "bad name!"})
+    assert (r.status_code, r.json()["error"]["code"], r.json()["error"]["param"]) == (400, "unknown_task", None)
+    assert gw.rt.ledger.examples() == [] and gw.rt.ledger.totals()["requests"] == 1
 
 
 @pytest.mark.req("FR-1.3")
@@ -871,6 +953,13 @@ def test_unknown_tasks_reject_policy_400(gw_env):
     }
     r = c.post(CHAT, json={"messages": msgs, "metadata": {"ratchet_task": "nope"}}, headers=ACME)
     assert (r.status_code, r.json()["error"]["param"]) == (400, "metadata.ratchet_task")
+    r = c.post(CHAT, json={"messages": msgs}, headers={**ACME, "X-Ratchet-Task": "bad name!"})  # not 'default'
+    assert r.status_code == 400 and r.json()["error"] == {
+        "message": f"'bad name!' is not a task name (1 to 64 letters, digits, '_', '.' or '-'); registered: {registered}",
+        "type": "invalid_request_error",
+        "param": None,
+        "code": "unknown_task",
+    }
     assert gw.rt.ledger.totals()["requests"] == 0  # refused before the quota: nothing logged, nothing used
     ok = c.post(CHAT, json={"messages": msgs}, headers={**ACME, "X-Ratchet-Task": "ticket-triage"})
     assert ok.status_code == 200 and ok.headers["x-ratelimit-remaining-requests"] == "0"

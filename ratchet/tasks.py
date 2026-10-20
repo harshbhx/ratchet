@@ -13,8 +13,9 @@ already one JSON object is kept as it is, so a reply that mentions a `<think>` t
 
 The registry (FR-2.15, ADR 0022): `REGISTRY` holds the tasks a request can name, by name. It starts with `BUILTIN` (the
 tasks defined here); `taskspec.install` adds the tasks of RATCHET_TASKS_FILE (which may replace a built-in one) and the
-ones the admin API stored (which may replace neither). Writers (`register`, `unregister`, `reset_builtin`) take a lock
-and publish a new dict, so `get` on the request path reads without one. Only an operator's spec (built-in, file or API)
+ones the admin API stored (which may replace neither), building the whole registry before it publishes it
+(`replace_all`). Writers (`register`, `unregister`, `reset_builtin`, `replace_all`) take a lock and publish a new dict,
+so `get` on the request path reads without one. Only an operator's spec (built-in, file or API)
 can pin a task; nothing in a request can.
 """
 
@@ -608,14 +609,20 @@ class RegistryFull(ValueError):
 
 
 class UnknownTask(ValueError):
-    """A request named a task that is not registered, and RATCHET_UNKNOWN_TASKS is `reject`. The message lists the
-    registered tasks the caller may use (`known`), at most 20 of them."""
+    """A request named a task that is not registered, and RATCHET_UNKNOWN_TASKS is `reject`; or (`invalid`) it sent an
+    X-Ratchet-Task header that is not a task name, under `reject` or `teacher`. The message lists the registered tasks
+    the caller may use (`known`), at most 20 of them."""
 
-    def __init__(self, name: str, known: Iterable[str] = ()) -> None:
+    def __init__(self, name: str, known: Iterable[str] = (), invalid: bool = False) -> None:
         names = sorted(known)
         listed = ", ".join(names[:_LISTED]) or "none"
         more = f" and {len(names) - _LISTED} more" if len(names) > _LISTED else ""
-        super().__init__(f'unknown task "{name}"; registered: {listed}{more}')
+        if invalid:  # a header can be long: show its start only
+            shown = repr(name) if len(name) <= 40 else repr(name[:37] + "...")
+            head = f"{shown} is not a task name (1 to 64 letters, digits, '_', '.' or '-')"
+        else:
+            head = f'unknown task "{name}"'
+        super().__init__(f"{head}; registered: {listed}{more}")
         self.name = name
 
 
@@ -627,13 +634,9 @@ class TaskForbidden(PermissionError):
         self.name = name
 
 
-def register(task: Task, source: str | None = None) -> Task | None:
-    """Add `task` to the registry, or replace the task registered under its name; returns the task it replaced, if any.
-    `source` (default `task.source`) is `file`, `api` or `auto`: built-in tasks come only from `reset_builtin`, and
-    adhoc tasks are never registered. Raises TaskConflict when the registered task may not be replaced by one from this
-    source (`_REPLACES`), RegistryFull for a new name past MAX_TASKS, and ValueError for a name a request could not
-    send."""
-    global REGISTRY
+def _put(registry: dict[str, Task], task: Task, source: str | None) -> Task | None:
+    """`register`'s rules applied to `registry`, a dict that no reader sees yet: puts `task` in it and returns the task
+    it replaced, if any."""
     if source is not None and source != task.source:
         task = replace(task, source=source)
     allowed = _REPLACES.get(task.source)
@@ -641,18 +644,52 @@ def register(task: Task, source: str | None = None) -> Task | None:
         raise ValueError(f"task {task.name!r}: a {task.source} task cannot be registered; use file, api or auto")
     if not isinstance(task.name, str) or not valid_name(task.name):
         raise ValueError(f"task {task.name!r}: a name is 1 to 64 letters, digits, '_', '.' or '-'")
+    current = registry.get(task.name)
+    if current is not None and current.source not in allowed:
+        article = "an" if task.source[0] in "aeiou" else "a"
+        message = f"task {task.name!r} is {_OWNER[current.source]}; {article} {task.source} task cannot replace it"
+        raise TaskConflict(message, task.name, current.source)
+    if current is None and len(registry) >= MAX_TASKS:
+        raise RegistryFull(f"the task registry is full ({MAX_TASKS} tasks); delete a task first")
+    registry[task.name] = task
+    return current
+
+
+def register(task: Task, source: str | None = None) -> Task | None:
+    """Add `task` to the registry, or replace the task registered under its name; returns the task it replaced, if any.
+    `source` (default `task.source`) is `file`, `api` or `auto`: built-in tasks come only from `reset_builtin`, and
+    adhoc tasks are never registered. Raises TaskConflict when the registered task may not be replaced by one from this
+    source (`_REPLACES`), RegistryFull for a new name past MAX_TASKS, and ValueError for a name a request could not
+    send."""
+    global REGISTRY
     with _REGISTRY_LOCK:
-        current = REGISTRY.get(task.name)
-        if current is not None and current.source not in allowed:
-            article = "an" if task.source[0] in "aeiou" else "a"
-            message = f"task {task.name!r} is {_OWNER[current.source]}; {article} {task.source} task cannot replace it"
-            raise TaskConflict(message, task.name, current.source)
-        if current is None and len(REGISTRY) >= MAX_TASKS:
-            raise RegistryFull(f"the task registry is full ({MAX_TASKS} tasks); delete a task first")
         new = dict(REGISTRY)
-        new[task.name] = task
+        current = _put(new, task, source)
         REGISTRY = new
     return current
+
+
+def builtin_registry() -> dict[str, Task]:
+    """A new, unpublished registry holding the built-in tasks: `add` tasks to it, then publish it with `replace_all`."""
+    return dict(BUILTIN)
+
+
+def add(registry: dict[str, Task], task: Task, source: str | None = None) -> Task | None:
+    """`register` into `registry` (from `builtin_registry`) instead of the published one, with the same rules and
+    errors. Readers see none of it until `replace_all`."""
+    return _put(registry, task, source)
+
+
+def replace_all(registry: Mapping[str, Task]) -> None:
+    """Publish a whole registry in one assignment (`taskspec.install`), so a request sees the old registry or the new
+    one, never one without the tasks file's tasks. It must hold every built-in name (an invalid name gets 'default')."""
+    global REGISTRY
+    missing = [name for name in BUILTIN if name not in registry]
+    if missing:
+        raise ValueError(f"a registry must hold every built-in task; missing {', '.join(missing)}")
+    new = dict(registry)
+    with _REGISTRY_LOCK:
+        REGISTRY = new
 
 
 def unregister(name: str) -> Task | None:
@@ -684,8 +721,8 @@ def restore(name: str, previous: Task | None) -> None:
 
 
 def reset_builtin() -> None:
-    """Make the registry the built-in tasks again (at startup, before the tasks file and the stored API tasks are
-    registered, and in tests)."""
+    """Make the registry the built-in tasks again (tests; `taskspec.install` builds its registry from
+    `builtin_registry` and publishes it whole instead, so requests never see the built-in tasks alone)."""
     global REGISTRY
     with _REGISTRY_LOCK:
         REGISTRY = dict(BUILTIN)

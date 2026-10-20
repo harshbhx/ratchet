@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 613 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 615 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -14,7 +14,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 |---|---|
 | `tests/test_core.py` | 52 (30 functions; one has 19 cases, one has 5) |
 | `tests/test_tasks.py` | 81 (35 functions; one has 28 cases, one has 20) |
-| `tests/test_registry.py` | 27 |
+| `tests/test_registry.py` | 29 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 12 (11 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
@@ -25,7 +25,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **613** |
+| **Total** | **615** |
 
 There are three layers:
 
