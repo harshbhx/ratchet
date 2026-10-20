@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import tasks
+from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -262,12 +263,12 @@ COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
     if kind not in COMPUTE_KINDS:
         raise ValueError(f"compute kind must be one of {', '.join(COMPUTE_KINDS)}, not {kind!r}")
-    if isinstance(usd_per_hour, bool) or not isinstance(usd_per_hour, (int, float)) or not math.isfinite(usd_per_hour):
+    if isinstance(usd_per_hour, bool) or not isinstance(usd_per_hour, (int, float)):
         raise ValueError(f"usd_per_hour must be a number, not {usd_per_hour!r}")
-    if usd_per_hour < 0:
-        raise ValueError(f"usd_per_hour must be 0 or more, not {usd_per_hour!r}")
-    if isinstance(gpus, bool) or not isinstance(gpus, int) or gpus < 0:
-        raise ValueError(f"gpus must be a whole number, 0 or more, not {gpus!r}")
+    if not 0 <= usd_per_hour <= MAX_USD_PER_GPU_HOUR:  # also NaN, infinity and an int too large for a float
+        raise ValueError(f"usd_per_hour must be 0 to {MAX_USD_PER_GPU_HOUR:,.0f} per GPU-hour, not {usd_per_hour!r}")
+    if isinstance(gpus, bool) or not isinstance(gpus, int) or not 0 <= gpus <= MAX_GPUS:
+        raise ValueError(f"gpus must be a whole number from 0 to {MAX_GPUS:,}, not {gpus!r}")
 
 
 def _check_ts(ts: float, what: str) -> float:
@@ -382,6 +383,38 @@ class Ledger:
             args.append(until)
         return [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
 
+    @_locked
+    def student_traffic_by_hour(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
+        """On a live ledger, the hours in which requests on ledger days `since` to `until` reached the student (it served
+        them, or its calls used tokens, as `cost_by_day`'s `sampled`), each with `start` (on the wall clock; hour 0 starts
+        with day 1, at the first request), its ledger `day`, `student_served` and `student_usd`. The cost report's idle
+        hours and observed volume come from these (ADR 0023): a request's time and the endpoint's uptime are on one clock
+        here, unlike the simulator's. One aggregate query; empty before the first request."""
+        if self._t0 is None:
+            return []
+        x = "((ts - :t0) / 3600.0)"
+        where = "".join(
+            clause for clause, value in ((" AND day >= :since", since), (" AND day <= :until", until)) if value is not None
+        )
+        q = f"""SELECT h, COALESCE(SUM(served_by='student'), 0) student_served,
+                       COALESCE(SUM(student_cost_usd), 0.0) student_usd,
+                       COALESCE(SUM(served_by='student'
+                                    OR COALESCE(student_in_tokens, 0) + COALESCE(student_out_tokens, 0) > 0), 0) sampled
+                FROM (SELECT CAST({x} AS INTEGER) - ({x} < CAST({x} AS INTEGER)) h, served_by, student_cost_usd,
+                             student_in_tokens, student_out_tokens
+                      FROM requests WHERE ts IS NOT NULL{where})
+                GROUP BY h HAVING sampled > 0 OR student_usd > 0 ORDER BY h"""
+        rows = self.db.execute(q, {"t0": self._t0, "since": since, "until": until})
+        return [
+            {
+                "start": self._t0 + r["h"] * 3600.0,
+                "day": r["h"] // 24 + 1,
+                "student_served": r["student_served"],
+                "student_usd": r["student_usd"],
+            }
+            for r in rows
+        ]
+
     # ---------- compute time (ADR 0023) ----------
     def now(self) -> float:
         """The clock compute intervals are recorded on. A live ledger (`auto_day`) uses wall-clock time. Simulations and
@@ -391,11 +424,14 @@ class Ledger:
         return t if self.auto_day else self.day * DAY_SECONDS + t % DAY_SECONDS
 
     def _origin(self, now: float | None) -> float:
-        """When day 1 starts on a live ledger: at the first logged request (as `_tick_day` counts), or at `now` before
-        there is one."""
+        """When day 1 starts on a live ledger: at the first logged request (as `_tick_day` counts). Before there is one,
+        at the earliest recorded compute interval (never after `now`), so a report of the last N days still covers the
+        uptime recorded before the first request; with nothing recorded, at `now`."""
         if self._t0 is not None:
             return self._t0
-        return self.now() if now is None else now
+        now = self.now() if now is None else now
+        first = self.db.execute("SELECT MIN(start_ts) FROM compute_intervals").fetchone()[0]
+        return now if first is None else min(float(first), now)
 
     @_locked
     def day_start(self, day: int, now: float | None = None) -> float:
@@ -494,6 +530,33 @@ class Ledger:
             self.db.rollback()
             raise
         return int(rows[-1]["id"]) if rows else None
+
+    @_locked
+    def compute_record(
+        self,
+        kind: str,
+        start: float,
+        end: float,
+        usd_per_hour: float,
+        gpus: int,
+        source: str,
+        version: int | None = None,
+        note: str | None = None,
+    ) -> int:
+        """Insert a closed interval [start, end] of `kind` and return its id. Unlike `compute_start`, it never returns or
+        closes an open interval of the kind, so a record of what already happened (the simulator's synthetic day) leaves
+        an endpoint someone marked up as it was; overlapping records merge when the report sums them."""
+        _check_compute(kind, usd_per_hour, gpus)
+        a, b = _check_ts(start, "start"), _check_ts(end, "end")
+        if b < a:
+            raise ValueError(f"end ({b}) is before start ({a})")
+        cur = self.db.execute(
+            "INSERT INTO compute_intervals (kind, start_ts, end_ts, usd_per_hour, gpus, version, source, note)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (kind, a, b, float(usd_per_hour), gpus, version, source, note),
+        )
+        self.db.commit()
+        return int(cur.lastrowid)
 
     @_locked
     def compute_intervals(

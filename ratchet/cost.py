@@ -32,7 +32,8 @@ from .config import CostPolicy, Settings
 from .ledger import COMPUTE_KINDS, DAY_SECONDS, Ledger, Version
 
 RECOMMENDATIONS = ("self_host", "hosted_fallback", "scale_to_zero", "insufficient_data")
-# Above this share of its hours idle (no request reached the student that day), the endpoint should scale to zero.
+# Above this share of its hours idle (no request reached the student in that hour on a live ledger, that day on the
+# synthetic clock), the endpoint should scale to zero.
 IDLE_SHARE = 0.5
 # The daily breakdown covers at most this many days (the latest); the totals always cover the whole window.
 MAX_DAILY = 731
@@ -167,8 +168,9 @@ def _recommend(
     """One of RECOMMENDATIONS (ADR 0023). Self-hosting needs both to beat the teacher spend it replaces (observed volume
     at or above break-even) and to beat the hosted fallback (at or above the crossover). Otherwise an endpoint idle
     most of its hours should scale to zero; without student answers there is nothing to judge; below the hosted
-    crossover the hosted fallback is cheaper; and below break-even with the hosted fallback no cheaper either, the
-    endpoint has to run fewer hours."""
+    crossover the hosted fallback is cheaper per answer (also between break-even and the crossover, where the endpoint
+    still beats the teacher; the explanation says which); and below break-even with the hosted fallback no cheaper
+    either, the endpoint has to run fewer hours."""
     if endpoint_hours <= 0 or observed is None:
         return "insufficient_data"
     pays = break_even is not None and observed >= break_even
@@ -184,9 +186,35 @@ def _recommend(
     return "scale_to_zero"
 
 
+# Said wherever the hosted fallback is recommended for being cheaper per answer (ADR 0023).
+CROSSOVER_CAVEAT = (
+    "The crossover assumes the hosted fallback serves as many requests as the tuned student; it is untuned, so more of its "
+    "requests may go to the teacher."
+)
+
+
+def _buckets(r: Mapping[str, Any]) -> str:
+    """How idle time and observed volume were counted: in hours on a live ledger, whole days on the synthetic clock."""
+    return "in hours" if r["idle_granularity"] == "hour" else "on days"
+
+
+def _rate(r: Mapping[str, Any], policy: CostPolicy) -> str:
+    """The endpoint price break-even and the crossover used, and how sure it is."""
+    configured = policy.student.usd_per_hour
+    used = r["endpoint_usd_per_hour"]
+    if r["endpoint_hours"] > 0 and not math.isclose(used, configured, rel_tol=1e-9, abs_tol=1e-12):
+        what = f"${used:,.2f} per endpoint hour as recorded"
+    else:
+        what = _gpus(policy.student.gpus, policy.student.usd_per_gpu_hour)
+    return f"{what}; {_label(policy)}"
+
+
 def _explain(r: dict[str, Any], policy: CostPolicy) -> str:
-    """The recommendation as one plain-English paragraph with the numbers behind it."""
-    rate = f"{_gpus(policy.student.gpus, policy.student.usd_per_gpu_hour)}; {_label(policy)}"
+    """The recommendation as one plain-English paragraph with the numbers behind it. Whether the endpoint covers its
+    hours (observed volume at or above break-even) and whether the window lost money by GPU-hours are said separately,
+    so the words never contradict the figures: between break-even and the hosted crossover self-hosting beats the
+    teacher and the hosted fallback is still cheaper per answer."""
+    rate = _rate(r, policy)
     gpu = r["views"]["gpu_hours"]
     tok = r["views"]["per_token"]
     money = (
@@ -210,33 +238,55 @@ def _explain(r: dict[str, Any], policy: CostPolicy) -> str:
             )
         return f"Not enough data. {why} {money}"
     volume = f"The endpoint served {_count(observed)} student requests per hour it ran"
+    covers = be is not None and observed >= be  # its hours cost no more than the teacher spend they avoid
+    loss = gpu["savings_usd"] < 0
+    idle = r["idle_share"] is not None and r["idle_share"] > IDLE_SHARE
+    if be is not None:
+        position = f"{'at or above' if covers else 'below'} the break-even of {_count(be)}"
+    elif r["avoided_teacher_usd_per_student_request"] is None:
+        position = "with no student answer yet to judge it by"
+    else:
+        position = "and its answers avoid no teacher spend, so it can never break even"
+    # Above break-even with the window still at a loss: training jobs (and spend outside the endpoint's hours) are not
+    # in the break-even, which prices the endpoint's hours alone.
+    overall = (
+        f"; training jobs ({_money(r['training_usd'])}) and other spend still leave the GPU-hour total at a loss"
+        if covers and loss
+        else ""
+    )
     if rec == "self_host":
         tail = ""
-        if r["idle_share"] is not None and r["idle_share"] > IDLE_SHARE:
+        if idle:
             tail = f" It was idle {_share(r['idle_share'])} of its hours; scaling to zero between bursts would save more."
+        lead = "Self-hosting pays." if not loss else "Keep the endpoint; it covers its hours but not yet the whole bill."
         return (
-            f"Self-hosting pays. {volume}, at or above the break-even of {_count(be)} and the hosted fallback's crossover "
-            f"of {_count(cross) if cross is not None else 'n/a'} ({rate}).{tail} {money}"
+            f"{lead} {volume}, {position} and the hosted fallback's crossover of "
+            f"{_count(cross) if cross is not None else 'n/a'} ({rate}){overall}.{tail} {money}"
         )
-    if be is not None:
-        below = f"below the break-even of {_count(be)}"
-    elif r["avoided_teacher_usd_per_student_request"] is None:
-        below = "with no student answer yet to judge it by"
-    else:
-        below = "and its answers avoid no teacher spend, so it can never break even"
     if rec == "scale_to_zero":
-        if r["idle_share"] is not None and r["idle_share"] > IDLE_SHARE:
+        if idle:
             lead = (
                 f"Scale the endpoint to zero when idle: it ran {r['endpoint_hours']:,.1f} h, {r['idle_hours']:,.1f} h "
-                f"({_share(r['idle_share'])}) of them on days the student got no request."
+                f"({_share(r['idle_share'])}) of them {_buckets(r)} when no request reached the student."
             )
         else:
             lead = "Run the endpoint fewer hours: at this volume neither the endpoint nor the hosted fallback pays for itself."
-        return f"{lead} {volume}, {below} ({rate}). {money}"
+        if covers and cross is not None and observed < cross:
+            position += f" but below the hosted fallback's crossover of {_count(cross)}"
+        return f"{lead} {volume}, {position} ({rate}){overall}. {money}"
+    # hosted_fallback: below the crossover, so per answer the hosted fallback is cheaper than the endpoint.
+    if covers and not loss:
+        return (
+            f"Self-hosting beats the teacher, but the hosted fallback would cost less per answer. {volume}, {position}, so "
+            f"its GPU-hours cost less than the teacher spend they avoid; below {_count(cross)} an hour the hosted fallback "
+            f"is cheaper per answer ({rate}). {CROSSOVER_CAVEAT} Switch to it (leave RATCHET_STUDENT_BASE empty) only if "
+            f"it serves about as many requests: compare the student's share of requests over a day on each. {money}"
+        )
+    lead = "Self-hosting does not pay at this volume." if not covers else "Self-hosting does not pay overall at this volume."
     return (
-        f"Self-hosting does not pay at this volume. {volume}, {below}; below {_count(cross)} an hour the hosted fallback "
-        f"is cheaper ({rate}). Use the hosted fallback student on Token Factory (leave RATCHET_STUDENT_BASE empty) or "
-        f"run the endpoint only while traffic arrives. {money}"
+        f"{lead} {volume}, {position}{overall}; below {_count(cross)} an hour the hosted fallback is cheaper per answer "
+        f"({rate}). Use the hosted fallback student on Token Factory (leave RATCHET_STUDENT_BASE empty) or run the endpoint "
+        f"only while traffic arrives. {CROSSOVER_CAVEAT} {money}"
     )
 
 
@@ -250,9 +300,10 @@ def cost_report(
 ) -> dict[str, Any]:
     """The cost report for ledger days `since` to `until` (inclusive; None: from the first record, and to the current
     day), or for the last `days` days up to `until`. Requests are counted by their ledger day; compute intervals are
-    clipped to the window's days on the ledger's clock, an open one running to `now` (default `ledger.now()`). One
-    aggregate query over the requests and one over the intervals; no other I/O. Savings can be negative and are never
-    clamped. See ADR 0023 for every formula."""
+    clipped to the window's days on the ledger's clock, an open one running to `now` (default `ledger.now()`). Idle time
+    and the observed volume are counted by hour on a live ledger and by day on the synthetic clock (`idle_granularity`).
+    One aggregate query over the requests (and one by hour on a live ledger) and one over the intervals; no other I/O.
+    Savings can be negative and are never clamped. See ADR 0023 for every formula."""
     policy = settings.cost_policy()
     now = ledger.now() if now is None else float(now)
     current = max(ledger.day, ledger.day_of(now, now))
@@ -284,19 +335,29 @@ def cost_report(
     endpoint_hours, endpoint_usd = usage(endpoint)
     training_hours, training_usd = usage(jobs)
 
-    # Endpoint uptime on the days requests reached the student: what is left of its hours was idle, and student spend
-    # on days without uptime came from the hosted fallback (or from uptime nobody recorded), priced per token.
-    traffic = [r for r in rows if r["sampled"] > 0 or r["student_usd"] > 0]
-    uptime = split(endpoint, [(ledger.day_start(r["day"], now), ledger.day_start(r["day"] + 1, now)) for r in traffic])
+    # Endpoint uptime in the hours (live ledger) or days (synthetic clock) when requests reached the student: what is
+    # left of its hours was idle, and student spend in buckets without uptime came from the hosted fallback (or from
+    # uptime nobody recorded), priced per token. A live ledger's requests and intervals share the wall clock, so hours;
+    # the simulator's requests carry wall-clock times its synthetic intervals cannot be compared with, so whole days.
+    buckets, granularity = _traffic(ledger, rows, lo_day, hi_day, now)
+    uptime = split(endpoint, [(start, end) for start, end, _, _ in buckets])
     busy_hours = sum(h for h, _ in uptime)
-    served_on_endpoint = sum(r["student_served"] for r, (h, _) in zip(traffic, uptime, strict=True) if h > 0)
-    hosted_student_usd = sum(r["student_usd"] for r, (h, _) in zip(traffic, uptime, strict=True) if h <= 0)
-    served_off_endpoint = sum(r["student_served"] for r, (h, _) in zip(traffic, uptime, strict=True) if h <= 0)
+    served_on_endpoint = served_off_endpoint = 0
+    hosted_by_day: dict[int, float] = {}
+    for (_, _, day, b), (h, _) in zip(buckets, uptime, strict=True):
+        if h > 0:
+            served_on_endpoint += b["student_served"]
+        else:
+            served_off_endpoint += b["student_served"]
+            hosted_by_day[day] = hosted_by_day.get(day, 0.0) + b["student_usd"]
+    hosted_student_usd = sum(hosted_by_day.values())
     idle_hours = max(0.0, endpoint_hours - busy_hours)
     idle_share = idle_hours / endpoint_hours if endpoint_hours > 0 else None
 
     avoided = total("avoided") / served if served else None
-    gpu_per_hour = policy.student.usd_per_hour
+    # The endpoint's price per hour as recorded in the window (each interval at its own rate), so break-even and the
+    # crossover use the same rate as the GPU-hour view; the configured rate only while no uptime is recorded.
+    gpu_per_hour = endpoint_usd / endpoint_hours if endpoint_hours > 0 else policy.student.usd_per_hour
     break_even = gpu_per_hour / avoided if avoided is not None and avoided > 0 else None
     fallback_price = settings.price(settings.fallback_student_model)
     with_tokens = total("served_with_tokens")
@@ -335,8 +396,10 @@ def cost_report(
         "split_unknown_usd": total("split_unknown_usd"),
         "endpoint_hours": endpoint_hours,
         "endpoint_usd": endpoint_usd,
+        "endpoint_usd_per_hour": gpu_per_hour,
         "idle_hours": idle_hours,
         "idle_share": idle_share,
+        "idle_granularity": granularity,
         "training_hours": training_hours,
         "training_usd": training_usd,
         "views": views,
@@ -350,8 +413,25 @@ def cost_report(
     }
     report["explanation"] = _explain(report, policy)
     report["open_intervals"], report["warnings"] = _open(by_kind, now, report)
-    report["daily"], report["daily_truncated"] = _daily(ledger, rows, segs, lo_day, hi_day, now)
+    report["daily"], report["daily_truncated"] = _daily(ledger, rows, segs, hosted_by_day, lo_day, hi_day, now)
     return report
+
+
+def _traffic(
+    ledger: Ledger, rows: list[dict[str, Any]], lo_day: int | None, hi_day: int, now: float
+) -> tuple[list[tuple[float, float, int, Mapping[str, Any]]], str]:
+    """The buckets in which requests reached the student, as (start, end, ledger day, sums), sorted and disjoint, and
+    their size: hours on a live ledger (`Ledger.student_traffic_by_hour`), whole ledger days on the synthetic clock (the
+    `cost_by_day` rows)."""
+    if ledger.auto_day:
+        hours = ledger.student_traffic_by_hour(lo_day, hi_day)
+        return [(b["start"], b["start"] + HOUR, b["day"], b) for b in hours], "hour"
+    days = [
+        (ledger.day_start(r["day"], now), ledger.day_start(r["day"] + 1, now), r["day"], r)
+        for r in rows
+        if r["sampled"] > 0 or r["student_usd"] > 0
+    ]
+    return days, "day"
 
 
 def _prices(settings: Settings, policy: CostPolicy) -> dict[str, Any]:
@@ -394,8 +474,8 @@ def _open(
             )
     if report["endpoint_hours"] > 0 and report["student_served_off_endpoint"]:
         warnings.append(
-            f"{report['student_served_off_endpoint']} student answers fell on days with no recorded endpoint uptime and are "
-            "priced per token (the hosted fallback, or uptime nobody recorded)"
+            f"{report['student_served_off_endpoint']} student answers fell {_buckets(report)} with no recorded endpoint "
+            "uptime and are priced per token (the hosted fallback, or uptime nobody recorded)"
         )
     if report["split_unknown_requests"]:
         warnings.append(
@@ -412,11 +492,13 @@ def _daily(
     ledger: Ledger,
     rows: list[dict[str, Any]],
     segs: Mapping[str, list[Segment]],
+    hosted_by_day: Mapping[int, float],
     lo_day: int | None,
     hi_day: int,
     now: float,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """One row per day with requests or compute in the window, the latest MAX_DAILY days at most."""
+    """One row per day with requests or compute in the window, the latest MAX_DAILY days at most. A day's GPU-hour total
+    takes its share of `hosted_student_usd` (`hosted_by_day`), so the days add up to the totals."""
     first = [ledger.day_of(s[0].start, now) for s in segs.values() if s]
     last = [ledger.day_of(s[-1].end, now) for s in segs.values() if s]
     days = [r["day"] for r in rows]
@@ -444,8 +526,7 @@ def _daily(
         if r is None and hours <= 0 and training_usd <= 0 and training[i][0] + evals[i][0] <= 0:
             continue
         r = r or _EMPTY_DAY
-        hosted = r["student_usd"] if hours <= 0 else 0.0
-        gpu_total = r["teacher_usd"] + endpoint_usd + training_usd + hosted
+        gpu_total = r["teacher_usd"] + endpoint_usd + training_usd + hosted_by_day.get(d, 0.0)
         out.append(
             {
                 "day": d,
@@ -479,30 +560,32 @@ def record_simulated_day(ledger: Ledger, policy: CostPolicy, day: int, trained: 
     """The simulator's compute for one day, on the synthetic clock (day N starts at N x 86400 s): the student endpoint up
     `policy.mock_endpoint_hours` from the start of the day, and, when the night trained a version, a training job from
     22:00 lasting SIM_TRAIN_BASE_S plus SIM_TRAIN_PER_EXAMPLE_S per training example. Simulation assumptions, not
-    measurements. Writes only compute intervals, so no request, event or random draw moves."""
+    measurements. Writes only closed compute intervals (`Ledger.compute_record`), so no request, event or random draw
+    moves, and an endpoint interval someone opened through the API on the mock demo stays as it was (the report merges
+    the two)."""
     start = float(day * DAY_SECONDS)
     if policy.mock_endpoint_hours > 0:
-        ledger.compute_start(
+        ledger.compute_record(
             "student_endpoint",
+            start,
+            start + policy.mock_endpoint_hours * HOUR,
             policy.student.usd_per_gpu_hour,
             policy.student.gpus,
             "simulation",
-            ts=start,
             note=f"simulated: {policy.mock_endpoint_hours:g} h a day",
         )
-        ledger.compute_stop("student_endpoint", ts=start + policy.mock_endpoint_hours * HOUR)
     if trained is not None:
         seconds = SIM_TRAIN_BASE_S + SIM_TRAIN_PER_EXAMPLE_S * trained.train_examples
-        job = ledger.compute_start(
+        ledger.compute_record(
             "training_job",
+            start + SIM_NIGHT_START_S,
+            start + SIM_NIGHT_START_S + seconds,
             policy.train.usd_per_gpu_hour,
             policy.train.gpus,
             "simulation",
             version=trained.id,
-            ts=start + SIM_NIGHT_START_S,
             note=f"simulated: {SIM_TRAIN_BASE_S:g} s + {SIM_TRAIN_PER_EXAMPLE_S:g} s x {trained.train_examples} examples",
         )
-        ledger.compute_stop("training_job", ts=start + SIM_NIGHT_START_S + seconds, interval_id=job)
 
 
 # ---------- the CLI ----------
@@ -541,8 +624,9 @@ def render(report: Mapping[str, Any]) -> str:
         f"requests: {report['requests']:,} ({report['student_served']:,} served by the student)",
         f"teacher: {_money(report['teacher_usd'])}; student per token: {_money(report['student_per_token_usd'])}",
         f"student endpoint: {report['endpoint_hours']:,.1f} h, {_money(report['endpoint_usd'])} "
-        f"(${p['student_gpu_usd_per_hour']:,.2f}/GPU-hour x {p['student_gpus']}); idle {report['idle_hours']:,.1f} h "
-        f"({_share(report['idle_share'])})",
+        f"(${report['endpoint_usd_per_hour']:,.2f} per endpoint hour; configured ${p['student_gpu_usd_per_hour']:,.2f}"
+        f"/GPU-hour x {p['student_gpus']}); idle {report['idle_hours']:,.1f} h ({_share(report['idle_share'])}, "
+        f"counted {_buckets(report)})",
         f"training jobs: {report['training_hours']:,.2f} h, {_money(report['training_usd'])}",
         f"teacher spend avoided per student answer: {_money(report['avoided_teacher_usd_per_student_request'])}",
         f"break-even: {_count(report['break_even_student_requests_per_gpu_hour'])} student answers per endpoint hour; "
