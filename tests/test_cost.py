@@ -56,8 +56,8 @@ API_KEY = "cost-client-key-0123456789abcdef"
 REPORT_KEYS = {
     "window", "model", "headline", "prices", "requests", "student_served", "teacher_served", "teacher_usd",
     "student_per_token_usd", "hosted_student_usd", "student_served_off_endpoint", "baseline_usd",
-    "split_unknown_requests", "split_unknown_usd", "endpoint_hours", "endpoint_usd", "idle_hours", "idle_share",
-    "training_hours", "training_usd", "views", "avoided_teacher_usd_per_student_request",
+    "split_unknown_requests", "split_unknown_usd", "endpoint_hours", "endpoint_usd", "endpoint_usd_per_hour", "idle_hours",
+    "idle_share", "idle_granularity", "training_hours", "training_usd", "views", "avoided_teacher_usd_per_student_request",
     "break_even_student_requests_per_gpu_hour", "hosted_fallback_usd_per_request",
     "self_host_beats_hosted_above_requests_per_hour", "observed_student_requests_per_endpoint_hour",
     "utilization_vs_break_even", "recommendation", "explanation", "open_intervals", "warnings", "daily",
@@ -128,21 +128,23 @@ def _interval(led: Ledger, kind: str, start: float, end: float | None, rate: flo
     return iid
 
 
-def _hand_ledger() -> Ledger:
+def _hand_ledger(rate: float = 2.0, train_rate: float = 3.0) -> Ledger:
     """Two days on the synthetic clock, worked out in `test_report_math_on_a_hand_built_ledger`:
 
     day 1: a student answer (student $0.002, baseline $0.010), an audited one (student $0.002, audit $0.006, baseline
-    $0.006) and an escalation (student $0.002, teacher $0.010, baseline $0.010); the endpoint up 10 h at $2/h and a
-    0.5 h training job at $3/h. day 2: one pinned request ($0.010) and the endpoint up 4 h with no student traffic."""
+    $0.006) and an escalation (student $0.002, teacher $0.010, baseline $0.010); the endpoint up 10 h at `rate` ($2/h)
+    and a 0.5 h training job at `train_rate` ($3/h). day 2: one pinned request ($0.010) and the endpoint up 4 h with no
+    student traffic. Pass the same `rate` to `_settings(student_gpu_usd_per_hour=...)`: break-even uses the rate the
+    intervals recorded."""
     led = Ledger(":memory:")
     _request(led, 1, "student", 0.002, 0.0, 0.010)
     _request(led, 1, "student", 0.002, 0.006, 0.006, audited=1, audit_agree=1)
     _request(led, 1, "teacher", 0.002, 0.010, 0.010)
     _request(led, 2, "teacher", 0.0, 0.010, 0.010, route="pinned", escalated=0, student_in_tokens=0, student_out_tokens=0)
     led.day = 2
-    _interval(led, "student_endpoint", 1 * D, 1 * D + 10 * H)
-    _interval(led, "training_job", 1 * D + 22 * H, 1 * D + 22.5 * H, rate=3.0)
-    _interval(led, "student_endpoint", 2 * D + 8 * H, 2 * D + 12 * H)
+    _interval(led, "student_endpoint", 1 * D, 1 * D + 10 * H, rate=rate)
+    _interval(led, "training_job", 1 * D + 22 * H, 1 * D + 22.5 * H, rate=train_rate)
+    _interval(led, "student_endpoint", 2 * D + 8 * H, 2 * D + 12 * H, rate=rate)
     return led
 
 
@@ -345,21 +347,29 @@ def test_endpoint_start_is_idempotent_and_stop_closes_it(tmp_path):
 
 
 @pytest.mark.req("FR-15.2", "NFR-6")
-def test_concurrent_endpoint_starts_keep_one_open_interval():
-    led = Ledger(":memory:")
+def test_concurrent_endpoint_starts_keep_one_open_interval(tmp_path):
+    """Eight connections to one file, as the gateway, the CLI and the deploy script are: the ledger's lock cannot
+    serialise them, only the write transaction `compute_start` opens before it looks for an open interval."""
+    db = str(tmp_path / "live.db")
+    ledgers = [Ledger(db, auto_day=True) for _ in range(8)]
     ids: list[int] = []
-    barrier = threading.Barrier(8)
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(len(ledgers))
 
-    def up() -> None:
+    def up(led: Ledger) -> None:
         barrier.wait()
-        ids.append(led.compute_start("student_endpoint", 1.55, 1, "api", ts=10.0))
+        try:
+            ids.append(led.compute_start("student_endpoint", 1.55, 1, "api", ts=10.0))
+        except BaseException as e:  # noqa: BLE001 - reported below
+            errors.append(e)
 
-    threads = [threading.Thread(target=up) for _ in range(8)]
+    threads = [threading.Thread(target=up, args=(led,)) for led in ledgers]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    assert len(set(ids)) == 1 and len(led.compute_intervals()) == 1
+    assert errors == [] and len(ids) == 8 and len(set(ids)) == 1
+    assert len(Ledger(db, auto_day=True).compute_intervals()) == 1
 
 
 @pytest.mark.parametrize(
@@ -371,7 +381,11 @@ def test_concurrent_endpoint_starts_keep_one_open_interval():
         lambda led: led.compute_start("student_endpoint", 1.0, True, "cli"),
         lambda led: led.compute_start("student_endpoint", 1.0, -2, "cli"),
         lambda led: led.compute_start("student_endpoint", 1.0, 1, "cli", ts=float("inf")),
+        lambda led: led.compute_start("student_endpoint", 1000.5, 1, "cli"),  # above MAX_USD_PER_GPU_HOUR
+        lambda led: led.compute_start("student_endpoint", 10**400, 1, "cli"),  # an int no float can hold
+        lambda led: led.compute_start("student_endpoint", 1.0, 1025, "cli"),  # above MAX_GPUS
         lambda led: led.compute_stop("gpu_party"),
+        lambda led: led.compute_record("student_endpoint", 10.0, 5.0, 1.0, 1, "simulation"),  # ends before it starts
     ],
 )
 @pytest.mark.req("FR-15.2")
@@ -424,9 +438,10 @@ def test_report_math_on_a_hand_built_ledger():
     assert (r["requests"], r["student_served"], r["teacher_served"]) == (4, 2, 2)
     assert r["teacher_usd"] == pytest.approx(0.026) and r["student_per_token_usd"] == pytest.approx(0.006)
     assert r["baseline_usd"] == pytest.approx(0.036) and r["split_unknown_requests"] == 0
-    assert (r["endpoint_hours"], r["endpoint_usd"]) == pytest.approx((14.0, 28.0))
+    assert (r["endpoint_hours"], r["endpoint_usd"], r["endpoint_usd_per_hour"]) == pytest.approx((14.0, 28.0, 2.0))
     assert (r["training_hours"], r["training_usd"]) == pytest.approx((0.5, 1.5))
     assert (r["idle_hours"], r["idle_share"]) == pytest.approx((4.0, 4 / 14))  # day 2: up, no student traffic
+    assert r["idle_granularity"] == "day"  # the synthetic clock: whole days
     assert (r["hosted_student_usd"], r["student_served_off_endpoint"]) == (0.0, 0)  # every such day had uptime
 
     tok, gpu = r["views"]["per_token"], r["views"]["gpu_hours"]
@@ -444,7 +459,9 @@ def test_report_math_on_a_hand_built_ledger():
     assert r["observed_student_requests_per_endpoint_hour"] == pytest.approx(2 / 14)
     assert r["utilization_vs_break_even"] == pytest.approx((2 / 14) / (2.0 / avoided))
     assert r["recommendation"] == "hosted_fallback"
-    assert "does not pay" in r["explanation"] and "unverified list prices" in r["explanation"]
+    assert r["explanation"].startswith("Self-hosting does not pay at this volume.")
+    assert "below the break-even of 400" in r["explanation"] and "unverified list prices" in r["explanation"]
+    assert cost.CROSSOVER_CAVEAT in r["explanation"]
     assert r["prices"]["verified"] is False and r["prices"]["student_endpoint_usd_per_hour"] == 2.0
 
     day1, day2 = r["daily"]
@@ -472,11 +489,14 @@ def test_report_math_on_a_hand_built_ledger():
 @pytest.mark.req("FR-15.4")
 def test_recommendation_for_each_branch():
     led = _hand_ledger()
-    # self_host: a cheap endpoint against a pricey hosted fallback, so the observed volume clears both bars.
-    cheap = _settings(student_gpu_usd_per_hour=0.0005, prices={**DEFAULT_PRICES, FALLBACK: Price(100.0, 100.0)})
-    r = cost.cost_report(led, cheap)
+    # self_host: a cheap endpoint (and cheap training) against a pricey hosted fallback, so the observed volume clears
+    # both bars and the window saves money by GPU-hours. Break-even 0.1/h, crossover about 0.026/h, observed 1/7.
+    pricey = {**DEFAULT_PRICES, FALLBACK: Price(100.0, 100.0)}
+    cheap = _settings(student_gpu_usd_per_hour=0.0005, prices=pricey)
+    r = cost.cost_report(_hand_ledger(rate=0.0005, train_rate=0.0001), cheap)
     assert r["observed_student_requests_per_endpoint_hour"] >= r["break_even_student_requests_per_gpu_hour"]
     assert r["observed_student_requests_per_endpoint_hour"] >= r["self_host_beats_hosted_above_requests_per_hour"]
+    assert r["views"]["gpu_hours"]["savings_usd"] > 0
     assert r["recommendation"] == "self_host" and r["explanation"].startswith("Self-hosting pays.")
 
     # hosted_fallback: the hand ledger as it is (below break-even and below the hosted crossover).
@@ -486,11 +506,11 @@ def test_recommendation_for_each_branch():
     _interval(led, "student_endpoint", 3 * D, 3 * D + 20 * H)
     r = cost.cost_report(led, _settings(), now=3 * D + 21 * H)
     assert r["idle_share"] == pytest.approx(24 / 34) and r["recommendation"] == "scale_to_zero"
-    assert "Scale the endpoint to zero" in r["explanation"]
+    assert "Scale the endpoint to zero" in r["explanation"] and "on days when no request reached" in r["explanation"]
     # Below break-even, but above the crossover of a hosted fallback that costs more per answer than the teacher spend it
     # avoids: neither pays, so the endpoint has to run fewer hours. Break-even 0.4/h, crossover about 0.1/h, observed 1/7.
-    between = _settings(student_gpu_usd_per_hour=0.002, prices={**DEFAULT_PRICES, FALLBACK: Price(100.0, 100.0)})
-    r = cost.cost_report(_hand_ledger(), between)
+    between = _settings(student_gpu_usd_per_hour=0.002, prices=pricey)
+    r = cost.cost_report(_hand_ledger(rate=0.002), between)
     assert r["self_host_beats_hosted_above_requests_per_hour"] <= r["observed_student_requests_per_endpoint_hour"]
     assert r["observed_student_requests_per_endpoint_hour"] < r["break_even_student_requests_per_gpu_hour"]
     assert r["recommendation"] == "scale_to_zero" and "fewer hours" in r["explanation"]
@@ -501,6 +521,7 @@ def test_recommendation_for_each_branch():
     bare.day = 1
     r = cost.cost_report(bare, _settings())
     assert (r["endpoint_hours"], r["observed_student_requests_per_endpoint_hour"]) == (0.0, None)
+    assert r["endpoint_usd_per_hour"] == 2.0  # no uptime recorded: the configured rate
     assert r["recommendation"] == "insufficient_data" and "No student endpoint uptime" in r["explanation"]
     # insufficient_data: uptime and student traffic, but the student never served, so the avoided spend is unknown.
     unsure = Ledger(":memory:")
@@ -522,6 +543,71 @@ def test_recommendation_for_each_branch():
     assert set(cost.RECOMMENDATIONS) == {"self_host", "hosted_fallback", "scale_to_zero", "insufficient_data"}
 
 
+def _volume_ledger(avoided: float, idle_day_hours: float = 0.0) -> Ledger:
+    """20 student answers on day 1, each avoiding `avoided` of teacher spend (baseline `avoided`, no teacher call), with
+    the endpoint up 2 h at $0.50/h that day; optionally up `idle_day_hours` more on day 2, when nobody reached it. The
+    hosted fallback (the Nano price for 100 prompt and 30 output tokens) costs $0.0000132 an answer, so its crossover is
+    about 37,879 an hour: far above the observed volume."""
+    led = Ledger(":memory:")
+    for _ in range(20):
+        _request(led, 1, "student", 0.00002, 0.0, avoided)
+    led.day = 2 if idle_day_hours else 1
+    _interval(led, "student_endpoint", 1 * D, 1 * D + 2 * H, rate=0.5)
+    if idle_day_hours:
+        _interval(led, "student_endpoint", 2 * D, 2 * D + idle_day_hours * H, rate=0.5)
+    return led
+
+
+@pytest.mark.req("FR-15.4", "NFR-11")
+def test_explanation_between_break_even_and_the_hosted_crossover():
+    """Above break-even but below the hosted fallback's crossover (where about 14,000 student answers an hour, the
+    '10M requests a month' customer, sits at list prices): the endpoint beats the teacher, so GPU-hour savings are
+    positive, and the hosted fallback is still cheaper per answer. The explanation says both, never 'does not pay' or
+    'below the break-even', and states that the crossover assumes the untuned fallback serves as many requests."""
+    r = cost.cost_report(_volume_ledger(avoided=0.10), _settings(student_gpu_usd_per_hour=0.5))
+    be, cross = r["break_even_student_requests_per_gpu_hour"], r["self_host_beats_hosted_above_requests_per_hour"]
+    assert (be, r["observed_student_requests_per_endpoint_hour"]) == pytest.approx((5.0, 10.0))  # $0.50/h / $0.10
+    assert cross == pytest.approx(0.5 / DEFAULT_PRICES[FALLBACK].cost(100, 30))
+    assert r["views"]["gpu_hours"]["savings_usd"] == pytest.approx(2.0 - 0.0 - 1.0)  # baseline - teacher - endpoint
+    assert r["recommendation"] == "hosted_fallback"
+    text = r["explanation"]
+    assert text.startswith("Self-hosting beats the teacher, but the hosted fallback would cost less per answer.")
+    assert "at or above the break-even of 5.0" in text and "below 37,879 an hour" in text
+    assert "Savings by GPU-hours paid: $1.00 (50%)" in text and cost.CROSSOVER_CAVEAT in text
+    assert "does not pay" not in text and "below the break-even" not in text
+
+    # The same volume on an endpoint idle most of its hours: scale to zero, still above break-even, below the crossover.
+    r = cost.cost_report(_volume_ledger(avoided=0.30, idle_day_hours=3.0), _settings(student_gpu_usd_per_hour=0.5))
+    assert (r["idle_share"], r["observed_student_requests_per_endpoint_hour"]) == pytest.approx((0.6, 4.0))
+    assert r["break_even_student_requests_per_gpu_hour"] == pytest.approx(0.5 / 0.30)
+    assert r["recommendation"] == "scale_to_zero"
+    assert "at or above the break-even of 1.7 but below the hosted fallback's crossover" in r["explanation"]
+    assert "below the break-even" not in r["explanation"]
+
+
+@pytest.mark.req("FR-15.4", "NFR-11")
+def test_break_even_uses_the_recorded_rate_and_never_says_pays_at_a_loss():
+    """Break-even and the crossover use the endpoint's price per hour as recorded (2 GPUs by `--gpus 2`, while
+    RATCHET_STUDENT_GPUS says 1), the same rate as the GPU-hour view; and an endpoint that covers its hours while
+    training leaves the window at a loss is kept without the words 'Self-hosting pays'."""
+    led = _volume_ledger(avoided=0.10)
+    led.compute_record("student_endpoint", 1 * D + 3 * H, 1 * D + 4 * H, 0.5, 2, "cli")  # $1/h for an hour, no traffic
+    r = cost.cost_report(led, _settings(student_gpu_usd_per_hour=0.5, student_gpus=1))
+    assert (r["endpoint_hours"], r["endpoint_usd"], r["endpoint_usd_per_hour"]) == pytest.approx((3.0, 2.0, 2.0 / 3))
+    assert r["break_even_student_requests_per_gpu_hour"] == pytest.approx((2.0 / 3) / 0.10)
+    assert "$0.67 per endpoint hour as recorded" in r["explanation"]
+
+    # Covers its hours (break-even 5/h, observed 10/h, above the crossover of about 3.8/h of a pricey hosted fallback),
+    # but a $5 training job leaves the window at a loss.
+    pricey = {**DEFAULT_PRICES, FALLBACK: Price(1000.0, 1000.0)}
+    led = _volume_ledger(avoided=0.10)
+    _interval(led, "training_job", 1 * D + 22 * H, 1 * D + 23 * H, rate=5.0)
+    r = cost.cost_report(led, _settings(student_gpu_usd_per_hour=0.5, prices=pricey))
+    assert r["recommendation"] == "self_host" and r["views"]["gpu_hours"]["savings_usd"] == pytest.approx(2.0 - 1.0 - 5.0)
+    assert r["explanation"].startswith("Keep the endpoint; it covers its hours but not yet the whole bill.")
+    assert "training jobs ($5.00)" in r["explanation"] and "Self-hosting pays" not in r["explanation"]
+
+
 @pytest.mark.req("FR-15.3")
 def test_live_ledger_days_count_from_the_first_request(tmp_path):
     """A live ledger counts days from its first request: uptime before it is day 0, and a window of the last day takes
@@ -536,12 +622,86 @@ def test_live_ledger_days_count_from_the_first_request(tmp_path):
     r = cost.cost_report(led, _settings(), now=now)
     assert r["endpoint_hours"] == pytest.approx(51.0) and r["open_intervals"][0]["hours"] == pytest.approx(51.0)
     assert [(d["day"], round(d["endpoint_hours"], 9)) for d in r["daily"]] == [(0, 1.0), (1, 24.0), (2, 24.0), (3, 2.0)]
-    assert r["idle_hours"] == pytest.approx(25.0) and r["recommendation"] == "hosted_fallback"
+    # Idle time in hours on a live ledger: hours 0 and 48 had a request, the other 49 of the 51 hours none.
+    assert (r["idle_granularity"], r["idle_hours"], r["recommendation"]) == ("hour", pytest.approx(49.0), "scale_to_zero")
+    assert "in hours when no request reached the student" in r["explanation"]
     last = cost.cost_report(led, _settings(), now=now, days=1)
     assert (last["window"]["since_day"], last["endpoint_hours"], last["requests"]) == (3, pytest.approx(2.0), 1)
     # A ledger file reopened later counts the same days.
     again = Ledger(str(tmp_path / "live.db"), auto_day=True)
     assert cost.cost_report(again, _settings(), now=now)["daily"] == r["daily"]
+
+
+@pytest.mark.req("FR-15.3", "FR-15.4")
+def test_live_ledger_counts_observed_volume_and_idle_time_by_hour(tmp_path):
+    """On a live ledger requests and uptime share the wall clock, so the report works in hours: an endpoint up only for
+    the first hour of the day is credited with that hour's answers, not the whole day's (the RUNBOOK's advice to run it
+    only while traffic arrives), the later answers are the hosted fallback's (priced per token, with a warning), and the
+    daily rows still add up to the totals."""
+    t0 = 1_800_000_000.0
+    led = Ledger(str(tmp_path / "live.db"), auto_day=True)
+    _request(led, 1, "student", 0.002, 0.0, 0.010, ts=t0)
+    _request(led, 1, "student", 0.002, 0.0, 0.010, ts=t0 + 600)
+    for i in range(3):  # five hours later, with the endpoint down
+        _request(led, 1, "student", 0.003, 0.0, 0.010, ts=t0 + 5 * H + i)
+    led.compute_start("student_endpoint", 2.0, 1, "cli", ts=t0)
+    led.compute_stop("student_endpoint", ts=t0 + H)
+    r = cost.cost_report(led, _settings(), now=t0 + 6 * H)
+    assert (r["idle_granularity"], r["endpoint_hours"], r["idle_hours"]) == ("hour", pytest.approx(1.0), 0.0)
+    assert r["observed_student_requests_per_endpoint_hour"] == pytest.approx(2.0)  # not 5, as whole days would say
+    assert (r["student_served_off_endpoint"], r["hosted_student_usd"]) == (3, pytest.approx(0.009))
+    assert any("3 student answers fell in hours with no recorded endpoint uptime" in w for w in r["warnings"])
+    assert r["views"]["gpu_hours"]["total_usd"] == pytest.approx(2.0 + 0.009)
+    (day,) = r["daily"]
+    assert day["savings_pct_gpu_hours"] == pytest.approx(r["views"]["gpu_hours"]["savings_pct"])
+    # A 24/7 endpoint with one request a day is idle 23 hours in 24, so it should scale to zero.
+    led.compute_start("student_endpoint", 2.0, 1, "cli", ts=t0 + 6 * H)
+    _request(led, 2, "student", 0.002, 0.0, 0.010, ts=t0 + D + 60)
+    r = cost.cost_report(led, _settings(), now=t0 + 6 * H + D)
+    assert r["idle_hours"] == pytest.approx(r["endpoint_hours"] - 2.0) and r["idle_share"] > 0.9
+    assert r["recommendation"] == "scale_to_zero"
+
+
+@pytest.mark.req("FR-15.3")
+def test_last_days_before_the_first_live_request_keep_recorded_uptime(tmp_path):
+    """Before a live ledger's first request, day 1 starts at the earliest recorded interval (never after now), so a
+    report of the last day still holds the hours the endpoint has run; once a request arrives, days count from it."""
+    now = 1_800_000_000.0
+    led = Ledger(str(tmp_path / "live.db"), auto_day=True)
+    assert cost.cost_report(led, _settings(), now=now, days=1)["endpoint_hours"] == 0.0
+    led.compute_start("student_endpoint", 2.0, 1, "deploy", ts=now - 5 * H)  # up 5 h, no traffic yet
+    for days in (None, 1, 7):
+        r = cost.cost_report(led, _settings(), now=now, days=days)
+        assert (r["endpoint_hours"], r["idle_share"], r["recommendation"]) == (pytest.approx(5.0), 1.0, "scale_to_zero"), days
+    assert led.day_start(1, now) == now - 5 * H and led.day_of(now, now) == 1
+    _request(led, 1, "student", 0.002, 0.0, 0.010, ts=now)
+    assert led.day_start(1, now) == now  # the first request starts day 1, as auto_day always counted
+
+
+@pytest.mark.req("FR-15.2", "INV-8")
+def test_simulated_day_leaves_an_endpoint_opened_through_the_api_alone():
+    """The mock demo's POST /ratchet/cost/endpoint does not take the demo lock, so a visitor can mark the endpoint up
+    while a simulated day runs. The day's synthetic interval is written as a closed record of its own: the visitor's
+    interval stays open (never closed by the simulator, never 'started after the end given'), and the report merges
+    the two."""
+    led = Ledger(":memory:")
+    policy = _settings(mock_endpoint_hours=8.0).cost_policy()
+    led.day = 3
+    api = led.compute_start("student_endpoint", 1.55, 1, "api", ts=3 * D + 10 * H)  # 10:00, after the 8 h day ends
+    cost.record_simulated_day(led, policy, 3, None)
+    rows = {iv["id"]: iv for iv in led.compute_intervals("student_endpoint")}
+    assert rows[api]["end_ts"] is None and len(rows) == 2
+    (sim,) = [iv for iv in rows.values() if iv["source"] == "simulation"]
+    assert (sim["start_ts"], sim["end_ts"]) == (3 * D, 3 * D + 8 * H)
+    r = cost.cost_report(led, _settings(), now=3 * D + 12 * H)
+    assert r["endpoint_hours"] == pytest.approx(8.0 + 2.0)
+    # An API interval opened earlier in the day overlaps the simulated one and is counted once.
+    early = Ledger(":memory:")
+    early.day = 3
+    early.compute_start("student_endpoint", 2.0, 1, "api", ts=3 * D + 2 * H)
+    cost.record_simulated_day(early, policy, 3, None)
+    r = cost.cost_report(early, _settings(), now=3 * D + 12 * H)
+    assert r["endpoint_hours"] == pytest.approx(12.0) and r["open_intervals"][0]["kind"] == "student_endpoint"
 
 
 @pytest.mark.req("FR-15.3", "NFR-11")
@@ -633,6 +793,10 @@ def test_post_endpoint_records_uptime_with_an_admin_key(gw_env):
         ({"state": "up", "gpu": 2}, "unknown keys"),
         ({"state": "up", "usd_per_hour": -1}, "usd_per_hour"),
         ({"state": "up", "usd_per_hour": True}, "usd_per_hour"),
+        ({"state": "up", "usd_per_hour": 1000.5}, "usd_per_hour"),  # above MAX_USD_PER_GPU_HOUR
+        ({"state": "up", "usd_per_hour": 1e308}, "usd_per_hour"),
+        ({"state": "up", "usd_per_hour": 10**400}, "usd_per_hour"),  # was a 500: no float holds it
+        ({"state": "up", "gpus": 1025}, "gpus"),
         ({"state": "up", "gpus": 1.5}, "gpus"),
         ({"state": "up", "note": "x" * 201}, "note"),
     ):
@@ -734,6 +898,9 @@ def test_cli_records_and_reports(tmp_path, capsys):
         ["endpoint", "up", "--db", str(db), "--at", "yesterday"],
         ["endpoint", "up", "--db", str(db), "--at", "4102444800"],  # 2100: a plan, not a record
         ["endpoint", "down", "--db", str(db), "--at", "1780000000"],  # before the open interval started
+        ["endpoint", "up", "--db", str(db), "--usd-per-hour", "5000"],  # above MAX_USD_PER_GPU_HOUR
+        ["endpoint", "up", "--db", str(db), "--usd-per-hour", "1" + "0" * 400],
+        ["endpoint", "up", "--db", str(db), "--gpus", "4096"],
         ["report", "--db", str(db), "--days", "0"],
     ):
         assert cost.main(argv, settings=s) == 2, argv
@@ -847,6 +1014,8 @@ def test_v04_database_gets_the_cost_columns_and_table(tmp_path):
         ({"RATCHET_STUDENT_COST_MODEL": "per_gpu"}, "RATCHET_STUDENT_COST_MODEL"),
         ({"RATCHET_MOCK_ENDPOINT_HOURS": "25"}, "RATCHET_MOCK_ENDPOINT_HOURS"),
         ({"RATCHET_STUDENT_GPU_USD_PER_HOUR": "nan"}, "RATCHET_STUDENT_GPU_USD_PER_HOUR"),
+        ({"RATCHET_STUDENT_GPU_USD_PER_HOUR": "1e308"}, "RATCHET_STUDENT_GPU_USD_PER_HOUR"),
+        ({"RATCHET_TRAIN_GPUS": "4096"}, "RATCHET_TRAIN_GPUS"),
     ],
 )
 @pytest.mark.req("FR-15.3", "NFR-11")

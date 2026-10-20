@@ -583,7 +583,8 @@ The cost report for every ledger day, or for the last `days` days (1 to 36,500; 
   "requests": 13500, "student_served": 11300, "teacher_served": 2200,
   "teacher_usd": 4.69, "student_per_token_usd": 0.52, "hosted_student_usd": 0.0, "student_served_off_endpoint": 0,
   "baseline_usd": 14.58, "split_unknown_requests": 0, "split_unknown_usd": 0.0,
-  "endpoint_hours": 216.0, "endpoint_usd": 334.8, "idle_hours": 24.0, "idle_share": 0.11,
+  "endpoint_hours": 216.0, "endpoint_usd": 334.8, "endpoint_usd_per_hour": 1.55,
+  "idle_hours": 24.0, "idle_share": 0.11, "idle_granularity": "day",
   "training_hours": 1.9, "training_usd": 2.95,
   "views": {
     "per_token": {"total_usd": 5.21, "savings_usd": 9.37, "savings_pct": 0.64},
@@ -596,7 +597,7 @@ The cost report for every ledger day, or for the last `days` days (1 to 36,500; 
   "observed_student_requests_per_endpoint_hour": 52.3,
   "utilization_vs_break_even": 0.033,
   "recommendation": "hosted_fallback",
-  "explanation": "Self-hosting does not pay at this volume. The endpoint served 52 student requests per hour it ran, below the break-even of 1,582; below 54,070 an hour the hosted fallback is cheaper (1 GPU at $1.55 per GPU-hour; unverified list prices). Use the hosted fallback student on Token Factory (leave RATCHET_STUDENT_BASE empty) or run the endpoint only while traffic arrives. Savings by GPU-hours paid: -$327.86 (-2249%); per token: $9.37 (64%).",
+  "explanation": "Self-hosting does not pay at this volume. The endpoint served 52 student requests per hour it ran, below the break-even of 1,582; below 54,070 an hour the hosted fallback is cheaper per answer (1 GPU at $1.55 per GPU-hour; unverified list prices). Use the hosted fallback student on Token Factory (leave RATCHET_STUDENT_BASE empty) or run the endpoint only while traffic arrives. The crossover assumes the hosted fallback serves as many requests as the tuned student; it is untuned, so more of its requests may go to the teacher. Savings by GPU-hours paid: -$327.86 (-2249%); per token: $9.37 (64%).",
   "open_intervals": [],
   "warnings": [],
   "daily": [
@@ -608,11 +609,11 @@ The cost report for every ledger day, or for the last `days` days (1 to 36,500; 
 }
 ```
 
-- `views.per_token` is what every other savings figure uses; `views.gpu_hours` prices the student by the GPU-hours paid: teacher spend + endpoint hours + training hours (each interval at the rate it was recorded at) + the student's per-token spend on days with no recorded endpoint uptime (`hosted_student_usd`, `student_served_off_endpoint` answers: the hosted fallback served, or nobody recorded the endpoint). Savings can be negative and are never clamped; `savings_pct` is `null` without a baseline. `headline` is the view `RATCHET_STUDENT_COST_MODEL` picks.
-- `avoided_teacher_usd_per_student_request` is the teacher spend a student answer saves on average (its all-teacher baseline less the teacher calls it still made); `break_even_student_requests_per_gpu_hour` is the endpoint's USD per hour (per-GPU price × GPUs) divided by it, so it counts student answers per hour of the whole endpoint. `null` until the student has served, and when its answers save nothing.
-- `hosted_fallback_usd_per_request` is what the hosted fallback student (`RATCHET_FALLBACK_STUDENT`, per token) would bill for all the student calls, per student answer; `self_host_beats_hosted_above_requests_per_hour` is the volume above which the endpoint is cheaper. The hosted model is untuned, so it may serve fewer requests than the tuned student.
-- `observed_student_requests_per_endpoint_hour` counts student answers on days the endpoint had uptime over its hours; `idle_hours` are endpoint hours on days when no request reached the student (whole days: hours idle inside a busy day are not counted).
-- `recommendation` is `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data` (rules in [ARCHITECTURE.md](ARCHITECTURE.md#the-report-costpy)), with a plain-English `explanation`.
+- `views.per_token` is what every other savings figure uses; `views.gpu_hours` prices the student by the GPU-hours paid: teacher spend + endpoint hours + training hours (each interval at the rate it was recorded at) + the student's per-token spend in hours (live ledger) or days (simulation) with no recorded endpoint uptime (`hosted_student_usd`, `student_served_off_endpoint` answers: the hosted fallback served, or nobody recorded the endpoint). Savings can be negative and are never clamped; `savings_pct` is `null` without a baseline. `headline` is the view `RATCHET_STUDENT_COST_MODEL` picks.
+- `avoided_teacher_usd_per_student_request` is the teacher spend a student answer saves on average (its all-teacher baseline less the teacher calls it still made); `break_even_student_requests_per_gpu_hour` is `endpoint_usd_per_hour` divided by it, so it counts student answers per hour of the whole endpoint. `endpoint_usd_per_hour` is the endpoint's GPU cost in the window over its hours (each interval at the rate it was recorded at, per-GPU price × GPUs), the same rate the GPU-hour view bills; the configured rate while no uptime is recorded. Break-even prices the endpoint's hours alone: training jobs can still leave the window at a loss above it, and the explanation then says so. `null` until the student has served, and when its answers save nothing.
+- `hosted_fallback_usd_per_request` is what the hosted fallback student (`RATCHET_FALLBACK_STUDENT`, per token) would bill for all the student calls, per student answer; `self_host_beats_hosted_above_requests_per_hour` (`endpoint_usd_per_hour` / that price) is the volume above which the endpoint is cheaper per answer. It compares price per answer only: the hosted model is untuned, so it may serve fewer requests than the tuned student and send more to the teacher. Every `hosted_fallback` explanation says so; compare the student's share of requests over a day on each before switching.
+- `observed_student_requests_per_endpoint_hour` counts student answers in buckets when the endpoint had uptime over its hours; `idle_hours` are endpoint hours in buckets when no request reached the student. `idle_granularity` names the bucket: `hour` on a live ledger (requests and uptime share the wall clock; an hour with any uptime is credited with all its answers), `day` on the simulator's synthetic clock (hours idle inside a busy simulated day are not counted).
+- `recommendation` is `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data` (rules in [ARCHITECTURE.md](ARCHITECTURE.md#the-report-costpy)), with a plain-English `explanation`. It says separately whether the observed volume covers the endpoint's hours and whether the window lost money by GPU-hours: between break-even and the crossover, `hosted_fallback` comes with "Self-hosting beats the teacher, but the hosted fallback would cost less per answer", and it never says "pays" when `views.gpu_hours.savings_usd` is negative.
 - `split_unknown_requests`: rows from before v0.5 have no student/teacher split; their whole cost counts as teacher spend in the GPU-hour view (`split_unknown_usd`), and a warning says so. `warnings` also names a training job open for more than 12 hours, which counts up to now until it is closed.
 - `daily`: one row per day with requests or compute, the latest 731 days at most (`daily_truncated`); the totals always cover the whole window.
 
@@ -632,7 +633,7 @@ curl -s localhost:8000/ratchet/cost/endpoint -H "Authorization: Bearer $ADMIN_KE
  "summary": "student endpoint up at 2026-10-20 10:13:20 UTC: 1 GPU at $1.55 per GPU-hour (interval 3)"}
 ```
 
-- `state` is required (`up` or `down`); `usd_per_hour` (per GPU, 0 or more; default `RATCHET_STUDENT_GPU_USD_PER_HOUR`), `gpus` (0 to 1,024; default `RATCHET_STUDENT_GPUS`) and `note` (at most 200 characters, PII redacted) are optional. Any other key, or a bad value, is **400**.
+- `state` is required (`up` or `down`); `usd_per_hour` (per GPU, 0 to 1,000; default `RATCHET_STUDENT_GPU_USD_PER_HOUR`), `gpus` (0 to 1,024; default `RATCHET_STUDENT_GPUS`) and `note` (at most 200 characters, PII redacted) are optional. Any other key, or a bad value, is **400**.
 - `up` while the endpoint is up returns its open interval with `changed: false`; `down` while it is down returns `interval: null`, `changed: false`. `down` closes every open endpoint interval. A change writes an `endpoint` event naming the source and the admin's name, never the key.
 - In mock mode the time is on the demo's synthetic clock (the current simulated day at the wall clock's time of day), and the shared demo holds at most 200 such records (**409**; a reset clears them).
 

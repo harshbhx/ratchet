@@ -6,7 +6,6 @@ day 1 with `GET https://api.tokenfactory.nebius.com/v1/models?verbose=true`.
 
 from __future__ import annotations
 
-import math
 import os
 from dataclasses import dataclass, field
 
@@ -104,6 +103,11 @@ UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
 # `per_token`: the hosted Nano price per token, as every savings figure since v0.1; `gpu_hours`: the GPU-hours the student
 # endpoint and the training jobs ran. Each request's `cost_usd` keeps the per-token price in both, so history never moves.
 COST_MODELS = ("per_token", "gpu_hours")
+# Bounds on a GPU rate wherever one is set or recorded (settings, the CLI, POST /ratchet/cost/endpoint, the ledger): no GPU
+# lists near $1,000 an hour, and the bounds keep every total finite, so a typo or a visitor of the shared mock demo cannot
+# turn the cost report into infinities.
+MAX_USD_PER_GPU_HOUR = 1000.0
+MAX_GPUS = 1024
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -418,11 +422,11 @@ class Settings:
             ("RATCHET_STUDENT_GPU_USD_PER_HOUR", self.student_gpu_usd_per_hour),
             ("RATCHET_TRAIN_GPU_USD_PER_HOUR", self.train_gpu_usd_per_hour),
         ):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
-                raise ValueError(f"{env} must be a price in USD per GPU-hour, 0 or more, not {value!r}")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_USD_PER_GPU_HOUR:
+                raise ValueError(f"{env} must be a price in USD per GPU-hour, 0 to {MAX_USD_PER_GPU_HOUR:,.0f}, not {value!r}")
         for env, value in (("RATCHET_STUDENT_GPUS", self.student_gpus), ("RATCHET_TRAIN_GPUS", self.train_gpus)):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"{env} must be a whole number of GPUs, 0 or more, not {value!r}")
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_GPUS:
+                raise ValueError(f"{env} must be a whole number of GPUs, 0 to {MAX_GPUS:,}, not {value!r}")
         hours = self.mock_endpoint_hours
         if isinstance(hours, bool) or not isinstance(hours, (int, float)) or not (0 <= hours <= 24):
             raise ValueError(f"RATCHET_MOCK_ENDPOINT_HOURS must be 0 to 24 hours a day, not {hours!r}")

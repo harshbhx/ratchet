@@ -40,7 +40,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from . import __version__, live, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
-from .config import Settings
+from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
@@ -985,10 +985,13 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
     if state not in ("up", "down"):
         raise HTTPException(400, "state must be 'up' or 'down'")
     rate, gpus, note = body.get("usd_per_hour"), body.get("gpus"), body.get("note")
-    if rate is not None and (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate < math.inf):
-        raise HTTPException(400, "usd_per_hour must be a number of US dollars per GPU-hour, 0 or more")
-    if gpus is not None and (isinstance(gpus, bool) or not isinstance(gpus, int) or not 0 <= gpus <= 1024):
-        raise HTTPException(400, "gpus must be a whole number from 0 to 1024")
+    # Compared before any conversion, so a 400-digit integer is refused here rather than overflowing a float later.
+    if rate is not None and (
+        isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate <= MAX_USD_PER_GPU_HOUR
+    ):
+        raise HTTPException(400, f"usd_per_hour must be US dollars per GPU-hour, 0 to {MAX_USD_PER_GPU_HOUR:,.0f}")
+    if gpus is not None and (isinstance(gpus, bool) or not isinstance(gpus, int) or not 0 <= gpus <= MAX_GPUS):
+        raise HTTPException(400, f"gpus must be a whole number from 0 to {MAX_GPUS:,}")
     if note is not None and (not isinstance(note, str) or len(note) > MAX_NOTE_CHARS):
         raise HTTPException(400, f"note must be text of at most {MAX_NOTE_CHARS} characters")
     led = rt.ledger

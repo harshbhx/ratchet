@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 706 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 717 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -27,10 +27,10 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
+| `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
-| **Total** | **706** |
+| **Total** | **717** |
 
 There are three layers:
 
@@ -497,23 +497,28 @@ Utilization-aware cost accounting (FR-15.1 to FR-15.4, NFR-11, [ADR 0023](adr/00
 | `test_overlapping_and_nested_intervals_are_not_double_counted` | FR-15.2: nested, overlapping and separate intervals merge into hours once; a pricier overlapping record bills only its stretch at its rate; clipping to a window; empty records count nothing; the per-day split adds up |
 | `test_open_interval_counts_to_now_and_to_the_window` | FR-15.2: an open interval runs to `now`, never past the window, never negative; listed in `open_intervals` |
 | `test_endpoint_start_is_idempotent_and_stop_closes_it` | FR-15.2: a second `up` (also from a second connection to the file) returns the open interval; an end before the start is refused and closes nothing; `down` while down is None; jobs get an interval per start and close by id with their version and note |
-| `test_concurrent_endpoint_starts_keep_one_open_interval` | FR-15.2, NFR-6: eight threads starting the endpoint at once leave one interval |
-| `test_bad_compute_records_are_refused` | FR-15.2: an unknown kind, a negative or NaN rate, `True` or negative GPUs, an infinite time (7 cases) |
+| `test_concurrent_endpoint_starts_keep_one_open_interval` | FR-15.2, NFR-6: eight connections to one file starting the endpoint at once leave one interval (only the write transaction can serialise them; it fails without `BEGIN IMMEDIATE`) |
+| `test_bad_compute_records_are_refused` | FR-15.2: an unknown kind, a negative or NaN rate, `True` or negative GPUs, an infinite time, a rate above $1,000 per GPU-hour or too large for a float, more than 1,024 GPUs, a closed record that ends before it starts (11 cases) |
 | `test_training_interval_is_closed_when_train_raises` | FR-15.2, FR-4.2: `run_night(train_gpu=...)` closes the interval at the failure time with a note and re-raises; a successful night records the job's duration and version; without a rate it records nothing |
 | `test_report_math_on_a_hand_built_ledger` | FR-15.3, FR-15.4, NFR-11: every total, both views (a negative GPU-hour saving, not clamped), s̄, break-even, the hosted-fallback price and crossover, observed volume, utilization, idle hours, the `hosted_fallback` recommendation, the daily rows, the headline following `RATCHET_STUDENT_COST_MODEL`, and the window arguments |
-| `test_recommendation_for_each_branch` | FR-15.4: `self_host`, `hosted_fallback`, `scale_to_zero` (idle days, and below break-even with a pricier hosted fallback), `insufficient_data` (no uptime; uptime but no student answer), an empty ledger with no division by zero or NaN |
-| `test_live_ledger_days_count_from_the_first_request` | FR-15.3: a live ledger's days start at its first request; uptime before it is day 0; a one-day window takes that day's hours; a reopened file reports the same days |
+| `test_recommendation_for_each_branch` | FR-15.4: `self_host` ("Self-hosting pays." with positive GPU-hour savings), `hosted_fallback`, `scale_to_zero` (idle days, and below break-even with a pricier hosted fallback), `insufficient_data` (no uptime; uptime but no student answer), an empty ledger with no division by zero or NaN |
+| `test_explanation_between_break_even_and_the_hosted_crossover` | FR-15.4, NFR-11: above break-even and below the crossover the recommendation is `hosted_fallback` and the explanation says self-hosting beats the teacher with the GPU-hour savings, the hosted fallback's crossover and the equal-coverage caveat, never "does not pay" or "below the break-even"; the same with the endpoint idle most hours (`scale_to_zero`) |
+| `test_break_even_uses_the_recorded_rate_and_never_says_pays_at_a_loss` | FR-15.4, NFR-11: break-even and the crossover at the rate the intervals recorded (2 GPUs against a setting of 1); an endpoint above break-even with a training job that leaves the window at a loss is kept without the words "Self-hosting pays" |
+| `test_live_ledger_days_count_from_the_first_request` | FR-15.3: a live ledger's days start at its first request; uptime before it is day 0; idle time in hours (49 of 51); a one-day window takes that day's hours; a reopened file reports the same days |
+| `test_live_ledger_counts_observed_volume_and_idle_time_by_hour` | FR-15.3, FR-15.4: an endpoint up for one hour is credited with that hour's answers only, the later ones are priced per token as the hosted fallback's (with a warning), the daily row matches the totals, and a 24/7 endpoint with one request a day is told to scale to zero |
+| `test_last_days_before_the_first_live_request_keep_recorded_uptime` | FR-15.3: before the first request, `days=1` and `days=7` keep the 5 hours the endpoint has run; the first request then starts day 1 |
+| `test_simulated_day_leaves_an_endpoint_opened_through_the_api_alone` | FR-15.2, INV-8: a simulated day writes its own closed interval, so an endpoint a visitor marked up after the day's simulated hours stays open (no error), and an overlapping one is counted once |
 | `test_student_answers_without_recorded_uptime_are_priced_per_token` | FR-15.3, NFR-11: student spend on a day with no recorded uptime stays in the GPU-hour view at its per-token price, stays out of the observed volume, and gets a warning |
 | `test_report_warnings_and_daily_cap` | FR-15.3: a training job open for 30 hours is named with the command that closes it; the daily breakdown keeps the latest `MAX_DAILY` days while the totals keep every day |
 | `test_mock_demo_with_a_24h_endpoint_does_not_pay` | FR-15.3, FR-15.4, NFR-11: five simulated days of 1,500 requests: per-token savings positive, GPU-hour savings negative, never `self_host`, observed below break-even; `/ratchet/stats` `cost` and `totals.cost_model`; `?days=1`; 400 and 422 for bad `days` |
 | `test_simulated_endpoint_hours_follow_the_setting` | FR-15.2, FR-9.4: `RATCHET_MOCK_ENDPOINT_HOURS=8` records 8-hour days without events; `0` records none and the report says `insufficient_data` |
-| `test_post_endpoint_records_uptime_with_an_admin_key` | FR-15.2, INV-13: 401 without a key, 403 for an API key, 400 for each bad body (8), `up` with rate, GPUs and note, `up` again unchanged, `down`, `down` again; `endpoint` events with the admin's name and no key anywhere |
+| `test_post_endpoint_records_uptime_with_an_admin_key` | FR-15.2, INV-13: 401 without a key, 403 for an API key, 400 for each bad body (12, including rates above $1,000, 1e308 and a 401-digit integer, which was a 500), `up` with rate, GPUs and note, `up` again unchanged, `down`, `down` again; `endpoint` events with the admin's name and no key anywhere |
 | `test_post_endpoint_is_open_in_mock_capped_and_off_in_live` | FR-15.2, INV-8: open in mock mode as `mock-admin` on the synthetic clock, the mock cap (409, never for `down`), 403 in live mode without admin keys, and the report public in live mode |
-| `test_cli_records_and_reports` | FR-15.2, FR-15.3: `endpoint up` (with `--at` and `--gpus`), `up` again, `down` with an ISO time, `report` and `report --json` (the second `up` adds nothing), `--days 1` meaning today, `close training_job`; exit 2 for a missing ledger (never created), a bad or future `--at`, an end before the start, `--days 0` and a bad setting |
+| `test_cli_records_and_reports` | FR-15.2, FR-15.3: `endpoint up` (with `--at` and `--gpus`), `up` again, `down` with an ISO time, `report` and `report --json` (the second `up` adds nothing), `--days 1` meaning today, `close training_job`; exit 2 for a missing ledger (never created), a bad or future `--at`, an end before the start, a rate above the cap or too large for a float, too many GPUs, `--days 0` and a bad setting |
 | `test_cli_runs_as_a_module_with_the_environment` | FR-15.3: `python -m ratchet.cost report` in a subprocess with `RATCHET_DB` |
 | `test_deploy_script_records_uptime_and_never_fails_on_it` | FR-15.2, FR-8.2: `deploy/student_endpoint.sh` start and stop with a stub `nebius` record the endpoint through the CLI; with no ledger the deploy still exits 0 and says so; an unknown action exits 2. Skipped where bash is missing |
 | `test_v04_database_gets_the_cost_columns_and_table` | FR-15.1, FR-15.2: a v0.4 file gains the split and token columns and `compute_intervals`; its old rows count as teacher spend (`split_unknown_requests`, a warning) and give no hosted-fallback price |
-| `test_bad_cost_settings_stop_startup_naming_the_variable` | FR-15.3, NFR-11: a negative, non-numeric or NaN rate, fractional or negative GPUs, an unknown cost model and 25 endpoint hours a day each stop the runtime with the variable's name (7 cases) |
+| `test_bad_cost_settings_stop_startup_naming_the_variable` | FR-15.3, NFR-11: a negative, non-numeric, NaN or 1e308 rate, fractional, negative or 4,096 GPUs, an unknown cost model and 25 endpoint hours a day each stop the runtime with the variable's name (9 cases) |
 | `test_cost_settings_defaults_and_spellings` | NFR-11: the defaults, a cost model in any case with spaces, `RATCHET_PRICES_VERIFIED=1` changing the label, an empty model meaning `per_token`, and `--at` parsing |
 
 ### `tests/test_stats.py`
