@@ -37,7 +37,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rollback` | `tick` | Canary audited precision has a Wilson upper bound below 0.92; traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
 | `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
 | `student_error` | `Ratchet.handle` | A student call raised; the request fell back to the teacher. Logged on the 1st, 10th, 100th and 1000th failure | See [Student endpoint down](#student-endpoint-down-or-restarted) |
-| `audit_error` | `Ratchet.handle` | A teacher audit of a served student answer raised; the student's answer was served and the request is logged with `audited=0`. Detail is the task and the exception's class (with the HTTP status for an HTTP error), never its message. Logged on the 1st, 10th, 100th and 1000th failure | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
+| `audit_error` | `Ratchet.handle` | A teacher audit of a served student answer raised (after the teacher's retries); the student's answer was served and the request is logged with `audited=0`. Detail is the task and the exception's class (with the HTTP status for an HTTP error, and the code for an upstream error: `UpstreamError 504 upstream_timeout`), never its message. Logged on the 1st, 10th, 100th and 1000th failure | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `shadow_error` | `Ratchet.handle` | A shadow call raised: `sampling` (the shadow's own samples; no shadow record for that request) or `arbitration` (the teacher's arbitration; the disagreement counts against the shadow). The request was not affected. Same detail and throttling as `audit_error` | `sampling`: the shadow's adapter may be missing, see [Student endpoint down](#student-endpoint-down-or-restarted). `arbitration`: see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `gateway_error` | the gateway's error handler | An unhandled exception in a request: a bug, not a client mistake. The client got a 500 (`api_error` on `/v1/*`). Detail is the exception's class and how many there have been, never its message. Logged on the 1st, 10th, 100th, ... occurrence since the last restart | Read the traceback in the gateway's log (`docker compose logs ratchet` on the demo VM) and fix the bug |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` | Mock mode only |
@@ -84,15 +84,31 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### Teacher API down (Token Factory errors or timeouts)
 
-**Symptoms:** `/v1/chat/completions` returns **502** ("teacher unavailable") for cold-start, escalated and pinned requests, which need the teacher's answer. `audit_error` events in the release log, and `shadow_error` events (`arbitration`) while a shadow runs, each logged on the 1st, 10th, 100th and 1000th failure.
+**Symptoms:** `/v1/chat/completions` returns **502** `teacher_unavailable` (`teacher unavailable: upstream 503`, or `upstream 502 upstream_unreachable` when Token Factory cannot be reached) or **504** `teacher_timeout` for cold-start, escalated and pinned requests, which need the teacher's answer. `audit_error` events in the release log, and `shadow_error` events (`arbitration`) while a shadow runs, each logged on the 1st, 10th, 100th and 1000th failure; the detail names the status and code (`ticket-triage: UpstreamError 504 upstream_timeout`). A **502** `upstream_auth_error` or `upstream_not_found` is not an outage: see step 1.
 
-**Impact:** requests the student serves with confidence still succeed (INV-15): when the audit or the shadow's arbitration fails, the student's answer is served and the failure is counted. But each failed audit waits for the teacher's timeout first, so audited requests are slow. A failed audit is not counted as an audit, so canary promotion and rollback pause until the teacher is back. A shadow's disagreements go unarbitrated and count against it, so a shadow running through a long outage will likely be rejected; the reason says how many were unarbitrated, and the next night trains a new candidate.
+**What the gateway already does** ([ADR 0014](adr/0014-upstream-failure-semantics.md)): each teacher call is retried up to `RATCHET_TEACHER_RETRIES` (2) times within `RATCHET_TEACHER_DEADLINE_S` (180 s), with backoff, on connection failures and 408/409/429/5xx; a read timeout (`RATCHET_TEACHER_TIMEOUT_S`, 120 s) is retried once. So a short blip costs latency, not errors. OpenAI SDKs retry the 502 and 504 twice more on their own.
+
+**Impact:** requests the student serves with confidence still succeed (INV-15): when the audit or the shadow's arbitration fails, the student's answer is served and the failure is counted. But each failed audit waits for the teacher first (up to the 180 s deadline when the teacher hangs), so audited requests are slow. A failed audit is not counted as an audit, so canary promotion and rollback pause until the teacher is back. A shadow's disagreements go unarbitrated and count against it, so a shadow running through a long outage will likely be rejected; the reason says how many were unarbitrated, and the next night trains a new candidate.
 
 **Steps:**
 
-1. Check the Token Factory status page and `scripts/day1_check.py`.
-2. Short outage: tell your app to retry the 502s. Long outage: set `RATCHET_AUDIT_RATE=0` and restart the gateway, so confident student answers stop waiting on the teacher for audits. Escalations will still fail. Restore the audit rate afterwards: audits drive canary promotion and rollback.
-3. Don't run Night School during the outage.
+1. `upstream_auth_error` (401/403): `NEBIUS_API_KEY` is wrong, expired or lacks access to the model. `upstream_not_found` (404): `RATCHET_TEACHER_MODEL` or `RATCHET_TEACHER_BASE` is wrong. Fix the setting and restart; retrying will not help, and the gateway tells SDKs so (`X-Should-Retry: false`).
+2. Otherwise check the Token Factory status page and `scripts/day1_check.py`.
+3. Short outage: tell your app to retry the 502s and 504s. Long outage: set `RATCHET_AUDIT_RATE=0` and restart the gateway, so confident student answers stop waiting on the teacher for audits. Escalations will still fail. Restore the audit rate afterwards: audits drive canary promotion and rollback. If requests pile up while the teacher hangs, lower `RATCHET_TEACHER_DEADLINE_S` (and `RATCHET_TEACHER_TIMEOUT_S`) so each one gives up sooner.
+4. Don't run Night School during the outage.
+
+### Rate limited
+
+**Symptoms:** clients get **429**. Tell the two kinds apart by `error.code`:
+
+- `daily_quota_exceeded` (`type` `insufficient_quota`): a gateway API key used up `RATCHET_API_KEY_DAILY_REQUESTS`. `Retry-After` and `X-RateLimit-Reset-Requests` say when it resets (00:00 UTC), and `X-Should-Retry: false` stops OpenAI SDKs from retrying. The dashboard's **Trust and privacy** panel shows requests per key.
+- `upstream_rate_limited` (`type` `rate_limit_error`): Token Factory rate-limited the teacher. The gateway already waited for Token Factory's `Retry-After` and retried (twice, if each wait was 8 s or less); `Retry-After` on the 429 is Token Factory's wait, clamped to 1 to 60 s, and SDKs honour it.
+
+**Steps:**
+
+1. Daily quota: raise `RATCHET_API_KEY_DAILY_REQUESTS` and restart, give the client its own key, or wait for midnight UTC. A refused request was not logged and used no quota.
+2. Token Factory rate limit: check the account's limits in the Token Factory console. Fewer escalations mean fewer teacher calls: look at the escalation rate (drift, or a broken student) and the audit rate. Lower `RATCHET_AUDIT_RATE` (not to 0 while a canary is in flight) and avoid running Night School's judge during peak traffic.
+3. Repeated `audit_error` events with `UpstreamError 429` mean audits are being rate-limited: the student's answers are still served, but canary promotion slows down.
 
 ### Student endpoint down or restarted
 

@@ -496,7 +496,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_quota",
         "ratchet.ledger:Ledger.stats_by_client",
     ),
-    "FR-1.8": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat"),
+    "FR-1.8": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat", "ratchet.gateway:_map_upstream"),
     "FR-1.9": ("ratchet.gateway:landing", "ratchet.gateway:scout_page", "ratchet.gateway:dashboard"),
     "FR-1.10": (
         "ratchet.openai_compat:validate_chat_request",
@@ -507,6 +507,14 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_http_error",
         "ratchet.gateway:_unhandled_error",
         "ratchet.router:Ratchet.teacher_only",
+    ),
+    "FR-1.11": (
+        "ratchet.resilience:retry_call",
+        "ratchet.resilience:UpstreamError",
+        "ratchet.providers:OpenAICompatProvider.complete",
+        "ratchet.config:Settings.teacher_retry",
+        "ratchet.gateway:_map_upstream",
+        "ratchet.gateway:_quota",
     ),
     # 6.2 Cascade and confidence
     "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),
@@ -598,7 +606,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
-    "NFR-2": ("ratchet.router:Ratchet.handle", "ratchet.live:reload_adapters"),
+    "NFR-2": ("ratchet.router:Ratchet.handle", "ratchet.resilience:retry_call", "ratchet.live:reload_adapters"),
     "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night"),
     "NFR-4": ("ratchet.redact:redact_messages",),
     "NFR-5": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_quota"),
@@ -614,7 +622,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "INV-4": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-5": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-6": ("ratchet.nightschool.evaluate:cascade_eval",),
-    "INV-7": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat"),
+    "INV-7": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat", "ratchet.gateway:_map_upstream"),
     "INV-8": ("ratchet.gateway:_mock_only",),
     "INV-9": ("ratchet.config:DEFAULT_PRICES", "scripts/day1_check.py"),
     "INV-10": ("ratchet.router:Ratchet._pinned",),

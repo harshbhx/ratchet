@@ -17,5 +17,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0011](0011-requirements-traceability.md) | Requirements traceability from PRD rows and test markers, checked in CI | Accepted | 2026-10-20 |
 | [0012](0012-openai-request-validation-and-error-envelope.md) | Validate and normalise OpenAI requests at the gateway, and answer errors in OpenAI's envelope | Accepted | 2026-10-20 |
 | [0013](0013-optional-teacher-calls-fail-open.md) | Optional teacher calls fail open for the request and count against the shadow in the release gate | Accepted | 2026-10-20 |
+| [0014](0014-upstream-failure-semantics.md) | Upstream failure semantics: bounded retries, one error type, and statuses a client can act on | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

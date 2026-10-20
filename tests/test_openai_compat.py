@@ -426,7 +426,7 @@ def test_checks_run_in_order_and_refusals_cost_nothing(gw_env):
     assert c.post(CHAT, json={"messages": msgs}, headers=key).status_code == 200
     r = c.post(CHAT, json={"messages": msgs}, headers=key)  # quota used up
     err = _error(r)
-    assert r.status_code == 429 and (err["type"], err["code"]) == ("rate_limit_error", None)
+    assert r.status_code == 429 and (err["type"], err["code"]) == ("insufficient_quota", "daily_quota_exceeded")
     assert r.headers["x-ratelimit-remaining-requests"] == "0" and r.headers["x-should-retry"] == "false"
     assert 0 < int(r.headers["retry-after"]) <= 86400
     assert c.post(CHAT, json=bad, headers=key).status_code == 400  # validation comes before the quota
@@ -647,7 +647,7 @@ def test_openai_sdk_auth_and_quota_errors(gw_env):
     client.chat.completions.create(model="ratchet", messages=msgs)
     with pytest.raises(openai.RateLimitError) as limited:
         client.chat.completions.create(model="ratchet", messages=msgs)
-    assert limited.value.type == "rate_limit_error"
+    assert (limited.value.type, limited.value.code) == ("insufficient_quota", "daily_quota_exceeded")
     assert len(calls) == 2  # X-Should-Retry: false, so the daily quota is not retried
 
 

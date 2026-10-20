@@ -34,6 +34,7 @@ from ratchet.ledger import Ledger
 from ratchet.nightschool import dataset, train
 from ratchet.nightschool.evaluate import JUDGE_PROMPT, LiveEvaluator
 from ratchet.providers import OpenAICompatProvider
+from ratchet.resilience import RetryPolicy, timeouts
 from ratchet.router import Ratchet
 from ratchet.scout.__main__ import main as scout_main
 from ratchet.scout.guard import Guard
@@ -234,12 +235,12 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     _examples(Ledger(str(db)), train=60, golden=6)  # the live ledger after some days of teacher answers
     vllm = FakeOpenAIServer(_answer_like_the_teacher)
     token_factory = FakeOpenAIServer('{"score": 1, "reason": "same answer"}')
-    factory_calls: list[tuple[str, str]] = []
+    factory_calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    def factory(base_url: str, api_key: str) -> Any:
-        factory_calls.append((base_url, api_key))
+    def factory(base_url: str, api_key: str, **options: Any) -> Any:
+        factory_calls.append((base_url, api_key, options))
         server = vllm if base_url == STUDENT_BASE else token_factory
-        return OpenAICompatProvider(base_url, api_key, transport=server.transport)
+        return OpenAICompatProvider(base_url, api_key, transport=server.transport, **options)
 
     run = RecordingRun()
 
@@ -259,7 +260,13 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert bom.verify(doc, public_key)[0]  # signed with RATCHET_BOM_SIGNING_KEY
     assert f"bill of materials: {boms / 'student-v1.json'}" in out and "[trained] v1 on 60 examples" in out
     assert [v.state for v in led.versions()] == ["canary"]  # cold start: straight to canary
-    assert factory_calls == [(STUDENT_BASE, STUDENT_KEY), (TEACHER_BASE, TEACHER_KEY)]
+    # The judge is a teacher call (teacher timeouts and retries). The student keeps its own timeouts but is retried like
+    # the teacher, because no teacher stands behind it in the golden eval (ADR 0014). All defaults: _live_env cleared them.
+    retry = RetryPolicy(max_attempts=3, deadline_s=180.0)
+    assert factory_calls == [
+        (STUDENT_BASE, STUDENT_KEY, {"timeout": timeouts(15.0, connect_s=2.0), "retry": retry}),
+        (TEACHER_BASE, TEACHER_KEY, {"timeout": timeouts(120.0), "retry": retry}),
+    ]
     assert run.commands == ["bash deploy/train_job.sh student-v1"]
     assert len(train.load_rows(str(data / "night" / "train.jsonl"))) == 60
     # The adapter was hot-loaded, then sampled on the golden set as in production; the judge got JSON mode.
@@ -336,9 +343,12 @@ def test_live_runtime_wiring(gw_env, tmp_path, monkeypatch):
     assert (body["ratchet"]["served_by"], body["ratchet"]["escalated"]) == ("teacher", True)
     assert [e["kind"] for e in down.ledger.events()] == ["student_error"]
     dead = _live_settings(tmp_path, db_path=str(tmp_path / "dead.db"))
-    monkeypatch.setattr(gw, "rt", gw.Runtime(dead, transports={"teacher": _failing(), "student": _failing()}))
+    waits: list[float] = []
+    dead_rt = gw.Runtime(dead, transports={"teacher": _failing(), "student": _failing()}, sleep=waits.append)
+    monkeypatch.setattr(gw, "rt", dead_rt)
     r = c.post(CHAT, json={"messages": _ask(4)})
-    assert r.status_code == 502 and r.json()["detail"] == "teacher unavailable: HTTPStatusError"
+    assert r.status_code == 502 and r.json()["detail"] == "teacher unavailable: upstream 500"
+    assert r.json()["error"]["code"] == "teacher_unavailable" and len(waits) == 2  # retried twice first (ADR 0014)
 
     # FR-8.3: no student endpoint, so the hosted untuned Nano on Token Factory answers, under the global threshold (the
     # version's calibrated 0.2 belongs to its adapter, not to the fallback model).

@@ -74,8 +74,9 @@ class APIError(Exception):
         return {"error": error, "detail": self.message}
 
 
-# status -> (error.type, error.code) for errors raised as plain HTTP errors: the API key (401), the daily quota (429),
-# a teacher failure (502), and what the web framework raises itself (404 for an unknown path, 405, 413).
+# status -> (error.type, error.code) for errors raised as plain HTTP errors: the API key (401), the body limit (413), and
+# what the web framework raises itself (404 for an unknown path, 405). The daily quota and teacher failures raise
+# APIError with their own codes (gateway._quota, gateway._map_upstream).
 STATUS_TYPES: dict[int, tuple[str, str | None]] = {
     400: (INVALID_REQUEST, None),
     401: (INVALID_REQUEST, "invalid_api_key"),
@@ -429,8 +430,8 @@ def _function_call(fn: Any, at: str) -> int:
 
 def _assistant_calls(m: Mapping[str, Any], at: str) -> tuple[bool, int]:
     """Whether an assistant message carries tool calls (then its content may be null), and their characters. Each call
-    is checked in full ({id, type: 'function', function: {name, arguments}}), so a malformed one is this 400 and not
-    the teacher's refusal, which would come back as a 502."""
+    is checked in full ({id, type: 'function', function: {name, arguments}}), so a malformed one is this 400 naming the
+    field, before the student's samples and the teacher's own refusal are paid for."""
     chars = 0
     tool_calls = m.get("tool_calls")
     if tool_calls is not None:

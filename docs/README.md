@@ -28,7 +28,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Security and privacy: assets, trust boundaries, threats, mitigations present vs planned |
 | [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), requirements traceability check, simulation method and assumptions, bugs found and fixed, seed robustness |
-| [adr/](adr/README.md) | Architecture Decision Records 0001–0013 |
+| [adr/](adr/README.md) | Architecture Decision Records 0001–0014 |
 
 ## Hackathon working docs
 
