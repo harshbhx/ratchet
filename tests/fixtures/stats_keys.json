@@ -94,6 +94,7 @@
       "not_stored_requests": "number",
       "not_stored_by_reason": "object",
       "no_train_end_users": "number",
+      "no_train_unmatched": "number",
       "store_examples": "bool",
       "no_store_tasks": "list",
       "no_store_clients": "list",

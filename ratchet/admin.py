@@ -8,8 +8,8 @@
     python -m ratchet.admin export requests --since 2026-10-01
 
 `erase` is a dry run unless `--apply` is given, as `POST /ratchet/admin/privacy/erase` is. An end user given without
-`--client` is erased in every API key's scope (RATCHET_API_KEYS) and the keyless scope, as an admin's no-train
-registration is. Pass `--end-user -` to read the value from standard input, so it stays out of the shell history.
+`--client` is erased in every API key's scope (RATCHET_API_KEYS) and the keyless scope, the scopes requests and
+examples are attributed in. Pass `--end-user -` to read the value from standard input, so it stays out of the shell history.
 `export` writes NDJSON to standard output or `--out`. Both open the same ledger file as the gateway; the ledger's
 writes are transactions, so they can run while the gateway serves.
 """

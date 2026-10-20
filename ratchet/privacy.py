@@ -16,7 +16,10 @@ an opted-out answer stored (docs/lanes/e-invariants.md).
 
 End users are attributed by HMAC only. `safety_identifier` (else `user`) is hashed with a per-deployment key, scoped to
 the API key name that sent it, and cut to 16 hex digits (`EndUsers.hash`). The raw value is never stored or logged; the
-same person seen by two deployments, or by two API clients of one deployment, gets unrelated hashes.
+same person seen by two deployments, or by two API clients of one deployment, gets unrelated hashes. A no-train
+registration made with either value applies (`end_user_ids`, `EndUsers.aliases`), and an admin's registration for every
+client is one hash in the `EVERY_CLIENT` scope, so it covers API keys added later. Registrations scoped to a key name
+that is no longer configured match nothing; `check_no_train_scopes` says so at startup.
 
 What was stored can be removed (FR-13.3 to FR-13.5, ADR 0081):
 
@@ -45,7 +48,7 @@ from .auth import valid_name
 from .config import ERASURE_SHARED, MAX_RETENTION_DAYS, Retention
 from .ledger import DAY_SECONDS, EXPORT_FILTERS, EXPORT_KINDS, Ledger
 from .nightschool import dataset
-from .openai_compat import MAX_END_USER, STORE_METADATA
+from .openai_compat import STORE_METADATA
 from .redact import redact
 
 # Why a request's teacher answers could not be stored, broadest first (`requests.store_opt_out`).
@@ -54,7 +57,8 @@ OPT_OUTS = ("global", "task", "key", "request", "end_user")
 STORE_HEADER_OFF = frozenset({"none", "0", "false"})
 STORE_HEADER_ON = frozenset({"1", "true"})
 
-END_USER_MAX_CHARS = MAX_END_USER  # `user` and `safety_identifier`: a longer value is a 400 (openai_compat)
+# The scope of an admin's no-train registration for every client, now and later: never a key name (`auth.valid_name`).
+EVERY_CLIENT = "*"
 END_USER_HASH_HEX = 16  # 64 bits: unique enough for any one deployment's end users, short enough to index
 MIN_KEY_CHARS = 16  # RATCHET_END_USER_KEY
 KEY_META = "end_user_key"  # meta row holding the generated key (hex), when RATCHET_END_USER_KEY is not set
@@ -62,9 +66,10 @@ KEY_ID_META = "end_user_key_id"  # meta row holding the id of the key last used,
 
 
 def store_header(value: str | None) -> bool | None:
-    """`X-Ratchet-Store` as False (opt out), True (store, the default) or None (not sent). ValueError for any other
-    value, so a typo cannot quietly store what the client meant to keep out."""
-    if value is None:
+    """`X-Ratchet-Store` as False (opt out), True (store, the default) or None (not sent, or sent empty, which some
+    clients do for a header they leave unset). ValueError for any other value, so a typo cannot quietly store what the
+    client meant to keep out."""
+    if value is None or not value.strip():
         return None
     word = value.strip().lower()
     if word in STORE_HEADER_OFF:
@@ -83,11 +88,17 @@ def request_opts_out(store: bool | None, metadata: Mapping[str, str] | None, hea
 
 def end_user_of(user: str | None, safety_identifier: str | None) -> str | None:
     """The request's end user: `safety_identifier`, else `user` (OpenAI's newer field wins). An empty string is no end
-    user. The value is only ever hashed (`EndUsers.hash`)."""
-    for value in (safety_identifier, user):
-        if value:
-            return value
-    return None
+    user. The value is only ever hashed (`EndUsers.hash`), whole, whatever its length."""
+    ids = end_user_ids(user, safety_identifier)
+    return ids[0] if ids else None
+
+
+def end_user_ids(user: str | None, safety_identifier: str | None) -> list[str]:
+    """Every end-user identifier the request carries, the one it is attributed to first (`end_user_of`). A no-train
+    registration made with any of them applies, so a client that starts sending `safety_identifier` beside `user`
+    (OpenAI's advice) keeps the opt-outs it registered by `user`."""
+    ids = [v for v in (safety_identifier, user) if v]
+    return ids[:1] if len(ids) == 2 and ids[0] == ids[1] else ids
 
 
 def _key_id(key: bytes) -> str:
@@ -115,8 +126,15 @@ class EndUsers:
         return hmac.new(self._key, message, hashlib.sha256).hexdigest()[:END_USER_HASH_HEX]
 
     def hashes(self, value: str, clients: Iterable[str | None]) -> list[tuple[str, str | None]]:
-        """(hash, client) of `value` in each client's scope: what an admin registers (or erases) for every client."""
+        """(hash, client) of `value` in each client's scope: what an admin removes (or erases) for every client."""
         return [(self.hash(value, c), c) for c in clients]
+
+    def aliases(self, ids: Sequence[str], client: str | None) -> tuple[str, ...]:
+        """The other hashes a no-train registration of this request's end user may be stored under, beyond the attributed
+        one (`hash(ids[0], client)`): each further identifier in `client`'s scope, and every identifier in the
+        `EVERY_CLIENT` scope (an admin's registration for every client, also those added after it). Looked up, never
+        stored (`RequestMeta.end_user_aliases`)."""
+        return tuple([self.hash(v, client) for v in ids[1:]] + [self.hash(v, EVERY_CLIENT) for v in ids])
 
 
 def end_users(ledger: Ledger, configured: str = "") -> EndUsers:
@@ -151,6 +169,38 @@ def end_users(ledger: Ledger, configured: str = "") -> EndUsers:
     return out
 
 
+def no_train_scopes(key_names: Sequence[str] | None) -> list[str | None]:
+    """The scopes a request's end user can be hashed in, so the scopes in which a no-train registration can match:
+    each configured API key name (`key_names`; None when keys are off, and every request is keyless) or the keyless
+    scope (None), and `EVERY_CLIENT`."""
+    return [*key_names, EVERY_CLIENT] if key_names is not None else [None, EVERY_CLIENT]
+
+
+UNMATCHED_META = "no_train_unmatched"  # meta row: the unmatched registrations last reported, so each change is said once
+
+
+def check_no_train_scopes(ledger: Ledger, key_names: Sequence[str] | None) -> int:
+    """How many no-train registrations match no request under the current keys, because their scope is a key name no
+    longer in RATCHET_API_KEYS (renamed or removed), or the keyless scope while keys are on, or a key name while they
+    are off. Those end users' requests are stored again until the name is back or they register again, so at startup a
+    `no_train_unmatched` event says how many and in which scopes (names only), once per change."""
+    unmatched = ledger.no_train_unmatched(no_train_scopes(key_names))
+    n = sum(unmatched.values())
+    seen = f"{n}:" + ",".join(f"{c}={k}" for c, k in sorted(unmatched.items(), key=lambda kv: str(kv[0])))
+    previous = ledger.meta_get(UNMATCHED_META)
+    if previous != seen and (n or previous is not None):
+        if n:
+            names = sorted("keyless" if c is None else c for c in unmatched)
+            shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+            ledger.event(
+                "no_train_unmatched",
+                f"{n} no-train registrations match no request under the current API keys (scopes: {shown}): those end "
+                "users' requests are stored again until the scope is configured again or they register again",
+            )
+        ledger.meta_set(UNMATCHED_META, seen)
+    return n
+
+
 # ---------- erasure, retention and export (FR-13.3 to FR-13.5, ADR 0081) ----------
 MAX_ERASE_HASHES = 10000  # example hashes one erasure may name
 MAX_CONTAINS_CHARS = 1000
@@ -168,8 +218,8 @@ def _check_erasure(
     the text to match, which may identify someone."""
     if client is not None and not valid_name(client):
         raise ValueError("client must be an API key name (letters, digits, '_', '.', '-'; 1 to 64)")
-    if end_user_raw is not None and (not isinstance(end_user_raw, str) or not 1 <= len(end_user_raw) <= END_USER_MAX_CHARS):
-        raise ValueError(f"end_user must be 1 to {END_USER_MAX_CHARS} characters, as sent in 'user' or 'safety_identifier'")
+    if end_user_raw is not None and (not isinstance(end_user_raw, str) or not end_user_raw):
+        raise ValueError("end_user must be a non-empty string, as sent in 'user' or 'safety_identifier'")
     wanted: list[str] | None = None
     if hashes is not None:
         if not isinstance(hashes, (list, tuple, set, frozenset)) or any(not isinstance(h, str) for h in hashes):

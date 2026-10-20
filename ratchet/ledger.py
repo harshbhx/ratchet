@@ -166,7 +166,8 @@ CREATE TABLE IF NOT EXISTS example_clients (  -- other API clients whose request
 CREATE TABLE IF NOT EXISTS no_train (         -- end users whose requests are never stored as training examples
     end_user_hash TEXT PRIMARY KEY,  -- privacy.EndUsers hash, scoped to `client`
     ts REAL,
-    client TEXT,               -- the API key name the hash belongs to; NULL for requests sent without a key
+    client TEXT,               -- the API key name the hash belongs to; NULL for requests sent without a key; '*' for
+                               -- an admin's registration for every client (privacy.EVERY_CLIENT)
     admin TEXT                 -- the admin's name when an admin registered it; then only an admin can remove it
 );
 CREATE TABLE IF NOT EXISTS erasure_items (    -- the examples each erasure purged: hashes, never text (FR-13.3)
@@ -475,6 +476,14 @@ def _merge(rows: list[dict[str, Any]], key: str, folded: Mapping[Any, Mapping[st
             r[n] = int(r.get(n) or 0) + int(f[rolled_n] or 0)
             r[avg] = (r[total] or 0) / r[n] if r[n] else None
     return out
+
+
+class NoTrainFull(Exception):
+    """`Ledger.no_train_add` with a `limit` the new registrations would pass (the shared mock demo's)."""
+
+    def __init__(self, limit: int):
+        super().__init__(f"at most {limit} no-train registrations")
+        self.limit = limit
 
 
 def _locked(fn):
@@ -1380,14 +1389,23 @@ class Ledger:
 
     # ---------- end users (FR-13.2, ADR 0080) ----------
     @_locked
-    def no_train_add(self, entries: Iterable[tuple[str, str | None]], admin: str | None = None) -> list[bool]:
+    def no_train_add(
+        self, entries: Iterable[tuple[str, str | None]], admin: str | None = None, limit: int | None = None
+    ) -> list[bool]:
         """Register end users as no-train: `entries` are (hash, the API key name the hash belongs to). Returns, per
         entry, whether it was new. An admin's registration (`admin`, the admin's name) also marks an existing one as
-        the admin's, so its client cannot remove it. One transaction."""
+        the admin's, so its client cannot remove it. With `limit`, raises `NoTrainFull` and writes nothing when the new
+        entries would take the table past it (entries already there do not count). One transaction."""
         now = time.time()
+        entries = list(entries)
         created = []
         self._begin()
         try:
+            if limit is not None:
+                total = int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+                new = len({h for h, _ in entries if not self._no_train_row(h)})
+                if total + new > limit:
+                    raise NoTrainFull(limit)
             for h, client in entries:
                 cur = self.db.execute(
                     "INSERT OR IGNORE INTO no_train (end_user_hash, ts, client, admin) VALUES (?,?,?,?)", (h, now, client, admin)
@@ -1409,7 +1427,7 @@ class Ledger:
         self._begin()
         try:
             for h in hashes:
-                row = self.db.execute("SELECT admin FROM no_train WHERE end_user_hash=?", (h,)).fetchone()
+                row = self._no_train_row(h)
                 if row is None:
                     out.append("absent")
                 elif row["admin"] is not None and not admin:
@@ -1423,14 +1441,36 @@ class Ledger:
             raise
         return out
 
+    def _no_train_row(self, h: str) -> sqlite3.Row | None:
+        return self.db.execute("SELECT admin FROM no_train WHERE end_user_hash=?", (h,)).fetchone()
+
     @_locked
-    def is_no_train(self, h: str) -> bool:
-        """Whether the end user with hash `h` is registered as no-train: one primary-key lookup."""
-        return self.db.execute("SELECT 1 FROM no_train WHERE end_user_hash=?", (h,)).fetchone() is not None
+    def is_no_train(self, *hashes: str | None) -> bool:
+        """Whether any of `hashes` (one end user's, in the scopes a registration may use) is registered as no-train: one
+        lookup on the primary key."""
+        wanted = [h for h in hashes if h is not None]
+        if not wanted:
+            return False
+        marks = ",".join("?" * len(wanted))
+        return self.db.execute(f"SELECT 1 FROM no_train WHERE end_user_hash IN ({marks}) LIMIT 1", wanted).fetchone() is not None
 
     @_locked
     def no_train_count(self) -> int:
         return int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+
+    @_locked
+    def no_train_scopes_stored(self) -> list[str | None]:
+        """Every scope (`client`) a no-train registration is stored in, configured or not."""
+        rows = self.db.execute("SELECT DISTINCT client FROM no_train").fetchall()
+        return sorted((r["client"] for r in rows), key=lambda c: (c is not None, c or ""))
+
+    @_locked
+    def no_train_unmatched(self, scopes: Iterable[str | None]) -> dict[str | None, int]:
+        """{scope: registrations} for the no-train registrations stored in a scope not among `scopes` (the ones requests
+        can be hashed in now, `privacy.no_train_scopes`): they match no request."""
+        live = set(scopes)
+        rows = self.db.execute("SELECT client, COUNT(*) n FROM no_train GROUP BY client").fetchall()
+        return {r["client"]: int(r["n"]) for r in rows if r["client"] not in live}
 
     # ---------- meta (small ledger-wide state) ----------
     @_locked
