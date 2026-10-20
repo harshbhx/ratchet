@@ -67,6 +67,25 @@ def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: f
     return Scored(best, conf, agreement, p)
 
 
+def majority(task: Task, scored: Scored, samples: list[Completion], n: int) -> list[Completion] | None:
+    """The `n` samples a client gets as its choices when the student serves a request for `n` choices (FR-1.14), or
+    None when fewer than `n` of `samples` share the scored majority answer (or no sample was valid). `scored` is the
+    score of a prefix of `samples` (`Settings.samples` of them, as calibrated), so choice 0 is `scored.answer`, the
+    sample a one-choice request serves; the others follow by token probability, highest first (in sample order on ties).
+    Every choice is a valid answer that ended by itself."""
+    if not scored.valid:
+        return None
+    if n == 1:
+        return [scored.answer]
+    best = next(i for i, s in enumerate(samples) if s is scored.answer)
+    key = _key(task, scored.answer)
+    rest = [s for i, s in enumerate(samples) if i != best and _key(task, s) == key]
+    if len(rest) + 1 < n:
+        return None
+    rest.sort(key=lambda s: -(s.mean_prob if s.mean_prob is not None else 0.0))
+    return [scored.answer, *rest[: n - 1]]
+
+
 def calibrate_threshold(points: list[tuple[float, bool]], target_precision: float = 0.95) -> float:
     """Lowest threshold whose served answers are correct at least `target_precision` of the time.
 

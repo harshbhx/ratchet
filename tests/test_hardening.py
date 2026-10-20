@@ -3,6 +3,7 @@ issues found while testing the live entry points offline (v0.5)."""
 
 import hashlib
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -16,7 +17,7 @@ from ratchet import live, tasks
 from ratchet.config import Settings
 from ratchet.ledger import DAY_SECONDS, Ledger
 from ratchet.nightschool import dataset
-from ratchet.providers import Completion, GenParams, OpenAICompatProvider
+from ratchet.providers import Completion, GenParams, OpenAICompatProvider, served_logprobs
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
 
@@ -944,6 +945,29 @@ def test_finish_reason_values_are_read_safely(value, want):
         "https://m.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"choices": [choice]}))
     )
     assert p.complete(_ask(), "m")[0].finish_reason == want
+
+
+@pytest.mark.req("FR-1.14", "FR-1.11")
+def test_logprobs_too_large_for_a_float_are_ignored_not_a_crash():
+    """Regression (FR-1.14 makes the teacher's logprobs reachable): `json.loads` accepts an integer of hundreds of
+    digits, and `math.isfinite` raised OverflowError on it, so such a logprob crashed the parse (a 500 on a teacher
+    answer). It is now one malformed value: left out of the confidence's logprobs, and the served logprobs are None."""
+    huge = 10**400
+    body = {
+        "choices": [
+            {
+                "message": {"content": "ab"},
+                "logprobs": {"content": [{"token": "a", "logprob": -0.5}, {"token": "b", "logprob": huge}]},
+            }
+        ]
+    }
+    p = OpenAICompatProvider("https://m.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    (c,) = p.complete(_ask(), "m", logprobs=True)
+    assert c.token_logprobs == [-0.5] and c.mean_prob == pytest.approx(math.exp(-0.5))
+    assert served_logprobs(c, "ab") is None
+    body["choices"][0]["logprobs"]["content"][1]["logprob"] = -0.25
+    (c,) = p.complete(_ask(), "m", logprobs=True)
+    assert [t["logprob"] for t in served_logprobs(c, "ab")] == [-0.5, -0.25]
 
 
 @pytest.mark.req("FR-1.13", "FR-1.11")

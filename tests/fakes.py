@@ -107,8 +107,10 @@ class RecordingProvider:
     then raise `exc(message)`: `httpx.ConnectError` by default, the way an unreachable endpoint fails, or another error
     such as `exc=httpx.ReadTimeout` for a slow one. `finish_reason` (a string, or a list scripted like `text`) is why
     each choice stopped: `"length"` plays an answer cut off by the token limit. Each choice reports `reasoning_tokens`
-    (part of its `out_tokens`) and `cached_tokens` (part of `in_tokens`), 0 by default. Thread-safe, because Scout calls
-    the router from several threads."""
+    (part of its `out_tokens`) and `cached_tokens` (part of `in_tokens`), 0 by default. With logprobs, each choice also
+    has `logprobs_content`: its text cut into `out_tokens` tokens (`pieces`) that spell it, each with the choice's
+    logprob, and with `top_logprobs` asked for, each token listing itself first among that many alternatives. Thread-safe,
+    because Scout calls the router from several threads."""
 
     def __init__(
         self,
@@ -155,14 +157,18 @@ class RecordingProvider:
         if model in self.raise_on:
             raise self.exc(f"{model} is down")
         said = self.text(messages, model) if callable(self.text) else self.text
+        params = kwargs.get("params")
+        top = (getattr(params, "top_logprobs", None) or 0) if kwargs.get("logprobs") else 0
         out = []
         for i in range(int(kwargs.get("n") or 1)):
             lp = _nth(self.logprob, i)
-            logprobs = [lp] * self.out_tokens if kwargs.get("logprobs") and lp is not None else []
+            with_logprobs = bool(kwargs.get("logprobs")) and lp is not None
+            logprobs = [lp] * self.out_tokens if with_logprobs else []
             finish = _nth(self.finish_reason, i)
+            text = _nth(said, i)
             out.append(
                 Completion(
-                    _nth(said, i),
+                    text,
                     model,
                     self.in_tokens,
                     self.out_tokens,
@@ -171,6 +177,7 @@ class RecordingProvider:
                     finish,
                     reasoning_tokens=self.reasoning_tokens,
                     cached_tokens=self.cached_tokens,
+                    logprobs_content=token_entries(text, lp, self.out_tokens, top) if with_logprobs else None,
                 )
             )
         return out
@@ -179,6 +186,30 @@ class RecordingProvider:
 def _nth(value: Any, i: int) -> Any:
     """Item i of a scripted list (cycling), or the value itself for every choice."""
     return value[i % len(value)] if isinstance(value, list) else value
+
+
+def pieces(text: str, count: int) -> list[str]:
+    """`text` cut into `count` pieces (at least one) whose lengths differ by at most 1, longer ones first; they spell it
+    (some are empty when the text is shorter than `count`)."""
+    count = max(1, count)
+    q, r = divmod(len(text), count)
+    out, pos = [], 0
+    for i in range(count):
+        size = q + (1 if i < r else 0)
+        out.append(text[pos : pos + size])
+        pos += size
+    return out
+
+
+def token_entries(text: str, logprob: float, count: int, top: int = 0) -> list[dict[str, Any]]:
+    """OpenAI's `logprobs.content` for `text` as `count` tokens (`pieces`) with one logprob; with `top` > 0, each token
+    lists itself and then `alt1`, `alt2`, ... with lower logprobs, `top` alternatives in all."""
+    out = []
+    for p in pieces(text, count):
+        alternatives = [{"token": p, "logprob": logprob, "bytes": list(p.encode())}][:top]
+        alternatives += [{"token": f"alt{k}", "logprob": logprob - k, "bytes": list(f"alt{k}".encode())} for k in range(1, top)]
+        out.append({"token": p, "logprob": logprob, "bytes": list(p.encode()), "top_logprobs": alternatives})
+    return out
 
 
 # ---------- the live-mode boundary: HTTP endpoints and commands ----------
@@ -193,9 +224,10 @@ class FakeOpenAIServer:
     """An OpenAI-compatible server behind `httpx.MockTransport`: Token Factory, or vLLM with runtime LoRA loading.
 
     `POST .../chat/completions` returns `n` choices with `text` (or `text(body)`), token logprobs only when the body
-    asks for them (`logprob=None` plays a server that never returns them), and usage of `in_tokens` and `out_tokens`
-    per choice. `POST .../load_lora_adapter` answers `load(body)` as `(status, text)`, 200 by default. `GET .../models`
-    lists `models`. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
+    asks for them (`out_tokens` tokens that spell the text, `token_entries`, with the body's `top_logprobs` alternatives;
+    `logprob=None` plays a server that never returns them), and usage of `in_tokens` and `out_tokens` per choice.
+    `POST .../load_lora_adapter` answers `load(body)` as `(status, text)`, 200 by default. `GET .../models` lists
+    `models`. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
     it keeps vLLM's adapter state: a chat request for a model not in it is vLLM's 404 (`The model `x` does not
     exist.`), a successful load adds the adapter, and `restart()` forgets them all. Every request is recorded as an
     `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
@@ -273,7 +305,8 @@ class FakeOpenAIServer:
         n = int(body.get("n") or 1)
         lp = None
         if body.get("logprobs") and self.logprob is not None:
-            lp = {"content": [{"token": "t", "logprob": self.logprob}] * self.out_tokens}
+            top = body.get("top_logprobs") or 0
+            lp = {"content": token_entries(text, self.logprob, self.out_tokens, top), "refusal": None}
         choice: dict[str, Any] = {"message": {"role": "assistant", "content": text}, "logprobs": lp}
         if self.finish_reason is not None:
             choice["finish_reason"] = self.finish_reason
@@ -407,7 +440,8 @@ def _shadow(
     serve all). Among the answers it would serve, every `agree_every`-th disagrees with the reference (0 = all agree),
     counted over served answers only so the two patterns never line up by accident. The live student (`live_vid`)
     serves every request except every `live_escalate_every`-th, which goes to the teacher (0 = it serves all) by
-    `live_route`: `confidence` (unsure), or `student_breaker` / `student_error` (never answered).
+    `live_route`: `confidence` (unsure), `student_breaker` / `student_error` (never answered), or `n_choices`
+    (confident, but fewer than the client's n samples agreed).
     Among the answers it would serve, every `unarbitrated_every`-th is a disagreement the teacher could not arbitrate
     (`shadow_agree` NULL; 0 = none); it takes precedence over `agree_every` on the same answer."""
     served = 0
@@ -422,7 +456,7 @@ def _shadow(
             task=task,
             served_by="teacher" if escalate else "student",
             student_version=live_vid,
-            confidence=(0.5 if live_route == "confidence" else None) if escalate else 0.95,
+            confidence={"confidence": 0.5, "n_choices": 0.95}.get(live_route) if escalate else 0.95,
             escalated=int(escalate),
             route=live_route if escalate else "student",
             audited=0,

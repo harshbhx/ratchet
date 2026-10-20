@@ -1679,6 +1679,9 @@ def test_every_request_row_has_a_route():
     seen.append(r.teacher_only(_ask("image"), TRIAGE).route)  # the pinned path
     live = _version(led, "live", {"threshold": 0.5})
     seen.append(r.handle(_ask("sure"), TRIAGE).route)
+    student.text = [A, A, A, B]  # confident on its 3 scored samples, but only 3 of the 4 drawn agree
+    seen.append(r.handle(_ask("four choices"), TRIAGE, n=4).route)
+    student.text = A
     led.update_eval(live, {"threshold": 0.99})
     seen.append(r.handle(_ask("unsure"), TRIAGE).route)
     teacher.raise_on.add(OPEN_TEACHER)  # the primary teacher is down: the fallback answers
@@ -1693,6 +1696,7 @@ def test_every_request_row_has_a_route():
         "pinned",
         "pinned",
         "student",
+        "n_choices",
         "confidence",
         "fallback_teacher",
         "degraded",
@@ -1713,6 +1717,7 @@ def test_every_request_row_has_a_route():
             "pinned": 1,
             "student": 1,
             "student_breaker": 1,
+            "n_choices": 1,
         },
         "research-plan": {"pinned": 1},
     }
@@ -2118,6 +2123,34 @@ def test_degraded_answers_are_counted_exactly_under_threads():
         0,
         0,
     )
+
+
+@pytest.mark.req("FR-2.12", "FR-1.14")
+def test_n_choices_when_the_teacher_is_down():
+    """With n > 1 choices, a degraded answer needs n student samples that agree (never fewer choices than asked from the
+    student); otherwise the teacher's error stands. The fallback teacher writes n choices like the teacher would."""
+    clock = FakeClock()
+    a2 = json.dumps({"category": "billing", "priority": "high", "reply": "on it"})
+    down = RecordingProvider(B, raise_on={OPEN_TEACHER})
+    students = {"student-v1": RecordingProvider([A, a2, A])}
+    led, _, r = _teacher_down(down, clock, students=students, on_teacher_failure="serve_student", teacher_breaker_failures=0)
+    out = r.handle(_ask("two"), TRIAGE, n=2)
+    assert (out.route, out.degraded, [ch.text for ch in out.choices]) == ("degraded", "teacher_unavailable", [A, a2])
+    assert (out.completion_tokens, out.usage_breakdown["served"]) == (10, {"in": 10, "out": 10})
+    students["student-v1"].text = [A, A, B, B]  # 2 of 3 agree: not enough for 3 choices
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask("three"), TRIAGE, n=3)
+    assert r.handle(_ask("one"), TRIAGE).route == "degraded"  # one choice: the majority answer stands in as before
+    assert led.db.execute("SELECT COUNT(*) FROM requests WHERE route='degraded'").fetchone()[0] == 2
+
+    fallback = RecordingProvider([B, A])
+    led, _, r = _teacher_down(
+        RecordingProvider(B, raise_on={OPEN_TEACHER}), clock, fallback=fallback, teacher_fallback_model=FALLBACK_TEACHER
+    )
+    out = r.handle(_ask("fallback"), TRIAGE, n=2)
+    assert (out.route, [ch.text for ch in out.choices]) == ("fallback_teacher", [B, A])
+    assert (fallback.calls[0].kwargs["n"], fallback.calls[0].kwargs["temperature"]) == (2, 0.7)
+    assert led.examples() == []  # a fallback teacher's answer is not stored by default
 
 
 @pytest.mark.req("FR-2.12", "NFR-2", "INV-2", "INV-10", "FR-2.9")
