@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS requests (
     latency_ms REAL,
     cost_usd REAL, baseline_cost_usd REAL,
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
-    route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | ...
+    route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
     stored INTEGER             -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
 );
 CREATE TABLE IF NOT EXISTS examples (
@@ -421,13 +421,18 @@ class Ledger:
 
     @_locked
     def stats_by_day(self) -> list[dict[str, Any]]:
+        """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
+        answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
+        `fallback_teacher`: the fallback teacher; ADR 0019)."""
         rows = self.db.execute(
             """SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
                       AVG(latency_ms) latency_ms,
-                      AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree
+                      AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
+                      SUM(route='degraded') degraded,
+                      SUM(route='fallback_teacher') fallback_teacher
                FROM requests GROUP BY day ORDER BY day"""
         ).fetchall()
         out = []
@@ -445,6 +450,8 @@ class Ledger:
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                     "avg_latency_ms": r["latency_ms"],
                     "audit_agreement": r["audit_agree"],
+                    "degraded": int(r["degraded"] or 0),
+                    "fallback_teacher": int(r["fallback_teacher"] or 0),
                 }
             )
         return out

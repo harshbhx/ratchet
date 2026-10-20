@@ -33,6 +33,7 @@ from ratchet.providers import Completion
 from ratchet.release import CANARY_STEPS
 
 OPEN_TEACHER = "nvidia/Nemotron-3-Ultra-550b-a55b"  # distillable (OpenMDW-1.1), the default teacher
+FALLBACK_TEACHER = "nvidia/nemotron-3-super-120b-a12b"  # distillable under another license, and priced lower
 CLOSED_TEACHER = "openai/gpt-4o"  # refused by licenses.require_distillable
 BASE_MODEL = "base-model"
 

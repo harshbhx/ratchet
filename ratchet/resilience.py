@@ -13,12 +13,13 @@ Waits use full jitter, `uniform(0, min(cap_s, base_s * 2**i))`, or the server's 
 sends one. A server wait longer than `cap_s`, or any wait that would end past the deadline, stops the retries: the error
 goes back to the caller at once rather than holding the request for a retry that cannot be in time.
 
-A `Breaker` keeps a failing endpoint from holding every request for its whole timeout (ADR 0015): after
-`failure_threshold` endpoint failures in a row it refuses calls (`CircuitOpen`) for `open_s` seconds, then lets one probe
-through; a failed probe doubles the wait, up to `max_open_s`, and a successful one closes it. A probe still running when
-its call could have timed out (`probe_timeout_s`) is presumed lost and the next caller probes, but its result still
-counts. `endpoint_down` decides what counts: a timeout, no connection, a 5xx, 408 or 429 does; another 4xx is the
-endpoint answering (about this request), and an error that is not an HTTP failure says nothing either way.
+A `Breaker` keeps a failing endpoint from holding every request for its whole timeout (the student's, ADR 0015; the
+teacher's, ADR 0019): after `failure_threshold` endpoint failures in a row it refuses calls (`CircuitOpen`) for `open_s`
+seconds, then lets one probe through; a failed probe doubles the wait, up to `max_open_s`, and a successful one closes
+it. A probe still running when its call could have timed out (`probe_timeout_s`) is presumed lost and the next caller
+probes, but its result still counts. `endpoint_down` decides what counts: a timeout, no connection, a 5xx, 408 or 429
+does; another 4xx is the endpoint answering (about this request), and an error that is not an HTTP failure says nothing
+either way. `teacher_unavailable` decides when a failed teacher call may be answered by a stand-in instead.
 
 httpx is the only import outside the standard library (for its exception types); no retry library is needed.
 """
@@ -49,8 +50,11 @@ UPSTREAM_TIMEOUT = "upstream_timeout"
 UPSTREAM_UNREACHABLE = "upstream_unreachable"
 BAD_RESPONSE = "bad_upstream_response"
 CIRCUIT_OPEN = "circuit_open"
+TEACHER_CIRCUIT_OPEN = "teacher_circuit_open"  # the teacher's breaker refused the call (router.Ratchet._teacher_complete)
 ADAPTER_MISSING = "adapter_missing"
 TOOL_CALLS_UNSUPPORTED = "tool_calls_unsupported"  # the teacher answered with a tool call (router._ask_teacher)
+# Upstream statuses the client caused: its request is too long or malformed for the model. A 400 the client should fix.
+CLIENT_CAUSED = frozenset({400, 413, 422})
 
 # Timeouts other than the read timeout: a healthy endpoint accepts a connection and a request body quickly.
 CONNECT_S = 5.0
@@ -292,10 +296,12 @@ REPORTED_REPEATS = frozenset({1, 10, 100, 1000})
 
 
 class CircuitOpen(UpstreamError):
-    """A call the breaker refused without making it: the endpoint failed too often lately (503 `circuit_open`)."""
+    """A call the breaker refused without making it: the endpoint failed too often lately (503 `circuit_open`, or
+    `teacher_circuit_open` for the teacher's breaker). `retry_after` is how long until the breaker lets its next probe
+    through (`Breaker.retry_in()`), None when it cannot say."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(503, f"the {name} circuit is open", code=CIRCUIT_OPEN)
+    def __init__(self, name: str, retry_after: float | None = None, code: str = CIRCUIT_OPEN) -> None:
+        super().__init__(503, f"the {name} circuit is open", code=code, retry_after=retry_after)
         self.breaker = name
 
 
@@ -329,6 +335,18 @@ def endpoint_down(e: BaseException) -> bool | None:
     else:
         return None
     return status >= 500 or status in (408, 429)
+
+
+def teacher_unavailable(e: BaseException) -> bool:
+    """Whether a failed teacher call, after the provider's retries, means the teacher cannot answer now, so a stand-in (a
+    fallback teacher, or the student in degraded mode) may answer instead: any HTTP failure or an open breaker, except
+    an answer about this request (400, 413, 422: too long or malformed for the model) and a tool call the gateway cannot
+    return. Those are for the client to act on, and a stand-in would hide them. An error that is not an HTTP failure (a
+    bug, the mock world not knowing a request) is never one."""
+    if not isinstance(e, httpx.HTTPError):
+        return False
+    u = as_upstream(e)
+    return u.status not in CLIENT_CAUSED and u.code != TOOL_CALLS_UNSUPPORTED
 
 
 def _breaker_args(failure_threshold: int, open_s: float, max_open_s: float, probe_timeout_s: float = 0.0) -> None:
@@ -504,6 +522,15 @@ class Breaker:
                 self._lost.discard(me)
                 if self._probe == me:
                     self._probe = None
+
+    def retry_in(self) -> float | None:
+        """Seconds until an open breaker lets its next probe through (0 when that time has come), or None when it is not
+        open: closed, or half-open with a probe out, whose result may close it at any moment. What a refused caller can
+        tell its own client to wait (`Retry-After`)."""
+        with self._lock:
+            if self._state != OPEN or self._open_until is None:
+                return None
+            return max(0.0, self._open_until - self.clock())
 
     def _quiet(self) -> bool:
         """Whether the current probe's transitions go unreported: a repeat at the longest wait not in REPORTED_REPEATS.

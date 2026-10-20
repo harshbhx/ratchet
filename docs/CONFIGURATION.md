@@ -8,7 +8,7 @@ All settings come from environment variables. Defaults live in `ratchet/config.p
 |---|---|---|
 | `RATCHET_MODE` | `mock` | `mock`: offline demo with mock models and an in-memory ledger. `live`: real Token Factory teacher and a SQLite file |
 | `RATCHET_DB` | `ratchet.db` | SQLite ledger path (live mode only; mock mode always uses `:memory:`) |
-| `RATCHET_TEACHER_BASE` | `https://api.tokenfactory.nebius.com/v1` | OpenAI-compatible base URL for the teacher, judge and fallback student |
+| `RATCHET_TEACHER_BASE` | `https://api.tokenfactory.nebius.com/v1` | OpenAI-compatible base URL for the teacher, judge and fallback student (and the fallback teacher, unless `RATCHET_TEACHER_FALLBACK_BASE` is set) |
 | `NEBIUS_API_KEY` | empty | Token Factory API key (sent as `Authorization: Bearer …`) |
 | `RATCHET_TEACHER_MODEL` | `nvidia/Nemotron-3-Ultra-550b-a55b` | Teacher model. Must be in the license registry and distillable, or startup fails with `LicenseError` |
 | `RATCHET_JUDGE_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Judge for free-text golden evaluation (`LiveEvaluator`) |
@@ -59,6 +59,19 @@ Read in `ratchet/config.py`; used by `ratchet/providers.py` and `ratchet/resilie
 | `RATCHET_STUDENT_CONNECT_TIMEOUT_S` | `2` | Connect timeout for student calls, in seconds, so an endpoint that is down costs a request two seconds rather than the teacher's five |
 | `RATCHET_STUDENT_BREAKER_FAILURES` | `5` | Student circuit breaker: endpoint failures in a row (a timeout, a connection error, an unreadable or 5xx answer, 408, 429; another 4xx is the endpoint answering and resets the count) after which student calls are skipped and requests go straight to the teacher (route `student_breaker`), so they stop waiting on a dead endpoint. Live and canary on one endpoint share a breaker; shadow calls have their own. `0` = no breaker ([ARCHITECTURE.md](ARCHITECTURE.md#student-circuit-breaker), [ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)) |
 | `RATCHET_STUDENT_BREAKER_COOLDOWN_S` | `30` | Seconds an open student breaker waits before one request probes the endpoint again. A failed probe doubles the wait, up to 300 s (or this value, if larger); a successful probe closes the breaker and resets it. It may be shorter than the student's timeouts: another request probes only once the probe has been out for the longer of the wait and the student call's longest time (connect, write, read and pool timeouts plus 5 s: 2 + 10 + `RATCHET_STUDENT_TIMEOUT_S` + 5 + 5 = 37 s by default), and a probe that fails after that still reopens the breaker and doubles the wait |
+
+## When the teacher is down
+
+Read in `ratchet/config.py`; used by `ratchet/router.py` and `ratchet/gateway.py` ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md), [RUNBOOK.md](RUNBOOK.md#teacher-api-down-token-factory-errors-or-timeouts)). Every teacher call goes through a circuit breaker; the other two features are off by default. On an escalation the order is: the teacher, then the fallback teacher (if set), then the student's own answer (with `serve_student`), then the error.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_TEACHER_BREAKER_FAILURES` | `5` | Teacher circuit breaker: failed teacher calls in a row, each counted after its retries (a timeout, a connection error, an unreadable or 5xx answer, 408, 429; a 400 such as `context_length_exceeded`, a 401 or a tool-call answer is the teacher answering and resets the count), after which the teacher is not called. While it is open, a request that needs the teacher's answer gets **503** `teacher_circuit_open` at once, with the time until the next probe as `Retry-After` (1 to 60 s), and audits and arbitrations are skipped. The fallback teacher has a breaker of its own with the same settings. `0` = no breaker. A negative or non-integer value stops the gateway at startup |
+| `RATCHET_TEACHER_BREAKER_COOLDOWN_S` | `30` | Seconds an open teacher breaker waits before one request probes the teacher again. A failed probe doubles the wait, up to 300 s (or this value, if larger); a successful one closes the breaker. Must be a positive number |
+| `RATCHET_ON_TEACHER_FAILURE` | `error` | What an escalated request gets when the teacher (and the fallback teacher, if set) is unavailable. `error`: the mapped error (502, 503 or 504). `serve_student`: the student's own answer, below its threshold, when it gave at least one valid sample, with route `degraded`, `ratchet.degraded: "teacher_unavailable"` and `X-Ratchet-Degraded: teacher_unavailable`; never stored, audited or shadowed, so it never counts toward a release. Never for a 400, 413 or 422 about the request, a tool-call answer, a request with `tools`, a pinned or teacher-only request, a cold start, or a request whose student call failed. Case and spaces are ignored, empty means `error`, anything else stops the gateway at startup |
+| `RATCHET_TEACHER_FALLBACK_MODEL` | empty | A second teacher that answers a call whose answer is served (escalation, cold start, pinned, teacher-only) when the teacher is unavailable: its retries failed or its breaker is open. Never for audits or arbitrations, a 400 about the request or a tool-call answer. Must be in the license registry and distillable, or startup fails with `LicenseError` (invariant 1). Its answers are served with route `fallback_teacher` and its own model id, priced with its own price (`Settings.price`). When it fails too, the client gets the teacher's error. Empty = none |
+| `RATCHET_TEACHER_FALLBACK_BASE` | empty (`RATCHET_TEACHER_BASE`) | OpenAI-compatible base URL for the fallback teacher. It always uses `NEBIUS_API_KEY` and the teacher's timeouts and retries. Empty or equal to `RATCHET_TEACHER_BASE`: the teacher's client is used |
+| `RATCHET_STORE_FALLBACK_TEACHER` | `0` | `1`: store the fallback teacher's answers as training examples (under the usual rules), each with the fallback model and its own license in its provenance and the BOM. `0`: serve them, store nothing, so golden labels stay the teacher's |
 
 ## Privacy and security
 
@@ -149,7 +162,7 @@ USD per 1M tokens (input / output). These are Token Factory list prices as of Oc
 | `nvidia/Nemotron-3_5-Lightning` | 0.06 | 0.24 | |
 | `student` | 0.06 | 0.24 | Per-token **proxy** for the self-hosted student; real cost is GPU-hours |
 
-`Settings.price(model)` checks for an exact key first, then uses `student` for any name starting with `student`. Anything else gets the teacher's price (or 1.00 / 3.00). To change prices, pass `Settings(prices={...})` in code; there are no price environment variables.
+`Settings.price(model)` checks for an exact key first, then uses `student` for any name starting with `student`. Anything else gets the teacher's price (or 1.00 / 3.00). To change prices, pass `Settings(prices={...})` in code; there are no price environment variables. A fallback teacher's answers (`RATCHET_TEACHER_FALLBACK_MODEL`) are priced with its own entry (the teacher's price when it has none); the all-teacher baseline of such a request is the teacher's price for the same tokens.
 
 ## Release policy (`ratchet/release.py`)
 

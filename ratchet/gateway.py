@@ -59,7 +59,7 @@ from .openai_compat import (
 from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
-from .resilience import RETRY_STATUSES, TOOL_CALLS_UNSUPPORTED, as_upstream
+from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
 from .router import Ratchet
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
@@ -88,7 +88,8 @@ class Runtime:
     `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ...}, each an
     `httpx.BaseTransport` such as `httpx.MockTransport`; the student's also carries adapter reloads), so live mode can
     run offline in tests, and `sleep` the teacher's waits between retries; mock mode has no HTTP providers and ignores
-    both. `clock` times the student breakers, adapter reloads and demo outages (tests pass a fake one).
+    both. A fallback teacher on another endpoint (RATCHET_TEACHER_FALLBACK_BASE) also goes over the teacher's transport.
+    `clock` times the breakers, adapter reloads and demo outages (tests pass a fake one).
 
     `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None."""
 
@@ -125,6 +126,7 @@ class Runtime:
             policy = ReleasePolicy(min_audits=15)
             self.search: SearchTool | None = MockSearch()
             self.guard = Guard(None, 10 * s.scout_runs_per_hour)
+            fallback_teacher: OpenAICompatProvider | None = None  # the mock teacher plays any fallback model too
         else:
             self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True)
             # Timeouts and retries per role (ADR 0014): the teacher is retried within a deadline; the student never is,
@@ -137,6 +139,19 @@ class Runtime:
                 transport=self.transports.get("teacher"),
                 sleep=self.sleep,
             )
+            # The fallback teacher (ADR 0019) has the teacher's key, timeouts and retries. On the teacher's endpoint it
+            # shares the teacher's client (Ratchet's default); on another one it gets its own, on the teacher transport.
+            fallback_teacher = None
+            fallback_base = s.teacher_fallback_base or s.teacher_base
+            if s.teacher_fallback_model and fallback_base.rstrip("/") != teacher.base_url:
+                fallback_teacher = OpenAICompatProvider(
+                    fallback_base,
+                    s.teacher_api_key,
+                    timeout=s.teacher_timeout(),
+                    retry=s.teacher_retry(),
+                    transport=self.transports.get("teacher"),
+                    sleep=self.sleep,
+                )
             self.reloader = None
             if s.student_base:
                 student_transport = self.transports.get("student")
@@ -166,7 +181,16 @@ class Runtime:
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
         reload = self.reloader.request if self.reloader is not None else None
-        self.ratchet = Ratchet(s, self.ledger, teacher, resolver, seed=7, clock=self.clock, on_adapter_missing=reload)
+        self.ratchet = Ratchet(
+            s,
+            self.ledger,
+            teacher,
+            resolver,
+            seed=7,
+            clock=self.clock,
+            on_adapter_missing=reload,
+            fallback_teacher=fallback_teacher,
+        )
         self.gate = ReleaseGate(self.ledger, policy)
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
@@ -432,8 +456,6 @@ def _quota(client: str | None) -> dict[str, str]:
     return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
 
 
-# Upstream statuses the client caused (its request is too long or malformed for the teacher): a 400 it should fix.
-CLIENT_CAUSED = frozenset({400, 413, 422})
 NO_RETRY = {"X-Should-Retry": "false"}
 MAX_UPSTREAM_RETRY_AFTER = 60  # OpenAI SDKs refuse to wait longer than this
 
@@ -450,8 +472,14 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
     cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing. A 502 or 504 the client
     may retry carries the teacher's `Retry-After` when it sent one: the provider stops retrying at a wait over its cap,
     so the client is the one that has to wait. A teacher answer that is a tool call (`router.Ratchet._ask_teacher`, only
-    when an operator allows `tools`) is a 502 `tool_calls_unsupported` no retry can change."""
+    when an operator allows `tools`) is a 502 `tool_calls_unsupported` no retry can change. The teacher's open breaker
+    (`router.Ratchet._teacher_complete`, ADR 0019) is a 503 `teacher_circuit_open` at once, with the time until its next
+    probe as `Retry-After` (1 to 60 s)."""
     u = as_upstream(e)
+    if isinstance(u, CircuitOpen) and u.code == TEACHER_CIRCUIT_OPEN:
+        wait = _client_wait(u.retry_after)
+        message = f"teacher circuit open: recent teacher calls failed, so the gateway is not calling it; retry after {wait} s"
+        return APIError(503, message, "api_error", TEACHER_CIRCUIT_OPEN, headers={"Retry-After": str(wait)})
     if u.code == TOOL_CALLS_UNSUPPORTED:
         message = "The teacher answered with a tool call, which this gateway cannot return yet; send the request without tools."
         return APIError(502, message, "api_error", TOOL_CALLS_UNSUPPORTED, headers=NO_RETRY)
@@ -559,12 +587,15 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         "all_teacher_cost_usd": r.baseline_usd,
         "latency_ms": r.latency_ms,
         "usage_breakdown": r.usage_breakdown,
+        "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
     }
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
     cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
+    if r.degraded:
+        headers["X-Ratchet-Degraded"] = r.degraded
     if not req.stream:
         message = {"role": "assistant", "content": r.text, "refusal": None, "annotations": []}
         payload = {
