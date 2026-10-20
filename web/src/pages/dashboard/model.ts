@@ -80,7 +80,10 @@ export const STATE_TONE: Record<VersionState, Tone> = {
   rolled_back: "bad",
 };
 
-/** Event kinds from docs/RUNBOOK.md, in the order the filter chips show them. */
+/**
+ * Event kinds from docs/RUNBOOK.md, in the order the filter chips show them: training and the release gate first, then
+ * upstream failures and recovery, then the task registry and operations. A kind not listed still shows, after these.
+ */
 export const EVENT_KINDS = [
   "trained",
   "skip",
@@ -91,7 +94,23 @@ export const EVENT_KINDS = [
   "rollback",
   "alert",
   "retired",
+  "rescored",
+  "rescore_failed",
   "student_error",
+  "circuit",
+  "audit_error",
+  "shadow_error",
+  "degraded",
+  "fallback_teacher",
+  "adapter_reloaded",
+  "adapter_reload_failed",
+  "gateway_error",
+  "skip_example",
+  "task_registered",
+  "task_changed",
+  "task_deleted",
+  "task_skipped",
+  "endpoint",
   "fault",
   "warmup",
 ] as const;
@@ -106,7 +125,23 @@ export const EVENT_TONE: Record<string, Tone> = {
   rollback: "bad",
   alert: "warn",
   retired: "neutral",
+  rescored: "neutral",
+  rescore_failed: "warn",
   student_error: "bad",
+  circuit: "warn",
+  audit_error: "warn",
+  shadow_error: "warn",
+  degraded: "warn",
+  fallback_teacher: "warn",
+  adapter_reloaded: "good",
+  adapter_reload_failed: "bad",
+  gateway_error: "bad",
+  skip_example: "outline",
+  task_registered: "neutral",
+  task_changed: "neutral",
+  task_deleted: "neutral",
+  task_skipped: "warn",
+  endpoint: "neutral",
   fault: "warn",
   warmup: "outline",
 };
@@ -121,10 +156,69 @@ export const EVENT_LABEL: Record<string, string> = {
   rollback: "Rollback",
   alert: "Alert",
   retired: "Retired",
+  rescored: "Re-scored",
+  rescore_failed: "Re-score failed",
   student_error: "Student error",
+  circuit: "Circuit breaker",
+  audit_error: "Audit failed",
+  shadow_error: "Shadow call failed",
+  degraded: "Degraded answer",
+  fallback_teacher: "Fallback teacher",
+  adapter_reloaded: "Adapter reloaded",
+  adapter_reload_failed: "Adapter reload failed",
+  gateway_error: "Gateway error",
+  skip_example: "Answer not stored",
+  task_registered: "Task registered",
+  task_changed: "Task changed",
+  task_deleted: "Task deleted",
+  task_skipped: "Task skipped",
+  endpoint: "Endpoint",
   fault: "Fault injected",
   warmup: "Warm-up",
 };
+
+/**
+ * A `circuit` event's detail, `<breaker>: <old>-><new> <reason>`, as `router.Ratchet._circuit_event` writes it. The
+ * grammar is checked against the gateway's real events by tests/test_contract.py::test_resilience_panel_contract,
+ * which reads the `*_RE` literals in this file and resilience-model.ts; keep each on one line.
+ */
+export const CIRCUIT_RE = /^([A-Za-z0-9_.-]+): (closed|open|half_open)->(closed|open|half_open)(?: (.*))?$/;
+
+export type BreakerState = "closed" | "open" | "half_open";
+
+export interface CircuitChange {
+  breaker: string;
+  from: BreakerState;
+  to: BreakerState;
+  reason: string;
+}
+
+export function parseCircuit(detail: string): CircuitChange | null {
+  const m = CIRCUIT_RE.exec(detail);
+  if (!m) return null;
+  return { breaker: m[1], from: m[2] as BreakerState, to: m[3] as BreakerState, reason: m[4] ?? "" };
+}
+
+const CIRCUIT_TONE: Record<BreakerState, Tone> = { open: "bad", half_open: "warn", closed: "good" };
+const CIRCUIT_LABEL: Record<BreakerState, string> = { open: "Breaker opened", half_open: "Breaker probing", closed: "Breaker closed" };
+
+/** An event's tone: its kind's, except a `circuit` event, whose tone is the state it moved to. */
+export function eventTone(e: Pick<LedgerEvent, "kind" | "detail">): Tone {
+  if (e.kind === "circuit") {
+    const c = parseCircuit(e.detail);
+    if (c) return CIRCUIT_TONE[c.to];
+  }
+  return EVENT_TONE[e.kind] ?? "neutral";
+}
+
+/** An event's heading: its kind's label, except a `circuit` event, which says what the breaker did. */
+export function eventLabel(e: Pick<LedgerEvent, "kind" | "detail">): string {
+  if (e.kind === "circuit") {
+    const c = parseCircuit(e.detail);
+    if (c) return CIRCUIT_LABEL[c.to];
+  }
+  return EVENT_LABEL[e.kind] ?? e.kind;
+}
 
 export function eventKey(e: LedgerEvent): string {
   return `${e.ts ?? ""}|${e.day}|${e.kind}|${e.detail}`;
@@ -154,7 +248,7 @@ export function armedFault(s: Stats): { id: number; trained: boolean } | null {
     const e = s.events[i];
     if (e.kind !== "fault") continue;
     const m = /student-v(\d+)/.exec(e.detail);
-    if (!m) return null;
+    if (!m) continue; // another fault (the student outage drill) says nothing about an armed deploy
     const id = Number(m[1]);
     const v = s.versions.find((x) => x.id === id);
     if (!v) return { id, trained: false };

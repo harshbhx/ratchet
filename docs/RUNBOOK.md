@@ -22,7 +22,10 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Model versions | `versions` | Exactly one `live` once past cold start; at most one `shadow` or `canary` |
 | Release log | last 40 `events` | See below |
 | Provenance | `bill_of_materials` | Only distillable teachers and licenses; fingerprint changes as data grows |
-| (not on the dashboard yet) | `cost` | The GPU-hour view and the recommendation; `GET /ratchet/cost` has the full report. The panels above price the student per token (`totals.cost_model`) |
+| Economics | `GET /ratchet/cost` (else the `cost` summary) | The GPU-hour view next to the per-token one, break-even and the recommendation. The other panels price the student per token (`totals.cost_model`) |
+| By task | `tasks` | A task whose share stays at 0 while its neighbours rise: check its spec in the Task registry |
+| Task registry | `GET /ratchet/tasks` | Unregistered names (typos, or tasks to register or pin); `Recalibrating` should clear after the next night. Admin API tasks can be changed here with an admin key, which the page keeps in memory only |
+| Resilience | `circuit` events and `tasks[].routes` | An `Open` breaker that does not close within a few minutes (see [Student endpoint down](#student-endpoint-down-or-adapters-lost), [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts)); a rising `student_breaker` or `student_error` count. The state comes from the last 40 events, so "No recent change" means none of them moved that breaker |
 
 ## Event kinds
 

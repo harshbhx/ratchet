@@ -5,7 +5,7 @@ import type { Workload } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type Busy = "day" | "break" | "reset" | null;
+export type Busy = "day" | "break" | "reset" | "outage" | null;
 
 export interface Notice {
   id: number;

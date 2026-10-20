@@ -40,10 +40,11 @@ These are CSS variables (see `src/styles/globals.css`) exposed as Tailwind color
 - `@/components/ui/badge`: `Badge` with `tone` `neutral | owned | rented | good | warn | bad | outline`.
 - `@/components/ui/who`: `WhoBadge servedBy="student|teacher|tool"`: the one vocabulary for who answered.
 - `@/components/ui/card`, `@/components/ui/section` (`Container`, `Eyebrow`, `H2`, `Lead`), `@/components/ui/code-block` (`CodeBlock`, `tok`), `@/components/ui/stat` (`Stat`, `CountUp`), `@/components/ui/logo`.
-- `@/lib/api`: typed client (`api.stats()`, `api.demoDay()`, `api.breakNext()`, `api.reset()`, `api.scoutExamples()`, `api.scoutStatus()`, `streamScout()`), and all response types.
+- `@/lib/api`: typed client (`api.stats()`, `api.cost()`, `api.tasks()`, `api.task(name)`, `api.validateTask()`, `api.putTask()`, `api.deleteTask()` (these three take the admin key as an argument), `api.demoDay()`, `api.breakNext()`, `api.studentOutage()`, `api.reset()`, `api.scoutExamples()`, `api.scoutStatus()`, `streamScout()`), and all response types. `ApiError.body` holds a parsed error body (a 422's `errors`).
+- `src/pages/dashboard/drawer.tsx`: `Drawer`, `DrawerBody`, `DrawerFooter`, a side sheet for detail and editing (modal, focus kept inside, Escape and a click outside close it, focus returns to the opener).
 - `@/lib/hooks`: `useStats(intervalMs)`, `useTheme()`, `useCountUp()`, `useInterval()`.
 - `@/lib/utils`: `cn`, `fmtUsd`, `fmtPct`, `fmtInt`, `fmtMs`, `domainOf`, `safeHref`, `REPO_URL`, `DOCS_URL`.
-- `@/lib/sim`: the seed-7 simulation table (`SIM_DAYS`, `SIM_TOTAL`, `SIM_SOURCE`).
+- `@/lib/sim`: the seed-7 simulation table (`SIM_DAYS`, `SIM_TOTAL`, `SIM_SOURCE`), the same run's cost report (`SIM_COST_REPORT`, a `CostReport`, so it renders with the code a live report uses) and the command that reproduces it (`SIM_COMMAND`). A test pins every number to a fresh run.
 - Libraries available: `motion/react` (animation; respect reduced motion; `MotionConfig reducedMotion="user"` is set globally), `lucide-react` (icons; there is no GitHub icon), `recharts` (charts), `react-router` v8 (`Link`, `NavLink`).
 
 ## Motion
@@ -70,5 +71,6 @@ Semantic landmarks and headings in order, visible focus (global `:focus-visible`
 - Menlo Ventures: enterprises spent $12.5B on model APIs in 2025 (of $37B generative AI spend): https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/
 - OpenAI stops new self-serve fine-tuning jobs after Jan 6, 2027: https://developers.openai.com/api/docs/deprecations
 - Buyers rank proving ROI (43%) far above price (7%): https://www.nops.io/blog/state-of-tokenomics-2026/
+- Nebius Serverless AI Builders Challenge: the second-place project (an evaluation dashboard) found that "self-hosting only wins on cost at high utilization": https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners
 - Release gate numbers (from `ratchet/release.py`): golden precision ≥ 95%, coverage ≥ 25%, no regression vs live beyond 2 points; shadow needs ≥ 100 would-serve answers; canary 10% → 50% → 100% with ≥ 20 audits per stage; rollback when the 95% Wilson upper bound of audited precision < 92%.
 - Model roles: teacher `nvidia/Nemotron-3-Ultra-550b-a55b` (Token Factory), judge `nvidia/nemotron-3-super-120b-a12b`, fallback student `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` (Token Factory), student `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA (vLLM on a Nebius Serverless Endpoint), Night School on Nebius Serverless Jobs, storage on Nebius Object Storage, search by Tavily.
