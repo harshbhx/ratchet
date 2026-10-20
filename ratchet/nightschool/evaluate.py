@@ -9,6 +9,11 @@ precision, then report:
   coverage  = share of golden requests it would serve (= expected savings)
 Structured fields are compared exactly against the teacher's answer, so there is no judge
 bias on labels. Free-text tasks can add a reference-based judge score.
+
+A row the student endpoint refuses (`REFUSED`: a stored condition it cannot serve, such as
+`tools` on a vLLM without a tool parser or a schema its guided decoding cannot compile, or a
+prompt too long for it) escalates in production (INV-7), so here it scores as a request the
+student would not serve: confidence 0, wrong. It never stops the night.
 """
 
 from __future__ import annotations
@@ -19,11 +24,22 @@ from typing import Any
 
 from .. import tasks
 from ..confidence import STUDENT_SAMPLING, calibrate_threshold, score
-from ..providers import Completion, GenParams, GenPolicy, Provider
+from ..providers import Completion, GenParams, GenPolicy, Provider, UpstreamError
 
 # sample(prompt, n, params): n student samples for a golden row's prompt, under the conditions stored with it (the row's
 # `params`, a dict of ledger.STORED_PARAM_KEYS, or None).
 SampleFn = Callable[[list[dict[str, Any]], int, "dict[str, Any] | None"], list[Completion]]
+
+# Statuses with which a student endpoint refuses one request for what it asks, not every request: vLLM answers 400 for
+# an unsupported parameter or a prompt over its context, 413 and 422 are the same refusal from other servers. An auth
+# error or a missing adapter (401, 403, 404) would refuse every row, so it still stops the night, as does an outage.
+REFUSED = frozenset({400, 413, 422})
+
+
+def refused(e: BaseException) -> bool:
+    """Whether a student call's failure is the endpoint refusing that one request (`REFUSED`)."""
+    return isinstance(e, UpstreamError) and e.status in REFUSED
+
 
 JUDGE_PROMPT = (
     "You compare a CANDIDATE answer with a REFERENCE answer for the same request. "
@@ -36,14 +52,26 @@ def cascade_eval(
     sample: SampleFn, golden_rows: list[dict[str, Any]], samples: int = 3, target_precision: float = 0.97, floor: float = 0.5
 ) -> dict[str, Any]:
     """Calibrate the threshold on one half of the golden set and measure on the other half,
-    so the reported precision is not graded on the data the threshold was tuned on."""
+    so the reported precision is not graded on the data the threshold was tuned on. A row the
+    student endpoint refuses (`refused`) counts as confidence 0 and wrong, as production would
+    escalate it; `refused_n` says how many there were."""
     calib: list[tuple[float, bool]] = []
     test: list[tuple[float, bool]] = []
+    n_refused = 0
     for i, row in enumerate(golden_rows):
         task = tasks.get(row["task"])
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
-        sc = score(task, sample(prompt, samples, row.get("params")))
-        (calib if i % 2 == 0 else test).append((sc.confidence, task.agree(sc.answer.text, ref)))
+        try:
+            got = sample(prompt, samples, row.get("params"))
+        except UpstreamError as e:
+            if not refused(e):
+                raise
+            n_refused += 1
+            point = (0.0, False)
+        else:
+            sc = score(task, got)
+            point = (sc.confidence, task.agree(sc.answer.text, ref))
+        (calib if i % 2 == 0 else test).append(point)
     thr = min(1.01, max(floor, calibrate_threshold(calib, target_precision)))  # 1.01 = serve nothing
     served = [ok for c, ok in test if c >= thr]
     allpts = calib + test
@@ -54,6 +82,7 @@ def cascade_eval(
         "coverage": len(served) / len(test) if test else 0.0,
         "precision": sum(served) / len(served) if served else 0.0,
         "test_n": len(test),
+        "refused_n": n_refused,
     }
 
 
@@ -102,7 +131,12 @@ class LiveEvaluator:
             for row in free_text:
                 prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
                 gen = self.policy.student(GenParams.from_stored(row.get("params")))
-                cand = self.student.complete(prompt, adapter_uri, n=1, temperature=0.0, params=gen)[0].text
+                try:
+                    cand = self.student.complete(prompt, adapter_uri, n=1, temperature=0.0, params=gen)[0].text
+                except UpstreamError as e:
+                    if not refused(e):
+                        raise
+                    continue  # refused: the row does not pass
                 ok += self.judge_score(prompt, ref, cand)
             res["judge_pass_rate"] = ok / len(free_text)
         return res

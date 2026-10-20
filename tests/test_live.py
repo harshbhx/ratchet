@@ -642,7 +642,9 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
         "usage": {"prompt_tokens": 40, "completion_tokens": 12},
     }
 
-    def serve(present: list[str], special: dict[str, httpx.Response]) -> tuple[httpx.Client, list[httpx.Request]]:
+    def serve(
+        present: list[str], special: dict[str, httpx.Response], gen: httpx.Response | None = None
+    ) -> tuple[httpx.Client, list[httpx.Request]]:
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -650,12 +652,16 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
             if request.url.path == "/v1/models":
                 ids = present + ["nvidia/Some-Other-Nemotron", "meta/llama-3.3-70b"]
                 return httpx.Response(200, json={"data": [{"id": m} for m in ids]})
-            model = json.loads(request.content)["model"]
-            return special.get(model) or httpx.Response(200, json=good)
+            body = json.loads(request.content)
+            if "seed" in body and gen is not None:  # the generation-parameter check
+                return gen
+            return special.get(body["model"]) or httpx.Response(200, json=good)
 
         return httpx.Client(transport=httpx.MockTransport(handler)), seen
 
     monkeypatch.setattr(day1_check, "BASE", "https://tf.test/v1")
+    monkeypatch.setattr(day1_check, "TEACHER", want[0])
+    monkeypatch.setattr(day1_check, "TEACHER_MAX_TOKENS", 8192)
     monkeypatch.setattr(day1_check, "KEY", "")
     client, seen = serve(want, {})
     assert day1_check.main(client) == 2 and "Set NEBIUS_API_KEY first." in capsys.readouterr().out and seen == []
@@ -670,17 +676,25 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     assert f"[ok] {want[0]}: json ok, logprobs=yes, finish_reason=stop" in out  # INV-16 stores only these
     assert f"[ok] {want[1]}: json NOT parseable, logprobs=NO" in out  # reported; confidence falls back to agreement
     assert f"[FAIL] {want[2]}: HTTP 500 upstream error" in out and "Some checks failed" in out
-    assert [(r.method, r.url.path) for r in seen] == [("GET", "/v1/models")] + [("POST", "/v1/chat/completions")] * (
-        len(want) - 1
-    )
+    assert [(r.method, r.url.path) for r in seen] == [("GET", "/v1/models")] + [("POST", "/v1/chat/completions")] * len(want)
     assert all(r.headers["authorization"] == "Bearer tf-day1-key" for r in seen)
-    bodies = [json.loads(r.content) for r in seen[1:]]
+    *bodies, gen = [json.loads(r.content) for r in seen[1:]]
     assert [b["model"] for b in bodies] == want[:-1]  # never asks for a missing model
     assert all(b["logprobs"] is True and b["response_format"] == {"type": "json_object"} for b in bodies)
     assert all(b["messages"] == day1_check.PROMPT and b["max_tokens"] == 400 for b in bodies)
+    # Then the teacher with what every escalation sends: the output cap and a client's stop, seed and temperature.
+    assert gen == {"model": want[0], "messages": day1_check.PROMPT, "max_tokens": 8192, **day1_check.GEN_PARAMS}
+    assert f"[ok] {want[0]} accepts max_tokens=8192, stop, seed, temperature" in out
 
     client, _ = serve(want, {})
     assert day1_check.main(client) == 0 and capsys.readouterr().out.rstrip().endswith("All good.")
+
+    # A teacher that refuses the cap (above the model's output limit) fails the check: every escalation would get a 4xx.
+    over = httpx.Response(400, json={"error": {"message": "max_tokens must be at most 4096"}})
+    client, _ = serve(want, {}, gen=over)
+    assert day1_check.main(client) == 1
+    out = capsys.readouterr().out
+    assert f"[FAIL] {want[0]} with max_tokens=8192, stop, seed: HTTP 400" in out and "RATCHET_TEACHER_MAX_TOKENS" in out
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

@@ -13,6 +13,7 @@ the live golden eval and the mock one apply the same rules (ADR 0017).
 
 from __future__ import annotations
 
+import difflib
 import math
 import random
 import re
@@ -91,7 +92,8 @@ PARAM_FIELDS = (
     "reasoning_effort",
 )
 # Fields Ratchet sets itself (model, messages, n, stream) or never sends to a model (the end user's identity, the
-# storage and metadata choices, the legacy function fields): an allowlist that names one is a configuration mistake.
+# storage, metadata and billing-tier choices, the legacy function fields): an allowlist that names one is a configuration
+# mistake.
 NEVER_FORWARDED = frozenset(
     {
         "model",
@@ -103,19 +105,29 @@ NEVER_FORWARDED = frozenset(
         "safety_identifier",
         "store",
         "metadata",
+        "service_tier",
         "functions",
         "function_call",
     }
 )
+# Standard fields no default allowlist forwards, because the gateway cannot use what comes back yet: a tool call (a
+# response has no `message.tool_calls` until the tool-call item, and the student's vLLM runs without a tool parser, so
+# it refuses `tools`) and the teacher's logprobs (a response's `logprobs` is null). An operator can still name them.
+NOT_YET_FORWARDED = frozenset({"tools", "tool_choice", "parallel_tool_calls", "logprobs", "top_logprobs"})
 # RATCHET_TEACHER_PARAMS and RATCHET_STUDENT_PARAMS when unset. The student gets what shapes the answer it must give
-# (length, stops, format, tools), not the client's sampling: its own sampling is fixed (confidence.STUDENT_SAMPLING).
-DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS)
-DEFAULT_STUDENT_PARAMS = frozenset(
-    {"max_tokens", "stop", "seed", "response_format", "tools", "tool_choice", "logit_bias", "top_logprobs"}
-)
+# (length, stops, format), not the client's sampling: its own sampling is fixed (confidence.STUDENT_SAMPLING).
+DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS) - NOT_YET_FORWARDED
+DEFAULT_STUDENT_PARAMS = frozenset({"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"})
 DEFAULT_TEACHER_MAX_TOKENS = 8192  # RATCHET_TEACHER_MAX_TOKENS
 DEFAULT_STUDENT_MAX_TOKENS = 1024  # RATCHET_STUDENT_MAX_TOKENS
-_PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_PARAM_NAME = re.compile(r"[a-z_][a-z0-9_]{0,63}")
+# How close an allowlist name may come to a standard field before it is taken for a typo of it (`max_token`, `stops`,
+# `temprature`) rather than a vendor field: difflib's ratio. Vendor fields such as `top_k` (0.8 to `top_p`) and
+# `min_tokens` (0.8 to `max_tokens`) stay below it.
+_TYPO_RATIO = 0.88
+# The most a client's temperature may be for a teacher answer written under it to be stored: above 1 the teacher samples
+# from a flatter distribution than its own, and at 2 it writes noise.
+STORED_MAX_TEMPERATURE = 1.0
 
 
 @dataclass(frozen=True)
@@ -182,6 +194,22 @@ class GenParams:
             tool_choice=tool_choice if isinstance(tool_choice, (str, dict)) else None,
         )
 
+    def unstorable(self) -> str | None:
+        """Why a teacher answer written under these parameters cannot be a training target or a golden reference, or None
+        when it can. A client's `logit_bias`, a penalty, a temperature above 1 or a vendor field changes what the teacher
+        writes, not only how it samples: a bias of +100 forces a token, so whoever holds an API key could dictate the
+        label. Such an answer is served; it is just not stored (threat model T2). A vendor field counts because Ratchet
+        cannot tell one that only samples (`top_k`) from one that constrains the answer (vLLM's `guided_choice`)."""
+        if self.logit_bias:
+            return "client logit_bias"
+        if self.presence_penalty or self.frequency_penalty:
+            return "client penalty"
+        if self.temperature is not None and self.temperature > STORED_MAX_TEMPERATURE:
+            return "client temperature above 1"
+        if self.extra:
+            return "client vendor field"
+        return None
+
     def only(self, allow: Collection[str]) -> GenParams:
         """These parameters without the fields and extra keys `allow` does not name (the same object when none is left
         out, so the common case allocates nothing)."""
@@ -206,29 +234,35 @@ class GenParams:
 
 
 def parse_param_allowlist(spec: str, default: frozenset[str], name: str = "the parameter allowlist") -> frozenset[str]:
-    """RATCHET_TEACHER_PARAMS / RATCHET_STUDENT_PARAMS: comma-separated request fields to forward. Empty means
-    `default`; `none` forwards nothing; `all` stands for every standard field (`all,top_k` adds a vendor field);
-    `max_completion_tokens` means `max_tokens`. A field Ratchet sets itself or never forwards (`model`, `n`, `user`,
-    `metadata`, ...) or a name that is not an identifier raises ValueError, so a typo stops startup."""
+    """RATCHET_TEACHER_PARAMS / RATCHET_STUDENT_PARAMS: comma-separated request fields to forward, in any case. Empty
+    means `default`; `none` forwards nothing; `all` stands for every standard field (`all,top_k` adds a vendor field);
+    `max_completion_tokens` means `max_tokens`. Raises ValueError, so startup stops, for a field Ratchet sets itself or
+    never forwards (`model`, `n`, `user`, `metadata`, `service_tier`, ...), a name that is not an identifier, and a name
+    so close to a standard field that it is a typo of it (`max_token`, `stops`). Any other name is taken as a vendor
+    field (vLLM's `top_k`) and forwarded when a client sends it."""
     text = spec.strip()
     if not text:
         return default
     if text.lower() == "none":
         return frozenset()
     out: set[str] = set()
-    for item in (part.strip() for part in text.split(",")):
+    for item in (part.strip().lower() for part in text.split(",")):
         if not item:
             continue
-        if item.lower() == "all":
+        if item == "all":
             out.update(PARAM_FIELDS)
             continue
         if item == "max_completion_tokens":
             item = "max_tokens"
-        if item in NEVER_FORWARDED or item.lower() == "none" or not _PARAM_NAME.fullmatch(item):
+        if item in NEVER_FORWARDED or item == "none" or not _PARAM_NAME.fullmatch(item):
             raise ValueError(
                 f"{name}: {item!r} cannot be forwarded; list request fields such as max_tokens, stop or top_k, "
                 "or use 'all' or 'none'"
             )
+        if item not in PARAM_FIELDS:
+            near = difflib.get_close_matches(item, (*PARAM_FIELDS, "max_completion_tokens"), n=1, cutoff=_TYPO_RATIO)
+            if near:
+                raise ValueError(f"{name}: {item!r} is not a request field; did you mean {near[0]!r}?")
         out.add(item)
     return frozenset(out)
 

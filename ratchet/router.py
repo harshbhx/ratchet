@@ -19,7 +19,16 @@ from .config import Settings
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
 from .providers import COMPLETE, Completion, GenParams, GenPlan, Provider, UpstreamError, approx_tokens
 from .redact import redact, redact_json, redact_messages
-from .resilience import BAD_RESPONSE, AdapterMissing, Breaker, CircuitOpen, describe_failure, endpoint_down, names_model
+from .resilience import (
+    BAD_RESPONSE,
+    TOOL_CALLS_UNSUPPORTED,
+    AdapterMissing,
+    Breaker,
+    CircuitOpen,
+    describe_failure,
+    endpoint_down,
+    names_model,
+)
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
 StudentResolver = Callable[[Version], tuple[Provider, str]]
@@ -35,7 +44,9 @@ ROUTES = ("student", "confidence", "cold_start", "pinned", "student_error", "stu
 # finish_reason values a `skip_example` event names as they are; any other is `other`, so the reasons stay a short list.
 _FINISH_NAMED = frozenset({"length", "content_filter", "function_call", "abort", "error", "unknown"})
 # The finish_reason values a client gets (`Result.finish_reason`); any other upstream value is reported as `stop`.
-CLIENT_FINISH = ("stop", "length", "tool_calls", "content_filter")
+# `tool_calls` is not one yet: a response carries no `message.tool_calls` until the tool-call item, and OpenAI clients
+# read that finish as "the calls are in the message". A teacher answer that is a tool call is refused (`_ask_teacher`).
+CLIENT_FINISH = ("stop", "length", "content_filter")
 
 
 def answer_problem(task: tasks.Task, c: Completion) -> str | None:
@@ -297,10 +308,17 @@ class Ratchet:
         """One teacher answer under `gen`. When the reasoning headroom let the teacher write more than the client's
         `max_tokens` (`visible_max`), an answer whose visible part (`tasks.clean_answer`) is longer than that, by
         `approx_tokens`, is marked `length`: over the client's budget, so it is not stored (INV-16) and the client is told.
-        The text is not cut, because the count is an estimate."""
+        The text is not cut, because the count is an estimate. An answer that ends in a tool call (only when an operator
+        allows `tools` for the teacher) raises `UpstreamError` 502 `tool_calls_unsupported`: the provider does not read
+        tool calls yet, so its text is not the whole answer, and a response claiming `tool_calls` without them breaks
+        OpenAI clients. Nothing is stored; an audit or arbitration counts it as a failed optional call."""
         c = self.teacher.complete(
             messages, self.s.teacher_model, temperature=gen.temperature or 0.0, logprobs=bool(gen.logprobs), params=gen
         )[0]
+        if c.finish_reason == "tool_calls":
+            raise UpstreamError(
+                502, "the teacher answered with a tool call, which the gateway cannot return yet", code=TOOL_CALLS_UNSUPPORTED
+            )
         if visible_max is not None and c.finish_reason in COMPLETE:
             if approx_tokens(tasks.clean_answer(task, c.text)) > visible_max:
                 c = replace(c, finish_reason="length")
@@ -332,12 +350,15 @@ class Ratchet:
         """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
         is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
         `Settings.redact_pii`, with identifiers in the messages, the answer and the stored conditions replaced (INV-12).
-        The conditions are the `STORED_PARAM_KEYS` of `gen`, the parameters the teacher answered under. Returns True when
-        an example was inserted or a duplicate's `seen` bumped; False, with a throttled `skip_example` event, when not.
-        A request whose `meta.storable` is False stores nothing and is not a skip."""
+        The conditions are the `STORED_PARAM_KEYS` of `gen`, the parameters the teacher answered under. An answer written
+        under a client's label-altering sampling (`GenParams.unstorable`: `logit_bias`, a penalty, a temperature above 1,
+        a vendor field) is not stored either: the client may choose the answer it gets, not the label everyone's student
+        learns (threat model T2). Returns True when an example was inserted or a duplicate's `seen` bumped; False, with a
+        throttled `skip_example` event, when not. A request whose `meta.storable` is False stores nothing and is not a
+        skip."""
         if meta is not None and not meta.storable:
             return False
-        problem = answer_problem(task, c)
+        problem = (gen.unstorable() if gen is not None else None) or answer_problem(task, c)
         if problem is not None:
             self._skip_example(task, problem)
             return False

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import threading
 import time
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -981,3 +982,63 @@ def test_provider_sends_params_and_its_explicit_arguments_win():
     narrow = OpenAICompatProvider("https://m.test/v1", "k", transport=server.transport, allow=frozenset({"stop"}))
     narrow.complete(_ask(), "m", params=params)
     assert server.calls[-1].json == {"model": "m", "messages": _ask(), "n": 1, "temperature": 0.0, "stop": ["\n\n"]}
+
+
+# ---------- generation parameters (v0.5, FR-1.13, ADR 0017) ----------
+def _gen_settings(**overrides):
+    base = dict(
+        teacher_model=OPEN_TEACHER,
+        samples=3,
+        audit_rate=0.0,
+        teacher_params="",
+        student_params="",
+        teacher_max_tokens=8192,
+        student_max_tokens=1024,
+        teacher_reasoning_headroom=0,
+    )
+    return Settings(**{**base, **overrides})
+
+
+@pytest.mark.req("FR-1.13", "INV-2", "FR-4.1")
+@pytest.mark.parametrize(
+    ("client", "reason"),
+    [
+        pytest.param(GenParams(logit_bias={"123": 100}), "client logit_bias", id="logit-bias"),
+        pytest.param(GenParams(presence_penalty=2.0), "client penalty", id="presence-penalty"),
+        pytest.param(GenParams(frequency_penalty=-0.5), "client penalty", id="negative-frequency-penalty"),
+        pytest.param(GenParams(temperature=2.0), "client temperature above 1", id="temperature-2"),
+        pytest.param(GenParams(extra={"guided_choice": ["refund"]}), "client vendor field", id="vendor-field"),
+        pytest.param(
+            GenParams(temperature=2.0, logit_bias={"123": 100}, presence_penalty=2.0), "client logit_bias", id="all-three"
+        ),
+    ],
+)
+def test_answers_under_label_altering_sampling_are_served_not_stored(client, reason):
+    """The serving teacher gets the client's sampling, so a `logit_bias` of +100, a penalty, a temperature of 2 or a vendor
+    field (which may constrain the answer, like vLLM's `guided_choice`) shapes its answer. The client gets that answer;
+    it is not stored, because whoever holds an API key could otherwise write the label in the shared training set and
+    the golden references (threat model T2). Before, it was stored under teacher provenance with no record of how."""
+    teacher = RecordingProvider("Refunds take five days.")
+    led = Ledger(":memory:")
+    r = Ratchet(_gen_settings(teacher_params="all,guided_choice"), led, teacher, lambda v: (RecordingProvider("x"), "m"))
+    out = r.handle(_ask(), "default", params=client)
+    assert (out.served_by, out.text) == ("teacher", "Refunds take five days.")
+    sent = teacher.calls[0].kwargs["params"]
+    assert (sent.logit_bias, sent.extra) == (client.logit_bias, client.extra)  # served as the client asked
+    assert led.examples() == [] and led.db.execute("SELECT stored FROM requests").fetchone()[0] == 0
+    assert [e["detail"] for e in led.events() if e["kind"] == "skip_example"] == [f"default: {reason}"]
+
+    # The teacher's own sampling stores as before: top_p, a seed, a temperature up to 1, a zero penalty.
+    neutral = GenParams(temperature=1.0, top_p=0.5, seed=3, presence_penalty=0.0, frequency_penalty=0.0)
+    r.handle(_ask(), "default", params=neutral)
+    assert len(led.examples()) == 1
+
+    # An audit drops these fields (temperature 0, providers.CHECK_DROPS), so its answer is stored.
+    led = Ledger(":memory:")
+    _version(led, "live", {"threshold": 0.5})
+    student = RecordingProvider("Refunds take five days.")
+    r = Ratchet(
+        _gen_settings(audit_rate=1.0), led, RecordingProvider("Refunds take five days."), lambda v: (student, v.adapter_uri)
+    )
+    assert r.handle(_ask(), "default", params=replace(client, extra={})).served_by == "student"
+    assert len(led.examples()) == 1

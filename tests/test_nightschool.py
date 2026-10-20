@@ -31,7 +31,7 @@ from ratchet.nightschool import dataset
 from ratchet.nightschool.dataset import FREQUENT
 from ratchet.nightschool.evaluate import LiveEvaluator, cascade_eval
 from ratchet.nightschool.orchestrate import run_night
-from ratchet.providers import GenParams
+from ratchet.providers import GenParams, UpstreamError
 from ratchet.release import CANARY_STEPS, ReleaseGate
 from ratchet.router import Ratchet
 from sim import mock_models
@@ -217,6 +217,63 @@ def test_golden_rows_never_reach_the_trainer_except_frequent():
     # The move happens when the dataset is built; the stored split never changes.
     assert {r["hash"] for r in led.examples(split="golden")} == {e.hash for e in golden}
     assert led.version(rep.version).train_examples == 62
+
+
+@pytest.mark.req("INV-3", "INV-6", "FR-4.3", "FR-1.13")
+def test_every_variant_of_a_prompt_shares_its_split_and_count():
+    """The trainer sees only the messages, so a prompt stored under other conditions (a stop, JSON mode) must land in the
+    same split as the bare one: otherwise a golden prompt and its answer would be trained on (INV-3) and inflate the
+    held-out precision (INV-6). The split comes from the hash without conditions, so a bare example keeps its v0.4 split,
+    and the frequent rule counts every variant of one request together."""
+    conditions = ({"stop": ["\n\n"]}, {"response_format": {"type": "json_object"}}, {"stop": ["END"], "tool_choice": "none"})
+    led = Ledger(":memory:", golden_fraction=0.3)
+    for i in range(200):
+        msgs = [{"role": "user", "content": f"What is the capital of France? #{i}"}]
+        led.add_example("default", msgs, "Paris.", OPEN_TEACHER, "l", "u")
+        for params in conditions:
+            led.add_example("default", msgs, "Paris.", OPEN_TEACHER, "l", "u", params=params)
+    by_prompt: dict[str, set[str]] = {}
+    for r in led.examples():
+        by_prompt.setdefault(r["messages"], set()).add(r["split"])
+    assert len(by_prompt) == 200 and len(led.examples()) == 800  # four examples per prompt
+    assert all(len(splits) == 1 for splits in by_prompt.values())
+    assert {next(iter(s)) for s in by_prompt.values()} == {"golden", "train"}
+    bare = Ledger(":memory:", golden_fraction=0.3)  # the bare example's split is the one it had alone (v0.4)
+    for i in range(200):
+        bare.add_example(
+            "default", [{"role": "user", "content": f"What is the capital of France? #{i}"}], "Paris.", OPEN_TEACHER, "l", "u"
+        )
+    assert {r["hash"]: r["split"] for r in bare.examples()} == {r["hash"]: r["split"] for r in led.examples() if not r["params"]}
+
+    # The same request seen once bare and twice under a format is seen FREQUENT times: every variant moves to training.
+    led = Ledger(":memory:", golden_fraction=1.0)
+    msgs = [{"role": "user", "content": "Is my order late?"}]
+    led.add_example("default", msgs, "No.", OPEN_TEACHER, "l", "u")
+    json_mode = {"response_format": {"type": "json_object"}}
+    led.add_example("default", msgs, '{"late": false}', OPEN_TEACHER, "l", "u", params=json_mode)
+    assert len(dataset.rows(led, "golden")) == 2 and dataset.rows(led, "train") == []
+    led.add_example("default", msgs, '{"late": false}', OPEN_TEACHER, "l", "u", params=json_mode)
+    assert dataset.rows(led, "golden") == [] and len(dataset.rows(led, "train")) == 2
+
+
+@pytest.mark.req("INV-3", "FR-4.1", "FR-5.1")
+def test_examples_cut_at_a_stop_are_held_out_of_training():
+    """train.py renders the messages only, so an answer the client's stop ended early would teach the student to stop
+    there on the bare prompt: such a row is left out of training. As a golden row it still serves the eval, which
+    samples the student under the same stop."""
+    led = Ledger(":memory:", golden_fraction=0.0)
+    for i in range(3):
+        msgs = [{"role": "user", "content": f"List three colours #{i}"}]
+        led.add_example("default", msgs, "Red, green, blue.", OPEN_TEACHER, "l", "u")
+        led.add_example("default", msgs, "Red", OPEN_TEACHER, "l", "u", params={"stop": [","]})
+        led.add_example("default", msgs, '{"c": 1}', OPEN_TEACHER, "l", "u", params={"response_format": {"type": "json_object"}})
+    train = dataset.rows(led, "train")
+    assert len(train) == 6 and all(not (r["params"] or {}).get("stop") for r in train)
+    golden = Ledger(":memory:", golden_fraction=1.0)
+    golden.add_example(
+        "default", [{"role": "user", "content": "List three colours"}], "Red", OPEN_TEACHER, "l", "u", params={"stop": [","]}
+    )
+    assert [r["params"] for r in dataset.rows(golden, "golden")] == [{"stop": [","]}]
 
 
 # ---------- INV-1: closed teachers never reach training ----------
@@ -426,6 +483,34 @@ def test_cascade_eval_passes_row_params_to_sample():
         ("ticket 2", 3, {"response_format": {"type": "json_object"}}),
         ("ticket 3", 3, None),
     ]
+
+
+@pytest.mark.req("FR-5.1", "INV-7", "INV-6")
+def test_cascade_eval_scores_a_refused_row_as_not_served():
+    """A row the student endpoint refuses for what it asks (400, 413, 422: a stored condition it cannot serve, a prompt
+    over its context) escalates in production, so the eval scores it as confidence 0 and wrong and goes on. Any other
+    failure (an auth error, a missing adapter, an outage) refuses every row and still stops the eval."""
+    rows = _golden(6)
+    for i in (1, 2, 4):
+        rows[i]["params"] = {"tools": [{"type": "function", "function": {"name": "lookup"}}]}
+    student = RecordingProvider(RIGHT)
+
+    def sample(prompt, k, params):
+        if params:
+            raise UpstreamError(400, '"auto" tool choice requires --enable-auto-tool-choice')
+        return student.complete(prompt, "m", n=k, logprobs=True)
+
+    res = cascade_eval(sample, rows, samples=3)
+    assert (res["golden_n"], res["refused_n"], res["golden_agreement"]) == (6, 3, 0.5)
+    assert (res["test_n"], res["coverage"], res["precision"]) == (3, 2 / 3, 1.0)  # odd rows 1, 3, 5: row 1 is refused
+    assert cascade_eval(lambda p, k, params: student.complete(p, "m", n=k, logprobs=True), rows)["refused_n"] == 0
+    for status in (401, 404, 429, 503):
+
+        def failing(prompt, k, params, status=status):
+            raise UpstreamError(status, "no")
+
+        with pytest.raises(UpstreamError):
+            cascade_eval(failing, rows, samples=3)
 
 
 @pytest.mark.req("FR-5.1", "FR-1.13", "FR-4.1")

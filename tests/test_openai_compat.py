@@ -763,6 +763,52 @@ def test_a_cut_off_teacher_answer_reaches_the_client_as_length(gw_env, tmp_path,
     assert c.post(CHAT, json={"messages": HI}).json()["choices"][0]["finish_reason"] == "stop"
 
 
+WEATHER = [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}]
+
+
+@pytest.mark.req("FR-1.13", "FR-1.1", "FR-1.6")
+def test_finish_reason_is_never_tool_calls_without_tool_calls(gw_env, tmp_path, monkeypatch):
+    """Ratchet does not return `message.tool_calls` yet, so no response may say `finish_reason: "tool_calls"`: the OpenAI
+    SDK reads that as "the calls are in the message", and the usual agent loop over `message.tool_calls` (None) raises.
+    By default `tools` reach neither model, as in v0.4. A teacher that calls a tool anyway (an operator allowed `tools`)
+    is a 502 `tool_calls_unsupported` with nothing stored; a student sample that ended in a tool call is reported as
+    `stop`."""
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    ask = {"messages": [{"role": "user", "content": "Weather in Paris?"}], "tools": WEATHER, "tool_choice": "auto"}
+
+    def claims_calls_it_lacks(body: dict[str, Any]) -> bool:
+        return any(ch["finish_reason"] == "tool_calls" and not ch["message"].get("tool_calls") for ch in body["choices"])
+
+    teacher = FakeOpenAIServer("I cannot look up the weather.")
+    rt, student = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    r = c.post(CHAT, json=ask)
+    assert r.status_code == 200 and r.json()["choices"][0]["finish_reason"] == "stop" and not claims_calls_it_lacks(r.json())
+    assert not [b for b in _bodies(teacher) + _bodies(student) if "tools" in b or "tool_choice" in b]
+
+    for teacher_params in ("", "all"):  # the default, and an operator who allows tools
+        teacher = FakeOpenAIServer("", finish_reason="tool_calls")
+        rt, _ = _gen_runtime(gw, tmp_path, teacher, teacher_params=teacher_params)
+        monkeypatch.setattr(gw, "rt", rt)
+        r = c.post(CHAT, json=ask)
+        assert r.status_code == 502 and _error(r)["code"] == "tool_calls_unsupported"
+        assert r.headers["x-should-retry"] == "false" and rt.ledger.examples() == []
+        with c.stream("POST", CHAT, json={**ask, "stream": True}) as resp:
+            assert resp.status_code == 502
+    assert _bodies(teacher)[0]["tools"] == WEATHER
+
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher, student_params="all")
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.5})
+    student.finish_reason = "tool_calls"
+    r = c.post(CHAT, json=ask)
+    assert r.json()["ratchet"]["served_by"] == "student" and r.json()["choices"][0]["finish_reason"] == "stop"
+    assert not claims_calls_it_lacks(r.json()) and _bodies(student)[0]["tools"] == WEATHER
+
+
 @pytest.mark.req("FR-1.13", "FR-2.13", "FR-9.2")
 def test_mock_models_honour_max_tokens_and_stop(gw_env):
     """In mock mode the mock teacher stops at a stop string and cuts at max_tokens (about 4 characters a token): a cut

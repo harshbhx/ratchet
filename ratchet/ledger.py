@@ -83,7 +83,8 @@ def target_params(params: Mapping[str, Any] | None) -> dict[str, Any] | None:
 
 def example_hash(task: str, messages: list[dict[str, Any]], params: Mapping[str, Any] | None = None) -> str:
     """The example's identity: its task, messages and stored conditions (`target_params`). The conditions join the hashed
-    object only when there are some, so every v0.4 hash, and with it every golden or train split, stays the same."""
+    object only when there are some, so every v0.4 hash stays the same. The golden or train split comes from the hash
+    without conditions (`Ledger._split`), so it stays the same too, for every variant of a prompt."""
     obj: dict[str, Any] = {"task": task, "messages": messages}
     target = target_params(params)
     if target:
@@ -199,11 +200,10 @@ class Ledger:
         """Store a teacher-labelled example. Returns False if it was a duplicate.
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
-        under other conditions are another example."""
+        under other conditions are another example, in the same split (`_split`)."""
         target = target_params(params)
         h = example_hash(task, messages, target)
-        # Deterministic split from the hash, so an example never moves between sets.
-        split = "golden" if int(h[:8], 16) / 0xFFFFFFFF < self.golden_fraction else "train"
+        split = self._split(example_hash(task, messages) if target else h)  # without conditions, h is the split key
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model,"
@@ -229,6 +229,14 @@ class Ledger:
             self.db.execute("UPDATE examples SET seen = seen + 1 WHERE hash=?", (h,))
             self.db.commit()
             return False
+
+    def _split(self, key: str) -> str:
+        """'golden' or 'train', deterministic from `key`, the hash of an example's task and messages without its
+        conditions (`example_hash(task, messages)`), so an example never moves between sets and every variant of one
+        prompt (with a stop, in JSON mode, or bare) lands in the same one. The trainer sees only the messages, so a golden
+        prompt stored again under other conditions in train would be trained on (INV-3) and inflate held-out precision
+        (INV-6). Without conditions the key is the example's own hash, so every v0.4 split is unchanged."""
+        return "golden" if int(key[:8], 16) / 0xFFFFFFFF < self.golden_fraction else "train"
 
     @_locked
     def examples(self, split: str | None = None, task: str | None = None) -> list[sqlite3.Row]:
