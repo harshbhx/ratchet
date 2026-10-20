@@ -34,7 +34,8 @@ def _rng(*parts: Any) -> random.Random:
 
 def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
     """Scout's planner and writer prompts (pinned to the teacher). A writer request whose facts the mock cannot read
-    raises KeyError, like any request the mock world does not know (the gateway's 400 in mock mode)."""
+    (not JSON, nested too deeply to parse, or the wrong shape) raises KeyError, like any request the mock world does not
+    know (the gateway's 400 in mock mode)."""
     system = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
     user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
     if not isinstance(user, str):
@@ -44,7 +45,7 @@ def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
     if system == WRITE_SYSTEM:
         try:
             return research.write_answer(json.loads(user).get("facts", []))
-        except (ValueError, AttributeError, TypeError) as e:
+        except (ValueError, AttributeError, TypeError, RecursionError) as e:
             raise KeyError("writer request without readable facts") from e
     return None
 

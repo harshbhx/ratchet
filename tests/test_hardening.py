@@ -2,6 +2,7 @@
 issues found while testing the live entry points offline (v0.5)."""
 
 import hashlib
+import json
 import sqlite3
 
 import httpx
@@ -181,6 +182,24 @@ def test_redact_messages_handles_content_parts():
     out = redact_messages(msgs)
     assert out[1]["content"][0]["text"] == "I am [EMAIL]" and out[1]["content"][1]["type"] == "image_url"
     assert msgs[1]["content"][0]["text"] == "I am bob@example.com"  # the caller's copy is untouched
+
+
+@pytest.mark.req("FR-4.7", "INV-12")
+def test_redact_messages_covers_names_refusals_and_call_arguments():
+    """Everything a message can carry from the user to the ledger is redacted, not only its content."""
+    call = {"id": "c1", "type": "function", "function": {"name": "mail", "arguments": '{"to": "bob@example.com"}'}}
+    msgs = [
+        {"role": "user", "content": "hi", "name": "bob@example.com"},
+        {"role": "assistant", "content": None, "refusal": "I will not mail bob@example.com", "tool_calls": [call, "junk"]},
+        {"role": "assistant", "content": None, "function_call": {"name": "mail", "arguments": '{"to": "+44 20 7946 0958"}'}},
+    ]
+    snapshot = json.loads(json.dumps(msgs))
+    c = Counter()
+    out = redact_messages(msgs, c)
+    assert out[0]["name"] == "[EMAIL]" and out[1]["refusal"] == "I will not mail [EMAIL]"
+    assert out[1]["tool_calls"] == [{**call, "function": {"name": "mail", "arguments": '{"to": "[EMAIL]"}'}}, "junk"]
+    assert out[2]["function_call"] == {"name": "mail", "arguments": '{"to": "[PHONE]"}'}
+    assert c == Counter(EMAIL=3, PHONE=1) and msgs == snapshot  # the caller's messages are untouched
 
 
 @pytest.mark.req("FR-4.7")

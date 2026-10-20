@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 305 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 320 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -16,14 +16,14 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_release.py` | 10 (9 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 25 |
+| `tests/test_hardening.py` | 26 |
 | `tests/test_resilience.py` | 8 (6 functions; one has 3 cases) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
-| `tests/test_openai_compat.py` | 116 (22 functions; one has 76 cases, one has 20) |
+| `tests/test_openai_compat.py` | 130 (24 functions; one has 86 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **305** |
+| **Total** | **320** |
 
 There are three layers:
 
@@ -115,6 +115,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_redact_finds_each_kind_and_checks_checksums` | Every label is found in one text (two phones, ten placeholders); a card number that fails Luhn is left alone |
 | `test_redact_leaves_ordinary_text_alone` | Order numbers, dates, times, prices, version strings, page counts, URLs and an ISBN are not touched |
 | `test_redact_messages_handles_content_parts` | OpenAI content-part lists are redacted part by part; non-text parts and the caller's copy are untouched |
+| `test_redact_messages_covers_names_refusals_and_call_arguments` | `name`, an assistant's `refusal`, tool-call and legacy function-call arguments are redacted and counted; a malformed tool call and the caller's copy are untouched |
 | `test_redaction_is_a_no_op_on_the_mock_world` | 2,000 requests from the `mixed` stream and their teacher answers are unchanged by redaction, so mock lookups and simulation numbers cannot shift |
 | `test_examples_are_stored_redacted_but_the_teacher_sees_the_original` | The teacher receives the email and phone; the stored example has `[EMAIL]` and `[PHONE]` in messages and completion, `redactions == 3`, and `privacy_stats` agrees; with `redact_pii=False` the example is stored verbatim |
 | `test_keyring_parses_and_identifies` | Named and bare keys, lookup, short keys, bad names and duplicate names raise; `bearer()` reads `Authorization` and `X-API-Key` |
@@ -200,26 +201,28 @@ OpenAI compatibility of `/v1/chat/completions` (FR-1.5, FR-1.10, US-1; [ADR 0012
 
 | Test | Covers |
 |---|---|
-| `test_bad_request_gets_an_openai_error` (20 cases) | `["hi"]` as messages, `metadata: "x"`, a missing role, role `robot`, temperature 3, `n` 0 and 2, five stop strings, `top_logprobs` without `logprobs`, `json_schema` without a name, bad JSON (incl. `NaN`, 100,000 nested brackets, bad UTF-8, an empty body), a non-object body, a body over 2 MiB (413), 120,001 characters of input, an image part, and a bad field with `stream: true`: each gets the expected status, `code` and `param` in the envelope (with `detail` repeating the message), as JSON, with nothing logged |
-| `test_no_client_mistake_gives_500` | Every value of a request that uses every field (developer role, text parts, tool calls, metadata, `json_schema`, tools) swapped for one of eight kinds of junk, or deleted: always a 400 envelope, never a 500, nothing logged |
+| `test_bad_request_gets_an_openai_error` (22 cases) | `["hi"]` as messages, `metadata: "x"`, a missing role, role `robot`, temperature 3, `n` 0 and 2, five stop strings, `top_logprobs` without `logprobs`, `json_schema` without a name, bad JSON (incl. `NaN`, 100,000 nested brackets, bad UTF-8, an empty body, an unpaired UTF-16 surrogate escaped or as UTF-8 bytes), a non-object body, a body over 2 MiB (413), 120,001 characters of input, an image part, and a bad field with `stream: true`: each gets the expected status, `code` and `param` in the envelope (with `detail` repeating the message), as JSON, with nothing logged |
+| `test_no_client_mistake_gives_500` | Every value of a request that uses every field (developer role, text parts, tool calls, metadata, `json_schema`, tools) swapped for one of eight kinds of junk, or deleted, each judged by `validate_chat_request` first: one it refuses gets that exact `code` and `param` from the gateway; one it accepts gets 200 from a live-mode gateway with the teacher behind `MockTransport`, and the mock's own 400 in mock mode. Never a 500; refused requests are never logged |
+| `test_unpaired_surrogate_is_a_400_in_both_modes` | An unpaired surrogate in a system message sent with a demo ticket, in `name`, in a text part or in a key is 400 `invalid_json` with its JSON path in mock mode, and in live mode the teacher is never called; a valid escaped pair (an emoji) reaches the teacher as one character |
 | `test_unknown_v1_path_and_wrong_method` | Unknown paths under `/v1` and `/openai` get 404 `not_found_error` / `unknown_url` with `Unknown request URL: METHOD path.`; `GET /v1/chat/completions` gets 405 with `Allow: POST`; other paths keep `{"detail": "Not Found"}` |
 | `test_unhandled_error_is_a_500_envelope_and_an_event` | A crash in the cascade gives 500 `api_error` without the exception's message; the ledger gets `gateway_error` events (class name only) at the 1st and 10th crash; a crash outside `/v1` keeps the plain-text 500 and is counted but not written (11th); when the ledger itself fails at the 100th, the 500 still goes out |
-| `test_mock_keyerror_is_400_and_live_keyerror_is_500` | In mock mode an unknown request, a request without a user message and a Scout writer request without JSON facts get 400 `mock mode only answers demo requests`; in live mode a `KeyError` from the cascade is a 500 |
+| `test_mock_keyerror_is_400_and_live_keyerror_is_500` | In mock mode an unknown request, a request without a user message and a Scout writer request without JSON facts (also facts nested too deeply to parse) get 400 `mock mode only answers demo requests`; in live mode a `KeyError` from the cascade is a 500 |
 | `test_framework_validation_errors_become_400_on_v1_only` | FastAPI's validation errors are 400 envelopes with `param` and `code` on `/v1`, and stay 422 `{"detail": [...]}` elsewhere |
 | `test_ratchet_routes_keep_detail` | `/ratchet/redact` (400, and 413 over a 1,000-byte limit), `/ratchet/versions/999/bom`, `/ratchet/demo/day` and `/scout/run` errors keep `{"detail": ...}` |
 | `test_checks_run_in_order_and_refusals_cost_nothing` | With a key and a quota of 1: no key and a bad body is 401 (`invalid_api_key`, `WWW-Authenticate` kept); a bad body with a key is 400 and uses no quota; the next good request is 200; the one after is 429 `rate_limit_error` with `Retry-After` and `X-Should-Retry: false`; a bad body at the quota is still 400; one ledger row |
 | `test_body_limit_declared_and_streamed` | A declared `Content-Length` over the limit is 413; a chunked body driven straight into the ASGI app is refused at the chunk that passes the limit, with the rest left unread; outside `/v1` the 413 is `{"detail"}`; a chunked body under the limit is answered; a client that disconnects halfway through its body gets a 400, not a 500; `0` turns the limit off |
 | `test_message_and_input_limits_come_from_settings` | `RATCHET_MAX_MESSAGES` and `RATCHET_MAX_INPUT_CHARS` (text parts added up) give 400; `0` turns both off |
 | `test_developer_role_reaches_the_teacher_as_system` | A `developer` message reaches the teacher, and the stored example, as `system`; `RATCHET_MERGE_SYSTEM=1` merges the leading system messages with a blank line |
+| `test_dropped_keys_and_redacted_tool_calls_end_to_end` | Keys a message's role does not use (a vendor field, `annotations`, a tool call's `index`) reach neither the teacher nor the stored example; a tool call's arguments reach the teacher as sent and are stored with `[EMAIL]` (INV-12) |
 | `test_text_parts_ticket_matches_the_string_form` | A demo ticket sent as text parts gets the same message back as the string form, and one stored example, seen twice, under the string form's hash |
 | `test_multimodal_parts_go_to_the_teacher_only` | With `RATCHET_TEACHER_MODALITIES=text,image_url` and a live student, an image request reaches the teacher with its parts as sent, never the student, stores nothing and logs one teacher row; a text request on the same gateway is still served by the student; audio stays refused; the mock teacher gives a 400 for the image request |
 | `test_openai_sdk_round_trip_and_errors` | The real OpenAI SDK: a `ChatCompletion` with the `ratchet` block, the same answer for text parts and the developer role, and `BadRequestError` with `code` and `param` for temperature 3 and for too much input |
 | `test_openai_sdk_auth_and_quota_errors` | The SDK raises `AuthenticationError` with code `invalid_api_key`, and `RateLimitError` for the daily quota without retrying it (two requests sent with `max_retries=2`) |
 | `test_chat_request_fields` | `ChatRequest`: `max_completion_tokens` wins over `max_tokens`, a string `stop` becomes a list, `null` fields are unset, unknown fields are kept in `extra`; conversations with tool calls, tool answers, legacy function calls and assistant messages dumped from a response (unused fields `null`) pass; valid forms of every optional field come back as sent; a non-string `metadata` key from a Python caller is refused |
-| `test_validation_rules` (76 cases) | One case per rule in [API.md](API.md#request-validation): the body, messages, roles, content and parts, tool messages, every sampling range, `n`, `stop`, `logit_bias`, `logprobs`, `metadata` (17 keys, long keys and values, task names incl. a trailing newline), `response_format` and `json_schema` (name, type, depth 17, over 64 KB, `strict`), `tools` (129, custom type, names, parameters, over 64 KB), `tool_choice`, the legacy function fields and the string and boolean fields: each gives a 400 with the documented `code` and `param` |
-| `test_limits_and_their_off_switch` | `Limits`: too many messages, too many characters in a string, in text parts and in a refusal part; exactly at the limit passes; `0` means no limit; `max_n` |
-| `test_parse_body_and_error_helpers` | Strict JSON (`Infinity`, `NaN`, bad UTF-8 refused); the status-to-type table for plain HTTP errors (401 `invalid_api_key`, 403, 404 `unknown_url` only for the router's own 404, 409, 413, 429, 5xx `api_error`); headers kept; FastAPI validation errors turned into a JSON path |
-| `test_normalize_rewrites_only_what_it_must` | `developer` → `system` (other keys kept), text parts joined by newlines, a refusal part becomes text, assistant `audio` dropped, plain messages returned as the same objects, the caller's list never changed, and merging leading system messages |
+| `test_validation_rules` (86 cases) | One case per rule in [API.md](API.md#request-validation): the body, messages, roles, content and parts, tool messages, assistant tool calls in full (`id`, `type`, `function.name`, `function.arguments`), legacy `function_call` arguments, `refusal`, every sampling range, `n`, `stop`, `logit_bias`, `logprobs`, `metadata` (17 keys, long keys and values, task names incl. a trailing newline), `response_format` and `json_schema` (name, type, depth 17, over 64 KB, `strict`), `tools` (129, custom type, names, parameters, over 64 KB), `tool_choice`, the legacy function fields and the string and boolean fields: each gives a 400 with the documented `code` and `param` |
+| `test_limits_and_their_off_switch` | `Limits`: too many messages, too many characters in a string, in text parts, in a refusal part, and with `name`, `refusal`, `tool_call_id` or tool and function call arguments counted; keys a role does not use are not counted; exactly at the limit passes; `0` means no limit; `max_n` |
+| `test_parse_body_and_error_helpers` | Strict JSON (`Infinity`, `NaN`, bad UTF-8 refused); a valid surrogate pair is one character (bytes, text, UTF-16), and an unpaired surrogate (escaped, as bytes, in a key, CESU-8) is refused with its JSON path in an error that is itself valid UTF-8; the status-to-type table for plain HTTP errors (401 `invalid_api_key`, 403, 404 `unknown_url` only for the router's own 404, 409, 413, 429, 5xx `api_error`); headers kept; FastAPI validation errors turned into a JSON path |
+| `test_normalize_rewrites_only_what_it_must` | `developer` → `system` (other keys kept), text parts joined by newlines, a refusal part becomes text, keys a role does not use dropped (assistant `audio` and `annotations`, vendor fields, `tool_calls` on a user message), tool and function calls kept to their documented fields, plain messages returned as the same objects, the caller's list never changed, and merging leading system messages |
 | `test_non_text_parts_need_a_teacher_modality` | `image_url`, `input_audio` and `file` parts, and a refusal part from the user, are refused with their exact `param`; with `image_url` allowed the message comes back as sent and `multimodal` is set; `parse_modalities` |
 | `test_normalize_is_identity_on_the_mock_world` | Every mock ticket (every template, drift too) and every Scout request in the research world comes back as the same objects, with or without merging, and passes validation with its task, so example hashes, golden splits and the reference simulation cannot move |
 

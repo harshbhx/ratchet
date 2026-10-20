@@ -13,10 +13,11 @@ from typing import Any
 
 import anyio
 import pytest
-from fakes import OPEN_TEACHER, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
+from ratchet.config import Settings
 from ratchet.ledger import example_hash
 from ratchet.openai_compat import (
     APIError,
@@ -93,6 +94,20 @@ BAD_BODIES = [
     pytest.param(b'{"messages": [{"role": "user", "content": "hi"}], "temperature": NaN}', 400, "invalid_json", None, id="nan"),
     pytest.param(b"[" * 100_000, 400, "invalid_json", None, id="nested-too-deep"),
     pytest.param(b"\xff\xfe\xfd", 400, "invalid_json", None, id="not-utf8"),
+    pytest.param(
+        b'{"messages": [{"role": "user", "content": "hi \\udc00"}]}',
+        400,
+        "invalid_json",
+        "messages[0].content",
+        id="unpaired-surrogate-escape",
+    ),
+    pytest.param(
+        b'{"messages": [{"role": "user", "content": "hi \xed\xa0\x80"}]}',
+        400,
+        "invalid_json",
+        "messages[0].content",
+        id="surrogate-as-utf8-bytes",
+    ),
     pytest.param(b"", 400, "invalid_json", None, id="empty-body"),
     pytest.param(b"[]", 400, "invalid_type", None, id="body-not-an-object"),
     pytest.param(b"{" + b" " * LIMIT + b"}", 413, "request_too_large", None, id="over-the-size-limit"),
@@ -168,40 +183,113 @@ def _apply(body: Any, path: tuple[Any, ...], new: Any) -> Any:
     return body
 
 
+# A request that uses every field Ratchet validates; the sweep below swaps each of its values for junk.
+FULL_REQUEST: dict[str, Any] = {
+    "model": "ratchet",
+    "messages": [
+        {"role": "developer", "content": "be brief"},
+        {"role": "user", "content": [{"type": "text", "text": "hi"}], "name": "u"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "42"},
+    ],
+    "temperature": 0.5,
+    "top_p": 1,
+    "n": 1,
+    "max_tokens": 10,
+    "stop": ["x"],
+    "seed": 1,
+    "logit_bias": {"1": 2},
+    "logprobs": True,
+    "top_logprobs": 1,
+    "metadata": {"ratchet_task": "ticket-triage"},
+    "response_format": {"type": "json_schema", "json_schema": {"name": "t", "schema": {"type": "object"}}},
+    "tools": [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}],
+    "tool_choice": {"type": "function", "function": {"name": "f"}},
+    "stream": False,
+    "user": "u-1",
+}
+
+
 @pytest.mark.req("FR-1.10")
-def test_no_client_mistake_gives_500(gw_env):
-    """Swap every value of a request that uses every field for junk, or delete it: always a 400 envelope, never a 500."""
+def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
+    """Swap every value of a request that uses every field for junk, or delete it, and let validation judge it first.
+    One it refuses gets exactly that 400 (code and param) from the gateway; one it accepts is answered: 200 in live mode
+    (the teacher behind MockTransport), and in mock mode the mock's own 400, which only knows demo requests. Never a
+    500, and a refused request is never logged."""
+    gw = _gateway(gw_env)
+    mock = gw.rt
+    live = gw.Runtime(
+        Settings(mode="live", db_path=str(tmp_path / "live.db"), student_base="", teacher_api_key="", audit_rate=0.0),
+        transports={"teacher": FakeOpenAIServer(A).transport},
+    )
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    mutations = _mutations(FULL_REQUEST)
+    accepted = 0
+    for path, new in mutations:
+        raw = json.dumps(_apply(FULL_REQUEST, path, new))
+        try:
+            normalize_messages(validate_chat_request(parse_body(raw)).messages)
+            expected = None
+        except APIError as e:
+            expected = (e.code, e.param)
+        monkeypatch.setattr(gw, "rt", live)
+        r = c.post(CHAT, content=raw, headers={"content-type": "application/json"})
+        if expected is not None:  # the same refusal in either mode, since validation runs before the cascade
+            assert r.status_code == 400, (path, new, r.status_code, r.text[:200])
+            err = _error(r)
+            assert (err["type"], err["code"], err["param"]) == ("invalid_request_error", *expected), (path, new)
+            continue
+        accepted += 1
+        assert r.status_code == 200, (path, new, r.status_code, r.text[:200])
+        monkeypatch.setattr(gw, "rt", mock)
+        r = c.post(CHAT, content=raw, headers={"content-type": "application/json"})
+        assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"], (path, new)
+    assert 0 < accepted < len(mutations) // 2  # both branches run; most junk is refused
+    assert (mock.gateway_errors, live.gateway_errors) == (0, 0)
+    assert mock.ledger.totals()["requests"] == 0 and live.ledger.totals()["requests"] == accepted
+
+
+@pytest.mark.req("FR-1.10")
+def test_unpaired_surrogate_is_a_400_in_both_modes(gw_env, tmp_path, monkeypatch):
+    """A string Python's JSON decoder accepts but UTF-8 cannot hold (an emoji cut in half, as JavaScript's slice() can
+    leave it) is refused before anything is sent or stored. A valid escaped pair is an ordinary character."""
     gw = _gateway(gw_env)
     c = TestClient(gw.app, raise_server_exceptions=False)
-    full = {
-        "model": "ratchet",
-        "messages": [
-            {"role": "developer", "content": "be brief"},
-            {"role": "user", "content": [{"type": "text", "text": "hi"}], "name": "u"},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function"}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "42"},
-        ],
-        "temperature": 0.5,
-        "top_p": 1,
-        "n": 1,
-        "max_tokens": 10,
-        "stop": ["x"],
-        "seed": 1,
-        "logit_bias": {"1": 2},
-        "logprobs": True,
-        "top_logprobs": 1,
-        "metadata": {"ratchet_task": "ticket-triage"},
-        "response_format": {"type": "json_schema", "json_schema": {"name": "t", "schema": {"type": "object"}}},
-        "tools": [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}],
-        "tool_choice": {"type": "function", "function": {"name": "f"}},
-        "stream": False,
-        "user": "u-1",
-    }
-    for path, new in _mutations(full):
-        r = c.post(CHAT, json=_apply(full, path, new))
-        assert r.status_code == 400, (path, new, r.status_code, r.text[:200])
-        assert _error(r)["type"] == "invalid_request_error"
+    system, user = gw.rt.stream.sample(1).messages()  # a demo ticket: the mock would answer and store it
+
+    def post(messages: Any) -> Any:  # json.dumps escapes a surrogate as \udXXX, as JSON.stringify does
+        return c.post(CHAT, content=json.dumps({"messages": messages}), headers={"content-type": "application/json"})
+
+    cases = [
+        ([{**system, "content": system["content"] + "\ud800"}, user], "messages[0].content"),
+        ([system, {**user, "name": "\ud83d"}], "messages[1].name"),
+        ([system, user, {"role": "user", "content": [{"type": "text", "text": "a\udfff"}]}], "messages[2].content[0].text"),
+        ([system, {**user, "x\udc00": 1}], "messages[1]"),  # in a key: the object's path
+    ]
+    for messages, param in cases:
+        r = post(messages)
+        assert r.status_code == 400, r.text[:200]
+        err = _error(r)
+        assert (err["code"], err["param"]) == ("invalid_json", param) and "unpaired UTF-16 surrogate" in err["message"]
     assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == 0
+
+    # Live mode: the teacher is never called (before the fix, encoding its request body raised: a 500).
+    teacher = FakeOpenAIServer(A)
+    live = gw.Runtime(
+        Settings(mode="live", db_path=str(tmp_path / "live.db"), student_base="", teacher_api_key="", audit_rate=0.0),
+        transports={"teacher": teacher.transport},
+    )
+    monkeypatch.setattr(gw, "rt", live)
+    r = post([{"role": "user", "content": "hi \udc00"}])
+    assert r.status_code == 400 and _error(r)["param"] == "messages[0].content" and teacher.calls == []
+    r = post([{"role": "user", "content": "hi \ud83d\ude00"}])  # a pair is one character, U+1F600
+    assert r.status_code == 200, r.text[:200]
+    assert teacher.calls[0].json["messages"] == [{"role": "user", "content": "hi \U0001f600"}]
+    assert live.gateway_errors == 0 and live.ledger.totals()["requests"] == 1
 
 
 # ---------- the envelope on other errors ----------
@@ -264,6 +352,7 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
         HI,  # not a demo ticket
         [{"role": "system", "content": "only a system message"}],  # no user message at all
         [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "not JSON"}],  # Scout's writer
+        [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "[" * 100_000}],  # too deep to parse
     ]
     for messages in unknown:
         r = c.post(CHAT, json={"messages": messages})
@@ -442,6 +531,27 @@ def test_developer_role_reaches_the_teacher_as_system(gw_env):
     teacher = gw.rt.ratchet.teacher = RecordingProvider(A)
     assert TestClient(gw.app).post(CHAT, json={"messages": msgs}).status_code == 200
     assert teacher.calls[0].messages == [{"role": "system", "content": "Reply with JSON.\n\nBe brief."}, *HI]
+
+
+@pytest.mark.req("FR-1.10", "INV-12")
+def test_dropped_keys_and_redacted_tool_calls_end_to_end(gw_env):
+    """Keys a message's role does not use reach neither the teacher nor the ledger. A tool call's arguments reach the
+    teacher as sent and are stored redacted, like content."""
+    gw = _gateway(gw_env)
+    teacher = gw.rt.ratchet.teacher = RecordingProvider(A)
+    call = {"id": "c1", "type": "function", "function": {"name": "lookup", "arguments": '{"email": "bob@example.com"}'}}
+    msgs = [
+        {"role": "user", "content": "Find my order.", "vendor_note": "call me on +44 20 7946 0958"},
+        {"role": "assistant", "content": None, "tool_calls": [{**call, "index": 0}], "annotations": []},
+        {"role": "tool", "tool_call_id": "c1", "content": "Order 7 ships today."},
+    ]
+    assert TestClient(gw.app).post(CHAT, json={"messages": msgs}).status_code == 200
+    sent = [{"role": "user", "content": "Find my order."}, {"role": "assistant", "content": None, "tool_calls": [call]}, msgs[2]]
+    assert teacher.calls[0].messages == sent
+    (example,) = gw.rt.ledger.examples()
+    stored = json.loads(example["messages"])
+    assert stored[1]["tool_calls"][0]["function"]["arguments"] == '{"email": "[EMAIL]"}'
+    assert "vendor_note" not in example["messages"] and "7946" not in example["messages"] and example["redactions"] == 1
 
 
 @pytest.mark.req("FR-1.1", "FR-1.10", "US-1")
@@ -634,6 +744,67 @@ VALIDATION_CASES = [
         {"messages": [{"role": "assistant", "tool_calls": [1]}]}, "invalid_type", "messages[0].tool_calls[0]", id="call-number"
     ),
     pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"type": "function", "function": {"name": "f", "arguments": ""}}]}]},
+        "missing_required_parameter",
+        "messages[0].tool_calls[0].id",
+        id="call-id-missing",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"id": 5, "type": "function"}]}]},
+        "invalid_type",
+        "messages[0].tool_calls[0].id",
+        id="call-id-number",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "f", "arguments": ""}}]}]},
+        "missing_required_parameter",
+        "messages[0].tool_calls[0].type",
+        id="call-type-missing",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "custom", "custom": {"name": "f"}}]}]},
+        "unsupported_value",
+        "messages[0].tool_calls[0].type",
+        id="call-type-custom",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function"}]}]},
+        "missing_required_parameter",
+        "messages[0].tool_calls[0].function",
+        id="call-function-missing",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": "f"}]}]},
+        "invalid_type",
+        "messages[0].tool_calls[0].function",
+        id="call-function-string",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"arguments": ""}}]}]},
+        "missing_required_parameter",
+        "messages[0].tool_calls[0].function.name",
+        id="call-name-missing",
+    ),
+    pytest.param(
+        {
+            "messages": [
+                {"role": "assistant", "tool_calls": [{"id": "c", "type": "function", "function": {"name": "f", "arguments": {}}}]}
+            ]
+        },
+        "invalid_type",
+        "messages[0].tool_calls[0].function.arguments",
+        id="call-arguments-object",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "function_call": {"name": "f"}}]},
+        "missing_required_parameter",
+        "messages[0].function_call.arguments",
+        id="function-call-arguments",
+    ),
+    pytest.param(
+        {"messages": [{"role": "assistant", "content": "x", "refusal": 5}]}, "invalid_type", "messages[0].refusal", id="refusal"
+    ),
+    pytest.param(
         {"messages": [{"role": "tool", "content": "x"}]}, "missing_required_parameter", "messages[0].tool_call_id", id="tool-id"
     ),
     pytest.param(
@@ -821,6 +992,9 @@ def test_validation_rules(body, code, param):
     assert err["message"]
 
 
+CALL_6 = {"name": "f", "arguments": "12345"}  # a call to f(12345): the name and arguments count, 6 characters
+
+
 @pytest.mark.req("FR-1.10")
 def test_limits_and_their_off_switch():
     small = Limits(max_messages=2, max_input_chars=5)
@@ -832,11 +1006,22 @@ def test_limits_and_their_off_switch():
             "context_length_exceeded",
         ),
         ({"messages": [{"role": "assistant", "content": [{"type": "refusal", "refusal": "123456"}]}]}, "context_length_exceeded"),
+        ({"messages": [{"role": "user", "content": "123", "name": "456"}]}, "context_length_exceeded"),
+        ({"messages": [{"role": "assistant", "content": "123", "refusal": "456"}]}, "context_length_exceeded"),
+        ({"messages": [{"role": "tool", "content": "123", "tool_call_id": "456"}]}, "context_length_exceeded"),
+        (
+            {"messages": [{"role": "assistant", "tool_calls": [{"id": "1", "type": "function", "function": CALL_6}]}]},
+            "context_length_exceeded",
+        ),
+        ({"messages": [{"role": "assistant", "content": None, "function_call": CALL_6}]}, "context_length_exceeded"),
     ):
         with pytest.raises(APIError) as e:
             validate_chat_request(body, small)
         assert (e.value.code, e.value.param) == (code, "messages")
     assert validate_chat_request({"messages": [{"role": "user", "content": "12345"}]}, small).messages  # at the limit
+    # Keys a message's role does not use are dropped by normalize_messages, so they are not counted either.
+    junk = {"role": "user", "content": "12345", "tool_call_id": "x" * 100, "vendor": "y" * 100}
+    assert validate_chat_request({"messages": [junk]}, small).messages == [junk]
     validate_chat_request({"messages": [{"role": "user", "content": "x" * 10}] * 500}, Limits(max_messages=0, max_input_chars=0))
     assert validate_chat_request({"messages": HI, "n": 3}, Limits(max_n=4)).n == 3
 
@@ -848,6 +1033,22 @@ def test_parse_body_and_error_helpers():
         with pytest.raises(APIError) as e:
             parse_body(raw)
         assert (e.value.status, e.value.code) == (400, "invalid_json")
+    # Surrogates: a valid escaped pair is one character, in bytes, text or UTF-16; an unpaired one, escaped or as bytes
+    # (also both halves of a pair as separate UTF-8 sequences, CESU-8), is a 400 naming where it is.
+    assert parse_body(b'{"a": "\\ud83d\\ude00"}') == parse_body('{"a": "\\ud83d\\ude00"}') == {"a": "\U0001f600"}
+    assert parse_body('{"a": "\U0001f600 \\\\ud800"}'.encode("utf-16")) == {"a": "\U0001f600 \\ud800"}  # an escaped backslash
+    for raw, param in (
+        (b'"\\ud800"', None),
+        (b'{"a": [1, {"b": "x\\udc00y"}]}', "a[1].b"),
+        (b'{"a": {"\\ude00": 1}}', "a"),
+        (b'{"a": "\\ude00\\ud83d"}', "a"),  # the wrong way round
+        (b'{"a": ["\xed\xa0\xbd\xed\xb8\x80"]}', "a[0]"),
+        ('{"a": "\ud800"}', "a"),
+    ):
+        with pytest.raises(APIError) as e:
+            parse_body(raw)
+        assert (e.value.status, e.value.code, e.value.param) == (400, "invalid_json", param), raw
+        assert json.dumps(e.value.body(), ensure_ascii=False).encode()  # the error itself is valid UTF-8
     assert http_error(404, "Not Found", method="GET", path="/v1/x").body()["error"]["code"] == "unknown_url"
     assert http_error(404, "no such model").body()["error"] == {
         "message": "no such model",
@@ -904,6 +1105,27 @@ def test_normalize_rewrites_only_what_it_must():
     for merge in (False, True):  # nothing to change: the same list back
         same, _ = normalize_messages(plain, merge_system=merge)
         assert same is plain
+
+    # Keys a role does not use are dropped, like unknown top-level keys, so neither the teacher nor the ledger gets them.
+    call = {"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+    asked = {"role": "assistant", "content": None, "refusal": None, "tool_calls": [call], "annotations": [], "audio": None}
+    answered = {"role": "tool", "tool_call_id": "c1", "content": "42", "name": "f"}
+    msgs = [
+        {"role": "user", "content": "hi", "tool_call_id": "c0", "tool_calls": "junk", "vendor": {"x": [1]}},
+        asked,
+        answered,
+        {"role": "assistant", "content": "ok", "tool_calls": [{**call, "index": 0, "function": {**call["function"], "x": 1}}]},
+        {"role": "assistant", "content": None, "function_call": {"name": "f", "arguments": "{}", "x": 1}},
+    ]
+    out, _ = normalize_messages(msgs)
+    assert out == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "refusal": None, "tool_calls": [call]},
+        answered,
+        {"role": "assistant", "content": "ok", "tool_calls": [call]},
+        {"role": "assistant", "content": None, "function_call": {"name": "f", "arguments": "{}"}},
+    ]
+    assert out[1]["tool_calls"][0] is call and out[2] is answered
 
 
 @pytest.mark.req("FR-1.10")

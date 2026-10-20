@@ -161,7 +161,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-1.7 | API keys / auth on the gateway: named keys (`RATCHET_API_KEYS`), per-key daily quota, cost and savings per client. The demo VM also has an opt-in edge guard in Caddy | Done (v0.4) |
 | FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors where the teacher's answer is needed return HTTP 502 (a failed audit or arbitration does not: FR-2.10) | Done (v0.1.1) |
 | FR-1.9 | Web pages: landing page at `/`, Scout at `/scout`, dashboard at `/dashboard` | Done (v0.2) |
-| FR-1.10 | Strict request validation and normalisation on `/v1/chat/completions`: a malformed request (wrong types, unknown role, bad `metadata`, out-of-range parameters, bad JSON) gets HTTP 400 before any model call, never a 500, and is neither logged nor counted against a quota; errors on `/v1/*` use OpenAI's envelope (`error.message`, `type`, `param`, `code`), so SDKs raise typed exceptions; limits on body size (413), messages per request and input characters; the `developer` role and text content parts are accepted and normalised to the plain form, so they match plain requests in the ledger; other content parts are refused unless the teacher takes them (`RATCHET_TEACHER_MODALITIES`), and then the request goes to the teacher only and is never stored; unknown top-level fields are ignored | Done (v0.5) |
+| FR-1.10 | Strict request validation and normalisation on `/v1/chat/completions`: a malformed request (wrong types, unknown role, bad `metadata`, out-of-range parameters, a malformed tool call, bad JSON or a string that is not valid Unicode) gets HTTP 400 before any model call, never a 500, and is neither logged nor counted against a quota; errors on `/v1/*` use OpenAI's envelope (`error.message`, `type`, `param`, `code`), so SDKs raise typed exceptions; limits on body size (413), messages per request and input characters (every string forwarded in the messages); the `developer` role and text content parts are accepted and normalised to the plain form, so they match plain requests in the ledger; other content parts are refused unless the teacher takes them (`RATCHET_TEACHER_MODALITIES`), and then the request goes to the teacher only and is never stored; unknown top-level fields are ignored, and message keys Ratchet does not use are dropped | Done (v0.5) |
 
 ### 6.2 Cascade and confidence
 
@@ -199,7 +199,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-4.4 | Skip training if fewer than 50 new examples, no golden set, or a release is in flight | Done (v0.1) |
 | FR-4.5 | LoRA fine-tune script with Unsloth (fallback: transformers + peft) for Nemotron 3 Nano 4B | Done (v0.1), untested (on GPU) |
 | FR-4.6 | Run training as a Nebius Serverless Job; wait for adapter in bucket | Done (v0.1), untested (on Nebius) |
-| FR-4.7 | PII redaction before storing examples (pattern-based with checksums; names and addresses not covered) | Done (v0.4); NER-based detection planned |
+| FR-4.7 | PII redaction before storing examples (pattern-based with checksums; names and addresses not covered), in message content, `name`, `refusal` and tool and function call arguments | Done (v0.4); NER-based detection planned |
 
 ### 6.5 Evaluation
 
