@@ -25,6 +25,9 @@ ratchet = ["dashboard.html", "web/*.html", "web/dist/*", "web/dist/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A misspelled marker is an error, so a requirement marker can never be silently ignored.
+addopts = "--strict-markers"
+markers = ["req(*ids): requirement ids this test proves"]
 
 [tool.ruff]
 line-length = 130

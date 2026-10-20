@@ -7,6 +7,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | Doc | What it covers |
 |---|---|
 | [PRD.md](PRD.md) | Product requirements: problem, users, goals, scope, requirements, success metrics |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
 | [RESEARCH_SUMMARY.md](RESEARCH_SUMMARY.md) | Market, competitor and feasibility research, with sources |
 | [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) | Who else does distillation, routing and gateways, and where Ratchet wins |
 | [BUSINESS.md](BUSINESS.md) | Business model, pricing, go-to-market, sizing |
@@ -26,8 +27,8 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | Hosting the public demo on one Nebius CPU VM: setup, mock to live, costs, monitoring, backups, security, teardown |
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Security and privacy: assets, trust boundaries, threats, mitigations present vs planned |
-| [TESTING.md](TESTING.md) | Test suite, simulation method and assumptions, bugs found and fixed, seed robustness, known gaps |
-| [adr/](adr/README.md) | Architecture Decision Records 0001–0010 |
+| [TESTING.md](TESTING.md) | Test suite, requirements traceability check, simulation method and assumptions, bugs found and fixed, seed robustness, known gaps |
+| [adr/](adr/README.md) | Architecture Decision Records 0001–0011 |
 
 ## Hackathon working docs
 

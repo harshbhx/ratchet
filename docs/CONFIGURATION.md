@@ -42,6 +42,7 @@ Read in `ratchet/config.py`; used by `ratchet/gateway.py` and `ratchet/scout/gua
 | Variable | Default | Meaning |
 |---|---|---|
 | `TAVILY_API_KEY` | empty | Tavily Search key for Scout's searcher. In live mode without it, Scout returns 503. The Scout CLI (`python -m ratchet.scout`) also reads it; without it the CLI uses simulated results |
+| `RATCHET_API_KEY` | `unused` | Scout CLI only (`python -m ratchet.scout`): the gateway API key it sends as `Authorization: Bearer`, for a gateway with `RATCHET_API_KEYS` set. `--api-key` overrides it. The gateway itself never reads this variable |
 | `RATCHET_SCOUT_DAILY_BUDGET_USD` | `3.00` | Live mode: most Ratchet spend on Scout runs per UTC day. Once reached, new runs get 429. Mock mode has no budget |
 | `RATCHET_SCOUT_RUNS_PER_HOUR` | `6` | Runs per client IP per rolling hour. Mock mode allows 10 × this value |
 | `RATCHET_SCOUT_MAX_RUNS_PER_DAY` | `30` | Live mode: most runs per UTC day, for all clients together. Caps Tavily credits (about 3 searches per run, so 90 credits a day). Mock mode has no cap |
@@ -114,16 +115,18 @@ USD per 1M tokens (input / output). These are Token Factory list prices as of Oc
 
 ## Release policy (`ratchet/release.py`)
 
-`ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with `RATCHET_<FIELD>` in upper case, e.g. `RATCHET_MIN_AUDITS=30` or `RATCHET_LIVE_FLOOR=0.9` (`ReleasePolicy.from_env()`). Mock mode uses `min_audits=15`.
+`ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode ignores them and uses `min_audits=15`.
 
-| Field | Default | Used in |
-|---|---|---|
-| `min_precision` | 0.95 | Golden gate and shadow: minimum precision of answers the candidate would serve |
-| `min_coverage` | 0.25 | Golden gate: minimum share of golden traffic it would serve |
-| `tolerance` | 0.02 | Max allowed drop vs live (precision and coverage) in the golden gate, and coverage vs live in shadow |
-| `min_shadow` | 100 | Would-serve shadow answers needed before a shadow decision |
-| `min_audits` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert (`RATCHET_MIN_AUDITS`) |
-| `live_floor` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it |
+| Field | Variable | Default | Used in |
+|---|---|---|---|
+| `min_precision` | `RATCHET_MIN_PRECISION` | 0.95 | Golden gate and shadow: minimum precision of answers the candidate would serve |
+| `min_coverage` | `RATCHET_MIN_COVERAGE` | 0.25 | Golden gate: minimum share of golden traffic it would serve |
+| `tolerance` | `RATCHET_TOLERANCE` | 0.02 | Max allowed drop vs live (precision and coverage) in the golden gate, and coverage vs live in shadow |
+| `min_shadow` | `RATCHET_MIN_SHADOW` | 100 | Would-serve shadow answers needed before a shadow decision |
+| `min_audits` | `RATCHET_MIN_AUDITS` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert |
+| `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it |
+
+A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one.
 
 Other constants:
 
