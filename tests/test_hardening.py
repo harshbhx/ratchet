@@ -1,5 +1,6 @@
-"""Regression tests for issues found while documenting v0.1."""
+"""Regression tests for issues found while documenting v0.1, and the v0.4 hardening (privacy, auth, streaming, BOMs)."""
 
+import hashlib
 import sqlite3
 
 import httpx
@@ -116,3 +117,259 @@ def test_policy_from_env(monkeypatch):
     monkeypatch.setenv("RATCHET_LIVE_FLOOR", "0.9")
     p = ReleasePolicy.from_env()
     assert p.min_audits == 42 and p.live_floor == pytest.approx(0.9)
+
+
+# ---------- v0.4 hardening: PII redaction, API keys and quotas, streaming, signed BOMs ----------
+from collections import Counter  # noqa: E402
+
+from ratchet import bom  # noqa: E402
+from ratchet.auth import KeyRing, bearer  # noqa: E402
+from ratchet.redact import redact, redact_messages  # noqa: E402
+
+KEY_A = "a" * 32
+KEY_B = "b-" + "x" * 30
+
+
+@pytest.fixture()
+def gw_env(monkeypatch):
+    """A freshly loaded gateway in mock mode with extra settings; restores the default gateway afterwards."""
+    import importlib
+
+    import ratchet.gateway as gw
+
+    def load(**env):
+        monkeypatch.setenv("RATCHET_MODE", "mock")
+        monkeypatch.setenv("RATCHET_MOCK_WARMUP_DAYS", "0")
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        importlib.reload(gw)
+        return gw
+
+    yield load
+    monkeypatch.undo()
+    importlib.reload(gw)
+
+
+def test_redact_finds_each_kind_and_checks_checksums():
+    c = Counter()
+    text = (
+        "Mail jane.doe@acme.co.uk, call +1 (415) 555-0132 or 98765 43210. Card 4111 1111 1111 1111. "
+        "IBAN DE89 3704 0044 0532 0130 00. SSN 123-45-6789. PAN ABCPE1234F. Aadhaar 2345 6789 0124. "
+        "Host 192.168.1.20. Key sk-abcdefghijklmnopqrstuvwxyz123."
+    )
+    out = redact(text, c)
+    for label in ("EMAIL", "PHONE", "CARD", "IBAN", "SSN", "PAN", "AADHAAR", "IP", "SECRET"):
+        assert f"[{label}]" in out, label
+    assert "jane" not in out and "4111" not in out and "555" not in out
+    assert c["PHONE"] == 2 and sum(c.values()) == 10
+    assert redact("Card 4111 1111 1111 1112") == "Card 4111 1111 1111 1112"  # fails Luhn: not a card
+
+
+def test_redact_leaves_ordinary_text_alone():
+    text = (
+        "Order #48213 on 2026-10-20 at 10:30 cost $1,299.00. Python 3.10, v0.3.0, page 12 of 300, "
+        "1500 requests/day, see https://example.org/a/12345 and ISBN 978-3-16-148410-0."
+    )
+    assert redact(text) == text
+
+
+def test_redact_messages_handles_content_parts():
+    msgs = [
+        {"role": "system", "content": "triage"},
+        {"role": "user", "content": [{"type": "text", "text": "I am bob@example.com"}, {"type": "image_url", "image_url": {}}]},
+    ]
+    out = redact_messages(msgs)
+    assert out[1]["content"][0]["text"] == "I am [EMAIL]" and out[1]["content"][1]["type"] == "image_url"
+    assert msgs[1]["content"][0]["text"] == "I am bob@example.com"  # the caller's copy is untouched
+
+
+def test_redaction_is_a_no_op_on_the_mock_world():
+    """Mock models look requests up by exact text, so redaction must never change a synthetic request."""
+    from sim.mock_models import MockTeacher
+    from sim.world import make_stream
+
+    stream, teacher = make_stream("mixed", seed=3), MockTeacher()
+    for day in range(1, 9):
+        for _ in range(250):
+            item = stream.sample(day)
+            msgs = item.messages()
+            assert redact_messages(msgs) == msgs
+            answer = teacher.complete(msgs, "t")[0].text
+            assert redact(answer) == answer
+
+
+class EchoTeacher:
+    def __init__(self):
+        self.seen = []
+
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+        self.seen.append(messages)
+        return [Completion(text='{"category": "account", "reply": "Mailed you at bob@example.com"}', model=model)]
+
+
+def test_examples_are_stored_redacted_but_the_teacher_sees_the_original():
+    led, teacher = Ledger(":memory:"), EchoTeacher()
+    r = Ratchet(Settings(), led, teacher, lambda v: (None, "x"), seed=1)
+    msgs = [{"role": "user", "content": "Locked out. I'm bob@example.com, phone +44 20 7946 0958"}]
+    r.handle(msgs, "ticket-triage")
+    assert "bob@example.com" in teacher.seen[0][0]["content"]
+    ex = led.examples()[0]
+    assert "bob@example.com" not in ex["messages"] and "[EMAIL]" in ex["messages"] and "[PHONE]" in ex["messages"]
+    assert "[EMAIL]" in ex["completion"] and ex["redactions"] == 3
+    assert led.privacy_stats() == {"examples": 1, "redacted_examples": 1, "placeholders": 3}
+
+    raw = Ledger(":memory:")
+    Ratchet(Settings(redact_pii=False), raw, EchoTeacher(), lambda v: (None, "x")).handle(msgs, "ticket-triage")
+    assert "bob@example.com" in raw.examples()[0]["messages"]
+
+
+def test_keyring_parses_and_identifies():
+    ring = KeyRing(f"acme:{KEY_A}, {KEY_B}")
+    assert ring.enabled and ring.names == ["acme", "key2"]
+    assert ring.identify(KEY_A) == "acme" and ring.identify(KEY_B) == "key2"
+    assert ring.identify("a" * 31) is None and ring.identify(None) is None
+    assert not KeyRing("").enabled
+    for bad in ("acme:short", f"bad name:{KEY_A}", f"acme:{KEY_A},acme:{KEY_B}"):
+        with pytest.raises(ValueError):
+            KeyRing(bad)
+    assert bearer(f"Bearer {KEY_A}") == KEY_A and bearer("Basic abc", "k") == "k" and bearer(None) is None
+
+
+def test_api_keys_protect_v1_and_name_the_client(gw_env):
+    from fastapi.testclient import TestClient
+
+    gw = gw_env(RATCHET_API_KEYS=f"acme:{KEY_A},globex:{KEY_B}")
+    c = TestClient(gw.app)
+    msgs = gw.rt.stream.sample(1).messages()
+    assert c.post("/v1/chat/completions", json={"messages": msgs}).status_code == 401
+    assert c.post("/v1/chat/completions", json={"messages": msgs}, headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert c.get("/v1/models").status_code == 401
+    a = {"Authorization": f"Bearer {KEY_A}"}
+    assert c.post("/v1/chat/completions", json={"messages": msgs}, headers=a).status_code == 200
+    assert c.post("/v1/chat/completions", json={"messages": msgs}, headers={"X-API-Key": KEY_B}).status_code == 200
+    stats = c.get("/ratchet/stats").json()
+    assert {x["client"] for x in stats["clients"]} == {"acme", "globex"}
+    assert stats["security"]["api_keys"] is True
+    assert KEY_A not in str(stats) and KEY_B not in str(stats)  # names only, never keys
+    assert c.get("/scout/examples").status_code == 200  # pages and Scout stay public
+
+
+def test_daily_quota_per_key(gw_env):
+    from fastapi.testclient import TestClient
+
+    gw = gw_env(RATCHET_API_KEYS=f"acme:{KEY_A},globex:{KEY_B}", RATCHET_API_KEY_DAILY_REQUESTS="2")
+    c = TestClient(gw.app)
+    msgs = gw.rt.stream.sample(1).messages()
+    a = {"Authorization": f"Bearer {KEY_A}"}
+    first = c.post("/v1/chat/completions", json={"messages": msgs}, headers=a)
+    assert first.headers["X-RateLimit-Remaining-Requests"] == "1"
+    assert c.post("/v1/chat/completions", json={"messages": msgs}, headers=a).status_code == 200
+    over = c.post("/v1/chat/completions", json={"messages": msgs}, headers=a)
+    assert over.status_code == 429 and over.headers["X-RateLimit-Remaining-Requests"] == "0"
+    b = {"Authorization": f"Bearer {KEY_B}"}
+    assert c.post("/v1/chat/completions", json={"messages": msgs}, headers=b).status_code == 200
+
+
+def test_streaming_matches_the_non_streaming_answer(gw_env):
+    import json as _json
+
+    from fastapi.testclient import TestClient
+
+    gw = gw_env()
+    c = TestClient(gw.app)
+    msgs = gw.rt.stream.sample(1).messages()
+    plain = c.post("/v1/chat/completions", json={"messages": msgs}).json()
+    resp = c.post("/v1/chat/completions", json={"messages": msgs, "stream": True})
+    assert resp.status_code == 200 and resp.headers["content-type"].startswith("text/event-stream")
+    assert resp.headers["X-Ratchet-Served-By"] in ("student", "teacher")
+    lines = [ln[6:] for ln in resp.text.splitlines() if ln.startswith("data: ")]
+    assert lines[-1] == "[DONE]"
+    chunks = [_json.loads(x) for x in lines[:-1]]
+    assert all(ch["object"] == "chat.completion.chunk" for ch in chunks)
+    assert chunks[0]["choices"][0]["delta"]["role"] == "assistant"
+    text = "".join(ch["choices"][0]["delta"].get("content", "") for ch in chunks)
+    assert text == plain["choices"][0]["message"]["content"]
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop" and "served_by" in chunks[-1]["ratchet"]
+    assert len(chunks) > 3
+
+
+def test_signed_bom_per_adapter_verifies_and_detects_tampering(gw_env):
+    import copy
+
+    from fastapi.testclient import TestClient
+
+    seed, pub = bom.keygen()
+    gw = gw_env(RATCHET_BOM_SIGNING_KEY=seed)
+    rep = gw.rt.simulate_day(600, "tickets")
+    assert rep.trained and rep.version is not None
+    c = TestClient(gw.app)
+    doc = c.get(f"/ratchet/versions/{rep.version}/bom").json()
+    m = doc["manifest"]
+    assert m["schema"] == bom.SCHEMA and m["adapter"]["version"] == rep.version
+    assert m["training"]["examples"] > 0 and m["training"]["targets"] == "teacher answers only"
+    assert all(s["distill_ok"] for s in m["sources"]) and m["golden"]["held_out"]
+    assert bom.verify(doc, pub)[0]
+    assert c.get("/ratchet/bom/public-key").json()["public_key"] == pub
+    assert c.get("/ratchet/stats").json()["versions"][0]["bom"] == "signed"
+
+    forged = copy.deepcopy(doc)
+    forged["manifest"]["sources"][0]["license"] = "something else"
+    assert not bom.verify(forged, pub)[0]
+    forged["sha256"] = hashlib.sha256(bom.canonical(forged["manifest"])).hexdigest()  # re-hash: signature still fails
+    assert bom.verify(forged, pub) == (False, "bad signature")
+    _, other = bom.keygen()
+    assert not bom.verify(doc, other)[0]
+    assert c.get("/ratchet/versions/999/bom").status_code == 404
+
+
+def test_bom_is_stored_unsigned_without_a_key_and_cli_verifies(tmp_path, capsys):
+    import json as _json
+
+    from sim.simulate import parser, run
+
+    args = parser().parse_args(["--days", "3", "--requests", "500"])
+    res = run(args, db=str(tmp_path / "s.db"))
+    led = Ledger(str(tmp_path / "s.db"))
+    trained = [v for v in res["versions"]]
+    assert trained
+    for v in trained:
+        doc = led.version_bom(v["id"])
+        assert doc is not None and doc["signature"] is None and bom.verify(doc) == (True, "unsigned; sha256 matches")
+    path = tmp_path / "bom.json"
+    path.write_text(_json.dumps(led.version_bom(trained[0]["id"])))
+    assert bom.main(["verify", str(path)]) == 0
+    assert bom.main(["keygen"]) == 0
+    assert "RATCHET_BOM_SIGNING_KEY=" in capsys.readouterr().out
+
+
+def test_bad_signing_key_fails_at_startup():
+    with pytest.raises(ValueError):
+        bom.Signer("not base64!!")
+    with pytest.raises(ValueError):
+        bom.Signer("c2hvcnQ=")
+
+
+def test_v03_database_gets_v04_columns(tmp_path):
+    db = tmp_path / "v03.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE requests (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, shadow_serve INTEGER);
+        CREATE TABLE examples (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT UNIQUE, seen INTEGER DEFAULT 1);
+        CREATE TABLE versions (id INTEGER PRIMARY KEY AUTOINCREMENT, state TEXT, stage_since INTEGER DEFAULT 0);
+    """)
+    con.commit()
+    con.close()
+    led = Ledger(str(db))
+    assert "client" in {r["name"] for r in led.db.execute("PRAGMA table_info(requests)")}
+    assert "redactions" in {r["name"] for r in led.db.execute("PRAGMA table_info(examples)")}
+    assert "bom" in {r["name"] for r in led.db.execute("PRAGMA table_info(versions)")}
+    assert led.client_requests_since("acme", 0) == 0
+
+
+def test_healthz_stays_public_when_keys_are_on(gw_env):
+    from fastapi.testclient import TestClient
+
+    gw = gw_env(RATCHET_API_KEYS=f"acme:{KEY_A}")
+    c = TestClient(gw.app)
+    assert c.get("/healthz").json()["status"] == "ok"
+    assert c.get("/v1/models").status_code == 401

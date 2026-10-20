@@ -5,7 +5,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY ratchet ./ratchet
 COPY sim ./sim
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[sign]"
 
 ENV RATCHET_MODE=mock \
     RATCHET_DB=/data/ratchet.db

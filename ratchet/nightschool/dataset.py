@@ -38,7 +38,12 @@ def rows(ledger: Ledger, split: str, task: str | None = None) -> list[dict[str, 
                 "task": r["task"],
                 "messages": msgs + [{"role": "assistant", "content": r["completion"]}],
                 "seen": int(r["seen"] or 1),
-                "provenance": {"teacher": r["teacher_model"], "license": r["license"], "hash": r["hash"]},
+                "provenance": {
+                    "teacher": r["teacher_model"],
+                    "license": r["license"],
+                    "hash": r["hash"],
+                    "redactions": int(r["redactions"] or 0),
+                },
             }
         )
     return out

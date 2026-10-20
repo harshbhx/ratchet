@@ -77,6 +77,19 @@ class Settings:
     # Behind a reverse proxy (Caddy on the demo VM), take the client IP from X-Forwarded-For.
     trust_proxy: bool = field(default_factory=lambda: _env("RATCHET_TRUST_PROXY", "0") == "1")
 
+    # Privacy: replace emails, phone numbers, card numbers etc. with placeholders before a
+    # request and the teacher's answer are stored as a training example (ratchet/redact.py).
+    redact_pii: bool = field(default_factory=lambda: _env("RATCHET_REDACT_PII", "1") != "0")
+
+    # Gateway API keys for /v1/*: "name:key,name:key". Empty = no authentication (v0.3 behaviour).
+    api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
+    # Requests per key per UTC day on /v1/chat/completions. 0 = unlimited.
+    api_key_daily_requests: int = field(default_factory=lambda: int(_env("RATCHET_API_KEY_DAILY_REQUESTS", "0")))
+
+    # Ed25519 private key (base64 of the 32-byte seed) that signs each adapter's bill of materials.
+    # Generate one with `python -m ratchet.bom keygen`. Empty = manifests are stored unsigned.
+    bom_signing_key: str = field(default_factory=lambda: _env("RATCHET_BOM_SIGNING_KEY", ""))
+
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
     mock_warmup_days: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_DAYS", "0")))
