@@ -1,7 +1,7 @@
 # CLAUDE.md: `deploy/` (Nebius)
 
 - `train_job.sh <version>`: submits a Nebius Serverless Job that runs `python -m ratchet.nightschool.train` with the bucket mounted at `/data`. If `RATCHET_BUCKET_S3` is set, it polls for `adapters/<version>/adapter_model.safetensors` (up to 2 h) so `ratchet.live` can wait on it.
-- `student_endpoint.sh`: creates a Nebius Serverless Endpoint running `vllm/vllm-openai:v0.18.0-cu130` with `--enable-lora` and `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`, so new adapters are hot-loaded (`POST /v1/load_lora_adapter`) without a restart.
+- `student_endpoint.sh [start|stop]`: `start` (the default) creates a Nebius Serverless Endpoint running `vllm/vllm-openai:v0.18.0-cu130` with `--enable-lora` and `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`, so new adapters are hot-loaded (`POST /v1/load_lora_adapter`) without a restart; `stop` stops it. Each then records the endpoint's uptime for the cost report with `"${RATCHET_PYTHON:-python}" -m ratchet.cost endpoint up|down --source deploy` (ledger at `RATCHET_DB`); that call is best effort and must never fail the deploy (`|| echo note`).
 - `Dockerfile.train`: CUDA 12.8 + torch + Unsloth/TRL/PEFT + Mamba kernels.
 
 - `vm/`: the public demo on one Nebius CPU VM ([docs/DEPLOY_NEBIUS_VM.md](../docs/DEPLOY_NEBIUS_VM.md)).
@@ -21,4 +21,4 @@ Rules:
 - Port 8000 must stay unpublished (`expose`, not `ports`): `--forwarded-allow-ips "*"` is safe only because Caddy is the only thing that can reach the gateway.
 - `nebius compute` flags in `vm/create_vm.sh` were checked against docs.nebius.com on Oct 20, 2026; the lines marked VERIFY ON DAY 1 were not.
 - Pin image versions once the day-1 run passes, and record them in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
-- `tests/test_live.py` runs `bash -n` on every `*.sh` here, `DRY_RUN=1 bash vm/create_vm.sh` (the printed `nebius` commands, never the user data or a token in the repo URL, and each early refusal) and `vm/backup.sh` in mock mode. It also checks that `train_job.sh` reads `/data/night/train.jsonl` and writes `/data/adapters/${VERSION}` (the paths `ratchet.live` uses) and that both scripts default to the gateway's student base model. Keep those in step when you edit a script; they cannot check the `nebius` flags themselves.
+- `tests/test_live.py` runs `bash -n` on every `*.sh` here, `DRY_RUN=1 bash vm/create_vm.sh` (the printed `nebius` commands, never the user data or a token in the repo URL, and each early refusal) and `vm/backup.sh` in mock mode. It also checks that `train_job.sh` reads `/data/night/train.jsonl` and writes `/data/adapters/${VERSION}` (the paths `ratchet.live` uses) and that both scripts default to the gateway's student base model. `tests/test_cost.py` runs `student_endpoint.sh` start and stop with a stub `nebius` on `PATH`: the ledger records the uptime, and a missing ledger leaves the exit code 0. Keep those in step when you edit a script; they cannot check the `nebius` flags themselves.

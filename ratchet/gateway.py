@@ -41,6 +41,7 @@ from . import __version__, live, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import Settings
+from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
@@ -112,6 +113,7 @@ class Runtime:
 
     def reset(self) -> None:
         s = self.settings
+        self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
@@ -214,7 +216,8 @@ class Runtime:
 
     # ----- mock-mode simulation helpers -----
     def simulate_day(self, requests: int, workload: str = "tickets") -> NightReport:
-        """One simulated day of traffic, then one night of Night School (mock mode only)."""
+        """One simulated day of traffic, then one night of Night School (mock mode only), with the day's simulated
+        compute (the endpoint's RATCHET_MOCK_ENDPOINT_HOURS and the night's training job) on the synthetic clock."""
         from sim.world import night_task
 
         stream = self.streams[workload]
@@ -225,7 +228,7 @@ class Runtime:
             self.ratchet.handle(item.messages(), item.task)
             if (i + 1) % ticks == 0:
                 self.tick()
-        return run_night(
+        rep = run_night(
             self.ledger,
             self.fleet,
             self.fleet,
@@ -234,6 +237,9 @@ class Runtime:
             task=night_task(workload),
             signer=self.signer,
         )
+        trained = self.ledger.version(rep.version) if rep.trained and rep.version is not None else None
+        record_simulated_day(self.ledger, self.cost_policy, self.ledger.day, trained)
+        return rep
 
     def warm_up(self, days: int, requests: int) -> None:
         for _ in range(days):
@@ -704,7 +710,8 @@ def stats() -> dict[str, Any]:
         "tasks": led.stats_by_task(),
         "versions": [{**v.__dict__, "bom": boms.get(v.id)} for v in led.versions()],
         "events": led.events()[-40:],
-        "totals": led.totals(),
+        # Every savings figure above and in `totals` prices the student per token; `cost` has the GPU-hour view (NFR-11).
+        "totals": {**led.totals(), "cost_model": "per_token"},
         "bill_of_materials": led.bill_of_materials(),
         "clients": led.stats_by_client(),
         "privacy": {"redaction": rt.settings.redact_pii, **led.privacy_stats()},
@@ -714,6 +721,7 @@ def stats() -> dict[str, Any]:
             "bom_signing": rt.signer is not None,
             "bom_key_id": rt.signer.key_id if rt.signer else None,
         },
+        "cost": stats_block(cost_report(led, rt.settings)),
     }
 
 
@@ -942,6 +950,54 @@ def delete_task(name: str, admin: str = Depends(_admin)) -> dict[str, Any]:
         kept = rt.ledger.example_count(name)
         rt.ledger.event("task_deleted", f"{name} (spec {current.spec_hash}) by {admin}; {kept} stored examples kept")
     return {"deleted": name, "spec_hash": current.spec_hash, "examples_kept": kept}
+
+
+# ----- cost accounting (FR-15.2 to FR-15.4, ADR 0023) -----
+MAX_COST_DAYS = 36500
+MOCK_MAX_API_INTERVALS = 200  # the shared mock demo holds at most this many endpoint records from the API; a reset clears them
+ENDPOINT_KEYS = frozenset({"state", "usd_per_hour", "gpus", "note"})
+MAX_NOTE_CHARS = 200
+
+
+@app.get("/ratchet/cost")
+def cost(days: int | None = None) -> dict[str, Any]:
+    """The cost report (`ratchet.cost.cost_report`): savings per token and by GPU-hours paid, the break-even volume, the
+    crossover with the hosted fallback, observed utilization and a recommendation, for every day or the last `days`
+    ledger days. Public, like /ratchet/stats."""
+    if days is not None and not (1 <= days <= MAX_COST_DAYS):
+        raise HTTPException(400, f"days must be 1 to {MAX_COST_DAYS}")
+    return cost_report(rt.ledger, rt.settings, days=days)
+
+
+@app.post("/ratchet/cost/endpoint")
+def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Record the student endpoint going up or down (`{"state": "up" | "down"}`, optionally `usd_per_hour` per GPU,
+    `gpus` and a `note`), as `python -m ratchet.cost endpoint` does. Needs an admin key (open in mock mode without
+    admin keys, like the other management calls). `up` while up and `down` while down change nothing (`changed`
+    false)."""
+    if not isinstance(body, Mapping):
+        raise HTTPException(400, "the body must be a JSON object")
+    unknown = sorted(set(body) - ENDPOINT_KEYS)
+    if unknown:
+        raise HTTPException(400, f"unknown keys {unknown}; use {sorted(ENDPOINT_KEYS)}")
+    state = body.get("state")
+    if state not in ("up", "down"):
+        raise HTTPException(400, "state must be 'up' or 'down'")
+    rate, gpus, note = body.get("usd_per_hour"), body.get("gpus"), body.get("note")
+    if rate is not None and (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate < math.inf):
+        raise HTTPException(400, "usd_per_hour must be a number of US dollars per GPU-hour, 0 or more")
+    if gpus is not None and (isinstance(gpus, bool) or not isinstance(gpus, int) or not 0 <= gpus <= 1024):
+        raise HTTPException(400, "gpus must be a whole number from 0 to 1024")
+    if note is not None and (not isinstance(note, str) or len(note) > MAX_NOTE_CHARS):
+        raise HTTPException(400, f"note must be text of at most {MAX_NOTE_CHARS} characters")
+    led = rt.ledger
+    if rt.settings.mode == "mock" and state == "up":
+        if sum(1 for iv in led.compute_intervals("student_endpoint") if iv["source"] == "api") >= MOCK_MAX_API_INTERVALS:
+            raise HTTPException(409, f"the mock demo holds at most {MOCK_MAX_API_INTERVALS} endpoint records; reset it")
+    interval, changed, summary = record_endpoint(
+        led, rt.cost_policy, state, "api", rate, gpus, note=redact(note) if note else None, by=admin
+    )
+    return {"state": state, "changed": changed, "interval": interval, "summary": summary}
 
 
 # ----- demo controls (mock mode only) -----

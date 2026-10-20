@@ -113,6 +113,7 @@ Read in `ratchet/config.py`. Ignored in live mode.
 | `RATCHET_MOCK_WARMUP_DAYS` | `0` | Simulated days of `mixed` traffic, each followed by a night, run at startup and on every demo reset, so the demo opens with a trained student. `4` takes about 2 s and leaves a live student that answers about 80–90% of Scout's LLM calls (simulation). Writes a `warmup` event |
 | `RATCHET_MOCK_WARMUP_REQUESTS` | `1500` | Requests per warm-up day |
 | `RATCHET_MOCK_PACE` | `0.25` | `/scout/stream` waits this share of each call's simulated latency (mock Ultra 2.4 s → 0.6 s), so the page shows agents working. `0` = no waiting. `/scout/run` never waits |
+| `RATCHET_MOCK_ENDPOINT_HOURS` | `24` | Hours a day the simulated student endpoint runs, 0 to 24: each simulated day (the demo, the warm-up, `python -m sim.simulate`) records one endpoint interval of this length from the start of the day, on the synthetic clock, for the cost report ([Cost accounting](#cost-accounting)). `0` = no endpoint (as with the hosted fallback). Anything outside 0 to 24 stops startup. Simulation assumption, not a measurement |
 
 ## Demo VM: Caddy (`deploy/vm/`)
 
@@ -147,7 +148,9 @@ Commands are split with `shlex.split` and run without a shell, so pipes and `&&`
 | `RATCHET_TRAIN_PRESET` | `train_job.sh` | `1gpu-8vcpu-32gb` | Nebius preset |
 | `RATCHET_BUCKET_S3` | `train_job.sh` | empty | `s3://bucket[/prefix]`. When set, the script polls for `adapters/<version>/adapter_model.safetensors` (every 30 s, up to 2 h) so it can be used as `RATCHET_TRAIN_CMD` |
 | `RATCHET_S3_ENDPOINT` | `train_job.sh` | empty | S3 endpoint URL for Nebius Object Storage |
-| `RATCHET_STUDENT_KEY` | `student_endpoint.sh` | required | Token clients must send to the endpoint |
+| `RATCHET_STUDENT_KEY` | `student_endpoint.sh` | required (start) | Token clients must send to the endpoint |
+| `RATCHET_ENDPOINT_NAME` | `student_endpoint.sh` | `ratchet-student` | Name of the Serverless Endpoint that `start` creates and `stop` stops |
+| `RATCHET_PYTHON` | `student_endpoint.sh` | `python` | Python that runs `python -m ratchet.cost endpoint up\|down` after `start` and `stop` to record the endpoint's uptime in the ledger at `RATCHET_DB` (best effort: when it fails, the deploy still succeeds and prints the command to run where the ledger is) |
 | `RATCHET_SERVE_PLATFORM` | `student_endpoint.sh` | `gpu-l40s-a` | GPU platform for vLLM |
 | `RATCHET_SERVE_PRESET` | `student_endpoint.sh` | `1gpu-8vcpu-32gb` | Preset for vLLM |
 | `RATCHET_STUDENT_BASE_MODEL` | both | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model |
@@ -162,9 +165,24 @@ USD per 1M tokens (input / output). These are Token Factory list prices as of Oc
 | `nvidia/nemotron-3-super-120b-a12b` | 0.30 | 0.90 | Judge |
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | 0.06 | 0.24 | Fallback student |
 | `nvidia/Nemotron-3_5-Lightning` | 0.06 | 0.24 | |
-| `student` | 0.06 | 0.24 | Per-token **proxy** for the self-hosted student; real cost is GPU-hours |
+| `student` | 0.06 | 0.24 | Per-token **proxy** for the self-hosted student; real cost is GPU-hours ([Cost accounting](#cost-accounting)) |
 
 `Settings.price(model)` checks for an exact key first, then uses `student` for any name starting with `student`. Anything else gets the teacher's price (or 1.00 / 3.00). To change prices, pass `Settings(prices={...})` in code; there are no price environment variables. A fallback teacher's answers (`RATCHET_TEACHER_FALLBACK_MODEL`) are priced with its own entry (the teacher's price when it has none); the all-teacher baseline of such a request is the teacher's price for the same tokens.
+
+## Cost accounting
+
+Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py`, the gateway (`GET /ratchet/cost`, the `cost` block of `/ratchet/stats`, `POST /ratchet/cost/endpoint`), `python -m ratchet.cost`, `python -m ratchet.live night` and the simulator ([ARCHITECTURE.md](ARCHITECTURE.md#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). A bad value (negative, not a number, not a whole number of GPUs, an unknown model) stops startup with `ValueError` naming the variable. Each interval stores the rate it was recorded at, so changing a rate later prices new intervals only; the break-even and the hosted-fallback crossover use the current student rate.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_STUDENT_COST_MODEL` | `per_token` | Which savings the cost report's `headline` (and `/ratchet/stats` `cost.model`) shows: `per_token` (the student priced per token at the hosted Nano price, as every figure since v0.1) or `gpu_hours` (the GPU-hours the student endpoint and the training jobs ran). The report always has both views, and each request's `cost_usd` stays per token in both, so history never moves. Case and spaces are ignored; empty means `per_token` |
+| `RATCHET_STUDENT_GPU_USD_PER_HOUR` | `1.55` | USD per GPU-hour of the student endpoint (an L40S on-demand list price, [nebius.com/prices](https://nebius.com/prices), Oct 2026; **unverified** until the day-1 checks pass). The default for `python -m ratchet.cost endpoint up` and `POST /ratchet/cost/endpoint` when they name no price, for the simulator's intervals, and the price in the break-even |
+| `RATCHET_STUDENT_GPUS` | `1` | GPUs the student endpoint runs on (`1gpu-8vcpu-32gb` in `deploy/student_endpoint.sh`). The endpoint costs this many times the per-GPU price per hour |
+| `RATCHET_TRAIN_GPU_USD_PER_HOUR` | `1.55` | USD per GPU-hour of a training job (the same L40S list price, unverified). Prices the training interval `python -m ratchet.live night` records around each training run, and the simulator's |
+| `RATCHET_TRAIN_GPUS` | `1` | GPUs a training job runs on (`RATCHET_TRAIN_PRESET`) |
+| `RATCHET_PRICES_VERIFIED` | `0` | `1` once `scripts/day1_check.py` passed with a real key and the GPU rates above match your Nebius bill. Until then every report labels its prices "unverified list prices" (invariant 9); with `1` it says "prices confirmed by the operator". Ratchet never sets it by itself |
+
+The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mode demo](#mock-mode-demo)).
 
 ## Release policy (`ratchet/release.py`)
 

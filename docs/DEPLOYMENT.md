@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 615 tests, ~35 s
+pytest -q                                                          # 651 tests, ~70 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -76,7 +76,10 @@ The image is CUDA 12.8 devel with torch, Unsloth, TRL, PEFT and datasets. It als
 export RATCHET_STUDENT_KEY=$(openssl rand -hex 24)
 bash deploy/student_endpoint.sh        # verify on day 1: nebius ai endpoint create --help
 export RATCHET_STUDENT_BASE=https://<endpoint host>/v1
+bash deploy/student_endpoint.sh stop   # when idle: stopped endpoints cost nothing (verify: nebius ai endpoint stop --help)
 ```
+
+After creating and after stopping the endpoint, the script records it in the ledger (`python -m ratchet.cost endpoint up|down`, with `RATCHET_DB` pointing at the ledger file), so the cost report knows the GPU-hours you paid for ([Cost estimates](#4-cost-estimates)). Recording is best effort: run where the ledger is not, the deploy still succeeds and prints the command to run there (or use `POST /ratchet/cost/endpoint` with an admin key).
 
 What the script sets:
 
@@ -153,6 +156,8 @@ Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop
 ## 4. Cost estimates
 
 These are **estimates**: Serverless pricing was not confirmed (on-demand list prices assumed), and token counts depend on your prompts.
+
+Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (or `GET /ratchet/cost`) prices the recorded endpoint and training hours at `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR`, reports savings per token and by GPU-hours paid, the break-even volume, and whether self-hosting pays at your traffic ([RUNBOOK.md](RUNBOOK.md#cost-and-the-self-host-recommendation), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). At about $1.55 per GPU-hour a 24/7 endpoint breaks even near 1,500 student-served requests an hour (unverified list prices); below that, use the hosted fallback or stop the endpoint when idle.
 
 | Item | Assumption | Estimate |
 |---|---|---|

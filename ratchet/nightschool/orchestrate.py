@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .. import bom, tasks
+from ..config import GpuRate
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
 from ..resilience import describe_failure
@@ -59,7 +61,14 @@ def run_night(
     min_new_examples: int = 50,
     task: str | None = None,
     signer: bom.Signer | None = None,
+    train_gpu: GpuRate | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> NightReport:
+    """One night. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
+    recorded as a `training_job` compute interval on `clock` (default `ledger.now`) for the cost report (FR-15.2), and
+    closed whether training returns or raises. It includes the dataset upload and the adapter load around the GPU job,
+    so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
+    (`cost.record_simulated_day`) and pass none."""
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
@@ -102,10 +111,24 @@ def run_night(
         ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
 
     name = f"student-v{len(ledger.versions()) + 1}"
-    adapter_uri = trainer.train(train_rows, base_model, name)
-    vid = ledger.create_version(
-        base_model, adapter_uri, manifest["train_examples"], manifest["dataset_sha256"], {}, state="candidate"
-    )
+    now = clock or ledger.now
+    job = None
+    if train_gpu is not None:
+        job = ledger.compute_start(
+            "training_job", train_gpu.usd_per_gpu_hour, train_gpu.gpus, "night", ts=now(), note=f"adapter {name}"
+        )
+    ended: float | None = None
+    vid: int | None = None
+    try:
+        adapter_uri = trainer.train(train_rows, base_model, name)
+        ended = now()
+        vid = ledger.create_version(
+            base_model, adapter_uri, manifest["train_examples"], manifest["dataset_sha256"], {}, state="candidate"
+        )
+    finally:
+        if job is not None:  # the GPU time is paid whether or not training worked: close the interval, then re-raise
+            note = None if ended is not None else f"adapter {name}: training failed"
+            ledger.compute_stop("training_job", ts=ended if ended is not None else now(), interval_id=job, version=vid, note=note)
     result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
     ledger.update_eval(vid, result)
     # The adapter's own bill of materials, written now, while we know exactly what it was trained on.

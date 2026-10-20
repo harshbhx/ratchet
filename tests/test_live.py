@@ -216,7 +216,7 @@ def test_reload_adapters_loads_live_canary_shadow(tmp_path, monkeypatch):
         live.reload_adapters(s, led, http=httpx.Client(transport=_failing(503)))
 
 
-@pytest.mark.req("FR-8.4", "FR-3.6")
+@pytest.mark.req("FR-8.4", "FR-3.6", "FR-15.2")
 def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     seed, public_key = bom.keygen()
     data, db = tmp_path / "data", tmp_path / "live.db"
@@ -260,6 +260,10 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert bom.verify(doc, public_key)[0]  # signed with RATCHET_BOM_SIGNING_KEY
     assert f"bill of materials: {boms / 'student-v1.json'}" in out and "[trained] v1 on 60 examples" in out
     assert [v.state for v in led.versions()] == ["canary"]  # cold start: straight to canary
+    # The training job's wall-clock time is a compute interval for the cost report (FR-15.2), at the default L40S rate.
+    (job,) = led.compute_intervals("training_job")
+    assert (job["source"], job["version"], job["usd_per_hour"], job["gpus"]) == ("night", 1, 1.55, 1)
+    assert job["end_ts"] is not None and job["end_ts"] >= job["start_ts"]
     # The judge is a teacher call (teacher timeouts and retries). The student keeps its own timeouts but is retried like
     # the teacher, because no teacher stands behind it in the golden eval (ADR 0014). All defaults: _live_env cleared them.
     retry = RetryPolicy(max_attempts=3, deadline_s=180.0)
@@ -288,6 +292,7 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert run.commands == ["bash deploy/train_job.sh student-v1"] and sorted(p.name for p in boms.iterdir()) == [
         "student-v1.json"
     ]
+    assert len(Ledger(str(db)).compute_intervals("training_job")) == 1  # no training, no GPU time
     with pytest.raises(SystemExit, match="unknown command 'bogus'"):
         live.main(["bogus"], provider_factory=factory, run=run, http=_http(vllm))
 
@@ -551,15 +556,19 @@ def test_scout_cli_over_http(gw_env, monkeypatch, capsys):
     assert err.startswith("error: HTTPStatusError") and "401" in err
 
 
-@pytest.mark.req("FR-9.4")
+@pytest.mark.req("FR-9.4", "FR-15.3")
 def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     out = tmp_path / "sim.json"
     simulate.main(["--days", "2", "--requests", "200", "--drift-day", "0", "--workload", "mixed", "--out", str(out)])
     printed = capsys.readouterr().out
     res = json.loads(out.read_text(encoding="utf-8"))
-    assert set(res) == {"days", "nights", "versions", "events", "totals", "bill_of_materials"}
+    assert set(res) == {"days", "nights", "versions", "events", "totals", "bill_of_materials", "cost"}
     assert [d["day"] for d in res["days"]] == [1, 2] and [n["night"] for n in res["nights"]] == [1, 2]
     assert res["totals"]["requests"] == 400 and res["nights"][0]["trained"]
+    # The cost report (FR-15.3): the simulated endpoint ran 24 h a day, and the GPU-hour view is printed as simulation.
+    cost = res["cost"]
+    assert cost["requests"] == 400 and cost["endpoint_hours"] == pytest.approx(48.0) and cost["training_hours"] > 0
+    assert f"recommendation: {cost['recommendation']}" in printed and "by GPU-hours (simulation" in printed
     lines = printed.splitlines()
     assert lines[0].split() == ["day", "student", "escal.", "audit", "ok", "$/1k", "all-Ultra", "saved"]
     assert [ln.split()[0] for ln in lines[1:3]] == ["1", "2"]  # one table row per day

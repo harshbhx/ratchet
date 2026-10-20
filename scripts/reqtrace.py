@@ -694,6 +694,33 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
+    # 6.15 Cost and economics
+    "FR-15.1": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._teacher_only",
+        "ratchet.router:Result",
+        "ratchet.ledger:SCHEMA",
+        "ratchet.ledger:MIGRATIONS",
+    ),
+    "FR-15.2": (
+        "ratchet.ledger:Ledger.compute_start",
+        "ratchet.ledger:Ledger.compute_stop",
+        "ratchet.ledger:Ledger.compute_intervals",
+        "ratchet.cost:segments",
+        "ratchet.cost:record_endpoint",
+        "ratchet.cost:record_simulated_day",
+        "ratchet.gateway:cost_endpoint",
+        "ratchet.nightschool.orchestrate:run_night",
+        "deploy/student_endpoint.sh",
+    ),
+    "FR-15.3": (
+        "ratchet.cost:cost_report",
+        "ratchet.cost:main",
+        "ratchet.ledger:Ledger.cost_by_day",
+        "ratchet.gateway:cost",
+        "ratchet.gateway:stats",
+    ),
+    "FR-15.4": ("ratchet.cost:_recommend", "ratchet.cost:_explain"),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (
@@ -712,6 +739,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval"),
     "NFR-9": ("ratchet.bom:manifest", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
+    "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
@@ -756,6 +784,11 @@ EXEMPT: dict[str, Exempt] = {
     ),
     "FR-11.1": Exempt("live", "deploy/vm/create_vm.sh", "needs a Nebius project; DRY_RUN=1 prints the commands"),
     "FR-11.2": Exempt("live", "deploy/vm/backup.sh", "runs on the demo VM"),
+    "FR-15.2": Exempt(
+        "live",
+        "deploy/student_endpoint.sh",
+        "real endpoint uptime and the `nebius ai endpoint` flags need a Nebius project; recording is tested with a stub",
+    ),
     "NFR-1": Exempt("live", "docs/DEPLOYMENT.md", "p50 latency needs the real student endpoint"),
     "US-10": Exempt("live", "deploy/train_job.sh", "the adapter reaches the customer's bucket only in live mode"),
     "INV-9": Exempt("live", "scripts/day1_check.py", "model ids and prices are confirmed against Token Factory with a real key"),

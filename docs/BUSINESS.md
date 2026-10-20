@@ -99,4 +99,4 @@ Worked example with **unverified list prices** (confirm on day 1): an L40S at ab
 - **At customer volume the case holds.** 10M requests a month is about 14,000 an hour, far above break-even: a GPU running all month (about $1,100 at the price above) is small next to about $9,300 of avoided Ultra spend.
 - **The levers:** serve many LoRA adapters (tasks or customers) from one GPU with vLLM multi-LoRA, scale to zero between bursts, and fall back to the hosted model below break-even.
 
-Ratchet will report this itself: v0.5 adds utilization-aware cost accounting (endpoint uptime and training GPU-hours, savings computed both ways, the break-even volume and a self-host recommendation). See [ROADMAP.md](ROADMAP.md).
+Ratchet reports this itself (v0.5): it records endpoint uptime and training GPU-hours, computes savings both ways, works out the break-even volume and recommends self-hosting, the hosted fallback or scaling to zero (`GET /ratchet/cost`, `python -m ratchet.cost report`; [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)).

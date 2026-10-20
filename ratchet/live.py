@@ -222,6 +222,7 @@ def main(
     http: httpx.Client | None = None,
 ) -> None:
     s = Settings(mode="live")
+    policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -239,7 +240,10 @@ def main(
         judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
         evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples, policy=s.gen_policy())
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
-        rep = run_night(led, NebiusTrainer(s, run, http), evaluator, gate, s.student_base_model, signer=signer)
+        # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
+        rep = run_night(
+            led, NebiusTrainer(s, run, http), evaluator, gate, s.student_base_model, signer=signer, train_gpu=policy.train
+        )
         if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
             doc = led.version_bom(rep.version)
             out = Path(os.environ.get("RATCHET_DATA_DIR", "data")) / "boms" / f"student-v{rep.version}.json"

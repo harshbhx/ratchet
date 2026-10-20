@@ -71,6 +71,8 @@ Ratchet is an OpenAI-compatible gateway. You change one line, your base URL. The
 
 The dashboard shows dollars saved against an all-Ultra baseline, the share of traffic your own model answers, results by task, every version and its state, the release log, and a model bill of materials.
 
+It is honest about cost. A self-hosted endpoint bills GPU-hours whether requests arrive or not, so Ratchet records when the endpoint and the training jobs ran and reports savings two ways: per token, and by the GPU-hours actually paid. It works out the break-even volume (about 1,500 student answers per endpoint hour at unverified L40S list prices) and says plainly when self-hosting does not pay, recommending the hosted fallback or scaling the endpoint to zero instead. At demo volume it says exactly that.
+
 It is built for real traffic: personal data (emails, phones, card numbers, IBANs, national IDs, IPs, API secrets) is replaced with placeholders before anything becomes training data; the gateway takes API keys with a daily quota per client; it streams like the OpenAI API; and every trained adapter ships with its own bill of materials, signed with Ed25519, that anyone with the public key can verify offline.
 
 **Scout** shows Ratchet on agent traffic. It is a team of five research agents that answers a question from the web, and every LLM call goes through Ratchet:
@@ -90,6 +92,7 @@ The Scout page shows each call as it happens, with a badge for who answered it (
 - **Simulator.** Synthetic support tickets, mock models with a learning curve and confident mistakes, and fault injection, so the whole loop is testable without GPUs. A mock research world (8 questions, simulated search results on `example.org`) lets Scout run with no keys.
 - **Scout.** Five agents in Python. Each is a plain OpenAI client pointed at Ratchet, with a task name per call. Triage and reader calls run in parallel threads; the ledger is guarded by a lock. Two tasks are pinned to the teacher in Ratchet's task registry, so open-ended work never trains the student. Events stream to the page with Server-Sent Events. A budget guard (daily spend cap, daily run cap, per-IP hourly limit) protects the public demo.
 - **Web app.** A story page, the Scout page and the dashboard in React (Vite, Tailwind, motion, recharts), built into the Python package so the gateway serves it without Node. Light and dark mode. The dashboard's Trust and privacy panel has a live redactor: paste any text and see what would be stored.
+- **Cost accounting.** Each request's cost is split into student and teacher spend; a compute-time ledger records endpoint uptime and training GPU-hours (CLI, an admin-key endpoint, the deploy script, Night School); `GET /ratchet/cost` and `python -m ratchet.cost report` give savings per token and by GPU-hours, the break-even and hosted-fallback crossover volumes, and a recommendation.
 - **Privacy and provenance.** Pattern-based PII redaction with checksums (Luhn, mod-97, Verhoeff) before examples are stored. Named API keys with per-key quotas and per-client savings. A `ratchet.bom/v1` document per adapter with an Ed25519 signature and an offline verifier (`python -m ratchet.bom verify`).
 - **Hosting.** One Nebius CPU VM running the gateway and Caddy (automatic HTTPS) with Docker Compose, set up by a cloud-init script.
 
@@ -119,12 +122,13 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 615 tests (98% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 651 tests (98% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
 - Live run: [LIVE NUMBER]% cost reduction, [LIVE NUMBER]% audited precision, [LIVE NUMBER] ms median student latency vs [LIVE NUMBER] ms for Ultra.
 - License-clean provenance with a signed bill of materials for every adapter.
+- A cost report that admits when self-hosting loses money: in simulation, 1,500 requests a day save money per token and lose it by GPU-hours on a 24/7 endpoint, and the report recommends the hosted fallback. Live: [LIVE NUMBER] endpoint hours and [LIVE NUMBER]% savings by GPU-hours paid.
 
 ## What we learned
 

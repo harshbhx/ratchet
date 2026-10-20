@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -27,6 +28,9 @@ CREATE TABLE IF NOT EXISTS requests (
     shadow_version INTEGER, shadow_serve INTEGER, shadow_agree INTEGER,
     latency_ms REAL,
     cost_usd REAL, baseline_cost_usd REAL,
+    student_cost_usd REAL,     -- cost_usd's student part (live and shadow samples, per token); NULL before v0.5
+    teacher_cost_usd REAL,     -- cost_usd's teacher part (escalation, audit, arbitration, pinned); NULL before v0.5
+    student_in_tokens INTEGER, student_out_tokens INTEGER, -- the student calls' tokens (prices the hosted fallback)
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
     route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
     stored INTEGER             -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
@@ -55,6 +59,16 @@ CREATE TABLE IF NOT EXISTS versions (
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, kind TEXT, detail TEXT
+);
+CREATE TABLE IF NOT EXISTS compute_intervals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT,                 -- COMPUTE_KINDS: 'student_endpoint' | 'training_job' | 'eval_job'
+    start_ts REAL, end_ts REAL, -- on the ledger's clock (Ledger.now); end_ts NULL while it runs
+    usd_per_hour REAL,         -- per GPU, as recorded (list prices are unverified until the day-1 checks pass)
+    gpus INTEGER,
+    version INTEGER,           -- the version a training job produced; NULL otherwise
+    source TEXT,               -- 'cli' | 'api' | 'deploy' | 'night' | 'simulation'
+    note TEXT
 );
 CREATE TABLE IF NOT EXISTS tasks (
     name TEXT PRIMARY KEY,
@@ -117,16 +131,48 @@ class Version:
 
 # Columns added after v0.1's first schema; existing database files are migrated on open.
 MIGRATIONS: dict[str, dict[str, str]] = {
-    "requests": {"shadow_serve": "INTEGER", "client": "TEXT", "route": "TEXT", "stored": "INTEGER"},
+    "requests": {
+        "shadow_serve": "INTEGER",
+        "client": "TEXT",
+        "route": "TEXT",
+        "stored": "INTEGER",
+        "student_cost_usd": "REAL",
+        "teacher_cost_usd": "REAL",
+        "student_in_tokens": "INTEGER",
+        "student_out_tokens": "INTEGER",
+    },
     "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0", "params": "TEXT"},
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }
 # Created after migrations, because they index columns that old files only get from MIGRATIONS.
-INDEXES = ["CREATE INDEX IF NOT EXISTS requests_client_ts ON requests (client, ts)"]
+INDEXES = [
+    "CREATE INDEX IF NOT EXISTS requests_client_ts ON requests (client, ts)",
+    "CREATE INDEX IF NOT EXISTS compute_intervals_kind_start ON compute_intervals (kind, start_ts)",
+]
 
 DAY_SECONDS = 86400
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
+# What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
+# (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
+COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
+
+
+def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
+    if kind not in COMPUTE_KINDS:
+        raise ValueError(f"compute kind must be one of {', '.join(COMPUTE_KINDS)}, not {kind!r}")
+    if isinstance(usd_per_hour, bool) or not isinstance(usd_per_hour, (int, float)) or not math.isfinite(usd_per_hour):
+        raise ValueError(f"usd_per_hour must be a number, not {usd_per_hour!r}")
+    if usd_per_hour < 0:
+        raise ValueError(f"usd_per_hour must be 0 or more, not {usd_per_hour!r}")
+    if isinstance(gpus, bool) or not isinstance(gpus, int) or gpus < 0:
+        raise ValueError(f"gpus must be a whole number, 0 or more, not {gpus!r}")
+
+
+def _check_ts(ts: float, what: str) -> float:
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(ts):
+        raise ValueError(f"{what} must be a finite number of seconds, not {ts!r}")
+    return float(ts)
 
 
 def _locked(fn):
@@ -191,6 +237,172 @@ class Ledger:
     def client_requests_since(self, client: str, ts: float) -> int:
         """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
         return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
+
+    @_locked
+    def cost_by_day(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
+        """Per ledger day from `since` to `until` (inclusive; None = unbounded), the sums the cost report needs, in one
+        aggregate query (ratchet/cost.py). Rows from before v0.5 have no split (`split_unknown`): their whole `cost_usd`
+        counts as teacher spend, which can only lower the GPU-hour view's savings. `sampled` counts requests that
+        reached the student (it served them, or its calls used tokens), `avoided` the teacher spend student-served
+        requests did not need (their all-teacher baseline less the teacher calls they made), and the tokens and
+        `served_with_tokens` cover only rows that recorded the student's tokens."""
+        q = """SELECT day, COUNT(*) requests,
+                      COALESCE(SUM(served_by='student'), 0) student_served,
+                      COALESCE(SUM(served_by='teacher'), 0) teacher_served,
+                      COALESCE(SUM(cost_usd), 0.0) cost_usd,
+                      COALESCE(SUM(baseline_cost_usd), 0.0) baseline_usd,
+                      COALESCE(SUM(COALESCE(teacher_cost_usd, cost_usd, 0.0)), 0.0) teacher_usd,
+                      COALESCE(SUM(student_cost_usd), 0.0) student_usd,
+                      COALESCE(SUM(student_cost_usd IS NULL), 0) split_unknown,
+                      COALESCE(SUM(CASE WHEN student_cost_usd IS NULL THEN cost_usd END), 0.0) split_unknown_usd,
+                      COALESCE(SUM(served_by='student'
+                                   OR COALESCE(student_in_tokens, 0) + COALESCE(student_out_tokens, 0) > 0), 0) sampled,
+                      COALESCE(SUM(CASE WHEN served_by='student'
+                                   THEN COALESCE(baseline_cost_usd, 0.0) - COALESCE(teacher_cost_usd, cost_usd, 0.0)
+                                   END), 0.0) avoided,
+                      COALESCE(SUM(student_in_tokens), 0) student_in_tokens,
+                      COALESCE(SUM(student_out_tokens), 0) student_out_tokens,
+                      COALESCE(SUM(served_by='student' AND student_in_tokens IS NOT NULL), 0) served_with_tokens
+               FROM requests WHERE 1=1"""
+        args: list[Any] = []
+        if since is not None:
+            q += " AND day >= ?"
+            args.append(since)
+        if until is not None:
+            q += " AND day <= ?"
+            args.append(until)
+        return [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
+
+    # ---------- compute time (ADR 0023) ----------
+    def now(self) -> float:
+        """The clock compute intervals are recorded on. A live ledger (`auto_day`) uses wall-clock time. Simulations and
+        tests run on a synthetic clock where day N starts at N x 86400 s (a simulated day takes a second of wall time,
+        so its 24 hours cannot be on the wall clock); there `now()` is the current day at the wall clock's time of day."""
+        t = time.time()
+        return t if self.auto_day else self.day * DAY_SECONDS + t % DAY_SECONDS
+
+    def _origin(self, now: float | None) -> float:
+        """When day 1 starts on a live ledger: at the first logged request (as `_tick_day` counts), or at `now` before
+        there is one."""
+        if self._t0 is not None:
+            return self._t0
+        return self.now() if now is None else now
+
+    @_locked
+    def day_start(self, day: int, now: float | None = None) -> float:
+        """When ledger day `day` starts on the ledger's clock (`now()`)."""
+        if not self.auto_day:
+            return float(day * DAY_SECONDS)
+        return self._origin(now) + (day - 1) * DAY_SECONDS
+
+    @_locked
+    def day_of(self, ts: float, now: float | None = None) -> int:
+        """The ledger day a moment on the ledger's clock falls in (before the first request of a live ledger: day 0 or
+        less)."""
+        if not self.auto_day:
+            return int(ts // DAY_SECONDS)
+        return int((ts - self._origin(now)) // DAY_SECONDS) + 1
+
+    def _begin(self) -> None:
+        """Start a write transaction now, so a check and the write after it are atomic across processes too (the CLI
+        and the gateway may share the file). Every write commits at once, so none is open here."""
+        if not self.db.in_transaction:
+            self.db.execute("BEGIN IMMEDIATE")
+
+    @_locked
+    def compute_start(
+        self,
+        kind: str,
+        usd_per_hour: float,
+        gpus: int,
+        source: str,
+        version: int | None = None,
+        ts: float | None = None,
+        note: str | None = None,
+    ) -> int:
+        """Record that compute of `kind` (COMPUTE_KINDS) started at `ts` (default `now()`), billed `usd_per_hour` per GPU
+        for `gpus` GPUs; returns the interval's id. A student endpoint is up or down, so starting it while an interval
+        is open returns that interval's id unchanged, also when another process opened it. A training or eval job gets
+        an interval per start."""
+        _check_compute(kind, usd_per_hour, gpus)
+        start = self.now() if ts is None else _check_ts(ts, "ts")
+        self._begin()
+        try:
+            if kind == "student_endpoint":
+                row = self.db.execute(
+                    "SELECT id FROM compute_intervals WHERE kind=? AND end_ts IS NULL ORDER BY start_ts DESC, id DESC",
+                    (kind,),
+                ).fetchone()
+                if row is not None:
+                    self.db.commit()
+                    return int(row["id"])
+            cur = self.db.execute(
+                "INSERT INTO compute_intervals (kind, start_ts, end_ts, usd_per_hour, gpus, version, source, note)"
+                " VALUES (?,?,NULL,?,?,?,?,?)",
+                (kind, start, float(usd_per_hour), gpus, version, source, note),
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return int(cur.lastrowid)
+
+    @_locked
+    def compute_stop(
+        self,
+        kind: str,
+        ts: float | None = None,
+        interval_id: int | None = None,
+        version: int | None = None,
+        note: str | None = None,
+    ) -> int | None:
+        """Close compute of `kind` at `ts` (default `now()`): the open interval `interval_id`, or every open interval of
+        the kind (an endpoint that goes down ends however many records said it was up). `version` and `note` are set
+        when given. Returns the id of the latest interval closed, or None when none was open. An explicit `ts` before
+        an interval's start raises ValueError and closes nothing; the default never ends one before it started (a
+        synthetic clock's time of day can wrap)."""
+        if kind not in COMPUTE_KINDS:
+            raise ValueError(f"compute kind must be one of {', '.join(COMPUTE_KINDS)}, not {kind!r}")
+        end = None if ts is None else _check_ts(ts, "ts")
+        q, args = "SELECT id, start_ts FROM compute_intervals WHERE kind=? AND end_ts IS NULL", [kind]
+        if interval_id is not None:
+            q += " AND id=?"
+            args.append(interval_id)
+        self._begin()
+        try:
+            rows = self.db.execute(q + " ORDER BY start_ts, id", args).fetchall()
+            now = self.now() if end is None else end
+            for r in rows:
+                if end is not None and end < r["start_ts"]:
+                    raise ValueError(f"interval {r['id']} started at {r['start_ts']}, after the end given ({end})")
+            for r in rows:
+                self.db.execute(
+                    "UPDATE compute_intervals SET end_ts=?, version=COALESCE(?, version), note=COALESCE(?, note) WHERE id=?",
+                    (max(now, r["start_ts"]), version, note, r["id"]),
+                )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return int(rows[-1]["id"]) if rows else None
+
+    @_locked
+    def compute_intervals(
+        self, kind: str | None = None, since: float | None = None, until: float | None = None
+    ) -> list[dict[str, Any]]:
+        """Recorded intervals, oldest first, as dicts of the table's columns. With `since` / `until` (moments on the
+        ledger's clock), only those overlapping [since, until); an open interval overlaps everything after its start."""
+        q, args = "SELECT * FROM compute_intervals WHERE 1=1", []
+        if kind is not None:
+            q += " AND kind=?"
+            args.append(kind)
+        if since is not None:
+            q += " AND (end_ts IS NULL OR end_ts > ?)"
+            args.append(since)
+        if until is not None:
+            q += " AND start_ts < ?"
+            args.append(until)
+        return [dict(r) for r in self.db.execute(q + " ORDER BY start_ts, id", args)]
 
     # ---------- examples (provenance) ----------
     @_locked
