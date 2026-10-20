@@ -21,7 +21,7 @@ Presidio finds names and addresses with a spaCy NER model. That brings a large d
 | `AADHAAR` | Verhoeff |
 | `PHONE` | 10–15 digits |
 
-- `Ratchet._call_teacher` redacts the messages and the teacher's answer before `Ledger.add_example`. The teacher receives the original request, because it needs the details to answer well.
+- `Ratchet._call_teacher` redacts the messages and the teacher's answer before `Ledger.add_example`. The teacher receives the original request, because it needs the details to answer well. `redact_messages` covers every field of a message that can carry what the user typed: content (strings and text parts), `name`, an assistant's `refusal`, and tool and function call arguments (v0.5; tool arguments often repeat an email or an order's customer details). Message keys the gateway does not use are dropped by `normalize_messages` before this point ([ADR 0012](0012-openai-request-validation-and-error-envelope.md)), so nothing reaches the ledger unredacted.
 - The number of placeholders is stored per example (`examples.redactions`), reported in `/ratchet/stats` (`privacy`) and in each adapter's BOM (`examples_with_pii_redacted`).
 - On by default (`RATCHET_REDACT_PII=1`). The hash, and so the golden split and the frequent-request count, are computed on the redacted text.
 - `POST /ratchet/redact` shows what would be stored for any text, so operators can test it on their own data.

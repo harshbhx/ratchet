@@ -130,8 +130,16 @@ def redact(text: str, counts: Counter[str] | None = None) -> str:
     return text
 
 
+def _redact_function(fn: Any, counts: Counter[str] | None) -> Any:
+    if isinstance(fn, dict) and isinstance(fn.get("arguments"), str):
+        return {**fn, "arguments": redact(fn["arguments"], counts)}
+    return fn
+
+
 def redact_messages(messages: list[dict[str, Any]], counts: Counter[str] | None = None) -> list[dict[str, Any]]:
-    """Redact chat messages, including OpenAI content-part lists (`[{"type": "text", "text": ...}]`)."""
+    """Redact chat messages: content (a string or OpenAI content parts, `[{"type": "text", "text": ...}]`), `name`, an
+    assistant's `refusal`, and the arguments of its tool and function calls, which can carry what the user typed. The
+    rest of a message is a role, an id or a part that is not text."""
     out = []
     for m in messages:
         m = dict(m)
@@ -145,5 +153,15 @@ def redact_messages(messages: list[dict[str, Any]], counts: Counter[str] | None 
                     p = {**p, "text": redact(p["text"], counts)}
                 parts.append(p)
             m["content"] = parts
+        for key in ("name", "refusal"):
+            if isinstance(m.get(key), str):
+                m[key] = redact(m[key], counts)
+        if isinstance(m.get("tool_calls"), list):
+            m["tool_calls"] = [
+                {**c, "function": _redact_function(c["function"], counts)} if isinstance(c, dict) and "function" in c else c
+                for c in m["tool_calls"]
+            ]
+        if "function_call" in m:
+            m["function_call"] = _redact_function(m["function_call"], counts)
         out.append(m)
     return out

@@ -123,14 +123,53 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not valid JSON")
 
 
+SURROGATE = re.compile("[\ud800-\udfff]")
+# A surrogate as a raw character, or a \uD800-\uDFFF escape (also half of a valid pair, which then needs a closer look).
+MAYBE_SURROGATE = re.compile("[\ud800-\udfff]|" + r"\\u[dD][89a-fA-F]")
+
+
 def parse_body(raw: bytes | str) -> Any:
-    """Strict JSON (no NaN or Infinity). Bad JSON, bad UTF-8 and nesting too deep to parse are all a 400."""
+    """Strict JSON (no NaN or Infinity). Bad JSON, bad UTF-8 and nesting too deep to parse are all a 400, and so is a
+    string holding an unpaired UTF-16 surrogate (`"\\ud83d"` from a client that cut an emoji in half): Python's JSON
+    decoder accepts it, but the string cannot be written as UTF-8, so the teacher call or the ledger would fail later."""
     try:
-        return json.loads(raw, parse_constant=_no_constant)
+        # What json.loads does with bytes, done here so the surrogate check below sees the same text.
+        text = raw.decode(json.detect_encoding(raw), "surrogatepass") if isinstance(raw, bytes) else raw
+        body = json.loads(text, parse_constant=_no_constant)
     except RecursionError as e:
         raise APIError(400, "The request body is not valid JSON: it is nested too deeply.", code=INVALID_JSON) from e
     except ValueError as e:  # JSONDecodeError, UnicodeDecodeError, NaN, integers too long to convert
         raise APIError(400, f"The request body is not valid JSON: {e}.", code=INVALID_JSON) from e
+    if MAYBE_SURROGATE.search(text):  # rare: skip the walk for almost every request
+        found = _lone_surrogate(body)
+        if found is not None:
+            param, char = found
+            where = f" in '{param}'" if param else ""
+            message = f"The request body is not valid JSON: an unpaired UTF-16 surrogate {char!r}{where} is not valid Unicode."
+            raise APIError(400, message, code=INVALID_JSON, param=param)
+    return body
+
+
+def _lone_surrogate(value: Any) -> tuple[str | None, str] | None:
+    """(JSON path, character) of the first string, value or object key, that holds a surrogate code point. A key's path
+    is its object's. Iterative, so any nesting `json.loads` accepted is fine here."""
+    stack: list[tuple[Any, Any]] = [(value, None)]  # (value, where): where is (parent's where, key or index) or None
+    while stack:
+        v, where = stack.pop()
+        strings = [(v, where)] if isinstance(v, str) else [(k, where) for k in v] if isinstance(v, dict) else []
+        for s, at in strings:
+            m = None if s.isascii() else SURROGATE.search(s)
+            if m:
+                parts: list[Any] = []
+                while at is not None:
+                    at, key = at
+                    parts.append(key)
+                return _path(reversed(parts)) or None, m.group()
+        if isinstance(v, dict):
+            stack.extend((child, (where, k)) for k, child in v.items())
+        elif isinstance(v, list):
+            stack.extend((child, (where, i)) for i, child in enumerate(v))
+    return None
 
 
 # ---------- the validated request ----------
@@ -298,8 +337,36 @@ def _deeper_than(value: Any, limit: int) -> bool:
 
 
 # ---------- messages ----------
+# The message keys Ratchet checks, forwards and stores, by role. Any other key is dropped by `normalize_messages` (as
+# unknown top-level keys are ignored), so it reaches neither the teacher nor the ledger.
+MESSAGE_KEYS = frozenset({"role", "content", "name"})
+ROLE_KEYS = {
+    "assistant": MESSAGE_KEYS | {"refusal", "tool_calls", "function_call"},
+    "tool": MESSAGE_KEYS | {"tool_call_id"},
+}
+TOOL_CALL_KEYS = frozenset({"id", "type", "function"})
+FUNCTION_KEYS = frozenset({"name", "arguments"})
+
+
+def _required_str(obj: Mapping[str, Any], key: str, at: str) -> str:
+    v = obj.get(key)
+    if v is None:
+        raise _missing(f"{at}.{key}")
+    if not isinstance(v, str):
+        raise _wrong_type(f"{at}.{key}", "a string", v)
+    return v
+
+
+def _optional_str(obj: Mapping[str, Any], key: str, at: str) -> str:
+    v = obj.get(key)
+    if v is not None and not isinstance(v, str):
+        raise _wrong_type(f"{at}.{key}", "a string", v)
+    return v or ""
+
+
 def _message(m: Any, at: str) -> int:
-    """Check one message; return the characters of text it carries."""
+    """Check one message; return the characters of text it carries: content text and refusal parts, `name`, `refusal`,
+    `tool_call_id`, and each tool call's id, function name and arguments (everything sent on but non-text parts)."""
     if not isinstance(m, dict):
         raise _wrong_type(at, "a message object", m)
     role = m.get("role")
@@ -309,21 +376,18 @@ def _message(m: Any, at: str) -> int:
         raise _wrong_type(f"{at}.role", "a string", role)
     if role not in ROLES:
         raise _bad(f"{at}.role", f"Invalid value for '{at}.role': {_short(role)} is not one of {list(ROLES)}.")
-    name = m.get("name")
-    if name is not None and not isinstance(name, str):
-        raise _wrong_type(f"{at}.name", "a string", name)
-    calls = _assistant_calls(m, at) if role == "assistant" else False
+    chars = len(_optional_str(m, "name", at))
+    calls = False
+    if role == "assistant":
+        calls, call_chars = _assistant_calls(m, at)
+        chars += len(_optional_str(m, "refusal", at)) + call_chars
     if role == "tool":
-        call_id = m.get("tool_call_id")
-        if call_id is None:
-            raise _missing(f"{at}.tool_call_id")
-        if not isinstance(call_id, str):
-            raise _wrong_type(f"{at}.tool_call_id", "a string", call_id)
+        chars += len(_required_str(m, "tool_call_id", at))
 
     content = m.get("content")
     if content is None:
         if calls:
-            return 0
+            return chars
         if "content" not in m:
             raise _missing(f"{at}.content")
         raise _bad(
@@ -332,12 +396,11 @@ def _message(m: Any, at: str) -> int:
             INVALID_TYPE,
         )
     if isinstance(content, str):
-        return len(content)
+        return chars + len(content)
     if not isinstance(content, list):
         raise _wrong_type(f"{at}.content", "a string or an array of content parts", content)
     if not content:
         raise _bad(f"{at}.content", f"Invalid value for '{at}.content': an array of content parts must not be empty.")
-    chars = 0
     for j, part in enumerate(content):
         p = f"{at}.content[{j}]"
         if not isinstance(part, dict):
@@ -357,19 +420,37 @@ def _message(m: Any, at: str) -> int:
     return chars
 
 
-def _assistant_calls(m: Mapping[str, Any], at: str) -> bool:
-    """Whether an assistant message carries tool calls (then its content may be null)."""
+def _function_call(fn: Any, at: str) -> int:
+    """{name, arguments}, both strings (arguments is JSON text, as OpenAI returns it); return their characters."""
+    if not isinstance(fn, dict):
+        raise _wrong_type(at, "an object", fn)
+    return len(_required_str(fn, "name", at)) + len(_required_str(fn, "arguments", at))
+
+
+def _assistant_calls(m: Mapping[str, Any], at: str) -> tuple[bool, int]:
+    """Whether an assistant message carries tool calls (then its content may be null), and their characters. Each call
+    is checked in full ({id, type: 'function', function: {name, arguments}}), so a malformed one is this 400 and not
+    the teacher's refusal, which would come back as a 502."""
+    chars = 0
     tool_calls = m.get("tool_calls")
     if tool_calls is not None:
         if not isinstance(tool_calls, list):
             raise _wrong_type(f"{at}.tool_calls", "an array of tool calls", tool_calls)
         for k, call in enumerate(tool_calls):
+            p = f"{at}.tool_calls[{k}]"
             if not isinstance(call, dict):
-                raise _wrong_type(f"{at}.tool_calls[{k}]", "a tool call object", call)
+                raise _wrong_type(p, "a tool call object", call)
+            chars += len(_required_str(call, "id", p))
+            if _required_str(call, "type", p) != "function":
+                message = f"Unsupported value for '{p}.type': only 'function' tool calls are supported."
+                raise _bad(f"{p}.type", message, UNSUPPORTED_VALUE)
+            if call.get("function") is None:
+                raise _missing(f"{p}.function")
+            chars += _function_call(call["function"], f"{p}.function")
     function_call = m.get("function_call")
-    if function_call is not None and not isinstance(function_call, dict):
-        raise _wrong_type(f"{at}.function_call", "an object", function_call)
-    return bool(tool_calls) or function_call is not None
+    if function_call is not None:
+        chars += _function_call(function_call, f"{at}.function_call")
+    return bool(tool_calls) or function_call is not None, chars
 
 
 def _messages(value: Any, limits: Limits) -> list[dict[str, Any]]:
@@ -633,13 +714,29 @@ def parse_modalities(spec: str) -> frozenset[str]:
     return frozenset({TEXT_MODALITY, *(s.strip() for s in spec.split(",") if s.strip())})
 
 
+def _known_call(call: dict[str, Any]) -> dict[str, Any]:
+    fn = call["function"]
+    if call.keys() <= TOOL_CALL_KEYS and fn.keys() <= FUNCTION_KEYS:
+        return call
+    return {"id": call["id"], "type": call["type"], "function": {k: fn[k] for k in ("name", "arguments")}}
+
+
 def _normalize(m: dict[str, Any], i: int, modalities: frozenset[str], flags: Flags) -> dict[str, Any]:
     role = m.get("role")
     out = m
+    keys = ROLE_KEYS.get(role, MESSAGE_KEYS)
+    if not m.keys() <= keys:  # unknown keys (assistant `audio`, `annotations`, vendor fields): not sent on
+        out = {k: v for k, v in m.items() if k in keys}
     if role == "developer":  # OpenAI's newer name for the system role; open models know only 'system'
         out = {**out, "role": "system"}
-    if role == "assistant" and "audio" in out:  # a reference to audio the client got back; nothing to send on
-        out = {k: v for k, v in out.items() if k != "audio"}
+    calls = out.get("tool_calls")
+    if calls:
+        known = [_known_call(c) for c in calls]
+        if any(a is not b for a, b in zip(known, calls, strict=True)):
+            out = {**out, "tool_calls": known}
+    fc = out.get("function_call")
+    if fc is not None and not fc.keys() <= FUNCTION_KEYS:
+        out = {**out, "function_call": {k: fc[k] for k in ("name", "arguments")}}
     content = out.get("content")
     if not isinstance(content, list):
         return out
