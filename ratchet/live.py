@@ -101,7 +101,7 @@ class NebiusTrainer:
 
 
 def build(s: Settings) -> tuple[Ledger, ReleaseGate]:
-    led = Ledger(s.db_path, s.golden_fraction, auto_day=True)
+    led = Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=s.ledger_sync())
     return led, ReleaseGate(led, ReleasePolicy.from_env())
 
 
@@ -261,7 +261,7 @@ def main(
         print(rep)
     else:
         raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick' or 'reload'")
-    for e in led.events()[-10:]:
+    for e in led.events(last=10):
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
 
 

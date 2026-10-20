@@ -1188,8 +1188,7 @@ RESERVED_ENV = {
     "RATCHET_BATCH_API": "openai",
     "RATCHET_BATCH_DISCOUNT": "0.4",
     "RATCHET_BACKFILL_MAX_TOKENS": "1024",
-    "RATCHET_DB_SYNC": "NORMAL",
-}
+}  # RATCHET_DB_SYNC left with the WAL journal (ADR 0060); tests/test_perf.py covers it
 
 
 def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, tmp_path):
@@ -1201,7 +1200,7 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()
-    for env, value in {"RATCHET_CERT_TARGET": "0.950", "RATCHET_CALIBRATION": " Point ", "RATCHET_DB_SYNC": "full"}.items():
+    for env, value in {"RATCHET_CERT_TARGET": "0.950", "RATCHET_CALIBRATION": " Point "}.items():
         monkeypatch.setenv(env, value)
     monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", "")
     Settings().check_reserved()

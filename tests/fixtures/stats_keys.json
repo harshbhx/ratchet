@@ -30,7 +30,9 @@
       "avg_latency_ms": "number",
       "audit_agreement": "number|null",
       "degraded": "number",
-      "fallback_teacher": "number"
+      "fallback_teacher": "number",
+      "p50_student_ms": "number|null",
+      "p95_ms": "number|null"
     },
     "tasks[]": {
       "task": "string",

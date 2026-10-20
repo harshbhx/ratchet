@@ -58,6 +58,23 @@ def _float_or_none(name: str) -> float | None:
         raise ValueError(f"{name} must be a number, not {raw!r}") from None
 
 
+# The longest interval RATCHET_TICK_INTERVAL_S and RATCHET_STATS_TTL_S take: an hour. Longer would leave rollbacks to the
+# cron tick alone, or the dashboard showing hour-old numbers, which is never what a typo meant.
+MAX_INTERVAL_S = 3600.0
+# RATCHET_DB_SYNC values (`ledger.SYNC_MODES` repeats them; config imports nothing from the ledger).
+SYNC_MODES = ("NORMAL", "FULL")
+
+
+def _seconds(env: str, value: object, default: float) -> float:
+    """An optional interval setting: `default` when unset (None), else a finite number of seconds from 0 to
+    MAX_INTERVAL_S; ValueError names the variable otherwise."""
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_INTERVAL_S:
+        raise ValueError(f"{env} must be a number of seconds from 0 to {MAX_INTERVAL_S:.0f}, not {value!r}")
+    return float(value)
+
+
 # Settings declared for the evidence features (FR-15.5, FR-16.x; ADR 0024) before the items that read them are built:
 # field name -> (variable, its default as the environment spells it, the feature that will read it). Their defaults keep
 # today's behaviour. Until a feature lands, `Settings.check_reserved()` stops startup on any other value, so nobody
@@ -76,7 +93,6 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
     "batch_api": ("RATCHET_BATCH_API", "operations", "clean-room backfill (FR-16.8)"),
     "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
-    "db_sync": ("RATCHET_DB_SYNC", "FULL", "live readiness (WAL journal)"),
 }
 # Variables read through a helper the traceability check cannot see (scripts/reqtrace.py: every one needs a row in
 # docs/CONFIGURATION.md).
@@ -307,7 +323,7 @@ class Settings:
     # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the canary's own audit rate (unset = the
     # audit rate); the golden eval's calibration rule and certificate level; teacher-watch probes and adjudications per
     # night; the receipts' take rate, audits needed per task and the mock teacher's mean reasoning tokens (unset = the
-    # fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap; the ledger's sync mode.
+    # fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap.
     canary_audit_rate: float | None = field(default_factory=lambda: _float_or_none("RATCHET_CANARY_AUDIT_RATE"))
     calibration: str = field(default_factory=lambda: _env("RATCHET_CALIBRATION", "point"))
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
@@ -322,7 +338,14 @@ class Settings:
     batch_api: str = field(default_factory=lambda: _env("RATCHET_BATCH_API", "operations"))
     batch_discount: float = field(default_factory=lambda: _float("RATCHET_BATCH_DISCOUNT", "0.5"))
     backfill_max_tokens: int = field(default_factory=lambda: _int("RATCHET_BACKFILL_MAX_TOKENS", "2048"))
-    db_sync: str = field(default_factory=lambda: _env("RATCHET_DB_SYNC", "FULL"))
+
+    # The hot path (ADR 0060). The ledger file's journal: NORMAL = WAL with synchronous=NORMAL (the default), FULL = the
+    # rollback journal with synchronous=FULL (v0.4). How often the request path runs the release gate and how long
+    # /ratchet/stats serves one computed payload, in seconds (unset = 5 and 2 in live mode, 0 and 0 in mock mode, where
+    # simulations and tests tick after every request and read fresh stats).
+    db_sync: str = field(default_factory=lambda: _env("RATCHET_DB_SYNC", "NORMAL"))
+    tick_interval_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_TICK_INTERVAL_S"))
+    stats_ttl_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_STATS_TTL_S"))
 
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
@@ -433,6 +456,27 @@ class Settings:
             mock_endpoint_hours=float(hours),
             prices_verified=bool(self.prices_verified),
         )
+
+    def ledger_sync(self) -> str:
+        """RATCHET_DB_SYNC: `NORMAL` (the default, also when set but empty) or `FULL`, in any case. Anything else raises
+        ValueError, so a typo stops startup instead of picking a journal the operator did not ask for."""
+        raw = self.db_sync
+        mode = raw.strip().upper() if isinstance(raw, str) else None
+        if mode == "":
+            mode = "NORMAL"
+        if mode not in SYNC_MODES:
+            raise ValueError(f"RATCHET_DB_SYNC must be {' or '.join(SYNC_MODES)}, not {raw!r}")
+        return mode
+
+    def tick_interval(self) -> float:
+        """RATCHET_TICK_INTERVAL_S: the least time between two release-gate ticks from the request path (unset: 5 s in
+        live mode, 0 in mock mode, every request). A rollback can wait this long; the cron tick runs regardless."""
+        return _seconds("RATCHET_TICK_INTERVAL_S", self.tick_interval_s, 0.0 if self.mode == "mock" else 5.0)
+
+    def stats_ttl(self) -> float:
+        """RATCHET_STATS_TTL_S: how long /ratchet/stats serves one computed payload (unset: 2 s in live mode, 0 in mock
+        mode, a fresh payload per read)."""
+        return _seconds("RATCHET_STATS_TTL_S", self.stats_ttl_s, 0.0 if self.mode == "mock" else 2.0)
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

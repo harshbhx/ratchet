@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (706 tests, ~75 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (728 tests, ~75 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -61,7 +61,7 @@ Always run `make lint test reference` before committing.
 | `ratchet/release.py` | `ReleaseGate`: golden gate, shadow, canary, rollback (Wilson bounds); `tick` in five steps, one per feature (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`); `ReleasePolicy` (checked when built; `RESERVED_POLICY`) |
 | `ratchet/stats.py` | Exact statistics, stdlib only: binomial tails, Clopper-Pearson bounds, the precision p-value and sample-size planner, McNemar, Learn-then-Test over `CERT_GRID`, mixture e-values and confidence sequences, `wilson`, Kish, Hajek, the ratio estimator ([ADR 0024](docs/adr/0024-evidence-foundations.md)) |
 | `ratchet/merkle.py` | Merkle trees, stdlib only: `KeySet` (a sparse tree with membership and non-membership proofs, `verify`) and RFC 9162 log trees (`mth`, `inclusion_path`, `verify_inclusion`, `LogTree`) |
-| `ratchet/ledger.py` | SQLite ledger: requests (with API client and the student/teacher cost split), examples (provenance, redaction count), versions (with BOM), events, API tasks (`tasks`: spec, hash, admin name), compute intervals (endpoint uptime, training jobs), and the evidence tables (`version_leaves` and `receipts`, append-only by trigger, INV-17; `teacher_checks`, `meta`, `spend`, `backfill_jobs`, `tombstones`, `erasures`); migrations; `auto_day` and the ledger's clock (`now`, `day_start`, `day_of`); `stats_by_task`, `stats_by_client`, `privacy_stats`, `cost_by_day`; one re-entrant lock |
+| `ratchet/ledger.py` | SQLite ledger: requests (with API client and the student/teacher cost split), examples (provenance, redaction count), versions (with BOM), events, API tasks (`tasks`: spec, hash, admin name), compute intervals (endpoint uptime, training jobs), and the evidence tables (`version_leaves` and `receipts`, append-only by trigger, INV-17; `teacher_checks`, `meta`, `spend`, `backfill_jobs`, `tombstones`, `erasures`); migrations; `auto_day` and the ledger's clock (`now`, `day_start`, `day_of`); `stats_by_task`, `stats_by_client`, `privacy_stats`, `cost_by_day`, `latency_percentiles`; one re-entrant lock; a WAL file with a read-only stats connection, a cached version routing snapshot and incremental audit tallies (ADR 0060) |
 | `ratchet/licenses.py` | Teacher license registry; closed-model teachers are refused |
 | `ratchet/redact.py` | PII redaction (`[EMAIL]`, `[CARD]`, …) applied before examples are stored |
 | `ratchet/auth.py` | `KeyRing`: named gateway API keys from `RATCHET_API_KEYS`, and admin keys from `RATCHET_ADMIN_KEYS` |

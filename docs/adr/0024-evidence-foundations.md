@@ -64,7 +64,7 @@ Build the shared pieces once, before any feature, with defaults that change noth
 - Thirteen reserved settings and sixteen reserved policy fields are documented before they do anything, in their own section of CONFIGURATION.md.
 - `student_cost_usd` already exists (FR-15.1: live and shadow samples), so the replay uses it as it is.
 - The router's `route` column already records why a request was not served by the student (`cold_start`, `confidence`, `student_error`, `student_breaker`, ...). So no separate `reason` column was added: the replay reads `route`.
-- The ledger's journal mode is unchanged. WAL comes with live readiness (`RATCHET_DB_SYNC`), which must also keep the ledger off the bucket mount.
+- The ledger's journal mode is unchanged. WAL comes with live readiness (`RATCHET_DB_SYNC`), which must also keep the ledger off the bucket mount. (Amended by [ADR 0060](0060-hot-path-caches-and-throttled-tick.md): WAL landed with the hot-path item, `RATCHET_DB_SYNC` now defaults to `NORMAL`, and `FULL` keeps the rollback journal for such mounts.)
 
 ## Alternatives
 

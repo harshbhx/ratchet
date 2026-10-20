@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 706 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 728 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -30,12 +30,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
-| **Total** | **706** |
+| `tests/test_perf.py` | 22 |
+| **Total** | **728** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), and the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -560,6 +561,35 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
 | `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
 
+### `tests/test_perf.py`
+
+The hot path ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), FR-12.8, NFR-1). See [Hot-path tests](#hot-path-tests) for how the timing tests stay stable.
+
+| Test | Covers |
+|---|---|
+| `test_file_ledger_uses_wal_and_memory_does_not` | A file ledger: WAL, `synchronous=NORMAL`, 5 s busy timeout, a read-only second connection that sees each commit at once and refuses writes; `:memory:` has none; an old rollback-journal file is switched on open and gains `wall_ms` |
+| `test_sync_full_keeps_the_rollback_journal_and_bad_values_stop_startup` | `RATCHET_DB_SYNC=FULL` (any case) takes a WAL file back to the rollback journal with `synchronous=FULL` and no second connection; anything else raises naming the variable; `config.SYNC_MODES` matches the ledger's |
+| `test_full_cannot_take_a_file_out_of_wal_while_another_process_holds_it` | `FULL` on a file another connection holds in WAL stops with an error naming the setting; `NORMAL` alongside is fine |
+| `test_gate_queries_search_their_indexes` | `EXPLAIN QUERY PLAN` of the ledger's own query constants: the audit tally searches `requests_version_audited` from the last id, the shadow verdicts `requests_shadow_version`, the routing rebuild `versions_state`, a day's percentiles `requests_day`; none scans `requests` |
+| `test_version_cache_sees_another_connections_writes` | Two ledgers on one file (gateway and cron tick): a new live version, canary steps, a rollback and a new eval written by one are seen by the other on its next read |
+| `test_version_cache_invalidates_on_state_change` | Every version write (create, eval, state, traffic, BOM, and SQL on `ledger.db` that bypasses the writers) is seen on the next read; each read is a fresh copy, so changing one changes nothing cached; `version(id)` agrees |
+| `test_routing_reads_no_version_rows_until_a_version_changes` | With 31 versions, ten routing rounds run only `PRAGMA data_version`; the next version write makes the next read rebuild once |
+| `test_live_quality_tally_matches_a_full_count` | `version_live_quality` equals one `COUNT`/`AVG` over the stage after new audits (read above the last id), audits without a verdict, other versions' and teacher rows, a new stage, a deleted row, and rows another connection commits |
+| `test_bom_digest_is_cached_until_examples_change` | The BOM digest is recomputed after an insert, a rewritten or deleted hash, or another connection's insert, not after a duplicate; never cached against an uncommitted write; always equal to a fresh computation |
+| `test_events_last_reads_only_the_newest` | `events(last=n)` is `events()[-n:]`; 0 gives none; a bad `n` raises |
+| `test_stats_reads_skip_the_writer_lock` | On a WAL file every stats query returns while another thread holds the writer's lock |
+| `test_tick_throttle_runs_the_gate_once_per_interval` | With a 5 s interval on a fake clock: one gate tick per interval, none while another thread ticks (without waiting), `force` and simulated days always tick, a failing tick is not retried on every request, interval 0 ticks every call |
+| `test_request_path_ticks_at_most_once_per_interval` | Through `/v1/chat/completions`: three requests within the interval share one tick; the next one after it ticks |
+| `test_snapshot_cache_ttl_and_single_flight` | `SnapshotCache`: one value per TTL; during a recompute other callers get the previous value at once, and the very first callers wait; a failed recompute raises and keeps the old value; TTL 0 computes every time |
+| `test_stats_ttl_returns_the_cached_payload` | `/ratchet/stats` with a 2 s TTL returns the same payload within it despite a request, the new one after it, and a fresh one after a demo reset |
+| `test_interval_settings_have_mode_defaults_and_bounds` | 5 s and 2 s in live mode, 0 in mock; 0 to 3600 s; negative, too long, NaN, infinite, bool and unparsable values raise naming the variable, also at gateway startup |
+| `test_latency_percentiles` | Nearest-rank p50 and p95 of `wall_ms`, exact, by day and `served_by`; q 0 and 1 are the minimum and maximum, 0.07 of 20 is rank 2; old rows without `wall_ms` count toward nothing; None without rows; bad quantiles raise |
+| `test_stats_by_day_reports_latency_percentiles_and_sorts_only_changed_days` | `stats_by_day`'s `p50_student_ms` and `p95_ms` equal `latency_percentiles`; a second read sorts nothing, a new request sorts only its day, a deleted row every day |
+| `test_wall_ms_logged_and_at_least_latency` | Over `OpenAICompatProvider` and a fake server, cold start, student-served, escalated, pinned and teacher-only rows each have `wall_ms >= latency_ms > 0` |
+| `test_wall_ms_is_the_timer_around_the_whole_cascade` | With `Ratchet(timer=...)`, `wall_ms` is exactly the two timer reads apart, on `handle`, a pinned task and `teacher_only`; `latency_ms` is the provider's |
+| `test_handle_overhead_does_not_grow_with_versions` | Zero-latency models: the mean request time with 365 retired versions is at most twice the one-version mean plus 0.5 ms (v0.4's lookups took about 25 times as long) |
+| `test_perf_guard_200k_requests` | A WAL ledger with 200,000 requests and a live, canary and shadow version: a cold tick under 250 ms, a warm tick under 20 ms (median), a request under 5 ms of its own time, the tally still exact |
+
 ## Live-path tests
 
 Live mode, the training job, the day-1 check, the Scout CLI and the deploy scripts would otherwise run for the first time on paid Nebius resources. `tests/test_live.py` runs each of them offline first, through seams that are default arguments, so production code passes nothing and talks to the real services:
@@ -578,6 +608,10 @@ The student's sampling parameters are one read-only constant, `confidence.STUDEN
 These tests prove the wiring, the order of operations and the failure handling. They do not prove that the real services accept the requests: model ids, `nebius` CLI flags, vLLM's runtime LoRA loading and GPU training stay `untested (live)` in the PRD until the day-1 checks ([DAY1.md](DAY1.md)) and a live run pass.
 
 Found while writing them: without `RATCHET_STUDENT_BASE`, `NebiusTrainer` ran the sync and the paid training job before noticing there was no endpoint to load the adapter into. It now checks first, and `python -m ratchet.live reload` gives the same clear error instead of an httpx URL error (`test_live_night_checks_the_student_endpoint_before_paid_work` in `test_hardening.py`).
+
+## Hot-path tests
+
+`tests/test_perf.py` measures time, which a busy CI machine can stretch. Its timing tests stay stable by design: models answer with zero latency, so only Ratchet's own work is timed; each bound is a ratio between two runs on the same machine (365 versions against one) or a ceiling several times above what a laptop measures (a warm tick takes about 3 ms against 20, a request about 0.3 ms against 5); each figure is the best of three runs or a median; and the 200,000 rows go in with one `executemany`, so the whole file runs in about 3 s. The structural claims (which index a query searches, how many sorts a stats read does, that routing reads no version row) are checked exactly, with `EXPLAIN QUERY PLAN` and the connection's trace callback, so they do not depend on timing at all.
 
 ## Contract tests
 

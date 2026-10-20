@@ -83,6 +83,43 @@ MAX_REDACT_CHARS = 5000
 TRANSPORT_KEYS = ("teacher", "student")
 
 
+class SnapshotCache:
+    """One computed value served for `ttl_s` seconds on `clock` (ADR 0060): /ratchet/stats, which every dashboard tab
+    polls, recomputes at most once per TTL however many read it. Single flight: while one caller recomputes, the others
+    get the previous value at once instead of queueing behind it (only the very first callers wait, having nothing to
+    serve). A failed recompute raises to its caller and keeps the previous value. `ttl_s` 0 computes on every call, as
+    before."""
+
+    def __init__(self, ttl_s: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self.ttl_s = ttl_s
+        self.clock = clock
+        self._lock = threading.Lock()  # held while computing
+        self._value: Any = None
+        self._at: float | None = None
+
+    def _fresh(self, now: float) -> bool:
+        return self._at is not None and 0 <= now - self._at < self.ttl_s
+
+    def get(self, compute: Callable[[], Any]) -> Any:
+        if self.ttl_s <= 0:
+            return compute()
+        if self._fresh(self.clock()):
+            return self._value
+        if self._at is not None:
+            if not self._lock.acquire(blocking=False):
+                return self._value  # another caller is recomputing: the previous value, now
+        else:
+            self._lock.acquire()  # nothing to serve yet: wait for the first value
+        try:
+            if self._fresh(self.clock()):  # computed while this caller waited for the lock
+                return self._value
+            value = compute()
+            self._value, self._at = value, self.clock()
+            return value
+        finally:
+            self._lock.release()
+
+
 class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
@@ -114,6 +151,11 @@ class Runtime:
     def reset(self) -> None:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
+        # The hot path (ADR 0060); a bad RATCHET_DB_SYNC, RATCHET_TICK_INTERVAL_S or RATCHET_STATS_TTL_S stops startup here.
+        sync = s.ledger_sync()
+        self.tick_interval_s = s.tick_interval()
+        self.stats_cache = SnapshotCache(s.stats_ttl(), clock=self.clock)
+        self._last_tick: float | None = None
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
@@ -131,7 +173,7 @@ class Runtime:
             self.guard = Guard(None, 10 * s.scout_runs_per_hour)
             fallback_teacher: OpenAICompatProvider | None = None  # the mock teacher plays any fallback model too
         else:
-            self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True)
+            self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=sync)
             # Timeouts and retries per role (ADR 0014): the teacher is retried within a deadline; the student never is,
             # because the teacher is its retry. A bad setting raises here, at startup.
             teacher = OpenAICompatProvider(
@@ -227,7 +269,7 @@ class Runtime:
             item = stream.sample(self.ledger.day)
             self.ratchet.handle(item.messages(), item.task)
             if (i + 1) % ticks == 0:
-                self.tick()
+                self.tick(force=True)  # simulated time: never throttled by the wall clock
         rep = run_night(
             self.ledger,
             self.fleet,
@@ -247,9 +289,32 @@ class Runtime:
             self.simulate_day(requests, "mixed")
         self.ledger.event("warmup", f"demo warm-up: {days} simulated days of mixed traffic ({requests} requests/day)")
 
-    def tick(self) -> None:
-        with self.gate_lock:
+    def tick(self, force: bool = False) -> bool:
+        """Run the release gate's tick; returns whether it ran. With RATCHET_TICK_INTERVAL_S above 0 (live mode: 5 s), a
+        tick less than that after the previous one is skipped, and so is one while another thread is ticking, so the
+        request path pays for a tick at most once per interval and never waits for one (ADR 0060). A rollback can wait
+        up to the interval. `force`, or an interval of 0 (mock mode), runs every call, waiting for a running tick, as
+        before."""
+        if force or self.tick_interval_s <= 0:
+            with self.gate_lock:
+                self._last_tick = self.clock()
+                self.gate.tick()
+            return True
+        if self._recent(self.clock()) or not self.gate_lock.acquire(blocking=False):
+            return False
+        try:
+            now = self.clock()
+            if self._recent(now):  # another thread ticked between the check and the lock
+                return False
+            self._last_tick = now  # before the tick, so a failing tick is not retried on every request
             self.gate.tick()
+            return True
+        finally:
+            self.gate_lock.release()
+
+    def _recent(self, now: float) -> bool:
+        last = self._last_tick
+        return last is not None and 0 <= now - last < self.tick_interval_s
 
     def scout(self, pace: float = 0.0) -> Scout:
         """`pace` > 0 (mock streams only) sleeps for that share of each call's simulated latency."""
@@ -700,6 +765,12 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
 
 @app.get("/ratchet/stats")
 def stats() -> dict[str, Any]:
+    """Everything the dashboard shows. Computed at most once per RATCHET_STATS_TTL_S (live mode: 2 s) by one caller at a
+    time (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests."""
+    return rt.stats_cache.get(_stats_payload)
+
+
+def _stats_payload() -> dict[str, Any]:
     led = rt.ledger
     boms = led.bom_status()
     return {
@@ -710,7 +781,7 @@ def stats() -> dict[str, Any]:
         "days": led.stats_by_day(),
         "tasks": led.stats_by_task(),
         "versions": [{**v.__dict__, "bom": boms.get(v.id)} for v in led.versions()],
-        "events": led.events()[-40:],
+        "events": led.events(last=40),
         # Every savings figure above and in `totals` prices the student per token; `cost` has the GPU-hour view (NFR-11).
         "totals": {**led.totals(), "cost_model": "per_token"},
         "bill_of_materials": led.bill_of_materials(),

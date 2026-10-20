@@ -294,7 +294,7 @@ class Ratchet:
     """The cascade. `clock` drives the breakers (tests pass a fake one). `on_adapter_missing(version)` is called when
     vLLM answers 404 for a version's adapter; live mode wires `AdapterReloader.request` to it. `fallback_teacher` is the
     provider for RATCHET_TEACHER_FALLBACK_MODEL (default: `teacher`, the same endpoint); it is used only when that model
-    is set."""
+    is set. `timer` measures each request's wall-clock time (`requests.wall_ms`, ADR 0060; `time.perf_counter`)."""
 
     def __init__(
         self,
@@ -307,6 +307,7 @@ class Ratchet:
         clock: Callable[[], float] = time.monotonic,
         on_adapter_missing: Callable[[Version], object] | None = None,
         fallback_teacher: Provider | None = None,
+        timer: Callable[[], float] = time.perf_counter,
     ):
         self.s = settings
         settings.check_reserved()  # a setting reserved for a feature not built yet stops startup here (ADR 0024)
@@ -334,6 +335,7 @@ class Ratchet:
         self.gen = settings.gen_policy()
         self._plain = self.gen.plan(None)  # the plan of a request without parameters (Scout, the simulator)
         self.clock = clock
+        self.timer = timer
         self.on_adapter_missing = on_adapter_missing
         # Failed upstream calls since start (health()). Scout calls handle from several threads, hence the lock.
         self.student_errors = 0  # student calls that raised; the teacher answered instead
@@ -727,13 +729,16 @@ class Ratchet:
         plan: GenPlan | None = None,
         params: GenParams | None = None,
         route: str = "pinned",
+        t0: float | None = None,
     ) -> Result:
         """The teacher alone: a pinned task, a request the student cannot take (`teacher_only`), or an unregistered
         task under RATCHET_UNKNOWN_TASKS=teacher (`route` `unknown_task`). The request is logged, but the answer is never
         stored as a training example, so it cannot leak into a student that was never meant to do it (INV-10), and the
         student is never sampled. When the primary teacher is unavailable, the fallback teacher may answer (route
         `fallback_teacher`); the student never does, so this path never degrades. The baseline is the primary teacher's
-        price for the same tokens. `params` are the client's, for the logprobs it asked to get back."""
+        price for the same tokens. `params` are the client's, for the logprobs it asked to get back. `t0` is when the
+        caller started the request on `self.timer` (now, when not given), for `wall_ms`."""
+        t0 = self.timer() if t0 is None else t0
         plan = plan or self._plain
         served, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n)
         c = served[0]
@@ -741,6 +746,7 @@ class Ratchet:
         route = "fallback_teacher" if fallback else route
         cost = self._call_cost(model, served)
         baseline = self._call_cost(self.s.teacher_model, served) if fallback else cost
+        wall_ms = (self.timer() - t0) * 1000
         request_id = self.ledger.log_request(
             task=task.name,
             served_by="teacher",
@@ -762,6 +768,7 @@ class Ratchet:
             client=client,
             route=route,
             stored=0,
+            wall_ms=wall_ms,
         )
         choices = _choices(task, served, params)
         return Result(
@@ -798,10 +805,11 @@ class Ratchet:
         is unavailable), the request is logged, and nothing is stored as a training example. No student, audit or shadow
         call, so it never degrades. `n` choices, as for `handle`. An unregistered task under RATCHET_UNKNOWN_TASKS=reject
         raises `tasks.UnknownTask`; under `teacher` it is logged with route `unknown_task`, as in `handle`."""
+        t0 = self.timer()
         task = _task(task)
         self._admit(task, client)
         route = "unknown_task" if task.source == "adhoc" and self.unknown_tasks == "teacher" else "pinned"
-        return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route)
+        return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route, t0=t0)
 
     def task_for(self, task: str | tasks.Task | None, client: str | None = None) -> tasks.Task:
         """The task a request names, as the gateway admits it before any quota or model call: a registered task, or for
@@ -853,14 +861,18 @@ class Ratchet:
 
         A pinned task, and an unregistered one under RATCHET_UNKNOWN_TASKS=teacher (route `unknown_task`), go to the
         teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. The client
-        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key."""
+        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key.
+
+        `requests.wall_ms` is the time from here to the ledger write on `self.timer`, every model call included;
+        `latency_ms` stays the providers' own time, so `wall_ms - latency_ms` is Ratchet's overhead (ADR 0060)."""
+        t0 = self.timer()
         task = _task(task)
         plan = self.plan(params, n)
         self._admit(task, client)
         if task.source == "adhoc" and self.unknown_tasks == "teacher":  # not registered: never distilled (ADR 0022)
-            return self._teacher_only(task, messages, client, plan, params, route="unknown_task")
+            return self._teacher_only(task, messages, client, plan, params, route="unknown_task", t0=t0)
         if task.pinned:
-            return self._teacher_only(task, messages, client, plan, params)
+            return self._teacher_only(task, messages, client, plan, params, t0=t0)
         version = self._pick_version()
         cost = 0.0
         # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
@@ -1020,6 +1032,7 @@ class Ratchet:
                 ref_text = reference.text if reference is not None else served.text
                 shadow_agree = int(task.agree(s_sc.answer.text, ref_text))
 
+        wall_ms = (self.timer() - t0) * 1000
         request_id = self.ledger.log_request(
             task=task.name,
             served_by=served_by,
@@ -1041,6 +1054,7 @@ class Ratchet:
             client=client,
             route=route,
             stored=int(stored),
+            wall_ms=wall_ms,
         )
         choices = _choices(task, served_choices, params)
         return Result(

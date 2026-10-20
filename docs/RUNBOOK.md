@@ -59,7 +59,7 @@ The `alert` event is written once per live version per process (a restart can wr
 
 ## Manual interventions
 
-All state lives in the SQLite ledger (`RATCHET_DB`). Stop the gateway or make sure no Night School run is in progress, take a backup, then use either the Python API or SQL.
+All state lives in the SQLite ledger (`RATCHET_DB`). Stop the gateway or make sure no Night School run is in progress, take a backup, then use either the Python API or SQL. A running gateway picks up a version change made from another process (the Python API below, or `sqlite3`) on its next request: its routing snapshot checks the file's `PRAGMA data_version` ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). Open the file with the same `RATCHET_DB_SYNC` the gateway uses (`Ledger(path, sync=...)`; the default `NORMAL` is the WAL journal).
 
 Python (preferred: it also updates `stage_since` and writes events):
 
@@ -260,8 +260,8 @@ sqlite3 /var/lib/ratchet/ratchet.db ".backup '/var/backups/ratchet-$(date +%F).d
 aws s3 cp /var/backups/ratchet-$(date +%F).db s3://<bucket>/backups/ --endpoint-url $RATCHET_S3_ENDPOINT
 ```
 
-Keep at least 14 days. Adapters and `train.jsonl` are already in the bucket; keep every adapter referenced by a `live` version for rollback.
+Keep at least 14 days. Adapters and `train.jsonl` are already in the bucket; keep every adapter referenced by a `live` version for rollback. Use `.backup` (or `deploy/vm/backup.sh`, which uses the same API), never `cp`: in the WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default) recent commits live in `ratchet.db-wal` until a checkpoint, and a copy of the main file alone misses them.
 
-**Restore:** stop the gateway, copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM.
+**Restore:** stop the gateway (and the cron jobs), remove `ratchet.db-wal` and `ratchet.db-shm` next to `RATCHET_DB` if they are there (a stale WAL file would be replayed onto the restored copy), copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM.
 
 **Schema changes:** opening a ledger migrates it: `Ledger._migrate()` adds the columns in `MIGRATIONS`, `SCHEMA` creates new tables and triggers, and `INDEXES` the indexes, so an upgraded gateway or `python -m ratchet.live` brings an old file up to date by itself (back it up first). Never edit `version_leaves` or `receipts` by hand: they are append-only (INV-17) and the database refuses the change, because signed roots and receipt chains are built from those rows.

@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from . import tasks
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS requests (
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
     route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
     stored INTEGER,            -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
+    wall_ms REAL,              -- the whole cascade on the gateway's clock (perf_counter); latency_ms is the providers' part
     -- Evidence columns (ADR 0024), NULL until the feature that writes them lands, and in older rows:
     threshold REAL,            -- the confidence threshold the student was held to; NULL without a version (FR-16.5)
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
@@ -220,6 +222,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "student_agree": "INTEGER",
         "baseline_est_usd": "REAL",
         "optional_failed": "INTEGER",
+        "wall_ms": "REAL",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -241,6 +244,9 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS requests_version_audited ON requests (student_version, audited, id)",
     "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
+    # The routing snapshot's rebuild reads only the live, canary and shadow rows (ADR 0060). SQLite ends every index with
+    # the rowid, so requests_shadow_version already serves `shadow_version=? AND id>?` ranges.
+    "CREATE INDEX IF NOT EXISTS versions_state ON versions (state)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
@@ -257,6 +263,43 @@ UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
 # (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
+
+# RATCHET_DB_SYNC (ADR 0060): NORMAL puts a file ledger in the WAL journal with synchronous=NORMAL (readers never wait for
+# the writer and a commit does not wait for the disk; a power cut can lose the last commits, never corrupt the file);
+# FULL keeps the rollback journal with synchronous=FULL, v0.4's behaviour, for a filesystem without shared memory.
+SYNC_MODES = ("NORMAL", "FULL")
+BUSY_TIMEOUT_MS = 5000  # how long a connection waits for another process's write lock before it raises
+# Paths SQLite keeps out of any file other connections can open: no journal mode, no second connection.
+PRIVATE_PATHS = ("", ":memory:")
+# The versions a request is routed by (`Ledger.live`, `Ledger.by_state`), kept in the routing snapshot.
+ROUTED_STATES = ("live", "canary", "shadow")
+# Tables whose writes on this connection bump a generation (`_bump`, through TEMP triggers that live only on
+# the writer's connection): any write to `versions` invalidates the routing snapshot; a deleted or rewritten request or
+# example invalidates the incremental tallies built from them. Inserts into requests and examples are not watched (the
+# tallies read rows above the last id they saw), so the request path pays nothing for them.
+WATCHED = {
+    "versions": ("INSERT", "UPDATE", "DELETE"),
+    "requests": ("UPDATE", "DELETE"),
+    "examples": ("UPDATE OF hash", "DELETE"),
+}
+MAX_TALLIES = 64  # version_live_quality's incremental tallies kept, oldest dropped first (two are used per tick)
+
+# The release gate's queries, named so tests can check their plans (each must search an index, never scan requests).
+# A version's audits of answers it served, above a request id (requests_version_audited): version_live_quality's tally.
+AUDIT_TALLY_SQL = (
+    "SELECT COUNT(*) n, COUNT(audit_agree) k, COALESCE(SUM(audit_agree), 0) s, MAX(id) top FROM requests"
+    " WHERE student_version=? AND audited=1 AND served_by='student' AND id>?"
+)
+# A shadow candidate's verdicts (requests_shadow_version): shadow_quality.
+SHADOW_QUALITY_SQL = """SELECT COUNT(*) n, SUM(shadow_serve) served,
+                      AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
+                      SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
+                      AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
+                               WHEN route = 'n_choices' THEN 1
+                               ELSE served_by='student' END) live_cov
+               FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL"""
+# The routing snapshot's rebuild (versions_state).
+ROUTED_SQL = f"SELECT * FROM versions WHERE state IN ({','.join('?' * len(ROUTED_STATES))}) ORDER BY id"
 
 
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
@@ -288,14 +331,74 @@ def _locked(fn):
     return wrapper
 
 
+def _reads(fn):
+    """A read-only query for stats, the dashboard and reports. On a file ledger in WAL mode it runs on the read-only
+    connection (`self._rdb`) under its own lock, inside one read transaction, so its statements see one snapshot and it
+    never waits for the writer's lock (nor makes a request wait for it). Elsewhere `self._rdb` is the writer, under its
+    lock, as before. A method wrapped here must only read, through `self._rdb`, and must not take `self._lock`."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        if self._ro is None:
+            with self._lock:
+                return fn(self, *args, **kwargs)
+        with self._ro_lock:
+            if self._ro.in_transaction:  # called from another reader method: already inside its snapshot
+                return fn(self, *args, **kwargs)
+            self._ro.execute("BEGIN")
+            try:
+                return fn(self, *args, **kwargs)
+            finally:
+                self._ro.execute("ROLLBACK")  # a read transaction: nothing to commit
+
+    return wrapper
+
+
+@dataclass
+class _Tally:
+    """version_live_quality's running audit counts for one (version, stage) above request id `last_id`, valid while the
+    writer's request generation and data_version stay `gen`."""
+
+    gen: tuple[int, int]
+    last_id: int
+    n: int = 0
+    agreed_n: int = 0  # rows with audit_agree set (AVG's denominator)
+    agreed: int = 0  # their sum
+
+
+def _bump(gen: dict[str, int], table: str) -> None:
+    """`ratchet_written(table)`, called by the writer's TEMP triggers (`Ledger._watch`)."""
+    gen[table] += 1
+
+
+def _nearest_rank(q: float, n: int) -> int:
+    """The 0-based offset of the q-quantile among n sorted values, by the nearest-rank rule: the smallest value with at
+    least a share q of the values at or below it (q=0: the minimum, q=1: the maximum). q*n is rounded to 9 decimals
+    first, so 0.07 * 100 counts as 7, not 7.000000000000001."""
+    return min(n, max(1, math.ceil(round(q * n, 9)))) - 1
+
+
+def _check_quantiles(qs: Iterable[float]) -> tuple[float, ...]:
+    out = tuple(qs)
+    for q in out:
+        if isinstance(q, bool) or not isinstance(q, (int, float)) or not 0 <= q <= 1:
+            raise ValueError(f"quantiles must be numbers from 0 to 1, not {q!r}")
+    return out
+
+
 class Ledger:
     """`day` is set by the caller in simulations. With `auto_day=True` (live mode) it is
     derived from wall-clock time: day 1 starts at the first logged request."""
 
-    def __init__(self, path: str = ":memory:", golden_fraction: float = 0.10, auto_day: bool = False):
+    def __init__(self, path: str = ":memory:", golden_fraction: float = 0.10, auto_day: bool = False, sync: str = "NORMAL"):
+        mode = sync.strip().upper() if isinstance(sync, str) else None
+        if mode not in SYNC_MODES:
+            raise ValueError(f"RATCHET_DB_SYNC must be {' or '.join(SYNC_MODES)}, not {sync!r}")
         self._lock = threading.RLock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.path = path
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=BUSY_TIMEOUT_MS / 1000)
         self.db.row_factory = sqlite3.Row
+        self.journal_mode = self._journal(mode)
         self.db.executescript(SCHEMA)
         self._migrate()
         self.golden_fraction = golden_fraction
@@ -304,6 +407,86 @@ class Ledger:
         self._t0: float | None = float(first) if first is not None else None
         last_day = self.db.execute("SELECT COALESCE(MAX(day), 0) FROM requests").fetchone()[0]
         self.day = int(last_day)
+        # Hot-path caches (ADR 0060). Generations count this connection's writes to WATCHED tables; PRAGMA data_version
+        # changes when another connection (the cron tick, the cost CLI) commits.
+        self._gen = dict.fromkeys(WATCHED, 0)
+        self._routing_key: tuple[int, int] | None = None
+        self._routing: dict[str, sqlite3.Row] = {}
+        self._tallies: dict[tuple[int, int], _Tally] = {}
+        # stats_by_day's percentiles per day: (count, highest id, request generation) -> (p50 student, p95).
+        self._day_latency: dict[int | None, tuple[tuple[int, int, int | None], float | None, float | None]] = {}
+        self._digest: tuple[tuple[int, int | None, int | None], str] | None = None  # bill_of_materials' sha
+        self._watch()
+        self._ro, self._ro_lock = self._reader()
+        self._rdb = self._ro if self._ro is not None else self.db
+
+    def _journal(self, mode: str) -> str:
+        """Set a file ledger's journal (WAL for NORMAL, the rollback journal for FULL) and sync level, and return the
+        journal mode SQLite reports. In-memory and private databases keep theirs. When WAL cannot be had (a filesystem
+        without shared memory), the rollback journal stays and synchronous stays FULL, the level that journal needs to
+        survive a power cut."""
+        if self.path in PRIVATE_PATHS:
+            return str(self.db.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        self.db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        want = "WAL" if mode == "NORMAL" else "DELETE"
+        try:
+            got = str(self.db.execute(f"PRAGMA journal_mode={want}").fetchone()[0]).lower()
+        except sqlite3.OperationalError as e:  # leaving WAL needs the file to itself
+            raise sqlite3.OperationalError(
+                f"cannot switch the ledger at {self.path!r} to the {want.lower()} journal (RATCHET_DB_SYNC={mode}): {e}; "
+                "another process has it open, so stop it or give every process the same RATCHET_DB_SYNC"
+            ) from e
+        self.db.execute(f"PRAGMA synchronous={'NORMAL' if got == 'wal' else 'FULL'}")
+        return got
+
+    def _watch(self) -> None:
+        """TEMP triggers that bump `_gen[table]` on every write to a WATCHED table through this connection, whoever
+        issues it (a Ledger method or SQL on `ledger.db`), so no write can leave a cache stale. They exist only on this
+        connection: other processes see a plain file, and their commits show up in PRAGMA data_version instead."""
+        # The callback holds the counters only, not the ledger, so the connection and the ledger form no reference cycle.
+        self.db.create_function("ratchet_written", 1, functools.partial(_bump, self._gen))
+        for table, ops in WATCHED.items():
+            for op in ops:
+                name = f"ratchet_watch_{table}_{op.split()[0].lower()}"
+                self.db.execute(
+                    f"CREATE TEMP TRIGGER IF NOT EXISTS {name} AFTER {op} ON main.{table} "
+                    f"BEGIN SELECT ratchet_written('{table}'); END"
+                )
+
+    def _settled(self, table: str) -> int | None:
+        """This connection's write generation for `table`, for a reader-side cache key; None while the writer is inside
+        a transaction, because a write it counted may not be committed yet (the TEMP trigger fires before the commit),
+        and caching what a snapshot without it shows would outlive the commit. Read it before the snapshot's first
+        statement: once the writer is outside a transaction, every counted write has ended and the snapshot sees it."""
+        gen = self._gen[table]
+        return None if self.db.in_transaction else gen
+
+    def _reader(self) -> tuple[sqlite3.Connection | None, threading.RLock]:
+        """A read-only connection for `_reads` methods, on a file ledger in WAL mode (where readers never block the
+        writer); None elsewhere, or when it cannot be opened (the writer then serves reads, as before)."""
+        lock = threading.RLock()
+        if self.journal_mode != "wal":
+            return None, lock
+        try:
+            ro = sqlite3.connect(
+                Path(self.path).resolve().as_uri() + "?mode=ro",
+                uri=True,
+                check_same_thread=False,
+                timeout=BUSY_TIMEOUT_MS / 1000,
+                isolation_level=None,  # explicit read transactions only (`_reads`), never an implicit one left open
+            )
+        except sqlite3.Error:
+            return None, lock
+        ro.row_factory = sqlite3.Row
+        return ro, lock
+
+    @_locked
+    def close(self) -> None:
+        """Close both connections. The ledger cannot be used afterwards."""
+        if self._ro is not None:
+            with self._ro_lock:
+                self._ro.close()
+        self.db.close()
 
     def _migrate(self) -> None:
         for table, cols in MIGRATIONS.items():
@@ -347,7 +530,7 @@ class Ledger:
         """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
         return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
 
-    @_locked
+    @_reads
     def cost_by_day(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
         """Per ledger day from `since` to `until` (inclusive; None = unbounded), the sums the cost report needs, in one
         aggregate query (ratchet/cost.py). Rows from before v0.5 have no split (`split_unknown`): their whole `cost_usd`
@@ -380,7 +563,7 @@ class Ledger:
         if until is not None:
             q += " AND day <= ?"
             args.append(until)
-        return [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
+        return [dict(r) for r in self._rdb.execute(q + " GROUP BY day ORDER BY day", args)]
 
     # ---------- compute time (ADR 0023) ----------
     def now(self) -> float:
@@ -583,25 +766,32 @@ class Ledger:
         """Stored examples of one task (what deleting the task keeps, for provenance)."""
         return int(self.db.execute("SELECT COUNT(*) FROM examples WHERE task=?", (task,)).fetchone()[0])
 
-    @_locked
+    @_reads
     def bill_of_materials(self) -> dict[str, Any]:
-        """Model bill of materials: which teachers and licenses produced the training data."""
-        rows = self.db.execute(
+        """Model bill of materials: which teachers and licenses produced the training data. `examples_sha256` (over
+        every example hash in order) is recomputed only when the examples' count, highest id or rewrite generation
+        moved: ids are never reused, so an insert or a delete moves the first two, and a hash rewritten on this
+        connection moves the third (another process never rewrites a hash in place; it is the example's identity)."""
+        gen = self._settled("examples")  # before the snapshot: a later write makes the next call recompute
+        rows = self._rdb.execute(
             "SELECT teacher_model, license, license_url, split, COUNT(*) n FROM examples"
             " GROUP BY teacher_model, license, license_url, split"
         ).fetchall()
-        digest = hashlib.sha256()
-        for r in self.db.execute("SELECT hash FROM examples ORDER BY hash"):
-            digest.update(r["hash"].encode())
-        return {
-            "generated_at": time.time(),
-            "examples_sha256": digest.hexdigest(),
-            "sources": [dict(r) for r in rows],
-        }
+        count, top = self._rdb.execute("SELECT COUNT(*), MAX(id) FROM examples").fetchone()
+        key = (int(count), top, gen)
+        if gen is not None and self._digest is not None and self._digest[0] == key:
+            sha = self._digest[1]
+        else:
+            digest = hashlib.sha256()
+            for r in self._rdb.execute("SELECT hash FROM examples ORDER BY hash"):
+                digest.update(r["hash"].encode())
+            sha = digest.hexdigest()
+            self._digest = (key, sha) if gen is not None else None
+        return {"generated_at": time.time(), "examples_sha256": sha, "sources": [dict(r) for r in rows]}
 
-    @_locked
+    @_reads
     def privacy_stats(self) -> dict[str, int]:
-        r = self.db.execute(
+        r = self._rdb.execute(
             "SELECT COUNT(*) n, SUM(redactions > 0) redacted, COALESCE(SUM(redactions), 0) placeholders FROM examples"
         ).fetchone()
         return {"examples": int(r["n"]), "redacted_examples": int(r["redacted"] or 0), "placeholders": int(r["placeholders"])}
@@ -651,32 +841,33 @@ class Ledger:
         r = self.db.execute("SELECT bom FROM versions WHERE id=?", (vid,)).fetchone()
         return json.loads(r["bom"]) if r and r["bom"] else None
 
-    @_locked
+    @_reads
     def bom_status(self) -> dict[int, str]:
         """{version id: 'signed' | 'unsigned'} for versions that have a BOM."""
         out = {}
-        for r in self.db.execute("SELECT id, bom FROM versions WHERE bom IS NOT NULL"):
+        for r in self._rdb.execute("SELECT id, bom FROM versions WHERE bom IS NOT NULL"):
             out[int(r["id"])] = "signed" if json.loads(r["bom"]).get("signature") else "unsigned"
         return out
 
+    @staticmethod
+    def _version(r: sqlite3.Row) -> Version:
+        """A new Version from a `versions` row, with its own eval dict (callers may change it freely)."""
+        return Version(
+            r["id"],
+            r["day"],
+            r["base_model"],
+            r["adapter_uri"],
+            r["train_examples"],
+            r["dataset_hash"],
+            json.loads(r["eval"] or "{}"),
+            r["state"],
+            r["traffic_pct"],
+            r["stage_since"] or 0,
+        )
+
     @_locked
     def versions(self, states: Iterable[str] | None = None) -> list[Version]:
-        rows = self.db.execute("SELECT * FROM versions ORDER BY id").fetchall()
-        out = [
-            Version(
-                r["id"],
-                r["day"],
-                r["base_model"],
-                r["adapter_uri"],
-                r["train_examples"],
-                r["dataset_hash"],
-                json.loads(r["eval"] or "{}"),
-                r["state"],
-                r["traffic_pct"],
-                r["stage_since"] or 0,
-            )
-            for r in rows
-        ]
+        out = [self._version(r) for r in self.db.execute("SELECT * FROM versions ORDER BY id")]
         if states is not None:
             wanted = set(states)
             out = [v for v in out if v.state in wanted]
@@ -684,20 +875,36 @@ class Ledger:
 
     @_locked
     def version(self, vid: int) -> Version | None:
-        for v in self.versions():
-            if v.id == vid:
-                return v
-        return None
+        r = self.db.execute("SELECT * FROM versions WHERE id=?", (vid,)).fetchone()
+        return self._version(r) if r is not None else None
+
+    def _routed(self) -> dict[str, sqlite3.Row]:
+        """The newest version row per routed state (ROUTED_STATES), rebuilt only when a version was written: on this
+        connection (the `versions` generation, bumped by a TEMP trigger on every write) or by another connection, such
+        as the cron tick or the cost CLI (PRAGMA data_version). Two cheap reads per call instead of every version row and
+        its eval. Call it under the lock."""
+        key = (self._gen["versions"], int(self.db.execute("PRAGMA data_version").fetchone()[0]))
+        if key != self._routing_key:
+            routed: dict[str, sqlite3.Row] = {}
+            for r in self.db.execute(ROUTED_SQL, ROUTED_STATES):
+                routed[r["state"]] = r  # ascending ids: the newest wins, as `versions([state])[-1]` picks it
+            self._routing, self._routing_key = routed, key
+        return self._routing
 
     @_locked
     def live(self) -> Version | None:
-        live = self.versions(["live"])
-        return live[-1] if live else None
+        """The live version (the newest one, should there be two), from the routing snapshot; a fresh copy per call."""
+        return self.by_state("live")
 
     @_locked
     def by_state(self, state: str) -> Version | None:
-        vs = self.versions([state])
-        return vs[-1] if vs else None
+        """The newest version in `state`. The routed states come from the routing snapshot, any other from one indexed
+        query; either way a fresh copy per call."""
+        if state in ROUTED_STATES:
+            r = self._routed().get(state)
+        else:
+            r = self.db.execute("SELECT * FROM versions WHERE state=? ORDER BY id DESC LIMIT 1", (state,)).fetchone()
+        return self._version(r) if r is not None else None
 
     # ---------- tasks (the admin API's and auto tasks; built-in and file tasks are never stored) ----------
     @_locked
@@ -757,23 +964,47 @@ class Ledger:
         self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail))
         self.db.commit()
 
-    @_locked
-    def events(self) -> list[dict[str, Any]]:
-        return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
+    @_reads
+    def events(self, last: int | None = None) -> list[dict[str, Any]]:
+        """Every event, oldest first; with `last`, only the newest `last` of them (still oldest first), read without
+        the rest (the dashboard shows 40 of a log that only grows)."""
+        q = "SELECT id, ts, day, kind, detail FROM events"
+        if last is None:
+            return [dict(r) for r in self._rdb.execute(q + " ORDER BY id")]
+        if isinstance(last, bool) or not isinstance(last, int) or last < 0:
+            raise ValueError(f"last must be a whole number, 0 or more, not {last!r}")
+        return [dict(r) for r in self._rdb.execute(f"SELECT * FROM ({q} ORDER BY id DESC LIMIT ?) ORDER BY id", (last,))]
 
     @_locked
     def version_live_quality(self, vid: int, current_stage_only: bool = True) -> tuple[int, float | None]:
-        """(audits, audited precision) for a version, from teacher audits of answers it served."""
+        """(audits, audited precision) for a version, from teacher audits of answers it served (in its current stage,
+        by default: rows after `stage_since`).
+
+        Incremental (ADR 0060): a tally per (version, stage) keeps the count and sum up to the last id it read, and each
+        call reads only rows above it, through `requests_version_audited`. SQLite assigns ids in commit order, so no row
+        can appear below a tally later. A deleted or rewritten request on this connection (the `requests` generation) or
+        any commit by another connection (PRAGMA data_version) starts the tally again from the stage's first row. The
+        numbers are exactly what one `COUNT(*)`, `AVG(audit_agree)` over the stage gives."""
         since = 0
         if current_stage_only:
             v = self.version(vid)
             since = v.stage_since if v else 0
-        r = self.db.execute(
-            "SELECT COUNT(*) n, AVG(audit_agree) a FROM requests WHERE student_version=? AND audited=1"
-            " AND served_by='student' AND id>?",
-            (vid, since),
-        ).fetchone()
-        return int(r["n"]), (None if r["a"] is None else float(r["a"]))
+        gen = (self._gen["requests"], int(self.db.execute("PRAGMA data_version").fetchone()[0]))
+        key = (vid, since)
+        tally = self._tallies.get(key)
+        if tally is None or tally.gen != gen:
+            tally = _Tally(gen, since)
+            self._tallies.pop(key, None)
+            self._tallies[key] = tally
+            while len(self._tallies) > MAX_TALLIES:
+                self._tallies.pop(next(iter(self._tallies)))
+        r = self.db.execute(AUDIT_TALLY_SQL, (vid, tally.last_id)).fetchone()
+        if r["top"] is not None:
+            tally.n += int(r["n"])
+            tally.agreed_n += int(r["k"])
+            tally.agreed += int(r["s"])
+            tally.last_id = int(r["top"])
+        return tally.n, (tally.agreed / tally.agreed_n if tally.agreed_n else None)
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:
@@ -788,16 +1019,7 @@ class Ledger:
         A request the live student was confident about but escalated only because fewer than the client's n samples
         agreed (route `n_choices`) counts as served: the shadow's verdict uses the one-choice rule, so the live student is
         held to the same one (ADR 0020)."""
-        r = self.db.execute(
-            """SELECT COUNT(*) n, SUM(shadow_serve) served,
-                      AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
-                      SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
-                      AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
-                               WHEN route = 'n_choices' THEN 1
-                               ELSE served_by='student' END) live_cov
-               FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL""",
-            (vid,),
-        ).fetchone()
+        r = self.db.execute(SHADOW_QUALITY_SQL, (vid,)).fetchone()
         n = int(r["n"] or 0)
         served = int(r["served"] or 0)
         return {
@@ -809,12 +1031,16 @@ class Ledger:
             "unarbitrated": int(r["unarbitrated"] or 0),
         }
 
-    @_locked
+    @_reads
     def stats_by_day(self) -> list[dict[str, Any]]:
         """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
-        `fallback_teacher`: the fallback teacher; ADR 0019)."""
-        rows = self.db.execute(
+        `fallback_teacher`: the fallback teacher; ADR 0019). `p50_student_ms` and `p95_ms` are nearest-rank percentiles
+        of `wall_ms` (the whole cascade on the gateway's clock) over the day's student-served and all requests that
+        recorded it (None without any). A day's percentiles are computed again only when its count or highest id moved
+        (ids are never reused) or a request was rewritten on this connection, so a stats read sorts today's rows only."""
+        gen = self._settled("requests")  # before the snapshot: a later rewrite makes the next call recompute
+        rows = self._rdb.execute(
             """SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
@@ -822,13 +1048,16 @@ class Ledger:
                       AVG(latency_ms) latency_ms,
                       AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
                       SUM(route='degraded') degraded,
-                      SUM(route='fallback_teacher') fallback_teacher
+                      SUM(route='fallback_teacher') fallback_teacher,
+                      MAX(id) top, COUNT(wall_ms) timed,
+                      COALESCE(SUM(served_by='student' AND wall_ms IS NOT NULL), 0) timed_student
                FROM requests GROUP BY day ORDER BY day"""
         ).fetchall()
         out = []
         for r in rows:
             n = r["requests"] or 1
             cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
+            p50_student, p95 = self._day_percentiles(r["day"], (r["requests"], r["top"], gen), r["timed_student"], r["timed"])
             out.append(
                 {
                     "day": r["day"],
@@ -842,21 +1071,72 @@ class Ledger:
                     "audit_agreement": r["audit_agree"],
                     "degraded": int(r["degraded"] or 0),
                     "fallback_teacher": int(r["fallback_teacher"] or 0),
+                    "p50_student_ms": p50_student,
+                    "p95_ms": p95,
                 }
             )
+        days = {r["day"] for r in rows}
+        for day in [d for d in self._day_latency if d not in days]:
+            del self._day_latency[day]
         return out
 
-    @_locked
+    def _day_percentiles(
+        self, day: int | None, key: tuple[int, int, int | None], timed_student: int, timed: int
+    ) -> tuple[float | None, float | None]:
+        """(p50 of the day's student-served wall_ms, p95 of all of its wall_ms), cached under `key` (count, highest id,
+        settled request generation; never cached without one). Call it from a `_reads` method."""
+        cached = self._day_latency.get(day)
+        if key[2] is not None and cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        p50 = self._nth_wall(_nearest_rank(0.5, timed_student), day, "student") if timed_student else None
+        p95 = self._nth_wall(_nearest_rank(0.95, timed), day, None) if timed else None
+        if key[2] is None:
+            self._day_latency.pop(day, None)
+        else:
+            self._day_latency[day] = (key, p50, p95)
+        return p50, p95
+
+    def _where_wall(self, day: int | None, served_by: str | None) -> tuple[str, list[Any]]:
+        q, args = " FROM requests WHERE wall_ms IS NOT NULL", []
+        if day is not None:
+            q += " AND day=?"
+            args.append(day)
+        if served_by is not None:
+            q += " AND served_by=?"
+            args.append(served_by)
+        return q, args
+
+    def _nth_wall(self, offset: int, day: int | None, served_by: str | None) -> float | None:
+        """The wall_ms at 0-based `offset` in ascending order among the rows the filters select: an ORDER BY with an
+        OFFSET, no SQLite extension."""
+        q, args = self._where_wall(day, served_by)
+        r = self._rdb.execute(f"SELECT wall_ms{q} ORDER BY wall_ms LIMIT 1 OFFSET ?", (*args, offset)).fetchone()
+        return float(r[0]) if r is not None else None
+
+    @_reads
+    def latency_percentiles(
+        self, day: int | None = None, served_by: str | None = None, qs: Iterable[float] = (0.5, 0.95)
+    ) -> dict[float, float | None]:
+        """{q: wall_ms} for each quantile in `qs` (0 to 1) over the requests that recorded `wall_ms`, of one day and one
+        `served_by` ('student' or 'teacher') when given, by the nearest-rank rule (`_nearest_rank`: a value that was
+        observed, never an interpolation). None for each q when no row matches. Overhead per request is `wall_ms -
+        latency_ms` (the providers' part)."""
+        quantiles = _check_quantiles(qs)
+        q, args = self._where_wall(day, served_by)
+        n = int(self._rdb.execute(f"SELECT COUNT(*){q}", args).fetchone()[0])
+        return {p: (self._nth_wall(_nearest_rank(p, n), day, served_by) if n else None) for p in quantiles}
+
+    @_reads
     def stats_by_task(self) -> list[dict[str, Any]]:
         """Per task: requests, student share, escalations, cost, savings, latency, and `routes`: how many requests took
         each route (`unrecorded` for rows older than the route column), most frequent first."""
-        rows = self.db.execute(
+        rows = self._rdb.execute(
             """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms
                FROM requests GROUP BY task ORDER BY COUNT(*) DESC"""
         ).fetchall()
         routes: dict[str, dict[str, int]] = {}
-        counted = self.db.execute("SELECT task, route, COUNT(*) n FROM requests GROUP BY task, route ORDER BY n DESC, route")
+        counted = self._rdb.execute("SELECT task, route, COUNT(*) n FROM requests GROUP BY task, route ORDER BY n DESC, route")
         for r in counted:
             per_task = routes.setdefault(r["task"], {})
             key = r["route"] or UNRECORDED_ROUTE
@@ -881,10 +1161,10 @@ class Ledger:
             )
         return out
 
-    @_locked
+    @_reads
     def stats_by_client(self) -> list[dict[str, Any]]:
         """Per API key: requests, cost and savings (the basis for per-client receipts)."""
-        rows = self.db.execute(
+        rows = self._rdb.execute(
             """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline
                FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
@@ -904,9 +1184,9 @@ class Ledger:
             )
         return out
 
-    @_locked
+    @_reads
     def totals(self) -> dict[str, float]:
-        r = self.db.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone()
+        r = self._rdb.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone()
         c, b = r["c"] or 0.0, r["b"] or 0.0
         return {
             "requests": r["n"],

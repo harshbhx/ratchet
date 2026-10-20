@@ -191,12 +191,13 @@ To also copy each backup to Nebius Object Storage:
 2. On the VM: `sudo snap install aws-cli --classic`, then `sudo -u ratchet -H aws configure` with that key.
 3. Set `RATCHET_BUCKET_S3=s3://<bucket>/ratchet` and `RATCHET_S3_ENDPOINT` in `.env`. Copy the endpoint URL from the console (verify on day 1).
 
-Restore: stop the gateway, copy the file into the volume, start it again.
+Restore: stop the gateway, remove the old WAL files, copy the file into the volume, start it again. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), so recent commits sit in `ratchet.db-wal` until a checkpoint: a stale `-wal` or `-shm` file left next to a restored copy would be replayed onto it. The backup script uses SQLite's backup API, which includes them; never copy the live file with `cp`.
 
 ```bash
 cd /opt/ratchet/deploy/vm
 gunzip -k /var/backups/ratchet/ratchet-<time>.db.gz
 sudo -u ratchet docker compose stop ratchet
+sudo -u ratchet docker compose run --rm --no-deps --entrypoint rm ratchet -f /data/ratchet.db-wal /data/ratchet.db-shm
 sudo -u ratchet docker compose cp /var/backups/ratchet/ratchet-<time>.db ratchet:/data/ratchet.db
 sudo -u ratchet docker compose start ratchet
 ```

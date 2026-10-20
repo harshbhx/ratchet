@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 706 tests, ~75 s
+pytest -q                                                          # 728 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -131,7 +131,7 @@ Use **one worker**. The ledger is a single SQLite connection inside the process,
 
 ### Step 7: Cron
 
-`python -m ratchet.live` must run on a machine that has the `nebius` CLI, the `aws` CLI (for sync and polling), the same `RATCHET_DB` file, and network access to the student endpoint. In v0.1 that means the same host as the gateway.
+`python -m ratchet.live` must run on a machine that has the `nebius` CLI, the `aws` CLI (for sync and polling), the same `RATCHET_DB` file, and network access to the student endpoint. In v0.1 that means the same host as the gateway. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), which needs every process that opens it on that one host with the file on a local disk: never put `RATCHET_DB` on the bucket mount or another network filesystem (if you must, set `RATCHET_DB_SYNC=FULL` for every process).
 
 ```cron
 # Night School at 02:30 local time

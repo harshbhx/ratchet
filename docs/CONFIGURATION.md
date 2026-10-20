@@ -184,6 +184,16 @@ Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py
 
 The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mode demo](#mock-mode-demo)).
 
+## Ledger and hot path
+
+How the ledger file is written and how often the request path does periodic work ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), [ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). A bad value stops startup with a `ValueError` naming the variable (the gateway, `python -m ratchet.live` and `python -m ratchet.cost`).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_DB_SYNC` | `NORMAL` | How a ledger file is journaled, `NORMAL` or `FULL` (any case; empty means `NORMAL`). `NORMAL`: the WAL journal with `synchronous=NORMAL`. Readers never wait for the writer, the dashboard reads on a second, read-only connection, and a commit does not wait for the disk: a power cut or an operating-system crash (not a crash of the gateway process) can lose the last commits, never corrupt the file. `FULL`: the rollback journal with `synchronous=FULL`, v0.4's behaviour, for a ledger on a filesystem without shared memory (a network or bucket mount, where WAL does not work) or when every commit must reach the disk before the client gets its answer. Give the gateway, the cron jobs and the cost CLI the same value: `FULL` cannot take a file out of WAL while another process has it open, and stops startup instead. Mock mode's in-memory ledger has no journal to set (a bad value still stops startup) |
+| `RATCHET_TICK_INTERVAL_S` | unset: `5` in live mode, `0` in mock mode | Seconds between two release-gate ticks run from the request path (0 to 3600). A tick less than this after the previous one, or while another thread is ticking, is skipped, so requests pay for a tick at most once per interval and never wait for one. A rollback can wait this long; the cron `python -m ratchet.live tick` runs regardless. `0` ticks after every request (mock mode, so simulations and tests behave as before); the mock demo's simulated days always tick |
+| `RATCHET_STATS_TTL_S` | unset: `2` in live mode, `0` in mock mode | Seconds `/ratchet/stats` serves one computed payload (0 to 3600). However many dashboards poll, it is computed at most once per TTL, by one caller at a time; the others get the previous payload. `0` computes it on every read |
+
 ## Release policy (`ratchet/release.py`)
 
 `ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode ignores them and uses `min_audits=15`.
@@ -234,7 +244,8 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 | `RATCHET_BATCH_API` | `operations` | Clean-room backfill (FR-16.8): the Token Factory batch API (`operations` or `openai`) |
 | `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
 | `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |
-| `RATCHET_DB_SYNC` | `FULL` | Live readiness: `NORMAL` will switch a file ledger to the WAL journal. `FULL` is today's rollback journal |
+
+`RATCHET_DB_SYNC` was reserved here for the WAL journal; it is built now ([Ledger and hot path](#ledger-and-hot-path)).
 
 `ReleasePolicy` (`release.RESERVED_POLICY`, read by `from_env` as `RATCHET_<FIELD>` in live mode like the fields above):
 
