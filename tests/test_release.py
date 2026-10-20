@@ -102,6 +102,17 @@ def test_shadow_promotes_and_both_rejections():
     assert (v.state, v.traffic_pct) == ("canary", CANARY_STEPS[0])
     assert led.live().id == live and _kinds(led, "canary")[-1]["detail"].startswith(f"v{cand} shadow precision 95.0%")
 
+    # The evidence is would-serve answers, not shadowed requests: 150 requests of which it would serve 75 is not enough.
+    led, gate, live, cand = _shadowing()
+    _shadow(led, cand, 150, serve_every=2, live_vid=live, live_escalate_every=2)
+    s = led.shadow_quality(cand)
+    assert (s["n"], s["served"], s["precision"], s["coverage"], s["live_coverage"]) == (150, 75, 1.0, 0.5, 0.5)
+    gate.tick()
+    assert led.version(cand).state == "shadow" and not _kinds(led, "canary", "rejected")
+    _shadow(led, cand, 50, serve_every=2, live_vid=live, live_escalate_every=2)  # 100 would-serve answers out of 200
+    gate.tick()
+    assert led.version(cand).state == "canary"
+
     # Rejection on precision: 90% of what it would serve agrees with the reference.
     led, gate, live, cand = _shadowing()
     _shadow(led, cand, 200, agree_every=10, live_vid=live)
@@ -126,7 +137,7 @@ def test_shadow_promotes_and_both_rejections():
 
 
 # ---------- canary ----------
-@pytest.mark.req("FR-6.5")
+@pytest.mark.req("FR-6.5", "FR-6.6")
 def test_canary_holds_without_strong_evidence():
     p = ReleasePolicy()  # 20 audits per stage, floor 92%
     led = Ledger(":memory:")
@@ -146,6 +157,25 @@ def test_canary_holds_without_strong_evidence():
     _audit(led, cand, 20)  # 38 of 40: now it has earned the next step
     gate.tick()
     assert led.version(cand).traffic_pct == CANARY_STEPS[1]
+
+    # The rollback boundary: 16 of 20 is the most agreement that still rolls back (Wilson upper bound 91.9%, just under
+    # the floor); 17 of 20 (94.8%) is not strong evidence and only holds the stage.
+    for agree, disagree_every, rolled_back in ((16, 5, True), (17, 7, False)):
+        led = Ledger(":memory:")
+        gate = ReleaseGate(led, p)
+        live = _version(led, "live", GOOD)
+        cand = _version(led, "canary", GOOD)
+        _audit(led, cand, p.min_audits, agree_every=disagree_every)
+        assert led.version_live_quality(cand) == (20, agree / 20)
+        hi = wilson(agree, 20)[1]
+        assert (hi < p.live_floor) == rolled_back and abs(hi - p.live_floor) < 0.03, (agree, hi)
+        gate.tick()
+        v = led.version(cand)
+        assert (v.state, v.traffic_pct) == (("rolled_back", 0) if rolled_back else ("canary", CANARY_STEPS[0])), agree
+        assert led.live().id == live and not _kinds(led, "canary", "live")
+        rollbacks = [e["detail"] for e in _kinds(led, "rollback")]
+        assert len(rollbacks) == int(rolled_back)
+        assert all(d.endswith(f"traffic back to live v{live}") for d in rollbacks)
 
 
 @pytest.mark.req("FR-6.6", "US-6")
