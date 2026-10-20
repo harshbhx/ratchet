@@ -15,6 +15,7 @@ import { Pipeline } from "./pipeline";
 import { Provenance } from "./provenance";
 import { ReleaseLog } from "./release-log";
 import { TasksTable, VersionsTable } from "./tables";
+import { TrustPanel } from "./trust";
 import { DetailText, KindChip } from "./ui";
 import { useDashboardStats, useNow } from "./use-dashboard";
 
@@ -370,6 +371,10 @@ export default function DashboardPage() {
 
                 <Reveal delay={0.14}>
                   <TasksTable tasks={stats.tasks} />
+                </Reveal>
+
+                <Reveal delay={0.15}>
+                  <TrustPanel stats={stats} />
                 </Reveal>
 
                 <Reveal delay={0.16} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">

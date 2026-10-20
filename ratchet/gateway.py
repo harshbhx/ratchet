@@ -18,6 +18,7 @@ import re
 import threading
 import time
 import uuid
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .providers import OpenAICompatProvider
+from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .router import Ratchet
 from .scout.agents import Call, Scout
@@ -51,6 +53,7 @@ DIST = HERE / "web" / "dist"
 SPA_INDEX = DIST / "index.html"
 WORKLOADS = ("tickets", "research", "mixed")
 MAX_QUESTION_CHARS = 300
+MAX_REDACT_CHARS = 5000
 
 
 class Runtime:
@@ -346,6 +349,18 @@ def stats() -> dict[str, Any]:
 def bom() -> dict[str, Any]:
     """Model bill of materials: proof of which teachers and licenses produced the training data."""
     return rt.ledger.bill_of_materials()
+
+
+@app.post("/ratchet/redact")
+def redact_preview(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Show what the redactor would store for a piece of text. Nothing is logged or stored."""
+    text = body.get("text")
+    if not isinstance(text, str):
+        raise HTTPException(400, "text is required")
+    if len(text) > MAX_REDACT_CHARS:
+        raise HTTPException(400, f"text is limited to {MAX_REDACT_CHARS} characters")
+    found: Counter[str] = Counter()
+    return {"text": redact(text, found), "found": dict(found), "enabled": rt.settings.redact_pii}
 
 
 @app.get("/ratchet/bom/public-key")

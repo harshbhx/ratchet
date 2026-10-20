@@ -373,3 +373,13 @@ def test_healthz_stays_public_when_keys_are_on(gw_env):
     c = TestClient(gw.app)
     assert c.get("/healthz").json()["status"] == "ok"
     assert c.get("/v1/models").status_code == 401
+
+
+def test_redact_preview_endpoint(gw_env):
+    from fastapi.testclient import TestClient
+
+    c = TestClient(gw_env().app)
+    r = c.post("/ratchet/redact", json={"text": "I'm bob@example.com, card 4111 1111 1111 1111"}).json()
+    assert r == {"text": "I'm [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": True}
+    assert c.post("/ratchet/redact", json={"text": "x" * 5001}).status_code == 400
+    assert c.post("/ratchet/redact", json={}).status_code == 400

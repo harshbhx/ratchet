@@ -53,6 +53,8 @@ export interface Version {
   state: VersionState;
   traffic_pct: number;
   stage_since: number;
+  /** This adapter's bill of materials (GET /ratchet/versions/{id}/bom); null for versions trained before v0.4. */
+  bom?: "signed" | "unsigned" | null;
 }
 
 export interface LedgerEvent {
@@ -71,6 +73,35 @@ export interface BomSource {
   n: number;
 }
 
+export interface ClientStats {
+  client: string;
+  requests: number;
+  student_share: number;
+  cost_usd: number;
+  baseline_usd: number;
+  savings_pct: number;
+}
+
+export interface PrivacyStats {
+  redaction: boolean;
+  examples: number;
+  redacted_examples: number;
+  placeholders: number;
+}
+
+export interface SecurityStats {
+  api_keys: boolean;
+  daily_requests_per_key: number | null;
+  bom_signing: boolean;
+  bom_key_id: string | null;
+}
+
+export interface RedactPreview {
+  text: string;
+  found: Record<string, number>;
+  enabled: boolean;
+}
+
 export interface Stats {
   mode: Mode;
   day: number;
@@ -82,6 +113,10 @@ export interface Stats {
   events: LedgerEvent[];
   totals: { requests: number; cost_usd: number; baseline_usd: number; saved_usd: number; savings_pct: number };
   bill_of_materials: { generated_at: number; examples_sha256: string; sources: BomSource[] };
+  // v0.4: optional so the UI still renders against an older gateway.
+  clients?: ClientStats[];
+  privacy?: PrivacyStats;
+  security?: SecurityStats;
 }
 
 export type Workload = "tickets" | "research" | "mixed";
@@ -200,6 +235,7 @@ export const api = {
     ),
   breakNext: () => json<{ corrupt: string }>("/ratchet/demo/break-next", { method: "POST" }),
   reset: () => json<{ status: string }>("/ratchet/demo/reset", { method: "POST" }),
+  redact: (text: string) => json<RedactPreview>("/ratchet/redact", { method: "POST", body: JSON.stringify({ text }) }),
   scoutExamples: () => json<ScoutExamples>("/scout/examples"),
   scoutStatus: () => json<ScoutStatus>("/scout/status"),
   scoutRun: (question: string) =>
