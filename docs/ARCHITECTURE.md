@@ -116,9 +116,9 @@ Details that matter:
 0. **Pinned tasks** (`Task.pinned`, `_pinned`): checked first. The teacher answers, the request is logged with `served_by=teacher`, no student version, and `cost_usd = baseline_cost_usd`. The answer is **not** passed to `add_example`, so it never becomes training data. No student, audit or shadow call is made. Scout's planner and writer (`research-plan`, `research-write`) are pinned; see [§10](#10-scout-multi-agent-demo).
 1. **Version choice** (`_pick_version`): if a version is in `canary`, it is chosen with probability `traffic_pct / 100`; otherwise the `live` version is used. With no live version (cold start) and the canary not picked, the request goes straight to the teacher.
 2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3) and `confidence.STUDENT_SAMPLING` (`temperature=0.7`, `logprobs=True`), the constant the golden eval also uses. The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name.
-3. **Threshold**: `Ratchet.threshold(version)` returns `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80).
-4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data.
-5. **Teacher calls** (`_call_teacher`): the teacher answer is stripped of `<think>…</think>`, the messages and the answer are redacted ([PII redaction](#pii-redaction)), and they are stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url, redactions)`. The license comes from `licenses.require_distillable(settings.teacher_model)`, checked once when `Ratchet` is constructed. A closed teacher raises `LicenseError` at startup.
+3. **Threshold**: `Ratchet.threshold(version)` returns `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80). A sample set with no valid answer (`Scored.valid` false: every sample unparseable, empty or cut off) is never served, whatever the threshold.
+4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data. A teacher answer that cannot be stored ([below](#storage-rules)) is not an audit: `audited=0`.
+5. **Teacher calls** (`_call_teacher` → `_store_example`): the teacher answer is cleaned (`tasks.clean_answer`), checked against the [storage rules](#storage-rules), the messages and the answer are redacted ([PII redaction](#pii-redaction)), and they are stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url, redactions)`. The license comes from `licenses.require_distillable(settings.teacher_model)`, checked once when `Ratchet` is constructed. A closed teacher raises `LicenseError` at startup.
 6. **Shadow**: see [state machine](#5-version-state-machine). The shadow candidate never serves.
 7. **Logging**: one row in `requests` per call (columns below), with the API client's name when keys are on.
 8. **Gate tick**: the gateway calls `rt.tick()` (which runs `gate.tick()` under a lock) after every `/v1/chat/completions` request and after every Scout run. In live mode, `python -m ratchet.live tick` can also be run from cron.
@@ -158,7 +158,18 @@ stateDiagram-v2
 
 The mock-only `POST /ratchet/demo/student-outage` takes the mock production endpoint down for 5 to 300 s, to show the breaker open and close again ([API.md](API.md#post-ratchetdemostudent-outageseconds60)).
 
-The response text is the served answer with reasoning tags removed. With `stream: true` the gateway sends it as OpenAI `chat.completion.chunk` events after the cascade has decided; the cascade cannot stream the student's tokens as they arrive, because confidence is scored on the whole answer ([API.md](API.md#streaming)).
+### Storage rules
+
+Every training example is a teacher answer (INV-2) that is complete and valid (INV-16, [ADR 0016](adr/0016-store-only-complete-valid-teacher-answers.md)). `Ratchet._store_example` is the only caller of `Ledger.add_example`; it runs on every teacher call (escalation, cold start, audit, shadow arbitration), never on the pinned and teacher-only path (INV-10).
+
+1. **Clean** (`tasks.clean_answer`, FR-2.7). `strip_reasoning` removes complete `<think>…</think>` blocks in any case, then everything up to the last remaining `</think>` (a chat template that opens the reasoning in the prompt, so the output has only the closing tag), then an opening `<think>` still left together with everything after it (an answer cut off while reasoning). For a structured task (`compare_keys`), one code fence that is the whole answer is unwrapped when its body parses as JSON; a free-text answer keeps its fences, since a code block is content there. The provider never reads `reasoning_content` or `reasoning` (vLLM's and Token Factory's reasoning parsers), so reasoning cannot arrive another way.
+2. **Check** (`router.answer_problem`). The answer is skipped when its `finish_reason` is not `stop` or `tool_calls` (`finish_reason length`: cut off by the token limit), when nothing is left after cleaning (`empty answer`), or when a structured task's answer does not parse as a JSON object (`invalid answer`). String operations only, so the check costs microseconds.
+3. **Redact**, then check once more: a placeholder can break a structured answer (a card-like number outside quotes becomes `[CARD]`), and such an answer is skipped (`invalid after redaction`).
+4. **Store** with its license, or bump `seen` for a duplicate. `requests.stored` is 1 for a request whose teacher answer was stored or bumped, 0 otherwise (including pinned requests), NULL for rows from before v0.5.
+
+A skipped answer is still served (the client asked for it, and with `finish_reason length` it is all there is), but it is not an audit (`audited=0`, counted neither for nor against the student) and it settles no shadow disagreement (`shadow_agree` NULL, which the gate counts against the shadow, as for a failed arbitration). Each skip writes a `skip_example` event (`ticket-triage: finish_reason length`) on the 1st, 10th, 100th and 1000th skip of each reason, counted per process under the same lock as the failure counters; the detail never quotes the answer. On the student side, a sample with `finish_reason` `length` or `content_filter` gets no vote in `confidence.score`, and an empty answer is invalid for every task.
+
+The response text is the served answer after `tasks.clean_answer`: no reasoning, and for a structured task bare JSON. With `stream: true` the gateway sends it as OpenAI `chat.completion.chunk` events after the cascade has decided; the cascade cannot stream the student's tokens as they arrive, because confidence is scored on the whole answer ([API.md](API.md#streaming)).
 
 ### PII redaction
 
@@ -176,7 +187,7 @@ The response text is the served answer with reasoning tags removed. With `stream
 | `IP` | IPv4 | |
 | `PHONE` | optional `+country`, optional `(area)`, digit groups | 10–15 digits |
 
-Only `_call_teacher` redacts; the teacher itself receives the original. `examples.redactions` counts the placeholders per example, `Ledger.privacy_stats()` sums them for `/ratchet/stats`, and each adapter BOM reports `examples_with_pii_redacted`. `POST /ratchet/redact` previews the result for any text. The redactor does not find names or street addresses.
+Only `_store_example` redacts; the teacher itself receives the original. `examples.redactions` counts the placeholders per example, `Ledger.privacy_stats()` sums them for `/ratchet/stats`, and each adapter BOM reports `examples_with_pii_redacted`. `POST /ratchet/redact` previews the result for any text. The redactor does not find names or street addresses.
 
 ## 3. Nightly loop (Night School)
 
@@ -225,16 +236,17 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `student_version` | INTEGER | Version that was tried first; NULL on cold start |
 | `confidence` | REAL | Student confidence; NULL if no student was tried |
 | `escalated` | INTEGER | 1 if the student was below threshold |
-| `audited` | INTEGER | 1 if the teacher double-checked a student answer (0 when the audit call failed) |
+| `audited` | INTEGER | 1 if the teacher double-checked a student answer (0 when the audit call failed or its answer could not be stored) |
 | `audit_agree` | INTEGER | 1/0 for audited rows, NULL otherwise |
 | `shadow_version` | INTEGER | Shadow candidate that ran, if any |
 | `shadow_serve` | INTEGER | 1 if the shadow would have served |
-| `shadow_agree` | INTEGER | 1 if the shadow agreed with the best available reference; NULL when its disagreement could not be arbitrated |
+| `shadow_agree` | INTEGER | 1 if the shadow agreed with the best available reference; NULL when its disagreement could not be arbitrated, or the teacher's reference could not be stored |
 | `latency_ms` | REAL | Student latency (max over samples) plus teacher latency if called |
 | `cost_usd` | REAL | Actual cost of this request (student + teacher + audit + shadow + arbitration) |
 | `baseline_cost_usd` | REAL | Estimated cost if the teacher had answered alone |
 | `client` | TEXT | API key name that sent the request; NULL when keys are off and for internal calls (Scout, demo). Indexed with `ts` for the daily quota |
 | `route` | TEXT | How the request was served (`router.ROUTES`): `student`, `confidence`, `cold_start`, `pinned`, `student_error`, `student_breaker` ([API.md](API.md#get-ratchetstats)). NULL in rows written before v0.5; `stats_by_task` reports those as `unrecorded` |
+| `stored` | INTEGER | 1 if a teacher answer from this request was stored as an example (inserted, or a duplicate's `seen` bumped); 0 if none was (student-served without audit, pinned, or a skipped answer, see [Storage rules](#storage-rules)); NULL in rows written before v0.5 |
 
 ### `examples`: teacher-written training data with provenance
 
@@ -269,7 +281,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -329,6 +341,7 @@ For each request while a shadow exists, the shadow candidate is sampled and scor
 
 1. The teacher's answer, if the teacher was called for this request (escalation or audit).
 2. If the shadow would serve and disagrees with the served answer, the teacher is called to **arbitrate** (stored as training data) and its answer is the reference. If that call fails, or is skipped because the audit already failed in this request, there is no reference: `shadow_agree` stays NULL and the gate counts it as a disagreement.
+   A teacher answer from step 1 or 2 that breaks the [storage rules](#storage-rules) (cut off, empty, or invalid for the task) is no reference either: `shadow_agree` stays NULL.
 3. Otherwise the served answer (the live student's).
 
 So disagreements are always settled by the teacher (or counted against the shadow when it cannot be reached), while agreements with the live student are accepted as-is.
@@ -339,8 +352,8 @@ So disagreements are always settled by the teacher (or counted against the shado
 
 Given `n` samples and a `Task`:
 
-1. Each sample is canonicalised by `Task.canonical()`. For tasks with `compare_keys` (e.g. `ticket-triage` → `category`, `priority`), the JSON is parsed and only those fields are kept, lower-cased and trimmed. Otherwise the whole text is used, with reasoning removed and whitespace normalised. Unparseable JSON becomes `<invalid>`.
-2. If every sample is invalid, confidence is 0.
+1. Each sample is canonicalised by `Task.canonical()`, after `tasks.clean_answer` ([Storage rules](#storage-rules)). For tasks with `compare_keys` (e.g. `ticket-triage` → `category`, `priority`), the JSON is parsed and only those fields are kept, lower-cased and trimmed. Otherwise the whole text is used, with reasoning removed and whitespace normalised. Unparseable JSON, an empty answer and a sample cut off by the token limit or a content filter (`finish_reason` `length` or `content_filter`) become `<invalid>` and get no vote.
+2. If every sample is invalid, confidence is 0 and the answer is never served (`Scored.valid` is false), even with a threshold of 0.
 3. `agreement = votes for the majority answer / n`.
 4. The best sample is the majority answer with the highest mean token probability, `p = exp(mean(token logprobs))`.
 5. `confidence = 0.4 · p + 0.6 · agreement`, or `agreement` alone if no logprobs were returned.

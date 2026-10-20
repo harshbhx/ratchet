@@ -49,7 +49,10 @@ def test_training_targets_are_teacher_answers_only():
     led = Ledger(":memory:")
     live = _version(led, "live", {"threshold": 0.5})
     shadow = _version(led, "shadow", {"threshold": 0.5})
-    teacher = RecordingProvider(lambda msgs, model: f"teacher answer to {msgs[-1]['content']}")
+    # Valid for both tasks used below ('ticket-triage' wants JSON), so every teacher answer can be stored (INV-16).
+    teacher = RecordingProvider(
+        lambda msgs, model: json.dumps({"category": "teacher", "priority": "high", "reply": f"to {msgs[-1]['content']}"})
+    )
     student = RecordingProvider(STUDENT_MARKER)  # unanimous at p≈0.95: confident enough to serve
     settings = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=1.0, confidence_threshold=0.8, redact_pii=True)
     r = Ratchet(settings, led, teacher, lambda v: (student, v.adapter_uri), seed=1)
@@ -94,10 +97,9 @@ def test_training_targets_are_teacher_answers_only():
 
 # Every place under ratchet/ that may store a training example. Change this set only in a reviewed edit: a new caller
 # must store teacher answers only (INV-2) and never a pinned task (INV-10). The set must match the code exactly, so
-# moving a call site means replacing its old entry, not adding the new one beside it. For example, when the
-# answer-hygiene item moves storing into Ratchet._store_example (called from _call_teacher), the entry
-# "ratchet.router:Ratchet._call_teacher" becomes "ratchet.router:Ratchet._store_example".
-ALLOWED_ADD_EXAMPLE_CALLERS = {"ratchet.router:Ratchet._call_teacher"}
+# moving a call site means replacing its old entry, not adding the new one beside it (as when storing moved from
+# Ratchet._call_teacher into Ratchet._store_example, which _call_teacher calls and which also enforces INV-16).
+ALLOWED_ADD_EXAMPLE_CALLERS = {"ratchet.router:Ratchet._store_example"}
 
 
 class _AddExampleSites(ast.NodeVisitor):

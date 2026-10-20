@@ -73,7 +73,9 @@ def main(client: httpx.Client | None = None) -> int:
             js = "json ok"
         except Exception:
             js = "json NOT parseable"
-        print(f"[ok] {model}: {js}, logprobs={'yes' if lp else 'NO'}, usage={d.get('usage')}")
+        # Only answers that end with finish_reason "stop" (or "tool_calls") are stored as training data (INV-16).
+        finish = ch.get("finish_reason")
+        print(f"[ok] {model}: {js}, logprobs={'yes' if lp else 'NO'}, finish_reason={finish}, usage={d.get('usage')}")
     print("\nAll good." if ok else "\nSome checks failed: update ratchet/config.py before building on them.")
     return 0 if ok else 1
 

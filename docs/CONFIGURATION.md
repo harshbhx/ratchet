@@ -172,14 +172,16 @@ A task tells Ratchet when two answers "agree" (`ratchet/tasks.py`):
 
 | Task | `compare_keys` | `pinned` | Agreement rule |
 |---|---|---|---|
-| `default` | none | no | Whole text equal after removing `<think>` blocks, lower-casing and collapsing whitespace |
-| `ticket-triage` | `category`, `priority` | no | Parse JSON (tolerates code fences and surrounding text), compare only those fields, case-insensitive. Free-text fields such as `reply` are ignored |
+| `default` | none | no | Whole text equal after removing reasoning (`tasks.strip_reasoning`), lower-casing and collapsing whitespace; an empty answer never agrees |
+| `ticket-triage` | `category`, `priority` | no | Parse JSON (tolerates reasoning, code fences and surrounding text), compare only those fields, case-insensitive. Free-text fields such as `reply` are ignored |
 | `source-triage` | `relevant`, `source_type` | no | Scout's triage agent. Same JSON rule; `reason` is ignored |
 | `page-read` | `answers_question`, `fact_type` | no | Scout's reader agent. Same JSON rule; `key_fact` is ignored |
 | `research-plan` | none | **yes** | Scout's planner. Always answered by the teacher |
 | `research-write` | none | **yes** | Scout's writer. Always answered by the teacher |
 
 **Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data.
+
+Every answer is cleaned the same way before it is compared, served or stored (`tasks.clean_answer`): reasoning is removed (`<think>` blocks, anything before a lone `</think>`, an unterminated `<think>` and what follows), and for a task with `compare_keys` (a structured task) a code fence around the whole answer is unwrapped when its body is JSON. A teacher answer is stored as a training example only when it is complete (`finish_reason` `stop` or `tool_calls`), not empty, and, for a structured task, valid JSON (invariant 16); otherwise it is served and logged as a `skip_example` event. So a structured task's system prompt should ask for JSON only.
 
 Clients pick a task with the `X-Ratchet-Task` header or `metadata.ratchet_task`. An unknown name gets a temporary `default`-style task with that name (not added to the registry), so its data stays separate. Names must match `[A-Za-z0-9_.-]{1,64}`; anything else becomes `default`.
 

@@ -12,5 +12,6 @@ Run these before building more. Each one is a known risk from the stress test. E
 | 6 | Runtime LoRA loading | `POST /v1/load_lora_adapter` (needs `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`) | Restart the endpoint with `--lora-modules name=path` per promotion |
 | 7 | Serverless pricing | Nebius console | Keep training runs short; stop the endpoint when idle |
 | 8 | Terms 5(f) of Token Factory ("competing service") | Ask Nebius DevRel in Discord | Position as "built on Nebius end to end" (it is) |
+| 9 | Answers end with `finish_reason=stop` | `python scripts/day1_check.py` prints it per model | Only complete answers are stored (invariant 16): with `length`, raise the script's `max_tokens` to see whether reasoning eats the budget; see [RUNBOOK.md](RUNBOOK.md#teacher-answers-not-stored) |
 
 Budget guess: about $40–80 total, assuming L40S at about $1.55/hour (training runs under an hour, endpoint only while testing and recording, $20–30 of Ultra calls). The Builder Program gives $25 of Token Factory credit; ask in Discord for more.

@@ -164,6 +164,8 @@ Standard `chat.completion` plus a `ratchet` block:
 
 `model` is the model that produced the served answer: the adapter name (`student-vN`) or the teacher model ID. `usage` is not returned yet.
 
+`message.content` is the served answer after `tasks.clean_answer`: model reasoning is never returned (a `<think>…</think>` block, anything before a lone `</think>`, an unterminated `<think>` and what follows), and for a structured task such as `ticket-triage` a code fence around the whole JSON answer is removed, so the content is bare JSON. A free-text answer keeps its code blocks. A teacher answer that was cut off by its token limit is still returned (and is not stored as training data); `finish_reason` in the response is always `stop` for now.
+
 Response headers: `X-Ratchet-Served-By: student|teacher`, plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
 
 ### Streaming
@@ -583,6 +585,6 @@ gate.tick()
 print(result.served_by, result.text, result.cost_usd)
 ```
 
-`result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)). `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`) and `breakers`: each student breaker's state by name (`student`, `shadow`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
+`result.route` says how the request was served (the routes table under [`/ratchet/stats`](#get-ratchetstats)); `result.text` is the answer after `tasks.clean_answer`. Each `Completion` a provider returns carries `finish_reason` (`stop` when the server leaves it out) and `reasoning_tokens`; only a teacher answer with `finish_reason` `stop` or `tool_calls` that is non-empty and valid for its task is stored (invariant 16), and `requests.stored` says whether a request stored one. `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`) and `breakers`: each student breaker's state by name (`student`, `shadow`), as `{"state": "closed" | "open" | "half_open", "failures": n, "open_until": t, "open_s": s}`, where `open_until` is on the breaker's clock (`time.monotonic()` unless `Ratchet(clock=...)` was given). `Ratchet(..., on_adapter_missing=callback)` is called with the version when vLLM answers 404 for its adapter; the gateway passes `live.AdapterReloader.request`.
 
 When the teacher's answer was needed and the teacher failed after its retries, `handle` raises `ratchet.providers.UpstreamError` (an `httpx.HTTPError`): `status` (504 for a timeout, 502 when Token Factory could not be reached), and the teacher's `type`, `code`, `param`, `message` and `retry_after` when it sent them. It never carries the URL or headers.

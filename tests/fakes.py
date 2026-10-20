@@ -104,7 +104,9 @@ class RecordingProvider:
     scripts the choices instead: choice i gets item i (cycling), so `RecordingProvider([A, A, B], [log(.6), log(.9),
     log(.99)])` is a 2-of-3 majority with known token probabilities. Calls to a model in `raise_on` are recorded and
     then raise `exc(message)`: `httpx.ConnectError` by default, the way an unreachable endpoint fails, or another error
-    such as `exc=httpx.ReadTimeout` for a slow one. Thread-safe, because Scout calls the router from several threads."""
+    such as `exc=httpx.ReadTimeout` for a slow one. `finish_reason` (a string, or a list scripted like `text`) is why
+    each choice stopped: `"length"` plays an answer cut off by the token limit. Thread-safe, because Scout calls the
+    router from several threads."""
 
     def __init__(
         self,
@@ -115,9 +117,10 @@ class RecordingProvider:
         raise_on: Collection[str] = frozenset(),
         latency_ms: float = 1.0,
         exc: Callable[[str], BaseException] = httpx.ConnectError,
+        finish_reason: str | list[str] = "stop",
     ) -> None:
-        if (isinstance(text, list) and not text) or (isinstance(logprob, list) and not logprob):
-            raise ValueError("a scripted text or logprob list needs at least one item")
+        if any(isinstance(v, list) and not v for v in (text, logprob, finish_reason)):
+            raise ValueError("a scripted text, logprob or finish_reason list needs at least one item")
         self.text = text
         self.logprob = logprob
         self.in_tokens = in_tokens
@@ -125,6 +128,7 @@ class RecordingProvider:
         self.raise_on = set(raise_on)
         self.latency_ms = latency_ms
         self.exc = exc
+        self.finish_reason = finish_reason
         self.calls: list[ProviderCall] = []
         self._lock = threading.Lock()
 
@@ -148,7 +152,8 @@ class RecordingProvider:
         for i in range(int(kwargs.get("n") or 1)):
             lp = _nth(self.logprob, i)
             logprobs = [lp] * self.out_tokens if kwargs.get("logprobs") and lp is not None else []
-            out.append(Completion(_nth(said, i), model, self.in_tokens, self.out_tokens, self.latency_ms, logprobs))
+            finish = _nth(self.finish_reason, i)
+            out.append(Completion(_nth(said, i), model, self.in_tokens, self.out_tokens, self.latency_ms, logprobs, finish))
         return out
 
 
@@ -175,6 +180,7 @@ class FakeOpenAIServer:
     it keeps vLLM's adapter state: a chat request for a model not in it is vLLM's 404 (`The model `x` does not
     exist.`), a successful load adds the adapter, and `restart()` forgets them all. Every request is recorded as an
     `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
+    `finish_reason` is what every choice reports (`"length"`: cut off by the token limit; None leaves the field out).
     Pass `server.transport` to `OpenAICompatProvider(transport=...)`, `Runtime(transports=...)` or `httpx.Client`."""
 
     def __init__(
@@ -187,11 +193,13 @@ class FakeOpenAIServer:
         load: Callable[[dict[str, Any]], tuple[int, str]] | None = None,
         models: Collection[str] = (),
         loaded: Collection[str] | None = None,
+        finish_reason: str | None = "stop",
     ) -> None:
         self.text = text
         self.logprob = logprob
         self.in_tokens = in_tokens
         self.out_tokens = out_tokens
+        self.finish_reason = finish_reason
         self.load = load or (lambda body: (200, ""))
         self.models = list(models)
         self.loaded = set(loaded) if loaded is not None else None
@@ -241,7 +249,9 @@ class FakeOpenAIServer:
         lp = None
         if body.get("logprobs") and self.logprob is not None:
             lp = {"content": [{"token": "t", "logprob": self.logprob}] * self.out_tokens}
-        choice = {"message": {"role": "assistant", "content": text}, "logprobs": lp, "finish_reason": "stop"}
+        choice: dict[str, Any] = {"message": {"role": "assistant", "content": text}, "logprobs": lp}
+        if self.finish_reason is not None:
+            choice["finish_reason"] = self.finish_reason
         return {
             "object": "chat.completion",
             "model": body["model"],

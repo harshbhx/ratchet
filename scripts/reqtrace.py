@@ -523,7 +523,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-2.4": ("ratchet.router:Ratchet.handle",),
     "FR-2.5": ("ratchet.router:Ratchet.handle",),
     "FR-2.6": ("ratchet.tasks:Task.agree", "ratchet.tasks:Task.canonical"),
-    "FR-2.7": ("ratchet.tasks:strip_reasoning", "ratchet.tasks:parse_json"),
+    "FR-2.7": ("ratchet.tasks:strip_reasoning", "ratchet.tasks:clean_answer", "ratchet.tasks:parse_json"),
     "FR-2.8": ("ratchet.router:Ratchet._pick_version",),
     "FR-2.9": ("ratchet.router:Ratchet._pinned", "ratchet.tasks:Task"),
     "FR-2.10": (
@@ -542,10 +542,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:demo_student_outage",
         "sim.mock_models:MockFleet.student_outage",
     ),
+    "FR-2.13": (
+        "ratchet.router:answer_problem",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.confidence:score",
+        "ratchet.providers:_completions",
+        "ratchet.ledger:SCHEMA",
+    ),
     # 6.3 Provenance and licensing
     "FR-3.1": ("ratchet.licenses:REGISTRY", "ratchet.licenses:require_distillable"),
     "FR-3.2": ("ratchet.licenses:CLOSED", "ratchet.licenses:require_distillable"),
-    "FR-3.3": ("ratchet.ledger:Ledger.add_example", "ratchet.router:Ratchet._call_teacher"),
+    "FR-3.3": ("ratchet.ledger:Ledger.add_example", "ratchet.router:Ratchet._store_example"),
     "FR-3.4": ("ratchet.ledger:Ledger.add_example",),
     "FR-3.5": ("ratchet.ledger:Ledger.bill_of_materials", "ratchet.gateway:bom"),
     "FR-3.6": ("ratchet.bom:document", "ratchet.bom:verify", "ratchet.bom:main", "ratchet.gateway:version_bom"),
@@ -561,7 +569,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "deploy/Dockerfile.train",
     ),
     "FR-4.6": ("ratchet.live:NebiusTrainer", "deploy/train_job.sh"),
-    "FR-4.7": ("ratchet.redact:redact", "ratchet.redact:redact_messages", "ratchet.router:Ratchet._call_teacher"),
+    "FR-4.7": ("ratchet.redact:redact", "ratchet.redact:redact_messages", "ratchet.router:Ratchet._store_example"),
     # 6.5 Evaluation
     "FR-5.1": (
         "ratchet.nightschool.evaluate:cascade_eval",
@@ -633,7 +641,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-10": ("scripts/reqtrace.py",),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
-    "INV-2": ("ratchet.router:Ratchet._call_teacher", "ratchet.nightschool.dataset:rows"),
+    "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
     "INV-3": ("ratchet.nightschool.dataset:rows", "ratchet.nightschool.dataset:FREQUENT"),
     "INV-4": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-5": ("ratchet.nightschool.orchestrate:run_night",),
@@ -643,10 +651,11 @@ CODE: dict[str, tuple[str, ...]] = {
     "INV-9": ("ratchet.config:DEFAULT_PRICES", "scripts/day1_check.py"),
     "INV-10": ("ratchet.router:Ratchet._pinned",),
     "INV-11": ("ratchet.gateway:_scout_precheck", "ratchet.gateway:_run_scout", "ratchet.scout.guard:Guard.admit"),
-    "INV-12": ("ratchet.redact:redact_messages", "ratchet.router:Ratchet._call_teacher"),
+    "INV-12": ("ratchet.redact:redact_messages", "ratchet.router:Ratchet._store_example"),
     "INV-13": ("ratchet.auth:KeyRing.identify",),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
     "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
+    "INV-16": ("ratchet.router:Ratchet._store_example", "ratchet.router:answer_problem", "ratchet.tasks:clean_answer"),
 }
 
 _UI = "dashboard UI: checked in light and dark mode at 1440 and 390 px with Playwright; CI typechecks and builds it"

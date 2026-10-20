@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 385 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 430 tests (test_core, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -12,18 +12,18 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 
 | File | Tests |
 |---|---|
-| `tests/test_core.py` | 19 (15 functions; one has 5 cases) |
+| `tests/test_core.py` | 37 (19 functions; one has 15 cases, one has 5) |
 | `tests/test_nightschool.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_release.py` | 10 (9 functions; one has 2 cases) |
 | `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 27 |
+| `tests/test_hardening.py` | 54 (42 functions; one has 9 cases, one has 4, one has 2) |
 | `tests/test_resilience.py` | 72 (34 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 33 (22 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 130 (24 functions; one has 86 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **385** |
+| **Total** | **430** |
 
 There are three layers:
 
@@ -47,9 +47,13 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 |---|---|
 | `test_task_agree_ignores_free_text_and_reasoning` | `Task.agree` compares only `compare_keys`, case-insensitively, and ignores `<think>` blocks and code fences |
 | `test_invalid_json_never_agrees` | Two invalid answers never count as agreeing |
+| `test_strip_reasoning_cases` (15 cases) | FR-2.7: `strip_reasoning` removes a full `<think>` pair, everything before a lone `</think>` (also before a fence, which it keeps), an unterminated `<think>` with what follows (`''`), tags in upper or mixed case, nested and repeated blocks (the last `</think>` wins); text without tags is unchanged apart from surrounding whitespace; `None` is `''`; stripping twice changes nothing |
+| `test_clean_answer_unwraps_fences_only_for_structured_tasks` | FR-2.7, FR-2.13: for `ticket-triage`, one fence around the whole answer (`json`, `JSON`, none, single-line, closing fence on the last line) is unwrapped after reasoning is stripped; a free-text task keeps it. Kept as is: a fence whose body is not JSON, two fences, prose around a fence, a four-backtick fence, a body nested too deeply to parse |
+| `test_empty_answers_are_invalid_for_every_task` | FR-2.13: an answer that is empty after cleaning (whitespace, unterminated or reasoning-only) is `<invalid>` for free-text and structured tasks, never agrees, and three of them score 0 with `valid` false |
 | `test_unanimous_confident_samples_score_high` | 3 identical samples at p=0.95 give agreement 1.0 and confidence above 0.9 |
 | `test_disagreement_lowers_confidence` | 2-of-3 majority gives agreement 2/3, confidence below 0.85, and the majority answer is chosen |
 | `test_all_invalid_scores_zero` | All invalid samples give confidence 0 |
+| `test_length_samples_are_invalid_in_score` | FR-2.13: samples with `finish_reason` `length` or `content_filter` get no vote even when their text parses (three of them: confidence 0, `valid` false); with two cut-off samples and one complete one, the complete one is the answer at agreement 1/3; `tool_calls` votes as usual |
 | `test_calibrate_threshold_hits_target_precision` | The calibrated threshold actually reaches the target precision, **including ties** (the regression test for bug 5 below) |
 | `test_closed_teachers_are_refused` (5 cases) | `gpt-5.6-sol`, `openai/gpt-4o`, `claude-opus-5-5`, `anthropic/claude-haiku`, `gemini-3.1-pro` all raise `LicenseError` |
 | `test_open_teacher_allowed_and_unknown_refused` | Ultra maps to OpenMDW-1.1; an unknown model is refused |
@@ -67,8 +71,8 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 
 | Test | Covers |
 |---|---|
-| `test_training_targets_are_teacher_answers_only` | INV-2: a student that answers `STUDENT-ONLY` with high confidence serves 200 requests with `audit_rate=1` and a shadow present, then 200 more without audits where a disagreeing shadow (`SHADOW-ONLY`) makes the teacher arbitrate and unparseable answers escalate. All 400 stored examples and dataset rows hold exactly the teacher's answer to their own request, and neither marker appears anywhere |
-| `test_add_example_called_only_from_allowed_callers` | INV-2, INV-10: an AST scan of `ratchet/` finds every use of `add_example` (a call, a bound method passed on, or `getattr(..., "add_example")`); each must sit in a function in `ALLOWED_ADD_EXAMPLE_CALLERS` (today only `Ratchet._call_teacher`), and every listed caller must still use it (so moving a call site replaces its entry rather than adding one beside it) |
+| `test_training_targets_are_teacher_answers_only` | INV-2: the teacher answers JSON that is valid for both tasks used (INV-16 would skip anything else); a student that answers `STUDENT-ONLY` with high confidence serves 200 requests with `audit_rate=1` and a shadow present, then 200 more without audits where a disagreeing shadow (`SHADOW-ONLY`) makes the teacher arbitrate and unparseable answers escalate. All 400 stored examples and dataset rows hold exactly the teacher's answer to their own request, and neither marker appears anywhere |
+| `test_add_example_called_only_from_allowed_callers` | INV-2, INV-10: an AST scan of `ratchet/` finds every use of `add_example` (a call, a bound method passed on, or `getattr(..., "add_example")`); each must sit in a function in `ALLOWED_ADD_EXAMPLE_CALLERS` (today only `Ratchet._store_example`), and every listed caller must still use it (so moving a call site replaces its entry rather than adding one beside it) |
 | `test_add_example_guard_sees_indirect_uses` | The scanner itself (no requirement marker: it tests the tool, not INV-2), on a throwaway package: a direct call, `getattr` inside a nested function and a bound method in a module-level lambda are found and named; a docstring that mentions `add_example` is not |
 | `test_golden_rows_never_reach_the_trainer_except_frequent` | INV-3: the trainer gets the train split plus the golden requests seen at least `FREQUENT` (3) times; the evaluator gets the other golden rows; the two never overlap; a golden request seen twice stays held out; the stored split never changes |
 | `test_closed_teacher_rows_are_dropped_at_dataset_build` | INV-1: rows from `openai/gpt-4o` and an unregistered teacher in the ledger never reach `dataset.rows`, `train.jsonl`, `golden.jsonl`, the trainer, the evaluator or the adapter's BOM |
@@ -102,11 +106,11 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
 | `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request that fails validation gets a normal HTTP 400 before any stream starts |
-| `test_openai_compat_provider_parses_logprobs_and_usage` | `OpenAICompatProvider` against an `httpx.MockTransport`: sends `logprobs` and `n`, sends the bearer header, parses logprobs per choice, splits completion tokens across choices, computes `mean_prob` |
+| `test_openai_compat_provider_parses_logprobs_and_usage` | `OpenAICompatProvider` against an `httpx.MockTransport`: sends `logprobs` and `n`, sends the bearer header, parses logprobs per choice, splits completion tokens across choices (evenly here, because one choice has no logprobs), computes `mean_prob` |
 
 ### `tests/test_hardening.py`
 
-Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`. `test_task_names_match_in_full` covers a bug found while building request validation: a task name with a trailing newline passed the `^...$` check. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)).
+Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`. `test_task_names_match_in_full` covers a bug found while building request validation: a task name with a trailing newline passed the `^...$` check. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)). The answer-hygiene tests (v0.5, FR-2.7, FR-2.13, INV-16, [ADR 0016](adr/0016-store-only-complete-valid-teacher-answers.md)) cover what a code reading found before any live run: reasoning before a lone `</think>` was served and stored, an unterminated `<think>` let the reasoning's JSON count as the answer, structured answers were stored inside code fences, a teacher answer cut off by the token limit (or empty, or not JSON for a structured task) became a training target and an audit, JSON nested too deeply crashed the request instead of escalating, and some long answers took seconds to clean.
 
 The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
 
@@ -131,6 +135,21 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_redact_preview_endpoint` | `POST /ratchet/redact` returns the redacted text and counts; over-long or missing text gets 400 |
 | `test_live_night_checks_the_student_endpoint_before_paid_work` | Without `RATCHET_STUDENT_BASE`, `NebiusTrainer.train` raises before the sync, the training job or any file write; `reload` with adapters to load raises the same clear error (and with none, returns an empty list) |
 | `test_task_names_match_in_full` | `tasks.valid_name` matches the whole name: a trailing newline, 65 characters, an empty string, a space or a tab is not a name, and `tasks.get` falls back to `default` for each |
+| `test_teacher_reasoning_and_fences_are_not_stored_or_served` (2 cases) | FR-2.7, FR-2.13, INV-2, INV-16: a teacher answer with a `<think>` block, or with only a closing `</think>`, and a fenced JSON answer is served and stored as the bare JSON, with `stored = 1` and no skip |
+| `test_served_text_is_clean_on_the_student_and_pinned_paths` | FR-2.7, INV-10: a confident student's fenced answer with reasoning is served as bare JSON; a pinned (`research-plan`) and a teacher-only answer lose the reasoning but keep their fence (free text), store nothing and are no skip |
+| `test_truncated_teacher_answer_is_not_stored` | FR-2.13, INV-16: through the real `OpenAICompatProvider` and a `FakeOpenAIServer` that reports `finish_reason: "length"`, a teacher answer whose visible part parses is served on a structured and a free-text task, but nothing is stored, both rows have `stored = 0`, and one `skip_example` event names the task and `finish_reason length` |
+| `test_empty_teacher_answer_not_stored` (4 cases) | FR-2.13, INV-16: an empty, whitespace, unterminated-reasoning or reasoning-only answer is served as `''` on both kinds of task, not stored, `stored = 0`, `empty answer` |
+| `test_invalid_json_teacher_answer_for_ticket_triage_not_stored` | FR-2.13, INV-16: prose, cut JSON and a JSON list are served but not stored for `ticket-triage` (`invalid answer`), while the same text is stored for the free-text `default` task |
+| `test_redaction_that_breaks_a_structured_answer_is_not_stored` | FR-2.13, INV-16, INV-12: a card-like number outside quotes becomes `[CARD]` and breaks the JSON, so the answer is served but not stored (`invalid after redaction`); with redaction off it is stored as is |
+| `test_unusable_teacher_answer_is_not_an_audit` | FR-2.13, INV-16: an audit whose teacher answer was cut off gives `audited = 0`, `audit_agree` NULL, `stored = 0`, no audit for the version, and a cost that still includes the teacher's call; a complete answer is an audit and an example again |
+| `test_invalid_shadow_reference_leaves_shadow_agree_null` | FR-2.13, INV-16, FR-6.3: a shadow disagreeing with the live student, arbitrated with prose, gets `shadow_agree` NULL and one unarbitrated row, nothing stored; a valid arbitration settles the next one and is stored; an escalation whose teacher answer was cut off leaves `shadow_agree` NULL too |
+| `test_skip_example_events_are_throttled_per_reason` | FR-2.13, INV-16, INV-12: 200 cut-off answers from 8 threads write exactly 3 events (1st, 10th, 100th); `empty answer` and an unnamed finish reason (`other`) are counted apart; no event quotes the answer; every row has `stored = 0` |
+| `test_stored_column_marks_requests_that_stored_an_example` | FR-2.13, FR-3.4: an escalation and its duplicate (`seen` 2) both have `stored = 1`; pinned and an unaudited student answer have 0; an audited one has 1 |
+| `test_v05_database_gets_the_stored_column` | A ledger from before answer hygiene gains `requests.stored`; its old row keeps NULL and a new escalation records 1 |
+| `test_answers_nested_too_deeply_are_invalid_not_a_crash` | FR-2.2, FR-2.7: `parse_json` returns None instead of raising `RecursionError` on deeply nested JSON, so such a student answer is invalid and the request escalates (route `confidence`) instead of failing with a 500 |
+| `test_answer_cleaning_is_linear_on_adversarial_answers` | FR-2.7, NFR-1: 20,000 unclosed `<think>` tags, 100,000 spaces, 100,000 `{`, a long space run before a fence, and stray closing tags followed by unclosed ones are each cleaned and judged invalid in well under 2 s (seconds each before, from regexes that rescanned every position); a fenced object after a sentence still parses |
+| `test_provider_parses_finish_reason_reasoning_tokens_and_per_choice_tokens` | FR-2.13, FR-1.11, NFR-7: per choice, the text is `content` only (never `reasoning_content` or `reasoning`), `finish_reason` is read, output tokens follow the logprob counts and add up to `usage.completion_tokens` (in proportion when the counts do not, evenly with the remainder first when a choice has no logprobs, the counts as they are without usage), and reasoning tokens are split evenly; a single teacher choice gets the whole bill |
+| `test_finish_reason_values_are_read_safely` (9 cases) | FR-2.13, FR-1.11: a missing or null `finish_reason` is `stop`; a word is lower-cased and trimmed; a number, a phrase or more than 40 characters is `unknown` |
 
 ### `tests/test_resilience.py`
 
@@ -302,7 +321,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_sim_cli_writes_json_and_table` | FR-9.4: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals and every event, and writes the JSON results with the documented keys |
 | `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
-| `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported; an HTTP 500 fails the check (exit 1); every request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; all present exits 0 with "All good." |
+| `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; all present exits 0 with "All good." |
 | `test_deploy_scripts_parse_and_dry_run` | FR-11.1, FR-11.2: `bash -n` on every `deploy/**/*.sh`; `DRY_RUN=1 bash deploy/vm/create_vm.sh` prints the subnet, disk and instance `nebius` commands with the project id and `<cloud-init.yaml>` in place of the user data, never the private-repo token; a given subnet skips the lookup; a missing project, missing key file, reserved user name or bad preset stops before any command; `backup.sh` exits 0 in mock mode. Skipped where bash is missing |
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
