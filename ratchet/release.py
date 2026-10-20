@@ -167,8 +167,8 @@ class ReleaseGate:
         self.ledger = ledger
         self.policy = policy or ReleasePolicy()
         self._alerted: set[int] = set()  # live versions already alerted on (one alert per version)
-        # (version, task) pairs known to have their per-task alert in the ledger: a cache of `Ledger.has_event`, which is
-        # what makes the alert once-only across gates and processes (FR-14.1).
+        # (version, task) pairs known to have their per-task alert in the ledger: a cache in front of `Ledger.event_once`,
+        # which is what makes the alert once-only across gates and processes (FR-14.1).
         self._task_alerted: set[tuple[int, str]] = set()
         # version -> the newest audited request its per-task check has seen: the grouped query runs only after a new audit
         # (`tick` runs after every gateway request).
@@ -229,12 +229,14 @@ class ReleaseGate:
     def task_failures(self, v: Version, live: Version | None) -> list[tuple[str, str]]:
         """The tasks of candidate `v` that fail their own golden check (FR-14.1), with why. A task is checked once its
         per-task record has at least `min_task_test_n` held-out rows and the candidate would answer it at all. It fails
-        when the 95% Wilson upper bound of its held-out precision (over the answers it would serve) is below its floor
-        (its spec's `policy.min_precision`, else the release policy's), or below the live version's precision on that
-        task less `tolerance`: strong evidence, as for rollback, because on a few dozen rows a point estimate under the
-        floor is mostly noise (a task at 97% shows under 95% on 30 rows about one night in four). Live is compared only
-        where it answers the task under the same spec with `min_task_test_n` rows too. A version scored before per-task
-        calibration has no records, so nothing fails."""
+        when its held-out precision (over the answers it would serve) is below its floor (its spec's
+        `policy.min_precision`, else the release policy's), or below the live version's precision on that task less
+        `tolerance`: the global gate's rule on the task's own rows, so a task that shares an adapter is held to what an
+        adapter of its own would be. A task that answers none of its held-out rows has no precision to show, so it
+        fails too: the student would serve it without evidence. Live is compared only where it answers the task under
+        the same spec with `min_task_test_n` rows too. On a few dozen rows a good task can dip under its floor; in
+        `disable` mode that costs coverage on that task, never precision, and RATCHET_MIN_TASK_TEST_N asks for more rows.
+        A version scored before per-task calibration has no records, so nothing fails."""
         p = self.policy
         live_records = calibration.entries(live.eval) if live is not None else {}
         out: list[tuple[str, str]] = []
@@ -244,17 +246,19 @@ class ReleaseGate:
             if task.pinned or not calibration.serves(rec) or test_n is None or prec is None or test_n < p.min_task_test_n:
                 continue
             served = calibration.served_rows(rec)
-            hi = wilson(round(prec * served), served)[1]
-            evidence = f"precision {prec:.1%} on {served} answers, upper bound {hi:.1%}"
+            if served == 0:
+                out.append((name, f"golden: answers none of its {test_n:.0f} held-out rows, so its precision is unmeasured"))
+                continue
+            evidence = f"precision {prec:.1%} on {served} answers"
             floor = calibration.min_precision(task, p.min_precision)
-            if hi < floor:
+            if prec < floor:
                 out.append((name, f"golden {evidence} < {floor:.1%}"))
                 continue
             lrec = live_records.get(name)
             if live is None or lrec is None or not calibration.serves(lrec) or lrec.get("spec_hash") != rec.get("spec_hash"):
                 continue
             lp, ln = calibration.number(lrec.get("precision")), calibration.number(lrec.get("test_n"))
-            if lp is not None and ln is not None and ln >= p.min_task_test_n and hi < lp - p.tolerance:
+            if lp is not None and ln is not None and ln >= p.min_task_test_n and prec < lp - p.tolerance:
                 out.append((name, f"regresses vs live v{live.id} ({evidence}, vs {lp:.1%})"))
         return out
 
@@ -303,9 +307,10 @@ class ReleaseGate:
         """Alert once per (version, task) when that task's audited precision in the current stage is strongly below the
         floor (Wilson upper bound < `live_floor`, at least `min_audits` audits), for the live version and the canary
         (FR-14.1). A version whose audits in the stage are all of one task is left to its own alert and rollback, which
-        say the same thing. Once-only is read from the ledger's events, so a new gate (each `python -m ratchet.live
-        tick` builds one) does not repeat an alert. Nothing is rolled back or disabled here: rollback stays per version,
-        and an operator can pin the task to the teacher (docs/RUNBOOK.md)."""
+        say the same thing. Once-only is read from the ledger's events, in the transaction that writes the alert
+        (`Ledger.event_once`), so a new gate (each `python -m ratchet.live tick` builds one) does not repeat an alert, nor
+        does the gateway's own tick racing a cron tick on the same file. Nothing is rolled back or disabled here:
+        rollback stays per version, and an operator can pin the task to the teacher (docs/RUNBOOK.md)."""
         p = self.policy
         for v in (live, self.ledger.by_state("canary")):
             if v is None:
@@ -325,10 +330,9 @@ class ReleaseGate:
                     continue
                 key = f"v{v.id} task {name}:"
                 self._task_alerted.add((v.id, name))
-                if self.ledger.has_event("alert", key):
-                    continue
-                self.ledger.event(
+                self.ledger.event_once(
                     "alert",
+                    key,
                     f"{key} audited precision {prec:.1%} (n={n}, upper bound {hi:.1%} < {p.live_floor:.0%}) while {v.state}; "
                     "investigate, or pin the task to the teacher (see docs/RUNBOOK.md)",
                 )

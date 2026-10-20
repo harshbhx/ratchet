@@ -108,6 +108,7 @@ def cascade_eval(
     target_precision: float = calibration.DEFAULT_TARGET_PRECISION,
     floor: float = 0.5,
     min_task_n: int = calibration.MIN_TASK_GOLDEN,
+    per_task: bool = True,
 ) -> dict[str, Any]:
     """Calibrate the threshold on one half of the golden set and measure on the other half,
     so the reported precision is not graded on the data the threshold was tuned on. A row the
@@ -120,10 +121,11 @@ def cascade_eval(
     `tasks` holds one record per task with golden rows that is not pinned (`_task_record`), split by
     the same global parity, so the global numbers above are exactly what they were before per-task
     calibration. A task whose every golden row was skipped as invalid has a record with no rows, and
-    so SERVE_NOTHING."""
+    so SERVE_NOTHING. With `per_task` False (RATCHET_PER_TASK_CALIBRATION=0) there is no `tasks`, so
+    the version keeps one pooled threshold and the gate checks only the pooled numbers, as in v0.4."""
     calib: list[Point] = []
     test: list[Point] = []
-    per_task: dict[str, tuple[tasks.Task, list[Point], list[Point]]] = {}  # by the task's name, not the row's spelling
+    per_task_points: dict[str, tuple[tasks.Task, list[Point], list[Point]]] = {}  # by the task's name, not its spelling
     n_refused = n_invalid = n_pinned = 0
     specs: dict[str, tasks.Task] = {}
     i = 0  # index among the scored rows: even calibrates, odd measures
@@ -132,7 +134,7 @@ def cascade_eval(
         if task.pinned:  # INV-10, read time: pinned after its rows were stored, so the student never answers it now
             n_pinned += 1
             continue
-        _, task_calib, task_test = per_task.setdefault(task.name, (task, [], []))
+        _, task_calib, task_test = per_task_points.setdefault(task.name, (task, [], []))
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
         if not task.valid(ref):
             n_invalid += 1
@@ -153,7 +155,12 @@ def cascade_eval(
     thr = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib, target_precision)))
     served = [ok for c, ok in test if c >= thr]
     allpts = calib + test
-    extra = {"excluded_pinned": n_pinned} if n_pinned else {}
+    extra: dict[str, Any] = {"excluded_pinned": n_pinned} if n_pinned else {}
+    if per_task:
+        extra["tasks"] = {
+            name: _task_record(task, c, t, thr, target_precision, floor, min_task_n)
+            for name, (task, c, t) in sorted(per_task_points.items())
+        }
     return {
         "golden_n": len(allpts),
         "golden_agreement": sum(ok for _, ok in allpts) / len(allpts) if allpts else 0.0,
@@ -164,10 +171,6 @@ def cascade_eval(
         "refused_n": n_refused,
         "golden_invalid_refs": n_invalid,
         **extra,
-        "tasks": {
-            name: _task_record(task, c, t, thr, target_precision, floor, min_task_n)
-            for name, (task, c, t) in sorted(per_task.items())
-        },
     }
 
 
@@ -175,7 +178,7 @@ class LiveEvaluator:
     """Evaluates an adapter served by vLLM (adapter name = model name). `policy` is the gateway's `GenPolicy`
     (`Settings.gen_policy()`), so each golden row's student call gets what the router would send for it. `min_task_n`
     is RATCHET_MIN_TASK_GOLDEN (`Settings.min_task_golden_rows()`), the calibration rows a task needs for its own
-    threshold (FR-14.1)."""
+    threshold (FR-14.1), and `per_task` RATCHET_PER_TASK_CALIBRATION (False: no per-task records)."""
 
     def __init__(
         self,
@@ -186,6 +189,7 @@ class LiveEvaluator:
         target_precision: float = calibration.DEFAULT_TARGET_PRECISION,
         policy: GenPolicy | None = None,
         min_task_n: int = calibration.MIN_TASK_GOLDEN,
+        per_task: bool = True,
     ):
         self.student = student
         self.judge = judge
@@ -194,6 +198,7 @@ class LiveEvaluator:
         self.target_precision = target_precision
         self.policy = policy or GenPolicy()
         self.min_task_n = min_task_n
+        self.per_task = per_task
 
     def judge_score(self, request: list[dict[str, Any]], reference: str, candidate: str) -> int:
         assert self.judge is not None
@@ -213,7 +218,9 @@ class LiveEvaluator:
             gen = self.policy.student(GenParams.from_stored(params))
             return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
-        res = cascade_eval(sample, golden_rows, self.samples, self.target_precision, min_task_n=self.min_task_n)
+        res = cascade_eval(
+            sample, golden_rows, self.samples, self.target_precision, min_task_n=self.min_task_n, per_task=self.per_task
+        )
         free_text = [r for r in golden_rows if not tasks.get(r["task"]).fields and not tasks.get(r["task"]).pinned]
         if self.judge and free_text:
             ok = 0

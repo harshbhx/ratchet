@@ -32,7 +32,7 @@ As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 
 ## Milestone 0.9: v0.5 backend completeness (in progress, from Oct 20)
 
-Built package by package. Every item gets offline tests and an adversarial review, and the reference simulation numbers must not change: since the evidence foundations, three workloads (tickets, mixed, research) are pinned (`make reference`): tickets reproduces v0.4.0 exactly, and mixed and research, where several tasks share one adapter, were captured again with per-task calibration ([ADR 0040](adr/0040-per-task-calibration.md)). The UI is out of scope for v0.5.
+Built package by package. Every item gets offline tests and an adversarial review, and the reference simulation numbers must not change: since the evidence foundations, three workloads (tickets, mixed, research) must reproduce v0.4.0 exactly (`make reference`; per-task calibration, on by default, is switched off for them, [ADR 0040](adr/0040-per-task-calibration.md)). The UI is out of scope for v0.5.
 
 | Package | Scope |
 |---|---|

@@ -56,7 +56,9 @@ EVENT_ON_FAILURE = (1, 10, 100, 1000)
 # teacher because the primary was unavailable (`fallback_teacher`, RATCHET_TEACHER_FALLBACK_MODEL; ADR 0019); or the
 # teacher because the student was confident but fewer than the client's n of its samples gave that answer, so it could
 # not fill n choices (`n_choices`, FR-1.14, ADR 0020); or the teacher alone because the task is not registered and
-# RATCHET_UNKNOWN_TASKS is `teacher` (`unknown_task`, FR-2.15, ADR 0022).
+# RATCHET_UNKNOWN_TASKS is `teacher` (`unknown_task`, FR-2.15, ADR 0022); or the teacher without a student call because
+# the serving version's per-task record lets the student answer nothing (`task_disabled`: the release gate disabled the
+# task on that version, or its eval had no held-out row of it; FR-14.1, ADR 0040).
 ROUTES = (
     "student",
     "confidence",
@@ -68,6 +70,7 @@ ROUTES = (
     "fallback_teacher",
     "n_choices",
     "unknown_task",
+    "task_disabled",
 )
 # Routes whose answer is not the primary teacher's or a confident student's: such a request runs no shadow, so release
 # statistics never rest on a stand-in's answer (ADR 0019).
@@ -669,6 +672,20 @@ class Ratchet:
             return default
         return calibration.threshold(version.eval, _task(task), default)
 
+    def _held_back(self, version: Version, task: tasks.Task) -> bool:
+        """Whether `version` holds `task` at SERVE_NOTHING by its own per-task record (`calibration.held_back`), so the
+        student need not be called. A version served by the hosted untuned fallback model ignores its records
+        (`threshold`), so it is never held back; the resolver is asked only when the record holds the task back, and a
+        resolver that fails here leaves the task held back (the student is not called either way)."""
+        if not calibration.held_back(version.eval, task):
+            return False
+        if not self.s.fallback_student_model:
+            return True
+        try:
+            return self.resolve_student(version)[1] != self.s.fallback_student_model
+        except Exception:
+            return True
+
     @staticmethod
     def spec_changed(version: Version, task: tasks.Task | str) -> bool:
         """Whether `version` was scored under another spec of `task` than the current one: its per-task record (or the
@@ -856,7 +873,10 @@ class Ratchet:
 
         A pinned task, and an unregistered one under RATCHET_UNKNOWN_TASKS=teacher (route `unknown_task`), go to the
         teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. The client
-        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key."""
+        allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key. A task whose
+        record on the serving version lets the student answer nothing (the release gate disabled it, or the version had
+        no held-out row of it) is escalated without a student call (route `task_disabled`, FR-14.1), so it costs no
+        student samples and is never answered in degraded mode; it still runs the shadow and can be stored."""
         task = _task(task)
         plan = self.plan(params, n)
         self._admit(task, client)
@@ -891,7 +911,11 @@ class Ratchet:
         served_choices: list[Completion] = []  # every choice the client gets; choice 0 is `served`
 
         sc = None
-        if version is not None:
+        if version is not None and self._held_back(version, task):
+            # The version's record for the task serves nothing: its samples could never be served, so the student is not
+            # called, and with no student answer nothing below the task's floor can stand in for the teacher (FR-14.1).
+            escalated, route = True, "task_disabled"
+        elif version is not None:
             try:
                 samples, c, model_used = self._sample(version, messages, gen=plan.student, n=max(self.s.samples, plan.n))
             except CircuitOpen:  # the endpoint failed too often lately: not called, not counted again

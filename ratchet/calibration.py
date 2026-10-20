@@ -95,6 +95,16 @@ def threshold(ev: Mapping[str, Any] | None, task: tasks.Task, default: float) ->
     return SERVE_NOTHING if thr is None or rec.get("disabled") else thr
 
 
+def held_back(ev: Mapping[str, Any] | None, task: tasks.Task) -> bool:
+    """Whether the version's record for `task`, under the task's current spec, lets the student answer nothing: the
+    release gate disabled the task on the version, its eval had no held-out row of it, or its threshold cannot be read.
+    The router then does not call the student for the task at all (route `task_disabled`): its samples could not be
+    served, and a below-floor answer must not stand in for the teacher either. A version without a record for the task,
+    or scored under another spec of it (`spec_changed`, which keeps its own path), is not held back here."""
+    rec = entry(ev, task.name)
+    return rec is not None and rec.get("spec_hash") == task.spec_hash and not serves(rec)
+
+
 def serves(rec: Mapping[str, Any]) -> bool:
     """Whether a per-task record lets the student answer the task at all: not disabled and its threshold below
     SERVE_NOTHING."""

@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from typing import Any
 
+import httpx
 import pytest
 from fakes import OPEN_TEACHER, RecordingEvaluator, RecordingProvider, RecordingTrainer, _examples, _version
 
-from ratchet import calibration, tasks, taskspec
+from ratchet import calibration, live, tasks, taskspec
 from ratchet.confidence import SERVE_NOTHING
 from ratchet.config import Settings
+from ratchet.gateway import Runtime
 from ratchet.ledger import Ledger
 from ratchet.nightschool import dataset
 from ratchet.nightschool.evaluate import LiveEvaluator, cascade_eval
@@ -25,7 +28,7 @@ from ratchet.nightschool.orchestrate import run_night, stale_tasks
 from ratchet.providers import Completion
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
-from sim.simulate import parser, run
+from sim.simulate import build, parser, run
 
 RIGHT, WRONG = "yes", "no"
 
@@ -165,9 +168,10 @@ def test_task_without_test_rows_is_teacher_only():
     vid = _version(led, "live", res)
     student = RecordingProvider(RIGHT, logprob=math.log(0.99))
     r = Ratchet(Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0), led, RecordingProvider(RIGHT), _student(student))
-    assert r.handle(_ask("a"), "a").route == "student"
-    out = r.handle(_ask("b"), "b")
-    assert (out.served_by, out.route, out.confidence) == ("teacher", "confidence", pytest.approx(0.996))
+    assert r.handle(_ask("a"), "a").route == "student" and len(student.calls) == 1
+    out = r.handle(_ask("b"), "b")  # its samples could never be served: the student is not called
+    assert (out.served_by, out.route, out.confidence, out.escalated) == ("teacher", "task_disabled", None, True)
+    assert len(student.calls) == 1
     assert r.threshold(led.version(vid), "student-v1", "b") == SERVE_NOTHING
 
 
@@ -215,6 +219,55 @@ def test_router_uses_task_threshold():
     assert r.threshold(v, s.fallback_student_model, "B") == s.confidence_threshold  # the untuned model: never calibrated
     # The fingerprint names the threshold the answer was held to, so each task of one version has its own.
     assert a.fingerprint != c.fingerprint and a.fingerprint == r.handle(_ask(4), "A").fingerprint
+
+
+@pytest.mark.req("FR-14.1", "FR-2.3", "FR-2.12")
+def test_disabled_task_skips_the_student():
+    """A task the release gate disabled on the serving version goes to the teacher without a student call (route
+    `task_disabled`): no student samples to pay for, and no below-floor answer to stand in for the teacher when it is
+    down, even with RATCHET_ON_TEACHER_FAILURE=serve_student. The shadow still runs. The hosted untuned fallback model
+    ignores the records, so it still samples and is held to RATCHET_CONFIDENCE_THRESHOLD."""
+    _text_task("A"), _text_task("B"), _text_task("C")
+    led = Ledger(":memory:")
+    records = {"A": _record("A", 0.7), "B": _record("B", SERVE_NOTHING, disabled="regressed"), "C": _record("C", 0.95)}
+    _version(led, "live", {"threshold": 0.8, "tasks": records})
+    student = RecordingProvider(RIGHT, logprob=math.log(_conf_to_prob(0.9)))  # unanimous at confidence 0.9
+    teacher = RecordingProvider(RIGHT)
+    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0, on_teacher_failure="serve_student")
+    r = Ratchet(s, led, teacher, _student(student))
+    b = r.handle(_ask(1), "B")
+    assert (b.served_by, b.route, b.confidence, b.escalated, b.text) == ("teacher", "task_disabled", None, True, RIGHT)
+    assert student.calls == [] and b.student_cost_usd == 0 and len(teacher.calls) == 1
+    assert led.db.execute("SELECT route, confidence, escalated FROM requests").fetchall()[-1][:] == ("task_disabled", None, 1)
+    assert r.handle(_ask(2), "A").route == "student" and len(student.calls) == 1
+
+    teacher.raise_on.add(OPEN_TEACHER)  # the teacher is down: C (unsure) degrades, B has no student answer to give
+    assert r.handle(_ask(3), "C").route == "degraded" and len(student.calls) == 2
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask(4), "B")
+    assert len(student.calls) == 2
+    teacher.raise_on.clear()
+
+    shadow_student = RecordingProvider(RIGHT, logprob=math.log(0.99))
+    shadow = _version(led, "shadow", {"threshold": 0.8}, adapter_uri="student-v2")
+    r = Ratchet(s, led, teacher, lambda v: (shadow_student if v.state == "shadow" else student, v.adapter_uri))
+    r.handle(_ask(5), "B")
+    assert led.db.execute("SELECT route, shadow_version, shadow_serve FROM requests").fetchall()[-1][:] == (
+        "task_disabled",
+        shadow,
+        1,
+    )
+    assert len(student.calls) == 2 and len(shadow_student.calls) == 1
+    led.set_version(shadow, "retired", 0)
+
+    hosted = Ratchet(s, led, teacher, lambda v: (student, s.fallback_student_model))
+    out = hosted.handle(_ask(6), "B")  # 0.9 >= RATCHET_CONFIDENCE_THRESHOLD (0.8): the untuned model's own threshold
+    assert (out.route, out.served_by) == ("student", "student") and len(student.calls) == 3
+
+    def broken(v):
+        raise RuntimeError("resolver down")
+
+    assert Ratchet(s, led, teacher, broken).handle(_ask(7), "B").route == "task_disabled"
 
 
 @pytest.mark.req("FR-14.1", "FR-2.3", "FR-2.15")
@@ -319,17 +372,16 @@ def _gate_setup(b_candidate: dict[str, Any], policy: ReleasePolicy | None = None
     return led, ReleaseGate(led, policy or ReleasePolicy()), live, cand
 
 
-@pytest.mark.req("FR-14.1", "FR-6.1", "NFR-8")
+@pytest.mark.req("FR-14.1", "FR-6.1")
 def test_admit_disables_regressed_task_but_ships_version():
-    # B: 36 of 40 answers right (90%): above the floor within its evidence (upper bound 96.0% >= 95%), but strongly behind
-    # live's 100% on B (96.0% < 100% - 2 points).
-    led, gate, live, cand = _gate_setup(_record("B", 0.85, precision=0.9, coverage=1.0))
+    # B: 48 of 50 answers right (96%): above its 95% floor, but more than 2 points behind live's 100% on B.
+    led, gate, live, cand = _gate_setup(_record("B", 0.85, precision=0.96, test_n=50, coverage=1.0))
     assert gate.admit(cand)
     v = led.version(cand)
     assert v.state == "shadow"
     b = v.eval["tasks"]["B"]
-    assert b["threshold"] == SERVE_NOTHING and b["precision"] == 0.9  # the measurement stays; the threshold serves nothing
-    assert b["disabled"] == f"regresses vs live v{live} (precision 90.0% on 40 answers, upper bound 96.0%, vs 100.0%)"
+    assert b["threshold"] == SERVE_NOTHING and b["precision"] == 0.96  # the measurement stays; the threshold serves nothing
+    assert b["disabled"] == f"regresses vs live v{live} (precision 96.0% on 50 answers, vs 100.0%)"
     assert "disabled" not in v.eval["tasks"]["A"] and v.eval["tasks"]["A"]["threshold"] == 0.75
     assert [(e["kind"], e["detail"]) for e in led.events()][:1] == [
         ("task_disabled", f"v{cand} B: {b['disabled']}; the teacher answers it, v{cand} ships for its other tasks")
@@ -337,45 +389,80 @@ def test_admit_disables_regressed_task_but_ships_version():
     r = Ratchet(Settings(teacher_model=OPEN_TEACHER), led, RecordingProvider(RIGHT), _student(RecordingProvider(RIGHT)))
     assert r.threshold(v, "student-v2", "B") == SERVE_NOTHING and r.threshold(v, "student-v2", "A") == 0.75
 
-    # A task far below its floor is disabled even with nothing live to compare with.
+    # A task below its floor is disabled even with nothing live to compare with.
     led, gate, _, cand = _gate_setup(_record("B", 0.85, precision=0.7, coverage=1.0))
     led.set_version(led.live().id, "retired", 0)
     assert gate.admit(cand) and led.version(cand).state == "canary"
-    assert led.version(cand).eval["tasks"]["B"]["disabled"].startswith("golden precision 70.0% on 40 answers, upper bound")
+    assert led.version(cand).eval["tasks"]["B"]["disabled"] == "golden precision 70.0% on 40 answers < 95.0%"
+
+
+@pytest.mark.req("FR-14.1", "FR-6.1")
+def test_per_task_gate_holds_each_task_to_its_floor():
+    """The per-task check is the global gate's rule on the task's own held-out rows: point precision below the floor
+    fails, however few rows it rests on (a Wilson upper bound would let 36 of 40, 90%, pass a 95% floor). Regression
+    for a gate that checked the upper bound: a candidate at 100% on A (160 rows) and 90% on B (40 rows) shipped B."""
+    _text_task("A"), _text_task("B")
+    led = Ledger(":memory:")
+    a = _record("A", 0.8, precision=1.0, test_n=160, coverage=1.0)
+    for right, n in ((36, 40), (9, 10), (18, 20), (91, 100)):
+        b = _record("B", 0.8, precision=right / n, test_n=n, coverage=1.0)
+        cand = _version(led, "candidate", {"threshold": 0.8, "precision": 0.97, "coverage": 1.0, "tasks": {"A": a, "B": b}})
+        gate = ReleaseGate(led, ReleasePolicy())
+        assert gate.task_failures(led.version(cand), None) == [
+            ("B", f"golden precision {right / n:.1%} on {n} answers < 95.0%")
+        ], (right, n)
+    assert gate.admit(cand) and led.version(cand).state == "canary"  # no live version: a cold start ships A alone
+    assert "disabled" in led.version(cand).eval["tasks"]["B"] and "disabled" not in led.version(cand).eval["tasks"]["A"]
+    # At the floor passes, as in the global gate; under it by one answer in 100 fails.
+    at_floor = _record("B", 0.8, precision=0.95, test_n=100, coverage=1.0)
+    cand = _version(led, "candidate", {"threshold": 0.8, "tasks": {"A": a, "B": at_floor}})
+    assert ReleaseGate(led, ReleasePolicy()).task_failures(led.version(cand), None) == []
+    # A task that answers none of its held-out rows at its threshold has no precision to show: the student would serve
+    # it without evidence, so it fails too.
+    blind = _record("B", 0.99, precision=0.0, test_n=40, coverage=0.0)
+    cand = _version(led, "candidate", {"threshold": 0.8, "tasks": {"A": a, "B": blind}})
+    assert ReleaseGate(led, ReleasePolicy()).task_failures(led.version(cand), None) == [
+        ("B", "golden: answers none of its 40 held-out rows, so its precision is unmeasured")
+    ]
 
 
 @pytest.mark.req("FR-14.1", "FR-6.1")
 def test_admit_reject_mode():
-    led, gate, live, cand = _gate_setup(_record("B", 0.85, precision=0.9, coverage=1.0), ReleasePolicy(task_mode="reject"))
+    led, gate, _, cand = _gate_setup(_record("B", 0.85, precision=0.9, coverage=1.0), ReleasePolicy(task_mode="reject"))
     assert not gate.admit(cand)
     assert led.version(cand).state == "rejected" and "disabled" not in led.version(cand).eval["tasks"]["B"]
     assert [(e["kind"], e["detail"]) for e in led.events()] == [
-        ("rejected", f"v{cand}: task B: regresses vs live v{live} (precision 90.0% on 40 answers, upper bound 96.0%, vs 100.0%)")
+        ("rejected", f"v{cand}: task B: golden precision 90.0% on 40 answers < 95.0%")
     ]
 
 
-@pytest.mark.req("FR-14.1", "FR-6.1", "NFR-8")
+@pytest.mark.req("FR-14.1", "FR-6.1")
 def test_per_task_gate_needs_evidence():
-    """Few held-out rows, a small dip within the noise, a task the candidate serves nothing of, a live version that
-    does not serve the task or was scored under another spec: nothing to disable."""
+    """Fewer held-out rows than `min_task_test_n`, a dip within the tolerance, a task the candidate serves nothing of
+    already, a live version that does not serve the task, was scored under another spec or has too few rows of it to
+    compare with: nothing to disable."""
     quiet = [
         _record("B", 0.85, precision=0.5, test_n=9, coverage=1.0),  # under min_task_test_n (10)
-        _record("B", 0.85, precision=0.95, coverage=1.0),  # 38 of 40: upper bound 98.6%, within live's 100% - 2 points
+        _record("B", 0.85, precision=0.98, test_n=50, coverage=1.0),  # 49 of 50: within live's 100% - 2 points
         _record("B", SERVE_NOTHING, precision=0.0, coverage=0.0),  # serves nothing already
     ]
     for rec in quiet:
         led, gate, _, cand = _gate_setup(rec)
         assert gate.task_failures(led.version(cand), led.live()) == [], rec
-    led, gate, live, cand = _gate_setup(_record("B", 0.85, precision=0.9, coverage=1.0))
+    # 48 of 50 (96%) is above the floor but behind live's 100% on B; only a live record it can be compared with says so.
+    led, gate, live, cand = _gate_setup(_record("B", 0.85, precision=0.96, test_n=50, coverage=1.0))
+    assert [name for name, _ in gate.task_failures(led.version(cand), led.live())] == ["B"]
     for live_b in (_record("B", SERVE_NOTHING), _record("B", 0.8, spec_hash="0" * 16), _record("B", 0.8, test_n=5)):
         ev = led.version(live).eval
         led.update_eval(live, {**ev, "tasks": {**ev["tasks"], "B": live_b}})
         assert gate.task_failures(led.version(cand), led.live()) == [], live_b
-    # A task's own floor (its spec's policy.min_precision) is checked with the same evidence rule: 194 of 200 (97%)
-    # has an upper bound of 98.6%, under a 99% floor.
+    # A task's own floor (its spec's policy.min_precision) replaces the release policy's: 97% passes 95% but not 99%.
+    led, gate, _, cand = _gate_setup(_record("B", 0.85, precision=0.97, test_n=200, coverage=1.0))
+    led.set_version(led.live().id, "retired", 0)
+    assert gate.task_failures(led.version(cand), None) == []
     _text_task("B", policy={"min_precision": 0.99})
     led, gate, _, cand = _gate_setup(_record("B", 0.85, precision=0.97, test_n=200, coverage=1.0))
-    assert [name for name, _ in gate.task_failures(led.version(cand), led.live())] == ["B"]
+    assert gate.task_failures(led.version(cand), led.live()) == [("B", "golden precision 97.0% on 200 answers < 99.0%")]
 
 
 @pytest.mark.req("FR-14.1", "FR-6.1", "INV-5")
@@ -474,6 +561,38 @@ def test_per_task_live_alert_once():
 
 
 @pytest.mark.req("FR-14.1", "FR-6.7")
+def test_per_task_alert_is_written_once_across_processes(tmp_path):
+    """The gateway's tick and a `python -m ratchet.live tick` cron can share one ledger file. `Ledger.event_once` checks
+    for the alert and writes it in one write transaction, so a second process that checks while the first is writing
+    waits for it and then finds its alert: one alert, never two. Regression for a separate check and write."""
+    path = str(tmp_path / "ratchet.db")
+    first, second = Ledger(path), Ledger(path)
+    other: dict[str, Any] = {}
+
+    def race(sql: str) -> None:  # the first process is about to write: the second checks now, from another thread
+        if sql.startswith("INSERT INTO events") and "thread" not in other:
+            other["thread"] = threading.Thread(
+                target=lambda: other.update(wrote=second.event_once("alert", "v1 task t:", "v1 task t: b"))
+            )
+            other["thread"].start()
+            other["thread"].join(0.2)  # it cannot check until the first commits: it waits on the write lock
+
+    statements: list[str] = []
+    first.db.set_trace_callback(lambda sql: statements.append(sql) or race(sql))
+    assert first.event_once("alert", "v1 task t:", "v1 task t: a") is True
+    first.db.set_trace_callback(None)
+    other["thread"].join(10)
+    assert other["wrote"] is False
+    assert [e["detail"] for e in second.events()] == ["v1 task t: a"]
+    assert statements[0] == "BEGIN IMMEDIATE" and statements[1].startswith("SELECT 1 FROM events") and statements[-1] == "COMMIT"
+    # Another task's alert, or another kind, is a different event; a detail outside its own prefix could never be found.
+    assert second.event_once("alert", "v1 task u:", "v1 task u: c") and second.event_once("note", "v1 task t:", "v1 task t: d")
+    with pytest.raises(ValueError, match="does not start with"):
+        first.event_once("alert", "v2 task t:", "v1 task t: e")
+    assert not first.db.in_transaction and len(first.events()) == 3
+
+
+@pytest.mark.req("FR-14.1", "FR-6.7")
 def test_per_task_alert_leaves_single_task_versions_to_the_version_alert():
     led = Ledger(":memory:")
     live = _version(led, "live", {"threshold": 0.8})
@@ -564,6 +683,40 @@ def test_task_calibration_settings(monkeypatch):
 
 
 @pytest.mark.req("FR-14.1")
+def test_per_task_calibration_can_be_switched_off(monkeypatch, tmp_path):
+    """RATCHET_PER_TASK_CALIBRATION=0 writes no per-task records: a new version keeps one pooled threshold and the gate
+    checks only the pooled numbers, as in v0.4 (the reference workloads run that way). The pooled numbers are the same
+    either way. The simulator, the mock gateway and `python -m ratchet.live night` pass the setting on."""
+    _text_task("easy"), _text_task("noisy")
+    full, pooled = cascade_eval(_sample, _easy_and_noisy()), cascade_eval(_sample, _easy_and_noisy(), per_task=False)
+    assert "tasks" not in pooled and pooled == {k: v for k, v in full.items() if k != "tasks"}
+    assert Settings().per_task_calibration is True
+    monkeypatch.setenv("RATCHET_PER_TASK_CALIBRATION", "0")
+    s = Settings()
+    assert s.per_task_calibration is False
+    _, _, fleet, _, _ = build(parser().parse_args(["--workload", "mixed", "--out", "-"]))
+    assert fleet.per_task is False
+    rt = Runtime(Settings(mode="mock", unknown_tasks="distill"))
+    assert rt.fleet.per_task is False
+    evaluator = LiveEvaluator(RecordingProvider(RIGHT, logprob=math.log(0.99)), per_task=s.per_task_calibration)
+    assert "tasks" not in evaluator.evaluate("student-v1", _easy_and_noisy())
+    seen: list[dict[str, Any]] = []
+
+    def evaluator_seen(*args: Any, **kw: Any) -> Any:
+        seen.append(kw)
+        raise SystemExit("stop before training")
+
+    monkeypatch.setenv("RATCHET_DB", str(tmp_path / "live.db"))
+    monkeypatch.setattr(live, "LiveEvaluator", evaluator_seen)
+    with pytest.raises(SystemExit, match="stop before training"):
+        live.main(["night"], provider_factory=lambda *a, **kw: RecordingProvider(RIGHT))
+    assert [kw["per_task"] for kw in seen] == [False]
+    for off in ("1", "yes", ""):
+        monkeypatch.setenv("RATCHET_PER_TASK_CALIBRATION", off)
+        assert Settings().per_task_calibration is True, off  # only 0 switches it off
+
+
+@pytest.mark.req("FR-14.1")
 def test_ledger_merges_a_task_record_atomically():
     led = Ledger(":memory:")
     vid = _version(led, "candidate", {"threshold": 0.8})
@@ -579,9 +732,11 @@ def test_ledger_merges_a_task_record_atomically():
 
 # ---------- the loop ----------
 @pytest.mark.req("FR-14.1", "FR-9.5", "US-4")
-def test_mixed_workload_calibrates_each_task():
-    """Simulation (mock models): tickets and Scout's two distillable calls share one adapter. Every trained version
-    carries a record per task, the live version serves each at its own threshold, and the student still takes over."""
+def test_mixed_workload_calibrates_each_task(monkeypatch):
+    """Simulation (mock models): tickets and Scout's two distillable calls share one adapter. With per-task calibration on
+    (the default; the reference workloads switch it off), every trained version carries a record per task, the live
+    version serves each at its own threshold, and the student still takes over."""
+    monkeypatch.setenv("RATCHET_PER_TASK_CALIBRATION", "1")
     args = parser().parse_args(["--workload", "mixed", "--days", "6", "--requests", "1200", "--drift-day", "0"])
     args.drift_day = None
     res = run(args)

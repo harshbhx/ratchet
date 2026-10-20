@@ -121,7 +121,13 @@ class Runtime:
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
             # RATCHET_MOCK_STRICT=1: the mock models answer only the demo's own requests (the 400 below otherwise).
-            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy(), min_task_n=min_task_n, strict=s.mock_strict)
+            self.fleet = MockFleet(
+                clock=self.clock,
+                policy=s.gen_policy(),
+                min_task_n=min_task_n,
+                strict=s.mock_strict,
+                per_task=s.per_task_calibration,
+            )
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in WORKLOADS[1:]}}

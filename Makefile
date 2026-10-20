@@ -15,7 +15,7 @@ lint:
 trace:
 	python scripts/reqtrace.py
 
-# Three pinned workloads (tickets, mixed, research) must still reproduce their pinned behaviour (about 25 s; CI runs it).
+# Three pinned workloads (tickets, mixed, research) must still reproduce v0.4.0's behaviour (about 25 s; CI runs it).
 reference:
 	python scripts/reference_check.py
 

@@ -240,7 +240,13 @@ def main(
         student = provider_factory(s.student_base, s.student_api_key, timeout=s.student_timeout(), retry=s.teacher_retry())
         judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
         evaluator = LiveEvaluator(
-            student, judge, s.judge_model, samples=s.samples, policy=s.gen_policy(), min_task_n=s.min_task_golden_rows()
+            student,
+            judge,
+            s.judge_model,
+            samples=s.samples,
+            policy=s.gen_policy(),
+            min_task_n=s.min_task_golden_rows(),
+            per_task=s.per_task_calibration,
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).

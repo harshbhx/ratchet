@@ -42,7 +42,7 @@ from fakes import FALLBACK_TEACHER, OPEN_TEACHER, FakeClock, FakeOpenAIServer, R
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
-from ratchet import licenses
+from ratchet import licenses, tasks
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.live import AdapterReloader, adapter_reloader
@@ -1686,6 +1686,11 @@ def test_every_request_row_has_a_route():
     student.text = A
     led.update_eval(live, {"threshold": 0.99})
     seen.append(r.handle(_ask("unsure"), TRIAGE).route)
+    # The release gate disabled the task on this version (FR-14.1): the student is not called.
+    disabled = {"spec_hash": tasks.get(TRIAGE).spec_hash, "threshold": 1.01, "disabled": "regressed"}
+    led.update_eval(live, {"threshold": 0.99, "tasks": {TRIAGE: disabled}})
+    seen.append(r.handle(_ask("disabled"), TRIAGE).route)
+    led.update_eval(live, {"threshold": 0.99})
     teacher.raise_on.add(OPEN_TEACHER)  # the primary teacher is down: the fallback answers
     seen.append(r.handle(_ask("unsure, primary down"), TRIAGE).route)
     fallback.raise_on.add(FALLBACK_TEACHER)  # both are down: the student's own answer, degraded
@@ -1701,6 +1706,7 @@ def test_every_request_row_has_a_route():
         "student",
         "n_choices",
         "confidence",
+        "task_disabled",
         "fallback_teacher",
         "degraded",
         "student_error",
@@ -1721,6 +1727,7 @@ def test_every_request_row_has_a_route():
             "student": 1,
             "student_breaker": 1,
             "n_choices": 1,
+            "task_disabled": 1,
         },
         "research-plan": {"pinned": 1},
         "unregistered-task": {"unknown_task": 1},
