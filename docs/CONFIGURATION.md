@@ -195,9 +195,11 @@ The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mo
 | `tolerance` | `RATCHET_TOLERANCE` | 0.02 | Max allowed drop vs live (precision and coverage) in the golden gate, and coverage vs live in shadow |
 | `min_shadow` | `RATCHET_MIN_SHADOW` | 100 | Would-serve shadow answers needed before a shadow decision |
 | `min_audits` | `RATCHET_MIN_AUDITS` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert |
-| `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it |
+| `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it. Strictly between 0 and 1 |
 
-A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one.
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1.
+
+A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features are in [Reserved settings](#reserved-settings).
 
 Other constants:
 
@@ -211,6 +213,49 @@ Other constants:
 | Confidence weights | `confidence.score()` | 0.4 × token probability + 0.6 × agreement |
 | Student sampling | `router._sample` | `temperature=0.7`, `logprobs=True` |
 | Teacher temperature for `n` > 1 | `providers.CHOICES_TEMPERATURE` | 0.7, when the client sets no temperature (at 0 every choice would be the same) |
+
+## Reserved settings
+
+The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their settings are declared already, with defaults that keep today's behaviour ([ADR 0024](adr/0024-evidence-foundations.md)), so later items only fill in logic. **Until a feature is built, any value but its default stops startup** with a `ValueError` that names the variable and the feature: a setting that does nothing yet must not look like it protects anything. The gateway, the simulator and `python -m ratchet.live` all check (`Settings.check_reserved()` in `Ratchet`, and `ReleasePolicy` when it is built). Unset, empty, or the default spelled another way (`0.950`, ` Point `) is fine. Each feature's item removes its rows from this section and documents them where they belong.
+
+`Settings` (`config.RESERVED_SETTINGS`):
+
+| Variable | Default | Feature that will read it |
+|---|---|---|
+| `RATCHET_CANARY_AUDIT_RATE` | unset (the audit rate) | Anytime-valid release gate (FR-16.1): the canary's own audit rate |
+| `RATCHET_CALIBRATION` | `point` | Certified precision (FR-16.3): `point` (today's threshold rule) or `ltt` (Learn-then-Test) |
+| `RATCHET_CERT_TARGET` | `0.95` | Certified precision (FR-16.3): the precision a certificate tests for |
+| `RATCHET_CERT_DELTA` | `0.05` | Certified precision (FR-16.3): the certificate's error rate |
+| `RATCHET_TEACHER_PROBES` | `20` | Teacher watch (FR-16.7): stored labels re-asked per night |
+| `RATCHET_ADJUDICATE_MAX` | `50` | Teacher watch (FR-16.7): contested labels adjudicated per night |
+| `RATCHET_TAKE_RATE` | `0.25` | Savings receipts (FR-15.5): the share of the billable lower bound that is the fee |
+| `RATCHET_RECEIPT_MIN_AUDITS` | `30` | Savings receipts (FR-15.5): audits a task needs before its baseline is calibrated |
+| `RATCHET_MOCK_TEACHER_REASONING_MEAN` | unset | Savings receipts (FR-15.5), mock mode only: the mock teacher's mean billed reasoning tokens (unset: the fixed `RATCHET_TEACHER_REASONING_TOKENS`) |
+| `RATCHET_BATCH_API` | `operations` | Clean-room backfill (FR-16.8): the Token Factory batch API (`operations` or `openai`) |
+| `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
+| `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |
+| `RATCHET_DB_SYNC` | `FULL` | Live readiness: `NORMAL` will switch a file ledger to the WAL journal. `FULL` is today's rollback journal |
+
+`ReleasePolicy` (`release.RESERVED_POLICY`, read by `from_env` as `RATCHET_<FIELD>` in live mode like the fields above):
+
+| Field | Variable | Default | Feature that will read it |
+|---|---|---|---|
+| `sequential` | `RATCHET_SEQUENTIAL` | 0 | Anytime-valid release gate (FR-16.1): 1 rolls a canary back by an e-process, with no minimum audit count |
+| `alpha_rollback` | `RATCHET_ALPHA_ROLLBACK` | 0.05 | FR-16.1: the chance of ever rolling back a version at or above the floor |
+| `promote_evidence` | `RATCHET_PROMOTE_EVIDENCE` | 0 | FR-16.1: 1 promotes a canary stage only on evidence that precision is above the floor |
+| `alpha_promote` | `RATCHET_ALPHA_PROMOTE` | 0.05 | FR-16.1: the promotion test's error rate |
+| `max_stage_audits` | `RATCHET_MAX_STAGE_AUDITS` | 400 | FR-16.1: audits after which an undecided canary stage is retired |
+| `alert_eprocess` | `RATCHET_ALERT_EPROCESS` | 0 | Anytime-valid live alert (FR-16.2): 1 alerts on the live version by the e-process instead of Wilson's bound |
+| `alpha_alert` | `RATCHET_ALPHA_ALERT` | 0.01 | FR-16.2: the live alert's error rate |
+| `min_certified_precision` | `RATCHET_MIN_CERTIFIED_PRECISION` | 0.0 | Certified precision (FR-16.3): a floor on the certified lower bound (0: off) |
+| `paired_gate` | `RATCHET_PAIRED_GATE` | 0 | FR-16.3: 1 compares candidate and live version on the same golden rows (McNemar) |
+| `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | FR-16.3: the paired gate's error rate |
+| `max_nfr` | `RATCHET_MAX_NFR` | 1.0 | FR-16.3: the highest negative-flip rate the paired gate accepts (1: off) |
+| `drift_alarm` | `RATCHET_DRIFT_ALARM` | 100 | Drift alarm (FR-16.6): the test martingale's alarm threshold (false-alarm probability at most 1/threshold per stream) |
+| `drift_audit_boost` | `RATCHET_DRIFT_AUDIT_BOOST` | 1.0 | FR-16.6: the audit-rate multiplier after an alarm (1: off) |
+| `drift_early_night` | `RATCHET_DRIFT_EARLY_NIGHT` | 0 | FR-16.6: 1 halves the new examples Night School needs after an alarm |
+| `teacher_noise_max` | `RATCHET_TEACHER_NOISE_MAX` | 0.05 | Teacher watch (FR-16.7): the teacher disagreement rate it tolerates |
+| `alpha_teacher` | `RATCHET_ALPHA_TEACHER` | 0.01 | FR-16.7: the teacher watch's error rate |
 
 ## Tasks
 

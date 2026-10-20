@@ -1,5 +1,6 @@
-"""Shared fixtures: the reloaded mock gateway (`gw`, `gw_env`), scripts loaded by path (`sim_reference`, `day1_check`),
-the pinned reference simulation (`reference_run`) and a task registry put back to the built-in tasks after every test.
+"""Shared fixtures: the reloaded mock gateway (`gw`, `gw_env`), scripts loaded by path (`sim_reference`, `day1_check`,
+`reference_check`), the pinned reference simulation (`reference_run`) and a task registry put back to the built-in tasks
+after every test. Tests marked `slow` run only with `--runslow`.
 
 Test doubles and ledger builders live in tests/fakes.py (`from fakes import ...`).
 """
@@ -26,6 +27,21 @@ def _load_script(name: str) -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--runslow", action="store_true", help="also run tests marked slow (long Monte Carlo runs)")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Tests marked `slow` are collected (so the suite's size stays what the docs count) but skipped unless --runslow:
+    each one is a longer run of a check that also has a quick version in the default suite."""
+    if config.getoption("--runslow"):
+        return
+    skip = pytest.mark.skip(reason="slow Monte Carlo run: pass --runslow")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +93,13 @@ def sim_reference() -> ModuleType:
 def day1_check() -> ModuleType:
     """scripts/day1_check.py: `WANT`, the Token Factory models the live day-1 check confirms. Loading it calls nothing."""
     return _load_script("day1_check")
+
+
+@pytest.fixture(scope="session")
+def reference_check(sim_reference: ModuleType) -> ModuleType:
+    """scripts/reference_check.py: the three pinned workloads of v0.4.0's behaviour (`CONFIGS`, `summarize`,
+    `compare`, `load`). Loading it runs nothing."""
+    return _load_script("reference_check")
 
 
 @pytest.fixture(scope="session")

@@ -21,6 +21,56 @@ def _kinds(led, *kinds):
     return [e for e in led.events() if e["kind"] in kinds]
 
 
+# ---------- the tick's steps (ADR 0024) ----------
+def test_tick_runs_each_step_once_in_order_with_the_live_version_it_started_with():
+    """`tick` is five steps, each owned by one feature: drift, live alert, shadow, canary, watchers. `live` is read
+    once, before any of them, so a canary promoted in this tick retires the version the tick started with."""
+    led = Ledger(":memory:")
+    gate = ReleaseGate(led, ReleasePolicy(min_audits=4))
+    old_live = _version(led, "live", GOOD)
+    canary = _version(led, "canary", GOOD, pct=50)
+    _audit(led, canary, 4)  # 4 of 4 agree: promoted from the last canary stage
+    calls = []
+    for step in ("_tick_drift", "_tick_live", "_tick_shadow", "_tick_canary", "_tick_watchers"):
+        original = getattr(gate, step)
+
+        def record(*args, _step=step, _original=original):
+            calls.append((_step, [a.id if a is not None else None for a in args]))
+            return _original(*args)
+
+        setattr(gate, step, record)
+    gate.tick()
+    assert calls == [
+        ("_tick_drift", []),
+        ("_tick_live", [old_live]),
+        ("_tick_shadow", [old_live]),
+        ("_tick_canary", [old_live]),
+        ("_tick_watchers", []),
+    ]
+    assert led.live().id == canary and led.version(old_live).state == "retired"
+    empty = Ledger(":memory:")
+    ReleaseGate(empty).tick()  # the drift and watcher steps do nothing until their features land
+    assert empty.events() == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("live_floor", 1.0),
+        ("live_floor", 0.0),
+        ("min_precision", 1.2),
+        ("min_coverage", -0.1),
+        ("min_audits", -1),
+        ("min_audits", 2.5),
+        ("min_shadow", True),
+        ("tolerance", float("inf")),
+    ],
+)
+def test_policy_refuses_values_out_of_range(field, value):
+    with pytest.raises(ValueError, match=f"RATCHET_{field.upper()}"):
+        ReleasePolicy(**{field: value})
+
+
 # ---------- golden gate ----------
 @pytest.mark.req("FR-6.1")
 def test_gate_rejects_low_coverage():

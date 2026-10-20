@@ -2,12 +2,14 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 651 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost), ~70 s
+pytest -q                     # 706 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
+python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
 ```
 
 | File | Tests |
@@ -16,27 +18,29 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_tasks.py` | 81 (35 functions; one has 28 cases, one has 20) |
 | `tests/test_registry.py` | 29 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
-| `tests/test_release.py` | 12 (11 functions; one has 2 cases) |
-| `tests/test_system.py` | 8 |
-| `tests/test_hardening.py` | 67 (48 functions; one has 11 cases, one has 6, one has 4, one has 2) |
+| `tests/test_release.py` | 21 (13 functions; one has 8 cases, one has 2) |
+| `tests/test_system.py` | 10 |
+| `tests/test_hardening.py` | 80 (54 functions; one has 11 cases, one has 8, one has 6, one has 4, one has 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
-| `tests/test_contract.py` | 44 (33 functions; one has 9 cases, one has 4) |
+| `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
-| **Total** | **651** |
+| `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
+| `tests/test_provenance.py` | 13 |
+| **Total** | **706** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`): the pure logic of each module, and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
 
-Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_run`) are in `tests/conftest.py`; `make_openai_client(app)` (the OpenAI SDK wired to the gateway in-process) is in `tests/sdk_bridge.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
+Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_check`, `reference_run`) and the `slow` marker (`--runslow`) are in `tests/conftest.py`; `make_openai_client(app)` (the OpenAI SDK wired to the gateway in-process) is in `tests/sdk_bridge.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
 
 Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
@@ -191,6 +195,8 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_rollback_without_live_returns_traffic_to_teacher` | A cold-start canary at 50% audited precision is rolled back with "traffic back to the teacher"; afterwards 50 requests are all answered by the teacher and the student is never called |
 | `test_shadow_arbitration_calls_teacher_once_and_stores_example` | A shadow that would serve a different answer than the live student triggers exactly one teacher call, whose answer is stored as the example, while the user keeps the live answer; agreeing or unsure shadows trigger none; with an audit, the audit is the reference and no second call is made; a shadow whose endpoint is down (`raise_on`) leaves the request untouched, with no shadow record and no extra cost (INV-7). Reported cost includes the shadow's samples, the arbitration and the audit (NFR-3) |
 | `test_canary_traffic_split` | `Ratchet._pick_version` with a seeded RNG: over 4,000 picks at 10% and at 50%, the canary's share is inside the 99% Wilson interval; 0% never picks it, 100% always does, and at cold start the rest of the traffic gets `None` (the teacher) |
+| `test_tick_runs_each_step_once_in_order_with_the_live_version_it_started_with` | ADR 0024: `tick` calls `_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary` and `_tick_watchers` once each, in that order, the middle three with the live version read before any step (a canary promoted in the tick retires that one); the drift and watcher steps write nothing yet |
+| `test_policy_refuses_values_out_of_range` (8 cases) | ADR 0024: `ReleasePolicy` refuses a `live_floor` of 1 or 0, a precision above 1, a negative coverage or audit count, a fractional or boolean count and an infinite tolerance, naming the variable |
 
 ### `tests/test_system.py`
 
@@ -200,6 +206,8 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_bad_deploy_is_rolled_back_and_users_return_to_live` | Fault-injects `student-v3`; v3 ends `rolled_back` and v1 stays `live` (skips if v3 was rejected before deploy for that seed) |
 | `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
 | `test_reference_simulation_unchanged` | The pinned reference run equals `tests/fixtures/sim_reference_seed7.json` exactly: the pinned inputs (a flag added later is not compared), daily numbers, release events and final versions ([below](#the-pinned-reference-simulation)) |
+| `test_reference_workloads_reproduce_v040` | ADR 0024: the tickets workload of `tests/fixtures/reference.json` (captured from v0.4.0) matches the session's reference run under `scripts/reference_check.py`'s rules, and every input the fixture pins for all three workloads is still the simulator's default |
+| `test_reference_check_rules` | ADR 0024: `reference_check.compare` ignores float noise below a relative 1e-9, new day and totals keys, advisory event kinds and text appended to an event, and reports one line for a moved number, a removed key or day, reworded event text, an extra event, a changed version or a changed input default |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
 | `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request that fails validation gets a normal HTTP 400 before any stream starts |
@@ -253,6 +261,12 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_logprobs_too_large_for_a_float_are_ignored_not_a_crash` | FR-1.14, FR-1.11 (regression): a token logprob of 10^400, which `json.loads` accepts as an integer, made `math.isfinite` raise OverflowError while parsing (a 500 once the teacher returns logprobs); now it is left out of the confidence's logprobs and the served logprobs are None, and a normal value is served |
 | `test_provider_sends_params_and_its_explicit_arguments_win` | FR-1.13, FR-1.11: `OpenAICompatProvider.complete(params=...)` adds the fields to the body; the explicit temperature, `n`, logprobs (off also drops `top_logprobs`) and `response_format` win; without params the body is v0.4's, and an unknown keyword argument is ignored; `allow` narrows what is sent |
 | `test_answers_under_label_altering_sampling_are_served_not_stored` (6 cases) | FR-1.13, INV-2, FR-4.1, threat model T2: a client's `logit_bias` of +100, a presence penalty of 2, a negative frequency penalty, temperature 2, a vendor field (`guided_choice`) or all three at once reach the serving teacher and its answer is returned, but nothing is stored (`stored` 0, one `skip_example` event naming the reason); neutral sampling (temperature 1, `top_p`, a seed, zero penalties) stores; an audit, which drops these fields, stores its answer |
+| `test_v04_file_gains_the_evidence_schema` | ADR 0024, INV-17: a ledger file with v0.4.0's schema and one row per table gains every new column (old rows: `contested` and `checked_epoch` 0, the rest NULL), the eight evidence tables, the append-only triggers and the new indexes, twice without change; its old data reads as before and new rows take the columns |
+| `test_every_index_exists_on_a_new_ledger` | ADR 0024: every `INDEXES` entry exists on a fresh ledger (a misspelled column would make `_migrate` skip it everywhere), and the gate's audit count uses `requests_version_audited` |
+| `test_committed_leaves_and_sealed_receipts_are_append_only` | INV-17: `version_leaves` and `receipts` accept new rows and refuse UPDATE, DELETE, `INSERT OR REPLACE`, `INSERT OR IGNORE` and a duplicate INSERT (also on a migrated v0.4 file), a NULL key column and a split other than train or golden, leaving the rows as they were |
+| `test_reserved_settings_stop_startup_until_their_feature_lands` | ADR 0024: each of the 13 reserved settings set away from its default stops `Settings.check_reserved()`, `Ratchet` and `python -m ratchet.live` (before the ledger is opened), naming the variable and the feature; the defaults spelled another way pass; a non-number names its variable |
+| `test_reserved_release_policy_fields_stop_startup` | ADR 0024: each of the 16 reserved `ReleasePolicy` fields set through its variable stops `from_env`; the defaults, also set explicitly, pass |
+| `test_policy_from_env_names_a_bad_value` (8 cases) | ADR 0024: a non-number, a fractional or negative count, a `live_floor` of 1 or 0, NaN and a negative tolerance each stop `from_env` with the variable named |
 
 ### `tests/test_resilience.py`
 
@@ -357,6 +371,7 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 | `test_usage_is_the_served_answer_and_the_breakdown_every_call` | FR-1.12, NFR-3: on the 11 paths of the cost test, `Result`'s usage is the served answer's (the chosen student sample's 30 + 7 tokens, or the teacher's 120 + 45 with its 40 reasoning and 100 cached tokens), `usage_breakdown` lists exactly the calls made (student samples, served, audit, shadow, arbitration; `None` for the others), `cost_usd` equals the price of the breakdown to 1e-12, and the fingerprint is the live version's or the teacher's |
 | `test_usage_estimates_missing_counts_and_keeps_details_inside_totals` | FR-1.12: a teacher that reports no usage gets prompt tokens estimated from the messages as JSON (non-ASCII kept) and completion tokens from the answer as served (reasoning stripped), while the breakdown keeps its zeros; an empty answer has 0 completion tokens; reasoning and cached tokens above their totals are cut to them |
 | `test_concurrent_requests_keep_the_ledger_consistent` | NFR-6: 8 threads × 40 requests through one `Ratchet`: no request lost or logged twice, one teacher call and one example per audit, each row's cost matches its own path, totals equal the sum |
+| `test_each_result_names_its_ledger_row` | ADR 0024: `Result.request_id` is the id of the row `log_request` wrote, on the student, pinned, teacher-only and cold-start paths, and for each of 100 requests from 4 threads |
 | `test_each_call_gets_the_parameters_its_role_allows` | FR-1.13, FR-2.1, FR-2.5, FR-2.9, INV-1: with one client parameter set, the confident student gets `n` 3, 0.7, logprobs and its shaping fields, and the audit temperature 0 with the limit, stop and format; an escalation, a cold start, a pinned task and a teacher-only request send the teacher everything, logprobs included (FR-1.14), at the client's temperature; a shadow samples like the live student and its arbitration is a check; without parameters both caps alone; the model is always the configured teacher; a `Task` object works as `task` |
 | `test_examples_store_the_conditions_the_teacher_answered_under` | FR-1.13, FR-4.3, INV-2, INV-12: an escalation stores JSON mode and its stop (an email in it redacted and counted) as `params`, hashed with them; the same messages without conditions are a second example, and sampling fields that keep the teacher's own distribution (temperature 0.8, `top_p`, a seed, a zero penalty) bump it; the completion is the teacher's; an audit stores its own (check) conditions |
 | `test_reasoning_headroom_marks_answers_over_the_clients_budget` | FR-1.13, FR-2.13, INV-16: with 600 tokens of headroom the teacher gets 620 for a client's 20; an answer whose visible part is longer is served whole with `finish_reason` `length`, not stored, and a `skip_example` event names it; a short one after long reasoning is stored; an over-budget audit is not an audit; without headroom the teacher's own `stop` stands |
@@ -500,6 +515,50 @@ Utilization-aware cost accounting (FR-15.1 to FR-15.4, NFR-11, [ADR 0023](adr/00
 | `test_v04_database_gets_the_cost_columns_and_table` | FR-15.1, FR-15.2: a v0.4 file gains the split and token columns and `compute_intervals`; its old rows count as teacher spend (`split_unknown_requests`, a warning) and give no hosted-fallback price |
 | `test_bad_cost_settings_stop_startup_naming_the_variable` | FR-15.3, NFR-11: a negative, non-numeric or NaN rate, fractional or negative GPUs, an unknown cost model and 25 endpoint hours a day each stop the runtime with the variable's name (7 cases) |
 | `test_cost_settings_defaults_and_spellings` | NFR-11: the defaults, a cost model in any case with spaces, `RATCHET_PRICES_VERIFIED=1` changing the label, an empty model meaning `per_token`, and `--at` parsing |
+
+### `tests/test_stats.py`
+
+The exact statistics of `ratchet/stats.py` ([ADR 0024](adr/0024-evidence-foundations.md)). Monte Carlo checks are seeded, counts-only and sized to run in under a second; the two marked slow repeat them at full size.
+
+| Test | Covers |
+|---|---|
+| `test_binomial_tails_match_brute_force` | `binom_sf`, `binom_cdf` and `binom_logpmf` equal sums of `math.comb` terms for every k of small n, edge probabilities 0 and 1 and 60 random cases at n = 120 |
+| `test_binomial_tails_keep_tiny_values_and_refuse_bad_input` | 0.5^100 and 0.1^200 to relative 1e-12 and 1e-9 (summed directly, not as 1 minus almost 1); bad counts and probabilities raise |
+| `test_clopper_pearson_bounds` | 46/48 → 0.8746, 129/130 → 0.9640, 127/128 → 0.9635; s/s → delta^(1/s); for 50 random (s, n) the bound is where P(X ≥ s) = delta, from below, and the upper bound mirrors it |
+| `test_precision_pvalue_planner_and_mcnemar` | `required_rows`: 0.95 → 59, 93, 124, 153 rows for 0 to 3 errors; 0.97 → 99, 157, 208, 257; 0.90 → 29, 46, 61, 76; the p-value falls as agreement rises; McNemar 4 vs 0 is 0.0625 |
+| `test_ltt_fixed_sequence_stops_at_the_first_failure` | 10 correct points certify nothing (1.01); 80 correct at 0.97 and 40 wrong at 0.72 certify 0.75 and stop at 0.70 with its trace; grid order does not matter; bad grids raise |
+| `test_ltt_controls_the_error_rate` | Confidences U(0,1) with P(correct) = c: over 200 seeded draws of 400 rows, the chosen threshold has true precision below the 0.80 target in at most 5% (+3 SE) of draws |
+| `test_e_value_oracles_and_confidence_sequence_oracles` | e(0/2 below 0.92) = 29.77, e(0/1) = 4.22, e(20/20) = 0.2006, e(7/17) = 2.59e5, e(60/60 above) = 27.6, e(83/83 above) = 129.7, within 1%; CS(0/2) = (0.001, 0.931) and CS(35/38) = (0.710, 0.992) within 0.002 |
+| `test_alt_grid_components_are_supermartingales` | For p0 in 0.5, 0.8, 0.92, 0.97 and every true rate on the null side, each alternative's one-trial mean factor is at most 1 (the validity argument, checked exactly); weights sum to 1, also near the edges |
+| `test_e_values_edges_and_input_checks` | No trials: e = 1; a huge count stays finite (capped at exp(690)); the confidence sequence narrows with data; bad sides, probabilities and steps raise |
+| `test_e_process_false_rollback_rate_and_wilson_peeking` | At a true rate on the 0.92 floor, checked after every audit (120 runs of 200): the e-process rolls back at most 5% (+3 SE); Wilson's bound checked the same way does more than 10% (about 23%, simulation) |
+| `test_confidence_sequence_covers_the_truth_at_every_step` | At p = 0.95, the true rate leaves the 95% confidence sequence at any step in at most 5% (+3 SE) of 120 runs |
+| `test_e_process_and_confidence_sequence_error_rates_full` (slow) | The two checks above at 300 runs of 300 audits, at 0.92, 0.95 and 0.80 |
+| `test_clopper_pearson_coverage_full` (slow) | P(cp_lower ≤ p) ≥ 0.95 (−3 SE) for (20, 0.90), (50, 0.95), (100, 0.97) and (130, 0.99), 2,000 draws each |
+| `test_wilson_lives_in_stats_and_release_still_exports_it` | `release.wilson` is `stats.wilson`; 18/20 → (0.699, 0.972) |
+| `test_kish_and_hajek` | Kish's n_eff of equal and unequal weights; the Hajek mean of a hand-computed example; empty or zero weights give None; bad input raises |
+| `test_ratio_estimate` | R = 1.3 recovered from 400 synthetic pairs; the ratio and standard error equal the textbook formulas; equal weights change nothing; weighted case by hand; too few pairs or no x are `insufficient` (ratio 1.0, se None) |
+| `test_ratio_estimate_interval_covers_the_truth` | R ± 1.96 se covers 1.3 in at least 90% of 200 seeded samples of 150 rows |
+
+### `tests/test_provenance.py`
+
+Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.md)).
+
+| Test | Covers |
+|---|---|
+| `test_keyset_roots` | The empty set's root is 32 zero bytes, one key's root is its leaf hash, hex and bytes agree, and the root depends on the set, not the order |
+| `test_keyset_proves_members_and_non_members` | 1,000 random members verify `included` (with their value) and 1,000 random non-members `absent` |
+| `test_keyset_agrees_with_a_brute_force_set` | Sizes 0 to 40 over keys that share long prefixes: every key of a 120-key universe verifies `included` exactly when it is in the set |
+| `test_tampered_proofs_never_prove_inclusion` | Flipping a byte of any sibling or of the terminal value makes a proof `invalid`; another key or an absent key never reads as `included`; an inclusion proof never reads as `absent` |
+| `test_malformed_and_overlong_proofs_are_invalid` | A terminal leaf without the key's prefix, 257 siblings, missing fields, bad hex and wrong lengths are `invalid`, never an error; duplicate or short keys raise when building |
+| `test_keyset_builds_and_proves_quickly` | 2,500 keys built and 200 proofs in well under 0.5 s |
+| `test_log_tree_matches_rfc_vectors` | RFC 9162: the empty tree is sha256(''), the leaf hash of '' is 6e340b9c..., the Certificate Transparency 8-leaf vector's root is 5dc9da79..., and every prefix matches an independent implementation |
+| `test_every_inclusion_path_verifies_and_alterations_fail` | Sizes 1 to 64: every audit path verifies (bytes and hex); an altered leaf or index, another tree's root, a size the path cannot fit or an extra node fails; malformed input is False |
+| `test_bom_v2_manifest_sections` | Schema v2 with every v1 field, `redactor`, `training.origins`; commitments only when given (`ratchet.smt/v1`, size checked against the rows); `EXTRA_KEYS` merged; unknown sections, a wrong size and a bad root refused |
+| `test_bom_verify_accepts_v1_and_v2_and_refuses_unknown_schemas` | Signed v2 and v1 documents verify with the public key, an unsigned v1 document by its hash; an unknown schema and junk are refused |
+| `test_rows_report_their_origin` | `dataset.rows` reports `examples.origin`, or `live` when it is not recorded |
+| `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
+| `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
 
 ## Live-path tests
 
@@ -698,9 +757,15 @@ Still open: `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` run without a shell, so p
 
 `tests/fixtures/sim_reference_seed7.json` holds one run of the simulator with every input pinned (seed 7, 10 days × 2,000 requests, drift day 5, corrupted v3, mock models; the same run as `make sim`): the inputs, each day's requests, student share, escalation rate, savings and audited agreement rounded to 4 decimal places, the ordered Night School and release events as (day, kind, version), and each version's final state, traffic and training-set size. `test_reference_simulation_unchanged` runs it once per session (the session-scoped `reference_run` fixture, about 7 s) and compares exactly. The inputs compared are the ones the fixture pins: a simulator flag added later, whose default keeps the old behaviour, does not force a regeneration, while a changed or removed pinned input fails the test.
 
-It is the one deliberate exception to "assert on trends, not numbers". Refactors and new features that claim to leave the legacy behaviour untouched prove it by keeping this test green. When a change is meant to move the simulation, run `python scripts/regen_sim_reference.py`, review the JSON diff (one day or event per line), commit it with the change and add a CHANGELOG line saying why; never edit the file by hand. `--check` compares without writing, with the same rule as the test.
+It and the reference workloads below are the deliberate exceptions to "assert on trends, not numbers". Refactors and new features that claim to leave the legacy behaviour untouched prove it by keeping this test green. When a change is meant to move the simulation, run `python scripts/regen_sim_reference.py`, review the JSON diff (one day or event per line), commit it with the change and add a CHANGELOG line saying why; never edit the file by hand. `--check` compares without writing, with the same rule as the test.
 
 The run unsets every `RATCHET_*` variable while it runs, so settings in your shell cannot move it, and it depends only on seeded `random.Random` streams, SHA-256-derived seeds and SQLite arithmetic. When the fixture was made it was identical on CPython 3.10, 3.11, 3.12 and 3.13 (Linux, the CI matrix) and under different `PYTHONHASHSEED` values. If it fails on one platform only, compare the first differing day before regenerating anything. The numbers are simulation output, not measurements.
+
+### The reference workloads (v0.4.0's behaviour)
+
+`scripts/reference_check.py` pins three workloads, captured from v0.4.0 (commit 1f9b18c) in `tests/fixtures/reference.json` ([ADR 0024](adr/0024-evidence-foundations.md)): `tickets-seed7` (the run above), `mixed-seed1` and `research-seed7` (8 days × 1,500 requests). It pins more than the reference simulation does: every input, every v0.4 key of each day's stats at full precision (`cost_per_1k`, `avg_latency_ms`, ...), the totals, each version's final state, training-set size and dataset hash, and the event log with its text. Every later feature defaults to v0.4's behaviour, so every change passes it: `make reference` (about 25 s) and a CI step run all three; the pytest suite checks the tickets workload against the session's reference run at no extra cost (`test_reference_workloads_reproduce_v040`).
+
+The rules: floats agree within a relative 1e-9 (an index may add the same numbers in another order); days and totals may gain keys; events compare as (day, kind, version) in order, and each pinned text must be a prefix of the fresh one, so a feature may append evidence to a message but never change it; the advisory kinds later features add (`drift`, `teacher_drift`, `teacher_model_changed`, `warning`, `student_healed`) are left out; a flag added later is not compared, a changed default is. When a change is meant to move these runs: `python scripts/reference_check.py --write --captured-from "<release or commit>"`, review the diff, and add a CHANGELOG line that says why. The numbers are simulation output from mock models, not measurements.
 
 ## Traceability
 

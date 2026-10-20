@@ -236,6 +236,7 @@ class Runtime:
             self.settings.student_base_model,
             task=night_task(workload),
             signer=self.signer,
+            redact_pii=self.settings.redact_pii,
         )
         trained = self.ledger.version(rep.version) if rep.trained and rep.version is not None else None
         record_simulated_day(self.ledger, self.cost_policy, self.ledger.day, trained)

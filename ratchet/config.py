@@ -47,6 +47,53 @@ def _int(name: str, default: str) -> int:
         raise ValueError(f"{name} must be a whole number, not {raw!r}") from None
 
 
+def _float_or_none(name: str) -> float | None:
+    """A number from the environment, or None when the variable is unset or empty; ValueError names the variable."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, not {raw!r}") from None
+
+
+# Settings declared for the evidence features (FR-15.5, FR-16.x; ADR 0024) before the items that read them are built:
+# field name -> (variable, its default as the environment spells it, the feature that will read it). Their defaults keep
+# today's behaviour. Until a feature lands, `Settings.check_reserved()` stops startup on any other value, so nobody
+# relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
+# checks). docs/CONFIGURATION.md lists them under "Reserved settings".
+RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
+    "canary_audit_rate": ("RATCHET_CANARY_AUDIT_RATE", "", "the anytime-valid release gate (FR-16.1)"),
+    "calibration": ("RATCHET_CALIBRATION", "point", "certified precision (FR-16.3)"),
+    "cert_target": ("RATCHET_CERT_TARGET", "0.95", "certified precision (FR-16.3)"),
+    "cert_delta": ("RATCHET_CERT_DELTA", "0.05", "certified precision (FR-16.3)"),
+    "teacher_probes": ("RATCHET_TEACHER_PROBES", "20", "the teacher watch (FR-16.7)"),
+    "adjudicate_max": ("RATCHET_ADJUDICATE_MAX", "50", "the teacher watch (FR-16.7)"),
+    "take_rate": ("RATCHET_TAKE_RATE", "0.25", "verified savings receipts (FR-15.5)"),
+    "receipt_min_audits": ("RATCHET_RECEIPT_MIN_AUDITS", "30", "verified savings receipts (FR-15.5)"),
+    "mock_teacher_reasoning_mean": ("RATCHET_MOCK_TEACHER_REASONING_MEAN", "", "verified savings receipts (FR-15.5)"),
+    "batch_api": ("RATCHET_BATCH_API", "operations", "clean-room backfill (FR-16.8)"),
+    "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
+    "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
+    "db_sync": ("RATCHET_DB_SYNC", "FULL", "live readiness (WAL journal)"),
+}
+# Variables read through a helper the traceability check cannot see (scripts/reqtrace.py: every one needs a row in
+# docs/CONFIGURATION.md).
+KNOWN_ENV: tuple[str, ...] = tuple(env for env, _, _ in RESERVED_SETTINGS.values())
+
+
+def _is_default(value: object, default: str) -> bool:
+    """Whether a reserved setting holds its default (`default` as the environment spells it; empty means unset)."""
+    if default == "":
+        return value is None or value == ""
+    if isinstance(value, str):
+        return value.strip().lower() in ("", default.lower())
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return float(value) == float(default)
+
+
 # RATCHET_ON_TEACHER_FAILURE: what a request whose teacher call failed gets (ADR 0019).
 TEACHER_FAILURE_MODES = ("error", "serve_student")
 # RATCHET_UNKNOWN_TASKS: what a request naming a task that is not registered gets (ADR 0022). `distill`: a task without
@@ -256,6 +303,27 @@ class Settings:
     # Mock mode only: hours a day the simulated student endpoint runs (each simulated day records one interval).
     mock_endpoint_hours: float = field(default_factory=lambda: _float("RATCHET_MOCK_ENDPOINT_HOURS", "24"))
 
+    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the canary's own audit rate (unset = the
+    # audit rate); the golden eval's calibration rule and certificate level; teacher-watch probes and adjudications per
+    # night; the receipts' take rate, audits needed per task and the mock teacher's mean reasoning tokens (unset = the
+    # fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap; the ledger's sync mode.
+    canary_audit_rate: float | None = field(default_factory=lambda: _float_or_none("RATCHET_CANARY_AUDIT_RATE"))
+    calibration: str = field(default_factory=lambda: _env("RATCHET_CALIBRATION", "point"))
+    cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
+    cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
+    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
+    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+    take_rate: float = field(default_factory=lambda: _float("RATCHET_TAKE_RATE", "0.25"))
+    receipt_min_audits: int = field(default_factory=lambda: _int("RATCHET_RECEIPT_MIN_AUDITS", "30"))
+    mock_teacher_reasoning_mean: float | None = field(
+        default_factory=lambda: _float_or_none("RATCHET_MOCK_TEACHER_REASONING_MEAN")
+    )
+    batch_api: str = field(default_factory=lambda: _env("RATCHET_BATCH_API", "operations"))
+    batch_discount: float = field(default_factory=lambda: _float("RATCHET_BATCH_DISCOUNT", "0.5"))
+    backfill_max_tokens: int = field(default_factory=lambda: _int("RATCHET_BACKFILL_MAX_TOKENS", "2048"))
+    db_sync: str = field(default_factory=lambda: _env("RATCHET_DB_SYNC", "FULL"))
+
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
     mock_warmup_days: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_DAYS", "0")))
@@ -365,6 +433,16 @@ class Settings:
             mock_endpoint_hours=float(hours),
             prices_verified=bool(self.prices_verified),
         )
+
+    def check_reserved(self) -> None:
+        """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a
+        feature that is not built yet, so it would do nothing. ValueError names the variable and the feature. `Ratchet`
+        and `python -m ratchet.live` call it, so the gateway, the simulator and the nightly job all refuse."""
+        for name, (env, default, feature) in RESERVED_SETTINGS.items():
+            value = getattr(self, name)
+            if not _is_default(value, default):
+                fix = "unset it" if default == "" else f"unset it or set it to {default}"
+                raise ValueError(f"{env}={value!r} has no effect yet: it is reserved for {feature}, not built yet; {fix}")
 
     def price(self, model: str) -> Price:
         if model in self.prices:

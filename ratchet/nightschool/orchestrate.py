@@ -63,12 +63,17 @@ def run_night(
     signer: bom.Signer | None = None,
     train_gpu: GpuRate | None = None,
     clock: Callable[[], float] | None = None,
+    redact_pii: bool | None = None,
 ) -> NightReport:
     """One night. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
     recorded as a `training_job` compute interval on `clock` (default `ledger.now`) for the cost report (FR-15.2), and
     closed whether training returns or raises. It includes the dataset upload and the adapter load around the GPU job,
     so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
-    (`cost.record_simulated_day`) and pass none."""
+    (`cost.record_simulated_day`) and pass none. `redact_pii` (`Settings.redact_pii`) goes into the BOM's `redactor`.
+
+    Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
+    set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
+    into the one `bom_extra` dict."""
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
@@ -131,10 +136,13 @@ def run_night(
             ledger.compute_stop("training_job", ts=ended if ended is not None else now(), interval_id=job, version=vid, note=note)
     result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
     ledger.update_eval(vid, result)
-    # The adapter's own bill of materials, written now, while we know exactly what it was trained on.
+    # The adapter's own bill of materials, written now, while we know exactly what it was trained on. Features add their
+    # sections (bom.EXTRA_KEYS) to `bom_extra` above this line.
+    bom_extra: dict[str, Any] = {}
     version = ledger.version(vid)
     assert version is not None
-    ledger.set_bom(vid, bom.document(bom.manifest(version, train_rows, golden_rows), signer))
+    m = bom.manifest(version, train_rows, golden_rows, extra=bom_extra or None, redact_pii=redact_pii)
+    ledger.set_bom(vid, bom.document(m, signer))
     ledger.event(
         "trained",
         f"v{vid} on {manifest['train_examples']} examples{left_out}; "

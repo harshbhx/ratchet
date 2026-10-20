@@ -6,6 +6,7 @@ import functools
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import threading
 import time
@@ -33,7 +34,13 @@ CREATE TABLE IF NOT EXISTS requests (
     student_in_tokens INTEGER, student_out_tokens INTEGER, -- the student calls' tokens (prices the hosted fallback)
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
     route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
-    stored INTEGER             -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
+    stored INTEGER,            -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
+    -- Evidence columns (ADR 0024), NULL until the feature that writes them lands, and in older rows:
+    threshold REAL,            -- the confidence threshold the student was held to; NULL without a version (FR-16.5)
+    label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
+    student_agree INTEGER,     -- 1/0: the student's answer agreed with the escalation's or a random audit's (FR-16.5)
+    baseline_est_usd REAL,     -- the all-teacher cost by the token formula, also when the teacher answered (FR-16.5)
+    optional_failed INTEGER    -- 1: an optional teacher call of this request (audit, arbitration) failed
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +51,12 @@ CREATE TABLE IF NOT EXISTS examples (
     split TEXT,                -- 'train' | 'golden'
     seen INTEGER DEFAULT 1,    -- how often this exact request occurred (drives the frequent-request rule)
     redactions INTEGER DEFAULT 0, -- PII placeholders inserted before storing (ratchet/redact.py)
-    params TEXT                -- JSON: the conditions the teacher answered under (STORED_PARAM_KEYS); NULL when none
+    params TEXT,               -- JSON: the conditions the teacher answered under (STORED_PARAM_KEYS); NULL when none
+    -- Evidence columns (ADR 0024):
+    origin TEXT,               -- 'escalation' | 'audit' | 'arbitration' | 'backfill'; NULL: not recorded (FR-16.8)
+    job TEXT,                  -- the backfill job that wrote it; NULL otherwise (FR-16.8)
+    contested INTEGER DEFAULT 0,      -- 1: a later teacher label of the same request disagreed (FR-16.7)
+    checked_epoch INTEGER DEFAULT 0   -- the teacher-watch epoch of its last self-consistency check (FR-16.7)
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,6 +90,69 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_ts REAL, updated_ts REAL,
     updated_by TEXT            -- the admin key's name (RATCHET_ADMIN_KEYS), never the key
 );
+-- Evidence tables (ADR 0024). Each feature fills its own; an old file gains them on open.
+CREATE TABLE IF NOT EXISTS version_leaves (  -- each adapter's committed training and golden sets (FR-16.4)
+    version_id INTEGER NOT NULL,
+    split TEXT NOT NULL CHECK (split IN ('train', 'golden')),
+    key TEXT NOT NULL,         -- hex: the example hash
+    value TEXT NOT NULL,       -- hex: sha256 of the example's label, teacher, license and redaction count
+    PRIMARY KEY (version_id, split, key)
+);
+CREATE TABLE IF NOT EXISTS teacher_checks (  -- teacher self-consistency checks (FR-16.7)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER, epoch INTEGER, task TEXT,
+    source TEXT,               -- 'duplicate' | 'probe'
+    agree INTEGER, model TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);  -- small ledger-wide state, e.g. the teacher epoch
+CREATE TABLE IF NOT EXISTS receipts (        -- sealed, signed savings receipts (FR-15.5)
+    period INTEGER NOT NULL,   -- the ledger day
+    client TEXT NOT NULL,      -- API key name; '' for the whole gateway
+    created_ts REAL,
+    doc TEXT NOT NULL,         -- JSON: the signed document
+    PRIMARY KEY (period, client)
+);
+CREATE TABLE IF NOT EXISTS spend (           -- money spent outside requests, e.g. backfill labelling (FR-16.8)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER, kind TEXT, ref TEXT,
+    usd REAL, realtime_usd REAL, in_tokens INTEGER, out_tokens INTEGER, detail TEXT
+);
+CREATE TABLE IF NOT EXISTS backfill_jobs (   -- historical prompts relabelled by the teacher (FR-16.8)
+    job TEXT PRIMARY KEY,
+    ts REAL, backend TEXT, teacher TEXT, license TEXT,
+    prompts INTEGER, unique_prompts INTEGER, outputs_discarded INTEGER,
+    source_models TEXT,        -- JSON: {model: outputs discarded}
+    status TEXT, usd REAL, realtime_usd REAL
+);
+CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys, never stored again (FR-16.9)
+    key TEXT PRIMARY KEY, erasure_id INTEGER, ts REAL,
+    suppressed INTEGER DEFAULT 0  -- how often a tombstoned example was offered again and refused
+);
+CREATE TABLE IF NOT EXISTS erasures (        -- erasure requests and their certificates (FR-16.9)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER, key TEXT,
+    tainted TEXT,              -- JSON: ids of the versions trained on the example
+    status TEXT,               -- 'pending' | 'complete'
+    replacement INTEGER,       -- the version trained without it
+    certificate TEXT           -- JSON: the signed certificate
+);
+-- INV-17: committed leaves and sealed receipts are append-only. A changed or deleted row would silently break the
+-- signed roots and chains built from them, so the database refuses UPDATE and DELETE, and an INSERT that would replace
+-- a row (INSERT OR REPLACE deletes the old row without firing a DELETE trigger, so it is refused before it runs).
+CREATE TRIGGER IF NOT EXISTS version_leaves_no_update BEFORE UPDATE ON version_leaves
+BEGIN SELECT RAISE(ABORT, 'version_leaves are append-only (INV-17)'); END;
+CREATE TRIGGER IF NOT EXISTS version_leaves_no_delete BEFORE DELETE ON version_leaves
+BEGIN SELECT RAISE(ABORT, 'version_leaves are append-only (INV-17)'); END;
+CREATE TRIGGER IF NOT EXISTS version_leaves_no_replace BEFORE INSERT ON version_leaves
+WHEN EXISTS (SELECT 1 FROM version_leaves WHERE version_id = NEW.version_id AND split = NEW.split AND key = NEW.key)
+BEGIN SELECT RAISE(ABORT, 'version_leaves are append-only (INV-17)'); END;
+CREATE TRIGGER IF NOT EXISTS receipts_no_update BEFORE UPDATE ON receipts
+BEGIN SELECT RAISE(ABORT, 'sealed receipts are append-only (INV-17)'); END;
+CREATE TRIGGER IF NOT EXISTS receipts_no_delete BEFORE DELETE ON receipts
+BEGIN SELECT RAISE(ABORT, 'sealed receipts are append-only (INV-17)'); END;
+CREATE TRIGGER IF NOT EXISTS receipts_no_replace BEFORE INSERT ON receipts
+WHEN EXISTS (SELECT 1 FROM receipts WHERE period = NEW.period AND client = NEW.client)
+BEGIN SELECT RAISE(ABORT, 'sealed receipts are append-only (INV-17)'); END;
 """
 
 
@@ -140,15 +215,41 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "teacher_cost_usd": "REAL",
         "student_in_tokens": "INTEGER",
         "student_out_tokens": "INTEGER",
+        "threshold": "REAL",
+        "label_p": "REAL",
+        "student_agree": "INTEGER",
+        "baseline_est_usd": "REAL",
+        "optional_failed": "INTEGER",
     },
-    "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0", "params": "TEXT"},
+    "examples": {
+        "seen": "INTEGER DEFAULT 1",
+        "redactions": "INTEGER DEFAULT 0",
+        "params": "TEXT",
+        "origin": "TEXT",
+        "job": "TEXT",
+        "contested": "INTEGER DEFAULT 0",
+        "checked_epoch": "INTEGER DEFAULT 0",
+    },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }
 # Created after migrations, because they index columns that old files only get from MIGRATIONS.
 INDEXES = [
     "CREATE INDEX IF NOT EXISTS requests_client_ts ON requests (client, ts)",
     "CREATE INDEX IF NOT EXISTS compute_intervals_kind_start ON compute_intervals (kind, start_ts)",
+    # A version's audits (version_live_quality, the release gate's counts), its shadow rows (shadow_quality) and a day's
+    # rows (stats and receipts by day) without a full scan as the ledger grows (ADR 0024).
+    "CREATE INDEX IF NOT EXISTS requests_version_audited ON requests (student_version, audited, id)",
+    "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
+    "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
+    "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
+    "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
+    "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
 ]
+_INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
+# Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
+# each of them.
+EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
+APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 
 DAY_SECONDS = 86400
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
@@ -211,7 +312,15 @@ class Ledger:
                 if col not in have:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         for ddl in INDEXES:
-            self.db.execute(ddl)
+            m = _INDEX_DDL.fullmatch(ddl)
+            if m is None:
+                raise ValueError(f"INDEXES entries read 'CREATE INDEX IF NOT EXISTS <name> ON <table> (<columns>)', not {ddl!r}")
+            have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({m.group(2)})")}
+            # Every file Ratchet wrote has the indexed columns (SCHEMA, then MIGRATIONS); a hand-made partial file may
+            # not, and an index is only an aid, so it is skipped there. test_every_index_exists_on_a_new_ledger catches a
+            # misspelled column, which would otherwise be skipped everywhere.
+            if {c.strip() for c in m.group(3).split(",")} <= have:
+                self.db.execute(ddl)
         self.db.commit()
 
     def _tick_day(self, ts: float) -> None:

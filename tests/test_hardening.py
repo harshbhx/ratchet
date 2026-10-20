@@ -1067,3 +1067,214 @@ def test_answers_under_label_altering_sampling_are_served_not_stored(client, rea
     )
     assert r.handle(_ask(), "default", params=replace(client, extra={})).served_by == "student"
     assert len(led.examples()) == 1
+
+
+# ---------- v0.5 evidence foundations (ADR 0024): schema, append-only tables, reserved settings ----------
+V040_SCHEMA = """
+CREATE TABLE requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, served_by TEXT, student_version INTEGER,
+    confidence REAL, escalated INTEGER, audited INTEGER, audit_agree INTEGER,
+    shadow_version INTEGER, shadow_serve INTEGER, shadow_agree INTEGER, latency_ms REAL,
+    cost_usd REAL, baseline_cost_usd REAL, client TEXT
+);
+CREATE TABLE examples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, hash TEXT UNIQUE, messages TEXT, completion TEXT,
+    teacher_model TEXT, license TEXT, license_url TEXT, split TEXT, seen INTEGER DEFAULT 1, redactions INTEGER DEFAULT 0
+);
+CREATE TABLE versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created_ts REAL, day INTEGER, base_model TEXT, adapter_uri TEXT,
+    train_examples INTEGER, dataset_hash TEXT, eval TEXT, state TEXT, traffic_pct INTEGER DEFAULT 0,
+    stage_since INTEGER DEFAULT 0, bom TEXT
+);
+CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, kind TEXT, detail TEXT);
+INSERT INTO requests (ts, day, task, served_by, student_version, escalated, audited, audit_agree, cost_usd,
+                      baseline_cost_usd, latency_ms)
+    VALUES (1800000000, 1, 'ticket-triage', 'student', 1, 0, 1, 1, 0.001, 0.01, 300);
+INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url, split)
+    VALUES (1800000000, 1, 'ticket-triage', 'h1', '[]', '{}', 'nvidia/Nemotron-3-Ultra-550b-a55b', 'OpenMDW-1.1', 'u', 'train');
+INSERT INTO versions (created_ts, day, base_model, adapter_uri, train_examples, dataset_hash, eval, state, traffic_pct)
+    VALUES (1800000000, 1, 'base', 'student-v1', 1, 'dh', '{}', 'live', 100);
+"""  # ratchet/ledger.py's SCHEMA at v0.4.0 (commit 1f9b18c), with one row in each table
+
+
+def _objects(led: Ledger, kind: str) -> set[str]:
+    return {r["name"] for r in led.db.execute("SELECT name FROM sqlite_master WHERE type=?", (kind,))}
+
+
+def _append_only_refusals(led: Ledger) -> None:
+    """Both append-only tables accept new rows and refuse every way of changing or removing one (INV-17)."""
+    led.db.execute("INSERT INTO version_leaves VALUES (1, 'train', 'aa', 'bb'), (1, 'golden', 'aa', 'cc')")
+    led.db.execute("INSERT INTO receipts VALUES (3, '', 1.0, '{}'), (3, 'acme', 1.0, '{}')")
+    for sql in (
+        "UPDATE version_leaves SET value='dd'",
+        "DELETE FROM version_leaves WHERE split='golden'",
+        "INSERT OR REPLACE INTO version_leaves VALUES (1, 'train', 'aa', 'dd')",
+        "INSERT OR IGNORE INTO version_leaves VALUES (1, 'train', 'aa', 'dd')",
+        "INSERT INTO version_leaves VALUES (1, 'train', 'aa', 'dd')",
+        "UPDATE receipts SET doc='{\"edited\": true}' WHERE client='acme'",
+        "DELETE FROM receipts",
+        "INSERT OR REPLACE INTO receipts VALUES (3, '', 2.0, '{}')",
+    ):
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            led.db.execute(sql)
+    for sql in ("INSERT INTO version_leaves VALUES (NULL, 'train', 'ab', 'cd')", "INSERT INTO receipts VALUES (4, NULL, 1, 'd')"):
+        with pytest.raises(sqlite3.IntegrityError):
+            led.db.execute(sql)  # a NULL key column would slip past the primary key
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        led.db.execute("INSERT INTO version_leaves VALUES (1, 'test', 'ab', 'cd')")
+    leaves = [tuple(r) for r in led.db.execute("SELECT * FROM version_leaves ORDER BY split")]
+    receipts = [tuple(r) for r in led.db.execute("SELECT period, client, doc FROM receipts ORDER BY client")]
+    assert leaves == [(1, "golden", "aa", "cc"), (1, "train", "aa", "bb")]
+    assert receipts == [(3, "", "{}"), (3, "acme", "{}")]
+
+
+def test_v04_file_gains_the_evidence_schema(tmp_path):
+    from ratchet.ledger import APPEND_ONLY_TABLES, EVIDENCE_TABLES, INDEXES, MIGRATIONS
+
+    db = tmp_path / "v04.db"
+    con = sqlite3.connect(db)
+    con.executescript(V040_SCHEMA)
+    con.commit()
+    con.close()
+    for _ in range(2):  # opening twice changes nothing more
+        led = Ledger(str(db))
+        for table, cols in MIGRATIONS.items():
+            assert set(cols) <= {r["name"] for r in led.db.execute(f"PRAGMA table_info({table})")}, table
+        assert set(EVIDENCE_TABLES) <= _objects(led, "table")
+        assert {f"{t}_no_{w}" for t in APPEND_ONLY_TABLES for w in ("update", "delete", "replace")} <= _objects(led, "trigger")
+        assert {ddl.split()[5] for ddl in INDEXES} <= _objects(led, "index")
+        led.db.close()
+    led = Ledger(str(db))
+    ex = led.examples()[0]
+    assert (ex["contested"], ex["checked_epoch"], ex["origin"], ex["job"]) == (0, 0, None, None)  # old rows: defaults
+    req = dict(led.db.execute("SELECT * FROM requests").fetchone())
+    assert {req[c] for c in ("threshold", "label_p", "student_agree", "baseline_est_usd", "optional_failed")} == {None}
+    assert led.version_live_quality(1) == (1, 1.0) and led.live().adapter_uri == "student-v1"  # old data reads as before
+    rid = led.log_request(task="t", served_by="student", threshold=0.8, label_p=0.05, optional_failed=1, cost_usd=0)
+    row = led.db.execute("SELECT threshold, label_p, optional_failed FROM requests WHERE id=?", (rid,)).fetchone()
+    assert tuple(row) == (0.8, 0.05, 1)
+    _append_only_refusals(led)
+
+
+def test_every_index_exists_on_a_new_ledger():
+    """A misspelled column would make `_migrate` skip an index everywhere (it skips indexes on columns a hand-made old
+    file lacks), so every entry must exist on a fresh ledger."""
+    from ratchet.ledger import _INDEX_DDL, INDEXES
+
+    led = Ledger(":memory:")
+    names = [_INDEX_DDL.fullmatch(ddl).group(1) for ddl in INDEXES]  # type: ignore[union-attr]
+    assert set(names) <= _objects(led, "index") and len(set(names)) == len(INDEXES)
+    query = "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM requests WHERE student_version=1 AND audited=1 AND id>0"
+    plan = " ".join(r[3] for r in led.db.execute(query))
+    assert "requests_version_audited" in plan  # the gate's audit counts use it
+
+
+@pytest.mark.req("INV-17")
+def test_committed_leaves_and_sealed_receipts_are_append_only():
+    _append_only_refusals(Ledger(":memory:"))
+
+
+# A value other than the default for every reserved setting (config.RESERVED_SETTINGS).
+RESERVED_ENV = {
+    "RATCHET_CANARY_AUDIT_RATE": "0.5",
+    "RATCHET_CALIBRATION": "ltt",
+    "RATCHET_CERT_TARGET": "0.9",
+    "RATCHET_CERT_DELTA": "0.01",
+    "RATCHET_TEACHER_PROBES": "5",
+    "RATCHET_ADJUDICATE_MAX": "7",
+    "RATCHET_TAKE_RATE": "0.3",
+    "RATCHET_RECEIPT_MIN_AUDITS": "40",
+    "RATCHET_MOCK_TEACHER_REASONING_MEAN": "420",
+    "RATCHET_BATCH_API": "openai",
+    "RATCHET_BATCH_DISCOUNT": "0.4",
+    "RATCHET_BACKFILL_MAX_TOKENS": "1024",
+    "RATCHET_DB_SYNC": "NORMAL",
+}
+
+
+def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, tmp_path):
+    """A setting declared for a feature that is not built yet would do nothing, so any value but its default stops the
+    cascade, the gateway and the nightly job at startup, naming the variable; its default, spelled any way, is fine."""
+    from ratchet.config import KNOWN_ENV, RESERVED_SETTINGS
+
+    assert set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()} == set(KNOWN_ENV)
+    for env in RESERVED_ENV:
+        monkeypatch.delenv(env, raising=False)
+    Settings().check_reserved()
+    for env, value in {"RATCHET_CERT_TARGET": "0.950", "RATCHET_CALIBRATION": " Point ", "RATCHET_DB_SYNC": "full"}.items():
+        monkeypatch.setenv(env, value)
+    monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", "")
+    Settings().check_reserved()
+    for env, value in RESERVED_ENV.items():
+        monkeypatch.setenv(env, value)
+        with pytest.raises(ValueError, match=env):
+            Settings().check_reserved()
+        monkeypatch.delenv(env)
+    monkeypatch.setenv("RATCHET_TAKE_RATE", "0.3")
+    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE.*verified savings receipts"):
+        Ratchet(Settings(), Ledger(":memory:"), FakeTeacher(), lambda v: (BrokenStudent(), ""))
+    monkeypatch.setenv("RATCHET_DB", str(tmp_path / "never.db"))
+    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE"):
+        live.main(["tick"])
+    assert not (tmp_path / "never.db").exists()  # refused before the ledger was opened
+    monkeypatch.setenv("RATCHET_TAKE_RATE", "lots")
+    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE must be a number"):
+        Settings()
+
+
+# A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY).
+RESERVED_POLICY_ENV = {
+    "sequential": "1",
+    "alpha_rollback": "0.1",
+    "promote_evidence": "1",
+    "alpha_promote": "0.1",
+    "max_stage_audits": "50",
+    "alert_eprocess": "1",
+    "alpha_alert": "0.05",
+    "min_certified_precision": "0.9",
+    "paired_gate": "1",
+    "regression_alpha": "0.1",
+    "max_nfr": "0.5",
+    "drift_alarm": "50",
+    "drift_audit_boost": "3",
+    "drift_early_night": "1",
+    "teacher_noise_max": "0.1",
+    "alpha_teacher": "0.05",
+}
+
+
+def test_reserved_release_policy_fields_stop_startup(monkeypatch):
+    from ratchet.release import RESERVED_POLICY
+
+    assert set(RESERVED_POLICY_ENV) == set(RESERVED_POLICY)
+    for name in RESERVED_POLICY:
+        monkeypatch.delenv(f"RATCHET_{name.upper()}", raising=False)
+    assert ReleasePolicy.from_env() == ReleasePolicy()
+    monkeypatch.setenv("RATCHET_MAX_STAGE_AUDITS", "400")  # the default, set explicitly
+    monkeypatch.setenv("RATCHET_DRIFT_ALARM", "100")
+    assert ReleasePolicy.from_env() == ReleasePolicy()
+    for name, value in RESERVED_POLICY_ENV.items():
+        env = f"RATCHET_{name.upper()}"
+        monkeypatch.setenv(env, value)
+        with pytest.raises(ValueError, match=f"{env}.*no effect yet"):
+            ReleasePolicy.from_env()
+        monkeypatch.delenv(env)
+
+
+@pytest.mark.parametrize(
+    "env, value, says",
+    [
+        ("RATCHET_MIN_AUDITS", "lots", "whole number"),
+        ("RATCHET_MIN_SHADOW", "1.5", "whole number"),
+        ("RATCHET_MIN_AUDITS", "-1", "0 or more"),
+        ("RATCHET_LIVE_FLOOR", "1.0", "strictly between 0 and 1"),
+        ("RATCHET_LIVE_FLOOR", "0", "strictly between 0 and 1"),
+        ("RATCHET_MIN_PRECISION", "nan", "finite"),
+        ("RATCHET_TOLERANCE", "-0.1", "from 0 to 1"),
+        ("RATCHET_ALPHA_ROLLBACK", "high", "a number"),
+    ],
+)
+def test_policy_from_env_names_a_bad_value(monkeypatch, env, value, says):
+    monkeypatch.setenv(env, value)
+    with pytest.raises(ValueError, match=f"{env}.*{says}"):
+        ReleasePolicy.from_env()
