@@ -233,9 +233,9 @@ FULL_REQUEST: dict[str, Any] = {
 @pytest.mark.req("FR-1.10")
 def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
     """Swap every value of a request that uses every field for junk, or delete it, and let validation judge it first.
-    One it refuses gets exactly that 400 (code and param) from the gateway; one it accepts is answered: 200 in live mode
-    (the teacher behind MockTransport), and in mock mode the mock's own 400, which only knows demo requests. Never a
-    500, and a refused request is never logged."""
+    One it refuses gets exactly that 400 (code and param) from the gateway; one it accepts is answered with a 200 in
+    live mode (the teacher behind MockTransport) and in mock mode (the generic mock world answers any request, FR-9.7).
+    Never a 500, and a refused request is never logged."""
     gw = _gateway(gw_env)
     mock = gw.rt
     live = gw.Runtime(
@@ -263,10 +263,10 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
         assert r.status_code == 200, (path, new, r.status_code, r.text[:200])
         monkeypatch.setattr(gw, "rt", mock)
         r = c.post(CHAT, content=raw, headers={"content-type": "application/json"})
-        assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"], (path, new)
+        assert r.status_code == 200, (path, new, r.status_code, r.text[:200])
     assert 0 < accepted < len(mutations) // 2  # both branches run; most junk is refused
     assert (mock.gateway_errors, live.gateway_errors) == (0, 0)
-    assert mock.ledger.totals()["requests"] == 0 and live.ledger.totals()["requests"] == accepted
+    assert mock.ledger.totals()["requests"] == live.ledger.totals()["requests"] == accepted
 
 
 @pytest.mark.req("FR-1.10")
@@ -360,21 +360,30 @@ def test_unhandled_error_is_a_500_envelope_and_an_event(gw_env, monkeypatch):
     assert r.status_code == 500 and _error(r)["type"] == "api_error" and gw.rt.gateway_errors == 100
 
 
-@pytest.mark.req("FR-1.8", "FR-1.10")
+@pytest.mark.req("FR-1.8", "FR-1.10", "FR-9.7")
 def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_path):
-    gw = _gateway(gw_env)
-    c = TestClient(gw.app, raise_server_exceptions=False)
+    """The strict mock (RATCHET_MOCK_STRICT=1) knows only demo requests, as v0.4 did: anything else is a 400. Without it
+    the generic mock world answers the same requests with a 200."""
     unknown = [
         HI,  # not a demo ticket
         [{"role": "system", "content": "only a system message"}],  # no user message at all
         [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "not JSON"}],  # Scout's writer
         [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "[" * 100_000}],  # too deep to parse
     ]
+    gw = _gateway(gw_env, RATCHET_MOCK_STRICT="1")
+    c = TestClient(gw.app, raise_server_exceptions=False)
     for messages in unknown:
         r = c.post(CHAT, json={"messages": messages})
         assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"], r.text
         assert _error(r)["type"] == "invalid_request_error"
-    assert gw.rt.gateway_errors == 0
+    assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == 0
+    gw = _gateway(gw_env, RATCHET_MOCK_STRICT="0")
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    for messages in unknown:
+        r = c.post(CHAT, json={"messages": messages})
+        assert r.status_code == 200, r.text[:200]
+        assert r.json()["choices"][0]["message"]["content"].startswith("[mock teacher] ")
+    assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == len(unknown)
 
     # In live mode a KeyError is a bug in the gateway, not a client mistake.
     live = _gateway(gw_env, RATCHET_MODE="live", RATCHET_DB=str(tmp_path / "live.db"), RATCHET_STUDENT_BASE="", NEBIUS_API_KEY="")
@@ -526,7 +535,7 @@ def test_message_and_input_limits_come_from_settings(gw_env):
     # 0 means no limit.
     unlimited = TestClient(_gateway(gw_env, RATCHET_MAX_MESSAGES="0", RATCHET_MAX_INPUT_CHARS="0").app)
     r = unlimited.post(CHAT, json={"messages": HI * 300 + [{"role": "user", "content": "x" * 200_000}]})
-    assert r.status_code == 400 and "mock mode only answers" in r.json()["detail"]  # validated, then unknown to the mock
+    assert r.status_code == 200  # validated, then answered by the generic mock world
 
 
 # ---------- normalisation through the gateway ----------
@@ -611,12 +620,13 @@ def test_multimodal_parts_go_to_the_teacher_only(gw_env):
     assert row == {"task": "ticket-triage", "served_by": "teacher", "escalated": 0, "student_version": None}
     # The same gateway sends a text request through the cascade as usual: the student answers.
     assert c.post(CHAT, json={"messages": HI}).json()["ratchet"]["served_by"] == "student" and len(student.calls) == 1
-    # Audio is still refused, and in mock mode the mock teacher does not know the image request (400, not 500).
+    # Audio is still refused. The mock teacher answers the image request from its text part, and still nothing is stored.
     audio = {"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": "", "format": "wav"}}]}
     assert _error(c.post(CHAT, json={"messages": [audio]}))["code"] == "unsupported_content_type"
     gw.rt.reset()
     r = c.post(CHAT, json={"messages": [image]})
-    assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"]
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    assert '"What is this?"' in r.json()["choices"][0]["message"]["content"] and gw.rt.ledger.examples() == []
 
 
 # ---------- generation parameters reach each model (FR-1.13, ADR 0017) ----------

@@ -684,6 +684,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-9.4": ("sim.simulate:main",),
     "FR-9.5": ("sim.research:ResearchStream", "sim.world:make_stream"),
     "FR-9.6": ("ratchet.gateway:Runtime.warm_up",),
+    "FR-9.7": ("sim.generic:item", "sim.generic:instance_from_schema", "sim.world:lookup", "sim.generic:SchemaStream"),
     # 6.10 Scout
     "FR-10.1": ("ratchet.scout.agents:Scout.run",),
     "FR-10.2": ("ratchet.tasks:REGISTRY",),

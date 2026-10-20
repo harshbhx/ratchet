@@ -63,11 +63,11 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/scout/guard.py` | `Guard`: daily spend cap, daily run cap, per-IP hourly limit for the public demo |
 | `ratchet/scout/__main__.py` | CLI: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` |
 | `ratchet/web/` | `landing.html` and `scout.html`: static pages, no build step |
-| `sim/` | Synthetic tickets, the mock research world (`research.py`), workloads (`world.py`), mock teacher/student for the offline simulation and tests |
+| `sim/` | Synthetic tickets, the mock research world (`research.py`), the generic mock world for every other request (`generic.py`: free text, schema instances, tool calls; [ADR 0041](adr/0041-generic-mock-world.md)), workloads (`world.py`), mock teacher/student for the offline simulation and tests |
 
 There are two runtime modes, chosen by `RATCHET_MODE`:
 
-- **mock** (default): in-memory ledger, mock teacher and students from `sim/`, demo controls enabled, simulated search for Scout. No network or keys. `RATCHET_MOCK_WARMUP_DAYS` runs simulated days at startup.
+- **mock** (default): in-memory ledger, mock teacher and students from `sim/`, demo controls enabled, simulated search for Scout. No network or keys. `RATCHET_MOCK_WARMUP_DAYS` runs simulated days at startup. The mock models answer the demo's tickets and Scout's calls from their registries and every other request from the generic mock world (free text, an instance of its `response_format` schema, a tool call; [ADR 0041](adr/0041-generic-mock-world.md)), deterministically from its text; `RATCHET_MOCK_STRICT=1` makes anything else a 400.
 - **live**: SQLite file at `RATCHET_DB`, real teacher on Token Factory, student on your vLLM endpoint (or the hosted fallback model when `RATCHET_STUDENT_BASE` is empty), Tavily for Scout when `TAVILY_API_KEY` is set.
 
 ## 2. Request path
@@ -234,7 +234,7 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
  └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow (tasks that fail their own check disabled)
 ```
 
-- **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
+- **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator. It finds each row's template from its messages and stored conditions, so a generic row (a schema, free text) trains like a ticket.
 - **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it.
 
 ### Datasets (`nightschool/dataset.py`)
@@ -556,4 +556,4 @@ question ─▶ Planner (research-plan, pinned) ─▶ 3 queries
 - Scout emits events (`start`, `step`, `done`, or `error`) through a callback. `/scout/stream` runs it in a worker thread and forwards events as Server-Sent Events; `/scout/run` collects them.
 - Before a run, `Guard.admit(ip)` applies the daily budget, the daily run cap and the per-IP hourly limit. After it, `Guard.add_spend` adds the summed `cost_usd` of the steps that finished, even if the run failed.
 - In mock mode, `MockSearch` returns simulated results from `sim/research.py`, and `MockTeacher` answers the planner and writer prompts by recognising their system prompts. The triage and reader requests are built with the same `prompts.py` functions the simulator uses, so the mock models can look each one up by its text.
-- The demo controls (`/ratchet/demo/day?workload=tickets|research|mixed`) let the dashboard train the student on Scout's calls without running Scout itself.
+- The demo controls (`/ratchet/demo/day?workload=tickets|research|mixed|schema|tools`) let the dashboard train the student on Scout's calls without running Scout itself, and on structured-output and tool requests from the generic mock world.

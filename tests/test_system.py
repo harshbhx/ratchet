@@ -161,9 +161,12 @@ def test_gateway_openai_shape_and_demo_flow(client):
 
 @pytest.mark.req("FR-1.5", "FR-1.6")
 def test_gateway_rejects_bad_requests(client):
-    c, _ = client
+    c, gw = client
     assert c.post("/v1/chat/completions", json={"messages": []}).status_code == 400
-    # Streaming is supported since v0.4, but errors still arrive as HTTP errors before the stream starts.
+    # Streaming is supported since v0.4, but errors still arrive as HTTP errors before the stream starts. The cascade's
+    # own refusal: a request the strict mock (RATCHET_MOCK_STRICT=1) does not know.
+    gw.rt.settings.mock_strict = True
+    gw.rt.reset()
     r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "x"}], "stream": True})
     assert r.status_code == 400 and "mock mode only answers" in r.json()["detail"]
 

@@ -276,6 +276,7 @@ class ResearchItem:
     labels: dict[str, Any]
     key_fact: str = ""
     messages_: list[dict[str, str]] = field(default_factory=list)
+    params = None  # sent without generation parameters (sim/world.py `Item.params`); not a dataclass field
 
     @property
     def label_space(self) -> dict[str, list[Any]]:
