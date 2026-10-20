@@ -286,6 +286,36 @@ No rows yet. `FR-13.x` rows go here.
 
 No rows yet. `FR-14.x` rows go here.
 
+### 6.15 Cost and economics
+
+A self-hosted student is billed by the GPU-hour while its endpoint runs, not per token. Below a break-even volume it costs more than it saves (see [BUSINESS.md](BUSINESS.md#when-self-hosting-pays-utilization-aware)). Ratchet must report that honestly.
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-15.1 | Each request's cost is split into student and teacher spend; the existing `cost_usd` stays exactly their sum and unchanged | Planned |
+| FR-15.2 | Compute-time ledger: student endpoint uptime and training-job GPU-hours, recorded by a CLI, an authenticated endpoint, the deploy script and the simulator; overlapping intervals never double-count | Planned |
+| FR-15.3 | Cost report (`GET /ratchet/cost`, `python -m ratchet.cost report`): savings per token and by GPU-hours paid (negative when self-hosting does not pay, never clamped), break-even student-served requests per GPU-hour, the crossover with the hosted fallback, and observed utilization | Planned |
+| FR-15.4 | Self-host recommendation (self-host, hosted fallback, scale to zero, or not enough data) with a plain-English explanation and the numbers behind it | Planned |
+| FR-15.5 | Verified savings receipts per API client: an audit-calibrated baseline with a confidence bound, both cost views, signed | Planned |
+
+### 6.16 Verifiable evidence
+
+Claims that a judge, customer or auditor can check from the data, not take on trust.
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence-based promotion, and confidence sequences, valid however often the gate runs | Planned |
+| FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert per version at the stated rate | Planned |
+| FR-16.3 | Certified precision: each candidate carries a Clopper–Pearson lower bound on precision at its threshold, recorded in its signed BOM; opt-in Learn-then-Test calibration | Planned |
+| FR-16.4 | Committed training sets: each adapter's BOM commits to its training and golden examples with Merkle roots, with membership and non-membership proofs | Planned |
+| FR-16.5 | Ledger time machine: replay past traffic under a different threshold or audit rate from logged propensities, with unbiased estimates | Planned |
+| FR-16.6 | Label-free drift alarm with a bounded false-alarm rate (conformal test martingale on student confidence) | Planned |
+| FR-16.7 | Teacher watch: free teacher self-consistency checks from duplicate requests; inconsistent labels are quarantined from training | Planned |
+| FR-16.8 | Clean-room backfill: a day-0 student from historical prompts relabelled by the teacher through the Token Factory Batch API, with provenance in the BOM | Planned |
+| FR-16.9 | Provable erasure: forget an example, retrain without it, and issue a signed certificate that the new adapter's training set excludes it | Planned |
+| FR-16.10 | Guarantee harness: Monte Carlo checks that each statistical guarantee holds at its stated rate | Planned |
+| FR-16.11 | Evidence tour: one command exercises every feature in mock mode and writes a signed evidence bundle | Planned |
+
 ## 7. Non-functional requirements
 
 | ID | Area | Requirement | Status |
@@ -300,6 +330,7 @@ No rows yet. `FR-14.x` rows go here.
 | NFR-8 | Correctness | Release decisions use held-out data and statistical bounds, not single numbers. | Done (v0.1) |
 | NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter. | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet |
 | NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
+| NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass. | Planned |
 
 ## 8. Success metrics
 
@@ -331,6 +362,8 @@ No rows yet. `FR-14.x` rows go here.
 | Submission complete by Oct 29, 2026 | Yes |
 | Live run on Token Factory + Nebius AI Cloud with real numbers in README and video | Yes |
 | Demo URL live through Dec 15, 2026 | Yes |
+| Stage One (pass/fail) met: the hosted demo runs in live mode during judging, with runtime Token Factory and Tavily calls | Yes |
+| Real Nebius bill reported (total, failed jobs included) next to the cost report's break-even line | Yes |
 | Placement | Track win or top 3 |
 
 ## 9. Release plan
@@ -342,7 +375,8 @@ No rows yet. `FR-14.x` rows go here.
 | v0.3.0 (web app) | React story page, Scout page and dashboard; 49 tests passing | Built Oct 20, 2026 |
 | v0.4.0 (hardening) | PII redaction, gateway API keys and quotas, streaming, signed BOM per adapter, `/healthz`; 64 tests passing | Built Oct 20, 2026 |
 | v0.1 live | Day-1 checks; Nano 4B trained on a Serverless Job; vLLM endpoint; real numbers | Oct 20–28, 2026 |
-| v0.5 | Postgres ledger, multiple tasks per deployment, NER-based redaction, per-key spend caps | After hackathon |
+| v0.5 (backend completeness) | Work packages A–F: traceability and a test safety net; request contract and resilience; task model and use cases; operations, security and performance; data governance and success metrics; cost accounting and verifiable evidence (§6.15, §6.16). See [Roadmap](ROADMAP.md) Milestone 0.9 | In progress (from Oct 20, 2026) |
+| v0.6 | Postgres ledger, multi-worker shared state, PyPI package, NER-based redaction | After hackathon |
 | v1.0 | Managed Ratchet Cloud, multi-tenant, savings-based billing, region choice (EU, India) | Startup track |
 
 See [Roadmap](ROADMAP.md) for dates and exit criteria.
