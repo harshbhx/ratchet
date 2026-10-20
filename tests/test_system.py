@@ -17,6 +17,7 @@ def sim(*argv):
     return run(args)
 
 
+@pytest.mark.req("US-2", "US-3", "US-4", "US-9", "FR-2.4", "FR-2.5", "FR-9.2")
 def test_loop_learns_and_saves_money():
     res = sim("--days", "6", "--requests", "1500", "--drift-day", "0")
     days = res["days"]
@@ -30,6 +31,7 @@ def test_loop_learns_and_saves_money():
     assert min(audits) >= 0.85
 
 
+@pytest.mark.req("FR-9.3", "US-6")
 def test_bad_deploy_is_rolled_back_and_users_return_to_live():
     res = sim("--days", "6", "--requests", "1500", "--drift-day", "0", "--bad-deploy-version", "3")
     states = {v["id"]: v["state"] for v in res["versions"]}
@@ -41,6 +43,7 @@ def test_bad_deploy_is_rolled_back_and_users_return_to_live():
     assert "rollback" in kinds
 
 
+@pytest.mark.req("FR-9.1")
 def test_drift_raises_escalations_then_recovers():
     res = sim("--days", "9", "--requests", "1500", "--drift-day", "5")
     d = {x["day"]: x for x in res["days"]}
@@ -48,6 +51,7 @@ def test_drift_raises_escalations_then_recovers():
     assert d[9]["escalation_rate"] < d[5]["escalation_rate"]
 
 
+@pytest.mark.req("FR-3.3", "US-7", "INV-1")
 def test_provenance_only_lists_distillable_teachers():
     res = sim("--days", "2", "--requests", "300", "--drift-day", "0")
     for src in res["bill_of_materials"]["sources"]:
@@ -67,6 +71,7 @@ def client(monkeypatch):
     return TestClient(gw.app), gw
 
 
+@pytest.mark.req("FR-1.1", "FR-1.3", "US-1", "US-11", "FR-7.5", "NFR-6")
 def test_gateway_openai_shape_and_demo_flow(client):
     c, gw = client
     assert c.get("/").status_code == 200
@@ -87,6 +92,7 @@ def test_gateway_openai_shape_and_demo_flow(client):
     assert c.post("/ratchet/demo/reset").json() == {"status": "reset"}
 
 
+@pytest.mark.req("FR-1.5", "FR-1.6")
 def test_gateway_rejects_bad_requests(client):
     c, _ = client
     assert c.post("/v1/chat/completions", json={"messages": []}).status_code == 400
@@ -96,6 +102,7 @@ def test_gateway_rejects_bad_requests(client):
 
 
 # ---------- provider client against a fake Token Factory ----------
+@pytest.mark.req("FR-8.1", "NFR-7")
 def test_openai_compat_provider_parses_logprobs_and_usage():
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)

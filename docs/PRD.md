@@ -5,7 +5,7 @@
 | Owner | Harsh Bhanushali (DualMind Labs) |
 | Status | v0.4.0 built (hackathon MVP, Scout demo, React web app, demo VM kit, privacy and security hardening); live Nebius run pending |
 | Last updated | 2026-10-20 |
-| Related | [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Research summary](RESEARCH_SUMMARY.md) · [Roadmap](ROADMAP.md) |
+| Related | [Requirements matrix](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Research summary](RESEARCH_SUMMARY.md) · [Roadmap](ROADMAP.md) |
 
 ## 1. Overview
 
@@ -136,7 +136,17 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 
 ## 6. Functional requirements
 
-Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in simulation, in that release. **Planned** means not built yet.
+Each requirement's Status is one of these forms, checked by `python scripts/reqtrace.py --check` in CI. The check also maps every row to its code and to the tests marked with its id (`@pytest.mark.req("FR-2.1")`); the generated matrix is [REQUIREMENTS.md](REQUIREMENTS.md).
+
+| Status | Meaning |
+|---|---|
+| `Done (vX)` | Built in release vX and covered by an offline test (simulation, fakes or `httpx.MockTransport`), or listed as a known gap or a manual check in the matrix |
+| `Done (vX), untested (live)` | Built and tested offline, but not yet run against the real service; also `untested (on GPU)` and `untested (on Nebius)` |
+| `Done (vX); <text> planned` | Built, with a named extension still planned |
+| `Partial: <text>` | Part of it is built; the text says what is missing |
+| `Planned` | Not built yet. A test for it must be a strict expected failure |
+| `Replaced by FR-a.b` | Superseded by another requirement |
+| `Met in simulation (<text>)`, `Not met (<text>)`, `Not checked` | Success metrics (§8.1) only |
 
 ### 6.1 Gateway
 
@@ -145,11 +155,11 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | FR-1.1 | `POST /v1/chat/completions` accepts OpenAI-format requests and returns a `chat.completion` object plus a `ratchet` metadata block (served_by, student_version, confidence, escalated, cost_usd, all_teacher_cost_usd, latency_ms) | Done (v0.1) |
 | FR-1.2 | `GET /v1/models` lists a `ratchet` model | Done (v0.1) |
 | FR-1.3 | Task selection via `X-Ratchet-Task` header or `metadata.ratchet_task` | Done (v0.1) |
-| FR-1.4 | Reject `stream: true` with HTTP 400 | Replaced by FR-1.6 in v0.4 |
+| FR-1.4 | Reject `stream: true` with HTTP 400 (until v0.4) | Replaced by FR-1.6 |
 | FR-1.5 | Reject missing or empty `messages` with HTTP 400 | Done (v0.1) |
 | FR-1.6 | Streaming responses: `stream: true` returns OpenAI `chat.completion.chunk` events and `[DONE]`, sent once the cascade has decided | Done (v0.4) |
+| FR-1.7 | API keys / auth on the gateway: named keys (`RATCHET_API_KEYS`), per-key daily quota, cost and savings per client. The demo VM also has an opt-in edge guard in Caddy | Done (v0.4) |
 | FR-1.8 | Student endpoint errors fall back to the teacher; teacher errors return HTTP 502 | Done (v0.1.1) |
-| FR-1.7 | API keys / auth on the gateway: named keys (`RATCHET_API_KEYS`), per-key daily quota, cost and savings per client | Done (v0.4); the demo VM also has an opt-in edge guard in Caddy |
 | FR-1.9 | Web pages: landing page at `/`, Scout at `/scout`, dashboard at `/dashboard` | Done (v0.2) |
 
 ### 6.2 Cascade and confidence
@@ -185,8 +195,8 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | FR-4.2 | Retrain from the base model each night (no adapter stacking) | Done (v0.1) |
 | FR-4.3 | Golden set: ~10% of unique requests by hash, held out; requests seen 3+ times move to training | Done (v0.1) |
 | FR-4.4 | Skip training if fewer than 50 new examples, no golden set, or a release is in flight | Done (v0.1) |
-| FR-4.5 | LoRA fine-tune script with Unsloth (fallback: transformers + peft) for Nemotron 3 Nano 4B | Done (v0.1), untested on GPU |
-| FR-4.6 | Run training as a Nebius Serverless Job; wait for adapter in bucket | Done (v0.1), untested on Nebius |
+| FR-4.5 | LoRA fine-tune script with Unsloth (fallback: transformers + peft) for Nemotron 3 Nano 4B | Done (v0.1), untested (on GPU) |
+| FR-4.6 | Run training as a Nebius Serverless Job; wait for adapter in bucket | Done (v0.1), untested (on Nebius) |
 | FR-4.7 | PII redaction before storing examples (pattern-based with checksums; names and addresses not covered) | Done (v0.4); NER-based detection planned |
 
 ### 6.5 Evaluation
@@ -197,7 +207,7 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 | FR-5.2 | Calibrate threshold on half the golden set (target precision 97%), measure on the other half | Done (v0.1) |
 | FR-5.3 | Report precision, coverage, threshold, raw agreement | Done (v0.1) |
 | FR-5.4 | Re-score the live version on the same golden set each night (champion vs challenger) | Done (v0.1) |
-| FR-5.5 | Reference-based judge (Nemotron 3 Super, JSON mode) for free-text tasks | Done (v0.1), untested live |
+| FR-5.5 | Reference-based judge (Nemotron 3 Super, JSON mode) for free-text tasks | Done (v0.1), untested (live) |
 
 ### 6.6 Release gate
 
@@ -229,11 +239,11 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 
 | ID | Requirement | Status |
 |---|---|---|
-| FR-8.1 | Teacher and judge via Token Factory OpenAI-compatible API | Done (v0.1), untested live |
-| FR-8.2 | Student served by vLLM on a Nebius Serverless Endpoint with runtime LoRA loading | Done (v0.1), untested live |
+| FR-8.1 | Teacher and judge via Token Factory OpenAI-compatible API | Done (v0.1), untested (live) |
+| FR-8.2 | Student served by vLLM on a Nebius Serverless Endpoint with runtime LoRA loading | Done (v0.1), untested (live) |
 | FR-8.3 | Fallback to hosted untuned Nemotron Nano on Token Factory when no student endpoint | Done (v0.1) |
-| FR-8.4 | `python -m ratchet.live night` and `tick` commands for cron | Done (v0.1) |
-| FR-8.5 | `scripts/day1_check.py` verifies model IDs, logprobs, JSON mode | Done (v0.1) |
+| FR-8.4 | `python -m ratchet.live night` and `tick` commands for cron | Done (v0.1), untested (on Nebius) |
+| FR-8.5 | `scripts/day1_check.py` verifies model IDs, logprobs, JSON mode | Done (v0.1), untested (live) |
 
 ### 6.9 Simulation
 
@@ -252,7 +262,7 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 |---|---|---|
 | FR-10.1 | Five agents (planner, searcher, triage, reader, writer); every LLM call goes through Ratchet with a task name | Done (v0.2) |
 | FR-10.2 | Planner and writer pinned to the teacher; triage and reader distillable | Done (v0.2) |
-| FR-10.3 | Live search with the Tavily Search API; simulated search in mock mode, labelled in the UI | Done (v0.2), Tavily untested live |
+| FR-10.3 | Live search with the Tavily Search API; simulated search in mock mode, labelled in the UI. The Tavily client is tested offline only | Done (v0.2), untested (live) |
 | FR-10.4 | Streaming run events to the page (Server-Sent Events) and a JSON endpoint (`/scout/run`) | Done (v0.2) |
 | FR-10.5 | Budget guard: daily spend cap, daily run cap, per-IP hourly limit; spend counted per step | Done (v0.2) |
 | FR-10.6 | CLI client: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` | Done (v0.2) |
@@ -261,34 +271,49 @@ Status: **Done (v0.1)** or **Done (v0.2)** means built and covered by tests in s
 
 | ID | Requirement | Status |
 |---|---|---|
-| FR-11.1 | One-command Nebius CPU VM setup (cloud-init, Docker Compose, Caddy HTTPS, firewall) | Done (v0.2), untested on Nebius |
-| FR-11.2 | Daily ledger backups, update script with health checks | Done (v0.2), untested on Nebius |
+| FR-11.1 | One-command Nebius CPU VM setup (cloud-init, Docker Compose, Caddy HTTPS, firewall) | Done (v0.2), untested (on Nebius) |
+| FR-11.2 | Daily ledger backups, update script with health checks | Done (v0.2), untested (on Nebius) |
+
+### 6.12 Operations
+
+No rows yet. `FR-12.x` rows go here, in the same `| ID | Requirement | Status |` table as the sections above.
+
+### 6.13 Data governance
+
+No rows yet. `FR-13.x` rows go here.
+
+### 6.14 Use cases
+
+No rows yet. `FR-14.x` rows go here.
 
 ## 7. Non-functional requirements
 
-| ID | Area | Requirement |
-|---|---|---|
-| NFR-1 | Latency | Student path adds at most one student call (n samples in one request). Target p50 under 1 s for student-served requests. Escalated requests cost one student call plus one teacher call. |
-| NFR-2 | Availability | If the student endpoint errors, requests fall back to the teacher automatically (v0.1.1); with `RATCHET_STUDENT_BASE` unset, the hosted untuned Nano is used with the default threshold. `python -m ratchet.live reload` restores adapters after an endpoint restart. A demo URL must stay live through judging (Dec 1–15, 2026). |
-| NFR-3 | Cost | Shadow, audit, and arbitration overhead is counted in reported cost. No training while a release is in flight. |
-| NFR-4 | Privacy | Prompts and teacher answers are stored in SQLite with identifiers (emails, phones, cards, IBANs, national IDs, IPs, secrets) replaced by placeholders (v0.4). Use synthetic data only in demos. NER-based redaction (Presidio) and zero-retention options are planned. |
-| NFR-5 | Security | Secrets come from environment variables only. Student endpoint uses token auth. Gateway auth is planned. See [Threat model](THREAT_MODEL.md). |
-| NFR-6 | Observability | Every request, version change, and release event is logged in the ledger and visible on the dashboard. |
-| NFR-7 | Portability | Any OpenAI-compatible teacher or student endpoint works. Adapters are standard LoRA files the customer can download and run elsewhere. |
-| NFR-8 | Correctness | Release decisions use held-out data and statistical bounds, not single numbers. |
-| NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter. |
+| ID | Area | Requirement | Status |
+|---|---|---|---|
+| NFR-1 | Latency | Student path adds at most one student call (n samples in one request). Target p50 under 1 s for student-served requests. Escalated requests cost one student call plus one teacher call. | Done (v0.1), untested (live) |
+| NFR-2 | Availability | If the student endpoint errors, requests fall back to the teacher automatically (v0.1.1); with `RATCHET_STUDENT_BASE` unset, the hosted untuned Nano is used with the default threshold. `python -m ratchet.live reload` restores adapters after an endpoint restart. A demo URL must stay live through judging (Dec 1–15, 2026). | Done (v0.1.1); a demo URL that stays live through judging planned |
+| NFR-3 | Cost | Shadow, audit, and arbitration overhead is counted in reported cost. No training while a release is in flight. | Done (v0.1) |
+| NFR-4 | Privacy | Prompts and teacher answers are stored in SQLite with identifiers (emails, phones, cards, IBANs, national IDs, IPs, secrets) replaced by placeholders (v0.4). Use synthetic data only in demos. | Done (v0.4); NER-based redaction (Presidio) and zero-retention options planned |
+| NFR-5 | Security | Secrets come from environment variables only. The student endpoint uses token auth. Named gateway API keys (`RATCHET_API_KEYS`, v0.4) protect `/v1/*`, each with an optional daily request quota (`RATCHET_API_KEY_DAILY_REQUESTS`, 429 past it). Keys are compared as constant-time digests and are never stored or logged: the ledger and `/ratchet/stats` see only key names. `/healthz`, the pages, Scout and `/ratchet/*` take no key; on the demo VM, Caddy can guard `/v1/*` and `/ratchet/demo/*` with an admin token. See [Threat model](THREAT_MODEL.md). | Done (v0.4) |
+| NFR-6 | Observability | Every request, version change, and release event is logged in the ledger and visible on the dashboard. | Done (v0.1) |
+| NFR-7 | Portability | Any OpenAI-compatible teacher or student endpoint works. Adapters are standard LoRA files the customer can download and run elsewhere. | Done (v0.1) |
+| NFR-8 | Correctness | Release decisions use held-out data and statistical bounds, not single numbers. | Done (v0.1) |
+| NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter. | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet |
+| NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
 
 ## 8. Success metrics
 
-### 8.1 Product
+### 8.1 Product metrics
 
-| Metric | Target |
-|---|---|
-| Cost reduction vs all-teacher, steady state | ≥ 70% |
-| Audited precision of student-served answers | ≥ 95% |
-| Student share of traffic, steady state | ≥ 80% |
-| Bad deploys reaching 100% traffic | 0 |
-| Time to recover from drift (escalations back to baseline) | ≤ 3 nights |
+| ID | Metric | Target | Status |
+|---|---|---|---|
+| SM-1 | Cost reduction vs all-teacher, steady state | ≥ 70% | Not checked |
+| SM-2 | Audited precision of student-served answers | ≥ 95% | Not checked |
+| SM-3 | Student share of traffic, steady state | ≥ 80% | Not checked |
+| SM-4 | Bad deploys reaching 100% traffic | 0 | Not checked |
+| SM-5 | Time to recover from drift (escalations back to baseline) | ≤ 3 nights | Not checked |
+
+`Not checked` means no test computes the metric yet. The simulation results below are a single run, not a check.
 
 **Simulation results (mock models, not real model quality):** with seed 7, 2,000 tickets a day over 10 days, a product launch on day 5, and a corrupted deploy of v3:
 

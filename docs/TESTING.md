@@ -2,7 +2,8 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 64 tests (test_core, test_system, test_hardening, test_scout), ~20 s
+pytest -q                     # 108 tests (test_core, test_system, test_hardening, test_scout, test_traceability), ~20 s
+python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
@@ -14,13 +15,16 @@ python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's 
 | `tests/test_system.py` | 7 |
 | `tests/test_hardening.py` | 23 |
 | `tests/test_scout.py` | 15 |
-| **Total** | **64** |
+| `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
+| **Total** | **108** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`): the pure logic of each module.
 2. **System tests** (`tests/test_system.py`, `tests/test_scout.py`): the whole loop over simulated days, the gateway API, the HTTP clients, and Scout end to end.
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
+
+Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
 None of these touch Token Factory or a GPU. Live behaviour is checked with `scripts/day1_check.py` and the steps in [DEPLOYMENT.md](DEPLOYMENT.md#5-verification-after-deploy).
 
@@ -103,6 +107,35 @@ The `gw` fixture reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS
 | `test_failed_run_returns_502_and_its_spend_still_counts` | When the writer's call fails, `/scout/run` returns 502 and the planner, triage and reader spend is still added to the budget |
 | `test_stats_mark_pinned_tasks` | `/ratchet/stats` `tasks` reports `pinned` for the planner and writer tasks only |
 | `test_react_app_is_served_with_lite_fallback` | With the committed build, `/`, `/scout` and `/dashboard` return the React shell and `/assets/*` is served; `/lite*` return the hand-written pages; without a build `/` falls back to the lite page |
+
+### `tests/test_traceability.py`
+
+Every test here carries `NFR-10` through a module-level `pytestmark`.
+
+| Test | Covers |
+|---|---|
+| `test_ids_unique_and_statuses_parse` | Every PRD id and invariant is well formed and unique, every status matches the grammar, invariants are numbered 1..N, §7 has a Status column, §6.12–6.14 exist |
+| `test_done_requirements_have_tests_or_known_gap` | Rule (b) on the repo: every done, partial or met requirement, user story and invariant has a passing test, an `EXEMPT` entry or a known gap |
+| `test_known_gaps_and_exemptions_only_shrink` | `KNOWN_GAPS` ⊆ `INITIAL_KNOWN_GAPS`; no known gap or manual exemption that now has a test; every exemption's evidence file exists |
+| `test_markers_cite_known_ids` | No marker cites an unknown or replaced id; markers are string literals |
+| `test_planned_ids_only_in_strict_xfail` | A test citing a `Planned` id is a strict xfail; no test cites a `Not checked` metric |
+| `test_not_met_metrics_have_strict_xfail` | Each `Not met` metric has a strict-xfail test |
+| `test_code_refs_resolve` | Every done requirement and invariant has a `CODE` entry, and every entry imports and resolves (or the file exists) |
+| `test_live_unverified_have_offline_test_and_live_exemption` | Each `untested (live)` row has a `live` exemption and an offline test (or is a known gap) |
+| `test_requirements_md_is_current` | `docs/REQUIREMENTS.md` equals a fresh `render()`, and rendering twice gives the same text |
+| `test_every_route_documented_in_api_md` | Every route in the gateway's OpenAPI schema appears in `docs/API.md` with its method on the same line |
+| `test_every_env_var_documented` | Every variable read under `ratchet/` (`_env`, `os.environ`, `os.getenv`, the `ReleasePolicy` fields) has a row in `docs/CONFIGURATION.md` |
+| `test_doc_test_counts_match` | Every "N tests" claim and per-file count in the docs equals the parametrize-expanded count |
+| `test_ast_count_matches_pytest_collection` | `pytest --collect-only` in a subprocess collects exactly the AST count per file |
+| `test_check_cli_passes_and_writes_the_committed_matrix` | `--check` exits 0 and prints `OK`; writing to `--out` reproduces the committed matrix |
+| `test_mini_world_is_clean_and_renders` | A tiny PRD, CLAUDE.md and test file pass every core rule and render the expected rows, an empty section, xfail tests and a live check; a table inside a code block is not parsed |
+| `test_each_mistake_gives_exactly_one_error` (23 cases) | Bad status wording, a cited replaced id, a duplicate id, an unknown marker id, a malformed id, an FR row in the wrong section, a metric status on an FR row, a missing replacement target, a done row without a test, a planned id without strict xfail, a `Not met` metric without one, a cited `Not checked` metric, a known gap that has a test, a grown `KNOWN_GAPS`, a tested manual exemption, missing evidence, a live row without a live exemption or without an offline test, a broken or missing `CODE` ref, a non-literal marker, an untested invariant and a requirement proved only by a skipped test each give exactly one error |
+| `test_status_grammar` | Each status form gives its flags; the old wording (`untested live`), free text after `Done (vX);` that does not end in `planned`, a metric status on an FR row and an empty status are errors |
+| `test_scan_reads_markers_and_counts_cases` | The AST scan reads module, class and function marks, nested classes, stacked and name-referenced `parametrize`, skips fixtures and classes with `__init__`, reports an uncountable `parametrize`, and treats a `@pytest.mark.skip` test as no proof |
+| `test_missing_sources_are_findings_not_crashes` | With no PRD, CLAUDE.md, API.md or CONFIGURATION.md, every rule reports what is missing instead of raising |
+| `test_doc_rules_catch_drift` | A wrong "N tests" line and a wrong per-file count are reported with file and line; a route documented without its method is reported; the env-var scan finds `os.environ.get`, `getenv`, `_env`, `os.environ[...]` and `_int` reads and skips non-literal names and writes |
+| `test_invariants_keep_their_list_numbers` | INV-n is the list number; a gap in the numbering is one error; continuation lines join the item |
+| `test_clip_keeps_table_cells_valid` | Matrix text is at most 100 characters, ends in an ellipsis, never leaves an open code span or half an escaped pipe |
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
@@ -269,9 +302,46 @@ Writing these docs turned up ten gaps in v0.1. Each one is fixed in v0.1.1 and c
 
 Still open: `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` run without a shell, so pipes and `&&` do not work; wrap them in a script.
 
+## Traceability
+
+[REQUIREMENTS.md](REQUIREMENTS.md) maps every requirement to the code that implements it and the tests that prove it. `scripts/reqtrace.py` generates it (`make trace`) and checks it (`python scripts/reqtrace.py --check`, part of `make lint` and a CI step after pytest). It uses only the standard library, reads the PRD, CLAUDE.md and the tests with regular expressions and `ast`, and finishes in about half a second.
+
+Sources of truth:
+
+| Source | What it holds |
+|---|---|
+| [PRD.md](PRD.md) | FR, NFR and SM rows (id, text, Status) and the US stories. Statuses follow the grammar in [PRD §6](PRD.md#6-functional-requirements) |
+| [CLAUDE.md](../CLAUDE.md) `## Invariants` | INV-n is the list number, so invariants are never renumbered |
+| `@pytest.mark.req("FR-2.1", "INV-7")` in `tests/` | Which tests prove which ids. A module- or class-level `pytestmark` works too. Registered in `pyproject.toml`, and `--strict-markers` makes a misspelled marker an error |
+| `CODE` in `scripts/reqtrace.py` | Where each done requirement and each invariant lives: `ratchet.router:Ratchet._sample` (imported and resolved) or a repo path for UI, shell and Docker files |
+| `EXEMPT` in `scripts/reqtrace.py` | Requirements checked outside the offline suite: `manual` (the dashboard UI, the CI simulation smoke test) or `live` (needs Nebius, a GPU or a real key), each with the file that holds the check |
+| `KNOWN_GAPS` in `scripts/reqtrace.py` | Done requirements without a test. It must stay a subset of the frozen `INITIAL_KNOWN_GAPS` (30 ids when the check landed), so it can only shrink |
+
+The check fails when:
+
+| Rule | Fails when |
+|---|---|
+| (a) | An id is malformed (`FR-a.b`, `NFR-n`, `US-n`, `SM-n`, `INV-n`) or duplicated, an `FR-a.b` row is not in section 6.a, a status is outside the grammar, invariants are not numbered 1..N, or a `Replaced by` target does not exist |
+| (b) | A done, partial or met requirement, a user story or an invariant has no passing test, no `EXEMPT` entry and is not a known gap. An xfail or `@pytest.mark.skip` test is not proof |
+| (c) | `KNOWN_GAPS` grows, or a known gap or a manual exemption has a test now ("remove it"); an exemption's evidence file is missing |
+| (d) | A marker cites an unknown or replaced id, is not a string literal, or cites a `Planned` id without `@pytest.mark.xfail(strict=True)`; or a test cites a `Not checked` metric (give the metric a status) |
+| (e) | A done requirement or an invariant has no `CODE` entry, or an entry does not import, resolve or exist |
+| (f) | An `untested (live)` row has no `live` exemption, or no offline test and is not a known gap |
+| (g) | A `Not met` metric has no strict-xfail test (so the test fails loudly once the target is met) |
+| (h) | `docs/REQUIREMENTS.md` differs from a fresh render |
+| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, `DEPLOYMENT.md` or `HACKATHON_SUBMISSION.md` differs from the parametrize-expanded count |
+
+To change behaviour:
+
+1. Update or add the PRD row (or the invariant in CLAUDE.md) in the same commit.
+2. Mark the test that proves it with `@pytest.mark.req("FR-a.b")`. If the id was a known gap, delete it from `KNOWN_GAPS`.
+3. Add a `CODE` entry for a new done requirement or invariant. Something that can only be checked by hand or live gets an `EXEMPT` entry with the file that holds the check; an `untested (live)` row also needs an offline test.
+4. Run `make trace` and commit `docs/REQUIREMENTS.md`, then `make lint test`.
+
 ## Adding tests
 
 - Pure logic goes in `test_core.py` with small hand-built ledgers (`Ledger(":memory:")`). Use `_version()` and `_audit()` to set up release states.
 - Scout, the research world and the guard go in `test_scout.py`. Use the `gw` fixture (mock gateway, no warm-up) and fake clocks for the guard.
 - Loop behaviour goes in `test_system.py` through `sim(...)` with fixed seeds. Assert on trends (rising share, falling escalations), not exact numbers, so tuning the mock does not break tests.
 - Never call real APIs in tests. Use `httpx.MockTransport` as in `test_openai_compat_provider_parses_logprobs_and_usage`.
+- Mark every new test with the requirement ids it proves (`@pytest.mark.req`), keep `parametrize` lists literal so the suite can be counted statically, and update the test counts above ([Traceability](#traceability)).

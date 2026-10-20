@@ -20,6 +20,7 @@ B = json.dumps({"category": "refund", "priority": "high", "reply": "y"})
 
 
 # ---------- tasks ----------
+@pytest.mark.req("FR-2.6", "FR-2.7")
 def test_task_agree_ignores_free_text_and_reasoning():
     a = '<think>hmm</think>```json\n{"category": "Billing", "priority": "high", "reply": "hello"}\n```'
     b = json.dumps({"category": "billing", "priority": "high", "reply": "totally different"})
@@ -27,16 +28,19 @@ def test_task_agree_ignores_free_text_and_reasoning():
     assert not TRIAGE.agree(a, B)
 
 
+@pytest.mark.req("FR-2.6")
 def test_invalid_json_never_agrees():
     assert not TRIAGE.agree("not json", "not json")
 
 
 # ---------- confidence ----------
+@pytest.mark.req("FR-2.2")
 def test_unanimous_confident_samples_score_high():
     s = score(TRIAGE, [comp(A, 0.95)] * 3)
     assert s.agreement == 1.0 and s.confidence > 0.9
 
 
+@pytest.mark.req("FR-2.2")
 def test_disagreement_lowers_confidence():
     s = score(TRIAGE, [comp(A, 0.95), comp(B, 0.95), comp(A, 0.5)])
     assert s.agreement == pytest.approx(2 / 3)
@@ -44,10 +48,12 @@ def test_disagreement_lowers_confidence():
     assert TRIAGE.agree(s.answer.text, A)
 
 
+@pytest.mark.req("FR-2.2")
 def test_all_invalid_scores_zero():
     assert score(TRIAGE, [comp("nope")] * 3).confidence == 0.0
 
 
+@pytest.mark.req("FR-5.2", "FR-2.3")
 def test_calibrate_threshold_hits_target_precision():
     pts = [(0.99, True)] * 50 + [(0.9, True)] * 30 + [(0.85, False)] * 5 + [(0.6, False)] * 20
     thr = calibrate_threshold(pts, 0.95)
@@ -57,12 +63,14 @@ def test_calibrate_threshold_hits_target_precision():
 
 
 # ---------- licenses ----------
+@pytest.mark.req("FR-3.2", "US-8", "INV-1")
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "openai/gpt-4o", "claude-opus-5-5", "anthropic/claude-haiku", "gemini-3.1-pro"])
 def test_closed_teachers_are_refused(model):
     with pytest.raises(licenses.LicenseError):
         licenses.require_distillable(model)
 
 
+@pytest.mark.req("FR-3.1", "FR-3.2", "US-8", "INV-1")
 def test_open_teacher_allowed_and_unknown_refused():
     assert licenses.require_distillable("nvidia/Nemotron-3-Ultra-550b-a55b").name == "OpenMDW-1.1"
     with pytest.raises(licenses.LicenseError):
@@ -70,6 +78,7 @@ def test_open_teacher_allowed_and_unknown_refused():
 
 
 # ---------- ledger ----------
+@pytest.mark.req("FR-3.4", "FR-4.3")
 def test_examples_dedupe_and_count_and_stable_split():
     led = Ledger(":memory:", golden_fraction=0.5)
     msgs = [{"role": "user", "content": "hi"}]
@@ -82,6 +91,7 @@ def test_examples_dedupe_and_count_and_stable_split():
     assert led2.examples()[0]["split"] == rows[0]["split"]
 
 
+@pytest.mark.req("FR-3.5", "US-7")
 def test_bill_of_materials_lists_licenses():
     led = Ledger(":memory:")
     led.add_example("t", [{"role": "user", "content": "q"}], "a", "nvidia/Nemotron-3-Ultra-550b-a55b", "OpenMDW-1.1", "u")
@@ -95,12 +105,14 @@ def _version(led, precision, coverage, state="candidate"):
     return led.create_version("base", "a", 100, "h", {"precision": precision, "coverage": coverage}, state)
 
 
+@pytest.mark.req("FR-6.6", "NFR-8")
 def test_wilson_bounds():
     lo, hi = wilson(19, 20)
     assert lo < 0.95 < hi
     assert wilson(0, 0) == (0.0, 1.0)
 
 
+@pytest.mark.req("FR-6.1", "FR-6.2", "US-5")
 def test_cold_start_goes_to_canary_and_bad_candidates_rejected():
     led = Ledger(":memory:")
     gate = ReleaseGate(led)
@@ -112,6 +124,7 @@ def test_cold_start_goes_to_canary_and_bad_candidates_rejected():
     assert led.version(good).state == "canary" and led.version(good).traffic_pct == 10
 
 
+@pytest.mark.req("FR-6.1", "US-5")
 def test_regression_vs_live_is_rejected_and_good_one_shadows():
     led = Ledger(":memory:")
     gate = ReleaseGate(led)
@@ -139,6 +152,7 @@ def _audit(led, vid, n, agree_every):
         )
 
 
+@pytest.mark.req("FR-6.5", "US-5")
 def test_canary_advances_then_goes_live():
     led = Ledger(":memory:")
     gate = ReleaseGate(led, ReleasePolicy(min_audits=10))
@@ -155,6 +169,7 @@ def test_canary_advances_then_goes_live():
     assert led.version(v).state == "live" and led.version(old).state == "retired"
 
 
+@pytest.mark.req("FR-6.6", "US-6")
 def test_canary_rolls_back_on_strong_evidence():
     led = Ledger(":memory:")
     gate = ReleaseGate(led, ReleasePolicy(min_audits=10))

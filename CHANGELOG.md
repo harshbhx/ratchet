@@ -2,6 +2,19 @@
 
 All notable changes are listed here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Requirements traceability** (PRD NFR-10, [ADR 0011](docs/adr/0011-requirements-traceability.md)): `scripts/reqtrace.py` (standard library only) maps every PRD requirement and every CLAUDE.md invariant to its code (`CODE`) and to the tests marked `@pytest.mark.req(...)`, and writes the generated matrix [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md). `python scripts/reqtrace.py --check` fails on a status outside the grammar, a duplicate or misplaced id, a done requirement, story or invariant without a test, exemption or known gap, a marker citing an unknown or replaced id, a planned id or unmet metric without a strict xfail, an unresolvable code reference, an `untested (live)` row without a live check, a stale matrix, an undocumented route or environment variable, or a wrong "N tests" claim. It runs in `make lint`, as a CI step and as `tests/test_traceability.py`. `make trace` regenerates the matrix.
+- `@pytest.mark.req` markers on 55 of the 60 existing test functions (the other five are migration, `auto_day` and policy regressions with no PRD row); the `req` marker is registered and `--strict-markers` is on.
+- `KNOWN_GAPS`: the 30 done requirements and invariants that have no test yet (for example shadow mode, the canary split, the Night School skip rules, champion vs challenger, mock-only endpoints). It may only shrink.
+- 44 tests in `tests/test_traceability.py` (108 in total), including one that checks the AST test count against `pytest --collect-only`.
+
+### Changed
+- PRD: a status grammar in §6; a Status column for §7; ids and statuses for the §8.1 metrics (SM-1 to SM-5, all `Not checked` until a test computes them); NFR-5 describes the v0.4 API keys and quotas; NFR-10 (traceability); empty sections 6.12 Operations, 6.13 Data governance and 6.14 Use cases; FR-1.4 is `Replaced by FR-1.6`; FR-1.7's Caddy note moved into its text; `untested live` became `untested (live)` (and `(on GPU)`, `(on Nebius)`); FR-8.4 and FR-8.5 are marked `untested` because they have never run against Nebius; §8.1 is renamed "Product metrics".
+- CONFIGURATION.md: an explicit `RATCHET_<FIELD>` row for every `ReleasePolicy` field, and `RATCHET_API_KEY` (Scout CLI).
+- Test counts corrected in CLAUDE.md, tests/CLAUDE.md, TESTING.md, README, DEPLOYMENT.md (it still said 49) and the Devpost draft.
+
 ## [0.4.0] - 2026-10-20
 
 The offline items of the hardening milestone (PRD FR-1.6, FR-1.7, FR-3.6, FR-4.7).

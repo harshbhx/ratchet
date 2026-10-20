@@ -57,6 +57,7 @@ def test_auto_day_counts_days_from_first_request():
     assert [d["day"] for d in led.stats_by_day()] == [1, 2]
 
 
+@pytest.mark.req("FR-1.8", "INV-7", "NFR-2")
 def test_student_failure_falls_back_to_teacher():
     led = Ledger(":memory:")
     vid = led.create_version("b", "student-v1", 10, "h", {"threshold": 0.5}, state="live")
@@ -67,6 +68,7 @@ def test_student_failure_falls_back_to_teacher():
     assert vid == 1
 
 
+@pytest.mark.req("FR-2.3", "FR-8.3")
 def test_fallback_model_uses_default_threshold():
     s = Settings()
     led = Ledger(":memory:")
@@ -77,6 +79,7 @@ def test_fallback_model_uses_default_threshold():
     assert r.threshold(v, "student-v1") == 0.2
 
 
+@pytest.mark.req("FR-1.8", "INV-7", "NFR-2")
 def test_teacher_failure_returns_502(monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -90,6 +93,7 @@ def test_teacher_failure_returns_502(monkeypatch):
     gw.rt.reset()
 
 
+@pytest.mark.req("FR-1.3")
 def test_unknown_tasks_do_not_grow_registry():
     before = len(tasks.REGISTRY)
     for i in range(50):
@@ -99,6 +103,7 @@ def test_unknown_tasks_do_not_grow_registry():
     assert tasks.get("bad name with spaces!").name == "default"
 
 
+@pytest.mark.req("FR-6.7")
 def test_live_alert_fires_once_per_version():
     led = Ledger(":memory:")
     gate = ReleaseGate(led, ReleasePolicy(min_audits=5))
@@ -150,6 +155,7 @@ def gw_env(monkeypatch):
     importlib.reload(gw)
 
 
+@pytest.mark.req("FR-4.7", "NFR-4")
 def test_redact_finds_each_kind_and_checks_checksums():
     c = Counter()
     text = (
@@ -165,6 +171,7 @@ def test_redact_finds_each_kind_and_checks_checksums():
     assert redact("Card 4111 1111 1111 1112") == "Card 4111 1111 1111 1112"  # fails Luhn: not a card
 
 
+@pytest.mark.req("FR-4.7")
 def test_redact_leaves_ordinary_text_alone():
     text = (
         "Order #48213 on 2026-10-20 at 10:30 cost $1,299.00. Python 3.10, v0.3.0, page 12 of 300, "
@@ -173,6 +180,7 @@ def test_redact_leaves_ordinary_text_alone():
     assert redact(text) == text
 
 
+@pytest.mark.req("FR-4.7", "INV-12")
 def test_redact_messages_handles_content_parts():
     msgs = [
         {"role": "system", "content": "triage"},
@@ -183,6 +191,7 @@ def test_redact_messages_handles_content_parts():
     assert msgs[1]["content"][0]["text"] == "I am bob@example.com"  # the caller's copy is untouched
 
 
+@pytest.mark.req("FR-4.7")
 def test_redaction_is_a_no_op_on_the_mock_world():
     """Mock models look requests up by exact text, so redaction must never change a synthetic request."""
     from sim.mock_models import MockTeacher
@@ -207,6 +216,7 @@ class EchoTeacher:
         return [Completion(text='{"category": "account", "reply": "Mailed you at bob@example.com"}', model=model)]
 
 
+@pytest.mark.req("FR-4.7", "NFR-4", "INV-12")
 def test_examples_are_stored_redacted_but_the_teacher_sees_the_original():
     led, teacher = Ledger(":memory:"), EchoTeacher()
     r = Ratchet(Settings(), led, teacher, lambda v: (None, "x"), seed=1)
@@ -223,6 +233,7 @@ def test_examples_are_stored_redacted_but_the_teacher_sees_the_original():
     assert "bob@example.com" in raw.examples()[0]["messages"]
 
 
+@pytest.mark.req("FR-1.7", "INV-13")
 def test_keyring_parses_and_identifies():
     ring = KeyRing(f"acme:{KEY_A}, {KEY_B}")
     assert ring.enabled and ring.names == ["acme", "key2"]
@@ -235,6 +246,7 @@ def test_keyring_parses_and_identifies():
     assert bearer(f"Bearer {KEY_A}") == KEY_A and bearer("Basic abc", "k") == "k" and bearer(None) is None
 
 
+@pytest.mark.req("FR-1.7", "NFR-5", "INV-13")
 def test_api_keys_protect_v1_and_name_the_client(gw_env):
     from fastapi.testclient import TestClient
 
@@ -254,6 +266,7 @@ def test_api_keys_protect_v1_and_name_the_client(gw_env):
     assert c.get("/scout/examples").status_code == 200  # pages and Scout stay public
 
 
+@pytest.mark.req("FR-1.7", "NFR-5")
 def test_daily_quota_per_key(gw_env):
     from fastapi.testclient import TestClient
 
@@ -270,6 +283,7 @@ def test_daily_quota_per_key(gw_env):
     assert c.post("/v1/chat/completions", json={"messages": msgs}, headers=b).status_code == 200
 
 
+@pytest.mark.req("FR-1.6")
 def test_streaming_matches_the_non_streaming_answer(gw_env):
     import json as _json
 
@@ -293,6 +307,7 @@ def test_streaming_matches_the_non_streaming_answer(gw_env):
     assert len(chunks) > 3
 
 
+@pytest.mark.req("FR-3.6", "US-7", "NFR-9", "INV-14")
 def test_signed_bom_per_adapter_verifies_and_detects_tampering(gw_env):
     import copy
 
@@ -322,6 +337,7 @@ def test_signed_bom_per_adapter_verifies_and_detects_tampering(gw_env):
     assert c.get("/ratchet/versions/999/bom").status_code == 404
 
 
+@pytest.mark.req("FR-3.6", "INV-14")
 def test_bom_is_stored_unsigned_without_a_key_and_cli_verifies(tmp_path, capsys):
     import json as _json
 
@@ -347,6 +363,7 @@ def test_bom_is_stored_unsigned_without_a_key_and_cli_verifies(tmp_path, capsys)
     assert "RATCHET_BOM_SIGNING_KEY=" in capsys.readouterr().out
 
 
+@pytest.mark.req("FR-3.6")
 def test_bad_signing_key_fails_at_startup():
     with pytest.raises(ValueError):
         bom.Signer("not base64!!")
@@ -371,6 +388,7 @@ def test_v03_database_gets_v04_columns(tmp_path):
     assert led.client_requests_since("acme", 0) == 0
 
 
+@pytest.mark.req("FR-1.7", "INV-13")
 def test_healthz_stays_public_when_keys_are_on(gw_env):
     from fastapi.testclient import TestClient
 

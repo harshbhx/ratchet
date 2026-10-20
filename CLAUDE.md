@@ -18,9 +18,10 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (64 tests, ~20 s, no network, no GPU)
-make lint           # ruff check + ruff format --check
+make test           # pytest -q (108 tests, ~20 s, no network, no GPU)
+make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
+make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
 make sim            # 10-day simulation with a corrupted deploy (mock models)
 make demo           # mock gateway (4-day warm-up) on http://localhost:8000: / story, /scout, /dashboard
 make web            # rebuild the React UI into ratchet/web/dist (commit the result)
@@ -69,7 +70,8 @@ Always run `make lint test` before committing.
 | `deploy/` | Nebius Serverless Job / Endpoint scripts, training Dockerfile |
 | `deploy/vm/` | Public demo on one Nebius CPU VM: `create_vm.sh`, cloud-init, Docker Compose + Caddy, update and backup scripts |
 | `scripts/day1_check.py` | Verifies model IDs, logprobs, JSON mode on Token Factory |
-| `docs/` | PRD, architecture, API, config, Scout, deployment (incl. the demo VM), runbook, threat model, testing, ADRs, business docs |
+| `scripts/reqtrace.py` | Requirements traceability: PRD rows and invariants → code (`CODE`) and `@pytest.mark.req` tests; writes and checks `docs/REQUIREMENTS.md` (generated, never edit by hand) |
+| `docs/` | PRD, the generated requirements matrix (`REQUIREMENTS.md`), architecture, API, config, Scout, deployment (incl. the demo VM), runbook, threat model, testing, ADRs, business docs |
 
 ## Invariants (do not break these)
 
@@ -92,7 +94,8 @@ Always run `make lint test` before committing.
 
 - Python ≥ 3.10, type hints, `from __future__ import annotations`. Ruff, line length 130.
 - Plain, short docstrings that say *why*. No hype words in docs or UI copy.
-- Tests: pure logic in `tests/test_core.py`; loop behaviour via `sim.simulate.run` in `tests/test_system.py`; regressions in `tests/test_hardening.py`; Scout, the research world and the guard in `tests/test_scout.py`. Assert on trends, not exact simulation numbers. Never call real APIs in tests (use `httpx.MockTransport`).
+- Tests: pure logic in `tests/test_core.py`; loop behaviour via `sim.simulate.run` in `tests/test_system.py`; regressions in `tests/test_hardening.py`; Scout, the research world and the guard in `tests/test_scout.py`; the traceability check in `tests/test_traceability.py`. Assert on trends, not exact simulation numbers. Never call real APIs in tests (use `httpx.MockTransport`).
+- Behaviour change: update the PRD row and mark the proving test with `@pytest.mark.req("FR-a.b")`, then run `make trace`. A new requirement or invariant needs a `CODE` entry in `scripts/reqtrace.py`; ids never change (INV-n is the list number). Statuses follow the grammar in [PRD §6](docs/PRD.md#6-functional-requirements). `KNOWN_GAPS` only shrinks: remove an id when its test lands. See [docs/TESTING.md](docs/TESTING.md#traceability).
 - Simulation numbers are **mock**. Label them as simulation anywhere they appear (README, docs, video).
 - Database changes: add the column to `SCHEMA` **and** to `MIGRATIONS` in `ledger.py`.
 - New env var: read it in `config.py` (or `ReleasePolicy.from_env`) and document it in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -101,7 +104,8 @@ Always run `make lint test` before committing.
 
 ## Current status (Oct 20, 2026)
 
-- v0.4.0: PII redaction before training, gateway API keys with per-key quotas, streaming, a signed bill of materials per adapter, `/healthz`, coverage in CI, and the dashboard's Trust and privacy panel. 64 tests, 87% line coverage.
+- Unreleased: requirements traceability. Every PRD row and invariant maps to code and tests in the generated [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), checked by `make lint` and CI; done requirements without a test are listed there as known gaps.
+- v0.4.0: PII redaction before training, gateway API keys with per-key quotas, streaming, a signed bill of materials per adapter, `/healthz`, coverage in CI, and the dashboard's Trust and privacy panel; 87% line coverage at release.
 - v0.3.0: React web app (story landing page, Scout, dashboard) replaces the hand-written pages, which stay at `/lite*`.
 - v0.2.0: loop complete and tested in simulation; Scout, landing page and the Nebius VM deploy kit added ([CHANGELOG.md](CHANGELOG.md)). Live mode, live Scout (Tavily) and the VM kit are written but **not yet run on Nebius**.
 - Waiting on Nebius support's reply about Token Factory ToS §5(f) (email sent Oct 19 from harshbhx@gmail.com).
