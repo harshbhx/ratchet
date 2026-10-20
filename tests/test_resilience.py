@@ -1,4 +1,4 @@
-"""Upstream failures on the request path (NFR-2, FR-1.8, FR-1.11, FR-2.10, INV-7, INV-15).
+"""Upstream failures on the request path (NFR-2, FR-1.8, FR-1.11, FR-2.10, FR-2.12, INV-7, INV-15).
 
 A failing student falls back to the teacher (`tests/test_hardening.py`). Here:
 
@@ -16,6 +16,9 @@ A failing student falls back to the teacher (`tests/test_hardening.py`). Here:
   endpoint that keeps failing (route `student_breaker`), probing it again and backing off; a shadow breaker of its own;
   vLLM's 404 for a lost adapter queuing one reload a minute through the live gateway; the mock outage demo; and the
   `route` recorded on every request.
+- When the teacher is down (FR-2.12, ADR 0019): the teacher's breaker (a 503 `teacher_circuit_open` with `Retry-After`
+  at once, audits and arbitrations skipped), `RATCHET_ON_TEACHER_FAILURE=serve_student` (the student's valid answer,
+  marked degraded, never stored, audited or shadowed), and the licensed fallback teacher.
 - Night School's golden eval when the student endpoint refuses a row for a condition stored with it (vLLM's 400 to
   `tools` without a tool parser): the row scores as not served and the night goes on (FR-5.1, INV-7).
 """
@@ -35,22 +38,24 @@ from typing import Any
 
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, RecordingTrainer, _version
+from fakes import FALLBACK_TEACHER, OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, RecordingTrainer, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
+from ratchet import licenses
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.live import AdapterReloader, adapter_reloader
 from ratchet.nightschool import dataset
 from ratchet.nightschool.evaluate import LiveEvaluator
 from ratchet.nightschool.orchestrate import run_night
-from ratchet.providers import PARAM_FIELDS, GenPolicy, OpenAICompatProvider, UpstreamError
+from ratchet.providers import PARAM_FIELDS, GenParams, GenPolicy, OpenAICompatProvider, UpstreamError
 from ratchet.release import ReleaseGate
 from ratchet.resilience import (
     NO_RETRY,
     AdapterMissing,
     Breaker,
+    BreakerPolicy,
     CircuitOpen,
     RetryPolicy,
     as_upstream,
@@ -58,7 +63,7 @@ from ratchet.resilience import (
     parse_retry_after,
     timeouts,
 )
-from ratchet.router import ROUTES, Ratchet
+from ratchet.router import ROUTES, Ratchet, RequestMeta, fingerprint
 from ratchet.scout.guard import Guard
 from ratchet.scout.prompts import EXAMPLE_QUESTIONS
 
@@ -70,7 +75,7 @@ CHAT = "/v1/chat/completions"
 TEACHER_URL = "https://teacher.test/v1/chat/completions?token=do-not-log"
 TEACHER_BASE = "https://teacher.test/v1"
 TEACHER_KEY = "tf-teacher-api-key"
-NO_ERRORS = {"student_errors": 0, "audit_errors": 0, "shadow_errors": 0}
+NO_ERRORS = {"student_errors": 0, "audit_errors": 0, "shadow_errors": 0, "degraded_answers": 0, "fallback_answers": 0}
 HI = [{"role": "user", "content": "hi"}]
 KEY = "resilience-test-key-0123456789abcdef"
 OK_BODY = {"model": "m", "choices": [{"message": {"content": "hi"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
@@ -113,12 +118,13 @@ def _counters(r: Ratchet) -> dict[str, int]:
     return {k: v for k, v in r.health().items() if k != "breakers"}
 
 
-def _cascade(teacher: RecordingProvider, audit_rate: float) -> tuple[Ledger, int, Settings, Ratchet]:
+def _cascade(teacher: RecordingProvider, audit_rate: float, **settings: Any) -> tuple[Ledger, int, Settings, Ratchet]:
     """A live version with a calibrated threshold of 0.5, which its unanimous student (confidence 0.98) clears."""
     led = Ledger(":memory:")
     live = _version(led, "live", {"threshold": 0.5})
     student = RecordingProvider(A)
-    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=audit_rate, teacher_reasoning_tokens=0)
+    base: dict[str, Any] = {"on_teacher_failure": "error", "teacher_fallback_model": "", "teacher_breaker_failures": 5}
+    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=audit_rate, teacher_reasoning_tokens=0, **{**base, **settings})
     return led, live, s, Ratchet(s, led, teacher, lambda v: (student, v.adapter_uri), seed=1)
 
 
@@ -154,7 +160,8 @@ def test_audit_failure_still_serves_the_student(failure, label):
 @pytest.mark.req("FR-2.10", "INV-15", "INV-7", "FR-1.8")
 def test_audit_errors_are_counted_and_throttled_and_escalation_still_fails():
     teacher = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=_timeout)
-    led, live, s, r = _cascade(teacher, audit_rate=1.0)
+    # No teacher breaker, so every request tries its audit (with one, the 6th on skip it: test_open_teacher_breaker_*).
+    led, live, s, r = _cascade(teacher, audit_rate=1.0, teacher_breaker_failures=0)
     for i in range(12):
         assert r.handle(_ask(i), TRIAGE).served_by == "student"
     assert _counters(r) == {**NO_ERRORS, "audit_errors": 12}
@@ -180,7 +187,7 @@ def test_audit_errors_are_counted_and_throttled_and_escalation_still_fails():
 def test_failure_counters_are_exact_under_threads():
     """Scout calls handle from several threads; every failure is counted once and the events stay throttled."""
     teacher = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=_timeout)
-    led, live, s, r = _cascade(teacher, audit_rate=1.0)
+    led, live, s, r = _cascade(teacher, audit_rate=1.0, teacher_breaker_failures=0)  # every audit tried, as above
     with ThreadPoolExecutor(8) as pool:
         served = list(pool.map(lambda i: r.handle(_ask(i), TRIAGE).served_by, range(200)))
     assert served == ["student"] * 200
@@ -320,7 +327,7 @@ def test_optional_teacher_failures_through_the_gateway(gw_env, tmp_path, monkeyp
     rt.settings.audit_rate = 0.0
     r = c.post(CHAT, json={"messages": _ask(3)})
     assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "student" and len(teacher_calls) == 6
-    assert _counters(rt.ratchet) == {"student_errors": 0, "audit_errors": 2, "shadow_errors": 1}
+    assert _counters(rt.ratchet) == {**NO_ERRORS, "audit_errors": 2, "shadow_errors": 1}
     events = [(e["kind"], e["detail"]) for e in rt.ledger.events()]
     assert events == [
         ("audit_error", "default: UpstreamError 504 upstream_timeout"),
@@ -1332,7 +1339,10 @@ def test_open_student_breaker_sends_requests_straight_to_the_teacher():
     )
     assert row["cost_usd"] == pytest.approx(teacher_cost) == row["baseline_cost_usd"]  # no student samples billed
     assert _counters(r)["student_errors"] == 5
-    assert r.health()["breakers"] == {"student": {"state": "open", "failures": 5, "open_until": clock.now + 30, "open_s": 30.0}}
+    assert r.health()["breakers"] == {
+        "student": {"state": "open", "failures": 5, "open_until": clock.now + 30, "open_s": 30.0},
+        "teacher": {"state": "closed", "failures": 0, "open_until": None, "open_s": 30.0},  # the teacher's own (ADR 0019)
+    }
     assert len(led.examples()) == 6  # the teacher's answers still become training data
 
     clock.advance(29)
@@ -1412,7 +1422,7 @@ def test_breakers_are_per_endpoint_and_role():
     assert r._breaker("student", other).name == "student-3"
     assert r._breaker("student", RecordingProvider(A)) is r._breaker("student", student)  # a new object per call: one breaker
     assert r._breaker("shadow", a1).name == "shadow" and r._breaker("shadow", a1) is not r._breaker("student", a1)
-    assert sorted(r.health()["breakers"]) == ["shadow", "student", "student-2", "student-3"]
+    assert sorted(r.health()["breakers"]) == ["shadow", "student", "student-2", "student-3", "teacher"]
 
 
 @pytest.mark.req("FR-2.11", "INV-7", "NFR-2")
@@ -1646,14 +1656,23 @@ def test_demo_student_outage_opens_and_closes_the_breaker(gw_env, monkeypatch):
     assert any(e["kind"] == "circuit" for e in stats["events"])
 
 
-@pytest.mark.req("FR-2.11", "FR-2.9")
+@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12")
 def test_every_request_row_has_a_route():
     clock = FakeClock()
     led = Ledger(":memory:")
     student = RecordingProvider(A)
     teacher = RecordingProvider(B)
-    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0, student_breaker_failures=2, student_breaker_cooldown_s=30)
-    r = Ratchet(s, led, teacher, lambda v: (student, v.adapter_uri), seed=1, clock=clock)
+    fallback = RecordingProvider(B)
+    s = Settings(
+        teacher_model=OPEN_TEACHER,
+        samples=3,
+        audit_rate=0.0,
+        student_breaker_failures=2,
+        student_breaker_cooldown_s=30,
+        teacher_fallback_model=FALLBACK_TEACHER,
+        on_teacher_failure="serve_student",
+    )
+    r = Ratchet(s, led, teacher, lambda v: (student, v.adapter_uri), seed=1, clock=clock, fallback_teacher=fallback)
 
     seen = [r.handle(_ask("cold"), TRIAGE).route]  # no version yet
     seen.append(r.handle([{"role": "user", "content": "Question: what is LoRA?"}], "research-plan").route)
@@ -1662,6 +1681,11 @@ def test_every_request_row_has_a_route():
     seen.append(r.handle(_ask("sure"), TRIAGE).route)
     led.update_eval(live, {"threshold": 0.99})
     seen.append(r.handle(_ask("unsure"), TRIAGE).route)
+    teacher.raise_on.add(OPEN_TEACHER)  # the primary teacher is down: the fallback answers
+    seen.append(r.handle(_ask("unsure, primary down"), TRIAGE).route)
+    fallback.raise_on.add(FALLBACK_TEACHER)  # both are down: the student's own answer, degraded
+    seen.append(r.handle(_ask("unsure, both down"), TRIAGE).route)
+    teacher.raise_on.clear()
     student.raise_on.add("student-v1")
     seen += [r.handle(_ask(f"down {i}"), TRIAGE).route for i in range(3)]
     assert seen == [
@@ -1670,6 +1694,8 @@ def test_every_request_row_has_a_route():
         "pinned",
         "student",
         "confidence",
+        "fallback_teacher",
+        "degraded",
         "student_error",
         "student_error",
         "student_breaker",
@@ -1678,10 +1704,591 @@ def test_every_request_row_has_a_route():
     assert led.db.execute("SELECT COUNT(*) FROM requests WHERE route IS NULL").fetchone()[0] == 0
     by_task = {t["task"]: t["routes"] for t in led.stats_by_task()}
     assert by_task == {
-        TRIAGE: {"student_error": 2, "pinned": 1, "cold_start": 1, "student": 1, "confidence": 1, "student_breaker": 1},
+        TRIAGE: {
+            "student_error": 2,
+            "cold_start": 1,
+            "confidence": 1,
+            "degraded": 1,
+            "fallback_teacher": 1,
+            "pinned": 1,
+            "student": 1,
+            "student_breaker": 1,
+        },
         "research-plan": {"pinned": 1},
     }
     assert list(by_task[TRIAGE])[0] == "student_error"  # most frequent first
+    assert [(d["degraded"], d["fallback_teacher"]) for d in led.stats_by_day()] == [(1, 1)]
+
+
+# ---------- when the teacher is down: its breaker, degraded mode, the fallback teacher (FR-2.12, ADR 0019) ----------
+def _teacher_down(
+    teacher: RecordingProvider,
+    clock: FakeClock,
+    *,
+    students: dict[str, RecordingProvider] | None = None,
+    fallback: Any = None,
+    **settings: Any,
+) -> tuple[Ledger, int, Ratchet]:
+    """A live version whose unanimous student (confidence 0.98) is below its threshold (0.99), so every request needs
+    the teacher. `students` maps adapter names to their providers (default: student-v1 answers A)."""
+    led = Ledger(":memory:")
+    live = _version(led, "live", {"threshold": 0.99})
+    students = students or {"student-v1": RecordingProvider(A)}
+    base: dict[str, Any] = {
+        "teacher_model": OPEN_TEACHER,
+        "samples": 3,
+        "audit_rate": 0.0,
+        "teacher_reasoning_tokens": 0,
+        "teacher_breaker_failures": 5,
+        "teacher_breaker_cooldown_s": 30.0,
+        "on_teacher_failure": "error",
+        "teacher_fallback_model": "",
+        "store_fallback_teacher": False,
+    }
+    s = Settings(**{**base, **settings})
+    r = Ratchet(
+        s, led, teacher, lambda v: (students[v.adapter_uri], v.adapter_uri), seed=1, clock=clock, fallback_teacher=fallback
+    )
+    return led, live, r
+
+
+def _requests(led: Ledger) -> int:
+    return int(led.db.execute("SELECT COUNT(*) FROM requests").fetchone()[0])
+
+
+class TokenFactory:
+    """Token Factory behind MockTransport, switched by the test: a model or a host in `down` answers 503 (no
+    `Retry-After`, so the provider retries it twice without waiting), anything else answers `text` under the model it
+    was asked for. Records (host, model, Authorization) for every request. Thread-safe."""
+
+    def __init__(self, text: str = B, down: Any = ()) -> None:
+        self.text = text
+        self.down = set(down)
+        self.requests: list[tuple[str, str, str]] = []
+        self._lock = threading.Lock()
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        with self._lock:
+            self.requests.append((request.url.host, model, request.headers.get("authorization", "")))
+        if model in self.down or request.url.host in self.down:
+            return httpx.Response(503, json={"error": {"message": f"overloaded ({request.url})", "type": "server_error"}})
+        choice = {"message": {"role": "assistant", "content": self.text}, "finish_reason": "stop"}
+        return httpx.Response(
+            200, json={"model": model, "choices": [choice], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+        )
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self)
+
+
+def _live_teacher_down(
+    gw_env: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, teacher: TokenFactory, clock: FakeClock, **overrides: Any
+) -> tuple[Any, Any, FakeOpenAIServer]:
+    """A live gateway on `teacher`, with a student endpoint that answers A as student-v1 and B as any other adapter.
+    The teacher's waits between retries are not slept."""
+    gw = gw_env()
+    for name in [n for n in os.environ if n.startswith("RATCHET_")]:  # e.g. RATCHET_ON_TEACHER_FAILURE in the shell
+        monkeypatch.delenv(name)
+    student = FakeOpenAIServer(lambda body: A if body["model"] == "student-v1" else B)
+    transports = {"teacher": teacher.transport, "student": student.transport}
+    settings = _live_settings(tmp_path, audit_rate=0.0, **overrides)
+    rt = gw.Runtime(settings, transports=transports, sleep=lambda seconds: None, clock=clock)
+    monkeypatch.setattr(gw, "rt", rt)
+    return gw, rt, student
+
+
+def _stream_meta(text: str) -> dict[str, Any]:
+    """The `ratchet` block of a streamed response (it rides on the finish chunk)."""
+    chunks = [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: {")]
+    return next(c["ratchet"] for c in chunks if "ratchet" in c)
+
+
+@pytest.mark.req("FR-2.12", "NFR-2", "FR-1.8", "INV-7")
+def test_open_teacher_breaker_answers_503_at_once_with_retry_after(gw_env, tmp_path, monkeypatch):
+    """Spec: 5 failed escalations, then the 6th is a 503 with Retry-After and makes no teacher call. Live Runtime at cold
+    start (every request needs the teacher), the real provider and its retries: each failed request is a 502 after
+    three attempts; once the breaker is open a request is a 503 `teacher_circuit_open` at once, with the time until its
+    next probe as `Retry-After`; a probe after the cooldown that finds the teacher back closes it."""
+    openai, _ = sdk()
+    clock = FakeClock()
+    teacher = TokenFactory(down={OPEN_TEACHER})
+    gw, rt, _ = _live_teacher_down(gw_env, tmp_path, monkeypatch, teacher, clock)
+    c = TestClient(gw.app)
+
+    for i in range(5):
+        r = c.post(CHAT, json={"messages": _ask(i)})
+        assert (r.status_code, r.json()["error"]["code"]) == (502, "teacher_unavailable")
+    assert len(teacher.requests) == 15  # each call is retried twice before it counts once
+    assert _circuits(rt.ledger) == ["teacher: closed->open after 5 failures (UpstreamError 503)"]
+
+    r = c.post(CHAT, json={"messages": _ask(5)})
+    err = r.json()["error"]
+    assert (r.status_code, err["type"], err["code"], err["param"]) == (503, "api_error", "teacher_circuit_open", None)
+    assert r.headers["retry-after"] == "30" and "x-should-retry" not in r.headers
+    assert r.json()["detail"] == err["message"] and "retry after 30 s" in err["message"] and "teacher.test" not in r.text
+    assert len(teacher.requests) == 15  # no teacher call
+
+    clock.advance(12.5)
+    calls: list[Any] = []
+    client = make_openai_client(gw.app, calls=calls, max_retries=0)
+    with pytest.raises(openai.InternalServerError) as e:
+        client.chat.completions.create(model="ratchet", messages=_ask(6))
+    assert (e.value.status_code, e.value.code, e.value.response.headers["retry-after"]) == (503, "teacher_circuit_open", "18")
+    assert len(teacher.requests) == 15 and len(calls) == 1
+    assert rt.ratchet.health()["breakers"]["teacher"]["state"] == "open"
+    assert rt.ledger.totals()["requests"] == 0 and rt.gateway_errors == 0  # refused, not logged, not a crash
+
+    # After the cooldown one probe goes through; the teacher is back, so it is answered and the breaker closes.
+    teacher.down.clear()
+    clock.advance(17.5)
+    r = c.post(CHAT, json={"messages": _ask(7)})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher" and len(teacher.requests) == 16
+    assert _circuits(rt.ledger)[1:] == [
+        "teacher: open->half_open after 30 s; one probe",
+        "teacher: half_open->closed after a successful probe",
+    ]
+
+    # The mapping on its own: the wait rounded up and clamped to 1 to 60 s, as for the teacher's other waits; a
+    # student's breaker never reaches the client, and an upstream that says `teacher_circuit_open` is just a 502.
+    for wait, header in ((12.2, "13"), (None, "1"), (240.0, "60")):
+        mapped = gw._map_upstream(CircuitOpen("teacher", retry_after=wait, code="teacher_circuit_open"))
+        assert (mapped.status, mapped.code, mapped.headers) == (503, "teacher_circuit_open", {"Retry-After": header})
+    assert gw._map_upstream(CircuitOpen("student")).code == "teacher_unavailable"
+    assert gw._map_upstream(UpstreamError(503, "busy", code="teacher_circuit_open")).status == 502
+
+
+@pytest.mark.req("FR-2.12", "NFR-2", "FR-2.10", "INV-15")
+def test_open_teacher_breaker_skips_audits_and_arbitration_without_counting_them():
+    """Every teacher call goes through the breaker: escalations open it, and while it is open an audit or an
+    arbitration is skipped without a call (the student's answer is served, as when they fail) and is not another
+    `audit_error` or `shadow_error`: the breaker already counted. A probe after the cooldown closes it."""
+    clock = FakeClock()
+    teacher = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=_timeout)
+    live_student, shadow_student = RecordingProvider(A), RecordingProvider(B)
+    led, live, r = _teacher_down(teacher, clock, students={"student-v1": live_student, "student-v2": shadow_student})
+    for i in range(5):
+        with pytest.raises(httpx.ReadTimeout):
+            r.handle(_ask(i), TRIAGE)
+    assert len(teacher.calls) == 5 and _circuits(led) == ["teacher: closed->open after 5 failures (ReadTimeout)"]
+    with pytest.raises(CircuitOpen) as refused:
+        r.handle(_ask(5), TRIAGE)
+    assert (refused.value.status, refused.value.code, refused.value.retry_after) == (503, "teacher_circuit_open", 30.0)
+    assert len(teacher.calls) == 5 and _requests(led) == 0
+    assert r.health()["breakers"]["teacher"] == {"state": "open", "failures": 5, "open_until": clock.now + 30, "open_s": 30.0}
+
+    # A confident student, audited every time, and a shadow that disagrees: both teacher calls are skipped.
+    led.update_eval(live, {"threshold": 0.5})
+    cand = _version(led, "shadow", {"threshold": 0.5})
+    r.s.audit_rate = 1.0
+    out = r.handle(_ask("audited"), TRIAGE)
+    assert (out.served_by, out.text, out.route) == ("student", A, "student") and len(teacher.calls) == 5
+    r.s.audit_rate = 0.0
+    out = r.handle(_ask("arbitrated"), TRIAGE)
+    assert (out.served_by, out.text) == ("student", A) and len(teacher.calls) == 5 and len(shadow_student.calls) == 2
+    rows = led.db.execute("SELECT audited, shadow_version, shadow_serve, shadow_agree FROM requests ORDER BY id").fetchall()
+    assert [tuple(row) for row in rows] == [(0, cand, 1, None), (0, cand, 1, None)]  # unarbitrated: against the shadow
+    assert _counters(r) == NO_ERRORS and [e["kind"] for e in led.events()] == ["circuit"]
+
+    # The teacher is back: after the cooldown, the next teacher call is the probe, and audits resume.
+    teacher.raise_on.clear()
+    clock.advance(30)
+    r.s.audit_rate = 1.0
+    r.handle(_ask("probe"), TRIAGE)
+    assert len(teacher.calls) == 6 and _last_request(led)["audited"] == 1
+    assert r.health()["breakers"]["teacher"]["state"] == "closed"
+
+
+@pytest.mark.req("FR-2.12", "NFR-2")
+def test_teacher_breaker_counts_only_teacher_outages():
+    """`resilience.endpoint_down` decides, as for the student: a 400 about the request, a tool-call answer (the teacher
+    answered; the gateway cannot return it) and a non-HTTP error never open the breaker; a success resets the count.
+    0 turns it off; bad settings stop startup. `Breaker.retry_in()` is the time left while open, else None."""
+    clock = FakeClock()
+    too_long = RecordingProvider(
+        B, raise_on={OPEN_TEACHER}, exc=lambda m: UpstreamError(400, TOO_LONG, code="context_length_exceeded")
+    )
+    led, _, r = _teacher_down(too_long, clock)
+    for i in range(7):
+        with pytest.raises(UpstreamError) as e:
+            r.handle(_ask(i), TRIAGE)
+        assert (e.value.status, e.value.code) == (400, "context_length_exceeded")
+    assert len(too_long.calls) == 7 and r.teacher_breaker.state == "closed"
+
+    flaky = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=_timeout)
+    led, _, r = _teacher_down(flaky, clock)
+    for i in range(4):
+        with pytest.raises(httpx.ReadTimeout):
+            r.handle(_ask(i), TRIAGE)
+    flaky.raise_on.clear()
+    flaky.finish_reason = "tool_calls"  # a tool call: refused for the client, a healthy answer for the breaker
+    with pytest.raises(UpstreamError, match="tool call"):
+        r.handle(_ask("tool"), TRIAGE)
+    flaky.text, flaky.finish_reason = _unreadable, "stop"  # not an HTTP failure: says nothing either way
+    with pytest.raises(ValueError):
+        r.handle(_ask("bug"), TRIAGE)
+    flaky.text = B
+    flaky.raise_on.add(OPEN_TEACHER)
+    for i in range(4):
+        with pytest.raises(httpx.ReadTimeout):
+            r.handle(_ask(f"again {i}"), TRIAGE)
+    assert len(flaky.calls) == 10 and r.teacher_breaker.snapshot()["failures"] == 4 and r.teacher_breaker.state == "closed"
+
+    off = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=_timeout)
+    led, _, r = _teacher_down(off, clock, teacher_breaker_failures=0)
+    for i in range(10):
+        with pytest.raises(httpx.ReadTimeout):
+            r.handle(_ask(i), TRIAGE)
+    assert len(off.calls) == 10 and r.teacher_breaker.state == "closed" and _circuits(led) == []
+
+    for bad, var in (
+        ({"teacher_breaker_failures": -1}, "RATCHET_TEACHER_BREAKER_FAILURES"),
+        ({"teacher_breaker_failures": True}, "RATCHET_TEACHER_BREAKER_FAILURES"),
+        ({"teacher_breaker_cooldown_s": 0.0}, "RATCHET_TEACHER_BREAKER_COOLDOWN_S"),
+        ({"teacher_breaker_cooldown_s": math.inf}, "RATCHET_TEACHER_BREAKER_COOLDOWN_S"),
+    ):
+        with pytest.raises(ValueError, match=var):
+            _teacher_down(RecordingProvider(B), clock, **bad)
+
+    b = Breaker("teacher", 1, 30.0, clock=clock)
+    assert b.retry_in() is None
+    b.record(False)
+    assert b.retry_in() == 30.0
+    clock.advance(31)
+    assert b.retry_in() == 0.0 and b.allow() and b.state == "half_open" and b.retry_in() is None
+
+
+@pytest.mark.req("FR-2.12", "NFR-2", "INV-7", "INV-2", "FR-6.3")
+def test_serve_student_mode_answers_degraded_with_a_flag_and_a_header(gw_env, tmp_path, monkeypatch):
+    """Spec: a confident-but-below-threshold student and a failing teacher give a 200 with `ratchet.degraded` and
+    `X-Ratchet-Degraded: teacher_unavailable`, and the row has audited 0. Live Runtime with
+    RATCHET_ON_TEACHER_FAILURE=serve_student: the student's own answer is served (route `degraded`), nothing is stored,
+    no shadow runs (its only reference would be that answer), and no release statistic moves. Once the teacher's breaker
+    opens, degraded answers come without a teacher call."""
+    clock = FakeClock()
+    teacher = TokenFactory(down={OPEN_TEACHER})
+    gw, rt, student = _live_teacher_down(gw_env, tmp_path, monkeypatch, teacher, clock, on_teacher_failure="serve_student")
+    live = _version(rt.ledger, "live", {"threshold": 0.99})
+    cand = _version(rt.ledger, "shadow", {"threshold": 0.5})
+    c = TestClient(gw.app)
+
+    r = c.post(CHAT, json={"messages": _ask(1)})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    meta = body["ratchet"]
+    assert (meta["served_by"], meta["degraded"], meta["escalated"], meta["student_version"]) == (
+        "student",
+        "teacher_unavailable",
+        True,
+        live,
+    )
+    assert 0.9 < meta["confidence"] < 0.99 and body["choices"][0]["message"]["content"] == A and body["model"] == "student-v1"
+    assert (r.headers["x-ratchet-degraded"], r.headers["x-ratchet-served-by"]) == ("teacher_unavailable", "student")
+    row = _last_request(rt.ledger)
+    assert (row["route"], row["served_by"], row["audited"], row["audit_agree"], row["escalated"], row["stored"]) == (
+        "degraded",
+        "student",
+        0,
+        None,
+        1,
+        0,
+    )
+    assert row["shadow_version"] is None and row["cost_usd"] == pytest.approx(Settings().price("student").cost(10, 15))
+    assert {call.json["model"] for call in student.calls_to("/chat/completions")} == {"student-v1"}  # no shadow call
+    assert len(teacher.requests) == 3 and rt.ledger.examples() == []
+    assert [(e["kind"], e["detail"]) for e in rt.ledger.events()] == [("degraded", "default: UpstreamError 503")]
+
+    r = c.post(CHAT, json={"messages": _ask(2), "stream": True})
+    assert r.status_code == 200 and r.headers["x-ratchet-degraded"] == "teacher_unavailable"
+    assert _stream_meta(r.text)["degraded"] == "teacher_unavailable"
+
+    for i in range(3, 6):  # the 5th failed teacher call opens its breaker; the 6th request is degraded without one
+        assert c.post(CHAT, json={"messages": _ask(i)}).json()["ratchet"]["degraded"] == "teacher_unavailable"
+    assert len(teacher.requests) == 15 and rt.ratchet.health()["breakers"]["teacher"]["state"] == "open"
+    r = c.post(CHAT, json={"messages": _ask(6)})
+    assert r.json()["ratchet"]["degraded"] == "teacher_unavailable" and len(teacher.requests) == 15
+    assert rt.ratchet.health()["degraded_answers"] == 6
+
+    # None of it counts toward a release: no audits for the live version, no evidence for the shadow.
+    assert rt.ledger.version_live_quality(live) == (0, None) and rt.ledger.shadow_quality(cand)["n"] == 0
+    stats = c.get("/ratchet/stats").json()
+    assert stats["days"][0]["degraded"] == 6 and stats["days"][0]["fallback_teacher"] == 0
+    assert stats["tasks"][0]["routes"] == {"degraded": 6}
+
+    # A confident answer is not degraded: no flag (null), no header.
+    rt.ledger.update_eval(live, {"threshold": 0.5})
+    r = c.post(CHAT, json={"messages": _ask(7)})
+    assert r.json()["ratchet"]["degraded"] is None and "x-ratchet-degraded" not in r.headers
+    assert r.json()["ratchet"]["served_by"] == "student" and _last_request(rt.ledger)["route"] == "student"
+
+
+@pytest.mark.req("FR-2.12", "INV-7", "FR-1.8", "FR-2.9", "INV-10")
+def test_error_mode_is_the_default_and_pinned_requests_never_degrade(gw_env, tmp_path, monkeypatch):
+    """Spec: error mode (the default) still returns 502; a pinned task in serve_student mode is still a 502, then a 503
+    once the breaker is open. The student is never asked for a pinned task."""
+    clock = FakeClock()
+    teacher = TokenFactory(down={OPEN_TEACHER})
+    gw, rt, student = _live_teacher_down(gw_env, tmp_path, monkeypatch, teacher, clock)
+    assert rt.settings.on_teacher_failure == "error" and not rt.ratchet.serve_student_on_failure
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    r = TestClient(gw.app).post(CHAT, json={"messages": _ask(1)})
+    assert (r.status_code, r.json()["error"]["code"]) == (502, "teacher_unavailable") and "x-ratchet-degraded" not in r.headers
+    assert rt.ledger.totals()["requests"] == 0
+
+    gw, rt, student = _live_teacher_down(
+        gw_env, tmp_path, monkeypatch, teacher, clock, on_teacher_failure="serve_student", db_path=str(tmp_path / "serve.db")
+    )
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    c = TestClient(gw.app)
+    plan = {"messages": [{"role": "user", "content": "Question: what is LoRA?"}]}
+    statuses = [c.post(CHAT, json=plan, headers={"X-Ratchet-Task": "research-plan"}).status_code for _ in range(6)]
+    assert statuses == [502] * 5 + [503]
+    assert student.calls == [] and rt.ledger.totals()["requests"] == 0 and rt.ratchet.health()["degraded_answers"] == 0
+
+
+@pytest.mark.req("FR-2.12", "INV-7", "FR-1.8")
+def test_degraded_mode_never_hides_a_client_error_or_serves_an_invalid_answer():
+    """serve_student stands in only for an unavailable teacher and only with a valid student answer: a 400 about the
+    request, a tool-call answer and a non-HTTP error still raise, and so does a request with `tools`, a student whose
+    samples are all invalid, a student that failed or was skipped, a cold start, and the teacher-only path. A bad
+    RATCHET_ON_TEACHER_FAILURE stops startup."""
+    clock = FakeClock()
+
+    def cascade(
+        exc: Any = httpx.ConnectError, student: RecordingProvider | None = None, **settings: Any
+    ) -> tuple[Ledger, Ratchet]:
+        teacher = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=exc)
+        students = {"student-v1": student or RecordingProvider(A)}
+        led, _, r = _teacher_down(teacher, clock, students=students, on_teacher_failure="serve_student", **settings)
+        return led, r
+
+    led, r = cascade()
+    assert r.handle(_ask("down"), TRIAGE).route == "degraded"  # the baseline: an unavailable teacher degrades
+    assert r.handle(_ask("down"), TRIAGE, params=GenParams(max_tokens=50)).route == "degraded"
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask("tools"), TRIAGE, params=GenParams(tools=TOOLS))  # the student never saw the tools
+    with pytest.raises(httpx.ConnectError):
+        r.teacher_only(_ask("image"), TRIAGE)
+
+    led, r = cascade(exc=lambda m: UpstreamError(400, TOO_LONG, code="context_length_exceeded"))
+    with pytest.raises(UpstreamError, match="maximum context length"):
+        r.handle(_ask("long"), TRIAGE)
+    led, r = cascade(exc=lambda m: ValueError("a bug in a provider"))
+    with pytest.raises(ValueError):
+        r.handle(_ask("bug"), TRIAGE)
+    led, r = cascade(student=RecordingProvider("not json"))  # no valid sample: never served, whatever the mode
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask("invalid"), TRIAGE)
+    led, r = cascade(student=RecordingProvider(A, raise_on={"student-v1"}), student_breaker_failures=1)
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask("student down"), TRIAGE)  # route student_error: no student answer
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask("student skipped"), TRIAGE)  # route student_breaker
+    tool_call = RecordingProvider(B, finish_reason="tool_calls")
+    led, _, r = _teacher_down(tool_call, clock, on_teacher_failure="serve_student")
+    with pytest.raises(UpstreamError, match="tool call"):
+        r.handle(_ask("tool call"), TRIAGE)
+
+    cold = Ledger(":memory:")
+    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0, on_teacher_failure="serve_student")
+    r = Ratchet(s, cold, RecordingProvider(B, raise_on={OPEN_TEACHER}), lambda v: (RecordingProvider(A), v.adapter_uri))
+    with pytest.raises(httpx.ConnectError):
+        r.handle(_ask("cold"), TRIAGE)
+
+    assert _teacher_down(RecordingProvider(B), clock, on_teacher_failure=" Serve_Student ")[2].serve_student_on_failure
+    assert not _teacher_down(RecordingProvider(B), clock, on_teacher_failure="")[2].serve_student_on_failure  # unset
+    for bad in ("serve-student", "student", "fallback", "1"):
+        with pytest.raises(ValueError, match="RATCHET_ON_TEACHER_FAILURE"):
+            _teacher_down(RecordingProvider(B), clock, on_teacher_failure=bad)
+
+
+@pytest.mark.req("FR-2.12")
+def test_degraded_answers_are_counted_exactly_under_threads():
+    """Scout calls handle from several threads: every degraded answer is logged, counted once, and its event throttled."""
+    teacher = RecordingProvider(B, raise_on={OPEN_TEACHER}, exc=_timeout)
+    led, _, r = _teacher_down(teacher, FakeClock(), on_teacher_failure="serve_student", teacher_breaker_failures=0)
+    with ThreadPoolExecutor(8) as pool:
+        routes = list(pool.map(lambda i: r.handle(_ask(i), TRIAGE).route, range(200)))
+    assert routes == ["degraded"] * 200 and len(teacher.calls) == 200
+    assert r.health()["degraded_answers"] == 200
+    assert _events(led) == [("degraded", f"{TRIAGE}: ReadTimeout")] * 3  # the 1st, 10th and 100th
+    assert led.db.execute("SELECT COUNT(*), SUM(audited), SUM(stored) FROM requests WHERE route='degraded'").fetchone()[:] == (
+        200,
+        0,
+        0,
+    )
+
+
+@pytest.mark.req("FR-2.12", "NFR-2", "INV-2", "INV-10", "FR-2.9")
+def test_fallback_teacher_answers_when_the_primary_is_unavailable():
+    """Spec: a fallback answer is served (route `fallback_teacher`, the fallback's model id, its own price) and not
+    stored by default. It is asked only after the primary failed its retries or while its breaker is open, never for a
+    400 about the request, never for an audit; when it fails too the primary's error is raised. A pinned task may get
+    it (and stores nothing), and a request it answered runs no shadow."""
+    clock = FakeClock()
+    teacher = RecordingProvider(B, raise_on={OPEN_TEACHER})
+    fallback = RecordingProvider(B, in_tokens=40, out_tokens=20)
+    live_student, shadow_student = RecordingProvider(A), RecordingProvider(B)
+    students = {"student-v1": live_student, "student-v2": shadow_student}
+    led, live, r = _teacher_down(teacher, clock, students=students, fallback=fallback, teacher_fallback_model=FALLBACK_TEACHER)
+    cand = _version(led, "shadow", {"threshold": 0.5})
+    s = r.s
+
+    out = r.handle(_ask(1), TRIAGE)
+    assert (out.route, out.served_by, out.model, out.text, out.escalated, out.version) == (
+        "fallback_teacher",
+        "teacher",
+        FALLBACK_TEACHER,
+        B,
+        True,
+        None,
+    )
+    samples = s.price("student").cost(10, 15)
+    assert out.cost_usd == pytest.approx(samples + s.price(FALLBACK_TEACHER).cost(40, 20))
+    assert out.baseline_usd == pytest.approx(s.price(OPEN_TEACHER).cost(40, 20))  # the primary's price, same tokens
+    assert out.fingerprint == fingerprint("teacher", FALLBACK_TEACHER) and out.usage_breakdown["served"] == {"in": 40, "out": 20}
+    assert [call.model for call in fallback.calls] == [FALLBACK_TEACHER] and fallback.calls[0].messages == _ask(1)
+    row = _last_request(led)
+    assert (row["route"], row["served_by"], row["stored"], row["shadow_version"]) == ("fallback_teacher", "teacher", 0, None)
+    assert led.examples() == [] and len(shadow_student.calls) == 0  # not stored, and no shadow
+    assert _events(led) == [("fallback_teacher", f"{TRIAGE}: ConnectError")]
+
+    # A 400 about the request is the client's to fix: the fallback is not asked. (The primary answered, so its count of
+    # failures starts again.)
+    teacher.exc = lambda m: UpstreamError(400, TOO_LONG, code="context_length_exceeded")
+    with pytest.raises(UpstreamError, match="maximum context length"):
+        r.handle(_ask("long"), TRIAGE)
+    assert len(fallback.calls) == 1
+    teacher.exc = httpx.ConnectError
+
+    # Five failures in a row open the primary's breaker; then the fallback answers without a primary call.
+    for i in range(5):
+        assert r.handle(_ask(f"down {i}"), TRIAGE).route == "fallback_teacher"
+    assert len(teacher.calls) == 7 and r.teacher_breaker.state == "open"
+    assert r.handle(_ask("open"), TRIAGE).route == "fallback_teacher" and len(teacher.calls) == 7
+
+    # Pinned: the fallback answers, nothing is stored; the baseline is the primary's price.
+    out = r.handle([{"role": "user", "content": "Question: what is LoRA?"}], "research-plan")
+    assert (out.route, out.model, out.served_by) == ("fallback_teacher", FALLBACK_TEACHER, "teacher")
+    assert out.cost_usd == pytest.approx(s.price(FALLBACK_TEACHER).cost(40, 20)) and out.baseline_usd > out.cost_usd
+
+    # An audit is the primary's or nothing: skipped while its breaker is open, never sent to the fallback. (This request
+    # was served by the live student, so the shadow runs on it.)
+    led.update_eval(live, {"threshold": 0.5})
+    s.audit_rate = 1.0
+    calls = len(fallback.calls)
+    assert r.handle(_ask("audited"), TRIAGE).route == "student" and len(fallback.calls) == calls
+    assert _last_request(led)["audited"] == 0 and len(shadow_student.calls) == 1
+    s.audit_rate = 0.0
+    led.update_eval(live, {"threshold": 0.99})
+
+    # Both down: the primary's error, with its breaker's wait.
+    fallback.raise_on.add(FALLBACK_TEACHER)
+    with pytest.raises(CircuitOpen) as both:
+        r.handle(_ask("both down"), TRIAGE)
+    assert (both.value.code, both.value.retry_after) == ("teacher_circuit_open", 30.0)
+    assert led.examples() == [] and r.health()["fallback_answers"] == 8
+    rows = led.db.execute("SELECT COUNT(*), COUNT(shadow_version) FROM requests WHERE route='fallback_teacher'").fetchone()
+    assert tuple(rows) == (8, 0) and len(shadow_student.calls) == 1  # no fallback-served request ran the shadow
+    assert led.shadow_quality(cand)["n"] == 1  # only the student-served one
+
+
+@pytest.mark.req("FR-2.12", "INV-1", "INV-2", "FR-3.3", "FR-3.5")
+def test_stored_fallback_answers_carry_the_fallback_license():
+    """Spec: with RATCHET_STORE_FALLBACK_TEACHER=1 a fallback answer is stored with the fallback model's own license
+    (looked up by the configured model that answered, never the primary's), and the BOM lists both teachers."""
+    teacher = RecordingProvider(B, raise_on={OPEN_TEACHER})
+    fallback = RecordingProvider(B)
+    led, _, r = _teacher_down(
+        teacher, FakeClock(), fallback=fallback, teacher_fallback_model=FALLBACK_TEACHER, store_fallback_teacher=True
+    )
+    assert r.handle(_ask("fallback"), TRIAGE).route == "fallback_teacher" and _last_request(led)["stored"] == 1
+    teacher.raise_on.clear()
+    assert r.handle(_ask("primary"), TRIAGE).route == "confidence"
+    by_model = {(ex["teacher_model"], ex["license"], ex["license_url"]) for ex in led.examples()}
+    assert len(led.examples()) == 2 and by_model == {
+        (FALLBACK_TEACHER, licenses.NEMOTRON_OPEN.name, licenses.NEMOTRON_OPEN.url),
+        (OPEN_TEACHER, licenses.OPEN_MDW.name, licenses.OPEN_MDW.url),
+    }
+    sources = {(src["teacher_model"], src["license"]) for src in led.bill_of_materials()["sources"]}
+    assert sources == {(FALLBACK_TEACHER, licenses.NEMOTRON_OPEN.name), (OPEN_TEACHER, licenses.OPEN_MDW.name)}
+
+    # Not stored by default, and never when the request may not be stored at all.
+    led, _, r = _teacher_down(RecordingProvider(B, raise_on={OPEN_TEACHER}), FakeClock(), teacher_fallback_model=FALLBACK_TEACHER)
+    assert r.fallback_teacher is r.teacher  # without its own provider, the fallback model is asked on the same endpoint
+    assert r.handle(_ask("default"), TRIAGE).route == "fallback_teacher" and led.examples() == []
+    led, _, r = _teacher_down(
+        RecordingProvider(B, raise_on={OPEN_TEACHER}),
+        FakeClock(),
+        teacher_fallback_model=FALLBACK_TEACHER,
+        store_fallback_teacher=True,
+    )
+    assert r.handle(_ask("private"), TRIAGE, meta=RequestMeta(storable=False)).route == "fallback_teacher"
+    assert led.examples() == [] and _events(led) == [("fallback_teacher", f"{TRIAGE}: ConnectError")]  # no skip event
+
+
+@pytest.mark.req("FR-2.12", "FR-8.1", "NFR-2", "INV-1")
+def test_live_runtime_wires_the_fallback_teacher(gw_env, tmp_path, monkeypatch):
+    """RATCHET_TEACHER_FALLBACK_BASE puts the fallback on its own client (same key, the teacher's timeouts and retries);
+    empty, it shares the teacher's endpoint and client. The response names the fallback's model. The variables reach
+    Settings."""
+    clock = FakeClock()
+    teacher = TokenFactory(down={"teacher.test"})
+    gw, rt, _ = _live_teacher_down(
+        gw_env,
+        tmp_path,
+        monkeypatch,
+        teacher,
+        clock,
+        teacher_fallback_model=FALLBACK_TEACHER,
+        teacher_fallback_base="https://fallback.test/v1/",
+    )
+    fb = rt.ratchet.fallback_teacher
+    assert fb is not rt.ratchet.teacher and (fb.base_url, fb.retry, fb.timeout.read) == (
+        "https://fallback.test/v1",
+        rt.ratchet.teacher.retry,
+        120.0,
+    )
+    r = TestClient(gw.app).post(CHAT, json={"messages": _ask(1)})  # cold start
+    assert r.status_code == 200 and r.json()["model"] == FALLBACK_TEACHER and r.json()["ratchet"]["served_by"] == "teacher"
+    assert r.headers["x-ratchet-served-by"] == "teacher" and "x-ratchet-degraded" not in r.headers
+    assert teacher.requests == [("teacher.test", OPEN_TEACHER, f"Bearer {TEACHER_KEY}")] * 3 + [
+        ("fallback.test", FALLBACK_TEACHER, f"Bearer {TEACHER_KEY}")
+    ]
+    assert sorted(rt.ratchet.health()["breakers"]) == ["fallback_teacher", "teacher"]  # cold start: no student call yet
+
+    teacher = TokenFactory(down={OPEN_TEACHER})
+    gw, rt, _ = _live_teacher_down(
+        gw_env, tmp_path, monkeypatch, teacher, clock, teacher_fallback_model=FALLBACK_TEACHER, db_path=str(tmp_path / "b.db")
+    )
+    assert rt.ratchet.fallback_teacher is rt.ratchet.teacher
+    r = TestClient(gw.app).post(CHAT, json={"messages": _ask(2)})
+    assert r.status_code == 200 and r.json()["model"] == FALLBACK_TEACHER
+    assert teacher.requests[-1] == ("teacher.test", FALLBACK_TEACHER, f"Bearer {TEACHER_KEY}")
+
+    env = {
+        "RATCHET_ON_TEACHER_FAILURE": "serve_student",
+        "RATCHET_TEACHER_FALLBACK_MODEL": FALLBACK_TEACHER,
+        "RATCHET_TEACHER_FALLBACK_BASE": "https://fallback.test/v1",
+        "RATCHET_STORE_FALLBACK_TEACHER": "1",
+        "RATCHET_TEACHER_BREAKER_FAILURES": "3",
+        "RATCHET_TEACHER_BREAKER_COOLDOWN_S": "12.5",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    s = Settings()
+    got = (
+        s.on_teacher_failure,
+        s.teacher_fallback_model,
+        s.teacher_fallback_base,
+        s.store_fallback_teacher,
+        s.teacher_breaker(),
+    )
+    assert got == ("serve_student", FALLBACK_TEACHER, "https://fallback.test/v1", True, BreakerPolicy(3, 12.5, 300.0))
+    monkeypatch.setenv("RATCHET_TEACHER_FALLBACK_MODEL", "gpt-4o")  # a closed model stops the gateway (INV-1)
+    with pytest.raises(licenses.LicenseError, match="gpt-4o"):
+        gw.Runtime(_live_settings(tmp_path, db_path=str(tmp_path / "c.db")))
 
 
 # ---------- Night School: a golden row the student endpoint refuses (FR-5.1, INV-7) ----------

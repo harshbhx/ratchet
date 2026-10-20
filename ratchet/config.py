@@ -26,6 +26,20 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+# RATCHET_ON_TEACHER_FAILURE: what a request whose teacher call failed gets (ADR 0019).
+TEACHER_FAILURE_MODES = ("error", "serve_student")
+
+
+def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
+    """A breaker policy from RATCHET_<ROLE>_BREAKER_FAILURES and _COOLDOWN_S; ValueError names the bad variable. The
+    longest wait is 300 s, or the cooldown itself when that is longer."""
+    if isinstance(failures, bool) or not isinstance(failures, int) or failures < 0:
+        raise ValueError(f"RATCHET_{role}_BREAKER_FAILURES must be 0 (no breaker) or more, not {failures!r}")
+    if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not (0 < cooldown < float("inf")):
+        raise ValueError(f"RATCHET_{role}_BREAKER_COOLDOWN_S must be a positive number of seconds, not {cooldown!r}")
+    return BreakerPolicy(failures, float(cooldown), max(MAX_OPEN_S, float(cooldown)))
+
+
 @dataclass(frozen=True)
 class Price:
     """USD per 1M tokens."""
@@ -91,6 +105,21 @@ class Settings:
     # teacher answers at once; then one probe decides, and each failed probe doubles the wait up to 300 s. 0 = no breaker.
     student_breaker_failures: int = field(default_factory=lambda: int(_env("RATCHET_STUDENT_BREAKER_FAILURES", "5")))
     student_breaker_cooldown_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_BREAKER_COOLDOWN_S", "30")))
+
+    # When the teacher is down (ADR 0019). Its breaker opens after RATCHET_TEACHER_BREAKER_FAILURES failed calls in a row
+    # (each after its retries), and requests that need its answer then get a 503 at once instead of waiting out the
+    # deadline; the same waits as the student's breaker. 0 = no breaker.
+    teacher_breaker_failures: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_BREAKER_FAILURES", "5")))
+    teacher_breaker_cooldown_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_BREAKER_COOLDOWN_S", "30")))
+    # 'error': a request whose teacher call failed gets the error. 'serve_student': an escalated request is answered with
+    # the student's own (below-threshold) answer instead, marked degraded.
+    on_teacher_failure: str = field(default_factory=lambda: _env("RATCHET_ON_TEACHER_FAILURE", "error"))
+    # A second licensed teacher that answers when the primary is unavailable; empty = none. Same API key as the teacher,
+    # at RATCHET_TEACHER_FALLBACK_BASE (empty = RATCHET_TEACHER_BASE). Its answers are stored as training data only with
+    # RATCHET_STORE_FALLBACK_TEACHER=1.
+    teacher_fallback_model: str = field(default_factory=lambda: _env("RATCHET_TEACHER_FALLBACK_MODEL", ""))
+    teacher_fallback_base: str = field(default_factory=lambda: _env("RATCHET_TEACHER_FALLBACK_BASE", ""))
+    store_fallback_teacher: bool = field(default_factory=lambda: _env("RATCHET_STORE_FALLBACK_TEACHER", "0") == "1")
 
     # Extra output tokens the teacher spends on reasoning (billed, not returned).
     teacher_reasoning_tokens: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_TOKENS", "300")))
@@ -170,12 +199,23 @@ class Settings:
     def student_breaker(self) -> BreakerPolicy:
         """The student breakers' policy. A bad value raises ValueError, so the gateway fails at startup. The longest wait
         is 300 s, or the cooldown itself when that is longer."""
-        failures, cooldown = self.student_breaker_failures, self.student_breaker_cooldown_s
-        if isinstance(failures, bool) or not isinstance(failures, int) or failures < 0:
-            raise ValueError(f"RATCHET_STUDENT_BREAKER_FAILURES must be 0 (no breaker) or more, not {failures!r}")
-        if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not (0 < cooldown < float("inf")):
-            raise ValueError(f"RATCHET_STUDENT_BREAKER_COOLDOWN_S must be a positive number of seconds, not {cooldown!r}")
-        return BreakerPolicy(failures, float(cooldown), max(MAX_OPEN_S, float(cooldown)))
+        return _breaker_policy("STUDENT", self.student_breaker_failures, self.student_breaker_cooldown_s)
+
+    def teacher_breaker(self) -> BreakerPolicy:
+        """The teacher breakers' policy (the primary teacher's and the fallback teacher's), as for the student."""
+        return _breaker_policy("TEACHER", self.teacher_breaker_failures, self.teacher_breaker_cooldown_s)
+
+    def serve_student_on_teacher_failure(self) -> bool:
+        """RATCHET_ON_TEACHER_FAILURE: True for `serve_student`, False for `error` (or empty). Anything else raises
+        ValueError, so a typo stops the gateway at startup instead of quietly failing requests the operator meant to
+        serve."""
+        mode = self.on_teacher_failure.strip().lower() if isinstance(self.on_teacher_failure, str) else None
+        if mode == "":  # set but empty, as in an .env file: the default
+            mode = "error"
+        if mode not in TEACHER_FAILURE_MODES:
+            choices = " or ".join(TEACHER_FAILURE_MODES)
+            raise ValueError(f"RATCHET_ON_TEACHER_FAILURE must be {choices}, not {self.on_teacher_failure!r}")
+        return mode == "serve_student"
 
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises

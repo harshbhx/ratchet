@@ -27,7 +27,9 @@
       "baseline_per_1k": "number",
       "savings_pct": "number",
       "avg_latency_ms": "number",
-      "audit_agreement": "number|null"
+      "audit_agreement": "number|null",
+      "degraded": "number",
+      "fallback_teacher": "number"
     },
     "tasks[]": {
       "task": "string",

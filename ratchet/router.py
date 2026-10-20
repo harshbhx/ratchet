@@ -11,16 +11,19 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, NamedTuple
+
+import httpx
 
 from . import licenses, tasks
-from .confidence import STUDENT_SAMPLING, score
+from .confidence import STUDENT_SAMPLING, Scored, score
 from .config import Settings
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
 from .providers import COMPLETE, Completion, GenParams, GenPlan, Provider, UpstreamError, approx_tokens
 from .redact import redact, redact_json, redact_messages
 from .resilience import (
     BAD_RESPONSE,
+    TEACHER_CIRCUIT_OPEN,
     TOOL_CALLS_UNSUPPORTED,
     AdapterMissing,
     Breaker,
@@ -28,6 +31,7 @@ from .resilience import (
     describe_failure,
     endpoint_down,
     names_model,
+    teacher_unavailable,
 )
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
@@ -38,8 +42,24 @@ EVENT_ON_FAILURE = (1, 10, 100, 1000)
 
 # How a request was served (`requests.route`): the student; the teacher because the student was unsure (`confidence`),
 # because no version serves yet (`cold_start`), because the task is pinned (`pinned`), because the student call raised
-# (`student_error`), or because the student's breaker was open (`student_breaker`).
-ROUTES = ("student", "confidence", "cold_start", "pinned", "student_error", "student_breaker")
+# (`student_error`), or because the student's breaker was open (`student_breaker`); the student's own below-threshold
+# answer because the teacher was unavailable (`degraded`, RATCHET_ON_TEACHER_FAILURE=serve_student); or the fallback
+# teacher because the primary was unavailable (`fallback_teacher`, RATCHET_TEACHER_FALLBACK_MODEL). ADR 0019.
+ROUTES = (
+    "student",
+    "confidence",
+    "cold_start",
+    "pinned",
+    "student_error",
+    "student_breaker",
+    "degraded",
+    "fallback_teacher",
+)
+# Routes whose answer is not the primary teacher's or a confident student's: such a request runs no shadow, so release
+# statistics never rest on a stand-in's answer (ADR 0019).
+STAND_IN_ROUTES = frozenset({"degraded", "fallback_teacher"})
+# `Result.degraded` (the response's `ratchet.degraded` and `X-Ratchet-Degraded`) for a degraded answer.
+TEACHER_UNAVAILABLE = "teacher_unavailable"
 
 # finish_reason values a `skip_example` event names as they are; any other is `other`, so the reasons stay a short list.
 _FINISH_NAMED = frozenset({"length", "content_filter", "function_call", "abort", "error", "unknown"})
@@ -129,6 +149,7 @@ class Result:
     cached_tokens: int = 0  # the part of prompt_tokens the served model read from its prompt cache
     fingerprint: str = ""
     usage_breakdown: dict[str, dict[str, int] | None] = field(default_factory=dict)  # USAGE_PARTS -> {"in", "out"}
+    degraded: str | None = None  # TEACHER_UNAVAILABLE when the student's below-threshold answer stood in for the teacher
 
     @property
     def total_tokens(self) -> int:
@@ -194,9 +215,23 @@ def _task(task: str | tasks.Task | None) -> tasks.Task:
     return task if isinstance(task, tasks.Task) else tasks.get(task)
 
 
+class TeacherAnswer(NamedTuple):
+    """A teacher call's answer (`Ratchet._call_teacher`): the completion, whether it was stored as a training example,
+    the configured model that wrote it (RATCHET_TEACHER_MODEL, or RATCHET_TEACHER_FALLBACK_MODEL), and whether that was
+    the fallback teacher. The model is the one Ratchet asked for and licensed at startup, never the response's own
+    `model` string, which an upstream may spell differently."""
+
+    completion: Completion
+    stored: bool
+    model: str
+    fallback: bool
+
+
 class Ratchet:
-    """The cascade. `clock` drives the student breakers (tests pass a fake one). `on_adapter_missing(version)` is
-    called when vLLM answers 404 for a version's adapter; live mode wires `AdapterReloader.request` to it."""
+    """The cascade. `clock` drives the breakers (tests pass a fake one). `on_adapter_missing(version)` is called when
+    vLLM answers 404 for a version's adapter; live mode wires `AdapterReloader.request` to it. `fallback_teacher` is the
+    provider for RATCHET_TEACHER_FALLBACK_MODEL (default: `teacher`, the same endpoint); it is used only when that model
+    is set."""
 
     def __init__(
         self,
@@ -208,13 +243,26 @@ class Ratchet:
         *,
         clock: Callable[[], float] = time.monotonic,
         on_adapter_missing: Callable[[Version], object] | None = None,
+        fallback_teacher: Provider | None = None,
     ):
         self.s = settings
         self.ledger = ledger
         self.teacher = teacher
         self.resolve_student = student_resolver
         self.rng = random.Random(seed)
-        self.teacher_license = licenses.require_distillable(settings.teacher_model)
+        # INV-1: every teacher that may write an answer is licensed here, so a closed or unknown model stops startup. An
+        # example records the license of the teacher that wrote it (`_store_example`), looked up by configured model.
+        self.licenses: dict[str, licenses.TeacherLicense] = {
+            settings.teacher_model: licenses.require_distillable(settings.teacher_model)
+        }
+        self.teacher_license = self.licenses[settings.teacher_model]
+        self.fallback_model: str | None = settings.teacher_fallback_model or None
+        self.fallback_teacher: Provider | None = None
+        if self.fallback_model is not None:
+            self.licenses[self.fallback_model] = licenses.require_distillable(self.fallback_model)
+            self.fallback_teacher = fallback_teacher if fallback_teacher is not None else teacher
+        # RATCHET_ON_TEACHER_FAILURE; a bad value stops startup here.
+        self.serve_student_on_failure = settings.serve_student_on_teacher_failure()
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
@@ -225,21 +273,48 @@ class Ratchet:
         self.student_errors = 0  # student calls that raised; the teacher answered instead
         self.audit_errors = 0  # teacher audits that raised; the student's answer was served anyway (INV-15)
         self.shadow_errors = 0  # shadow samples or arbitrations that raised; the request never noticed
+        self.degraded_answers = 0  # escalations answered by the student because the teacher was unavailable
+        self.fallback_answers = 0  # answers the fallback teacher wrote because the primary was unavailable
         self._errors_lock = threading.Lock()
         self._skipped: Counter[str] = Counter()  # teacher answers not stored, by reason (throttles `skip_example`)
         # One breaker per (role, endpoint), made on first use: live and canary on one endpoint share 'student'; shadow
         # calls have their own ('shadow'), so a bad staging adapter cannot open the breaker live traffic depends on.
         self._breakers: dict[tuple[str, str], Breaker] = {}
         self._breakers_lock = threading.Lock()
+        # The teachers' breakers (ADR 0019), made here so health() shows them from the start; a bad
+        # RATCHET_TEACHER_BREAKER_* value stops startup. Every teacher call goes through one (`_teacher_complete`).
+        self.teacher_policy = settings.teacher_breaker()
+        self.teacher_breaker = self._teacher_breaker("teacher", teacher)
+        self.fallback_breaker = (
+            self._teacher_breaker("fallback_teacher", self.fallback_teacher) if self.fallback_teacher is not None else None
+        )
+
+    def _teacher_breaker(self, name: str, provider: Provider) -> Breaker:
+        """A teacher's breaker ('teacher' or 'fallback_teacher') with RATCHET_TEACHER_BREAKER_*, listed in health()."""
+        p = self.teacher_policy
+        breaker = Breaker(
+            name,
+            p.failure_threshold,
+            p.open_s,
+            p.max_open_s,
+            clock=self.clock,
+            on_change=self._circuit_event,
+            probe_timeout_s=_probe_timeout(provider),
+        )
+        self._breakers[(name, _endpoint(provider))] = breaker
+        return breaker
 
     def health(self) -> dict[str, Any]:
-        """Failed upstream calls since start, by kind, and each student breaker's `snapshot()` by name (for /readyz and
-        /metrics)."""
+        """Failed upstream calls since start, by kind; answers a stand-in wrote because the teacher was unavailable
+        (`degraded_answers`, `fallback_answers`); and each breaker's `snapshot()` by name, the teachers' included (for
+        /readyz and /metrics)."""
         with self._errors_lock:
             out: dict[str, Any] = {
                 "student_errors": self.student_errors,
                 "audit_errors": self.audit_errors,
                 "shadow_errors": self.shadow_errors,
+                "degraded_answers": self.degraded_answers,
+                "fallback_answers": self.fallback_answers,
             }
         with self._breakers_lock:
             breakers = list(self._breakers.values())
@@ -302,19 +377,51 @@ class Ratchet:
         """The parameters of each model call for a request with these client parameters (`GenPolicy.plan`)."""
         return self._plain if params is None else self.gen.plan(params)
 
+    def _teacher_complete(self, messages: list[dict[str, Any]], gen: GenParams, fallback: bool = False) -> Completion:
+        """One call to the primary teacher (or, with `fallback`, the fallback teacher) through its breaker, the way
+        `_sample` calls the student. Raises `CircuitOpen` (503 `teacher_circuit_open`, with the time until the next probe
+        as `retry_after`) without calling while the breaker is open, so a request that needs the teacher's answer fails at
+        once instead of waiting out the deadline, and an optional call (audit, arbitration) is skipped. The provider's
+        retries come first: one failed call is one failure here, counted as `resilience.endpoint_down` says (a timeout, no
+        connection, a 5xx, 408, 429; another 4xx is the teacher answering; a non-HTTP error counts neither way)."""
+        if fallback:
+            assert self.fallback_teacher is not None and self.fallback_model is not None and self.fallback_breaker is not None
+            provider, model, breaker = self.fallback_teacher, self.fallback_model, self.fallback_breaker
+        else:
+            provider, model, breaker = self.teacher, self.s.teacher_model, self.teacher_breaker
+        if not breaker.allow():
+            raise CircuitOpen(breaker.name, retry_after=breaker.retry_in(), code=TEACHER_CIRCUIT_OPEN)
+        try:
+            out = provider.complete(messages, model, temperature=gen.temperature or 0.0, logprobs=bool(gen.logprobs), params=gen)
+            if not out:
+                raise UpstreamError(502, "the teacher returned no choices", code=BAD_RESPONSE)
+        except BaseException as e:
+            down = endpoint_down(e)
+            if down is None:
+                breaker.release()
+            else:
+                breaker.record(not down, describe_failure(e))
+            raise
+        breaker.record(True)
+        return out[0]
+
     def _ask_teacher(
-        self, task: tasks.Task, messages: list[dict[str, Any]], gen: GenParams, visible_max: int | None
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        gen: GenParams,
+        visible_max: int | None,
+        fallback: bool = False,
     ) -> Completion:
-        """One teacher answer under `gen`. When the reasoning headroom let the teacher write more than the client's
-        `max_tokens` (`visible_max`), an answer whose visible part (`tasks.clean_answer`) is longer than that, by
-        `approx_tokens`, is marked `length`: over the client's budget, so it is not stored (INV-16) and the client is told.
-        The text is not cut, because the count is an estimate. An answer that ends in a tool call (only when an operator
-        allows `tools` for the teacher) raises `UpstreamError` 502 `tool_calls_unsupported`: the provider does not read
-        tool calls yet, so its text is not the whole answer, and a response claiming `tool_calls` without them breaks
-        OpenAI clients. Nothing is stored; an audit or arbitration counts it as a failed optional call."""
-        c = self.teacher.complete(
-            messages, self.s.teacher_model, temperature=gen.temperature or 0.0, logprobs=bool(gen.logprobs), params=gen
-        )[0]
+        """One teacher answer under `gen` (the fallback teacher's with `fallback`). When the reasoning headroom let the
+        teacher write more than the client's `max_tokens` (`visible_max`), an answer whose visible part
+        (`tasks.clean_answer`) is longer than that, by `approx_tokens`, is marked `length`: over the client's budget, so it
+        is not stored (INV-16) and the client is told. The text is not cut, because the count is an estimate. An answer
+        that ends in a tool call (only when an operator allows `tools` for the teacher) raises `UpstreamError` 502
+        `tool_calls_unsupported`: the provider does not read tool calls yet, so its text is not the whole answer, and a
+        response claiming `tool_calls` without them breaks OpenAI clients. Nothing is stored; an audit or arbitration
+        counts it as a failed optional call. The teacher answered, so its breaker counts the call as a success."""
+        c = self._teacher_complete(messages, gen, fallback)
         if c.finish_reason == "tool_calls":
             raise UpstreamError(
                 502, "the teacher answered with a tool call, which the gateway cannot return yet", code=TOOL_CALLS_UNSUPPORTED
@@ -324,6 +431,32 @@ class Ratchet:
                 c = replace(c, finish_reason="length")
         return c
 
+    def _serve_teacher(
+        self, task: tasks.Task, messages: list[dict[str, Any]], gen: GenParams, visible_max: int | None
+    ) -> tuple[Completion, bool]:
+        """The teacher answer a request needs (escalation, cold start, pinned, teacher-only), and whether the fallback
+        teacher wrote it. The fallback teacher (RATCHET_TEACHER_FALLBACK_MODEL) is asked only when the primary is
+        unavailable (`resilience.teacher_unavailable`: its retries failed, or its breaker is open); never for an answer
+        about the request itself (a 400 such as `context_length_exceeded`) or a tool call. When the fallback fails as an
+        upstream call too, the primary's error is raised: it is the configured teacher, and its breaker says when to come
+        back. Anything else the fallback raises (a bug) propagates as it is."""
+        try:
+            return self._ask_teacher(task, messages, gen, visible_max), False
+        except Exception as e:
+            if self.fallback_teacher is None or not teacher_unavailable(e):
+                raise
+            primary = e
+        try:
+            c = self._ask_teacher(task, messages, gen, visible_max, fallback=True)
+        except httpx.HTTPError:
+            raise primary  # noqa: B904 - the primary's error is the one the client gets; the fallback's is its context
+        self._count_failure("fallback_answers", "fallback_teacher", f"{task.name}: {describe_failure(primary)}")
+        return c, True
+
+    def _teacher_model(self, fallback: bool) -> str:
+        """The configured model of the teacher that answered."""
+        return self.fallback_model if fallback and self.fallback_model is not None else self.s.teacher_model
+
     def _call_teacher(
         self,
         task: tasks.Task,
@@ -331,13 +464,20 @@ class Ratchet:
         plan: GenPlan | None = None,
         role: str = "serve",
         meta: RequestMeta | None = None,
-    ) -> tuple[Completion, bool]:
+    ) -> TeacherAnswer:
         """The teacher's answer, under the plan's `serve` parameters or, to audit or arbitrate, its `check` ones, and
-        whether it was stored as a training example (`_store_example`)."""
+        whether it was stored as a training example (`_store_example`). Only a served answer may come from the fallback
+        teacher (`_serve_teacher`); an audit or arbitration is a release signal and a label, so it is the primary's or
+        nothing."""
         plan = plan or self._plain
-        gen = plan.serve if role == "serve" else plan.check
-        c = self._ask_teacher(task, messages, gen, plan.visible_max)
-        return c, self._store_example(task, messages, c, gen, meta)
+        if role == "serve":
+            gen = plan.serve
+            c, fallback = self._serve_teacher(task, messages, gen, plan.visible_max)
+        else:
+            gen, fallback = plan.check, False
+            c = self._ask_teacher(task, messages, gen, plan.visible_max)
+        stored = self._store_example(task, messages, c, gen, meta, fallback=fallback)
+        return TeacherAnswer(c, stored, self._teacher_model(fallback), fallback)
 
     def _store_example(
         self,
@@ -346,6 +486,8 @@ class Ratchet:
         c: Completion,
         gen: GenParams | None = None,
         meta: RequestMeta | None = None,
+        *,
+        fallback: bool = False,
     ) -> bool:
         """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
         is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
@@ -355,8 +497,11 @@ class Ratchet:
         a vendor field) is not stored either: the client may choose the answer it gets, not the label everyone's student
         learns (threat model T2). Returns True when an example was inserted or a duplicate's `seen` bumped; False, with a
         throttled `skip_example` event, when not. A request whose `meta.storable` is False stores nothing and is not a
-        skip."""
+        skip. A `fallback` teacher's answer is stored only with RATCHET_STORE_FALLBACK_TEACHER=1 (so the golden labels
+        stay the primary teacher's), and then with its own model and license (INV-1)."""
         if meta is not None and not meta.storable:
+            return False
+        if fallback and not self.s.store_fallback_teacher:
             return False
         problem = (gen.unstorable() if gen is not None else None) or answer_problem(task, c)
         if problem is not None:
@@ -373,13 +518,15 @@ class Ratchet:
             if found and task.structured and task.canonical(clean) == tasks.INVALID:
                 self._skip_example(task, "invalid after redaction")
                 return False
+        model = self._teacher_model(fallback)
+        lic = self.licenses.get(model) or licenses.require_distillable(model)  # licensed at startup; never unlicensed
         self.ledger.add_example(
             task.name,
             stored,
             clean,
-            self.s.teacher_model,
-            self.teacher_license.name,
-            self.teacher_license.url,
+            model,
+            lic.name,
+            lic.url,
             redactions=sum(found.values()),
             params=conditions,
         )
@@ -404,12 +551,15 @@ class Ratchet:
     ) -> tuple[Completion, bool] | None:
         """The teacher settles a disagreement between the shadow and the served answer: its answer and whether it was
         stored. A failed call returns None and leaves the disagreement unarbitrated; the request it belongs to is
-        already answered (INV-15)."""
+        already answered (INV-15). An open teacher breaker skips the call, as a failure would, without counting it."""
         try:
-            return self._call_teacher(task, messages, plan, "arbitrate", meta)
+            ruling = self._call_teacher(task, messages, plan, "arbitrate", meta)
+        except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
+            return None
         except Exception as e:  # optional call: count it, never fail the request
             self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} arbitration: {describe_failure(e)}")
             return None
+        return ruling.completion, ruling.stored
 
     def _cost(self, model: str, c: Completion, n_out: int = 1) -> float:
         return self.s.price(model).cost(c.in_tokens, c.out_tokens * n_out)
@@ -460,10 +610,15 @@ class Ratchet:
         self, task: tasks.Task, messages: list[dict[str, Any]], client: str | None = None, plan: GenPlan | None = None
     ) -> Result:
         """Pinned tasks always go to the teacher. They are logged but never stored as training
-        examples, so they cannot leak into a student that was never meant to do them."""
+        examples, so they cannot leak into a student that was never meant to do them (INV-10). When the primary teacher
+        is unavailable, the fallback teacher may answer (route `fallback_teacher`); the student never does, so this path
+        never degrades. The baseline is the primary teacher's price for the same tokens."""
         plan = plan or self._plain
-        c = self._ask_teacher(task, messages, plan.serve, plan.visible_max)
-        cost = self._cost(self.s.teacher_model, c)
+        c, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max)
+        model = self._teacher_model(fallback)
+        route = "fallback_teacher" if fallback else "pinned"
+        cost = self._cost(model, c)
+        baseline = self._cost(self.s.teacher_model, c) if fallback else cost
         self.ledger.log_request(
             task=task.name,
             served_by="teacher",
@@ -477,9 +632,9 @@ class Ratchet:
             shadow_agree=None,
             latency_ms=c.latency_ms,
             cost_usd=cost,
-            baseline_cost_usd=cost,
+            baseline_cost_usd=baseline,
             client=client,
-            route="pinned",
+            route=route,
             stored=0,
         )
         text = tasks.clean_answer(task, c.text)
@@ -490,13 +645,13 @@ class Ratchet:
             confidence=None,
             escalated=False,
             cost_usd=cost,
-            baseline_usd=cost,
+            baseline_usd=baseline,
             latency_ms=c.latency_ms,
             model=c.model,
-            route="pinned",
+            route=route,
             finish_reason=_client_finish(c),
             **_usage(messages, c, text),
-            fingerprint=fingerprint("teacher", self.s.teacher_model),
+            fingerprint=fingerprint("teacher", model),
             usage_breakdown=_breakdown(c),
         )
 
@@ -509,8 +664,9 @@ class Ratchet:
         meta: RequestMeta | None = None,
     ) -> Result:
         """A request the student cannot take, such as one with an image part the teacher reads
-        (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers, the request is logged, and nothing is
-        stored as a training example. No student, audit or shadow call."""
+        (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers (or the fallback teacher, when the primary
+        is unavailable), the request is logged, and nothing is stored as a training example. No student, audit or shadow
+        call, so it never degrades."""
         return self._pinned(_task(task), messages, client, self.plan(params))
 
     # ------------------------------------------------------------------
@@ -525,7 +681,11 @@ class Ratchet:
         """Answer one request. `task` is a task name (or a `tasks.Task`); `client` is the API key name that sent it (None
         for internal calls and open gateways); `params` are the client's generation parameters, which each call gets as
         its role allows (`GenPolicy`, ADR 0017); `meta` is what else the caller knows (`RequestMeta`). Scout and the
-        simulator pass only messages and a task name."""
+        simulator pass only messages and a task name.
+
+        When the teacher answer an escalation needs cannot be had (ADR 0019), the fallback teacher answers if one is set
+        (route `fallback_teacher`), else, with RATCHET_ON_TEACHER_FAILURE=serve_student, the student's own valid answer
+        (route `degraded`), else the teacher's error is raised for the gateway to map (INV-7)."""
         task = _task(task)
         plan = self.plan(params)
         if task.pinned:
@@ -548,6 +708,7 @@ class Ratchet:
         s_samples: list[Completion] | None = None  # the shadow's, when it answered
         arbitration_c: Completion | None = None
         fp = ""
+        degraded: str | None = None
 
         sc = None
         if version is not None:
@@ -575,7 +736,9 @@ class Ratchet:
                 fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
                 if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
                     try:
-                        teacher_c, stored = self._call_teacher(task, messages, plan, "audit", meta)
+                        teacher_c, stored, _, _ = self._call_teacher(task, messages, plan, "audit", meta)
+                    except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
+                        teacher_failed = True
                     except Exception as e:  # optional call: the student's answer is served (INV-15)
                         teacher_failed = True
                         self._count_failure("audit_errors", "audit_error", f"{task.name}: {describe_failure(e)}")
@@ -588,11 +751,25 @@ class Ratchet:
             else:
                 escalated, route = True, "confidence"
         if served_by == "teacher":
-            teacher_c, stored = self._call_teacher(task, messages, plan, "serve", meta)
-            cost += self._cost(self.s.teacher_model, teacher_c)
-            latency += teacher_c.latency_ms
-            served = teacher_c
-            fp = fingerprint("teacher", self.s.teacher_model)
+            try:
+                answer = self._call_teacher(task, messages, plan, "serve", meta)
+            except Exception as e:  # no teacher answer: degraded if allowed, else the gateway maps the error (INV-7)
+                if not self._may_degrade(sc, params, e):
+                    raise
+                # The student's own valid answer stands in. Not audited, so it never counts toward release statistics.
+                assert version is not None and sc is not None
+                teacher_failed = True
+                served, served_by, route, degraded = sc.answer, "student", "degraded", TEACHER_UNAVAILABLE
+                fp = fingerprint("student", model_used, version.id, version.dataset_hash, self.threshold(version, model_used))
+                self._count_failure("degraded_answers", "degraded", f"{task.name}: {describe_failure(e)}")
+            else:
+                teacher_c, stored = answer.completion, answer.stored
+                cost += self._cost(answer.model, teacher_c)
+                latency += teacher_c.latency_ms
+                served = teacher_c
+                fp = fingerprint("teacher", answer.model)
+                if answer.fallback:
+                    route = "fallback_teacher"
 
         # Baseline = what this request would have cost with the teacher alone.
         if teacher_c is not None:
@@ -610,8 +787,9 @@ class Ratchet:
         # leaves no shadow record; a failed arbitration, or an escalation or arbitration answer the teacher
         # cut off or got wrong (INV-16), leaves shadow_agree NULL, which the release gate counts as a
         # disagreement (Ledger.shadow_quality). An audit answer like that is no reference at all: the shadow
-        # is compared with the served answer, as when no audit ran.
-        shadow = self.ledger.by_state("shadow")
+        # is compared with the served answer, as when no audit ran. A request a stand-in answered (degraded, or
+        # the fallback teacher) runs no shadow: its only reference would not be the primary teacher's (ADR 0019).
+        shadow = None if route in STAND_IN_ROUTES else self.ledger.by_state("shadow")
         shadow_vid = shadow_serve = shadow_agree = None
         if shadow is not None:
             try:
@@ -677,4 +855,20 @@ class Ratchet:
             **_usage(messages, served, text),
             fingerprint=fp,
             usage_breakdown=_breakdown(served, samples, audit_c, s_samples, arbitration_c),
+            degraded=degraded,
+        )
+
+    def _may_degrade(self, sc: Scored | None, params: GenParams | None, e: BaseException) -> bool:
+        """Whether a failed escalation may be answered with the student's own answer (ADR 0019): only with
+        RATCHET_ON_TEACHER_FAILURE=serve_student, only when the student answered this request with at least one valid
+        sample (`Scored.valid`: never an empty, invalid or cut-off answer), never for a request with `tools` (the student
+        did not see them, so its answer cannot be the call the client expects), and only when the teacher is unavailable
+        (`resilience.teacher_unavailable`), not when it answered about the request itself (a 400 the client must fix).
+        Pinned and teacher-only requests never get here: they have no student answer."""
+        return (
+            self.serve_student_on_failure
+            and sc is not None
+            and sc.valid
+            and not (params is not None and params.tools)
+            and teacher_unavailable(e)
         )

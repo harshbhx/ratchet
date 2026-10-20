@@ -62,6 +62,9 @@ PINNED_ENV = {
     "RATCHET_TEACHER_MAX_TOKENS": "8192",
     "RATCHET_STUDENT_MAX_TOKENS": "1024",
     "RATCHET_TEACHER_REASONING_HEADROOM": "0",
+    "RATCHET_ON_TEACHER_FAILURE": "error",
+    "RATCHET_TEACHER_FALLBACK_MODEL": "",
+    "RATCHET_TEACHER_BREAKER_FAILURES": "5",
 }
 
 
@@ -80,6 +83,9 @@ def _settings(**overrides: Any) -> Settings:
         "teacher_max_tokens": 8192,
         "student_max_tokens": 1024,
         "teacher_reasoning_headroom": 0,
+        "on_teacher_failure": "error",
+        "teacher_fallback_model": "",
+        "teacher_breaker_failures": 5,
     }
     return Settings(**{**base, **overrides})
 
@@ -933,6 +939,45 @@ def test_closed_teacher_fails_at_startup(gw_env, tmp_path):
         )
         with pytest.raises(licenses.LicenseError, match="gpt-4o"):
             gw.Runtime(settings)
+
+
+@pytest.mark.req("FR-3.2", "INV-1", "FR-2.12")
+def test_closed_fallback_teacher_fails_at_startup(gw_env, tmp_path):
+    """A fallback teacher (RATCHET_TEACHER_FALLBACK_MODEL) is a teacher: a closed or unknown model stops `Ratchet` and the
+    gateway's runtime at startup, long before the primary is ever down. A distillable one is licensed up front, so the
+    examples it may write carry its own license."""
+    led = Ledger(":memory:")
+    for model, match in (
+        ("gpt-4o", "OpenAI Business Terms"),
+        ("openai/gpt-4o", "not distillable"),
+        ("o3-mini", "OpenAI Business Terms"),
+        ("claude-3-5-sonnet", "Anthropic Commercial Terms"),
+        ("google/gemini-2.5-pro", "Google Gemini API Terms"),
+        ("someone/new-model", "Unknown teacher"),
+    ):
+        with pytest.raises(licenses.LicenseError, match=match):
+            Ratchet(_settings(teacher_fallback_model=model), led, RecordingProvider(A), lambda v: (None, ""))
+
+    gw = _gateway(gw_env)
+    for mode in ("live", "mock"):
+        settings = Settings(
+            mode=mode,
+            teacher_model=OPEN_TEACHER,
+            teacher_fallback_model="gpt-4o",
+            db_path=str(tmp_path / f"{mode}.db"),
+            student_base="",
+            tavily_api_key="",
+            api_keys="",
+            bom_signing_key="",
+            mock_warmup_days=0,
+        )
+        with pytest.raises(licenses.LicenseError, match="gpt-4o"):
+            gw.Runtime(settings)
+
+    fallback = "nvidia/nemotron-3-super-120b-a12b"
+    r = Ratchet(_settings(teacher_fallback_model=fallback), led, RecordingProvider(A), lambda v: (None, ""))
+    assert r.licenses == {OPEN_TEACHER: licenses.OPEN_MDW, fallback: licenses.NEMOTRON_OPEN}
+    assert Ratchet(_settings(), led, RecordingProvider(A), lambda v: (None, "")).licenses == {OPEN_TEACHER: licenses.OPEN_MDW}
 
 
 @pytest.mark.req("FR-3.3")

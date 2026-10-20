@@ -565,6 +565,19 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:demo_student_outage",
         "sim.mock_models:MockFleet.student_outage",
     ),
+    "FR-2.12": (
+        "ratchet.router:Ratchet._teacher_complete",
+        "ratchet.router:Ratchet._serve_teacher",
+        "ratchet.router:Ratchet._may_degrade",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.resilience:teacher_unavailable",
+        "ratchet.resilience:Breaker.retry_in",
+        "ratchet.config:Settings.serve_student_on_teacher_failure",
+        "ratchet.config:Settings.teacher_breaker",
+        "ratchet.gateway:_map_upstream",
+        "ratchet.gateway:_complete",
+        "ratchet.ledger:Ledger.stats_by_day",
+    ),
     "FR-2.13": (
         "ratchet.router:answer_problem",
         "ratchet.router:Ratchet._store_example",
@@ -651,6 +664,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (
         "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._teacher_complete",
         "ratchet.resilience:retry_call",
         "ratchet.resilience:Breaker",
         "ratchet.live:AdapterReloader",
