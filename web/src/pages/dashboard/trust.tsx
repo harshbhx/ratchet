@@ -93,7 +93,8 @@ function RedactPlayground() {
 
   const found = Object.entries(out?.found ?? {});
   return (
-    <div className="min-w-0 rounded-xl border border-line p-3.5">
+    // `redactor` is the story page's link target (/dashboard#redactor); scroll-mt clears the sticky header.
+    <div id="redactor" className="min-w-0 scroll-mt-20 rounded-xl border border-line p-3.5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <label htmlFor={inputId} className="text-[13px] font-medium text-ink">
           Try the redactor

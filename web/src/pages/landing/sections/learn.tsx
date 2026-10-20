@@ -264,29 +264,32 @@ export function Learn() {
                   </div>
                 </div>
                 <CostChart day={day} onPick={pick} />
-                <table className="sr-only">
-                  <caption>Simulation: cost per 1,000 requests by day</caption>
-                  <thead>
-                    <tr>
-                      <th>Day</th>
-                      <th>Answered by your model</th>
-                      <th>With Ratchet</th>
-                      <th>All-Ultra</th>
-                      <th>Saved</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {SIM_DAYS.map((x) => (
-                      <tr key={x.day}>
-                        <td>{x.day}</td>
-                        <td>{fmtPct(x.student)}</td>
-                        <td>{fmtUsd(x.costPer1k, 3)}</td>
-                        <td>{fmtUsd(x.baselinePer1k, 3)}</td>
-                        <td>{fmtPct(x.saved)}</td>
+                {/* A table grows to its content whatever its width, so the 1px sr-only box wraps it instead. */}
+                <div className="sr-only">
+                  <table>
+                    <caption>Simulation: cost per 1,000 requests by day</caption>
+                    <thead>
+                      <tr>
+                        <th>Day</th>
+                        <th>Answered by your model</th>
+                        <th>With Ratchet</th>
+                        <th>All-Ultra</th>
+                        <th>Saved</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {SIM_DAYS.map((x) => (
+                        <tr key={x.day}>
+                          <td>{x.day}</td>
+                          <td>{fmtPct(x.student)}</td>
+                          <td>{fmtUsd(x.costPer1k, 3)}</td>
+                          <td>{fmtUsd(x.baselinePer1k, 3)}</td>
+                          <td>{fmtPct(x.saved)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               <div className="flex flex-col p-4 sm:p-6">
