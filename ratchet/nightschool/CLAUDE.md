@@ -7,7 +7,7 @@ One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)
 3. Skip if fewer than `min_new_examples` new train examples, or no golden rows.
 4. Re-score the **live** version on the current golden set (champion vs challenger), recording `spec_hashes` (`orchestrate.spec_hashes`: each golden task's current `spec_hash`) in its eval. A night skipped for too few new examples still re-scores the live version when its recorded hashes are stale (`stale_tasks`; event `rescored`, or `rescore_failed` without failing the night), because `Ratchet.threshold` keeps a changed task on the teacher until then (FR-2.15).
 5. `trainer.train(...)` → adapter name (e.g. `student-v4`).
-6. `evaluator.evaluate(adapter, golden_rows)` → `{precision, coverage, threshold, golden_agreement, ...}`, plus `spec_hashes`.
+6. `evaluator.evaluate(adapter, golden_rows)` → `{precision, coverage, threshold, golden_agreement, tasks, ...}`, plus `spec_hashes`. `tasks` holds one calibration record per task (FR-14.1, [ADR 0040](../../docs/adr/0040-per-task-calibration.md)); a re-score of the live version (`rescore`) keeps the tasks the gate disabled on it disabled (`calibration.keep_disabled`).
 7. The adapter's BOM (`bom.manifest(..., extra=bom_extra or None, redact_pii=redact_pii)`, schema v2), then `gate.admit(vid)`.
 
 Later features add their steps at fixed places (ADR 0024): early-night checks (teacher freeze, erasures, the drift-advanced night) before the `min_new_examples` gate; set commitments right after `create_version`; paired evidence right after the candidate's eval, before `update_eval` and the BOM; and BOM sections (`bom.EXTRA_KEYS`) into the one `bom_extra` dict. `run_night(redact_pii=)` takes `Settings.redact_pii` (the gateway, the simulator and `python -m ratchet.live night` pass it) for the BOM's `redactor`.
@@ -20,6 +20,7 @@ Later features add their steps at fixed places (ADR 0024): early-night checks (t
 ## Rules
 
 - `cascade_eval` calibrates the threshold on even-indexed golden rows and reports precision/coverage on odd-indexed rows. Do not grade on calibration data.
+- Per task (`_task_record`, FR-14.1): the same global parity, so the global numbers never move and one task's record equals them. A task's threshold is calibrated to its `policy.target_precision`; with fewer than `min_task_n` (`RATCHET_MIN_TASK_GOLDEN`, passed as `LiveEvaluator(min_task_n=)` and `MockFleet(min_task_n=)`) calibration rows it is never below the global one; with no held-out row it is 1.01. `spec_hash` in each record is the spec it was scored under; `run_night` still writes `spec_hashes`, which does not depend on the evaluator.
 - Thresholds are clamped to `[floor=0.5, 1.01]`; 1.01 means "serve nothing" (keeps JSON finite).
 - Train from the base model on the cumulative dataset every night; do not stack adapters.
 - `train.py` runs inside the GPU container only, and `main` is excluded from tests. Its arguments (`parse_args`), the row contract (`load_rows` reads what `NebiusTrainer` writes) and `manifest` (`ratchet_manifest.json`) are tested offline in `tests/test_live.py`. LoRA target modules for Nemotron-H must be confirmed on day 1 (`--targets`).

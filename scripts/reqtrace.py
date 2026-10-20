@@ -694,6 +694,16 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
+    # 6.14 Use cases
+    "FR-14.1": (
+        "ratchet.calibration:threshold",
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.router:Ratchet.threshold",
+        "ratchet.release:ReleaseGate.task_failures",
+        "ratchet.release:ReleaseGate._tick_tasks",
+        "ratchet.nightschool.orchestrate:rescore",
+        "ratchet.ledger:Ledger.stats_by_task",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",

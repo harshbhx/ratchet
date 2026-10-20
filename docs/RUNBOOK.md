@@ -36,7 +36,8 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `live` | `tick` | Candidate promoted to 100%; previous live retired | None |
 | `retired` | `admit` | An in-flight shadow or canary was replaced by a newer candidate | None |
 | `rollback` | `tick` | Canary audited precision has a Wilson upper bound below 0.92; traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
-| `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live | Act now: see [Precision alert](#precision-alert-on-live) |
+| `alert` | `tick` | **Live** version's audited precision is clearly below 0.92. It is still serving, because there is no automatic action on live. `vN task <name>: ...` is the same for one task of the live or canary version, when it serves more than one task | Act now: see [Precision alert](#precision-alert-on-live), or [one task](#precision-alert-on-one-task) |
+| `task_disabled` | `admit` | One task of a candidate failed its own golden check (FR-14.1): its held-out precision is clearly below its floor or behind the live version's on that task (detail: the evidence). The teacher answers that task on this version; the version ships for its other tasks, and the task stays disabled for the version's life | Usually none: the next version is checked afresh. If it repeats every night, see [Persistent rejections](#persistent-rejections) |
 | `student_error` | `Ratchet.handle` | A student call raised; the request fell back to the teacher (route `student_error`). Logged on the 1st, 10th, 100th and 1000th failure. Detail is the version and the exception's class, with the HTTP status and code for an HTTP error (`v3: UpstreamError 503`), never its message, which can quote the request. `AdapterMissing 404` in the detail means vLLM lost the adapter (an endpoint restart); the gateway reloads it by itself | See [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
 | `circuit` | `Ratchet` (student and teacher breakers) | A breaker changed state. `student: closed->open after 5 failures (<error>)`: the endpoint kept failing, so requests now go straight to the teacher (route `student_breaker`) without waiting on it. `open->half_open`: one probe request is trying it again. `half_open->open for 60 s after a failed probe`: still down; the wait doubles up to 300 s. Once the wait is 300 s, that pair is logged only for the 1st, 10th, 100th and 1000th probe at that wait (the event says which), so a long outage leaves the rest of the log in view. `half_open->closed`: the endpoint is back (always logged). A `shadow:` breaker guards only the shadow candidate's calls. A `teacher:` breaker (`teacher: closed->open after 5 failures (UpstreamError 503)`) means Token Factory kept failing: requests that need the teacher now get a 503 `teacher_circuit_open` at once, and audits and arbitrations are skipped; a `fallback_teacher:` breaker guards the fallback teacher | `student:` or `shadow:` `open` that does not close within a few minutes: see [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost); `teacher:` see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `adapter_reloaded` | the gateway's `AdapterReloader` | vLLM answered 404 for a version's adapter, and the gateway loaded it again (`/v1/load_lora_adapter`) | None. Several at once usually mean the endpoint restarted |
@@ -55,7 +56,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
-The `alert` event is written once per live version per process (a restart can write it again), not on every tick.
+The `alert` event is written once per live version per process (a restart can write it again), not on every tick. A per-task alert (`vN task <name>:`) is written once per version and task, ever: the gate checks the ledger's events, so a restart or a new `python -m ratchet.live tick` process does not repeat it.
 
 ## Manual interventions
 
@@ -172,6 +173,17 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 5. Let Night School retrain. The disagreements are already training data.
 
+### Precision alert on one task
+
+**Symptoms:** an `alert` event saying "vN task <name>: audited precision X% (n=…, upper bound Y% < 92%) while live" (or "while canary"). The version as a whole may be fine; this task is not.
+
+**Steps:**
+
+1. Check `GET /ratchet/stats` → the task's entry in `tasks`: `audit_agreement`, `threshold`, and the held-out `precision` and `coverage` the version was admitted with. A held-out precision far above the audited one means live traffic for the task differs from its golden rows (drift, or a new kind of request).
+2. Keep the task on the teacher at once: set `"pinned": true` in its spec (tasks file or admin API). That is an operator decision, so the gate never makes it; a pinned task's stored examples leave training and the golden eval from the next night on, and unpinning brings them back.
+3. If several tasks are affected, or the version-level alert also fired, take the version out instead (see [Precision alert on live](#precision-alert-on-live)).
+4. Look at the task's spec: a field that is too strict or too loose shows up here first ([CONFIGURATION.md](CONFIGURATION.md#tasks)).
+
 ### Bad deploy / rollback
 
 **Symptoms:** a `rollback` event. The system has already moved traffic back.
@@ -189,6 +201,8 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 - "golden precision < 95%": the base model may be too small for the task, the task too subjective, or the task's fields too strict (an `exact` field where a `number` with a tolerance, a `set` or a `label` with aliases fits; [CONFIGURATION.md](CONFIGURATION.md#tasks)). Check the task's `fields`, and `golden_invalid_refs` in the version's eval: references the spec refuses are not graded.
 - "golden coverage < 25%": too few examples per pattern. Wait for more data, or lower `min_coverage` in code.
 - "regresses vs live": live is already good. This is expected and harmless.
+- "task <name>: ..." (`RATCHET_TASK_MODE=reject`) or a `task_disabled` event every night: one task is much worse than the others on the shared adapter. Check its golden rows (`golden_n`, `test_n` and `agreement` in `eval.tasks`), its spec, and whether it needs a bigger student or should be pinned to the teacher.
+- "golden coverage X% < 25% once <tasks> disabled" or "at its per-task thresholds": what the version would still answer, each task at its own threshold, is too little to release; it would sit in shadow or canary without reaching a decision.
 - "shadow precision/coverage": real traffic differs from the golden set. Check for drift.
 - "shadow precision ... (N unarbitrated counted as disagreements)": the teacher failed some arbitrations (`shadow_error` events). If N explains the shortfall, the candidate may be fine; the next night trains a new one.
 

@@ -42,7 +42,14 @@
       "baseline_usd": "number",
       "savings_pct": "number",
       "avg_latency_ms": "number",
-      "routes": "object"
+      "routes": "object",
+      "audits": "number",
+      "audit_agreement": "number|null",
+      "threshold": "number|null",
+      "precision": "number|null",
+      "coverage": "number|null",
+      "calibrated": "bool|null",
+      "disabled": "string|null"
     },
     "versions[]": {
       "id": "number",

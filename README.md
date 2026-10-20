@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 706 tests
+pytest -q                                                                # 728 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -86,7 +86,7 @@ day  student  escal. audit ok     $/1k all-Ultra  saved
  10      98%      2%      99%    0.147     1.093    87%
 ```
 
-`--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 96% of research calls on day 8 (85% saved that day, 63% over all 8 days), and 98% of mixed calls (86% saved that day, 54% overall). See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed).
+`--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 92% of research calls on day 8 (81% saved that day, 62% over all 8 days), and 94% of mixed calls (82% saved that day, 51% overall), each task held to its own threshold. See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed).
 
 ## Live mode (real Token Factory + Nebius)
 

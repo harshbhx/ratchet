@@ -2,14 +2,14 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 706 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 728 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
-python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
+python scripts/reference_check.py                    # do tickets, mixed and research still reproduce the pinned runs? (make reference, CI)
 ```
 
 | File | Tests |
@@ -30,11 +30,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
-| **Total** | **706** |
+| `tests/test_calibration.py` | 22 (20 functions; one has 3 cases) |
+| **Total** | **728** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_calibration.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
@@ -560,6 +561,33 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
 | `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
 
+### `tests/test_calibration.py`
+
+Per-task calibration when several tasks share one adapter (FR-14.1, [ADR 0040](adr/0040-per-task-calibration.md)). Scripted golden rows set each answer's confidence and correctness exactly; the simulation numbers come from mock models.
+
+| Test | Covers |
+|---|---|
+| `test_cascade_eval_per_task_thresholds` | FR-14.1, FR-5.2, INV-6: an easy and a noisy task on one adapter. Pooled, the global threshold (0.85) serves the noisy task's wrong answers (97% overall); the records give the easy task 0.85 and the noisy one 0.95 (precision 1.0, coverage 0.85), with their row counts, agreement, spec hashes and `calibrated`. When nothing reaches its target the noisy task gets 1.01; a `policy.target_precision` of 0.8 gives it 0.85 and a new spec hash |
+| `test_single_task_eval_identical_to_global` (3 cases) | FR-14.1, FR-5.2, FR-5.3: with one task, its record holds exactly the global threshold, precision, coverage, row counts and agreement, for `min_task_n` 1, 20 and 1000 (`calibrated` true, true, false) |
+| `test_task_with_few_calibration_rows_is_never_below_global` | FR-14.1, FR-5.2: with fewer than `min_task_n` calibration rows a task takes the higher of its own threshold and the global one (`calibrated: false`), the global one with no calibration row, 1.01 with no held-out row; enough rows make it its own |
+| `test_task_without_test_rows_is_teacher_only` | FR-14.1, INV-6: a task whose one golden row calibrates (none held out) gets 1.01, and so does a task whose references are all invalid; the router escalates it at confidence 0.996 while serving the other task |
+| `test_router_uses_task_threshold` | FR-14.1, FR-2.3: at confidence 0.9 task A (0.7) is served, B (0.95) escalates and C (no record) uses the global 0.8; without a task the global threshold, for the fallback model `RATCHET_CONFIDENCE_THRESHOLD`; each task of a version has its own fingerprint |
+| `test_stale_spec_hash_threshold_ignored` | FR-14.1, FR-2.3, FR-2.15: a record under an old spec hash gives 1.01 (neither its own nor the global threshold), and `stale_tasks` names it; a current record wins over a stale `spec_hashes` entry |
+| `test_versions_without_task_eval_unchanged` | FR-14.1, FR-2.3: a version without records keeps its one threshold for every task; `spec_hashes` alone still sends a changed task to the teacher; the gate checks only the global numbers |
+| `test_threshold_reads_malformed_records_safely` | FR-14.1, FR-2.3, INV-7: records that are not mappings are ignored; a non-numeric or NaN threshold, a missing hash or a disabled record give 1.01; a global threshold that is not a number serves nothing instead of failing the request |
+| `test_admit_disables_regressed_task_but_ships_version` | FR-14.1, FR-6.1, NFR-8: 36 of 40 right (upper bound 96.0%) is above the 95% floor but strongly behind live's 100%: the task is disabled (threshold 1.01, the reason, a `task_disabled` event) and the version shadows; far below the floor it is disabled with nothing live |
+| `test_admit_reject_mode` | FR-14.1, FR-6.1: with `task_mode="reject"` the same candidate is rejected, naming the task, and nothing is disabled |
+| `test_per_task_gate_needs_evidence` | FR-14.1, FR-6.1, NFR-8: no failure under `min_task_test_n` rows, for a dip within the noise, for a task already at 1.01, or against a live record that serves nothing, has another spec or too few rows; a policy floor of 99% fails 194 of 200 |
+| `test_admit_rejects_a_version_that_would_serve_too_little` | FR-14.1, FR-6.1, INV-5: disabling a task that leaves 12.5% of the held-out rows answered, or per-task thresholds that answer none, reject the candidate instead of leaving it in shadow or canary |
+| `test_disabled_task_survives_rescore` | FR-14.1, INV-4: the champion re-check overwrites the eval but keeps the disabled tasks disabled, also one the re-score has no record for |
+| `test_per_task_live_alert_once` | FR-14.1, FR-6.7, NFR-8: 12 of 20 audits on one task of the live version raise one alert, not repeated by later ticks or a new gate; `has_event` compares a prefix (a `_` in a task name is not a wildcard); the canary gets its own alert |
+| `test_per_task_alert_leaves_single_task_versions_to_the_version_alert` | FR-14.1, FR-6.7: a version whose audits are all one task's gets only the version-level alert |
+| `test_stats_by_task_has_audit_agreement` | FR-14.1, FR-7.7: `audits` and `audit_agreement` per task; `threshold`, `precision`, `coverage`, `calibrated` and `disabled` from the live version's records (the global threshold for a task without one, 1.01 for a disabled task or a changed spec, null for a pinned task or without a live version) |
+| `test_bom_eval_carries_task_records` | FR-14.1, INV-14: a night's BOM carries the eval's per-task records, and `spec_hashes` matches them |
+| `test_task_calibration_settings` | FR-14.1: `RATCHET_MIN_TASK_GOLDEN` (a whole number, 1 or more, reaching `LiveEvaluator`), `RATCHET_TASK_MODE` (case-insensitive, empty is the default, a bad value names the variable) and `RATCHET_MIN_TASK_TEST_N` |
+| `test_ledger_merges_a_task_record_atomically` | FR-14.1: `merge_task_eval` merges into one record, keeps the others, and rolls back on an unknown version |
+| `test_mixed_workload_calibrates_each_task` | FR-14.1, FR-9.5, US-4: a 6-day mixed simulation (mock models): every trained version has a record for `ticket-triage`, `source-triage` and `page-read` under their current specs, and the student still takes over (over 80% on the last day) at audited agreement of 90% or more |
+
 ## Live-path tests
 
 Live mode, the training job, the day-1 check, the Scout CLI and the deploy scripts would otherwise run for the first time on paid Nebius resources. `tests/test_live.py` runs each of them offline first, through seams that are default arguments, so production code passes nothing and talks to the real services:
@@ -685,37 +713,37 @@ The ticket numbers above are the same as in v0.1. Adding the research world did 
 
 ### Workloads: research and mixed
 
-Simulation, mock models. 8 days × 1,500 requests/day, drift day 5, no fault injection (selected days shown):
+Simulation, mock models. 8 days × 1,500 requests/day, drift day 5, no fault injection (selected days shown). Both workloads have several tasks on one adapter, so each task has its own threshold ([per-task calibration](adr/0040-per-task-calibration.md)):
 
 ```
 python -m sim.simulate --workload research --days 8 --requests 1500     (seed 7)
 day  student  escal. audit ok     $/1k all-Ultra  saved
   1       0%      0%        -    1.133     1.133     0%
-  2      16%      2%     100%    0.979     1.131    13%
-  3      82%     14%      99%    0.319     1.132    72%
-  4      95%      5%      99%    0.190     1.132    83%
-  5      95%      5%      96%    0.194     1.132    83%
-  8      96%      4%      99%    0.172     1.132    85%
-total: 12000 requests, $4.98 vs $13.58 all-Ultra -> saved 63%
+  2      15%      3%     100%    0.987     1.131    13%
+  3      94%      6%      99%    0.205     1.132    82%
+  4      93%      7%      99%    0.218     1.132    81%
+  5      93%      7%      98%    0.197     1.132    83%
+  8      92%      8%      98%    0.211     1.132    81%
+total: 12000 requests, $5.11 vs $13.58 all-Ultra -> saved 62%
 
 python -m sim.simulate --workload mixed --days 8 --requests 1500        (seed 7)
 day  student  escal. audit ok     $/1k all-Ultra  saved
   1       0%      0%        -    1.112     1.112     0%
-  3      21%      0%     100%    0.912     1.112    18%
-  4      97%      3%      98%    0.174     1.111    84%
-  5      92%      8%      97%    0.205     1.111    82%
-  8      98%      2%      99%    0.159     1.112    86%
-total: 12000 requests, $6.12 vs $13.34 all-Ultra -> saved 54%
+  3      19%      2%     100%    0.932     1.112    16%
+  4      92%      8%      98%    0.226     1.111    80%
+  5      86%     14%      96%    0.265     1.111    76%
+  8      94%      6%      97%    0.202     1.112    82%
+total: 12000 requests, $6.48 vs $13.34 all-Ultra -> saved 51%
 ```
 
 Seeds 1, 2, 3, 7, 11 (same settings):
 
 | Workload | Final student share | Final-day savings | Total savings | Lowest daily audit agreement | First version live |
 |---|---|---|---|---|---|
-| research | 96–98% | 85–86% | 57–65% | 96–98% | day 2–3 |
-| mixed | 92–98% | 79–86% | 54–63% | 93–96% | day 2–3 |
+| research | 92–97% | 81–84% | 54–65% | 97–98% | day 2–3 |
+| mixed | 93–96% | 80–85% | 51–60% | 95–98% | day 2–3 |
 
-On mixed traffic the first student comes a night later with seed 7 (v1 was rejected at 94.3% golden precision), so total savings are lower.
+On mixed traffic the first student comes a night later with seed 7 (v1 was rejected at 94.3% golden precision), so total savings are lower. With one pooled threshold (before per-task calibration) the student served a few points more (final share 96–98% on research, 92–98% on mixed; total savings up to 65% and 63%) at a lower worst day of audited agreement (96% and 93%): a task's own threshold, calibrated on a few dozen golden rows, is conservative.
 
 ## Bugs the simulation found (and the fixes)
 
@@ -761,9 +789,9 @@ It and the reference workloads below are the deliberate exceptions to "assert on
 
 The run unsets every `RATCHET_*` variable while it runs, so settings in your shell cannot move it, and it depends only on seeded `random.Random` streams, SHA-256-derived seeds and SQLite arithmetic. When the fixture was made it was identical on CPython 3.10, 3.11, 3.12 and 3.13 (Linux, the CI matrix) and under different `PYTHONHASHSEED` values. If it fails on one platform only, compare the first differing day before regenerating anything. The numbers are simulation output, not measurements.
 
-### The reference workloads (v0.4.0's behaviour)
+### The reference workloads
 
-`scripts/reference_check.py` pins three workloads, captured from v0.4.0 (commit 1f9b18c) in `tests/fixtures/reference.json` ([ADR 0024](adr/0024-evidence-foundations.md)): `tickets-seed7` (the run above), `mixed-seed1` and `research-seed7` (8 days × 1,500 requests). It pins more than the reference simulation does: every input, every v0.4 key of each day's stats at full precision (`cost_per_1k`, `avg_latency_ms`, ...), the totals, each version's final state, training-set size and dataset hash, and the event log with its text. Every later feature defaults to v0.4's behaviour, so every change passes it: `make reference` (about 25 s) and a CI step run all three; the pytest suite checks the tickets workload against the session's reference run at no extra cost (`test_reference_workloads_reproduce_v040`).
+`scripts/reference_check.py` pins three workloads, captured from v0.4.0 (commit 1f9b18c) in `tests/fixtures/reference.json` ([ADR 0024](adr/0024-evidence-foundations.md)): `tickets-seed7` (the run above), `mixed-seed1` and `research-seed7` (8 days × 1,500 requests). The mixed and research runs, where several tasks share one adapter, were captured again with per-task calibration ([ADR 0040](adr/0040-per-task-calibration.md)), which changes what they serve by design; the tickets run has one task, so it is still v0.4.0's. It pins more than the reference simulation does: every input, every v0.4 key of each day's stats at full precision (`cost_per_1k`, `avg_latency_ms`, ...), the totals, each version's final state, training-set size and dataset hash, and the event log with its text. Every later feature defaults to v0.4's behaviour, so every change passes it: `make reference` (about 25 s) and a CI step run all three; the pytest suite checks the tickets workload against the session's reference run at no extra cost (`test_reference_workloads_reproduce_v040`).
 
 The rules: floats agree within a relative 1e-9 (an index may add the same numbers in another order); days and totals may gain keys; events compare as (day, kind, version) in order, and each pinned text must be a prefix of the fresh one, so a feature may append evidence to a message but never change it; the advisory kinds later features add (`drift`, `teacher_drift`, `teacher_model_changed`, `warning`, `student_healed`) are left out; a flag added later is not compared, a changed default is. When a change is meant to move these runs: `python scripts/reference_check.py --write --captured-from "<release or commit>"`, review the diff, and add a CHANGELOG line that says why. The numbers are simulation output from mock models, not measurements.
 

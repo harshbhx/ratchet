@@ -193,6 +193,9 @@ class Settings:
     samples: int = field(default_factory=lambda: int(_env("RATCHET_SAMPLES", "3")))
     audit_rate: float = field(default_factory=lambda: float(_env("RATCHET_AUDIT_RATE", "0.05")))
     golden_fraction: float = field(default_factory=lambda: float(_env("RATCHET_GOLDEN_FRACTION", "0.10")))
+    # Calibration rows (the even half of a task's golden rows) a task needs before its own threshold may go below the
+    # version's global one (FR-14.1, ADR 0040); with fewer it gets the higher of the two.
+    min_task_golden: int = field(default_factory=lambda: _int("RATCHET_MIN_TASK_GOLDEN", "20"))
 
     # Upstream timeouts and retries (ratchet/resilience.py, ADR 0014). The read timeout is how long a model may take to
     # answer; connect, write and pool timeouts are 5, 10 and 5 s (the student's connect timeout is its own). A failed
@@ -381,6 +384,14 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def min_task_golden_rows(self) -> int:
+        """RATCHET_MIN_TASK_GOLDEN, checked: a whole number, 1 or more. Anything else raises ValueError, so the gateway,
+        the simulator and `python -m ratchet.live` stop at startup instead of calibrating tasks on a rule nobody chose."""
+        n = self.min_task_golden
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(f"RATCHET_MIN_TASK_GOLDEN must be a whole number, 1 or more, not {n!r}")
+        return n
 
     def limits(self) -> Limits:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,

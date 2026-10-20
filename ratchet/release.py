@@ -15,6 +15,13 @@ Rules, in order:
   3. Canary 10% -> 50% -> 100%: the teacher audits a sample of what it serves.
   4. Rollback: if the 95% upper confidence bound of audited precision falls below the
      floor (strong evidence it is worse), traffic returns to the previous live version.
+
+When several tasks share the adapter (FR-14.1, ADR 0040), the golden gate also checks each task's
+own held-out numbers once it has `min_task_test_n` test rows: a task below its floor, or behind the
+live version on that task, is disabled on the candidate (`task_mode` 'disable': the teacher answers
+it, the version ships for its other tasks) or rejects the candidate ('reject'). The live and canary
+versions get one `alert` per task whose audited precision is strongly below the floor. Rollback
+stays per version.
 """
 
 from __future__ import annotations
@@ -23,10 +30,15 @@ import math
 import os
 from dataclasses import MISSING, dataclass, fields
 
+from . import calibration, tasks
+from .confidence import SERVE_NOTHING
 from .ledger import Ledger, Version
 from .stats import wilson  # defined in stats.py since ADR 0024; `release.wilson` stays importable
 
 CANARY_STEPS = [10, 50]
+# What the golden gate does with a task that fails its own check (FR-14.1): `disable` it on the candidate, which ships for
+# its other tasks, or `reject` the candidate.
+TASK_MODES = ("disable", "reject")
 
 # ReleasePolicy fields declared for the evidence features (ADR 0024) before the items that read them are built: field ->
 # the feature. Their defaults keep today's decisions; until a feature lands, any other value stops startup (from
@@ -64,6 +76,10 @@ class ReleasePolicy:
     min_shadow: int = 100  # shadow answers it would have served
     min_audits: int = 20
     live_floor: float = 0.92  # audited precision floor for canary/live
+    # The per-task golden gate (FR-14.1): test rows a task needs before its own numbers are checked, and what a task that
+    # fails does (TASK_MODES).
+    min_task_test_n: int = 10
+    task_mode: str = "disable"
     # The anytime-valid gate (FR-16.1, FR-16.2): opt-in sequential canary, its error rates, the futility cap, and the
     # live alert's rule and rate.
     sequential: int = 0
@@ -92,7 +108,10 @@ class ReleasePolicy:
 
         for f in fields(self):
             value = getattr(self, f.name)
-            if f.type in (int, "int"):
+            if f.type in (str, "str"):
+                if not isinstance(value, str):
+                    raise bad(f.name, value, "a string")
+            elif f.type in (int, "int"):
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                     raise bad(f.name, value, "a whole number, 0 or more")
             elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -112,6 +131,8 @@ class ReleasePolicy:
             raise bad("drift_alarm", self.drift_alarm, "more than 1")
         if not self.drift_audit_boost >= 1:
             raise bad("drift_audit_boost", self.drift_audit_boost, "1 or more")
+        if self.task_mode not in TASK_MODES:
+            raise bad("task_mode", self.task_mode, " or ".join(TASK_MODES))
         defaults = {f.name: f.default for f in fields(self) if f.default is not MISSING}
         for name, feature in RESERVED_POLICY.items():
             if getattr(self, name) != defaults[name]:
@@ -122,13 +143,17 @@ class ReleasePolicy:
 
     @classmethod
     def from_env(cls) -> ReleasePolicy:
-        """Override any field with RATCHET_<FIELD> (e.g. RATCHET_MIN_AUDITS=30). Integer fields take whole numbers, the
-        rest numbers; ValueError names the variable otherwise."""
-        kw: dict[str, float] = {}
+        """Override any field with RATCHET_<FIELD> (e.g. RATCHET_MIN_AUDITS=30). Integer fields take whole numbers,
+        string fields (`task_mode`) a word, case and surrounding spaces ignored, the rest numbers; ValueError names the
+        variable otherwise."""
+        kw: dict[str, float | str] = {}
         for f in fields(cls):
             env = f"RATCHET_{f.name.upper()}"
             raw = os.environ.get(env)
-            if raw is not None:
+            if raw is not None and f.type in (str, "str"):
+                if raw.strip():  # set but empty, as in an .env file: the default
+                    kw[f.name] = raw.strip().lower()
+            elif raw is not None:
                 integer = f.type in (int, "int")
                 try:
                     kw[f.name] = int(raw) if integer else float(raw)
@@ -142,6 +167,9 @@ class ReleaseGate:
         self.ledger = ledger
         self.policy = policy or ReleasePolicy()
         self._alerted: set[int] = set()  # live versions already alerted on (one alert per version)
+        # (version, task) pairs known to have their per-task alert in the ledger: a cache of `Ledger.has_event`, which is
+        # what makes the alert once-only across gates and processes (FR-14.1).
+        self._task_alerted: set[tuple[int, str]] = set()
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
@@ -159,6 +187,21 @@ class ReleaseGate:
                 return self._reject(
                     v, f"regresses vs live v{live.id} (precision {prec:.1%} vs {lp:.1%}, coverage {cov:.1%} vs {lc:.1%})"
                 )
+        failed = self.task_failures(v, live)
+        if failed and p.task_mode == "reject":
+            return self._reject(v, "; ".join(f"task {name}: {why}" for name, why in failed))
+        if calibration.entries(v.eval):
+            # What the version would serve at its per-task thresholds, without the tasks it fails: a version that serves
+            # (almost) nothing would wait in shadow or canary forever, and no night trains while it does (INV-5).
+            left = self._coverage_without(v, {name for name, _ in failed})
+            if left < p.min_coverage:
+                why = f" once {', '.join(name for name, _ in failed)} disabled" if failed else " at its per-task thresholds"
+                return self._reject(v, f"golden coverage {left:.1%} < {p.min_coverage:.0%}{why}")
+        if failed:
+            for name, why in failed:
+                self.ledger.merge_task_eval(v.id, name, {"threshold": SERVE_NOTHING, "disabled": why})
+                detail = f"v{v.id} {name}: {why}; the teacher answers it, v{v.id} ships for its other tasks"
+                self.ledger.event("task_disabled", detail)
         for old in self.ledger.versions(["shadow", "canary"]):
             self.ledger.set_version(old.id, "retired", 0)
             self.ledger.event("retired", f"v{old.id} replaced by newer candidate v{v.id}")
@@ -180,15 +223,57 @@ class ReleaseGate:
         self.ledger.event("rejected", f"v{v.id}: {why}")
         return False
 
+    def task_failures(self, v: Version, live: Version | None) -> list[tuple[str, str]]:
+        """The tasks of candidate `v` that fail their own golden check (FR-14.1), with why. A task is checked once its
+        per-task record has at least `min_task_test_n` held-out rows and the candidate would answer it at all. It fails
+        when the 95% Wilson upper bound of its held-out precision (over the answers it would serve) is below its floor
+        (its spec's `policy.min_precision`, else the release policy's), or below the live version's precision on that
+        task less `tolerance`: strong evidence, as for rollback, because on a few dozen rows a point estimate under the
+        floor is mostly noise (a task at 97% shows under 95% on 30 rows about one night in four). Live is compared only
+        where it answers the task under the same spec with `min_task_test_n` rows too. A version scored before per-task
+        calibration has no records, so nothing fails."""
+        p = self.policy
+        live_records = calibration.entries(live.eval) if live is not None else {}
+        out: list[tuple[str, str]] = []
+        for name, rec in sorted(calibration.entries(v.eval).items()):
+            task = tasks.get(name)
+            test_n, prec = calibration.number(rec.get("test_n")), calibration.number(rec.get("precision"))
+            if task.pinned or not calibration.serves(rec) or test_n is None or prec is None or test_n < p.min_task_test_n:
+                continue
+            served = calibration.served_rows(rec)
+            hi = wilson(round(prec * served), served)[1]
+            evidence = f"precision {prec:.1%} on {served} answers, upper bound {hi:.1%}"
+            floor = calibration.min_precision(task, p.min_precision)
+            if hi < floor:
+                out.append((name, f"golden {evidence} < {floor:.1%}"))
+                continue
+            lrec = live_records.get(name)
+            if live is None or lrec is None or not calibration.serves(lrec) or lrec.get("spec_hash") != rec.get("spec_hash"):
+                continue
+            lp, ln = calibration.number(lrec.get("precision")), calibration.number(lrec.get("test_n"))
+            if lp is not None and ln is not None and ln >= p.min_task_test_n and hi < lp - p.tolerance:
+                out.append((name, f"regresses vs live v{live.id} ({evidence}, vs {lp:.1%})"))
+        return out
+
+    @staticmethod
+    def _coverage_without(v: Version, disabled: set[str]) -> float:
+        """The share of `v`'s held-out rows it would still answer with the tasks in `disabled` on the teacher, each other
+        task at its own threshold: what the coverage gate is held to once tasks are disabled."""
+        records = calibration.entries(v.eval)
+        total = sum(calibration.number(r.get("test_n")) or 0 for r in records.values())
+        served = sum(calibration.served_rows(r) for name, r in records.items() if name not in disabled)
+        return served / total if total else 0.0
+
     # ---- steps 2-4: call periodically (e.g. every few minutes in production) ----
     def tick(self) -> None:
-        """One pass of the gate, in a fixed order: the drift monitor, the live version's alert, the shadow decision, the
-        canary decision, then the watchers. `live` is read once, before any step, so every step sees the live version
-        the tick started with (a canary promoted in this tick retires that one). Each step belongs to one feature and
-        changes only its own function (ADR 0024)."""
+        """One pass of the gate, in a fixed order: the drift monitor, the live version's alert, the per-task alerts, the
+        shadow decision, the canary decision, then the watchers. `live` is read once, before any step, so every step sees
+        the live version the tick started with (a canary promoted in this tick retires that one). Each step belongs to one
+        feature and changes only its own function (ADR 0024)."""
         live = self.ledger.live()
         self._tick_drift()
         self._tick_live(live)
+        self._tick_tasks(live)
         self._tick_shadow(live)
         self._tick_canary(live)
         self._tick_watchers()
@@ -210,6 +295,36 @@ class ReleaseGate:
                 f"live v{live.id} audited precision {prec:.1%} (n={n}) below floor; "
                 "investigate or roll back manually (see docs/RUNBOOK.md)",
             )
+
+    def _tick_tasks(self, live: Version | None) -> None:
+        """Alert once per (version, task) when that task's audited precision in the current stage is strongly below the
+        floor (Wilson upper bound < `live_floor`, at least `min_audits` audits), for the live version and the canary
+        (FR-14.1). A version whose audits in the stage are all of one task is left to its own alert and rollback, which
+        say the same thing. Once-only is read from the ledger's events, so a new gate (each `python -m ratchet.live
+        tick` builds one) does not repeat an alert. Nothing is rolled back or disabled here: rollback stays per version,
+        and an operator can pin the task to the teacher (docs/RUNBOOK.md)."""
+        p = self.policy
+        for v in (live, self.ledger.by_state("canary")):
+            if v is None:
+                continue
+            quality = self.ledger.task_live_quality(v.id)
+            if len(quality) < 2:
+                continue
+            for name, (n, prec) in quality.items():
+                if n < p.min_audits or prec is None or (v.id, name) in self._task_alerted:
+                    continue
+                hi = wilson(prec * n, n)[1]
+                if hi >= p.live_floor:
+                    continue
+                key = f"v{v.id} task {name}:"
+                self._task_alerted.add((v.id, name))
+                if self.ledger.has_event("alert", key):
+                    continue
+                self.ledger.event(
+                    "alert",
+                    f"{key} audited precision {prec:.1%} (n={n}, upper bound {hi:.1%} < {p.live_floor:.0%}) while {v.state}; "
+                    "investigate, or pin the task to the teacher (see docs/RUNBOOK.md)",
+                )
 
     def _tick_shadow(self, live: Version | None) -> None:
         """Decide on the shadow once it would have served `min_shadow` answers: reject it, or promote it to canary."""
