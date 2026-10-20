@@ -17,7 +17,7 @@ The gateway serves a React web app ([web/](web/CLAUDE.md)):
 
 - `/`: the story. How Ratchet works, why it is license-clean and why releases are safe, with an interactive replay of the reference simulation.
 - `/scout`: the Scout multi-agent demo (below). Watch each call get answered by your model or by Ultra.
-- `/dashboard`: savings, the release pipeline, versions, per-task routing, release log and provenance, with demo controls in mock mode.
+- `/dashboard`: savings, the release pipeline, versions, per-task routing, trust and privacy, release log and provenance, with demo controls in mock mode.
 
 The original no-build pages stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
 
@@ -43,7 +43,7 @@ Pinned tasks always go to the teacher and are never stored as training data. The
 
 OpenAI's [Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and Anthropic's [Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) forbid using their outputs to train competing models. A distillation tool that learns from GPT or Claude traffic puts its users at risk.
 
-Ratchet only distills from teachers whose licenses allow it. Nemotron 3 Ultra is under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16), which places no restrictions on outputs. Closed models are refused as teachers in code (`ratchet/licenses.py`). `GET /ratchet/bom` exports a **model bill of materials**: every training source, its license, and a SHA-256 fingerprint of the dataset. *Not legal advice: check licenses yourself.*
+Ratchet only distills from teachers whose licenses allow it. Nemotron 3 Ultra is under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16), which places no restrictions on outputs. Closed models are refused as teachers in code (`ratchet/licenses.py`). `GET /ratchet/bom` exports a **model bill of materials**: every training source, its license, and a SHA-256 fingerprint of the dataset. Each trained adapter also gets **its own bill of materials, signed with Ed25519**, that anyone with your public key can check offline (`python -m ratchet.bom verify`). *Not legal advice: check licenses yourself.*
 
 ## How it uses NVIDIA and Nebius
 
@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 49 tests
+pytest -q                                                                # 64 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -130,6 +130,25 @@ The public demo runs on one small Nebius CPU VM with Docker Compose and Caddy (a
 - **Training data:** only teacher answers, never the student's own (avoids model collapse). Retrains from the base model on the cumulative set each night (limits forgetting). Requests that repeat 3+ times always go to training, so frequent questions are never held out forever.
 - **No training while a release is in flight**, which saves GPU money.
 
+## Privacy and security
+
+Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
+
+- **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default; names and addresses are not covered yet ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md)).
+- **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, and cost and savings per client: the basis for per-customer receipts.
+- **Streaming** (`stream: true`) in the OpenAI chunk format, so streaming clients work unchanged.
+- **Signed bill of materials per adapter** ([ADR 0010](docs/adr/0010-signed-adapter-bom.md)): teachers, licenses, dataset and golden-set hashes and the evaluation, written at training time.
+
+```bash
+python -m ratchet.bom keygen                       # signing key + public key to publish
+RATCHET_API_KEYS="acme:$(openssl rand -hex 24)" RATCHET_BOM_SIGNING_KEY=... make demo
+curl -s localhost:8000/ratchet/versions/2/bom | python -m ratchet.bom verify - --public-key <yours>
+```
+
+The dashboard's **Trust and privacy** panel shows all of it, including a box where you can paste any text and see what would be stored.
+
+![Trust and privacy panel (simulation)](docs/img/trust.jpg)
+
 ## Documentation
 
 Start at [docs/README.md](docs/README.md). Highlights:
@@ -146,12 +165,15 @@ Working with Claude? Read [CLAUDE.md](CLAUDE.md). Contributing: [CONTRIBUTING.md
 ## Repo map
 
 ```
-ratchet/gateway.py      OpenAI-compatible API, pages, demo controls, Scout endpoints
+ratchet/gateway.py      OpenAI-compatible API (keys, quotas, streaming), pages, demo controls, Scout endpoints
 ratchet/router.py       the cascade, pinned tasks, audits, shadow arbitration, cost accounting
 ratchet/confidence.py   confidence score + threshold calibration
 ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds)
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
+ratchet/redact.py       PII placeholders before examples are stored
+ratchet/auth.py         gateway API keys (named, per-key quota in gateway.py)
+ratchet/bom.py          per-adapter bill of materials, Ed25519 signing, `python -m ratchet.bom`
 ratchet/nightschool/    dataset build, LoRA training (Unsloth), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
 ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI

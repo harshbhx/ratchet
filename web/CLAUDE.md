@@ -31,4 +31,4 @@ npx tsc --noEmit -p .                            # typecheck
 | `src/components/layout/` | Header (nav, theme toggle), footer, layout |
 | `src/pages/landing/` | The story: hero flow, chapters 01–08, scrollytelling, rollback story, simulation scrubber |
 | `src/pages/scout/` | Scout: ask bar, agent graph, totals, lanes, answer, run summary (`state.ts` reduces the event stream) |
-| `src/pages/dashboard/` | Operator console: controls, KPIs, release pipeline, charts, tables, release log, provenance |
+| `src/pages/dashboard/` | Operator console: controls, KPIs, release pipeline, charts, tables (versions with BOM links, by task), trust and privacy (`trust.tsx`: redaction, API keys, BOM signing, per-client table, live redactor via `POST /ratchet/redact`), release log, provenance |

@@ -90,9 +90,9 @@ def test_gateway_openai_shape_and_demo_flow(client):
 def test_gateway_rejects_bad_requests(client):
     c, _ = client
     assert c.post("/v1/chat/completions", json={"messages": []}).status_code == 400
-    assert (
-        c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "x"}], "stream": True}).status_code == 400
-    )
+    # Streaming is supported since v0.4, but errors still arrive as HTTP errors before the stream starts.
+    r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "x"}], "stream": True})
+    assert r.status_code == 400 and "mock mode only answers" in r.json()["detail"]
 
 
 # ---------- provider client against a fake Token Factory ----------

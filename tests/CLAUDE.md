@@ -2,10 +2,10 @@
 
 - `test_core.py`: pure logic: tasks, confidence, calibration (incl. ties), licenses, ledger, release gate transitions. Build small ledgers with `Ledger(":memory:")`; use `_version()` / `_audit()` helpers.
 - `test_system.py`: end-to-end with mock models through `sim.simulate.run`: learning curve, savings, rollback, drift recovery, provenance, gateway API shape, provider parsing via `httpx.MockTransport`.
-- `test_hardening.py`: regressions for the issues listed in [docs/TESTING.md](../docs/TESTING.md): migrations, `auto_day`, student-failure fallback, 502 on teacher failure, fallback threshold, registry growth, alert de-duplication, `ReleasePolicy.from_env`.
+- `test_hardening.py`: regressions for the issues listed in [docs/TESTING.md](../docs/TESTING.md): migrations, `auto_day`, student-failure fallback, 502 on teacher failure, fallback threshold, registry growth, alert de-duplication, `ReleasePolicy.from_env`. Also the v0.4 hardening: PII redaction (incl. a check that it never changes a mock request), API keys and quotas, streaming, signed BOMs, `/healthz`, `/ratchet/redact`. Use the `gw_env` fixture there: `gw_env(RATCHET_API_KEYS=...)` reloads the gateway with those variables and restores the default gateway afterwards.
 - `test_scout.py`: Scout and its pieces: example questions match the research world, the documented event shape, pinned tasks never stored as training data, the student learning Scout calls over simulated days, `--workload research`, all gateway pages and `/scout/*` routes (incl. SSE and the 400/429 paths), the guard (budget, hourly window, daily run cap, with a fake clock), `TavilySearch` against `httpx.MockTransport`, and bad JSON from models. Use the `gw` fixture: it reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0`.
 
-49 tests in total (19 core, 7 system, 8 hardening, 14 Scout).
+64 tests in total (19 core, 7 system, 23 hardening, 15 Scout).
 
 Rules:
 

@@ -2,14 +2,14 @@
 
 ## Request path (`router.py`)
 
-`Ratchet.handle(messages, task)`:
+`Ratchet.handle(messages, task, client=None)` (`client` is the API key name; the gateway passes it, internal callers leave it `None`):
 
 0. Pinned task (`tasks.get(name).pinned`) → `_pinned()`: teacher answers, request logged, **no** `add_example`, no student/audit/shadow. Return.
 1. `_pick_version()`: canary gets `traffic_pct`% of requests, otherwise live; `None` on cold start → teacher.
 2. Student: `n = Settings.samples` samples at temperature 0.7 with logprobs → `confidence.score()`.
 3. Serve the student if `confidence >= threshold(version, model)`. The threshold comes from the version's eval (calibrated); the untuned fallback model uses `Settings.confidence_threshold`.
 4. With probability `audit_rate`, the teacher also answers a served request (quality signal + free training data).
-5. Otherwise, or if the student call raised, escalate: teacher answers, and `_call_teacher` stores the example with its license.
+5. Otherwise, or if the student call raised, escalate: teacher answers, and `_call_teacher` stores the example with its license, after `redact_messages` / `redact` replace identifiers (when `Settings.redact_pii`) and with the placeholder count.
 6. Shadow: if a version is in `shadow`, it runs the same cascade silently. A would-serve answer that disagrees with a live-student answer is arbitrated by the teacher.
 7. `ledger.log_request(...)` with `cost_usd` and `baseline_cost_usd` (= the all-teacher cost of this request).
 
@@ -30,7 +30,14 @@ States: `candidate → rejected | shadow | canary(10) → canary(50) → live`; 
 - `stats_by_task()` feeds `tasks` in `/ratchet/stats` and the dashboard's **By task** table.
 - `examples.hash` is unique per (task, messages); duplicates increment `seen`.
 - `split` is deterministic from the hash (`golden_fraction`), so an example never moves between sets, except via the `FREQUENT` rule applied in `nightschool/dataset.py`.
-- Schema changes need both `SCHEMA` and `MIGRATIONS`.
+- Schema changes need both `SCHEMA` and `MIGRATIONS`. Indexes on migrated columns go in `INDEXES` (created after migrations), not in `SCHEMA`.
+
+## Privacy, keys and BOMs
+
+- `redact.py`: `PATTERNS` is an ordered list of `(label, regex, check)`; earlier patterns win, so put specific formats (with checksums) before broad ones like `PHONE`. Every new pattern needs a positive test **and** must keep `test_redact_leaves_ordinary_text_alone` and `test_redaction_is_a_no_op_on_the_mock_world` passing (mock lookups match exact text).
+- `auth.py`: `KeyRing(spec)` raises `ValueError` on a bad spec, so a typo stops the gateway at startup. `identify()` compares SHA-256 digests with `hmac.compare_digest` over every key.
+- `bom.py`: `manifest()` from the exact train and golden rows, `document()` wraps it with `sha256` and an optional Ed25519 signature over `canonical()`. `Signer` imports `cryptography` lazily (the `sign` extra). Change the manifest shape only with a new `SCHEMA` version.
+- Gateway: `_client()` (401) then `_quota()` (429) run before the cascade on `/v1/chat/completions`; `/healthz` is public. Streaming runs the cascade first, then yields chunks (`_chunks`), so errors are ordinary HTTP errors.
 
 ## Licenses (`licenses.py`)
 
@@ -44,7 +51,7 @@ To add a teacher, add it to `REGISTRY` with its real license name and URL. `CLOS
 
 `Runtime` wires everything; `Runtime.reset()` rebuilds it (mock reset endpoint) and runs the mock warm-up (`RATCHET_MOCK_WARMUP_DAYS`) if set. Mock mode imports from `sim/` and keeps three seeded streams (`tickets`, `research`, `mixed`). Live mode uses `Ledger(auto_day=True)` and `ReleasePolicy.from_env()`. `rt.tick()` runs `gate.tick()` under `gate_lock`.
 
-Pages are static HTML files with no build step and no external scripts: `/` → `web/landing.html`, `/scout` → `web/scout.html`, `/dashboard` → `dashboard.html`. They are package data (`pyproject.toml`).
+Pages: the React build in `web/dist` (source in `/web`, see [web/CLAUDE.md](../web/CLAUDE.md)) at `/`, `/scout` and `/dashboard`. The hand-written static pages (`web/landing.html`, `web/scout.html`, `dashboard.html`) are served at `/lite*` and as a fallback when the build is missing. Both are package data (`pyproject.toml`).
 
 Demo controls are shared by every visitor: `day` and `reset` take `_demo_lock` without blocking (busy → 409), and `reset` has a 30 s cooldown (429).
 

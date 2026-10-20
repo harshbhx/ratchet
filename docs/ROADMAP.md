@@ -19,6 +19,17 @@ As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 - **Nebius VM deploy kit** (`deploy/vm/`, [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): cloud-init, Docker Compose, Caddy with HTTPS and an opt-in API guard, backups, updates.
 - 49 tests passing.
 
+## Milestone 0.75: v0.3 web app and v0.4 hardening (done, Oct 20)
+
+- **v0.3.0:** React story page, Scout page and dashboard, served by the gateway; hand-written pages kept at `/lite*`.
+- **v0.4.0:** the offline items of the hardening milestone, pulled forward because they need no Nebius account:
+  - PII redaction before examples are stored ([ADR 0009](adr/0009-pattern-based-pii-redaction.md)).
+  - Gateway API keys with per-key daily quotas and per-client cost and savings.
+  - Streaming responses (`stream: true`).
+  - A signed bill of materials per adapter, with an offline verifier ([ADR 0010](adr/0010-signed-adapter-bom.md)).
+  - `/healthz`, coverage in CI, and a **Trust and privacy** panel on the dashboard with a live redactor.
+- 64 tests passing.
+
 ## Milestone 1: hackathon submission (Oct 19–29, 2026)
 
 | Dates | Work | Exit criteria |
@@ -34,21 +45,21 @@ As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 
 ## Milestone 2: hardening (Nov–Dec 2026)
 
-Called "v0.2 hardening" in earlier drafts. The v0.2.0 version number went to the demo layer above, so these items now target v0.3.
+Called "v0.2 hardening" in earlier drafts. Version numbers went to the demo layer (v0.2), the web app (v0.3) and the first hardening items (v0.4, done above), so what is left targets v0.5.
 
-| Item | Why |
-|---|---|
-| PII redaction (Presidio) before storing examples | Real customer data |
-| Gateway API keys and per-key quotas | Security |
-| Streaming responses | Many apps stream |
-| Postgres ledger option | Concurrency, durability |
-| Multiple tasks per deployment with separate golden sets and thresholds | Real workloads mix tasks |
-| Signed model bill of materials stored with each adapter | Auditable provenance |
-| Batch API for backfill labelling (50% cheaper on Token Factory) | Cost |
-| Nemotron 3 Nano 30B student on H100/H200 | Harder tasks |
-| GitHub Actions CI with coverage; PyPI package | Open-source adoption |
+| Item | Why | Status |
+|---|---|---|
+| PII redaction before storing examples | Real customer data | Pattern-based: done (v0.4). NER-based (Presidio) for names and addresses: planned |
+| Gateway API keys and per-key quotas | Security | Done (v0.4). Per-key spend caps: planned |
+| Streaming responses | Many apps stream | Done (v0.4) |
+| Signed model bill of materials stored with each adapter | Auditable provenance | Done (v0.4). Copy inside the adapter folder in the bucket: planned |
+| GitHub Actions CI with coverage | Open-source adoption | Done (v0.4). PyPI package: planned |
+| Postgres ledger option | Concurrency, durability | Planned |
+| Multiple tasks per deployment with separate golden sets and thresholds | Real workloads mix tasks | Planned |
+| Batch API for backfill labelling (50% cheaper on Token Factory) | Cost | Planned |
+| Nemotron 3 Nano 30B student on H100/H200 | Harder tasks | Planned |
 
-Exit criteria: two design partners running v0.3 on one task each; zero bad deploys at 100%.
+Exit criteria: two design partners running v0.5 on one task each; zero bad deploys at 100%.
 
 ## Milestone 3: v1.0 Ratchet Cloud (Q1–Q2 2027)
 

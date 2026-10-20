@@ -2,7 +2,8 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 49 tests (test_core, test_system, test_hardening, test_scout), ~10 s
+pytest -q                     # 64 tests (test_core, test_system, test_hardening, test_scout), ~20 s
+pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 ```
@@ -11,9 +12,9 @@ python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's 
 |---|---|
 | `tests/test_core.py` | 19 (15 functions; one has 5 cases) |
 | `tests/test_system.py` | 7 |
-| `tests/test_hardening.py` | 8 |
+| `tests/test_hardening.py` | 23 |
 | `tests/test_scout.py` | 15 |
-| **Total** | **49** |
+| **Total** | **64** |
 
 There are three layers:
 
@@ -54,12 +55,32 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
-| `test_gateway_rejects_bad_requests` | Empty `messages` and `stream: true` both return 400 |
+| `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request that fails validation gets a normal HTTP 400 before any stream starts |
 | `test_openai_compat_provider_parses_logprobs_and_usage` | `OpenAICompatProvider` against an `httpx.MockTransport`: sends `logprobs` and `n`, sends the bearer header, parses logprobs per choice, splits completion tokens across choices, computes `mean_prob` |
 
 ### `tests/test_hardening.py`
 
 Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version`, `test_policy_from_env`.
+
+The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
+
+| Test | Covers |
+|---|---|
+| `test_redact_finds_each_kind_and_checks_checksums` | Every label is found in one text (two phones, ten placeholders); a card number that fails Luhn is left alone |
+| `test_redact_leaves_ordinary_text_alone` | Order numbers, dates, times, prices, version strings, page counts, URLs and an ISBN are not touched |
+| `test_redact_messages_handles_content_parts` | OpenAI content-part lists are redacted part by part; non-text parts and the caller's copy are untouched |
+| `test_redaction_is_a_no_op_on_the_mock_world` | 2,000 requests from the `mixed` stream and their teacher answers are unchanged by redaction, so mock lookups and simulation numbers cannot shift |
+| `test_examples_are_stored_redacted_but_the_teacher_sees_the_original` | The teacher receives the email and phone; the stored example has `[EMAIL]` and `[PHONE]` in messages and completion, `redactions == 3`, and `privacy_stats` agrees; with `redact_pii=False` the example is stored verbatim |
+| `test_keyring_parses_and_identifies` | Named and bare keys, lookup, short keys, bad names and duplicate names raise; `bearer()` reads `Authorization` and `X-API-Key` |
+| `test_api_keys_protect_v1_and_name_the_client` | No key or a wrong key gets 401 on `/v1/chat/completions` and `/v1/models`; Bearer and `X-API-Key` both work; `clients` in stats lists both names and never the keys; Scout stays public |
+| `test_daily_quota_per_key` | Quota 2: remaining-requests header counts down, the third call gets 429 with remaining 0, and another key is unaffected |
+| `test_streaming_matches_the_non_streaming_answer` | `stream: true` returns `text/event-stream`, a role chunk first, content chunks that join into exactly the non-streaming answer, a final chunk with `finish_reason: "stop"` and the `ratchet` block, then `[DONE]` |
+| `test_signed_bom_per_adapter_verifies_and_detects_tampering` | With a signing key, a simulated night stores a BOM that matches the schema, lists only distillable sources and verifies with the public key; editing it breaks the SHA-256, re-hashing still fails the signature, and another key fails; unknown versions get 404 |
+| `test_bom_is_stored_unsigned_without_a_key_and_cli_verifies` | Without a key, a simulated night stores an unsigned BOM whose dataset hash matches the version; the CLI `verify` and `keygen` commands work |
+| `test_bad_signing_key_fails_at_startup` | A key that is not base64, or not 32 bytes, raises |
+| `test_v03_database_gets_v04_columns` | A v0.3 database file gets `client`, `redactions` and `bom` on open |
+| `test_healthz_stays_public_when_keys_are_on` | `/healthz` answers 200 while `/v1/models` needs a key |
+| `test_redact_preview_endpoint` | `POST /ratchet/redact` returns the redacted text and counts; over-long or missing text gets 400 |
 
 ### `tests/test_scout.py`
 
@@ -85,7 +106,9 @@ The `gw` fixture reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
-Not covered by tests yet: `RATCHET_TRUST_PROXY` and the mock warm-up at startup (it runs the same `simulate_day` the tests exercise).
+Not covered by tests yet: `RATCHET_TRUST_PROXY`, the mock warm-up at startup (it runs the same `simulate_day` the tests exercise), and the live-mode BOM file written by `python -m ratchet.live night`.
+
+During development the v0.4 features were also checked end to end against a running gateway with the official OpenAI Python SDK (401 on a wrong key, streaming text identical to the non-streaming answer, the quota cutting one key off at its limit while another kept working, a signed BOM verifying with `python -m ratchet.bom verify` and failing once edited), and the dashboard's Trust and privacy panel with Playwright in light and dark mode at desktop and phone widths.
 
 ## Simulation methodology
 

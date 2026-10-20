@@ -91,7 +91,8 @@ The file starts in `RATCHET_MODE=mock` with `RATCHET_MOCK_WARMUP_DAYS=4`, so the
 | `https://<domain>/scout` | Scout UI. In mock mode it shows "Simulated search results" and only the example questions work |
 | `https://<domain>/dashboard` | Ratchet dashboard (simulation) |
 | `https://<domain>/ratchet/stats` | JSON stats |
-| `https://<domain>/v1/models` | `{"object":"list","data":[{"id":"ratchet",...}]}` (403 if the guard is on, see Security) |
+| `https://<domain>/healthz` | `{"status":"ok",...}` (always public) |
+| `https://<domain>/v1/models` | `{"object":"list","data":[{"id":"ratchet",...}]}` (403 if the Caddy guard is on, 401 if `RATCHET_API_KEYS` is set and you send no key; see Security) |
 
 ```bash
 curl -sN "https://<domain>/scout/stream?q=What%20is%20LoRA%20fine-tuning%3F"   # events should arrive one by one
@@ -105,7 +106,8 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
    - `RATCHET_MODE=live`
    - `NEBIUS_API_KEY` (Token Factory) and `TAVILY_API_KEY`
    - `RATCHET_STUDENT_BASE` and `RATCHET_STUDENT_KEY` only while the vLLM endpoint is running. Leave both empty to use the hosted, untuned fallback student, which costs per token instead of per GPU-hour. Say so in the demo.
-   - **`RATCHET_API_GUARD=guarded`** and `RATCHET_ADMIN_TOKEN=$(openssl rand -hex 32)`. Without this, anyone can send unlimited paid requests to `/v1/chat/completions`.
+   - **Protect `/v1/*`.** Either `RATCHET_API_KEYS=me:$(openssl rand -hex 24)` (gateway API keys; add `RATCHET_API_KEY_DAILY_REQUESTS=200` for a daily cap), or **`RATCHET_API_GUARD=guarded`** with `RATCHET_ADMIN_TOKEN=$(openssl rand -hex 32)` (Caddy edge guard), or both. Without one of them, anyone can send unlimited paid requests to `/v1/chat/completions`.
+   - Optional, for signed adapter BOMs: run `python -m ratchet.bom keygen` on your laptop, put the `RATCHET_BOM_SIGNING_KEY=` line in `.env`, and publish the public key it prints (README or Devpost). This also works in mock mode, so the public demo can show signed BOMs.
 2. Set the **budget guard** to what you can afford:
    - `RATCHET_SCOUT_DAILY_BUDGET_USD` caps Scout's Ratchet spend per UTC day (default 3.00). Over 48 days the worst case is the cap × 48, so 3.00 can reach **$144**. The Builder Program credit is $25 ([DEPLOYMENT.md](DEPLOYMENT.md#step-1-token-factory-key-and-checks)), so **0.50/day ($24 worst case)** fits inside it.
    - `RATCHET_SCOUT_RUNS_PER_HOUR` (default 6) limits each client IP.
@@ -149,7 +151,7 @@ Usage costs in live mode (on top of the infrastructure):
 | Item | How it is bounded | Expected | Worst case |
 |---|---|---|---|
 | Token Factory (Scout) | `RATCHET_SCOUT_DAILY_BUDGET_USD` per UTC day | A Scout run makes 1 planner + up to 12 triage + up to 6 reader + 1 writer call. With list prices in [CONFIGURATION.md](CONFIGURATION.md#prices-default_prices) that is roughly $0.02–0.03 per run before the student is trained, and under $0.01 after. 10–30 runs a day is about **$0.10–0.90/day** | cap × 48 days: $24 at 0.50, $144 at 3.00 |
-| Token Factory (`/v1/chat/completions`) | **Not covered by the Scout budget.** Only the edge guard limits it | $0 with `RATCHET_API_GUARD=guarded` | Unbounded with the guard off |
+| Token Factory (`/v1/chat/completions`) | **Not covered by the Scout budget.** Gateway API keys with `RATCHET_API_KEY_DAILY_REQUESTS`, or the edge guard | $0 with `RATCHET_API_GUARD=guarded` or keys you do not share | Keys: the daily quota × your keys. Unbounded with both off |
 | Tavily search | 3 basic searches per run, 1 credit each ([Tavily credits](https://docs.tavily.com/documentation/api-credits)) | 1,000 free credits per month ≈ 330 runs a month | `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (30) × 3 = 90 credits a day; beyond the free credits, $0.008 per credit on pay-as-you-go |
 | Student endpoint (L40S) | Only while running | $0 if you use the hosted fallback | ~$37 per full day if left on ([DEPLOYMENT.md](DEPLOYMENT.md#4-cost-estimates)) |
 
@@ -165,7 +167,7 @@ sudo -u ratchet docker compose logs -f --tail=100 caddy   # certificate problems
 curl -s https://<domain>/scout/status                 # live mode: spend today vs budget
 ```
 
-- The ratchet container has a Docker health check on `/v1/models` every 30 seconds. Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
+- The ratchet container has a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
 - For an outside check, point a free uptime monitor at `https://<domain>/ratchet/stats`.
 
@@ -202,16 +204,17 @@ sudo -u ratchet docker compose start ratchet
 - **No secrets in git.** Keys live only in `deploy/vm/.env` on the VM (mode 0600). The repo's `.gitignore` already ignores `.env` files at any depth. Never paste keys into `cloud-init.yaml` or `create_vm.sh`.
 - **Firewall.** `ufw` allows only 22, 80 and 443. The default Nebius security group allows all traffic ([security groups](https://docs.nebius.com/vpc/security-groups/overview)), so `ufw` is the filter that matters. Docker publishes Caddy's ports 80 and 443 through its own rules, which bypass `ufw`; the gateway's port 8000 is not published, so only Caddy can reach it.
 - **SSH.** Key login only, user `ubuntu` (or `RATCHET_SSH_USER`). The `ratchet` user cannot log in.
-- **The gateway has no authentication in v0.1.** `/v1/chat/completions` is open to anyone who can reach it, and there is no app setting to turn the public API off yet. Caddy provides an opt-in guard instead:
+- **Gateway API keys (v0.4).** `RATCHET_API_KEYS=name:key,...` makes `/v1/*` answer 401 without `Authorization: Bearer <key>`; `RATCHET_API_KEY_DAILY_REQUESTS` caps each key per UTC day. The dashboard's **Trust and privacy** panel shows per-client usage. Pages, Scout, `/healthz` and `/ratchet/*` stay public, so the mock demo buttons keep working. Details in [API.md](API.md#authentication).
+- **Caddy edge guard.** Independent of the app keys, and also covers the mock demo controls:
   - `RATCHET_API_GUARD=guarded` blocks `/v1/*` and `/ratchet/demo/*` with HTTP 403 unless the request carries `X-Ratchet-Admin-Token: <RATCHET_ADMIN_TOKEN>`.
   - These stay public: `/`, `/scout*` (including `/scout/stream`, `/scout/run`, `/scout/status`), `/dashboard`, `/ratchet/stats`, `/ratchet/bom`.
   - If the token is empty or shorter than 32 characters, the guarded paths are blocked for everyone. Caddy strips the token header before it reaches the gateway.
   - In mock mode the guard also disables the dashboard's **Run day**, **Break next deploy** and **Reset** buttons, which call `/ratchet/demo/*`. Use `open` for the mock demo and `guarded` for live mode.
   - Using the API yourself while guarded: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or pass `default_headers={"X-Ratchet-Admin-Token": TOKEN}` to the OpenAI SDK.
 - **The mock demo is shared.** All visitors see the same simulated state, and one visitor's Reset affects everyone. That is acceptable for a demo, and it costs nothing.
-- **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence the edge guard), and it does not stop someone with many IP addresses from using up the daily budget early. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
+- **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence API keys or the edge guard), and it does not stop someone with many IP addresses from using up the daily budget early. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
 - **Real client IPs.** Caddy replaces any client-sent `X-Forwarded-For` with the real address, and uvicorn runs with `--proxy-headers`, so the per-IP limit sees real IPs.
-- **After judging:** rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY` and `RATCHET_ADMIN_TOKEN`, and revoke any GitHub token used for cloning.
+- **After judging:** rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN_TOKEN` and `RATCHET_API_KEYS`, and revoke any GitHub token used for cloning. Keep `RATCHET_BOM_SIGNING_KEY` (or its public key) if you want old BOMs to stay verifiable.
 
 ## Teardown
 
