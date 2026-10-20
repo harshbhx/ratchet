@@ -29,7 +29,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Kind | Written by | Meaning | Action |
 |---|---|---|---|
 | `trained` | `run_night` | A new version was trained and scored on the golden set | None |
-| `skip` | `run_night` | No training tonight: release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight |
+| `skip` | `run_night` | No training tonight: storage disabled (`RATCHET_STORE_EXAMPLES=0`), release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight and storage on |
 | `rejected` | `admit` / `tick` | Candidate failed the golden gate or shadow (reason in detail) | Repeated rejections: see [Persistent rejections](#persistent-rejections) |
 | `shadow` | `admit` | Candidate passed the golden gate and is running silently | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
@@ -52,6 +52,8 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rescored` | `run_night` | A night without enough new data to train re-scored the live version, because a golden task's spec changed since it was scored. The task's student traffic resumes under the new threshold | None |
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
 | `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
+| `no_train` | `POST` / `DELETE /v1/ratchet/no-train` | End users were registered as no-train, or registrations removed: a count and who (`2 end user registration(s) by admin ops`, `1 ... removed by acme`), never the end user or its hash | None. See [Opt-out requests](#opt-out-requests-an-end-user-or-a-client) |
+| `end_user_key` | gateway startup (`privacy.end_users`) | The end-user HMAC key differs from the one the ledger last saw (`RATCHET_END_USER_KEY` set, changed or removed): every earlier end-user hash, and the no-train registrations the detail counts, no longer match, so those end users' requests are stored again | If unintended, restore the previous key and restart. If intended, have every no-train end user registered again |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -233,6 +235,20 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 `break_even_student_requests_per_gpu_hour` is the volume to aim for; `observed_student_requests_per_endpoint_hour` is where you are. More traffic per GPU (more tasks or customers as LoRA adapters on one vLLM endpoint) moves observed up; scale-to-zero moves endpoint hours down.
 
+### Opt-out requests (an end user or a client)
+
+Opt-outs only remove storage; requests are still answered, audited and logged ([API.md](API.md#end-users-and-storage), FR-13.1, FR-13.2).
+
+| Who asks | Do |
+|---|---|
+| An end user of one client | The client calls `POST /v1/ratchet/no-train` with `{"end_user": "<the value it sends as user or safety_identifier>"}` and its API key |
+| An end user, through you (a data subject request) | `POST /v1/ratchet/no-train` with an admin key and no `client`: registered for every API key's end users. Remove with `DELETE` and the same body |
+| A client, for all its traffic | Add `name:store=0` to `RATCHET_KEY_LIMITS` and restart |
+| A task's data owner | `store: false` in the task's spec (`PUT /ratchet/tasks/<name>`), or the name in `RATCHET_NO_STORE_TASKS` and restart |
+| Everyone (zero retention) | `RATCHET_STORE_EXAMPLES=0` and restart; Night School then skips every night |
+
+Check `/ratchet/stats` → `privacy.not_stored_by_reason` and the response's `ratchet.store_opt_out`. An opt-out does not delete what was stored before: for that, follow [PII leak](#pii-leak) until erasure lands. Keep `RATCHET_END_USER_KEY` stable: changing it unlinks every no-train registration (an `end_user_key` event).
+
 ### PII leak
 
 All request messages escalated or audited to the teacher are stored in `examples.messages`, and copies go to `night/train.jsonl` in the bucket. With `RATCHET_REDACT_PII=1` (the default) emails, phones, cards, IBANs, national IDs, IPs and API secrets are stored as placeholders, so a leak there usually means a name, an address, or an identifier format the redactor does not know. Paste a sample into the dashboard's **Try the redactor** box (or `POST /ratchet/redact`) to see what it catches.
@@ -245,7 +261,7 @@ All request messages escalated or audited to the teacher are stored in `examples
 4. Delete affected files from the bucket, including old adapters and datasets.
 5. Follow your legal and notification duties.
 
-**Prevention:** keep `RATCHET_REDACT_PII=1`; add a pattern to `ratchet/redact.py` (with a test) for any identifier format you find leaking. Planned: NER-based detection for names and addresses, and Token Factory zero-data-retention settings. See [THREAT_MODEL.md](THREAT_MODEL.md) T4.
+**Prevention:** keep `RATCHET_REDACT_PII=1`; add a pattern to `ratchet/redact.py` (with a test) for any identifier format you find leaking. Keep sensitive traffic out of storage altogether with an opt-out ([Opt-out requests](#opt-out-requests-an-end-user-or-a-client)). Planned: NER-based detection for names and addresses, and Token Factory zero-data-retention settings. See [THREAT_MODEL.md](THREAT_MODEL.md) T4.
 
 ### Startup refused: a reserved setting
 

@@ -40,7 +40,10 @@ CREATE TABLE IF NOT EXISTS requests (
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
     student_agree INTEGER,     -- 1/0: the student's answer agreed with the escalation's or a random audit's (FR-16.5)
     baseline_est_usd REAL,     -- the all-teacher cost by the token formula, also when the teacher answered (FR-16.5)
-    optional_failed INTEGER    -- 1: an optional teacher call of this request (audit, arbitration) failed
+    optional_failed INTEGER,   -- 1: an optional teacher call of this request (audit, arbitration) failed
+    -- Data governance (FR-13.1, FR-13.2, ADR 0080):
+    end_user TEXT,             -- HMAC of the request's safety_identifier or user (privacy.EndUsers), never the value
+    store_opt_out TEXT         -- why its teacher answers could not be stored (privacy.OPT_OUTS); NULL: no opt-out
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +59,10 @@ CREATE TABLE IF NOT EXISTS examples (
     origin TEXT,               -- 'escalation' | 'audit' | 'arbitration' | 'backfill'; NULL: not recorded (FR-16.8)
     job TEXT,                  -- the backfill job that wrote it; NULL otherwise (FR-16.8)
     contested INTEGER DEFAULT 0,      -- 1: a later teacher label of the same request disagreed (FR-16.7)
-    checked_epoch INTEGER DEFAULT 0   -- the teacher-watch epoch of its last self-consistency check (FR-16.7)
+    checked_epoch INTEGER DEFAULT 0,  -- the teacher-watch epoch of its last self-consistency check (FR-16.7)
+    -- Data governance (FR-13.2, ADR 0080): who sent the request it was first stored from; NULL for internal calls
+    client TEXT,               -- API key name, never the key; later senders are in example_clients
+    end_user TEXT              -- the end user's HMAC (privacy.EndUsers), never the raw value
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +141,18 @@ CREATE TABLE IF NOT EXISTS erasures (        -- erasure requests and their certi
     status TEXT,               -- 'pending' | 'complete'
     replacement INTEGER,       -- the version trained without it
     certificate TEXT           -- JSON: the signed certificate
+);
+-- Data governance tables (FR-13.2, ADR 0080). Hashes and key names only, never a raw end-user value or a key.
+CREATE TABLE IF NOT EXISTS example_clients (  -- other API clients whose requests matched a stored example
+    hash TEXT NOT NULL,        -- examples.hash
+    client TEXT NOT NULL,      -- API key name; examples.client holds the first sender and is never listed here
+    PRIMARY KEY (hash, client)
+);
+CREATE TABLE IF NOT EXISTS no_train (         -- end users whose requests are never stored as training examples
+    end_user_hash TEXT PRIMARY KEY,  -- privacy.EndUsers hash, scoped to `client`
+    ts REAL,
+    client TEXT,               -- the API key name the hash belongs to; NULL for requests sent without a key
+    admin TEXT                 -- the admin's name when an admin registered it; then only an admin can remove it
 );
 -- INV-17: committed leaves and sealed receipts are append-only. A changed or deleted row would silently break the
 -- signed roots and chains built from them, so the database refuses UPDATE and DELETE, and an INSERT that would replace
@@ -220,6 +238,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "student_agree": "INTEGER",
         "baseline_est_usd": "REAL",
         "optional_failed": "INTEGER",
+        "end_user": "TEXT",
+        "store_opt_out": "TEXT",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -229,6 +249,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "job": "TEXT",
         "contested": "INTEGER DEFAULT 0",
         "checked_epoch": "INTEGER DEFAULT 0",
+        "client": "TEXT",
+        "end_user": "TEXT",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }
@@ -244,12 +266,16 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
+    # One end user's requests over time (FR-13.2): what erasure, export and per-user limits look up.
+    "CREATE INDEX IF NOT EXISTS requests_end_user_ts ON requests (end_user, ts)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
 # each of them.
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
+# Tables created by SCHEMA for data governance (FR-13.2, ADR 0080); the migration test checks an old file gains them.
+GOVERNANCE_TABLES = ("example_clients", "no_train")
 
 DAY_SECONDS = 86400
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
@@ -525,18 +551,22 @@ class Ledger:
         license_url: str,
         redactions: int = 0,
         params: Mapping[str, Any] | None = None,
+        client: str | None = None,
+        end_user: str | None = None,
     ) -> bool:
         """Store a teacher-labelled example. Returns False if it was a duplicate.
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
-        under other conditions are another example, in the same split (`_split`)."""
+        under other conditions are another example, in the same split (`_split`). `client` (the API key name) and
+        `end_user` (its HMAC, `privacy.EndUsers`) record who sent the request (FR-13.2). A duplicate keeps its first
+        sender and adds a client that is not that one to `example_clients`, so a client's data can be found later."""
         target = target_params(params)
         h = example_hash(task, messages, target)
         split = self._split(example_hash(task, messages) if target else h)  # without conditions, h is the split key
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model,"
-                " license, license_url, split, redactions, params) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " license, license_url, split, redactions, params, client, end_user) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     time.time(),
                     self.day,
@@ -550,12 +580,20 @@ class Ledger:
                     split,
                     redactions,
                     json.dumps(target, ensure_ascii=False) if target else None,
+                    client,
+                    end_user,
                 ),
             )
             self.db.commit()
             return True
         except sqlite3.IntegrityError:
             self.db.execute("UPDATE examples SET seen = seen + 1 WHERE hash=?", (h,))
+            if client is not None:  # `IS NOT` so an example first stored without a client records this one
+                self.db.execute(
+                    "INSERT OR IGNORE INTO example_clients (hash, client) SELECT hash, ? FROM examples"
+                    " WHERE hash=? AND client IS NOT ?",
+                    (client, h, client),
+                )
             self.db.commit()
             return False
 
@@ -577,6 +615,15 @@ class Ledger:
             q += " AND task=?"
             args.append(task)
         return list(self.db.execute(q + " ORDER BY id", args))
+
+    @_locked
+    def example_clients(self, h: str) -> list[str]:
+        """Every API client whose request matched the example with hash `h`: its first sender, then the others in
+        name order (`example_clients`). Empty when the example was stored without a client (or does not exist)."""
+        row = self.db.execute("SELECT client FROM examples WHERE hash=?", (h,)).fetchone()
+        first = [row["client"]] if row is not None and row["client"] is not None else []
+        others = [r["client"] for r in self.db.execute("SELECT client FROM example_clients WHERE hash=? ORDER BY client", (h,))]
+        return first + [c for c in others if c not in first]
 
     @_locked
     def example_count(self, task: str) -> int:
@@ -605,6 +652,98 @@ class Ledger:
             "SELECT COUNT(*) n, SUM(redactions > 0) redacted, COALESCE(SUM(redactions), 0) placeholders FROM examples"
         ).fetchone()
         return {"examples": int(r["n"]), "redacted_examples": int(r["redacted"] or 0), "placeholders": int(r["placeholders"])}
+
+    @_locked
+    def opt_out_stats(self) -> dict[str, Any]:
+        """Requests under a storage opt-out (`not_stored_requests`, and by reason, `privacy.OPT_OUTS`) and end users
+        registered as no-train. Counts only, never a hash: /ratchet/stats is public (FR-13.1, FR-13.2)."""
+        reasons = {
+            row["store_opt_out"]: int(row["n"])
+            for row in self.db.execute(
+                "SELECT store_opt_out, COUNT(*) n FROM requests WHERE store_opt_out IS NOT NULL"
+                " GROUP BY store_opt_out ORDER BY n DESC, store_opt_out"
+            )
+        }
+        no_train = int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+        return {
+            "not_stored_requests": sum(reasons.values()),
+            "not_stored_by_reason": reasons,
+            "no_train_end_users": no_train,
+        }
+
+    # ---------- end users (FR-13.2, ADR 0080) ----------
+    @_locked
+    def no_train_add(self, entries: Iterable[tuple[str, str | None]], admin: str | None = None) -> list[bool]:
+        """Register end users as no-train: `entries` are (hash, the API key name the hash belongs to). Returns, per
+        entry, whether it was new. An admin's registration (`admin`, the admin's name) also marks an existing one as
+        the admin's, so its client cannot remove it. One transaction."""
+        now = time.time()
+        created = []
+        self._begin()
+        try:
+            for h, client in entries:
+                cur = self.db.execute(
+                    "INSERT OR IGNORE INTO no_train (end_user_hash, ts, client, admin) VALUES (?,?,?,?)", (h, now, client, admin)
+                )
+                created.append(cur.rowcount > 0)
+                if cur.rowcount == 0 and admin is not None:
+                    self.db.execute("UPDATE no_train SET admin=? WHERE end_user_hash=? AND admin IS NULL", (admin, h))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return created
+
+    @_locked
+    def no_train_remove(self, hashes: Iterable[str], admin: bool = False) -> list[str]:
+        """Remove no-train registrations: any of `hashes` with `admin`, else only those a client registered. Returns,
+        per hash, `removed`, `kept` (an admin registered it) or `absent`. One transaction."""
+        out = []
+        self._begin()
+        try:
+            for h in hashes:
+                row = self.db.execute("SELECT admin FROM no_train WHERE end_user_hash=?", (h,)).fetchone()
+                if row is None:
+                    out.append("absent")
+                elif row["admin"] is not None and not admin:
+                    out.append("kept")
+                else:
+                    self.db.execute("DELETE FROM no_train WHERE end_user_hash=?", (h,))
+                    out.append("removed")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return out
+
+    @_locked
+    def is_no_train(self, h: str) -> bool:
+        """Whether the end user with hash `h` is registered as no-train: one primary-key lookup."""
+        return self.db.execute("SELECT 1 FROM no_train WHERE end_user_hash=?", (h,)).fetchone() is not None
+
+    @_locked
+    def no_train_count(self) -> int:
+        return int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+
+    # ---------- meta (small ledger-wide state) ----------
+    @_locked
+    def meta_get(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    @_locked
+    def meta_set(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self.db.commit()
+
+    @_locked
+    def meta_setdefault(self, key: str, value: str) -> str:
+        """The stored value of `key`, storing `value` first when there is none. Atomic across processes sharing the
+        file: the first writer wins and everyone reads its value."""
+        self.db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self.db.commit()
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return str(row["value"])
 
     # ---------- versions ----------
     @_locked
@@ -883,10 +1022,13 @@ class Ledger:
 
     @_locked
     def stats_by_client(self) -> list[dict[str, Any]]:
-        """Per API key: requests, cost and savings (the basis for per-client receipts)."""
+        """Per API key: requests, cost and savings (the basis for per-client receipts); `end_users`, the distinct end
+        users its requests named (FR-13.2); and `stored_share`, the share of its requests that stored or bumped a
+        training example (None when no request recorded it, as before v0.5)."""
         rows = self.db.execute(
             """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
-                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline
+                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
+                      COUNT(DISTINCT end_user) end_users, AVG(stored) stored_share
                FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
         ).fetchall()
         out = []
@@ -900,6 +1042,8 @@ class Ledger:
                     "cost_usd": cost,
                     "baseline_usd": base,
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
+                    "end_users": int(r["end_users"] or 0),
+                    "stored_share": None if r["stored_share"] is None else float(r["stored_share"]),
                 }
             )
         return out

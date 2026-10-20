@@ -81,13 +81,22 @@
       "student_share": "number",
       "cost_usd": "number",
       "baseline_usd": "number",
-      "savings_pct": "number"
+      "savings_pct": "number",
+      "end_users": "number",
+      "stored_share": "number|null"
     },
     "privacy": {
       "redaction": "bool",
       "examples": "number",
       "redacted_examples": "number",
-      "placeholders": "number"
+      "placeholders": "number",
+      "not_stored_requests": "number",
+      "not_stored_by_reason": "object",
+      "no_train_end_users": "number",
+      "store_examples": "bool",
+      "no_store_tasks": "list",
+      "no_store_clients": "list",
+      "end_user_key": "string"
     },
     "security": {
       "api_keys": "bool",

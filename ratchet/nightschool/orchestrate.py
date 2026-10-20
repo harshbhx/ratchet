@@ -64,8 +64,11 @@ def run_night(
     train_gpu: GpuRate | None = None,
     clock: Callable[[], float] | None = None,
     redact_pii: bool | None = None,
+    store_examples: bool = True,
 ) -> NightReport:
-    """One night. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
+    """One night. With `store_examples` False (RATCHET_STORE_EXAMPLES=0, zero retention; FR-13.1) nothing is stored, so
+    the night skips before anything else (`storage disabled`): examples kept from before are neither trained on nor
+    re-scored. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
     recorded as a `training_job` compute interval on `clock` (default `ledger.now`) for the cost report (FR-15.2), and
     closed whether training returns or raises. It includes the dataset upload and the adapter load around the GPU job,
     so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
@@ -74,6 +77,9 @@ def run_night(
     Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
     set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
     into the one `bom_extra` dict."""
+    if not store_examples:
+        ledger.event("skip", "storage disabled (RATCHET_STORE_EXAMPLES=0): no new examples are stored; no training tonight")
+        return NightReport(False, None, False, "storage disabled")
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]

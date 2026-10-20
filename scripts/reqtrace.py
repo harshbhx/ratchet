@@ -694,6 +694,33 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
+    # 6.13 Data governance
+    "FR-13.1": (
+        "ratchet.router:Ratchet.store_opt_out",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.gateway:_request_meta",
+        "ratchet.privacy:store_header",
+        "ratchet.privacy:request_opts_out",
+        "ratchet.auth:parse_key_limits",
+        "ratchet.config:Settings.no_store_task_names",
+        "ratchet.nightschool.orchestrate:run_night",
+        "ratchet.ledger:Ledger.opt_out_stats",
+        "ratchet.gateway:stats",
+    ),
+    "FR-13.2": (
+        "ratchet.privacy:EndUsers",
+        "ratchet.privacy:end_users",
+        "ratchet.openai_compat:_end_user",
+        "ratchet.gateway:no_train_add",
+        "ratchet.gateway:no_train_remove",
+        "ratchet.ledger:Ledger.add_example",
+        "ratchet.ledger:Ledger.no_train_add",
+        "ratchet.ledger:Ledger.no_train_remove",
+        "ratchet.ledger:Ledger.stats_by_client",
+        "ratchet.ledger:SCHEMA",
+        "ratchet.ledger:MIGRATIONS",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -732,7 +759,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.live:reload_adapters",
     ),
     "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night", "ratchet.providers:GenPolicy"),
-    "NFR-4": ("ratchet.redact:redact_messages",),
+    "NFR-4": ("ratchet.redact:redact_messages", "ratchet.router:Ratchet.store_opt_out", "ratchet.privacy:EndUsers.hash"),
     "NFR-5": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_quota"),
     "NFR-6": ("ratchet.ledger:Ledger.log_request", "ratchet.ledger:Ledger.event", "ratchet.gateway:stats"),
     "NFR-7": ("ratchet.providers:OpenAICompatProvider",),
@@ -757,8 +784,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.nightschool.evaluate:cascade_eval",
     ),
     "INV-11": ("ratchet.gateway:_scout_precheck", "ratchet.gateway:_run_scout", "ratchet.scout.guard:Guard.admit"),
-    "INV-12": ("ratchet.redact:redact_messages", "ratchet.redact:redact_json", "ratchet.router:Ratchet._store_example"),
-    "INV-13": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_admin", "ratchet.ledger:Ledger.save_task"),
+    "INV-12": (
+        "ratchet.redact:redact_messages",
+        "ratchet.redact:redact_json",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.gateway:_request_meta",
+    ),
+    "INV-13": (
+        "ratchet.auth:KeyRing.identify",
+        "ratchet.gateway:_admin",
+        "ratchet.ledger:Ledger.save_task",
+        "ratchet.auth:parse_key_limits",
+    ),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
     "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
     "INV-16": (

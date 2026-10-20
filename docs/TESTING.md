@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 706 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 728 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -30,12 +30,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
-| **Total** | **706** |
+| `tests/test_privacy.py` | 22 |
+| **Total** | **728** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -559,6 +560,35 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_rows_report_their_origin` | `dataset.rows` reports `examples.origin`, or `live` when it is not recorded |
 | `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
 | `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
+
+### `tests/test_privacy.py`
+
+Data governance: storage opt-outs and pseudonymous end users (FR-13.1, FR-13.2, NFR-4, [ADR 0080](adr/0080-storage-opt-outs-and-pseudonymous-end-users.md)). The proposed invariant "opt-outs only reduce storage" and its proving tests are listed in [docs/lanes/e-invariants.md](lanes/e-invariants.md).
+
+| Test | Covers |
+|---|---|
+| `test_store_false_escalation_calls_the_teacher_and_stores_nothing` | FR-13.1, INV-2: `RequestMeta(storable=False)` on an escalation: the teacher answers, `Result.stored` false, `store_opt_out` `request`, the row `stored` 0 with its reason; the storable request stores, an opted-out duplicate (reason `key`) does not bump it; no `skip_example` event |
+| `test_store_false_still_audits_and_arbitrates_without_storing` | FR-13.1, INV-15: with `audit_rate=1` the audit still records `audit_agree` 1 and nothing is stored; a shadow that disagrees is still arbitrated (`shadow_agree` 0) and the arbitration is not stored, while the same disagreement on a storable request stores it |
+| `test_zero_retention_stores_nothing_for_any_caller` | FR-13.1, NFR-4: `store_examples=False` stores nothing for Scout's call shape (no meta), a request with an end user, or an audited student answer (still audited); every row `global`, `stored` 0 |
+| `test_zero_retention_mode_night_skips` | FR-13.1: `run_night(store_examples=False)` skips with `storage disabled` before the trainer or the evaluator is called, although 60 stored examples would train; the default trains; the mock `Runtime`'s simulated day under `RATCHET_STORE_EXAMPLES=0` serves 100 requests, stores nothing and skips |
+| `test_live_night_skips_under_zero_retention` | FR-13.1: `python -m ratchet.live night` with `RATCHET_STORE_EXAMPLES=0` prints `storage disabled`, runs no training command and creates no version |
+| `test_no_store_tasks_from_the_setting_and_the_spec` | FR-13.1: `RATCHET_NO_STORE_TASKS` (spaces trimmed, unregistered names allowed) and a spec's `store: false` give reason `task`; other tasks are stored; a space-separated list or an over-long name stops startup |
+| `test_examples_record_client` | FR-13.2, FR-3.3: an example keeps its first client and end user; a duplicate from another client adds one `example_clients` row, its own duplicates, internal calls and opted-out requests add none; an example first stored without a client records the first client that sends it again |
+| `test_no_train_end_users_are_never_stored_even_when_registered_mid_request` | FR-13.2: a registered end user's escalation is served and not stored (`end_user`), another end user's is; a registration made while the request waits for the teacher still keeps it out (the store-time check) |
+| `test_pinned_and_teacher_only_requests_record_the_end_user_and_opt_out` | FR-13.1, INV-10: pinned and teacher-only rows record the end user's hash and the opt-out, and store nothing |
+| `test_opt_outs_hold_under_concurrent_requests` | FR-13.1: 80 requests from 8 threads, three quarters opted out three ways (request, key, no-train end user): exactly the 24 storable ones are stored, and every row's `stored` matches its `store_opt_out` |
+| `test_store_false_over_http_escalation` | FR-13.1: `store: false` over HTTP on an escalation: the student and the teacher are called once each, `ratchet.stored` false and `store_opt_out` `request`, nothing stored; `store: true` stores |
+| `test_store_header_metadata_and_key_opt_outs` | FR-13.1: `X-Ratchet-Store` `none`, `0` and ` FALSE `, `metadata.ratchet_store` `"false"` and `"0"`, and a key with `store=0` in `RATCHET_KEY_LIMITS` (also with `store: true`, `X-Ratchet-Store: 1` and `ratchet_store: "true"`) store nothing; explicit opt-ins store; any one opt-out wins; an unknown header or metadata value is a 400 before anything is logged; `/ratchet/stats` names the key and counts by reason |
+| `test_end_user_is_an_hmac_and_the_raw_value_is_stored_nowhere` | FR-13.2, INV-12, INV-13, NFR-4: with redaction off, `user` and `safety_identifier` (which wins) become 16-hex HMACs scoped per key in `requests` and `examples`; an empty `user` is none; a 129-character `user` is a 400 that does not quote it; the raw values, a no-train value and the keys appear in no text value of any table; events carry no hash; `clients[].end_users` and `privacy.no_train_end_users` count |
+| `test_end_user_hash_survives_reopening_the_file_ledger` | FR-13.2: the generated key survives reopening the file (same hash, no event); another file gives another hash; `RATCHET_END_USER_KEY` gives the same hash in any file; switching keys writes one `end_user_key` event without the key; a short key or a corrupted stored key raises |
+| `test_after_no_train_registration_escalations_are_not_stored` | FR-13.2: `POST /v1/ratchet/no-train` with an API key registers the scoped hash without returning it (`created` true, then false); that client's end user is no longer stored, another client's same identifier is; 403 for another client, 200 for its own name; an admin registers for every key and the keyless scope, or for a named client (400 for an unknown one); a client cannot remove an admin's registration (`kept`), removes its own (`removed`, and storage resumes), an admin removes any; `absent`; an admin registration over a client's own protects it; `no_train` events name who and never the end user or its hash; 401 without or with a wrong key |
+| `test_no_train_requests_are_validated` | FR-13.2: missing, non-string, empty and over-long `end_user` (never echoed), an unknown field (`unknown_parameter`), a non-string `client`, a non-object body and bad JSON are 400s in OpenAI's envelope; a keyless caller cannot name a client (403) and registers in the keyless scope; the mock cap (409) |
+| `test_removing_a_registration_needs_a_key_in_live_mode` | FR-13.2, NFR-5: a live gateway without API keys registers for anyone but removes only for an admin key (403 otherwise) |
+| `test_metadata_is_echoed_and_the_ratchet_block_says_whether_it_was_stored` | FR-13.1, FR-7.7: `metadata` echoed in the response, on the stream's `ratchet` chunk (the finish chunk, or the usage chunk with `include_usage`) and nowhere else, absent when not sent, never stored |
+| `test_privacy_stats_report_opt_outs_and_clients` | FR-13.1, FR-13.2, FR-7.7: `/ratchet/stats` privacy keys on a fresh gateway (zero counts, `no_store_tasks` from the setting and specs, `no_store_clients`), `not_stored_by_reason` after traffic, `clients[].end_users` and `stored_share` (3 of 5), and `store_examples` false and `end_user_key` `env` when set |
+| `test_key_limits_parse_and_refuse_typos` | FR-13.1, INV-13: `RATCHET_KEY_LIMITS` parsing (spaces, empty fields, several keys); an unknown name (not quoted, in case it is a key), an unknown field, a bad `store`, a key or field twice and malformed entries raise; with keys off every name is unknown |
+| `test_storage_settings_refuse_typos` | FR-13.1, FR-13.2: `RATCHET_STORE_EXAMPLES` accepts 1/0, true/false, yes/no, on/off in any case (empty is the default) and refuses anything else; a non-bool in code stops `Ratchet`; a short `RATCHET_END_USER_KEY` and `RATCHET_KEY_LIMITS` without API keys stop the gateway |
+| `test_ledger_from_before_opt_outs_gains_the_columns_and_tables` | FR-13.2: a file from before this change gains `requests.end_user` and `store_opt_out`, `examples.client` and `end_user`, `example_clients`, `no_train` and the `(end_user, ts)` index (used by the query planner), twice without change; old rows read NULL |
 
 ## Live-path tests
 
