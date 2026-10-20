@@ -185,9 +185,21 @@ Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py
 
 The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mode demo](#mock-mode-demo)).
 
+## Certified precision (`Settings.cert_policy()`)
+
+How Night School's golden eval picks each version's threshold and what its certificate claims (FR-16.3, [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). The gateway (mock mode's golden eval) and `python -m ratchet.live night` read them; a bad value stops startup with a `ValueError` naming the variable. The simulator takes `--calibration`, `--cert-target` and `--cert-delta` instead. The gate's opt-in rules that read certificates are in the [release policy](#release-policy-ratchetreleasepy).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_CALIBRATION` | `point` | How the threshold is chosen on the calibration half of the golden rows. `point`: the lowest threshold whose calibration answers reach 97% precision (v0.4's rule; routing and the reference runs do not move). `ltt`: Learn-then-Test over the fixed grid 0.95, 0.90, …, 0.50, keeping the lowest threshold whose precision is above `RATCHET_CERT_TARGET` with probability at least 1 − `RATCHET_CERT_DELTA` (1.01, serve nothing, when the highest fails). Case is ignored; empty means `point` |
+| `RATCHET_CERT_TARGET` | `0.95` | The precision a certificate must show (`certified` when the lower bound reaches it), and Learn-then-Test's target. Strictly between 0 and 1 |
+| `RATCHET_CERT_DELTA` | `0.05` | The certificate's error rate: the one-sided Clopper–Pearson bound holds with probability at least 1 − delta (the frontier's rows at delta / 10 each). Strictly between 0 and 1 |
+
+Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served held-out rows; `python -m ratchet.stats plan --target T --delta D`): 95% at delta 0.05 needs 59, 93, 124 or 153 served rows; 97% needs 99, 157, 208 or 257; 90% needs 29, 46, 61 or 76. Only the held-out half counts, so the golden set must be about twice that, divided by the coverage.
+
 ## Release policy (`ratchet/release.py`)
 
-`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`).
+`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`).
 
 | Field | Variable | Default | Used in |
 |---|---|---|---|
@@ -204,8 +216,12 @@ The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mo
 | `max_stage_audits` | `RATCHET_MAX_STAGE_AUDITS` | 400 | Sequential rule: a canary stage with this many audits and no decision is retired (event `inconclusive`); 0 = never. It counts audits, not time. Must be at least `min_audits`, and with `promote_evidence` at least the audits a promotion needs (startup says how many) |
 | `alert_eprocess` | `RATCHET_ALERT_EPROCESS` | 1 | 1: the live alert fires when the e-value against "precision at or above the floor" over the audits since the version went live reaches 1/`alpha_alert`, with no minimum count. 0: the Wilson rule (at least `min_audits` audits and the upper bound below the floor). 0 or 1 |
 | `alpha_alert` | `RATCHET_ALPHA_ALERT` | 0.01 | The live alert's error rate: a live version at or above the floor is alerted on with probability at most this (threshold 1/alpha: 100). Strictly between 0 and 1 |
+| `min_certified_precision` | `RATCHET_MIN_CERTIFIED_PRECISION` | 0.0 | Golden gate ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)): reject a candidate whose certified lower bound on precision (recomputed from its certificate's counts) is below this, or that has no certificate. 0: off. From 0 to 1 |
+| `paired_gate` | `RATCHET_PAIRED_GATE` | 0 | 1: the golden gate's regression check compares the candidate with the re-scored live version row by row on the same held-out rows (the candidate's `paired` record), instead of the two point estimates within `tolerance`. It rejects only a regression that is both larger than `tolerance` (as a share of the rows) and significant (exact McNemar, `regression_alpha`), on coverage or on wrong answers, or a negative flip rate above `max_nfr`. Without a paired record against the live version it falls back to the unpaired rule. 0 or 1 |
+| `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | The paired gate's error rate for each McNemar test: a candidate no worse than live is rejected with probability at most this. Strictly between 0 and 1 |
+| `max_nfr` | `RATCHET_MAX_NFR` | 1.0 | The paired gate: reject when the 95% Wilson lower bound of the negative flip rate (answers live served right that the candidate serves wrong) is above this. 1: off. More than 0 and at most 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed).
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed).
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features not built yet are in [Reserved settings](#reserved-settings).
 
@@ -216,7 +232,8 @@ Other constants:
 | `CANARY_STEPS` | `release.py` | `[10, 50]` then 100 |
 | `FREQUENT` | `nightschool/dataset.py` | 3: requests seen this often always go to training |
 | `min_new_examples` | `run_night()` | 50 new train rows needed to train |
-| `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration |
+| `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration (the `point` rule) |
+| `CERT_GRID` | `stats.py` | 0.95, 0.90, …, 0.50: the thresholds Learn-then-Test and the frontier use (fixed in advance, never from the data) |
 | `floor` | `cascade_eval()` | 0.5: lowest allowed threshold |
 | Confidence weights | `confidence.score()` | 0.4 × token probability + 0.6 × agreement |
 | Student sampling | `router._sample` | `temperature=0.7`, `logprobs=True` |
@@ -224,15 +241,12 @@ Other constants:
 
 ## Reserved settings
 
-The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their settings are declared already, with defaults that keep today's behaviour ([ADR 0024](adr/0024-evidence-foundations.md)), so later items only fill in logic. **Until a feature is built, any value but its default stops startup** with a `ValueError` that names the variable and the feature: a setting that does nothing yet must not look like it protects anything. The gateway, the simulator and `python -m ratchet.live` all check (`Settings.check_reserved()` in `Ratchet`, and `ReleasePolicy` when it is built). Unset, empty, or the default spelled another way (`0.950`, ` Point `) is fine. Each feature's item removes its rows from this section and documents them where they belong.
+The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their settings are declared already, with defaults that keep today's behaviour ([ADR 0024](adr/0024-evidence-foundations.md)), so later items only fill in logic. **Until a feature is built, any value but its default stops startup** with a `ValueError` that names the variable and the feature: a setting that does nothing yet must not look like it protects anything. The gateway, the simulator and `python -m ratchet.live` all check (`Settings.check_reserved()` in `Ratchet`, and `ReleasePolicy` when it is built). Unset, empty, or the default spelled another way (`0.250`, ` Operations `) is fine. Each feature's item removes its rows from this section and documents them where they belong.
 
 `Settings` (`config.RESERVED_SETTINGS`):
 
 | Variable | Default | Feature that will read it |
 |---|---|---|
-| `RATCHET_CALIBRATION` | `point` | Certified precision (FR-16.3): `point` (today's threshold rule) or `ltt` (Learn-then-Test) |
-| `RATCHET_CERT_TARGET` | `0.95` | Certified precision (FR-16.3): the precision a certificate tests for |
-| `RATCHET_CERT_DELTA` | `0.05` | Certified precision (FR-16.3): the certificate's error rate |
 | `RATCHET_TEACHER_PROBES` | `20` | Teacher watch (FR-16.7): stored labels re-asked per night |
 | `RATCHET_ADJUDICATE_MAX` | `50` | Teacher watch (FR-16.7): contested labels adjudicated per night |
 | `RATCHET_TAKE_RATE` | `0.25` | Savings receipts (FR-15.5): the share of the billable lower bound that is the fee |
@@ -247,10 +261,6 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 
 | Field | Variable | Default | Feature that will read it |
 |---|---|---|---|
-| `min_certified_precision` | `RATCHET_MIN_CERTIFIED_PRECISION` | 0.0 | Certified precision (FR-16.3): a floor on the certified lower bound (0: off) |
-| `paired_gate` | `RATCHET_PAIRED_GATE` | 0 | FR-16.3: 1 compares candidate and live version on the same golden rows (McNemar) |
-| `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | FR-16.3: the paired gate's error rate |
-| `max_nfr` | `RATCHET_MAX_NFR` | 1.0 | FR-16.3: the highest negative-flip rate the paired gate accepts (1: off) |
 | `drift_alarm` | `RATCHET_DRIFT_ALARM` | 100 | Drift alarm (FR-16.6): the test martingale's alarm threshold (false-alarm probability at most 1/threshold per stream) |
 | `drift_audit_boost` | `RATCHET_DRIFT_AUDIT_BOOST` | 1.0 | FR-16.6: the audit-rate multiplier after an alarm (1: off) |
 | `drift_early_night` | `RATCHET_DRIFT_EARLY_NIGHT` | 0 | FR-16.6: 1 halves the new examples Night School needs after an alarm |

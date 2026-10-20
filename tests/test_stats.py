@@ -50,6 +50,7 @@ def test_binomial_tails_keep_tiny_values_and_refuse_bad_input():
             stats.binom_sf(*bad)
 
 
+@pytest.mark.req("FR-16.3")
 def test_clopper_pearson_bounds():
     assert stats.cp_lower(46, 48, 0.05) == pytest.approx(0.8746, abs=1e-4)
     assert stats.cp_lower(129, 130, 0.05) == pytest.approx(0.9640, abs=1e-4)
@@ -75,6 +76,7 @@ def test_clopper_pearson_bounds():
         stats.cp_lower(3, 4, 1.0)
 
 
+@pytest.mark.req("FR-16.3")
 def test_precision_pvalue_planner_and_mcnemar():
     assert stats.required_rows(0.95, 0.05) == [59, 93, 124, 153]
     assert stats.required_rows(0.97, 0.05) == [99, 157, 208, 257]
@@ -91,6 +93,7 @@ def test_precision_pvalue_planner_and_mcnemar():
         stats.required_rows(0.999999, 0.05, limit=1000)
 
 
+@pytest.mark.req("FR-16.3")
 def test_ltt_fixed_sequence_stops_at_the_first_failure():
     assert stats.ltt_fixed_sequence([(0.99, True)] * 10)[0] == stats.SERVE_NOTHING  # 0.95^10 = 0.6 > 0.05
     assert stats.SERVE_NOTHING == confidence.SERVE_NOTHING
@@ -111,12 +114,13 @@ def test_ltt_fixed_sequence_stops_at_the_first_failure():
         stats.ltt_fixed_sequence([(float("nan"), True)])
 
 
+@pytest.mark.req("FR-16.3")
 def test_ltt_controls_the_error_rate():
     """Confidences U(0,1) and P(correct | c) = c, so precision at threshold lam is (1 + lam) / 2: below the 0.80 target
     only for 0.55 and 0.50. With 400 calibration rows, the chosen threshold may be one of those in at most delta of
-    the draws (plus 3 Monte Carlo standard errors)."""
+    the 300 draws (plus 3 Monte Carlo standard errors)."""
     rng = random.Random(11)
-    runs, bad = 200, 0
+    runs, bad = 300, 0
     for _ in range(runs):
         points = []
         for _ in range(400):
@@ -126,6 +130,57 @@ def test_ltt_controls_the_error_rate():
         bad += lam < stats.SERVE_NOTHING and (1 + lam) / 2 < 0.80
     rate = bad / runs
     assert rate <= 0.05 + 3 * math.sqrt(0.05 * 0.95 / runs)
+
+
+@pytest.mark.req("FR-16.3")
+def test_certificate_on_the_held_out_half_holds_at_its_rate():
+    """The certificate's guarantee end to end: confidences U(0,1) and P(correct | c) = c; the threshold is chosen on 200
+    calibration points (the point rule at 0.97, clamped at 0.5, as cascade_eval does) and certified on 200 fresh ones.
+    The true precision at threshold lam is (1 + lam) / 2, so a certificate claiming more than it is wrong; that happens
+    in at most delta of the draws (plus 3 Monte Carlo standard errors)."""
+    from ratchet import certificate
+
+    rng = random.Random(13)
+    runs, wrong, claims = 300, 0, 0
+    for _ in range(runs):
+        draw = [(c, rng.random() < c) for c in (rng.random() for _ in range(400))]
+        calib, test = draw[0::2], draw[1::2]
+        lam = min(stats.SERVE_NOTHING, max(0.5, confidence.calibrate_threshold(calib, 0.97)))
+        cert = certificate.certificate(test, lam, target=0.80, delta=0.05)
+        claims += cert["certified"]
+        wrong += cert["certified"] and (1 + lam) / 2 < 0.80
+        assert cert["lcb"] <= cert["precision"]
+    assert claims > 0  # the check has power: some draws do certify
+    assert wrong / runs <= 0.05 + 3 * math.sqrt(0.05 * 0.95 / runs)
+
+
+# ---------- the command line (ADR 0026) ----------
+@pytest.mark.req("FR-16.3")
+def test_stats_cli_plans_bounds_and_tests():
+    import io
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    def run(*argv) -> tuple[int, str]:
+        out = io.StringIO()
+        return stats.main(list(argv), out=out), out.getvalue()
+
+    assert run("plan", "--target", "0.95", "--delta", "0.05") == (0, "0 errors: 59 rows, 1: 93, 2: 124, 3: 153\n")
+    assert run("plan", "--target", "0.90", "--max-errors", "1") == (0, "0 errors: 29 rows, 1: 46\n")
+    assert run("bound", "--successes", "127", "--n", "128", "--delta", "0.05") == (0, "0.9635\n")
+    assert run("bound", "--successes", "46", "--n", "48") == (0, "0.8746\n")
+    assert run("mcnemar", "--b", "4", "--c", "0") == (0, "0.0625\n")
+    assert run("mcnemar", "--b", "0", "--c", "0") == (0, "1\n")
+    assert run("bound", "--successes", "129", "--n", "128")[0] == 2  # more successes than trials
+    assert run("plan", "--target", "1.5")[0] == 2
+    with pytest.raises(SystemExit):
+        stats.main(["bound", "--n", "3"])  # argparse: --successes is required
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run(
+        [sys.executable, "-m", "ratchet.stats", "mcnemar", "--b", "4", "--c", "0"], cwd=root, capture_output=True, text=True
+    )
+    assert (done.returncode, done.stdout) == (0, "0.0625\n")
 
 
 # ---------- e-values and confidence sequences ----------

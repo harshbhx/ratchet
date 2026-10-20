@@ -8,7 +8,9 @@ chooses to serve, so every gate looks at two numbers:
 Rules, in order:
   1. Golden gate (after training): precision >= min_precision and coverage >= min_coverage
      on the held-out golden set, using the version's own calibrated threshold, and no
-     regression against the live version on either number.
+     regression against the live version on either number. Opt-in (ADR 0026): a floor on the
+     certified lower bound of precision, and a paired regression check on the same golden rows
+     (exact McNemar tests and a negative-flip-rate bound) instead of the two point estimates.
   2. Shadow: it scores real traffic silently. Disagreements with the live student are
      arbitrated by the teacher; one the teacher could not arbitrate counts as a disagreement.
      Promote when precision and coverage hold on real traffic.
@@ -32,8 +34,9 @@ from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
+from . import certificate
 from .ledger import Ledger, Version
-from .stats import LOG_E_CAP, confidence_sequence, e_bernoulli, log_e_bernoulli, wilson  # `release.wilson` still imports
+from .stats import LOG_E_CAP, confidence_sequence, cp_lower, e_bernoulli, log_e_bernoulli, wilson  # `release.wilson` too
 
 CANARY_STEPS = [10, 50]
 # The confidence sequence every gate event and `ReleaseGate.evidence` report: 95%, anytime-valid (ADR 0025).
@@ -46,10 +49,6 @@ _PROMOTION_SEARCH = 100_000
 # `ReleasePolicy.__post_init__`), so nobody relies on a rule that does nothing yet. The item that builds a feature
 # removes its fields here.
 RESERVED_POLICY: dict[str, str] = {
-    "min_certified_precision": "certified precision (FR-16.3)",
-    "paired_gate": "certified precision (FR-16.3)",
-    "regression_alpha": "certified precision (FR-16.3)",
-    "max_nfr": "certified precision (FR-16.3)",
     "drift_alarm": "the drift alarm (FR-16.6)",
     "drift_audit_boost": "the drift alarm (FR-16.6)",
     "drift_early_night": "the drift alarm (FR-16.6)",
@@ -81,7 +80,9 @@ class ReleasePolicy:
     max_stage_audits: int = 400
     alert_eprocess: int = 1
     alpha_alert: float = 0.01
-    # Certified precision (FR-16.3): a floor on the certified lower bound (0 = off) and the paired regression gate.
+    # Certified precision (FR-16.3, ADR 0026): a floor on the certified lower bound (0 = off), and the paired gate (1 =
+    # compare the candidate with the live version row by row: reject a regression beyond `tolerance` only when McNemar's
+    # exact test is below regression_alpha, or when the negative flip rate's 95% lower bound exceeds max_nfr, 1 = off).
     min_certified_precision: float = 0.0
     paired_gate: int = 0
     regression_alpha: float = 0.05
@@ -192,6 +193,11 @@ class ReleaseGate:
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
+        """The golden gate, in order: the precision and coverage floors; the certified floor (`min_certified_precision`,
+        when set); then no regression against the live version: row by row with `paired_gate=1` and the candidate's
+        paired comparison against that live version (`_paired_regression`), else on the two point estimates within
+        `tolerance`. With the defaults this is v0.4's gate exactly; events only append the paired counts and the
+        certificate."""
         p, v = self.policy, self.ledger.version(vid)
         assert v is not None
         prec, cov = v.eval.get("precision", 0.0), v.eval.get("coverage", 0.0)
@@ -200,27 +206,75 @@ class ReleaseGate:
             return self._reject(v, f"golden precision {prec:.1%} < {p.min_precision:.0%}")
         if cov < p.min_coverage:
             return self._reject(v, f"golden coverage {cov:.1%} < {p.min_coverage:.0%}")
+        if p.min_certified_precision > 0:
+            short = _below_certified_floor(v.eval.get("certificate"), p.min_certified_precision)
+            if short:
+                return self._reject(v, short)
+        paired_note = ""
         if live:
-            lp, lc = live.eval.get("precision", 0.0), live.eval.get("coverage", 0.0)
-            if prec < lp - p.tolerance or cov < lc - p.tolerance:
-                return self._reject(
-                    v, f"regresses vs live v{live.id} (precision {prec:.1%} vs {lp:.1%}, coverage {cov:.1%} vs {lc:.1%})"
+            counts = _paired_counts(v.eval.get("paired"), live.id) if p.paired_gate else None
+            if counts is not None:
+                why = self._paired_regression(counts, live)
+                if why:
+                    return self._reject(v, why)
+                n, b, c, nf, pf = (counts[k] for k in ("n", "cov_only_live", "cov_only_cand", "neg_flips", "pos_flips"))
+                paired_note = (
+                    f"; serves {c - b:+d} of {n} vs live v{live.id} (McNemar p={counts['p_cov']:.2f}); "
+                    f"{nf} negative flips, {pf} positive flips"
                 )
+            else:
+                lp, lc = live.eval.get("precision", 0.0), live.eval.get("coverage", 0.0)
+                if prec < lp - p.tolerance or cov < lc - p.tolerance:
+                    return self._reject(
+                        v, f"regresses vs live v{live.id} (precision {prec:.1%} vs {lp:.1%}, coverage {cov:.1%} vs {lc:.1%})"
+                    )
         for old in self.ledger.versions(["shadow", "canary"]):
             self.ledger.set_version(old.id, "retired", 0)
             self.ledger.event("retired", f"v{old.id} replaced by newer candidate v{v.id}")
+        certified = _certified_text(v.eval.get("certificate"))
         if live is None:
             # Cold start: nothing to shadow against, so a small canary audited by the teacher.
             self.ledger.set_version(v.id, "canary", CANARY_STEPS[0])
             self.ledger.event(
-                "canary", f"v{v.id} first student: golden precision {prec:.1%}, coverage {cov:.1%}; canary {CANARY_STEPS[0]}%"
+                "canary",
+                f"v{v.id} first student: golden precision {prec:.1%}, coverage {cov:.1%}; canary {CANARY_STEPS[0]}%{certified}",
             )
         else:
             self.ledger.set_version(v.id, "shadow", 0)
             self.ledger.event(
-                "shadow", f"v{v.id} passed golden gate (precision {prec:.1%}, coverage {cov:.1%}); shadowing live v{live.id}"
+                "shadow",
+                f"v{v.id} passed golden gate (precision {prec:.1%}, coverage {cov:.1%}); shadowing live v{live.id}"
+                f"{paired_note}{certified}",
             )
         return True
+
+    def _paired_regression(self, pair: dict[str, Any], live: Version) -> str | None:
+        """Why the candidate regresses against `live` on the same held-out rows, or None. A regression must be both
+        large and significant: more than `tolerance` of the rows lost from coverage with McNemar's exact one-sided p below
+        `regression_alpha`, or more than `tolerance` of the rows newly answered wrong (negative flips minus positive
+        flips) with p below it; or, when `max_nfr` < 1, the 95% lower bound of the negative flip rate (answers live
+        served right that the candidate serves wrong) above `max_nfr`. Unlike the unpaired rule, a difference within
+        noise never rejects."""
+        p = self.policy
+        n, b, c = pair["n"], pair["cov_only_live"], pair["cov_only_cand"]
+        nf, pf = pair["neg_flips"], pair["pos_flips"]
+        if n and (b - c) / n > p.tolerance and pair["p_cov"] < p.regression_alpha:
+            return (
+                f"serves {b - c} fewer of {n} golden rows than live v{live.id} ({b} only live, {c} only the candidate; "
+                f"McNemar p={pair['p_cov']:.3g} < {p.regression_alpha:g})"
+            )
+        if n and (nf - pf) / n > p.tolerance and pair["p_err"] < p.regression_alpha:
+            return (
+                f"{nf} negative flips vs {pf} positive flips on {n} golden rows against live v{live.id} "
+                f"(McNemar p={pair['p_err']:.3g} < {p.regression_alpha:g})"
+            )
+        lo = pair["nfr_95"][0]
+        if p.max_nfr < 1 and lo > p.max_nfr:
+            return (
+                f"negative flip rate {pair['nfr']:.1%} (95% lower bound {lo:.1%} > {p.max_nfr:.1%}): "
+                f"{pair['neg_flips_served']} of the {pair['live_served_ok']} answers live v{live.id} served right"
+            )
+        return None
 
     def _reject(self, v: Version, why: str) -> bool:
         self.ledger.set_version(v.id, "rejected", 0)
@@ -428,6 +482,63 @@ class ReleaseGate:
 
     def _tick_watchers(self) -> None:
         """The teacher watch (FR-16.7) will check here, last. Nothing yet."""
+
+
+def _paired_counts(pair: object, live_id: int) -> dict[str, Any] | None:
+    """The candidate's paired comparison against live version `live_id`, recomputed from its counts
+    (`certificate.paired_stats`), so the gate never acts on a stored p-value it did not derive. None when there is no
+    comparison against that version, or its counts are missing or impossible: the gate then falls back to the unpaired
+    rule, as for an eval without one."""
+    if not isinstance(pair, dict) or pair.get("against") != live_id:
+        return None
+    keys = ("n", "cov_only_live", "cov_only_cand", "neg_flips", "pos_flips", "neg_flips_served", "live_served_ok")
+    vals = [pair.get(k) for k in keys]
+    if any(isinstance(x, bool) or not isinstance(x, int) or x < 0 for x in vals):
+        return None
+    n, b, c, nf, pf, nf_served, live_ok = vals
+    if b + c > n or nf + pf > n or live_ok > n or nf_served > min(nf, live_ok):
+        return None
+    return certificate.paired_stats(n, b, c, nf, pf, nf_served, live_ok)
+
+
+def _cert_counts(cert: object) -> tuple[int, int, float] | None:
+    """(served, errors, delta) of a certificate, or None when it is missing or malformed."""
+    if not isinstance(cert, dict):
+        return None
+    served, errors, delta = cert.get("served"), cert.get("errors"), cert.get("delta")
+    if any(isinstance(x, bool) or not isinstance(x, int) or x < 0 for x in (served, errors)) or errors > served:
+        return None
+    if isinstance(delta, bool) or not isinstance(delta, (int, float)) or not 0 < delta < 1:
+        return None
+    return served, errors, float(delta)
+
+
+def _below_certified_floor(cert: object, floor: float) -> str | None:
+    """Why a candidate fails `min_certified_precision`, or None. The lower bound is recomputed from the certificate's
+    counts (`stats.cp_lower`); a candidate without a readable certificate fails, because the operator asked for one."""
+    got = _cert_counts(cert)
+    if got is None:
+        return f"no certificate to check against RATCHET_MIN_CERTIFIED_PRECISION={floor:g} (the evaluator wrote none)"
+    served, errors, delta = got
+    lcb = cp_lower(served - errors, served, delta)
+    if lcb >= floor:
+        return None
+    return f"certified lower bound {lcb:.1%} < {_pct(floor)} ({served - errors}/{served} served answers agree, delta {delta:g})"
+
+
+def _certified_text(cert: object) -> str:
+    """'; certified >= 95% (lcb 96.4%, delta 0.05)' for a candidate whose certificate reaches its target, else ''."""
+    got = _cert_counts(cert)
+    if got is None or not isinstance(cert, dict) or cert.get("certified") is not True:
+        return ""
+    target = cert.get("target")
+    if isinstance(target, bool) or not isinstance(target, (int, float)) or not 0 < target < 1:
+        return ""
+    served, errors, delta = got
+    lcb = cp_lower(served - errors, served, delta)
+    if lcb < target:  # the stated verdict does not survive a recomputation: say nothing rather than repeat it
+        return ""
+    return f"; certified >= {_pct(target)} (lcb {lcb:.1%}, delta {delta:g})"
 
 
 def _pct(alpha: float) -> str:

@@ -232,6 +232,8 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-6.6 | Rollback when Wilson 95% upper bound of audited precision < 92% | Done (v0.1) |
 | FR-6.7 | Live alert when live version's audited precision upper bound < 92% | Done (v0.1) |
 | FR-6.8 | Only one candidate in flight; older shadow/canary retired | Done (v0.1) |
+| FR-6.30 | Paired golden gate (opt-in, `RATCHET_PAIRED_GATE=1`): the candidate and the re-scored live version are compared row by row on the same held-out golden rows; a regression beyond the tolerance rejects only when an exact McNemar test (coverage, or wrong answers) is below `RATCHET_REGRESSION_ALPHA`, or when the negative flip rate's 95% lower bound exceeds `RATCHET_MAX_NFR`; the paired counts are in the candidate's signed BOM ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)) | Done (v0.5) |
+| FR-6.31 | Certified floor (opt-in, `RATCHET_MIN_CERTIFIED_PRECISION`): a candidate whose certified lower bound on precision is below the floor, or that has no certificate, is rejected at the golden gate | Done (v0.5) |
 
 ### 6.7 Dashboard
 
@@ -317,7 +319,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 |---|---|---|
 | FR-16.1 | Anytime-valid release gate (opt-in): rollback by an e-process with no minimum audit count, evidence-based promotion, and confidence sequences, valid however often the gate runs; with a futility cap (`inconclusive` → `retired`), an optional canary audit rate (logged as `label_p`), each canary and live version's evidence in `/ratchet/stats`, and `python -m sim.simulate --compare-release` ([ADR 0025](adr/0025-anytime-valid-release-gate.md)) | Done (v0.5) |
 | FR-16.2 | Anytime-valid live alert: the live version's alert uses the same e-process, at most one false alert per version at the stated rate (the default; `RATCHET_ALERT_EPROCESS=0` keeps the Wilson rule) | Done (v0.5) |
-| FR-16.3 | Certified precision: each candidate carries a Clopper–Pearson lower bound on precision at its threshold, recorded in its signed BOM; opt-in Learn-then-Test calibration | Planned |
+| FR-16.3 | Certified precision: each candidate carries a Clopper–Pearson lower bound on precision at its threshold, recorded in its signed BOM; opt-in Learn-then-Test calibration. Every golden eval also carries a Bonferroni-valid risk-coverage frontier over a fixed grid, per-task bounds and its per-row outcomes; `GET /ratchet/versions/{id}/certificate` serves the signed and the latest certificate with their assumptions, and `python -m ratchet.stats plan\|bound\|mcnemar\|check` plans golden rows and recomputes a BOM's certificate from its signed counts ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)) | Done (v0.5) |
 | FR-16.4 | Committed training sets: each adapter's BOM commits to its training and golden examples with Merkle roots, with membership and non-membership proofs | Planned |
 | FR-16.5 | Ledger time machine: replay past traffic under a different threshold or audit rate from logged propensities, with unbiased estimates | Planned |
 | FR-16.6 | Label-free drift alarm with a bounded false-alarm rate (conformal test martingale on student confidence) | Planned |

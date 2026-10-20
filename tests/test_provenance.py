@@ -306,3 +306,84 @@ def test_mock_gateway_bom_records_the_redaction_setting(gw):
     rep = rt.simulate_day(250)
     assert rep.trained
     assert rt.ledger.version_bom(rep.version)["manifest"]["redactor"]["redact_pii"] is False
+
+
+# ---------- certified precision: the certificate endpoint and `python -m ratchet.stats check` (FR-16.3, ADR 0026) ----------
+CERTIFICATE_KEYS = {"version", "state", "status", "training", "current", "bom", "live", "drift", "assumptions"}
+
+
+@pytest.mark.req("FR-16.3", "INV-14")
+def test_certificate_endpoint_and_stats_check_on_a_signed_bom(gw_env, tmp_path):
+    import io
+
+    from fastapi.testclient import TestClient
+
+    from ratchet import stats
+
+    seed, pub = bom.keygen()
+    gw = gw_env(RATCHET_BOM_SIGNING_KEY=seed)
+    client = TestClient(gw.app)
+    assert client.get("/ratchet/versions/1/certificate").status_code == 404  # nothing trained yet
+    for _ in range(2):
+        assert client.post("/ratchet/demo/day?requests=400").status_code == 200
+    first = gw.rt.ledger.version(1)
+    assert first is not None and first.state in ("canary", "live")
+
+    body = client.get("/ratchet/versions/1/certificate").json()
+    assert set(body) == CERTIFICATE_KEYS and (body["version"], body["state"]) == (1, first.state)
+    doc = client.get("/ratchet/versions/1/bom").json()
+    signed_eval = doc["manifest"]["eval"]
+    assert body["bom"] == {"sha256": doc["sha256"], "signed": True}
+    assert body["training"]["certificate"] == signed_eval["certificate"]
+    assert body["training"]["frontier"] == signed_eval["frontier"] and body["training"]["per_task"] == signed_eval["per_task"]
+    assert body["training"]["calibration"] == "point" and body["training"]["threshold"] == signed_eval["threshold"]
+    current = body["current"]
+    assert current["certificate"] == first.eval["certificate"] and current["rechecked_day"] == first.eval.get("rechecked_day")
+    assert body["status"] == ("certified" if current["certificate"]["certified"] else "not certified")
+    assert body["live"] == gw.rt.gate.evidence(first) and body["drift"] is None
+    assert len(body["assumptions"]) == 3 and all(isinstance(a, str) for a in body["assumptions"])
+    assert client.get("/ratchet/versions/999/certificate").status_code == 404
+    # A nightly re-score replaces the version's eval: `current` and the status follow it, `training` stays the signed one.
+    flipped = {**first.eval["certificate"], "certified": not first.eval["certificate"]["certified"]}
+    gw.rt.ledger.update_eval(1, {**first.eval, "certificate": flipped, "rechecked_day": 5})
+    again = client.get("/ratchet/versions/1/certificate").json()
+    assert again["current"]["certificate"] == flipped and again["current"]["rechecked_day"] == 5
+    assert again["training"] == body["training"] and again["status"] != body["status"]
+    # A version from before v0.5 (no certificate) and before v0.4 (no BOM) still answers, with nothing to certify.
+    from fakes import _version
+
+    old_vid = _version(gw.rt.ledger, "retired", {"precision": 0.97, "coverage": 0.9, "threshold": 0.8})
+    old_body = client.get(f"/ratchet/versions/{old_vid}/certificate").json()
+    assert (old_body["status"], old_body["training"], old_body["bom"], old_body["drift"]) == ("no certificate", None, None, None)
+    assert old_body["current"]["certificate"] is None and old_body["current"]["threshold"] == 0.8
+    assert old_body["live"] == gw.rt.gate.evidence(gw.rt.ledger.version(old_vid))  # it once served: audits may exist
+
+    path = tmp_path / "bom.json"
+    path.write_text(json.dumps(doc))
+
+    def check(*args) -> tuple[int, str]:
+        out = io.StringIO()
+        return stats.main(["check", str(path), *args], out=out), out.getvalue()
+
+    code, out = check("--public-key", pub)
+    assert code == 0 and "OK: signature valid" in out and "every number recomputed from the signed counts" in out
+    assert "OK: certificate: " in out and "OK: frontier: 10 thresholds" in out
+
+    edited = json.loads(json.dumps(doc))
+    edited["manifest"]["eval"]["certificate"]["errors"] += 1
+    path.write_text(json.dumps(edited))
+    code, out = check("--public-key", pub)
+    assert code == 1 and "FAIL: sha256 does not match" in out and "FAIL: certificate.precision" in out
+    # Re-hashed so the document matches itself again: the numbers still do not follow from the counts.
+    path.write_text(json.dumps(bom.document(edited["manifest"])))
+    code, out = check()
+    assert code == 1 and "OK: unsigned; sha256 matches" in out and "do not follow from the signed counts" in out
+    assert check("--public-key", pub)[0] == 1  # and it is no longer signed by the key
+
+    old = bom.document({**doc["manifest"], "eval": {"precision": 0.97, "threshold": 0.8}})  # a BOM from before v0.5
+    path.write_text(json.dumps(old))
+    code, out = check()
+    assert code == 0 and "no certificate in this BOM" in out
+    path.write_text("{not json")
+    assert check() == (1, "FAIL: not JSON\n")
+    assert stats.main(["check", str(tmp_path / "missing.json")], out=io.StringIO()) == 2

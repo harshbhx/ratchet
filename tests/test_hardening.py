@@ -4,6 +4,7 @@ issues found while testing the live entry points offline (v0.5)."""
 import hashlib
 import json
 import math
+import os
 import sqlite3
 import threading
 import time
@@ -179,6 +180,101 @@ def test_anytime_valid_settings_parse(monkeypatch):
     monkeypatch.setenv("RATCHET_CANARY_AUDIT_RATE", "lots")
     with pytest.raises(ValueError, match="RATCHET_CANARY_AUDIT_RATE must be a number"):
         Settings()
+
+
+@pytest.mark.req("FR-16.3", "FR-6.30", "FR-6.31")
+def test_certified_precision_settings_parse(monkeypatch, tmp_path):
+    """Certified precision's variables (ADR 0026) parse into the settings and the policy; a bad value stops the gateway,
+    the simulator's settings and the nightly job at startup, naming the variable, before any ledger is opened."""
+    from ratchet.config import CertPolicy
+    from ratchet.gateway import Runtime
+
+    names = ("CALIBRATION", "CERT_TARGET", "CERT_DELTA", "MIN_CERTIFIED_PRECISION", "PAIRED_GATE", "REGRESSION_ALPHA", "MAX_NFR")
+    for name in names:
+        monkeypatch.delenv(f"RATCHET_{name}", raising=False)
+    assert Settings().cert_policy() == CertPolicy("point", 0.95, 0.05)
+    p = ReleasePolicy.from_env()
+    assert (p.min_certified_precision, p.paired_gate, p.regression_alpha, p.max_nfr) == (0.0, 0, 0.05, 1.0)  # all off
+    monkeypatch.setenv("RATCHET_CALIBRATION", " LTT ")
+    monkeypatch.setenv("RATCHET_CERT_TARGET", "0.9")
+    monkeypatch.setenv("RATCHET_CERT_DELTA", "0.01")
+    assert Settings().cert_policy() == CertPolicy("ltt", 0.9, 0.01)
+    assert Runtime(Settings(mode="mock", mock_warmup_days=0)).fleet.calibration == "ltt"  # the mock fleet's eval
+    monkeypatch.setenv("RATCHET_CALIBRATION", "")  # set but empty: the default
+    assert Settings().cert_policy().calibration == "point"
+    for env, value, says in (
+        ("RATCHET_CALIBRATION", "conformal", "RATCHET_CALIBRATION must be point or ltt"),
+        ("RATCHET_CERT_TARGET", "1", "RATCHET_CERT_TARGET must be a number strictly between 0 and 1"),
+        ("RATCHET_CERT_TARGET", "nan", "RATCHET_CERT_TARGET must be a number strictly between 0 and 1"),
+        ("RATCHET_CERT_DELTA", "0", "RATCHET_CERT_DELTA must be a number strictly between 0 and 1"),
+    ):
+        monkeypatch.setenv(env, value)
+        with pytest.raises(ValueError, match=says):
+            Settings().cert_policy()
+        with pytest.raises(ValueError, match=says):
+            Runtime(Settings(mode="mock", mock_warmup_days=0))
+        monkeypatch.setenv("RATCHET_DB", str(tmp_path / "never.db"))
+        with pytest.raises(ValueError, match=says):
+            live.main(["tick"])
+        assert not (tmp_path / "never.db").exists()
+        monkeypatch.delenv(env)
+    monkeypatch.setenv("RATCHET_CERT_DELTA", "small")
+    with pytest.raises(ValueError, match="RATCHET_CERT_DELTA must be a number"):
+        Settings()
+    monkeypatch.delenv("RATCHET_CERT_DELTA")
+
+    for name, value in (
+        ("MIN_CERTIFIED_PRECISION", "0.9"),
+        ("PAIRED_GATE", "1"),
+        ("REGRESSION_ALPHA", "0.1"),
+        ("MAX_NFR", "0.05"),
+    ):
+        monkeypatch.setenv(f"RATCHET_{name}", value)
+    p = ReleasePolicy.from_env()
+    assert (p.min_certified_precision, p.paired_gate, p.regression_alpha, p.max_nfr) == (0.9, 1, 0.1, 0.05)
+    for env, value, says in (
+        ("RATCHET_MIN_CERTIFIED_PRECISION", "1.5", "from 0 to 1"),
+        ("RATCHET_PAIRED_GATE", "2", "0 or 1"),
+        ("RATCHET_PAIRED_GATE", "yes", "whole number"),
+        ("RATCHET_REGRESSION_ALPHA", "1", "strictly between 0 and 1"),
+        ("RATCHET_MAX_NFR", "0", "more than 0 and at most 1"),
+    ):
+        good = os.environ[env]
+        monkeypatch.setenv(env, value)
+        with pytest.raises(ValueError, match=f"{env}.*{says}"):
+            ReleasePolicy.from_env()
+        monkeypatch.setenv(env, good)
+
+
+@pytest.mark.req("FR-5.2", "INV-6", "FR-16.3")
+def test_stored_threshold_serves_what_the_eval_measured():
+    """Before v0.5 the threshold was stored rounded to 4 decimals, which could round up past the confidence it was
+    calibrated at: with every row at confidence 0.4 exp(-0.05) + 0.6 = 0.98049 it stored 0.9805, and a version whose eval
+    measured 100% coverage served nothing. It is stored exactly now, so the router serves every row the eval counted."""
+    from ratchet.nightschool.evaluate import cascade_eval
+
+    answer = '{"category": "billing", "priority": "high"}'
+    rows = [
+        {
+            "task": "ticket-triage",
+            "messages": [{"role": "user", "content": f"ticket {i}"}, {"role": "assistant", "content": answer}],
+        }
+        for i in range(6)
+    ]
+    student = RecordingProvider(answer)  # every sample at logprob -0.05, unanimous
+
+    res = cascade_eval(lambda p, k, params=None: student.complete(p, "m", n=k, temperature=0.7, logprobs=True), rows)
+    assert res["coverage"] == 1.0 and res["certificate"]["served"] == 3
+    assert round(res["threshold"], 4) > res["threshold"]  # the old rounding would have served none of them
+    led = Ledger(":memory:")
+    _version(led, "live", res)
+    router = Ratchet(
+        Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0),
+        led,
+        RecordingProvider(answer),
+        lambda v: (student, v.adapter_uri),
+    )
+    assert all(router.handle(r["messages"][:-1], "ticket-triage").served_by == "student" for r in rows)
 
 
 # ---------- v0.4 hardening: PII redaction, API keys and quotas, streaming, signed BOMs ----------
@@ -1215,9 +1311,6 @@ def test_committed_leaves_and_sealed_receipts_are_append_only():
 
 # A value other than the default for every reserved setting (config.RESERVED_SETTINGS).
 RESERVED_ENV = {
-    "RATCHET_CALIBRATION": "ltt",
-    "RATCHET_CERT_TARGET": "0.9",
-    "RATCHET_CERT_DELTA": "0.01",
     "RATCHET_TEACHER_PROBES": "5",
     "RATCHET_ADJUDICATE_MAX": "7",
     "RATCHET_TAKE_RATE": "0.3",
@@ -1239,7 +1332,7 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()
-    for env, value in {"RATCHET_CERT_TARGET": "0.950", "RATCHET_CALIBRATION": " Point ", "RATCHET_DB_SYNC": "full"}.items():
+    for env, value in {"RATCHET_TAKE_RATE": "0.250", "RATCHET_BATCH_API": " Operations ", "RATCHET_DB_SYNC": "full"}.items():
         monkeypatch.setenv(env, value)
     monkeypatch.setenv("RATCHET_MOCK_TEACHER_REASONING_MEAN", "")  # empty: unset
     Settings().check_reserved()
@@ -1262,10 +1355,6 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
 
 # A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY).
 RESERVED_POLICY_ENV = {
-    "min_certified_precision": "0.9",
-    "paired_gate": "1",
-    "regression_alpha": "0.1",
-    "max_nfr": "0.5",
     "drift_alarm": "50",
     "drift_audit_boost": "3",
     "drift_early_night": "1",
@@ -1281,7 +1370,7 @@ def test_reserved_release_policy_fields_stop_startup(monkeypatch):
     for name in RESERVED_POLICY:
         monkeypatch.delenv(f"RATCHET_{name.upper()}", raising=False)
     assert ReleasePolicy.from_env() == ReleasePolicy()
-    monkeypatch.setenv("RATCHET_REGRESSION_ALPHA", "0.05")  # the default, set explicitly
+    monkeypatch.setenv("RATCHET_ALPHA_TEACHER", "0.01")  # the default, set explicitly
     monkeypatch.setenv("RATCHET_DRIFT_ALARM", "100")
     assert ReleasePolicy.from_env() == ReleasePolicy()
     for name, value in RESERVED_POLICY_ENV.items():

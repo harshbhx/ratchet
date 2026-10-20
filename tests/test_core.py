@@ -685,3 +685,240 @@ def test_gen_plan_for_n_choices():
     for bad in (0, -1, 1.5, True, "2"):
         with pytest.raises(ValueError, match="whole number of choices"):
             policy.plan(None, bad)
+
+
+# ---------- certified precision (FR-16.3, ADR 0026) ----------
+from ratchet import certificate  # noqa: E402
+from ratchet.stats import CERT_GRID, cp_lower, mcnemar_one_sided  # noqa: E402
+
+# Held-out points: (confidence, agrees with the teacher), in golden order.
+CERT_POINTS = [(0.97, True)] * 40 + [(0.93, False)] * 2 + [(0.88, True)] * 10 + [(0.72, False)] * 6 + [(0.40, True)] * 4
+
+
+@pytest.mark.req("FR-16.3", "INV-6")
+def test_certificate_frontier_and_per_task_from_held_out_points():
+    cert = certificate.certificate(CERT_POINTS, 0.85, target=0.85, delta=0.05)
+    assert {k: cert[k] for k in ("method", "calibration", "threshold", "served", "errors", "target", "delta")} == {
+        "method": "clopper-pearson",
+        "calibration": "point",
+        "threshold": 0.85,
+        "served": 52,
+        "errors": 2,
+        "target": 0.85,
+        "delta": 0.05,
+    }
+    assert cert["precision"] == 50 / 52 and cert["lcb"] == cp_lower(50, 52, 0.05) < cert["precision"]
+    assert cert["certified"] is True and cert["lcb"] == pytest.approx(0.8838, abs=1e-4) and "ltt_trace" not in cert
+    assert certificate.certificate(CERT_POINTS, 0.85, 0.9, 0.05)["certified"] is False  # lcb 0.884 < 0.9
+    nothing = certificate.certificate(CERT_POINTS, 1.01, 0.9, 0.05, "ltt", trace=[])
+    assert (nothing["served"], nothing["precision"], nothing["lcb"], nothing["certified"]) == (0, 0.0, 0.0, False)
+    assert nothing["ltt_trace"] == []
+
+    rows = certificate.frontier(CERT_POINTS, 0.05)
+    assert [r["threshold"] for r in rows] == sorted(CERT_GRID, reverse=True)
+    assert all(r["delta"] == 0.05 / len(CERT_GRID) for r in rows)  # Bonferroni: every row holds at once
+    by = {r["threshold"]: r for r in rows}
+    assert (by[0.95]["served"], by[0.95]["errors"], by[0.95]["coverage"]) == (40, 0, 40 / 62)
+    assert (by[0.70]["served"], by[0.70]["errors"]) == (58, 8)
+    assert by[0.85]["lcb"] == cp_lower(50, 52, 0.005) < cert["lcb"]  # the corrected bound is the wider one
+    coverage = [r["coverage"] for r in sorted(rows, key=lambda r: r["threshold"])]
+    assert all(a >= b for a, b in zip(coverage, coverage[1:], strict=False)), "coverage never rises with the threshold"
+    assert all(r["lcb"] <= r["precision"] for r in rows)
+    assert certificate.frontier([], 0.05)[0] == {
+        "threshold": 0.95,
+        "coverage": 0.0,
+        "served": 0,
+        "errors": 0,
+        "precision": 0.0,
+        "lcb": 0.0,
+        "delta": 0.005,
+    }
+
+    names = ["a"] * 42 + ["b"] * 20
+    per = certificate.per_task(CERT_POINTS, names, 0.85, 0.05)
+    assert list(per) == ["a", "b"]
+    assert {k: per["a"][k] for k in ("n_test", "served", "errors")} == {"n_test": 42, "served": 42, "errors": 2}
+    assert {k: per["b"][k] for k in ("n_test", "served", "errors", "coverage")} == {
+        "n_test": 20,
+        "served": 10,
+        "errors": 0,
+        "coverage": 0.5,
+    }
+    assert per["a"]["lcb"] == cp_lower(40, 42, 0.05) and per["b"]["lcb"] == cp_lower(10, 10, 0.05)
+    with pytest.raises(ValueError, match="differ in length"):
+        certificate.per_task(CERT_POINTS, names[:-1], 0.85, 0.05)
+
+    vec = certificate.outcome_vector(CERT_POINTS, 0.85)
+    assert vec == "S" * 40 + "W" * 2 + "S" * 10 + "E" * 10 and len(vec) == len(CERT_POINTS)
+
+
+@pytest.mark.req("FR-16.3", "FR-6.30", "INV-4")
+def test_paired_counts_on_hand_built_vectors():
+    live = "SSSSWWEEES"
+    cand = "SWESSEWSEW"
+    p = certificate.paired(live, cand)
+    # Row by row: S/S, S/W (negative flip, served), S/E (only live), S/S, W/S (positive flip), W/E (only live, positive),
+    # E/W (only the candidate, negative flip), E/S (only the candidate), E/E, S/W (negative flip, served).
+    assert {k: p[k] for k in ("n", "cov_only_live", "cov_only_cand", "neg_flips", "pos_flips")} == {
+        "n": 10,
+        "cov_only_live": 2,
+        "cov_only_cand": 2,
+        "neg_flips": 3,
+        "pos_flips": 2,
+    }
+    assert (p["neg_flips_served"], p["live_served_ok"], p["nfr"]) == (2, 5, 0.4)
+    assert p["p_cov"] == mcnemar_one_sided(2, 2) and p["p_err"] == mcnemar_one_sided(3, 2)
+    assert p["nfr_95"] == list(wilson(2, 5))
+    assert certificate.paired("S" * 4, "E" * 4)["p_cov"] == mcnemar_one_sided(4, 0) == 0.0625
+    same = certificate.paired("SWE", "SWE")
+    assert (same["p_cov"], same["p_err"], same["nfr"], same["nfr_95"]) == (1.0, 1.0, 0.0, list(wilson(0, 1)))
+    assert certificate.paired("EW", "SS")["nfr_95"] == [0.0, 1.0]  # live served nothing right: no rate to bound
+    for bad in (("SS", "S"), ("SX", "SS"), ("S", 1)):
+        with pytest.raises(ValueError):
+            certificate.paired(*bad)
+
+
+def _cert_eval() -> dict:
+    """An eval as cascade_eval writes it, from CERT_POINTS, with a paired comparison against live v1."""
+    return {
+        "test_n": len(CERT_POINTS),
+        "threshold": 0.85,
+        "certificate": certificate.certificate(CERT_POINTS, 0.85, 0.85, 0.05),
+        "frontier": certificate.frontier(CERT_POINTS, 0.05),
+        "per_task": certificate.per_task(CERT_POINTS, ["a"] * 42 + ["b"] * 20, 0.85, 0.05),
+        "test_vector": certificate.outcome_vector(CERT_POINTS, 0.85),
+        "paired": {**certificate.paired("S" * 52 + "E" * 10, certificate.outcome_vector(CERT_POINTS, 0.85)), "against": 1},
+    }
+
+
+@pytest.mark.req("FR-16.3")
+def test_recheck_recomputes_every_number_from_the_counts():
+    ev = _cert_eval()
+    checked, problems = certificate.recheck(json.loads(json.dumps(ev)))  # as read back from a BOM
+    assert problems == [] and len(checked) == 4
+    assert checked[0].startswith("certificate: 50 of 52 served answers agree at threshold 0.85")
+    assert certificate.recheck({"threshold": 0.8}) == ([], [])  # nothing to check
+
+    def problems_after(edit) -> list[str]:
+        doc = json.loads(json.dumps(ev))
+        edit(doc)
+        return certificate.recheck(doc)[1]
+
+    def lcb_up(d):
+        d["certificate"]["lcb"] += 1e-6
+
+    assert problems_after(lcb_up) == [
+        f"certificate.lcb: stated {ev['certificate']['lcb'] + 1e-6!r}, recomputed {ev['certificate']['lcb']!r}"
+    ]
+
+    def tiny(d):
+        d["certificate"]["lcb"] += 1e-12  # float rounding is not a mismatch
+
+    assert problems_after(tiny) == []
+
+    def fewer_errors(d):
+        d["certificate"]["errors"] = 1
+
+    found = problems_after(fewer_errors)
+    assert any(p.startswith("certificate.precision") for p in found) and any("test_vector" in p for p in found)
+    assert any(p.startswith("per_task: errors adds up to 2") for p in found)
+
+    def claim(d):
+        d["certificate"]["target"] = 0.99  # certified stays True, but 0.884 < 0.99
+
+    assert problems_after(claim) == ["certificate.certified: stated True, recomputed False"]
+
+    def frontier_lcb(d):
+        d["frontier"][3]["lcb"] = 0.99
+
+    assert [p.split(":")[0] for p in problems_after(frontier_lcb)] == ["frontier[3].lcb"]
+
+    def uncorrected(d):
+        for row in d["frontier"]:
+            row["delta"], row["lcb"] = 0.05, cp_lower(row["served"] - row["errors"], row["served"], 0.05)
+
+    assert all("delta / 10" in p for p in problems_after(uncorrected))
+
+    def shuffled(d):
+        d["frontier"][0], d["frontier"][1] = d["frontier"][1], d["frontier"][0]
+
+    assert any("thresholds must fall" in p for p in problems_after(shuffled))
+
+    def p_cov(d):
+        d["paired"]["p_cov"] = 0.01
+
+    assert [p.split(":")[0] for p in problems_after(p_cov)] == ["paired.p_cov"]
+
+    def impossible(d):
+        d["paired"]["cov_only_live"] = 99
+
+    assert any("cannot come from" in p for p in problems_after(impossible))
+
+    def other_rows(d):
+        d["paired"]["n"] = 61  # the candidate's test vector has 62
+
+    assert problems_after(other_rows) == ["paired.n: stated 61, the test vector has 62 rows"]
+
+    def more_flips_than_wrong_answers(d):
+        d["paired"]["neg_flips"] = 3  # the candidate serves only 2 wrong answers
+
+    found = problems_after(more_flips_than_wrong_answers)
+    assert any(p.startswith("paired: counts the test vector rules out (10 escalated and 2 wrong of 62") for p in found)
+
+    def malformed(d):
+        d["certificate"]["served"] = "52"
+
+    assert problems_after(malformed)[0].startswith("certificate: certificate.served must be a whole number")
+
+    def bad_vector(d):
+        d["test_vector"] = "SSX"
+
+    assert any("test_vector must be a string of S, W and E" in p for p in problems_after(bad_vector))
+
+
+@pytest.mark.req("FR-16.3")
+def test_recheck_follows_the_ltt_trace():
+    from ratchet.stats import ltt_fixed_sequence
+
+    calib = [(0.97, True)] * 80 + [(0.72, False)] * 40
+    lam, trace = ltt_fixed_sequence(calib, CERT_GRID, 0.95, 0.05)
+    ev = {"certificate": certificate.certificate(CERT_POINTS, lam, 0.95, 0.05, "ltt", trace)}
+    assert certificate.recheck(json.loads(json.dumps(ev)))[1] == []
+    low = json.loads(json.dumps(ev))
+    low["certificate"] = certificate.certificate(CERT_POINTS, 0.70, 0.95, 0.05, "ltt", trace)
+    assert certificate.recheck(low)[1] == ["certificate.threshold: 0.7 is below 0.75, the lowest threshold Learn-then-Test kept"]
+    cooked = json.loads(json.dumps(ev))
+    cooked["certificate"]["ltt_trace"][-1]["p_value"] = 0.01  # claims the last test passed
+    assert [p.split(":")[0] for p in certificate.recheck(cooked)[1]] == ["certificate.ltt_trace[5].p_value"]
+
+
+@pytest.mark.req("FR-16.3")
+def test_certificate_status_and_section():
+    ev = _cert_eval()
+    sec = certificate.section(ev)
+    assert sec is not None and sec["certificate"] is ev["certificate"] and sec["calibration"] == "point"
+    assert sec["paired"]["against"] == 1 and sec["threshold"] == 0.85
+    assert certificate.section({}) is None and certificate.section(None) is None
+    old = certificate.section({"threshold": 0.8, "precision": 0.97})
+    assert old == {"certificate": None, "frontier": None, "per_task": None, "threshold": 0.8, "calibration": None, "paired": None}
+    no = {**ev["certificate"], "certified": False}
+    assert certificate.status(sec, None, None) == "certified"
+    assert certificate.status({"certificate": no}, sec, None) == "not certified"  # the latest re-score decides
+    assert certificate.status(old, sec, None) == "certified"  # a re-score without a certificate: the signed one
+    assert certificate.status(old, None, None) == certificate.status(None, None, None) == "no certificate"
+    assert certificate.status(sec, sec, {"alarm": True}) == "suspended"
+    assert certificate.status(sec, sec, {"alarm": False}) == "certified"
+    assert len(certificate.ASSUMPTIONS) == 3
+
+
+@pytest.mark.req("FR-16.3")
+def test_versions_filter_by_state_in_order():
+    led = Ledger(":memory:")
+    ids = [
+        _version(led, state, {"threshold": 0.8, "certificate": {"served": i}})
+        for i, state in enumerate(["live", "canary", "rejected", "live"])
+    ]
+    assert [v.id for v in led.versions(["live", "canary"])] == [ids[0], ids[1], ids[3]]
+    assert [v.id for v in led.versions(iter(["rejected"]))] == [ids[2]] and led.versions([]) == []
+    assert led.version(ids[1]).eval["certificate"] == {"served": 1} and led.version(999) is None
+    assert led.live().id == ids[3] and led.by_state("canary").id == ids[1]

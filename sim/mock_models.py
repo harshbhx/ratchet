@@ -200,18 +200,23 @@ class DownStudent:
 
 class MockFleet:
     """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages;
-    `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would."""
+    `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would. `calibration`,
+    `cert_target` and `cert_delta` go to `cascade_eval` (certified precision, ADR 0026; `Settings.cert_policy()`)."""
 
     def __init__(
         self,
         corrupt_on_deploy: set[str] | None = None,
         clock: Callable[[], float] = time.monotonic,
         policy: GenPolicy | None = None,
+        calibration: str = "point",
+        cert_target: float = 0.95,
+        cert_delta: float = 0.05,
     ):
         self.knowledge: dict[str, dict[str, Any]] = {}
         self.corrupt_on_deploy = corrupt_on_deploy or set()
         self.clock = clock
         self.policy = policy or GenPolicy()
+        self.calibration, self.cert_target, self.cert_delta = calibration, cert_target, cert_delta
         self.outage_until: float | None = None  # on `clock`; None = never down
 
     def student_outage(self, seconds: float) -> float:
@@ -239,7 +244,15 @@ class MockFleet:
             gen = self.policy.student(GenParams.from_stored(params))
             return student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
-        return cascade_eval(sample, golden_rows, samples=3, target_precision=0.97)
+        return cascade_eval(
+            sample,
+            golden_rows,
+            samples=3,
+            target_precision=0.97,
+            calibration=self.calibration,
+            cert_target=self.cert_target,
+            cert_delta=self.cert_delta,
+        )
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
     def resolve(self, version: Version):

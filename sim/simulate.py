@@ -3,6 +3,7 @@
     python -m sim.simulate --days 8 --requests 2000 --bad-deploy-version 3
     python -m sim.simulate --workload research   # Scout's triage + read calls
     python -m sim.simulate --bad-deploy-version 3 --compare-release   # Wilson vs the anytime-valid gate, same seed
+    python -m sim.simulate --calibration ltt --paired-gate   # certified thresholds and the paired gate (ADR 0026)
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -16,6 +17,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ratchet.certificate import CALIBRATIONS
 from ratchet.config import Settings
 from ratchet.cost import cost_report, record_simulated_day
 from ratchet.ledger import Ledger
@@ -39,16 +41,28 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
         samples=3,
         audit_rate=args.audit_rate,
         canary_audit_rate=getattr(args, "canary_audit_rate", None),
+        calibration=getattr(args, "calibration", "point"),
+        cert_target=getattr(args, "cert_target", 0.95),
+        cert_delta=getattr(args, "cert_delta", 0.05),
     )
+    cert = settings.cert_policy()
     ledger = Ledger(db, golden_fraction=0.10)
     corrupt = {f"student-v{args.bad_deploy_version}"} if args.bad_deploy_version else set()
-    fleet = MockFleet(corrupt_on_deploy=corrupt, policy=settings.gen_policy())
+    fleet = MockFleet(
+        corrupt_on_deploy=corrupt,
+        policy=settings.gen_policy(),
+        calibration=cert.calibration,
+        cert_target=cert.target,
+        cert_delta=cert.delta,
+    )
     ratchet = Ratchet(settings, ledger, MockTeacher(settings.teacher_reasoning_tokens), fleet.resolve, seed=args.seed)
     policy = ReleasePolicy(
         min_shadow=args.min_shadow,
         min_audits=args.min_audits,
         sequential=int(getattr(args, "release", "wilson") == "sequential"),
         promote_evidence=int(bool(getattr(args, "promote_evidence", False))),
+        paired_gate=int(bool(getattr(args, "paired_gate", False))),
+        min_certified_precision=getattr(args, "min_certified", 0.0),
     )
     gate = ReleaseGate(ledger, policy)
     return settings, ledger, fleet, ratchet, gate
@@ -168,6 +182,15 @@ def table(res: dict) -> str:
             f"({c['endpoint_hours']:.0f} endpoint hours, {c['training_hours']:.2f} training hours); "
             f"recommendation: {c['recommendation']}"
         )
+    certs = [(n["version"], n["eval"]["certificate"]) for n in res["nights"] if n["eval"] and "certificate" in n["eval"]]
+    if certs:  # what each trained version's held-out golden rows certify (ADR 0026), labelled as simulation
+        lines.append("\ncertificates (simulation, mock models):")
+        for vid, c in certs:
+            verdict = "certified" if c["certified"] else "not certified"
+            lines.append(
+                f"  v{vid}: {c['served'] - c['errors']}/{c['served']} served answers agree at threshold {c['threshold']:g}; "
+                f"lower bound {c['lcb']:.1%} vs {c['target'] * 100:.3g}% (delta {c['delta']:g}, {c['calibration']}): {verdict}"
+            )
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
     return "\n".join(lines)
@@ -209,6 +232,25 @@ def parser() -> argparse.ArgumentParser:
         help="the canary's own audit rate, more than 0 and at most 1 (default: --audit-rate)",
     )
     ap.add_argument(
+        "--calibration",
+        choices=CALIBRATIONS,
+        default="point",
+        help="threshold rule: the point rule at 97%%, or Learn-then-Test over a fixed grid (ADR 0026)",
+    )
+    ap.add_argument("--cert-target", type=float, default=0.95, help="the precision a certificate must show")
+    ap.add_argument("--cert-delta", type=float, default=0.05, help="a certificate's error rate")
+    ap.add_argument(
+        "--paired-gate",
+        action="store_true",
+        help="compare each candidate with the live version row by row on the same golden rows (exact McNemar tests)",
+    )
+    ap.add_argument(
+        "--min-certified",
+        type=float,
+        default=0.0,
+        help="reject a candidate whose certified lower bound is below this (0 = off)",
+    )
+    ap.add_argument(
         "--compare-release",
         action="store_true",
         help="run twice with the same seed, once per --release rule, and compare the rolled-back versions",
@@ -226,6 +268,11 @@ def main(argv: list[str] | None = None) -> None:
         ap.error("--promote-evidence needs --release sequential")
     if args.canary_audit_rate is not None and not 0 < args.canary_audit_rate <= 1:
         ap.error(f"--canary-audit-rate must be more than 0 and at most 1, not {args.canary_audit_rate}")
+    for flag, value in (("--cert-target", args.cert_target), ("--cert-delta", args.cert_delta)):
+        if not 0 < value < 1:
+            ap.error(f"{flag} must be strictly between 0 and 1, not {value}")
+    if not 0 <= args.min_certified <= 1:
+        ap.error(f"--min-certified must be from 0 to 1, not {args.min_certified}")
     if args.compare_release:
         results = compare_release(args)
         print(compare_table(results))

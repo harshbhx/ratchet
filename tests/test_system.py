@@ -144,6 +144,86 @@ def test_reference_check_rules(reference_check):
     assert compare("m", want, changed(inputs=lambda i: i.update(a_new_flag=True))) == []
 
 
+# ---------- certified precision (FR-16.3, ADR 0026) ----------
+CERT_RUN = ("--days", "3", "--requests", "700", "--drift-day", "0")
+
+
+@pytest.fixture(scope="module")
+def cert_run():
+    """A short run and its ledger (its BOMs are read back), shared by the tests below: about 1 s."""
+    import sim.simulate as simulate
+    from ratchet.ledger import Ledger
+
+    made: list[Ledger] = []
+
+    class Kept(Ledger):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(simulate, "Ledger", Kept)
+        res = sim(*CERT_RUN)
+    return res, made[0]
+
+
+@pytest.mark.req("FR-16.3", "INV-14")
+def test_every_version_carries_a_certificate_in_its_eval_and_bom(cert_run):
+    from ratchet import certificate
+
+    res, led = cert_run
+    assert res["versions"] and len(led.versions()) == len(res["versions"])
+    for v in led.versions():
+        signed = led.version_bom(v.id)["manifest"]["eval"]
+        for ev in (v.eval, signed):
+            cert = ev["certificate"]
+            assert cert["lcb"] <= cert["precision"] and cert["served"] == len(ev["test_vector"]) - ev["test_vector"].count("E")
+            assert len(ev["frontier"]) == 10 and ev["per_task"] and len(ev["test_vector"]) == ev["test_n"]
+            assert certificate.recheck(ev)[1] == []
+        if "rechecked_day" not in v.eval:  # never re-scored: the eval is the one signed at training
+            assert v.eval == signed
+
+
+@pytest.mark.req("FR-16.3", "FR-9.2")
+def test_certificates_move_no_simulation_number(cert_run, monkeypatch):
+    """The certificate code draws no random number and decides nothing by default, so the same run with it taken out
+    of the golden eval has the same days, versions and decisions (simulation, mock models)."""
+    from types import SimpleNamespace
+
+    from ratchet.nightschool import evaluate
+
+    res, _ = cert_run
+    stub = SimpleNamespace(
+        certificate=lambda *a, **k: {},
+        frontier=lambda *a, **k: [],
+        per_task=lambda *a, **k: {},
+        outcome_vector=lambda *a, **k: "",
+    )
+    monkeypatch.setattr(evaluate, "certificate", stub)
+    bare = sim(*CERT_RUN)
+    assert bare["days"] == res["days"] and bare["totals"] == res["totals"]
+    keys = ("id", "state", "traffic_pct", "train_examples", "dataset_hash")
+    assert [{k: v[k] for k in keys} for v in bare["versions"]] == [{k: v[k] for k in keys} for v in res["versions"]]
+    assert [v["eval"]["threshold"] for v in bare["versions"]] == [v["eval"]["threshold"] for v in res["versions"]]
+    assert all(v["eval"]["certificate"] == {} for v in bare["versions"])
+    # Events only gain appended text (the certificate of a certified version).
+    assert [(e["day"], e["kind"]) for e in bare["events"]] == [(e["day"], e["kind"]) for e in res["events"]]
+    assert all(e["detail"].startswith(b["detail"]) for b, e in zip(bare["events"], res["events"], strict=True))
+
+
+@pytest.mark.req("FR-16.3")
+def test_ltt_thresholds_come_from_the_fixed_grid():
+    from ratchet.stats import CERT_GRID, SERVE_NOTHING
+
+    res = sim(*CERT_RUN, "--calibration", "ltt", "--cert-target", "0.9")
+    assert res["versions"]
+    for v in res["versions"]:
+        ev = v["eval"]
+        assert ev["threshold"] in (*CERT_GRID, SERVE_NOTHING)
+        assert ev["certificate"]["calibration"] == "ltt" and ev["certificate"]["target"] == 0.9
+        assert ev["certificate"]["ltt_trace"][0]["threshold"] == max(CERT_GRID)
+
+
 @pytest.mark.req("FR-3.3", "US-7", "INV-1")
 def test_provenance_only_lists_distillable_teachers():
     res = sim("--days", "2", "--requests", "300", "--drift-day", "0")

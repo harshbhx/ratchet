@@ -224,6 +224,7 @@ def main(
     s = Settings(mode="live")
     s.check_reserved()  # a setting reserved for a feature not built yet stops here (ADR 0024)
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
+    cert = s.cert_policy()  # so does a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA (ADR 0026)
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -239,7 +240,16 @@ def main(
         # behind it, and one failed call would end the night (ADR 0014). The judge is a teacher call.
         student = provider_factory(s.student_base, s.student_api_key, timeout=s.student_timeout(), retry=s.teacher_retry())
         judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
-        evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples, policy=s.gen_policy())
+        evaluator = LiveEvaluator(
+            student,
+            judge,
+            s.judge_model,
+            samples=s.samples,
+            policy=s.gen_policy(),
+            calibration=cert.calibration,
+            cert_target=cert.target,
+            cert_delta=cert.delta,
+        )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(

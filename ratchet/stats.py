@@ -12,15 +12,29 @@ into signed BOMs.
 - Certified thresholds: `CERT_GRID` and `ltt_fixed_sequence` (Learn-then-Test over a fixed, data-independent grid).
 - Anytime-valid evidence about a rate: `alt_grid`, `log_e_bernoulli`, `e_bernoulli`, `confidence_sequence`.
 - Estimation: `wilson`, `kish_n_eff`, `hajek_mean`, `ratio_estimate`.
+
+The command line (`main`) puts the certificate arithmetic in an operator's hands (ADR 0026):
+
+    python -m ratchet.stats plan --target 0.95 --delta 0.05     # golden rows needed: 0 errors: 59 rows, 1: 93, ...
+    python -m ratchet.stats bound --successes 127 --n 128       # one-sided Clopper-Pearson lower bound: 0.9635
+    python -m ratchet.stats mcnemar --b 4 --c 0                 # exact one-sided McNemar p-value: 0.0625
+    python -m ratchet.stats check bom.json --public-key K       # verify a BOM and recompute its certificate
+
+`check` imports `ratchet.bom` and `ratchet.certificate` when it runs, so importing this module still pulls in nothing
+but the standard library.
 """
 
 from __future__ import annotations
 
+import argparse
 import bisect
 import functools
+import json
 import math
+import sys
 from collections.abc import Iterable, Sequence
-from typing import Any
+from pathlib import Path
+from typing import Any, TextIO
 
 # The threshold that serves nothing (`confidence.SERVE_NOTHING`): above every confidence, and finite for JSON. Not
 # imported, so this module stays free of the package's other imports (sim/ uses it alone).
@@ -417,3 +431,85 @@ def ratio_estimate(
     n_eff = kish_n_eff(ws)
     se = math.sqrt(s2 / n_eff) / x_mean
     return {"ratio": ratio, "se": se, "n": n, "n_eff": n_eff, "x_mean": x_mean, "s2": s2, "status": "ok"}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Command line (ADR 0026)
+# ---------------------------------------------------------------------------------------------------------------------
+def _check_bom(path: str, public_key: str | None, out: TextIO) -> int:
+    """Verify a BOM document (sha256, and the signature against `public_key` when given), then recompute its
+    certificate, frontier, per-task bounds and paired p-values from the counts it signs. 0 when everything holds, 1 on
+    any failure or mismatch beyond 1e-9."""
+    from ratchet import bom, certificate  # noqa: PLC0415 - only `check` needs the package (see the module docstring)
+
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"error: cannot read {path}: {e.strerror or e}", file=sys.stderr)
+        return 2
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        print("FAIL: not JSON", file=out)
+        return 1
+    ok, reason = bom.verify(doc, public_key)
+    print(("OK: " if ok else "FAIL: ") + reason, file=out)
+    m = doc.get("manifest") if isinstance(doc, dict) else None
+    ev = m.get("eval") if isinstance(m, dict) else None
+    if not isinstance(ev, dict) or ev.get("certificate") is None:
+        print("no certificate in this BOM (written before certified precision, or by another evaluator)", file=out)
+        return 0 if ok else 1
+    checked, problems = certificate.recheck(ev)
+    for line in checked:
+        print(f"OK: {line}", file=out)
+    for line in problems:
+        print(f"FAIL: {line}", file=out)
+    if problems:
+        print(
+            f"check: {len(problems)} problem(s): the parts above do not follow from the signed counts or cannot be read", file=out
+        )
+    elif ok:
+        print("check: every number recomputed from the signed counts", file=out)
+    return 0 if ok and not problems else 1
+
+
+def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
+    """`python -m ratchet.stats plan|bound|mcnemar|check`. Exit status 0, 1 when `check` finds a failure, 2 on bad
+    input (argparse's own errors exit 2 too)."""
+    out = out or sys.stdout
+    ap = argparse.ArgumentParser(prog="python -m ratchet.stats", description="Exact statistics behind Ratchet's certificates.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    plan = sub.add_parser("plan", help="golden rows needed to certify a precision, for 0 to --max-errors wrong answers")
+    plan.add_argument("--target", type=float, default=0.95)
+    plan.add_argument("--delta", type=float, default=0.05)
+    plan.add_argument("--max-errors", type=int, default=3)
+    bnd = sub.add_parser("bound", help="one-sided Clopper-Pearson lower bound on a rate")
+    bnd.add_argument("--successes", type=int, required=True)
+    bnd.add_argument("--n", type=int, required=True)
+    bnd.add_argument("--delta", type=float, default=0.05)
+    mcn = sub.add_parser("mcnemar", help="exact one-sided McNemar p-value from the discordant pairs")
+    mcn.add_argument("--b", type=int, required=True, help="pairs where the first side wins")
+    mcn.add_argument("--c", type=int, required=True, help="pairs where the second side wins")
+    chk = sub.add_parser("check", help="verify a BOM and recompute its certificate from the signed counts")
+    chk.add_argument("path", help="a BOM document (GET /ratchet/versions/{id}/bom), or - for stdin")
+    chk.add_argument("--public-key", default=None, help="the base64 Ed25519 public key you trust")
+    args = ap.parse_args(argv)
+    try:
+        if args.cmd == "plan":
+            rows = required_rows(args.target, args.delta, args.max_errors)
+            parts = [f"{e} errors: {n} rows" if e == 0 else f"{e}: {n}" for e, n in enumerate(rows)]
+            print(", ".join(parts), file=out)
+        elif args.cmd == "bound":
+            print(f"{cp_lower(args.successes, args.n, args.delta):.4f}", file=out)
+        elif args.cmd == "mcnemar":
+            print(f"{mcnemar_one_sided(args.b, args.c):.4g}", file=out)
+        else:
+            return _check_bom(args.path, args.public_key, out)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

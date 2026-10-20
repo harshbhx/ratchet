@@ -29,5 +29,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0023](0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation | Accepted | 2026-10-20 |
 | [0024](0024-evidence-foundations.md) | Foundations for the evidence features: exact statistics, Merkle trees, one schema change with append-only tables, reserved settings and three pinned workloads | Accepted | 2026-10-20 |
 | [0025](0025-anytime-valid-release-gate.md) | Anytime-valid release gate: e-process rollback, evidence-based promotion and confidence sequences from two integers per version | Accepted | 2026-10-20 |
+| [0026](0026-certified-thresholds-and-a-paired-release-gate.md) | Certified thresholds and a paired release gate: Clopper–Pearson certificates and a frontier in every BOM, opt-in Learn-then-Test and an exact paired champion/challenger gate | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

@@ -32,6 +32,10 @@
 | **Inconclusive** | Under the sequential rule, a canary stage that reached `RATCHET_MAX_STAGE_AUDITS` audits without enough evidence either way. The canary is retired, not rolled back. |
 | **e-value** | A number that measures evidence against a claim (here "precision is at least the floor"): 1 means none, and the chance that it ever reaches 1/alpha while the claim holds is at most alpha, however often it is checked (anytime-valid). The anytime-valid release gate rolls back at 20 and the live alert fires at 100 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)). |
 | **Confidence sequence** | A range for a rate that holds at every sample size at once with the stated probability, so it can be checked after every audit. Release events report a 95% one as `95% CS [lo, hi]`. |
+| **Certificate** | A version's exact lower bound on precision (one-sided Clopper–Pearson) from the held-out golden rows its threshold was not tuned on: "certified >= 95% (lcb 96.4%, delta 0.05)" means the answers it serves agree with the teacher at least 96.4% of the time, with probability at least 95%. Signed in the adapter's BOM ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). |
+| **Frontier** | The certificate at every threshold from 0.95 to 0.50, each corrected so all hold at once: the certified trade-off between precision and coverage. |
+| **Learn-then-Test** | Choosing the threshold by testing a fixed list of thresholds from the highest down and stopping at the first that cannot be certified (`RATCHET_CALIBRATION=ltt`). |
+| **Negative flip** | A golden row the live version answered right that a candidate answers wrong. The paired gate compares negative and positive flips on the same rows with McNemar's exact test. |
 | **Live** | The version serving 100% of student traffic. |
 | **States** | `candidate`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rolled_back`. |
 | **Cold start** | The period before any student exists. The teacher answers everything. |

@@ -2,36 +2,37 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 735 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 759 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 python -m sim.simulate --bad-deploy-version 3 --compare-release      # Wilson vs the anytime-valid gate, same seed
+python -m sim.simulate --calibration ltt --paired-gate              # certified thresholds and the paired gate (ADR 0026)
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
 python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
 ```
 
 | File | Tests |
 |---|---|
-| `tests/test_core.py` | 53 (31 functions; one has 19 cases, one has 5) |
+| `tests/test_core.py` | 59 (37 functions; one has 19 cases, one has 5) |
 | `tests/test_tasks.py` | 81 (35 functions; one has 28 cases, one has 20) |
 | `tests/test_registry.py` | 29 |
-| `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
-| `tests/test_release.py` | 34 (25 functions; one has 8 cases, two have 2) |
-| `tests/test_system.py` | 11 |
-| `tests/test_hardening.py` | 82 (55 functions; one has 11 cases, one has 8, one has 6, one has 4, two have 2) |
+| `tests/test_nightschool.py` | 23 (19 functions; one has 5 cases) |
+| `tests/test_release.py` | 37 (28 functions; one has 8 cases, two have 2) |
+| `tests/test_system.py` | 14 |
+| `tests/test_hardening.py` | 84 (57 functions; one has 11 cases, one has 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| `tests/test_live.py` | 15 |
+| `tests/test_live.py` | 17 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
-| `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
-| `tests/test_provenance.py` | 13 |
-| **Total** | **735** |
+| `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
+| `tests/test_provenance.py` | 14 |
+| **Total** | **759** |
 
 There are three layers:
 
@@ -84,6 +85,12 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_served_logprobs_check_every_entry_and_keep_the_clients_top_logprobs` | FR-1.14: `top_logprobs` cut to the client's count (none for 0 or unset), malformed alternatives left out; a malformed entry (no logprob, a string, a boolean, NaN, +Infinity, no token, an unpaired surrogate) makes the list None; -Infinity is -9999.0 (`MIN_LOGPROB`); the server's bytes are kept when they are bytes; the fakes' `token_entries` spell their text |
 | `test_majority_gives_n_agreeing_choices_with_the_best_sample_first` | FR-1.14, FR-2.2: `confidence.majority` gives the best scored sample first, then the other agreeing samples by token probability, never the minority; None when fewer than n agree, a cut-off or invalid sample never fills a choice, and a repeated object counts twice |
 | `test_gen_plan_for_n_choices` | FR-1.14, FR-1.13: `GenPolicy.plan(params, n)`: the serving teacher at 0.7 (`CHOICES_TEMPERATURE`) for n > 1 without a client temperature that reaches it (also when the allowlist leaves temperature out), the client's otherwise; audits at 0; the student's sampling unchanged; the teacher's logprobs only when asked, never in an audit; a bad n is a `ValueError` |
+| `test_certificate_frontier_and_per_task_from_held_out_points` | FR-16.3, INV-6, [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md): 62 held-out points at threshold 0.85: 52 served, 2 errors, `lcb = cp_lower(50, 52, 0.05)` (0.884), certified at 0.85 and not at 0.9; serving nothing gives 0 and `ltt_trace` only for Learn-then-Test; the frontier's ten rows at delta / 10 with coverage never rising with the threshold; per-task counts and bounds; the outcome vector `S`/`W`/`E` |
+| `test_paired_counts_on_hand_built_vectors` | FR-16.3, FR-6.30, INV-4: ten hand-built rows give exact discordances, flips (an escalated row the candidate answers wrong is a negative flip), the served flip rate 2/5 with its Wilson interval and both McNemar p-values; 4 rows only live serves give 0.0625; bad vectors raise |
+| `test_recheck_recomputes_every_number_from_the_counts` | FR-16.3: a JSON round trip of a full eval rechecks clean (1e-12 of float noise is not a mismatch); an edited `lcb`, `errors` (also against the test vector and the per-task sums), target, frontier row, uncorrected frontier deltas, reordered rows, a paired p-value, impossible counts, a paired `n` or flip count the candidate's test vector rules out, a string count and a bad vector each give their line |
+| `test_recheck_follows_the_ltt_trace` | FR-16.3: Learn-then-Test's trace rechecks; a threshold below the lowest one it kept and a forged p-value are named |
+| `test_certificate_status_and_section` | FR-16.3: `section` of an eval with and without a certificate; the status follows the latest certificate, falls back to the signed one, is `no certificate` without one and `suspended` under an open drift alarm |
+| `test_versions_filter_by_state_in_order` | FR-16.3: `Ledger.versions(states)` selects in SQL in id order (a generator, an empty list), `version(vid)` reads one row, `live` and `by_state` the latest |
 
 ### `tests/test_tasks.py`
 
@@ -181,6 +188,11 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_cascade_eval_scores_a_refused_row_as_not_served` | FR-5.1, INV-7, INV-6: three of six golden rows the sampler refuses with a 400 score as confidence 0 and wrong (`refused_n` 3, agreement 0.5, coverage 2/3 of the odd rows); a 401, 404, 429 or 503 still raises |
 | `test_golden_eval_runs_under_production_conditions` | FR-5.1, FR-1.13, FR-4.1: an example stored with a stop and JSON mode comes back from `dataset.rows` with them; the router (with `RATCHET_STUDENT_MAX_TOKENS=256`), `LiveEvaluator` and `MockFleet` send the student exactly the same arguments for those rows |
 | `test_champion_rescored_on_same_golden_set` | INV-4: the live version is evaluated first, on the same golden list as the candidate; its stored eval now holds the re-checked precision and coverage, with `rechecked_day` = the ledger's day; the candidate, which would regress against the stale eval, is admitted to shadow against the fresh one; the candidate is trained from the base model, not from the champion (FR-4.2) |
+| `test_cascade_eval_certifies_on_the_held_out_half` | FR-16.3, INV-6, FR-5.2: 80 rows of two tasks with seeded confidences: the threshold equals the pre-change point rule exactly, the certificate's counts are the odd rows' at it (its precision the eval's own), `lcb ≤ precision`, the test vector has `test_n` letters, the frontier's coverage never rises with the threshold, per-task counts add up, `recheck` is clean; another target and delta change only the certificate |
+| `test_cascade_eval_ltt_picks_a_grid_threshold` | FR-16.3, INV-6: 120 right calibration rows certify every grid threshold (served at 0.5, `lcb` 0.05^(1/120)); 10 rows certify nothing (1.01, one trace step); confident right rows and unsure wrong ones stop at a grid threshold above the unsure ones |
+| `test_cascade_eval_refuses_bad_certification_settings` | An unknown calibration, a target of 1 and a delta of 0 or `True` raise |
+| `test_run_night_pairs_the_candidate_with_the_rescored_live_version` | FR-16.3, FR-6.30, INV-4, INV-14: the candidate's eval and its signed BOM carry `paired` against the live version (the champion's re-score carries none); vectors of different lengths, a missing vector and empty vectors give none, and so does a cold start |
+| `test_paired_gate_admits_what_the_unpaired_rule_rejects_on_noise` | FR-6.30, FR-16.3, INV-4: the reference run's v2 (70 of 74 rows against live's 74, simulation): the unpaired rule rejects it, the paired gate admits it with `serves -4 of 74 vs live v1 (McNemar p=0.06)` |
 
 ### `tests/test_release.py`
 
@@ -211,6 +223,9 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_canary_audit_rate_focuses_audits_on_the_canary` | FR-16.1, FR-6.5: with `RATCHET_CANARY_AUDIT_RATE=1` and an audit rate of 0, every canary answer is audited and no live one, `label_p` logs 1.0 and 0.0; exactly two random draws per request with and without it (a counting RNG), and the same requests reach the canary |
 | `test_label_p_is_the_designed_labelling_probability` | FR-16.1: `label_p` is NULL at cold start, 1.0 for an escalation the student answered, and the audit rate (0.25) for a served answer |
 | `test_stats_versions_carry_the_gates_evidence` | FR-16.1, FR-16.2: `/ratchet/stats` gives the canary and the live version `evidence` equal to `ReleaseGate.evidence`, null for a retired one; the mock gateway reads `RATCHET_SEQUENTIAL` and `RATCHET_MIN_AUDITS` (15 when unset) |
+| `test_min_certified_precision_rejects_a_weak_certificate` | FR-6.31, FR-16.3: 46/48 (bound 87.5%) is rejected at a 90% floor with the exact reason and admitted at 85% or off; a stored `lcb` of 0.99 is ignored (recomputed), no or a broken certificate fails the floor, and the precision floor still comes first |
+| `test_certified_versions_say_so_in_their_gate_events` | FR-16.3: the cold-start canary event and the shadow event append `; certified >= 95% (lcb 96.4%, delta 0.05)` (or 96.5% at another target and delta) for a certified candidate, and nothing for an uncertified one or a claim its counts do not back |
+| `test_paired_gate_rejects_only_large_significant_regressions` | FR-6.30, FR-16.3: 2 of 63 rows within noise (p 0.42) are rejected by the unpaired rule and admitted by the paired gate with its event; a record against another version or with unreadable counts falls back; 10 rows lost (p 0.001) and 8 rows newly wrong of 100 (p 0.004) reject with exact reasons, the same 8 of 1,000 do not; 6 negative flips of 60 reject at `max_nfr` 0.02 (lower bound 4.7%) and pass at 0.05 or off |
 
 ### `tests/test_system.py`
 
@@ -227,10 +242,13 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
 | `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request that fails validation gets a normal HTTP 400 before any stream starts |
 | `test_openai_compat_provider_parses_logprobs_and_usage` | `OpenAICompatProvider` against an `httpx.MockTransport`: sends `logprobs` and `n`, sends the bearer header, parses logprobs per choice, splits completion tokens across choices (evenly here, because one choice has no logprobs), computes `mean_prob` |
+| `test_every_version_carries_a_certificate_in_its_eval_and_bom` | FR-16.3, INV-14: 3 simulated days: every version's eval and signed `manifest.eval` carry a certificate with `lcb ≤ precision`, ten frontier rows, per-task bounds and a test vector of `test_n` letters, all clean under `recheck`; a version never re-scored has its signed eval |
+| `test_certificates_move_no_simulation_number` | FR-16.3, FR-9.2: the same run with the certificate code taken out of the golden eval has the same days, totals, versions, thresholds and decisions; events only gain appended text |
+| `test_ltt_thresholds_come_from_the_fixed_grid` | FR-16.3: with `--calibration ltt --cert-target 0.9` every version's threshold is a grid value or 1.01 and its trace starts at 0.95 |
 
 ### `tests/test_hardening.py`
 
-Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version` (for the e-process alert, the default since FR-16.2, and the Wilson rule), `test_policy_from_env`. `test_anytime_valid_settings_parse` checks the anytime-valid gate's variables (FR-16.1, FR-16.2): `RATCHET_SEQUENTIAL`, `RATCHET_ALPHA_ROLLBACK` and `RATCHET_ALERT_EPROCESS` parse, `from_env(defaults=)` fills only unset fields, bad values name their variable, and `RATCHET_CANARY_AUDIT_RATE` is None unset, 0.5 when set, and stops `Ratchet` at 0, 1.5, -0.1 or NaN (and `Settings` at a non-number). `test_task_names_match_in_full` covers a bug found while building request validation: a task name with a trailing newline passed the `^...$` check. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)). The answer-hygiene tests (v0.5, FR-2.7, FR-2.13, INV-16, [ADR 0016](adr/0016-store-only-complete-valid-teacher-answers.md)) cover what a code reading found before any live run: reasoning before a lone `</think>` was served and stored, an unterminated `<think>` let the reasoning's JSON count as the answer, structured answers were stored inside code fences, a teacher answer cut off by the token limit (or empty, or not JSON for a structured task) became a training target and an audit, JSON nested too deeply crashed the request instead of escalating, and some long answers took seconds to clean.
+Regression tests for the issues in [Issues found while documenting](#issues-found-while-documenting-and-their-fixes): `test_old_database_file_is_migrated`, `test_auto_day_counts_days_from_first_request`, `test_student_failure_falls_back_to_teacher`, `test_fallback_model_uses_default_threshold`, `test_teacher_failure_returns_502`, `test_unknown_tasks_do_not_grow_registry`, `test_live_alert_fires_once_per_version` (for the e-process alert, the default since FR-16.2, and the Wilson rule), `test_policy_from_env`. `test_anytime_valid_settings_parse` checks the anytime-valid gate's variables (FR-16.1, FR-16.2): `RATCHET_SEQUENTIAL`, `RATCHET_ALPHA_ROLLBACK` and `RATCHET_ALERT_EPROCESS` parse, `from_env(defaults=)` fills only unset fields, bad values name their variable, and `RATCHET_CANARY_AUDIT_RATE` is None unset, 0.5 when set, and stops `Ratchet` at 0, 1.5, -0.1 or NaN (and `Settings` at a non-number). `test_task_names_match_in_full` covers a bug found while building request validation: a task name with a trailing newline passed the `^...$` check. `test_live_night_checks_the_student_endpoint_before_paid_work` covers the issue found while testing the live entry points ([Live-path tests](#live-path-tests)). `test_stored_threshold_serves_what_the_eval_measured` covers a bug found while building certified precision ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)): the golden eval stored its threshold rounded to 4 decimals, which could round up past the confidence it was calibrated at, so a version served less than its eval measured (nothing at all when every row had one confidence, as behind a constant-logprob endpoint). The answer-hygiene tests (v0.5, FR-2.7, FR-2.13, INV-16, [ADR 0016](adr/0016-store-only-complete-valid-teacher-answers.md)) cover what a code reading found before any live run: reasoning before a lone `</think>` was served and stored, an unterminated `<think>` let the reasoning's JSON count as the answer, structured answers were stored inside code fences, a teacher answer cut off by the token limit (or empty, or not JSON for a structured task) became a training target and an audit, JSON nested too deeply crashed the request instead of escalating, and some long answers took seconds to clean.
 
 The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the same file. The `gw_env` fixture (in `tests/conftest.py`) reloads the gateway in mock mode with extra environment variables and reloads it again with the defaults afterwards, so settings such as API keys never leak into other tests.
 
@@ -279,9 +297,11 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_v04_file_gains_the_evidence_schema` | ADR 0024, INV-17: a ledger file with v0.4.0's schema and one row per table gains every new column (old rows: `contested` and `checked_epoch` 0, the rest NULL), the eight evidence tables, the append-only triggers and the new indexes, twice without change; its old data reads as before and new rows take the columns |
 | `test_every_index_exists_on_a_new_ledger` | ADR 0024: every `INDEXES` entry exists on a fresh ledger (a misspelled column would make `_migrate` skip it everywhere), and the gate's audit count uses `requests_version_audited` |
 | `test_committed_leaves_and_sealed_receipts_are_append_only` | INV-17: `version_leaves` and `receipts` accept new rows and refuse UPDATE, DELETE, `INSERT OR REPLACE`, `INSERT OR IGNORE` and a duplicate INSERT (also on a migrated v0.4 file), a NULL key column and a split other than train or golden, leaving the rows as they were |
-| `test_reserved_settings_stop_startup_until_their_feature_lands` | ADR 0024: each of the 13 reserved settings set away from its default stops `Settings.check_reserved()`, `Ratchet` and `python -m ratchet.live` (before the ledger is opened), naming the variable and the feature; the defaults spelled another way pass; a non-number names its variable |
-| `test_reserved_release_policy_fields_stop_startup` | ADR 0024: each of the 16 reserved `ReleasePolicy` fields set through its variable stops `from_env`; the defaults, also set explicitly, pass |
+| `test_reserved_settings_stop_startup_until_their_feature_lands` | ADR 0024: each of the 9 reserved settings set away from its default stops `Settings.check_reserved()`, `Ratchet` and `python -m ratchet.live` (before the ledger is opened), naming the variable and the feature; the defaults spelled another way pass; a non-number names its variable |
+| `test_reserved_release_policy_fields_stop_startup` | ADR 0024: each of the 5 reserved `ReleasePolicy` fields set through its variable stops `from_env`; the defaults, also set explicitly, pass |
 | `test_policy_from_env_names_a_bad_value` (8 cases) | ADR 0024: a non-number, a fractional or negative count, a `live_floor` of 1 or 0, NaN and a negative tolerance each stop `from_env` with the variable named |
+| `test_certified_precision_settings_parse` | FR-16.3, FR-6.30, FR-6.31: `RATCHET_CALIBRATION` (any case; empty is `point`), `RATCHET_CERT_TARGET` and `RATCHET_CERT_DELTA` reach `Settings.cert_policy()` and the mock fleet; bad values stop `cert_policy`, the mock `Runtime` and `python -m ratchet.live` before a ledger is opened; the four `ReleasePolicy` fields parse and refuse values out of range |
+| `test_stored_threshold_serves_what_the_eval_measured` | FR-5.2, INV-6, FR-16.3 (regression): every golden row at confidence 0.98049 measured 100% coverage, but the threshold stored rounded to 0.9805 served nothing; stored exactly, the router serves every row the eval counted |
 
 ### `tests/test_resilience.py`
 
@@ -496,6 +516,8 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
 | `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every model request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; then the teacher gets `max_tokens` 8,192 with a stop, a seed, a temperature and JSON mode, and a 400 there fails the check; all present exits 0 with "All good." |
 | `test_deploy_scripts_parse_and_dry_run` | FR-11.1, FR-11.2: `bash -n` on every `deploy/**/*.sh`; `DRY_RUN=1 bash deploy/vm/create_vm.sh` prints the subnet, disk and instance `nebius` commands with the project id and `<cloud-init.yaml>` in place of the user data, never the private-repo token; a given subnet skips the lookup; a missing project, missing key file, reserved user name or bad preset stops before any command; `backup.sh` exits 0 in mock mode. Skipped where bash is missing |
+| `test_sim_cli_certificate_flags` | FR-9.4, FR-16.3, FR-6.30, FR-6.31: `--calibration ltt --cert-target 0.9 --cert-delta 0.1` reach every night's certificate and the table's certificates block (simulation); `--paired-gate` and `--min-certified` reach the gate's policy; bad values exit 2 |
+| `test_live_evaluator_passes_its_certificate_settings` | FR-16.3, FR-8.3: `LiveEvaluator(calibration='ltt', cert_target=0.6, cert_delta=0.2)` writes that certificate with its trace; the default is `point` |
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
@@ -548,7 +570,7 @@ The exact statistics of `ratchet/stats.py` ([ADR 0024](adr/0024-evidence-foundat
 | `test_clopper_pearson_bounds` | 46/48 → 0.8746, 129/130 → 0.9640, 127/128 → 0.9635; s/s → delta^(1/s); for 50 random (s, n) the bound is where P(X ≥ s) = delta, from below, and the upper bound mirrors it |
 | `test_precision_pvalue_planner_and_mcnemar` | `required_rows`: 0.95 → 59, 93, 124, 153 rows for 0 to 3 errors; 0.97 → 99, 157, 208, 257; 0.90 → 29, 46, 61, 76; the p-value falls as agreement rises; McNemar 4 vs 0 is 0.0625 |
 | `test_ltt_fixed_sequence_stops_at_the_first_failure` | 10 correct points certify nothing (1.01); 80 correct at 0.97 and 40 wrong at 0.72 certify 0.75 and stop at 0.70 with its trace; grid order does not matter; bad grids raise |
-| `test_ltt_controls_the_error_rate` | Confidences U(0,1) with P(correct) = c: over 200 seeded draws of 400 rows, the chosen threshold has true precision below the 0.80 target in at most 5% (+3 SE) of draws |
+| `test_ltt_controls_the_error_rate` | Confidences U(0,1) with P(correct) = c: over 300 seeded draws of 400 rows, the chosen threshold has true precision below the 0.80 target in at most 5% (+3 SE) of draws |
 | `test_e_value_oracles_and_confidence_sequence_oracles` | e(0/2 below 0.92) = 29.77, e(0/1) = 4.22, e(20/20) = 0.2006, e(7/17) = 2.59e5, e(60/60 above) = 27.6, e(83/83 above) = 129.7, within 1%; CS(0/2) = (0.001, 0.931) and CS(35/38) = (0.710, 0.992) within 0.002 |
 | `test_alt_grid_components_are_supermartingales` | For p0 in 0.5, 0.8, 0.92, 0.97 and every true rate on the null side, each alternative's one-trial mean factor is at most 1 (the validity argument, checked exactly); weights sum to 1, also near the edges |
 | `test_e_values_edges_and_input_checks` | No trials: e = 1; a huge count stays finite (capped at exp(690)); the confidence sequence narrows with data; bad sides, probabilities and steps raise; the cached confidence sequence equals a fresh scan and still refuses bad counts (a bool, a list, a float, s > n) |
@@ -560,6 +582,8 @@ The exact statistics of `ratchet/stats.py` ([ADR 0024](adr/0024-evidence-foundat
 | `test_kish_and_hajek` | Kish's n_eff of equal and unequal weights; the Hajek mean of a hand-computed example; empty or zero weights give None; bad input raises |
 | `test_ratio_estimate` | R = 1.3 recovered from 400 synthetic pairs; the ratio and standard error equal the textbook formulas; equal weights change nothing; weighted case by hand; too few pairs or no x are `insufficient` (ratio 1.0, se None) |
 | `test_ratio_estimate_interval_covers_the_truth` | R ± 1.96 se covers 1.3 in at least 90% of 200 seeded samples of 150 rows |
+| `test_certificate_on_the_held_out_half_holds_at_its_rate` | FR-16.3: confidences U(0,1) with P(correct) = c, the threshold chosen on 200 calibration points by the point rule and certified at 0.80 on 200 fresh ones: over 300 seeded draws a certificate claims more than the truth in at most 5% (+3 SE), and some draws do certify |
+| `test_stats_cli_plans_bounds_and_tests` | FR-16.3: `plan` prints `0 errors: 59 rows, 1: 93, 2: 124, 3: 153`, `bound` 0.9635 and 0.8746, `mcnemar` 0.0625 and 1; impossible counts and a target of 1.5 exit 2; `python -m ratchet.stats` in a subprocess |
 
 ### `tests/test_provenance.py`
 
@@ -580,6 +604,7 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_rows_report_their_origin` | `dataset.rows` reports `examples.origin`, or `live` when it is not recorded |
 | `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
 | `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
+| `test_certificate_endpoint_and_stats_check_on_a_signed_bom` | FR-16.3, INV-14: on a mock gateway with a signing key, `GET /ratchet/versions/1/certificate` returns every key, the signed certificate, frontier and per-task block, the BOM's hash, the gate's evidence and three assumptions; 404 before training and for an unknown version; a re-score changes `current` and the status, not `training`; a version from before v0.4 (no BOM) and v0.5 (no certificate) answers `no certificate`; `python -m ratchet.stats check` passes the BOM, fails it after `errors` is edited (hash and numbers), after a re-hash (numbers), without the key's signature, and passes a BOM from before v0.5 |
 
 ## Live-path tests
 

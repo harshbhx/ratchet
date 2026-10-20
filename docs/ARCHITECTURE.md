@@ -42,7 +42,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/vocab.py` | The built-in tasks' label vocabularies, shared with the prompts in `sim/tickets.py` and `ratchet/scout/prompts.py` |
 | `ratchet/confidence.py` | `score()` (confidence from samples, agreement counted pairwise) and `calibrate_threshold()` |
 | `ratchet/router.py` | `Ratchet.handle()`: the per-request cascade, audits, shadow, cost accounting |
-| `ratchet/release.py` | `ReleaseGate` (golden gate, shadow, canary, rollback, the anytime-valid canary rule and live alert, `evidence()`) and `wilson()` |
+| `ratchet/release.py` | `ReleaseGate` (golden gate with the opt-in certified floor and paired gate, shadow, canary, rollback, the anytime-valid canary rule and live alert, `evidence()`) and `wilson()` |
 | `ratchet/ledger.py` | `Ledger`: SQLite storage, provenance, stats |
 | `ratchet/licenses.py` | Teacher license registry; refuses teachers that forbid distillation |
 | `ratchet/redact.py` | `redact()`, `redact_messages()`: PII placeholders before examples are stored |
@@ -52,8 +52,9 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/cost.py` | Utilization-aware cost accounting ([§7](#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)): `cost_report()` (savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover, a recommendation), interval merging (`segments`), the simulator's compute (`record_simulated_day`), CLI (`report`, `endpoint up\|down`, `close`) |
 | `ratchet/nightschool/dataset.py` | Builds train and golden sets from the ledger |
 | `ratchet/nightschool/train.py` | LoRA fine-tune script, run inside the Serverless Job |
-| `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold |
-| `ratchet/nightschool/orchestrate.py` | `run_night()`: one night of training and release |
+| `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold (point rule or Learn-then-Test), and the certificate |
+| `ratchet/certificate.py` | Certified precision ([§6](#certified-precision-ratchetcertificatepy), [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)): the Clopper–Pearson certificate, the frontier, per-task bounds, the per-row outcomes, the paired comparison and `recheck()` (what `python -m ratchet.stats check` runs); standard library and `stats` only |
+| `ratchet/nightschool/orchestrate.py` | `run_night()`: one night of training and release; `paired_evidence()` (the candidate against the re-scored live version) |
 | `ratchet/live.py` | Live Night School on Nebius (`NebiusTrainer`, `load_adapter`, CLI) and the gateway's `AdapterReloader` |
 | `ratchet/gateway.py` | FastAPI app: OpenAI-compatible API (with API keys, quotas, request validation, body limit, OpenAI error envelope and streaming), stats, BOM and redaction endpoints, pages (`/`, `/scout`, `/dashboard`), mock-only demo controls, Scout endpoints |
 | `ratchet/scout/agents.py` | `Scout`: planner → searcher → triage (parallel) → reader (parallel) → writer; `Call`, `http_caller` |
@@ -226,8 +227,10 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
  ├─ champion re-check: evaluate the LIVE version on today's golden set, overwrite its eval (+ spec_hashes)
  ├─ trainer.train(train_rows, base_model, name="student-v{N+1}") → adapter_uri
  ├─ ledger.create_version(state="candidate")
- ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, ...} + spec_hashes
- ├─ ledger.set_bom(): bill of materials from the exact train and golden rows, signed if a key is set
+ ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, certificate, ...} + spec_hashes
+ ├─ live version? paired_evidence(): the candidate's test vector vs the re-check's → eval["paired"]
+ ├─ ledger.update_eval(), then ledger.set_bom(): bill of materials from the exact train and golden rows,
+ │     with the eval (certificate, frontier, paired counts), signed if a key is set
  ├─ event "trained"
  └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow
 ```
@@ -373,12 +376,17 @@ Using the candidate's `eval` (calibrated on half of the golden set, measured on 
 
 1. Reject if `precision < 0.95`.
 2. Reject if `coverage < 0.25`.
-3. If a live version exists, reject if `precision < live.precision − 0.02` **or** `coverage < live.coverage − 0.02`. The live numbers were re-measured on the same golden set the same night ([§3](#3-nightly-loop-night-school)).
-4. Otherwise every version in `shadow` or `canary` is set to `retired` (event `retired`). Then:
+3. With `min_certified_precision` > 0 (`RATCHET_MIN_CERTIFIED_PRECISION`, opt-in), reject if the certified lower bound, recomputed from the certificate's counts, is below it, or if the eval has no certificate ([§6](#certified-precision-ratchetcertificatepy)).
+4. If a live version exists, check for a regression against it. The live numbers were re-measured on the same golden set the same night ([§3](#3-nightly-loop-night-school)).
+   - Default: reject if `precision < live.precision − 0.02` **or** `coverage < live.coverage − 0.02`.
+   - With `paired_gate=1` and the candidate's `paired` record against this live version: reject only if more than `tolerance` of the rows are lost from coverage (`(b − c)/n`) with McNemar `p_cov < regression_alpha`, if more than `tolerance` of the rows are newly answered wrong (`(neg_flips − pos_flips)/n`) with `p_err < regression_alpha`, or if `max_nfr` < 1 and the negative flip rate's 95% Wilson lower bound is above it. Without such a record, the default rule.
+5. Otherwise every version in `shadow` or `canary` is set to `retired` (event `retired`). Then:
    - no live version → `canary` at 10% (event `canary`, "first student");
-   - live version exists → `shadow` (event `shadow`).
+   - live version exists → `shadow` (event `shadow`; with the paired gate it appends `serves +c−b of n vs live vL (McNemar p=…); nf negative flips, pf positive flips`).
 
-In practice step 4's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists.
+   Both events append `; certified >= 95% (lcb 96.4%, delta 0.05)` when the candidate's certificate holds (recomputed from its counts).
+
+In practice step 5's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists. With the defaults (no certified floor, no paired gate) this is v0.4's gate exactly.
 
 ### Ticks: `ReleaseGate.tick()`
 
@@ -428,16 +436,35 @@ For comparators that are transitive (equality on normalised values, as in every 
 
 ### Threshold calibration (`calibrate_threshold`, `cascade_eval`)
 
-`cascade_eval(sample, golden_rows, samples=3, target_precision=0.97, floor=0.5)`:
+`cascade_eval(sample, golden_rows, samples=3, target_precision=0.97, floor=0.5, calibration='point', cert_target=0.95, cert_delta=0.05)`:
 
 1. Score each golden row with the candidate. Even-indexed rows go to a calibration set, odd-indexed rows to a test set; each point is `(confidence, agrees_with_teacher)`.
-2. `calibrate_threshold(calib, 0.97)` sorts points by confidence (descending) and walks down **in groups of equal confidence** (ties included before checking). It returns the lowest confidence at which cumulative precision is still ≥ 0.97, or `inf` if none qualifies.
-3. `threshold = min(1.01, max(0.5, calibrated))`. The value 1.01 means "serve nothing".
-4. On the **test** half: `coverage = share with confidence ≥ threshold`, and `precision = agreement rate among those`.
+2. `calibration='point'` (the default): `calibrate_threshold(calib, 0.97)` sorts points by confidence (descending) and walks down **in groups of equal confidence** (ties included before checking). It returns the lowest confidence at which cumulative precision is still ≥ 0.97, or `inf` if none qualifies. `calibration='ltt'` (`RATCHET_CALIBRATION=ltt`): `stats.ltt_fixed_sequence(calib, CERT_GRID, cert_target, cert_delta)`, below.
+3. `threshold = min(1.01, max(0.5, calibrated))`. The value 1.01 means "serve nothing". It is stored exactly (before v0.5 it was rounded to 4 decimals, which could round up past the confidence it was calibrated at), so the router serves at the threshold the eval measured.
+4. On the **test** half: `coverage = share with confidence ≥ threshold`, and `precision = agreement rate among those`; then the certificate, the frontier, the per-task bounds and the test vector, below.
 
 A row whose reference (the stored teacher answer) is not valid under its task's current spec is skipped before the student is sampled; the halves alternate over the rows that are scored.
 
-Returned keys: `golden_n`, `golden_agreement` (majority-answer agreement over all rows), `threshold`, `coverage`, `precision`, `test_n`, `refused_n`, `golden_invalid_refs` (rows skipped for an invalid reference), plus `judge_pass_rate` from `LiveEvaluator` when tasks without fields exist.
+Returned keys: `golden_n`, `golden_agreement` (majority-answer agreement over all rows), `threshold`, `coverage`, `precision`, `test_n`, `refused_n`, `golden_invalid_refs` (rows skipped for an invalid reference), `certificate`, `frontier`, `per_task`, `test_vector`, plus `judge_pass_rate` from `LiveEvaluator` when tasks without fields exist, and `paired` added by `run_night` for a candidate trained while a version is live.
+
+### Certified precision (`ratchet/certificate.py`)
+
+The threshold comes from the calibration half only, so the test half's counts at it are one exact binomial experiment ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). With `s` agreeing answers among `m` served test rows:
+
+```
+lcb        = cp_lower(s, m, delta)      # the p with P(X >= s) = delta, X ~ Binomial(m, p); bisection, rounded down
+certified  = lcb >= target              # RATCHET_CERT_TARGET (0.95), RATCHET_CERT_DELTA (0.05)
+frontier   = for lam in CERT_GRID (0.95 .. 0.50): the same counts at lam, lcb at delta / 10   # Bonferroni: all hold at once
+per_task   = the counts per task at the threshold, each at delta                             # diagnostic only
+test_vector = 'S' served and right, 'W' served and wrong, 'E' escalated, one per test row
+```
+
+- With probability at least 1 − delta, the precision of what the version serves at its threshold is at least `lcb`, assuming the golden rows are exchangeable with traffic (they over-represent hard requests), with precision meaning agreement with the teacher. 59 served rows with no error is the smallest 95% certificate (`python -m ratchet.stats plan`).
+- **Learn-then-Test** (`stats.ltt_fixed_sequence`): from 0.95 down the fixed grid, the exact p-value `precision_pvalue(k, n, target)` of the calibration answers at or above each threshold; keep going while it is ≤ delta, stop at the first that is not, serve at the lowest kept (1.01 when the first fails). Fixed-sequence testing needs no correction. The grid is fixed in advance: one built from the observed confidences would start with a one-point group and certify nothing. Conformal risk control does not apply, because selective precision is not monotone in the threshold.
+- **Paired comparison** (`certificate.paired`, `run_night`'s `paired_evidence`): the candidate's test vector against the re-scored live version's, same rows, same order. `b`/`c` rows only live / only the candidate serves, `p_cov = mcnemar_one_sided(b, c)`; `neg_flips` rows where the candidate serves a wrong answer and live's answer was right (served or escalated), `pos_flips` the reverse, `p_err = mcnemar_one_sided(neg_flips, pos_flips)`; the negative flip rate (live served right, the candidate serves wrong) with its 95% Wilson interval. The opt-in paired gate reads it ([§5](#golden-gate-releasegateadmitvid)).
+- `certificate.recheck(eval)` recomputes every number from the counts (and the counts from the test vector, the per-task rows' sums and Learn-then-Test's trace); `python -m ratchet.stats check bom.json` runs it on a signed BOM. `GET /ratchet/versions/{id}/certificate` serves the signed and the latest certificate with the gate's evidence and the assumptions.
+
+Reference run (seed 7, simulation): the training certificates' lower bounds go from 0.875 (46/48, v1) to 0.964 (129/130, v7); v2 (70/70), v6 and v7 are certified at 95%, though the default gate rejects v2 for regressing against v1.
 
 ### Wilson score interval (`stats.wilson`, also `release.wilson`)
 
