@@ -634,9 +634,8 @@ INITIAL_KNOWN_GAPS: frozenset[str] = frozenset(
 # The gaps still open. Remove an id when a test marks it; the check fails until you do.
 KNOWN_GAPS: frozenset[str] = frozenset(
     {
-        "FR-1.2", "FR-2.1", "FR-2.8", "FR-4.1", "FR-4.2", "FR-4.4", "FR-4.5", "FR-4.6", "FR-5.1", "FR-5.3",
-        "FR-5.4", "FR-5.5", "FR-6.3", "FR-6.4", "FR-6.8", "FR-8.2", "FR-8.4", "FR-8.5", "FR-9.6", "FR-10.6",
-        "FR-11.1", "FR-11.2", "NFR-1", "NFR-3", "INV-2", "INV-3", "INV-4", "INV-5", "INV-6", "INV-8",
+        "FR-1.2", "FR-2.1", "FR-4.5", "FR-4.6", "FR-5.1", "FR-5.5", "FR-8.2", "FR-8.4", "FR-8.5", "FR-9.6",
+        "FR-10.6", "FR-11.1", "FR-11.2", "NFR-1", "INV-8",
     }
 )  # fmt: skip
 

@@ -1,19 +1,60 @@
 # CLAUDE.md: `tests/`
 
-- `test_core.py`: pure logic: tasks, confidence, calibration (incl. ties), licenses, ledger, release gate transitions. Build small ledgers with `Ledger(":memory:")`; use `_version()` / `_audit()` helpers.
-- `test_system.py`: end-to-end with mock models through `sim.simulate.run`: learning curve, savings, rollback, drift recovery, provenance, gateway API shape, provider parsing via `httpx.MockTransport`.
-- `test_hardening.py`: regressions for the issues listed in [docs/TESTING.md](../docs/TESTING.md): migrations, `auto_day`, student-failure fallback, 502 on teacher failure, fallback threshold, registry growth, alert de-duplication, `ReleasePolicy.from_env`. Also the v0.4 hardening: PII redaction (incl. a check that it never changes a mock request), API keys and quotas, streaming, signed BOMs, `/healthz`, `/ratchet/redact`. Use the `gw_env` fixture there: `gw_env(RATCHET_API_KEYS=...)` reloads the gateway with those variables and restores the default gateway afterwards.
+- `test_core.py`: pure logic: tasks, confidence, calibration (incl. ties), licenses, ledger, release gate transitions. Build small ledgers with `Ledger(":memory:")` and the builders from `fakes.py`.
+- `test_nightschool.py`: Night School's rules, each tested directly with `RecordingTrainer` / `RecordingEvaluator`: training targets are teacher answers only on every path that stores one (audit, arbitration, escalation); the INV-2 structural guard (an AST scan of `ratchet/` for every use of `add_example`, which must sit in a function listed in `ALLOWED_ADD_EXAMPLE_CALLERS`); golden rows never reach the trainer except `FREQUENT` ones; closed-teacher rows are dropped at dataset build; the skip reasons (parametrized); retraining from the base model on cumulative data; `cascade_eval` grading on the held-out half; the champion re-scored on the same golden set.
+- `test_release.py`: every `ReleaseGate` rule (coverage floor, tolerance boundary, retiring older candidates, shadow promotion and both rejections, canary hold without strong evidence, rollback to the teacher at cold start), shadow arbitration and its cost, and the canary traffic split (`Ratchet._pick_version` with a seeded RNG, 99% Wilson interval).
+- `test_system.py`: end-to-end with mock models through `sim.simulate.run`: learning curve, savings, rollback, drift recovery, provenance, gateway API shape, provider parsing via `httpx.MockTransport`, and `test_reference_simulation_unchanged` (below).
+- `test_hardening.py`: regressions for the issues listed in [docs/TESTING.md](../docs/TESTING.md): migrations, `auto_day`, student-failure fallback, 502 on teacher failure, fallback threshold, registry growth, alert de-duplication, `ReleasePolicy.from_env`. Also the v0.4 hardening: PII redaction (incl. a check that it never changes a mock request), API keys and quotas, streaming, signed BOMs, `/healthz`, `/ratchet/redact`.
 - `test_traceability.py`: the requirements traceability check (`scripts/reqtrace.py`, loaded with `importlib.util.spec_from_file_location`). Repo tests run each rule on the real repo; mini-world tests write a tiny PRD, CLAUDE.md and test file to `tmp_path` and assert that each kind of mistake gives exactly one error. One test runs `pytest --collect-only` in a subprocess to prove the AST test count matches pytest.
-- `test_scout.py`: Scout and its pieces: example questions match the research world, the documented event shape, pinned tasks never stored as training data, the student learning Scout calls over simulated days, `--workload research`, all gateway pages and `/scout/*` routes (incl. SSE and the 400/429 paths), the guard (budget, hourly window, daily run cap, with a fake clock), `TavilySearch` against `httpx.MockTransport`, and bad JSON from models. Use the `gw` fixture: it reloads the gateway in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0`.
+- `test_scout.py`: Scout and its pieces: example questions match the research world, the documented event shape, pinned tasks never stored as training data, the student learning Scout calls over simulated days, `--workload research`, all gateway pages and `/scout/*` routes (incl. SSE and the 400/429 paths), the guard (budget, hourly window, daily run cap, with `FakeClock`), `TavilySearch` against `httpx.MockTransport`, and bad JSON from models.
 
-108 tests in total (19 core, 7 system, 23 hardening, 15 Scout, 44 traceability).
+131 tests in total (19 core, 13 nightschool, 9 release, 8 system, 23 hardening, 15 Scout, 44 traceability).
 
-Rules:
+## Shared fixtures (`conftest.py`)
 
-- No network, no GPU, no API keys. The suite must pass offline in about 20 s.
-- Assert on trends and invariants (share rises, escalations fall after drift, rollback happens), not exact simulation numbers.
+| Fixture | Scope | What |
+|---|---|---|
+| `gw` | test | `ratchet.gateway` reloaded in mock mode with `RATCHET_MOCK_WARMUP_DAYS=0` (Scout and page tests) |
+| `gw_env` | test | `gw_env(RATCHET_API_KEYS=...)` reloads the gateway in mock mode with those variables (and no warm-up), and reloads the default gateway afterwards |
+| `sim_reference` | session | `scripts/regen_sim_reference.py`, loaded by path: `snapshot()`, `load()`, `inputs()`, the fixture path |
+| `reference_run` | session | The result of one `sim.simulate.run` with the pinned reference inputs. It runs once per session (about 7 s) however many tests use it, so treat the dict as read-only |
+
+## Fakes and builders (`fakes.py`)
+
+Import with `from fakes import ...` (pytest puts `tests/` on `sys.path` because it holds `conftest.py`).
+
+| Name | What |
+|---|---|
+| `RecordingProvider(text, logprob=-0.05, in_tokens=10, out_tokens=5, raise_on=set())` | Any OpenAI-compatible model. `text` is a string or `text(messages, model)`. Returns `n` identical choices (so a student built from it is unanimous; -0.05 is p≈0.95, confident), token logprobs only when `logprobs=True`, and raises `httpx.ConnectError` for a model in `raise_on`. Records `ProviderCall(messages, model, kwargs)` per call; `answer(messages, model)` gives what it said |
+| `RecordingTrainer` | Records `TrainCall(rows, base_model, name)` and returns `name` as the adapter |
+| `RecordingEvaluator(result_fn)` | Returns `result_fn(adapter_uri, golden_rows)` (or a copy of a fixed dict) and records `EvalCall(adapter_uri, golden_rows)` |
+| `REJECTED_EVAL` | A golden result the gate always rejects, so no release stays in flight and the next night trains again |
+| `FakeClock` | `clock = FakeClock(); Guard(..., clock=clock); clock.advance(3601)` |
+| `_version(led, state, eval, pct)` | `create_version` + `set_version`, as the gate does. `pct` defaults to the gate's value (live 100, canary 10, else 0); the adapter is `student-v<id>` |
+| `_audit(led, vid, n, agree_every)` | `n` audited student answers; every `agree_every`-th (from the first) disagrees: `(20, 10)` is 18 of 20 |
+| `_shadow(led, vid, n, serve_every, agree_every, live_vid=, live_escalate_every=)` | `n` requests the shadow scored. Every `serve_every`-th it would escalate; among the ones it would serve, every `agree_every`-th disagrees; the live student serves all but every `live_escalate_every`-th |
+| `_examples(led, train, golden, task=, teacher=, prefix=)`, `_repeat(led, ex, times)` | Exactly `train` and `golden` stored teacher examples (the split comes from the hash, so candidates are probed on a scratch ledger); `_repeat` raises an example's `seen` count |
+
+Every builder writes through the ledger's public writers (`create_version`, `set_version`, `log_request`, `add_example`), never raw SQL. Prefer these over a new local helper; extend them when a test needs more.
+
+## The reference simulation fixture
+
+`tests/fixtures/sim_reference_seed7.json` pins one run of the simulator (seed 7, 10 days × 2,000 requests, drift day 5, corrupted v3, mock models): every input, the daily requests, student share, escalation rate, savings and audited agreement (4 decimal places), the ordered Night School and release events as (day, kind, version), and each version's final state and training-set size. `test_reference_simulation_unchanged` compares a fresh run with it exactly. It is the one exception to "assert on trends": later changes use it to show that legacy behaviour is byte-identical.
+
+- A change that is not meant to alter the simulation must leave it passing. If it fails, find out why before anything else.
+- A change that is meant to alter it: run `python scripts/regen_sim_reference.py`, review the diff of the JSON (one day or event per line), commit it with the change, and add a CHANGELOG line that says why the reference moved. Never edit the JSON by hand.
+- `python scripts/regen_sim_reference.py --check` compares without writing (exit 1 on a difference).
+- The run unsets every `RATCHET_*` variable while it runs (and restores them after), so a variable in your shell, such as `RATCHET_TEACHER_REASONING_TOKENS`, cannot move it.
+- The numbers are simulation output from mock models, not measurements.
+
+## Rules
+
+- No network, no GPU, no API keys. The suite must pass offline in about 25 s (the reference simulation is about 7 s of that).
+- Assert on trends and invariants (share rises, escalations fall after drift, rollback happens), not exact simulation numbers, except in `test_reference_simulation_unchanged`.
 - Every bug fix gets a test in `test_hardening.py`.
+- `ALLOWED_ADD_EXAMPLE_CALLERS` in `test_nightschool.py` changes only in a reviewed edit, together with the code that adds or removes a caller. The test also fails when an allowed caller stops calling `add_example`, so the list never goes stale.
 - Mark each test with the requirements it proves: `@pytest.mark.req("FR-2.1", "INV-7")` (string literals only, so the AST scan can read them), or a module- or class-level `pytestmark`. Ids come from [docs/PRD.md](../docs/PRD.md) (FR, NFR, US, SM) and the invariants in [CLAUDE.md](../CLAUDE.md) (INV-n). Never cite an unknown or replaced id; a test for a `Planned` requirement or a `Not met` metric must be `@pytest.mark.xfail(strict=True, reason=...)`. An xfail or `@pytest.mark.skip` test never counts as proof. After adding or renaming a marked test, run `make trace` and commit `docs/REQUIREMENTS.md`; if the id was in `KNOWN_GAPS` in `scripts/reqtrace.py`, remove it there.
 - Keep `parametrize` argument lists literal (or a module-level list literal) so the suite size in the docs can be counted statically. Update the "N tests" lines in the docs when the count changes; `make lint` names every stale one.
 - Tests that reload `ratchet.gateway` must restore state (`gw.rt.reset()`). Set `RATCHET_MOCK_WARMUP_DAYS=0` when you reload it, so a warm-up in your shell does not slow tests or change their numbers.
-- Guard tests use an injected clock (`Guard(..., clock=lambda: now[0])`), never `time.sleep`.
+- Pass explicit values to `Settings(...)` for anything a test depends on (`audit_rate`, `samples`, `teacher_model`), so environment variables in your shell cannot change the result.
+- Guard tests use an injected clock (`FakeClock`), never `time.sleep`.

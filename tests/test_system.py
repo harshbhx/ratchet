@@ -51,6 +51,18 @@ def test_drift_raises_escalations_then_recovers():
     assert d[9]["escalation_rate"] < d[5]["escalation_rate"]
 
 
+def test_reference_simulation_unchanged(reference_run, sim_reference):
+    """The one exact-number test: the pinned reference run (seed 7, 10 days x 2,000, drift day 5, corrupted v3)
+    must reproduce tests/fixtures/sim_reference_seed7.json, so a change can show it leaves legacy behaviour
+    byte-identical. If a change is meant to move it, run scripts/regen_sim_reference.py and add a CHANGELOG line."""
+    want, have = sim_reference.load(), sim_reference.snapshot(reference_run)
+    assert have["inputs"] == want["inputs"]  # a changed simulator default, not a behaviour change
+    assert have["events"] == want["events"]
+    assert have["versions"] == want["versions"]
+    assert have["days"] == want["days"]
+    assert set(have) == set(want)
+
+
 @pytest.mark.req("FR-3.3", "US-7", "INV-1")
 def test_provenance_only_lists_distillable_teachers():
     res = sim("--days", "2", "--requests", "300", "--drift-day", "0")

@@ -7,6 +7,7 @@ from argparse import Namespace
 
 import httpx
 import pytest
+from fakes import FakeClock
 from fastapi.testclient import TestClient
 
 from ratchet import tasks
@@ -16,18 +17,6 @@ from ratchet.scout.prompts import EXAMPLE_QUESTIONS
 from ratchet.scout.search import MockSearch, TavilySearch
 from sim import research
 from sim.simulate import parser, run
-
-
-@pytest.fixture()
-def gw(monkeypatch):
-    monkeypatch.setenv("RATCHET_MODE", "mock")
-    monkeypatch.setenv("RATCHET_MOCK_WARMUP_DAYS", "0")
-    import importlib
-
-    import ratchet.gateway as gw
-
-    importlib.reload(gw)
-    return gw
 
 
 def _events(gw, question=EXAMPLE_QUESTIONS[0]):
@@ -129,16 +118,16 @@ def test_rate_limit_returns_429(gw):
 
 @pytest.mark.req("FR-10.5", "INV-11")
 def test_guard_budget_and_hourly_window():
-    now = [1_800_000_000.0]
-    g = Guard(1.0, 2, clock=lambda: now[0])
+    clock = FakeClock()
+    g = Guard(1.0, 2, clock=clock)
     assert g.admit("a") is None and g.admit("a") is None
     assert "Rate limit" in g.admit("a")
     assert g.admit("b") is None
-    now[0] += 3601
+    clock.advance(3601)
     assert g.admit("a") is None
     g.add_spend(1.5)
     assert "budget" in g.admit("c")
-    now[0] += 86400  # a new UTC day resets the budget
+    clock.advance(86400)  # a new UTC day resets the budget
     assert g.admit("c") is None
 
 
@@ -181,11 +170,11 @@ def test_scout_survives_bad_json_from_models():
 
 @pytest.mark.req("FR-10.5")
 def test_guard_caps_runs_per_day():
-    now = [1_800_000_000.0]
-    g = Guard(None, 100, max_runs_per_day=2, clock=lambda: now[0])
+    clock = FakeClock()
+    g = Guard(None, 100, max_runs_per_day=2, clock=clock)
     assert g.admit("a") is None and g.admit("b") is None
     assert "run limit" in g.admit("c")
-    now[0] += 86400
+    clock.advance(86400)
     assert g.admit("c") is None
 
 

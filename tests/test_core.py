@@ -2,6 +2,7 @@ import json
 import math
 
 import pytest
+from fakes import _audit, _version
 
 from ratchet import licenses, tasks
 from ratchet.confidence import calibrate_threshold, score
@@ -101,8 +102,8 @@ def test_bill_of_materials_lists_licenses():
 
 
 # ---------- release gate ----------
-def _version(led, precision, coverage, state="candidate"):
-    return led.create_version("base", "a", 100, "h", {"precision": precision, "coverage": coverage}, state)
+def _pc(precision, coverage):
+    return {"precision": precision, "coverage": coverage}
 
 
 @pytest.mark.req("FR-6.6", "NFR-8")
@@ -116,10 +117,10 @@ def test_wilson_bounds():
 def test_cold_start_goes_to_canary_and_bad_candidates_rejected():
     led = Ledger(":memory:")
     gate = ReleaseGate(led)
-    bad = _version(led, 0.80, 0.9)
+    bad = _version(led, "candidate", _pc(0.80, 0.9))
     assert not gate.admit(bad)
     assert led.version(bad).state == "rejected"
-    good = _version(led, 0.97, 0.8)
+    good = _version(led, "candidate", _pc(0.97, 0.8))
     assert gate.admit(good)
     assert led.version(good).state == "canary" and led.version(good).traffic_pct == 10
 
@@ -128,36 +129,21 @@ def test_cold_start_goes_to_canary_and_bad_candidates_rejected():
 def test_regression_vs_live_is_rejected_and_good_one_shadows():
     led = Ledger(":memory:")
     gate = ReleaseGate(led)
-    live = _version(led, 0.98, 0.90, state="live")
-    worse = _version(led, 0.97, 0.80)
+    live = _version(led, "live", _pc(0.98, 0.90))
+    worse = _version(led, "candidate", _pc(0.97, 0.80))
     assert not gate.admit(worse)
-    better = _version(led, 0.98, 0.92)
+    better = _version(led, "candidate", _pc(0.98, 0.92))
     assert gate.admit(better)
     assert led.version(better).state == "shadow"
     assert led.live().id == live
-
-
-def _audit(led, vid, n, agree_every):
-    for i in range(n):
-        led.log_request(
-            task="t",
-            served_by="student",
-            student_version=vid,
-            audited=1,
-            audit_agree=int(i % agree_every != 0) if agree_every else 1,
-            escalated=0,
-            cost_usd=0,
-            baseline_cost_usd=0,
-            latency_ms=1,
-        )
 
 
 @pytest.mark.req("FR-6.5", "US-5")
 def test_canary_advances_then_goes_live():
     led = Ledger(":memory:")
     gate = ReleaseGate(led, ReleasePolicy(min_audits=10))
-    old = _version(led, 0.97, 0.9, state="live")
-    v = _version(led, 0.97, 0.9)
+    old = _version(led, "live", _pc(0.97, 0.9))
+    v = _version(led, "candidate", _pc(0.97, 0.9))
     led.set_version(v, "canary", 10)
     _audit(led, v, 12, 0)
     gate.tick()
@@ -173,8 +159,8 @@ def test_canary_advances_then_goes_live():
 def test_canary_rolls_back_on_strong_evidence():
     led = Ledger(":memory:")
     gate = ReleaseGate(led, ReleasePolicy(min_audits=10))
-    live = _version(led, 0.97, 0.9, state="live")
-    v = _version(led, 0.97, 0.9)
+    live = _version(led, "live", _pc(0.97, 0.9))
+    v = _version(led, "candidate", _pc(0.97, 0.9))
     led.set_version(v, "canary", 10)
     _audit(led, v, 20, 2)  # 50% precision
     gate.tick()
