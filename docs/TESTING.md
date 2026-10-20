@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 601 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
+pytest -q                     # 613 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live), ~35 s
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -13,7 +13,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | File | Tests |
 |---|---|
 | `tests/test_core.py` | 52 (30 functions; one has 19 cases, one has 5) |
-| `tests/test_tasks.py` | 69 (33 functions; one has 20 cases, one has 18) |
+| `tests/test_tasks.py` | 81 (35 functions; one has 28 cases, one has 20) |
 | `tests/test_registry.py` | 27 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 12 (11 functions; one has 2 cases) |
@@ -25,7 +25,7 @@ python scripts/regen_sim_reference.py --check        # does the pinned reference
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
-| **Total** | **601** |
+| **Total** | **613** |
 
 There are three layers:
 
@@ -92,31 +92,33 @@ Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators
 | `test_parse_number_cases` (20 cases) | Thousands groupings (also Indian, apostrophe, space), `US$`, ISO codes, exponents, signs; ambiguous `1,5`, lower-case codes, units, NaN, infinities, `1_000`, double signs refused |
 | `test_number_refuses_non_finite_and_non_numbers` | Strings, booleans, lists, `1e999`, NaN and an integer too large for a float are invalid |
 | `test_ordinal_tolerance` | `low` and `medium` agree with tolerance 1, `low` and `high` do not; an unknown label is invalid; `order` is required |
-| `test_text_modes` | `loose` with suffixes (`Acme Corp.` == `ACME corp` == `Acme, Inc.`, a two-token suffix), a suffix that is the whole name kept, `exact`, `token_set` |
+| `test_text_modes` | `loose` with suffixes (`Acme Corp.` == `ACME corp` == `Acme, Inc.` == `Acme,Inc.`, a two-token suffix), punctuation as a word break (`hello-world`), apostrophes and initials joined (`O'Brien`, `U.S.A.`), a suffix that is the whole name kept, `exact`, `token_set` |
 | `test_date_formats` | Six written forms == `2026-10-03`; month first by default, `day_first`; the local day of a datetime; UTC datetimes; impossible dates invalid |
-| `test_language_codes_and_names` | `English` == `en` == `eng` == `en-US`, `Deutsch`, `日本語`; unknown languages invalid; `values` restricts |
+| `test_language_codes_and_names` | `English` == `en` == `eng` == `en-US`, `Deutsch`, `日本語`, locale tags with scripts, regions and variants; unknown languages invalid; `values` restricts; prose that starts with a code (`It is English`, `no idea`, `in progress`) and tags led by a 639-2 or retired code are invalid, so `It is English.` and `It is French.` do not agree |
 | `test_set_order_case_and_jaccard` | Order, case and duplicates ignored; Jaccard 0.8 boundary; `empty_values`; `split` with number elements; a string without `split` is invalid |
-| `test_records_unordered_keyed_and_ordered` | Greedy and keyed pairing across order, `ordered=True`, a changed field or length, duplicate keys and a missing sub-field invalid |
+| `test_records_unordered_keyed_and_ordered` | Unkeyed and keyed pairing across order, `ordered=True`, a changed field or length, duplicate keys and a missing sub-field invalid |
+| `test_records_without_a_key_pair_in_any_order` | Records with a tolerance pair by a maximum matching: the listed order never decides (`[0, 1]` and `[1, 0]` both agree with `[0.5, 2]`), a 50-record chain with one pairing, labels and nested records grouping first |
 | `test_ranking_top_k` | Top-3 in order and as a set; an id ranked twice is invalid |
 | `test_root_label_text_format` | A text task's `$` label: `Positive.` == `positive`, reasoning removed; other paths refused |
 | `test_top_level_array_with_dollar_path` | A `$` set over a top-level array (fenced, after a sentence, after reasoning), a `$` number, dot paths into nested objects |
 | `test_empty_json_is_invalid_when_fields_required` | `{}` is invalid for `ticket-triage` (score 0), but still valid for a `compare_keys` task, as in v0.4 |
 | `test_out_of_vocab_label_invalid` | INV-16: `check` reasons (`invalid field category`, `invalid field priority`, `invalid answer`, `empty answer`); every answer the mock world writes is valid |
 | `test_nullable_field_accepts_null` | Required, nullable and optional fields and how null and missing agree |
-| `test_bad_specs_fail_when_defined` (18 cases) | Reserved and unknown types, bad paths, options on the wrong type, duplicate labels, tolerances on set elements, record keys, the value, field and format limits, policy keys and ranges, `tools` |
+| `test_bad_specs_fail_when_defined` (28 cases) | Reserved and unknown types, bad paths, options on the wrong type (`values`, `tolerance`, `abs_tol`, `mode`, `k`, `min_jaccard`, `day_first`), duplicate labels, an alias that is a label of the vocabulary or names two labels, tolerances on set elements, record keys, the value, field and format limits, `compare_keys` with `.` or `$`, policy keys and ranges, `tools` |
 | `test_records_nest_at_most_four_deep_and_hold_at_most_200` | Depth 4 allowed and 5 refused; 200 records valid and 201 invalid; the 200 count across nesting |
-| `test_spec_hash_covers_the_rules_not_the_name` | Same rules, same hash, whatever the name or source; a vocabulary or `pinned` changes it; `dataclasses.replace` recomputes it; `policy` is read-only |
+| `test_spec_hash_covers_the_rules_not_the_name` | Same rules, same hash, whatever the name or source; a vocabulary or `pinned` changes it; `dataclasses.replace` recomputes it, also on a `compare_keys` task; `policy` is read-only |
 | `test_legacy_compare_keys_canonical_byte_identical` | FR-2.6: a `compare_keys` task's `canonical` and `agree` equal v0.4's on 25 answers with fences, `<think>`, nulls, `1` vs `1.0`, nested values, NaN and deep nesting |
 | `test_pairwise_score_equals_counter_score_for_exact_tasks` | FR-2.2: on 600 seeded random sample sets (invalid and cut-off samples, ties, missing logprobs), the pairwise score equals v0.4's `Counter` score: the same answer object, confidence, agreement and token probability; `majority`'s choices agree |
 | `test_builtin_task_agreement_decisions_unchanged` | On mock answers for the three built-in tasks, the typed specs decide agreement, confidence and the best sample exactly as v0.4's exact keys |
-| `test_tolerance_non_transitive` | 0, 0.6, 1.2 with `abs_tol` 1: the middle sample, agreement 1.0, even at a lower token probability; `majority`; two groups tie and the first wins |
-| `test_default_compares_json_canonically` | Key order, spacing, case, NFKC and `1` vs `1.0` agree when both are JSON; list order and `true` vs `1` do not; the text rule otherwise; deep nesting compared as text; a `json` task without fields |
-| `test_comparators_are_linear_on_adversarial_answers` | Long labels, suffix runs, token sets, numbers, dates, languages and sets normalise at once, 200 records pair in the worst order, all under 2 s |
+| `test_tolerance_non_transitive` | 0, 0.6, 1.2 with `abs_tol` 1: the middle sample, agreement 1.0, even at a lower token probability; `majority`; two groups tie and the first wins; with four samples the served sample's agreement is its own |
+| `test_score_never_raises_when_a_key_does_not_match_itself` | INV-7: a comparator that is not reflexive gives confidence 0 instead of raising on the request path |
+| `test_default_compares_json_canonically` | Key order, spacing (inside strings too, as in v0.4), case, NFKC and `1` vs `1.0` agree when both are JSON; list order and `true` vs `1` do not; the text rule otherwise; deep nesting compared as text; a `json` task without fields |
+| `test_comparators_are_linear_on_adversarial_answers` | Long labels, suffix runs, token sets, numbers, dates, languages and sets normalise at once; 200 records pair reversed, shifted within a tolerance, and with ten tolerant fields in the worst order, all under 2 s |
 | `test_comparators_never_raise_on_junk` | INV-7: 3,000 seeded junk values (odd strings, NaN, huge integers, nested lists and objects) never make a comparator raise, and every valid value matches itself |
 | `test_invalid_teacher_answer_served_but_not_stored` | FR-2.13, INV-16: an out-of-vocabulary or incomplete teacher answer is served, not stored, `skip_example` names the field; an invalid student answer is never served; `store=False` stores nothing without a skip |
 | `test_invalid_audit_not_counted` | INV-16: an audit whose teacher answer the spec refuses is `audited=0`, not stored |
 | `test_cascade_eval_skips_invalid_golden_refs` | INV-6: rows with invalid references are not sampled and are counted in `golden_invalid_refs`; the halves alternate over the scored rows |
-| `test_dataset_rows_skip_invalid` | INV-2, INV-16: train rows stored under a looser spec are left out and counted (`skipped_invalid`, also in `manifest.json`); golden rows stay |
+| `test_dataset_rows_skip_invalid` | INV-2, INV-16: train rows stored under a looser spec are left out and counted (`skipped_invalid`, also in `manifest.json` and in the night's `trained` or `skip` event); golden rows stay |
 
 ### `tests/test_registry.py`
 

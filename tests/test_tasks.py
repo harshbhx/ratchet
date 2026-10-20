@@ -11,7 +11,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 import pytest
-from fakes import OPEN_TEACHER, RecordingProvider, _version
+from fakes import OPEN_TEACHER, REJECTED_EVAL, RecordingEvaluator, RecordingProvider, RecordingTrainer, _version
 
 from ratchet import compare, licenses, tasks
 from ratchet.compare import INVALID, FieldSpec
@@ -20,7 +20,9 @@ from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.nightschool import dataset
 from ratchet.nightschool.evaluate import cascade_eval
+from ratchet.nightschool.orchestrate import run_night
 from ratchet.providers import COMPLETE, Completion
+from ratchet.release import ReleaseGate
 from ratchet.router import Ratchet
 from sim import research, tickets
 
@@ -152,6 +154,10 @@ def test_text_modes():
     assert agree(loose, "Acme Pvt. Ltd.", "Acme")  # a suffix of two tokens
     assert not agree(loose, "Acme Corp.", "Apex Corp.")
     assert agree(FieldSpec("v", "text"), "Inc", "inc.")  # a suffix that is the whole name stays
+    # Punctuation separates words, without a space too; apostrophes and the dots of initials join.
+    assert agree(loose, "Acme,Inc.", "acme") and agree(loose, "hello-world", "Hello world")
+    assert agree(loose, "O'Brien", "OBrien") and agree(loose, "U.S.A.", "usa") and agree(loose, "J.R.R. Tolkien", "jrr tolkien")
+    assert not agree(loose, "3.5", "35") and not agree(loose, "A.Smith", "asmith")
     exact = FieldSpec("v", "text", mode="exact")
     assert agree(exact, "Acme  Corp", "acme corp") and not agree(exact, "Acme Corp.", "Acme Corp")
     bag = FieldSpec("v", "text", mode="token_set")
@@ -183,6 +189,17 @@ def test_language_codes_and_names():
     assert one(only).valid('{"lang": "español"}') and not one(only).valid('{"lang": "fr"}')
     with pytest.raises(ValueError, match="unknown language"):
         FieldSpec("lang", "language", values=("Elvish",))
+    for tag, code in (("pt_BR", "pt"), ("zh-Hant-TW", "zh"), ("es-419", "es"), ("cmn-Hans-CN", "zh"), ("ca-ES-valencia", "ca")):
+        assert f.normalize(tag) == code, tag
+    # A locale tag is the whole value, with '-' or '_' between subtags: prose that starts with a code is no language,
+    # and neither is a tag led by a 639-2 or retired code ('ger-DE', 'in-depth').
+    for prose in ("It is English", "no idea", "in progress", "ice cream", "per my answer", "may be english", "en US"):
+        assert f.normalize(prose) is INVALID, prose
+    for word in ("in-progress", "in-depth", "ger-DE", "my guess is french"):
+        assert f.normalize(word) is INVALID, word
+    detect = tasks.Task("detect-language", format="text", fields=(FieldSpec("$", "language"),))
+    assert detect.agree("English.", "en") and not detect.valid("It is English.")
+    assert not detect.agree("It is English.", "It is French.") and not detect.agree("No idea", "Norwegian")
 
 
 @pytest.mark.req("FR-2.14")
@@ -203,13 +220,41 @@ def test_records_unordered_keyed_and_ordered():
     lines = (FieldSpec("sku", "label"), FieldSpec("qty", "number"), FieldSpec("price", "number", abs_tol=0.01))
     a = [{"sku": "A-1", "qty": 2, "price": "9.99"}, {"sku": "B-2", "qty": 1, "price": 5}]
     b = [{"sku": "b_2", "qty": "1", "price": "$5.00"}, {"sku": "a 1", "qty": 2.0, "price": 9.995}]
-    greedy = FieldSpec("lines", "records", fields=lines)
+    unordered = FieldSpec("lines", "records", fields=lines)
     keyed = FieldSpec("lines", "records", fields=lines, key=("sku",))
     ordered = FieldSpec("lines", "records", fields=lines, ordered=True)
-    assert agree(greedy, a, b) and agree(keyed, a, b) and not agree(ordered, a, b) and agree(ordered, a, a)
-    assert not agree(keyed, a, [b[0], {**b[1], "qty": 3}]) and not agree(greedy, a, b[:1])  # a field, or the length
+    assert agree(unordered, a, b) and agree(keyed, a, b) and not agree(ordered, a, b) and agree(ordered, a, a)
+    assert not agree(keyed, a, [b[0], {**b[1], "qty": 3}]) and not agree(unordered, a, b[:1])  # a field, or the length
     assert one(keyed).key(json.dumps({"lines": [a[0], a[0]]})) is INVALID  # two records with one key
-    assert one(greedy).key(json.dumps({"lines": [{"sku": "A"}]})) is INVALID  # a required sub-field missing
+    assert one(unordered).key(json.dumps({"lines": [{"sku": "A"}]})) is INVALID  # a required sub-field missing
+
+
+@pytest.mark.req("FR-2.14")
+def test_records_without_a_key_pair_in_any_order():
+    """Without a key, records pair by a maximum matching, so the order they are listed in never decides: a first-fit
+    pairing gave 1 the 0.5 and left 0 nothing, although 0 with 0.5 and 1 with 2 pair everything."""
+    tol = FieldSpec("r", "records", fields=(FieldSpec("v", "number", abs_tol=1),))
+    rows = [{"v": 0}, {"v": 1}]
+    for listed in (rows, rows[::-1]):
+        assert agree(tol, listed, [{"v": 0.5}, {"v": 2}]) and agree(tol, [{"v": 2}, {"v": 0.5}], listed)
+    assert not agree(tol, rows, [{"v": 0.5}, {"v": 2.5}]) and not agree(tol, rows, [{"v": -1.5}, {"v": 2}])
+    chain = [{"v": float(i)} for i in range(50)]  # each record within 1 of two partners: only one pairing takes all
+    assert agree(tol, chain[::-1], [{"v": i + 0.6} for i in range(50)])
+    assert not agree(tol, chain, [{"v": i + 0.6} for i in range(49)] + [{"v": 99}])
+    # Fields without a tolerance group the records first; nested records and labels too.
+    mixed = FieldSpec(
+        "r",
+        "records",
+        fields=(
+            FieldSpec("sku", "label"),
+            FieldSpec("qty", "number", abs_tol=0.5),
+            FieldSpec("parts", "records", fields=(FieldSpec("id", "label"),)),
+        ),
+    )
+    x = [{"sku": "a", "qty": 1, "parts": [{"id": "p"}, {"id": "q"}]}, {"sku": "a", "qty": 2, "parts": []}]
+    y = [{"sku": "A", "qty": 2.4, "parts": []}, {"sku": "a", "qty": 1.4, "parts": [{"id": "Q"}, {"id": "p"}]}]
+    assert agree(mixed, x, y) and not agree(mixed, x, [y[0], {**y[1], "sku": "b"}])
+    assert not agree(mixed, x, [y[0], {**y[1], "parts": [{"id": "p"}]}])
 
 
 @pytest.mark.req("FR-2.14")
@@ -296,6 +341,19 @@ def test_nullable_field_accepts_null():
         (lambda: FieldSpec("x", "records"), "fields must list"),
         (lambda: FieldSpec("x", "records", fields=(FieldSpec("a", "label"),), key=("b",)), "not one of the record's fields"),
         (lambda: FieldSpec("x", "label", values=tuple(str(i) for i in range(2001))), "more than 2000"),
+        (lambda: FieldSpec("x", "number", tolerance=1), "tolerance does not apply"),
+        (lambda: FieldSpec("x", "label", abs_tol=1.0), "abs_tol does not apply"),
+        (lambda: FieldSpec("x", "label", mode="bogus"), "mode does not apply"),
+        (lambda: FieldSpec("x", "set", k=3), "k does not apply"),
+        (lambda: FieldSpec("x", "number", min_jaccard=0.5), "min_jaccard does not apply"),
+        (lambda: FieldSpec("x", "bool", day_first=True), "day_first does not apply"),
+        (
+            lambda: FieldSpec("p", "label", values=("low", "high", "urgent"), aliases={"HIGH": "urgent"}),
+            "label of the vocabulary",
+        ),
+        (lambda: FieldSpec("p", "label", values=("low", "high"), aliases={"P1": "high", "p1": "low"}), "names two labels"),
+        (lambda: tasks.Task("t", compare_keys=["a.b"]), "not a plain top-level key"),
+        (lambda: tasks.Task("t", compare_keys=["$"]), "not a plain top-level key"),
         (lambda: tasks.Task("t", compare_keys=["a"], fields=(FieldSpec("b"),)), "not both"),
         (lambda: tasks.Task("t", fields=(FieldSpec("a"), FieldSpec("a", "label"))), "same path"),
         (lambda: tasks.Task("t", fields=tuple(FieldSpec(f"f{i}") for i in range(65))), "more than 64 fields"),
@@ -338,6 +396,8 @@ def test_spec_hash_covers_the_rules_not_the_name():
     legacy = tasks.Task("t", compare_keys=["k", "k"])
     assert legacy.fields == (FieldSpec("k", "exact", required=False),) and legacy.compare_keys == ("k", "k")
     assert dataclasses.replace(a, pinned=True).spec_hash == tasks.Task("a", fields=a.fields, pinned=True).spec_hash
+    pinned = dataclasses.replace(legacy, pinned=True)  # replace passes compare_keys and the fields they made
+    assert pinned.pinned and pinned.fields == legacy.fields and tasks.register(legacy, "file") is None
     with pytest.raises(TypeError):
         a.policy["samples"] = 5  # read-only, so the hash cannot go stale
     assert legacy.spec_hash == tasks.Task("u", fields=(FieldSpec("k", "exact", required=False),)).spec_hash
@@ -495,6 +555,31 @@ def test_tolerance_non_transitive():
     samples = [comp('{"x": 5}'), comp('{"x": 0}'), comp('{"x": 5.5}'), comp('{"x": 0.5}')]
     s = score(task, samples)
     assert s.answer is samples[0] and s.agreement == 0.5
+    # Four samples: 0.6 and 1.2 both have three votes. The served sample (1.2, more probable) does not match 0, but
+    # the agreement is its own: three of four.
+    samples = [comp('{"x": 0}'), comp('{"x": 0.6}', 0.5), comp('{"x": 1.2}', 0.99), comp('{"x": 1.8}')]
+    s = score(task, samples)
+    assert s.answer is samples[2] and s.agreement == 0.75 and not task.agree(samples[0].text, samples[2].text)
+    assert sum(task.agree(samples[2].text, x.text) for x in samples) / len(samples) == s.agreement
+
+
+@pytest.mark.req("FR-2.2", "INV-7")
+def test_score_never_raises_when_a_key_does_not_match_itself():
+    """The pairwise score must not crash the request path for a comparator that is not reflexive (a value json.dumps
+    cannot write from a deeper stack, a future type): a sample that matches nothing, itself included, gets no vote."""
+
+    class Odd:
+        def key(self, text):
+            return {"$": text}
+
+        def match(self, ka, kb):
+            return ka is not kb and ka == kb  # equal keys of other samples match; a key never matches itself
+
+    lone = score(Odd(), [comp("a", 0.9), comp("b", 0.9)])
+    assert (lone.confidence, lone.agreement, lone.valid) == (0.0, 0.0, False)
+    samples = [comp("a", 0.5), comp("a", 0.9), comp("b")]
+    pair = score(Odd(), samples)  # each "a" has one vote, from the other: the more probable one is served
+    assert pair.answer is samples[1] and pair.agreement == pytest.approx(1 / 3)
 
 
 @pytest.mark.req("FR-2.14")
@@ -502,6 +587,7 @@ def test_default_compares_json_canonically():
     d = tasks.get("default")
     assert d.agree('{"b": 1, "a": "X"}', '{"a": " x ", "b": 1.0}') and d.agree("[1, 2]", "```json\n[1.0, 2]\n```")
     assert d.agree('{"Name": "Ｐune"}', '{"name": "pune"}')  # keys and strings NFKC-normalised and case-folded
+    assert d.agree('{"a": "x  y"}', '{"a": " x y"}') and d.agree('{"a  b": 1}', '{"a b": 1}')  # whitespace, as in v0.4
     assert not d.agree("[1, 2]", "[2, 1]") and not d.agree('{"a": 1}', '{"a": 2}') and not d.agree('{"a": true}', '{"a": 1}')
     assert d.agree("Hello   World", "hello world") and not d.agree("hello", "hello!")  # text: the v0.4 rule
     assert d.agree('{"a": true}', '{"A": TRUE}')  # the second is not JSON, so both compare as text
@@ -517,7 +603,8 @@ def test_default_compares_json_canonically():
 def test_comparators_are_linear_on_adversarial_answers():
     """Every sample is normalised on the request path, so no comparator may take seconds on a long answer: each type
     is linear in its value, numbers, dates and languages longer than 100 characters are refused at once, and records
-    pair greedily within the 200-record budget."""
+    pair within the 200-record budget: in linear time by their fields without a tolerance or as the same records in
+    another order, else by a matching quadratic in the records."""
     lines = FieldSpec("lines", "records", fields=(FieldSpec("sku", "label"), FieldSpec("qty", "number", abs_tol=0.5)))
     rows = [{"sku": f"s{i}", "qty": i} for i in range(200)]
     cases = [
@@ -535,7 +622,13 @@ def test_comparators_are_linear_on_adversarial_answers():
     for f, raw, want in cases:
         assert f.normalize(raw) == want if want is not INVALID else f.normalize(raw) is INVALID, f
     a, b = lines.normalize(rows), lines.normalize(list(reversed(rows)))
-    assert lines.match(a, b)  # the worst order for greedy pairing: 20,100 record comparisons
+    assert lines.match(a, b)  # the same records reversed: paired as equal values, in linear time
+    near = lines.normalize([{"sku": f"s{i}", "qty": i + 0.25} for i in reversed(range(200))])
+    assert lines.match(a, near)  # within the tolerance: grouped by sku first
+    tol = FieldSpec("r", "records", fields=tuple(FieldSpec(f"f{k}", "number", abs_tol=0.5) for k in range(10)))
+    wide = [{**{f"f{k}": 1 for k in range(9)}, "f9": i} for i in range(200)]
+    x, y = tol.normalize(wide), tol.normalize([{**r, "f9": r["f9"] + 0.25} for r in reversed(wide)])
+    assert tol.match(x, y)  # every field with a tolerance, in the worst order: a quadratic matching, bounded by 200
     answer = json.dumps({"category": "billing" + "!" * 300_000, "priority": "high" + " " * 300_000})
     assert TRIAGE.key(answer) == {"category": "billing", "priority": "high"}
     assert time.perf_counter() - start < 2.0
@@ -678,3 +771,15 @@ def test_dataset_rows_skip_invalid(tmp_path):
     manifest = dataset.build(led, tmp_path)
     assert (manifest["train_examples"], manifest["skipped_invalid"]) == (len(train), len(bad_train))
     assert json.loads((tmp_path / "manifest.json").read_text())["skipped_invalid"] == len(bad_train)
+    # The manifest is a temporary file in a night: the count reaches operators through the night's event.
+    trainer = RecordingTrainer()
+    rep = run_night(led, trainer, RecordingEvaluator(REJECTED_EVAL), ReleaseGate(led), "base", min_new_examples=1)
+    assert rep.trained and len(trainer.calls[0].rows) == len(train)
+    trained = [e["detail"] for e in led.events() if e["kind"] == "trained"]
+    assert f"({len(bad_train)} stored answers invalid under the current spec left out)" in trained[0]
+    skip = run_night(led, trainer, RecordingEvaluator(REJECTED_EVAL), ReleaseGate(led), "base", min_new_examples=1)
+    skipped = [e["detail"] for e in led.events() if e["kind"] == "skip"]
+    assert not skip.trained and skipped == [
+        f"only 0 new examples (< 1) ({len(bad_train)} stored answers invalid under the "
+        "current spec left out); no training tonight"
+    ]
