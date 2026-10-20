@@ -21,3 +21,4 @@ Rules:
 - Port 8000 must stay unpublished (`expose`, not `ports`): `--forwarded-allow-ips "*"` is safe only because Caddy is the only thing that can reach the gateway.
 - `nebius compute` flags in `vm/create_vm.sh` were checked against docs.nebius.com on Oct 20, 2026; the lines marked VERIFY ON DAY 1 were not.
 - Pin image versions once the day-1 run passes, and record them in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
+- `tests/test_live.py` runs `bash -n` on every `*.sh` here, `DRY_RUN=1 bash vm/create_vm.sh` (the printed `nebius` commands, never the user data or a token in the repo URL, and each early refusal) and `vm/backup.sh` in mock mode. It also checks that `train_job.sh` reads `/data/night/train.jsonl` and writes `/data/adapters/${VERSION}` (the paths `ratchet.live` uses) and that both scripts default to the gateway's student base model. Keep those in step when you edit a script; they cannot check the `nebius` flags themselves.

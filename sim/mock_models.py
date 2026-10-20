@@ -17,6 +17,7 @@ import random
 from collections import Counter
 from typing import Any
 
+from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
 from ratchet.providers import Completion, approx_tokens
@@ -147,7 +148,7 @@ class MockFleet:
         student = MockStudent(adapter_uri, self.knowledge[adapter_uri])
 
         def sample(prompt, n):
-            return student.complete(prompt, adapter_uri, n=n, temperature=0.7, logprobs=True)
+            return student.complete(prompt, adapter_uri, n=n, **STUDENT_SAMPLING)
 
         return cascade_eval(sample, golden_rows, samples=3, target_precision=0.97)
 

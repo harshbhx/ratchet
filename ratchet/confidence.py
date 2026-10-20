@@ -12,10 +12,18 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any
 
 from .providers import Completion
 from .tasks import Task
+
+# How the student is sampled for a confidence score: in production (`Ratchet._sample`), in the live golden eval
+# (`LiveEvaluator.evaluate`) and in the mock one (`MockFleet.evaluate`). One constant, so the eval cannot drift from
+# production (FR-5.1). `n` is added by each caller (`Settings.samples`). Read-only.
+STUDENT_SAMPLING: Mapping[str, Any] = MappingProxyType({"temperature": 0.7, "logprobs": True})
 
 
 @dataclass

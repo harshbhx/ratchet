@@ -21,6 +21,15 @@ def load_rows(path: str) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
+def manifest(base: str, rows: list[dict]) -> dict:
+    """`ratchet_manifest.json`, saved next to the adapter: its base model and the teachers and licenses it learned from."""
+    return {
+        "base_model": base,
+        "examples": len(rows),
+        "provenance": sorted({(r["provenance"]["teacher"], r["provenance"]["license"]) for r in rows}),
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Ratchet Night School: LoRA fine-tune")
     ap.add_argument("--data", required=True)
@@ -92,17 +101,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs a G
     trainer.train()
     model.save_pretrained(str(out))
     tok.save_pretrained(str(out))
-    (out / "ratchet_manifest.json").write_text(
-        json.dumps(
-            {
-                "base_model": a.base,
-                "examples": len(rows),
-                "provenance": sorted({(r["provenance"]["teacher"], r["provenance"]["license"]) for r in rows}),
-            },
-            indent=2,
-            default=list,
-        )
-    )
+    (out / "ratchet_manifest.json").write_text(json.dumps(manifest(a.base, rows), indent=2, default=list))
     print(f"saved adapter to {out}")
 
 

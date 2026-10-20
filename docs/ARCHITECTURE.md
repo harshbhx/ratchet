@@ -112,7 +112,7 @@ Details that matter:
 
 0. **Pinned tasks** (`Task.pinned`, `_pinned`): checked first. The teacher answers, the request is logged with `served_by=teacher`, no student version, and `cost_usd = baseline_cost_usd`. The answer is **not** passed to `add_example`, so it never becomes training data. No student, audit or shadow call is made. Scout's planner and writer (`research-plan`, `research-write`) are pinned; see [§10](#10-scout-multi-agent-demo).
 1. **Version choice** (`_pick_version`): if a version is in `canary`, it is chosen with probability `traffic_pct / 100`; otherwise the `live` version is used. With no live version (cold start) and the canary not picked, the request goes straight to the teacher.
-2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3), `temperature=0.7`, `logprobs=True`. The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name.
+2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3) and `confidence.STUDENT_SAMPLING` (`temperature=0.7`, `logprobs=True`), the constant the golden eval also uses. The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name.
 3. **Threshold**: `Ratchet.threshold(version)` returns `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80).
 4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data.
 5. **Teacher calls** (`_call_teacher`): the teacher answer is stripped of `<think>…</think>`, the messages and the answer are redacted ([PII redaction](#pii-redaction)), and they are stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url, redactions)`. The license comes from `licenses.require_distillable(settings.teacher_model)`, checked once when `Ratchet` is constructed. A closed teacher raises `LicenseError` at startup.
@@ -161,7 +161,7 @@ Only `_call_teacher` redacts; the teacher itself receives the original. `example
 ```
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
-- **Live mode**: `NebiusTrainer` (`ratchet/live.py`) does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter`. `LiveEvaluator` then scores it.
+- **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it.
 
 ### Datasets (`nightschool/dataset.py`)
 

@@ -46,9 +46,12 @@ class Call:
 CallFn = Callable[[list[dict[str, Any]], str], Call]
 
 
-def http_caller(base_url: str, api_key: str = "unused", timeout: float = 120.0) -> CallFn:
-    """Call a Ratchet gateway over HTTP, exactly as any OpenAI client would."""
-    client = httpx.Client(timeout=timeout)
+def http_caller(base_url: str, api_key: str = "unused", timeout: float = 120.0, client: httpx.Client | None = None) -> CallFn:
+    """Call a Ratchet gateway over HTTP, exactly as any OpenAI client would.
+
+    `client` (tests: one on an `httpx.MockTransport` or an in-process transport) replaces the default client, whose
+    `timeout` is then the given client's own. Scout's agents call from several threads; an `httpx.Client` allows that."""
+    client = client if client is not None else httpx.Client(timeout=timeout)
     url = base_url.rstrip("/") + "/chat/completions"
 
     def call(messages: list[dict[str, Any]], task: str) -> Call:
