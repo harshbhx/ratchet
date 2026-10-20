@@ -4,7 +4,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 
 ## Daily checks (5 minutes)
 
-1. **Dashboard** (`/dashboard`) or `GET /ratchet/stats`:
+1. **Dashboard** (`/dashboard`) or `GET /ratchet/stats`. In live mode the dashboard API needs an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1` (`curl -H "Authorization: Bearer $DASHBOARD_KEY" .../ratchet/stats`); the page sends no key yet ([API.md](API.md#access-levels)):
    - **Answered by your model** should be stable or rising. A sudden drop means drift (new kinds of requests) or a student problem.
    - **Cost reduction** should track student share. If share is high but savings are low, audits or shadow are costing more than expected.
    - **Release log**: read every event since yesterday (meanings below).

@@ -1,11 +1,13 @@
 """OpenAI-compatible gateway, dashboard API, landing page and the Scout multi-agent demo.
 
     RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000     # offline demo, no keys
-    RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app  # real Token Factory teacher
+    RATCHET_MODE=live NEBIUS_API_KEY=... RATCHET_API_KEYS=... uvicorn ratchet.gateway:app  # real Token Factory teacher
 
 Point any OpenAI SDK at http://localhost:8000/v1. Choose the task with the
 `X-Ratchet-Task` header (or `metadata.ratchet_task` in the body; the header wins). With `RATCHET_API_KEYS`
-set, `/v1/*` needs `Authorization: Bearer <key>`. Errors on `/v1/*` use OpenAI's envelope
+set, `/v1/*` needs `Authorization: Bearer <key>`; live mode refuses to start without them unless told to. Each route has
+an access level (`ratchet/access.py`, ADR 0061): in live mode the dashboard API needs an admin or dashboard key unless
+RATCHET_PUBLIC_DASHBOARD=1. Errors on `/v1/*` use OpenAI's envelope
 (`ratchet/openai_compat.py`); every other route keeps FastAPI's `{"detail": ...}`.
 Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
 """
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import calendar
 import functools
+import itertools
 import json
 import math
 import queue
@@ -22,7 +25,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +36,13 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__, live, tasks, taskspec
+from . import access as acl
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import Settings
@@ -150,6 +155,7 @@ class Runtime:
 
     def reset(self) -> None:
         s = self.settings
+        self._set_access(s)  # first, so a live gateway without keys stops before it opens anything (ADR 0061)
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         # The hot path (ADR 0060); a bad RATCHET_DB_SYNC, RATCHET_TICK_INTERVAL_S or RATCHET_STATS_TTL_S stops startup here.
         sync = s.ledger_sync()
@@ -220,12 +226,6 @@ class Runtime:
             policy = ReleasePolicy.from_env()
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
-        self.keys = KeyRing(s.api_keys)
-        # Admin keys for management writes (ADR 0022); never the same keys as an API client's.
-        self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
-        both = self.admin_keys.shared(self.keys)
-        if both:
-            raise ValueError(f"RATCHET_ADMIN_KEYS: the key for {both[0]!r} is also an API key; give admins their own keys")
         # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
         # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
         with self.tasks_lock:
@@ -251,6 +251,33 @@ class Runtime:
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
+
+    def _set_access(self, s: Settings) -> None:
+        """The key rings and who may read what (ADR 0061). A bad key spec or switch, a key in two rings, or live mode
+        without RATCHET_API_KEYS (unless RATCHET_ALLOW_UNAUTHENTICATED=1) raises ValueError, so the gateway stops at
+        startup."""
+        self.access = s.access()
+        self.keys = KeyRing(s.api_keys)
+        # Admin keys for management writes (ADR 0022) and read-only dashboard keys (ADR 0061). Each key has one role: an
+        # API client's key is neither, and a dashboard key is not an admin's, so it can never write.
+        self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
+        self.dashboard_keys = KeyRing(s.dashboard_keys, env="RATCHET_DASHBOARD_KEYS")
+        for ring, other, fix in (
+            (self.admin_keys, self.keys, "an API key; give admins their own keys"),
+            (self.dashboard_keys, self.keys, "an API key; give dashboards their own keys"),
+            (self.dashboard_keys, self.admin_keys, "an admin key; give dashboards their own, read-only keys"),
+        ):
+            both = ring.shared(other)
+            if both:
+                raise ValueError(f"{ring.env}: the key for {both[0]!r} is also {fix}")
+        if s.mode != "mock" and not self.keys.enabled and not self.access.allow_unauthenticated:
+            raise ValueError(
+                "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
+                "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
+                "VM's Caddy guard) checks every caller"
+            )
+        csp = {"Content-Security-Policy": self.access.csp} if self.access.csp else {}
+        self.security_headers: dict[str, str] = {**SECURITY_HEADERS, **csp}
 
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
@@ -394,9 +421,95 @@ class BodyLimitMiddleware:
         await self.app(scope, counted, send)
 
 
+# ----- access and security headers (ADR 0061) -----
+# Headers every response carries: a browser never sniffs a JSON or text answer into a script or a page, and a page's URL
+# never leaks to the sites it links to. RATCHET_CSP adds a Content-Security-Policy (`Runtime.security_headers`).
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
+
+
+class SecurityHeadersMiddleware:
+    """Adds `headers()` (the runtime's `security_headers`) to every response, keeping any a route set itself. A plain
+    ASGI middleware, so streamed answers still stream. A 500 from an unhandled error is sent outside every middleware,
+    so `_unhandled_error` adds the same headers itself."""
+
+    def __init__(self, app: ASGIApp, headers: Callable[[], Mapping[str, str]]) -> None:
+        self.app = app
+        self.headers = headers
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        extra = self.headers()
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                headers = MutableHeaders(scope=message)
+                for name, value in extra.items():
+                    headers.setdefault(name, value)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+def _reader(key: str | None) -> tuple[str, str] | None:
+    """Whose key this is among the dashboard's readers: ("admin", name), ("dashboard", name) or None. Both rings are
+    checked every time, so the time taken does not say which one matched."""
+    if not key:
+        return None
+    admin, dashboard = rt.admin_keys.identify(key), rt.dashboard_keys.identify(key)
+    if admin is not None:
+        return ("admin", admin)
+    return None if dashboard is None else ("dashboard", dashboard)
+
+
+async def _access(request: Request) -> None:
+    """The dashboard API's gate, run before every route (ADR 0061). A route whose level (`access.route_access`; DASHBOARD
+    for a route nobody classified) is DASHBOARD or BOM needs an admin or dashboard key, from `Authorization: Bearer` or
+    `X-API-Key`, unless RATCHET_PUBLIC_DASHBOARD=1 (BOM: or RATCHET_PUBLIC_BOM=1): 401 for a missing or wrong key, 403
+    for an API key, and 403 when no admin or dashboard keys are set. The reader it found (`request.state.reader`) decides
+    whether a public read is scrubbed. Other levels check their callers themselves. Async, so the chat path pays no
+    thread hop for it."""
+    route = request.scope.get("route")
+    level = acl.route_access(request.method, getattr(route, "path", request.url.path)) or acl.DASHBOARD
+    if level not in acl.READER_LEVELS:
+        return
+    key = bearer(request.headers.get("authorization"), request.headers.get("x-api-key"))
+    reader = _reader(key)
+    request.state.reader = reader
+    a = rt.access
+    if reader is not None or a.public_dashboard or (level == acl.BOM and a.public_bom):
+        return
+    if not (rt.admin_keys.enabled or rt.dashboard_keys.enabled):
+        raise HTTPException(
+            403, "the dashboard API is private: set RATCHET_DASHBOARD_KEYS or RATCHET_ADMIN_KEYS, or RATCHET_PUBLIC_DASHBOARD=1"
+        )
+    if rt.keys.identify(key) is not None:
+        raise HTTPException(403, "this is an API key; the dashboard API needs a dashboard or admin key")
+    raise HTTPException(401, "invalid or missing dashboard key", headers={"WWW-Authenticate": "Bearer"})
+
+
+def _scrubbed(request: Request) -> bool:
+    """Whether this dashboard read is scrubbed (`Access.scrubs`): by default only an anonymous read of a public dashboard
+    in live mode."""
+    keyed = getattr(request.state, "reader", None) is not None
+    return rt.access.scrubs(live=rt.settings.mode != "mock", keyed=keyed)
+
+
+def _pseudonyms(*names: Iterable[str | None]) -> dict[str, str]:
+    """Client pseudonyms over every name a reader could meet: the configured API keys and `names` (the clients in the
+    ledger, the names in task allow-lists)."""
+    return acl.pseudonyms(itertools.chain(rt.keys.names, *names))
+
+
 rt = Runtime()
-app = FastAPI(title="Ratchet", version=__version__)
+# /docs, /redoc and /openapi.json only with RATCHET_OPENAPI (default: mock mode only): in live mode the schema would show
+# anyone every management route.
+_DOCS: dict[str, Any] = {} if rt.access.openapi else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+app = FastAPI(title="Ratchet", version=__version__, dependencies=[Depends(_access)], **_DOCS)
 app.add_middleware(BodyLimitMiddleware, max_bytes=rt.settings.max_body_bytes)
+app.add_middleware(SecurityHeadersMiddleware, headers=lambda: rt.security_headers)  # outermost: a 413 carries them too
 
 
 @app.exception_handler(APIError)
@@ -436,8 +549,11 @@ async def _unhandled_error(request: Request, exc: Exception) -> Response:
         except Exception:  # noqa: BLE001 - the ledger may be what failed; the 500 must still go out
             pass
     if _api_path(request.url.path):
-        return await _api_error(request, APIError(500, "The server had an error while processing your request.", "api_error"))
-    return PlainTextResponse("Internal Server Error", status_code=500)
+        response = await _api_error(request, APIError(500, "The server had an error while processing your request.", "api_error"))
+    else:
+        response = PlainTextResponse("Internal Server Error", status_code=500)
+    response.headers.update(rt.security_headers)  # sent outside SecurityHeadersMiddleware
+    return response
 
 
 if (DIST / "assets").is_dir():
@@ -764,10 +880,15 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
 
 
 @app.get("/ratchet/stats")
-def stats() -> dict[str, Any]:
+def stats(request: Request) -> dict[str, Any]:
     """Everything the dashboard shows. Computed at most once per RATCHET_STATS_TTL_S (live mode: 2 s) by one caller at a
-    time (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests."""
-    return rt.stats_cache.get(_stats_payload)
+    time (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests. A
+    scrubbed read (`_scrubbed`: by default an anonymous reader of a public live dashboard) gets a scrubbed copy, with
+    client pseudonyms and no URLs or error messages in the events (ADR 0061)."""
+    payload = rt.stats_cache.get(_stats_payload)
+    if not _scrubbed(request):
+        return payload
+    return acl.scrub_stats(payload, _pseudonyms(c["client"] for c in payload["clients"]))
 
 
 def _stats_payload() -> dict[str, Any]:
@@ -792,6 +913,11 @@ def _stats_payload() -> dict[str, Any]:
             "daily_requests_per_key": rt.settings.api_key_daily_requests or None,
             "bom_signing": rt.signer is not None,
             "bom_key_id": rt.signer.key_id if rt.signer else None,
+            # Who may read this (ADR 0061); `scrubbed` is true in a scrubbed copy (`access.scrub_stats`).
+            "admin_keys": rt.admin_keys.enabled,
+            "dashboard_keys": rt.dashboard_keys.enabled,
+            "public_dashboard": rt.access.public_dashboard,
+            "scrubbed": False,
         },
         "cost": stats_block(cost_report(led, rt.settings)),
     }
@@ -799,7 +925,8 @@ def _stats_payload() -> dict[str, Any]:
 
 @app.get("/ratchet/bom")
 def bom() -> dict[str, Any]:
-    """Model bill of materials: proof of which teachers and licenses produced the training data."""
+    """Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard
+    API, or by anyone with RATCHET_PUBLIC_BOM=1 (ADR 0061)."""
     return rt.ledger.bill_of_materials()
 
 
@@ -817,7 +944,7 @@ def redact_preview(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 @app.get("/ratchet/bom/public-key")
 def bom_public_key() -> dict[str, Any]:
-    """The Ed25519 public key that verifies per-adapter BOMs (null when signing is off)."""
+    """The Ed25519 public key that verifies per-adapter BOMs (null when signing is off). Always public."""
     if rt.signer is None:
         return {"alg": bomdoc.ALG, "public_key": None, "key_id": None}
     return {"alg": bomdoc.ALG, "public_key": rt.signer.public_key, "key_id": rt.signer.key_id}
@@ -825,7 +952,8 @@ def bom_public_key() -> dict[str, Any]:
 
 @app.get("/ratchet/versions/{vid}/bom")
 def version_bom(vid: int) -> dict[str, Any]:
-    """One adapter's bill of materials, written when it was trained. Check it with `python -m ratchet.bom verify`."""
+    """One adapter's bill of materials, written when it was trained. Check it with `python -m ratchet.bom verify`. Read
+    like /ratchet/bom."""
     doc = rt.ledger.version_bom(vid)
     if doc is None:
         raise HTTPException(404, f"no bill of materials for version {vid}")
@@ -839,9 +967,9 @@ MOCK_MAX_API_TASKS = 50  # the shared mock demo holds at most this many API task
 
 def _admin(authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)) -> str:
     """The admin's name for a management call, from `Authorization: Bearer <key>` or `X-API-Key`. With
-    RATCHET_ADMIN_KEYS set: 401 for a missing or wrong key, 403 for a regular API key. Without them: 403 in live mode
-    (the admin API is off) and `mock-admin` in mock mode, whose demo has nothing to protect. Only the name is ever
-    stored or logged (INV-13)."""
+    RATCHET_ADMIN_KEYS set: 401 for a missing or wrong key, 403 for a regular API key or a (read-only) dashboard key.
+    Without them: 403 in live mode (the admin API is off) and `mock-admin` in mock mode, whose demo has nothing to
+    protect. Only the name is ever stored or logged (INV-13)."""
     key = bearer(authorization, x_api_key)
     if rt.admin_keys.enabled:
         name = rt.admin_keys.identify(key)
@@ -849,6 +977,8 @@ def _admin(authorization: str | None = Header(default=None), x_api_key: str | No
             return name
         if rt.keys.identify(key) is not None:
             raise HTTPException(403, "this is an API key; management calls need an admin key (RATCHET_ADMIN_KEYS)")
+        if rt.dashboard_keys.identify(key) is not None:
+            raise HTTPException(403, "this is a dashboard key, which only reads; management calls need an admin key")
         raise HTTPException(401, "invalid or missing admin key", headers={"WWW-Authenticate": "Bearer"})
     if rt.settings.mode != "mock":
         raise HTTPException(403, "admin API disabled: set RATCHET_ADMIN_KEYS")
@@ -887,8 +1017,18 @@ def _not_yours(t: tasks.Task) -> HTTPException:
     return HTTPException(403, f"task {t.name!r} is an {t.source} task; only API tasks can be changed here")
 
 
+def _scrub_tasks(request: Request, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Task entries as this reader may see them: a scrubbed read (`_scrubbed`) gets the client allow-lists under the
+    same pseudonyms /ratchet/stats uses (ADR 0061)."""
+    if not _scrubbed(request):
+        return entries
+    clients = (c["client"] for c in rt.stats_cache.get(_stats_payload)["clients"])
+    names = _pseudonyms(clients, (c for e in entries for c in e.get("clients") or ()))
+    return [acl.scrub_task(e, names) for e in entries]
+
+
 @app.get("/ratchet/tasks")
-def list_tasks() -> dict[str, Any]:
+def list_tasks(request: Request) -> dict[str, Any]:
     """Every registered task (`_task_entry`), the unknown-task policy, the registry's cap, and the names requests used
     that are not registered (candidates to register or pin)."""
     stats = _task_stats()
@@ -898,13 +1038,13 @@ def list_tasks() -> dict[str, Any]:
     return {
         "unknown_tasks": rt.ratchet.unknown_tasks,
         "max_tasks": tasks.MAX_TASKS,
-        "tasks": [_task_entry(t, stats.get(t.name), live_version) for t in registered],
+        "tasks": _scrub_tasks(request, [_task_entry(t, stats.get(t.name), live_version) for t in registered]),
         "unregistered": [{"name": n, "requests": int(r["requests"])} for n, r in stats.items() if n not in names],
     }
 
 
 @app.get("/ratchet/tasks/{name}")
-def get_task(name: str) -> dict[str, Any]:
+def get_task(name: str, request: Request) -> dict[str, Any]:
     """One registered task; an API task also says when it was written and by which admin (the key's name)."""
     t = tasks.lookup(name)
     if t is None:
@@ -913,7 +1053,7 @@ def get_task(name: str) -> dict[str, Any]:
     saved = rt.ledger.saved_task(name) if t.source in ("api", "auto") else None
     if saved is not None:
         entry.update({k: saved[k] for k in ("created_ts", "updated_ts", "updated_by")})
-    return entry
+    return _scrub_tasks(request, [entry])[0]
 
 
 @app.post("/ratchet/tasks/validate")
@@ -1035,7 +1175,7 @@ MAX_NOTE_CHARS = 200
 def cost(days: int | None = None) -> dict[str, Any]:
     """The cost report (`ratchet.cost.cost_report`): savings per token and by GPU-hours paid, the break-even volume, the
     crossover with the hosted fallback, observed utilization and a recommendation, for every day or the last `days`
-    ledger days. Public, like /ratchet/stats."""
+    ledger days. Read like /ratchet/stats (ADR 0061)."""
     if days is not None and not (1 <= days <= MAX_COST_DAYS):
         raise HTTPException(400, f"days must be 1 to {MAX_COST_DAYS}")
     return cost_report(rt.ledger, rt.settings, days=days)

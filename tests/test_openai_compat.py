@@ -239,7 +239,14 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
     gw = _gateway(gw_env)
     mock = gw.rt
     live = gw.Runtime(
-        Settings(mode="live", db_path=str(tmp_path / "live.db"), student_base="", teacher_api_key="", audit_rate=0.0),
+        Settings(
+            mode="live",
+            db_path=str(tmp_path / "live.db"),
+            student_base="",
+            teacher_api_key="",
+            audit_rate=0.0,
+            allow_unauthenticated=True,
+        ),
         transports={"teacher": FakeOpenAIServer(A).transport},
     )
     c = TestClient(gw.app, raise_server_exceptions=False)
@@ -296,7 +303,14 @@ def test_unpaired_surrogate_is_a_400_in_both_modes(gw_env, tmp_path, monkeypatch
     # Live mode: the teacher is never called (before the fix, encoding its request body raised: a 500).
     teacher = FakeOpenAIServer(A)
     live = gw.Runtime(
-        Settings(mode="live", db_path=str(tmp_path / "live.db"), student_base="", teacher_api_key="", audit_rate=0.0),
+        Settings(
+            mode="live",
+            db_path=str(tmp_path / "live.db"),
+            student_base="",
+            teacher_api_key="",
+            audit_rate=0.0,
+            allow_unauthenticated=True,
+        ),
         transports={"teacher": teacher.transport},
     )
     monkeypatch.setattr(gw, "rt", live)
@@ -377,7 +391,14 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
     assert gw.rt.gateway_errors == 0
 
     # In live mode a KeyError is a bug in the gateway, not a client mistake.
-    live = _gateway(gw_env, RATCHET_MODE="live", RATCHET_DB=str(tmp_path / "live.db"), RATCHET_STUDENT_BASE="", NEBIUS_API_KEY="")
+    live = _gateway(
+        gw_env,
+        RATCHET_MODE="live",
+        RATCHET_DB=str(tmp_path / "live.db"),
+        RATCHET_STUDENT_BASE="",
+        NEBIUS_API_KEY="",
+        RATCHET_ALLOW_UNAUTHENTICATED="1",
+    )
 
     def lookup_bug(*args: Any, **kwargs: Any) -> Any:
         raise KeyError("threshold")
@@ -640,6 +661,7 @@ def _gen_runtime(gw: Any, tmp_path: Any, teacher: FakeOpenAIServer, **overrides:
         "student_max_tokens": 1024,
         "teacher_reasoning_headroom": 0,
         "api_keys": "",
+        "allow_unauthenticated": True,  # no API keys in live mode (ADR 0061)
         "api_key_daily_requests": 0,
         "bom_signing_key": "",
         "mock_warmup_days": 0,

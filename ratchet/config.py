@@ -58,6 +58,18 @@ def _float_or_none(name: str) -> float | None:
         raise ValueError(f"{name} must be a number, not {raw!r}") from None
 
 
+def _bool(name: str) -> bool | None:
+    """A 0/1 switch from the environment, or None when the variable is unset or empty (the setting's default, which may
+    depend on the mode). Anything else raises ValueError naming the variable: a typo in a security switch must stop
+    startup instead of quietly picking a side."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    if raw not in ("0", "1"):
+        raise ValueError(f"{name} must be 0 or 1, not {raw!r}")
+    return raw == "1"
+
+
 # The longest interval RATCHET_TICK_INTERVAL_S and RATCHET_STATS_TTL_S take: an hour. Longer would leave rollbacks to the
 # cron tick alone, or the dashboard showing hour-old numbers, which is never what a typo meant.
 MAX_INTERVAL_S = 3600.0
@@ -120,6 +132,32 @@ UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
 # `per_token`: the hosted Nano price per token, as every savings figure since v0.1; `gpu_hours`: the GPU-hours the student
 # endpoint and the training jobs ran. Each request's `cost_usd` keeps the per-token price in both, so history never moves.
 COST_MODELS = ("per_token", "gpu_hours")
+
+
+@dataclass(frozen=True)
+class Access:
+    """Who may read what, resolved from the access switches and the mode (`Settings.access()`, ADR 0061).
+
+    `public_dashboard`: the dashboard API (/ratchet/stats, the task list, the cost report, ...) needs no key; else an
+    admin or dashboard key. `public_bom`: the bills of materials need no key even when the dashboard API does.
+    `scrub_stats`: True scrubs every dashboard read (client pseudonyms, no URLs, error texts cut to the class), False
+    none, None (the default) only the anonymous reads of a public dashboard in live mode. `openapi`: /docs, /redoc and
+    /openapi.json exist. `csp`: the Content-Security-Policy every response carries ('' = none). `allow_unauthenticated`:
+    live mode may start without RATCHET_API_KEYS (something in front of the gateway checks callers)."""
+
+    public_dashboard: bool
+    public_bom: bool
+    scrub_stats: bool | None
+    openapi: bool
+    csp: str
+    allow_unauthenticated: bool
+
+    def scrubs(self, live: bool, keyed: bool) -> bool:
+        """Whether a dashboard read is scrubbed: `live` is the mode, `keyed` whether the reader sent an admin or dashboard
+        key. A keyed reader of a public live dashboard sees what a private dashboard shows."""
+        if self.scrub_stats is not None:
+            return self.scrub_stats
+        return live and self.public_dashboard and not keyed
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -277,6 +315,18 @@ class Settings:
     # and never the same keys. Empty: the admin API is off in live mode and open in mock mode (ADR 0022). Not the Caddy
     # edge guard's RATCHET_ADMIN_TOKEN.
     admin_keys: str = field(default_factory=lambda: _env("RATCHET_ADMIN_KEYS", ""))
+    # Who may read what (`Settings.access()`, ADR 0061). Read-only keys for the dashboard API, "name:key,name:key" like
+    # RATCHET_API_KEYS and never the same keys as an API client or an admin. The switches are 0 or 1; unset takes the
+    # default: the dashboard API and /docs public in mock mode and private in live mode, the BOM endpoints as the
+    # dashboard, stats scrubbed for anonymous readers of a public live dashboard, and live mode refusing to start
+    # without RATCHET_API_KEYS. RATCHET_CSP: a Content-Security-Policy for every response (empty = none).
+    dashboard_keys: str = field(default_factory=lambda: _env("RATCHET_DASHBOARD_KEYS", ""))
+    public_dashboard: bool | None = field(default_factory=lambda: _bool("RATCHET_PUBLIC_DASHBOARD"))
+    public_bom: bool | None = field(default_factory=lambda: _bool("RATCHET_PUBLIC_BOM"))
+    scrub_stats: bool | None = field(default_factory=lambda: _bool("RATCHET_SCRUB_STATS"))
+    openapi: bool | None = field(default_factory=lambda: _bool("RATCHET_OPENAPI"))
+    allow_unauthenticated: bool | None = field(default_factory=lambda: _bool("RATCHET_ALLOW_UNAUTHENTICATED"))
+    csp: str = field(default_factory=lambda: _env("RATCHET_CSP", ""))
 
     # Tasks (ratchet/taskspec.py, ADR 0022). A JSON (or YAML, with PyYAML) file of task specs registered at startup; a bad
     # file stops startup with every error listed. Empty = the built-in tasks and the ones the admin API stored.
@@ -477,6 +527,37 @@ class Settings:
         """RATCHET_STATS_TTL_S: how long /ratchet/stats serves one computed payload (unset: 2 s in live mode, 0 in mock
         mode, a fresh payload per read)."""
         return _seconds("RATCHET_STATS_TTL_S", self.stats_ttl_s, 0.0 if self.mode == "mock" else 2.0)
+
+    def access(self) -> Access:
+        """The access switches, checked and resolved by mode (ADR 0061): unset means public dashboard and /docs in mock
+        mode, private in live mode. A value that is not 0, 1 or unset, or a RATCHET_CSP that cannot be a header value
+        (anything but printable ASCII), raises ValueError naming the variable, so the gateway stops at startup."""
+        mock = self.mode == "mock"
+        switches: dict[str, bool | None] = {}
+        for env, name in (
+            ("RATCHET_PUBLIC_DASHBOARD", "public_dashboard"),
+            ("RATCHET_PUBLIC_BOM", "public_bom"),
+            ("RATCHET_SCRUB_STATS", "scrub_stats"),
+            ("RATCHET_OPENAPI", "openapi"),
+            ("RATCHET_ALLOW_UNAUTHENTICATED", "allow_unauthenticated"),
+        ):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(f"{env} must be 0 or 1, not {value!r}")
+            switches[name] = value
+        csp = self.csp.strip() if isinstance(self.csp, str) else None
+        if csp is None or any(not (" " <= ch <= "~") for ch in csp):
+            raise ValueError(f"RATCHET_CSP must be one header value in printable ASCII, not {self.csp!r}")
+        public_dashboard = switches["public_dashboard"]
+        openapi = switches["openapi"]
+        return Access(
+            public_dashboard=mock if public_dashboard is None else public_dashboard,
+            public_bom=bool(switches["public_bom"]),
+            scrub_stats=switches["scrub_stats"],
+            openapi=mock if openapi is None else openapi,
+            csp=csp,
+            allow_unauthenticated=bool(switches["allow_unauthenticated"]),
+        )
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

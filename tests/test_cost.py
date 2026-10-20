@@ -680,6 +680,8 @@ def test_post_endpoint_is_open_in_mock_capped_and_off_in_live(gw_env, tmp_path, 
         student_base="",
         admin_keys="",
         api_keys="",
+        allow_unauthenticated=True,
+        public_dashboard=True,
         tasks_file="",
         bom_signing_key="",
         tavily_api_key="",
@@ -691,7 +693,7 @@ def test_post_endpoint_is_open_in_mock_capped_and_off_in_live(gw_env, tmp_path, 
     r = c.post("/ratchet/cost/endpoint", json={"state": "up"})
     assert (r.status_code, r.json()) == (403, {"detail": "admin API disabled: set RATCHET_ADMIN_KEYS"})
     assert rt.ledger.compute_intervals() == []
-    report = c.get("/ratchet/cost").json()  # public, like /ratchet/stats
+    report = c.get("/ratchet/cost").json()  # read like /ratchet/stats: public with RATCHET_PUBLIC_DASHBOARD=1
     assert report["recommendation"] == "insufficient_data" and report["requests"] == 0
 
 

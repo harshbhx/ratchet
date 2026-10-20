@@ -108,7 +108,8 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
    - `RATCHET_MODE=live`
    - `NEBIUS_API_KEY` (Token Factory) and `TAVILY_API_KEY`
    - `RATCHET_STUDENT_BASE` and `RATCHET_STUDENT_KEY` only while the vLLM endpoint is running. Leave both empty to use the hosted, untuned fallback student, which costs per token instead of per GPU-hour. Say so in the demo.
-   - **Protect `/v1/*`.** Either `RATCHET_API_KEYS=me:$(openssl rand -hex 24)` (gateway API keys; add `RATCHET_API_KEY_DAILY_REQUESTS=200` for a daily cap), or **`RATCHET_API_GUARD=guarded`** with `RATCHET_ADMIN_TOKEN=$(openssl rand -hex 32)` (Caddy edge guard), or both. Without one of them, anyone can send unlimited paid requests to `/v1/chat/completions`.
+   - **Protect `/v1/*`.** Either `RATCHET_API_KEYS=me:$(openssl rand -hex 24)` (gateway API keys; add `RATCHET_API_KEY_DAILY_REQUESTS=200` for a daily cap), or **`RATCHET_API_GUARD=guarded`** with `RATCHET_ADMIN_TOKEN=$(openssl rand -hex 32)` (Caddy edge guard), or both. Without one of them, anyone can send unlimited paid requests to `/v1/chat/completions`. The gateway refuses to start in live mode without `RATCHET_API_KEYS`; if Caddy's guard is your only protection, also set `RATCHET_ALLOW_UNAUTHENTICATED=1` to say so ([ADR 0061](adr/0061-endpoint-access-levels.md)).
+   - **Decide who sees the dashboard.** In live mode the dashboard API (`/ratchet/stats`, `/ratchet/cost`, the task list, the BOMs) needs an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`. `.env.vm.example` sets `1`, so judges see the live dashboard; anonymous readers then get client pseudonyms (`client-1`, ...) and events without URLs or error messages, while a request with your key gets everything. For a private dashboard set `0` and give yourself `RATCHET_DASHBOARD_KEYS=me:$(openssl rand -hex 24)`: read `/ratchet/stats` with it (`curl -H "Authorization: Bearer <key>" ...`); the page itself sends no key yet and shows no data. `RATCHET_PUBLIC_BOM=1` keeps the BOMs public either way. `/docs` and `/openapi.json` are off in live mode (`RATCHET_OPENAPI=1` turns them on).
    - Optional, for signed adapter BOMs: run `python -m ratchet.bom keygen` on your laptop, put the `RATCHET_BOM_SIGNING_KEY=` line in `.env`, and publish the public key it prints (README or Devpost). This also works in mock mode, so the public demo can show signed BOMs.
 2. Set the **budget guard** to what you can afford:
    - `RATCHET_SCOUT_DAILY_BUDGET_USD` caps Scout's Ratchet spend per UTC day (default 3.00). Over 48 days the worst case is the cap × 48, so 3.00 can reach **$144**. The Builder Program credit is $25 ([DEPLOYMENT.md](DEPLOYMENT.md#step-1-token-factory-key-and-checks)), so **0.50/day ($24 worst case)** fits inside it.
@@ -171,7 +172,7 @@ curl -s https://<domain>/scout/status                 # live mode: spend today v
 
 - The ratchet container has a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
-- For an outside check, point a free uptime monitor at `https://<domain>/ratchet/stats`.
+- For an outside check, point a free uptime monitor at `https://<domain>/healthz` (always public; `/ratchet/stats` needs a key when the dashboard is private).
 
 ### Updating
 
@@ -179,7 +180,7 @@ curl -s https://<domain>/scout/status                 # live mode: spend today v
 sudo -u ratchet /opt/ratchet/deploy/vm/update.sh
 ```
 
-It runs `git pull --ff-only`, `docker compose up -d --build`, waits for the health check, then fetches `/`, `/ratchet/stats`, `/dashboard` and `/scout` over HTTPS and exits non-zero if any of them fail.
+It runs `git pull --ff-only`, `docker compose up -d --build`, waits for the health check, then fetches `/`, `/healthz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public) and exits non-zero if any of them fail.
 
 ### Backups
 
@@ -207,17 +208,17 @@ sudo -u ratchet docker compose start ratchet
 - **No secrets in git.** Keys live only in `deploy/vm/.env` on the VM (mode 0600). The repo's `.gitignore` already ignores `.env` files at any depth. Never paste keys into `cloud-init.yaml` or `create_vm.sh`.
 - **Firewall.** `ufw` allows only 22, 80 and 443. The default Nebius security group allows all traffic ([security groups](https://docs.nebius.com/vpc/security-groups/overview)), so `ufw` is the filter that matters. Docker publishes Caddy's ports 80 and 443 through its own rules, which bypass `ufw`; the gateway's port 8000 is not published, so only Caddy can reach it.
 - **SSH.** Key login only, user `ubuntu` (or `RATCHET_SSH_USER`). The `ratchet` user cannot log in.
-- **Gateway API keys (v0.4).** `RATCHET_API_KEYS=name:key,...` makes `/v1/*` answer 401 without `Authorization: Bearer <key>`; `RATCHET_API_KEY_DAILY_REQUESTS` caps each key per UTC day. The dashboard's **Trust and privacy** panel shows per-client usage. Pages, Scout, `/healthz` and `/ratchet/*` stay public, so the mock demo buttons keep working. Details in [API.md](API.md#authentication).
+- **Gateway API keys (v0.4).** `RATCHET_API_KEYS=name:key,...` makes `/v1/*` answer 401 without `Authorization: Bearer <key>`; `RATCHET_API_KEY_DAILY_REQUESTS` caps each key per UTC day. The dashboard's **Trust and privacy** panel shows per-client usage (pseudonyms for anonymous readers of a public live dashboard). Pages, Scout and `/healthz` are always public; the dashboard API is public in mock mode and, in live mode, only with `RATCHET_PUBLIC_DASHBOARD=1`; the mock demo buttons keep working. Every response carries `nosniff` and a referrer policy (Caddy's own `Referrer-Policy` replaces the gateway's on the VM); `RATCHET_CSP` adds a Content-Security-Policy. Details in [API.md](API.md#access-levels).
 - **Caddy edge guard.** Independent of the app keys, and also covers the mock demo controls:
   - `RATCHET_API_GUARD=guarded` blocks `/v1/*` and `/ratchet/demo/*` with HTTP 403 unless the request carries `X-Ratchet-Admin-Token: <RATCHET_ADMIN_TOKEN>`.
-  - These stay public: `/`, `/scout*` (including `/scout/stream`, `/scout/run`, `/scout/status`), `/dashboard`, `/ratchet/stats`, `/ratchet/bom`.
+  - These stay public at the edge: `/`, `/scout*` (including `/scout/stream`, `/scout/run`, `/scout/status`), `/dashboard`, `/ratchet/stats`, `/ratchet/bom`. Whether the gateway answers the last two without a key is `RATCHET_PUBLIC_DASHBOARD`.
   - If the token is empty or shorter than 32 characters, the guarded paths are blocked for everyone. Caddy strips the token header before it reaches the gateway.
   - In mock mode the guard also disables the dashboard's **Run day**, **Break next deploy** and **Reset** buttons, which call `/ratchet/demo/*`. Use `open` for the mock demo and `guarded` for live mode.
   - Using the API yourself while guarded: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or pass `default_headers={"X-Ratchet-Admin-Token": TOKEN}` to the OpenAI SDK.
 - **The mock demo is shared.** All visitors see the same simulated state, and one visitor's Reset affects everyone. That is acceptable for a demo, and it costs nothing.
 - **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence API keys or the edge guard), and it does not stop someone with many IP addresses from using up the daily budget early. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
 - **Real client IPs.** Caddy replaces any client-sent `X-Forwarded-For` with the real address, and uvicorn runs with `--proxy-headers`, so the per-IP limit sees real IPs.
-- **After judging:** rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN_TOKEN` and `RATCHET_API_KEYS`, and revoke any GitHub token used for cloning. Keep `RATCHET_BOM_SIGNING_KEY` (or its public key) if you want old BOMs to stay verifiable.
+- **After judging:** rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN_TOKEN`, `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS` and `RATCHET_DASHBOARD_KEYS`, and revoke any GitHub token used for cloning. Keep `RATCHET_BOM_SIGNING_KEY` (or its public key) if you want old BOMs to stay verifiable.
 
 ## Teardown
 

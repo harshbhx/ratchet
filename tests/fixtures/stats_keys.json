@@ -95,7 +95,11 @@
       "api_keys": "bool",
       "daily_requests_per_key": "number|null",
       "bom_signing": "bool",
-      "bom_key_id": "string|null"
+      "bom_key_id": "string|null",
+      "admin_keys": "bool",
+      "dashboard_keys": "bool",
+      "public_dashboard": "bool",
+      "scrubbed": "bool"
     },
     "cost": {
       "model": "string",
