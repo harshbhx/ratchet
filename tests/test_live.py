@@ -33,7 +33,7 @@ from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.nightschool import dataset, train
 from ratchet.nightschool.evaluate import JUDGE_PROMPT, LiveEvaluator
-from ratchet.providers import OpenAICompatProvider
+from ratchet.providers import DEFAULT_STUDENT_MAX_TOKENS, GenParams, OpenAICompatProvider
 from ratchet.resilience import RetryPolicy, timeouts
 from ratchet.router import Ratchet
 from ratchet.scout.__main__ import main as scout_main
@@ -395,10 +395,12 @@ def test_live_evaluator_uses_production_sampling():
 
     sampled = [c for c in student.calls if c.kwargs.get("logprobs")]
     assert [c.messages for c in sampled] == [r["messages"][:-1] for r in rows]  # one cascade call per golden row
-    assert all(c.model == "student-v7" and c.kwargs == {"n": 4, **STUDENT_SAMPLING} for c in sampled)
+    # The router's student parameters for a row stored without conditions: the student's token cap only (FR-5.1).
+    plain = {"n": 4, **STUDENT_SAMPLING, "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS)}
+    assert all(c.model == "student-v7" and c.kwargs == plain for c in sampled)
     candidates = [c for c in student.calls if not c.kwargs.get("logprobs")]  # the judge's candidates (free text only)
     assert [c.messages for c in candidates] == [r["messages"][:-1] for r in rows[4:]]
-    assert all(c.model == "student-v7" for c in candidates)
+    assert all(c.model == "student-v7" and c.kwargs["params"] == plain["params"] for c in candidates)
 
     # FR-5.5: the judge sees request, reference and candidate in JSON mode, and grades free-text rows only.
     assert len(judge.calls) == 2
@@ -463,7 +465,8 @@ def test_production_and_both_evaluators_share_student_sampling(monkeypatch):
     fleet = mock_models.MockFleet()
     fleet.train([row], "base-model", "student-v1")
     fleet.evaluate("student-v1", [row])
-    assert seen["router"] == seen["live"] == seen["mock"] == {"n": 3, **STUDENT_SAMPLING}
+    want = {"n": 3, **STUDENT_SAMPLING, "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS)}
+    assert seen["router"] == seen["live"] == seen["mock"] == want
 
 
 @pytest.mark.req("FR-4.5")

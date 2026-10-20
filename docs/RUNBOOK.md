@@ -177,9 +177,9 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 **Symptoms:** `skip_example` events reaching the 100th or 1000th of a reason; Night School says `skip` (fewer than 50 new examples) although `escalation_rate` is high; `SELECT task, COUNT(*), SUM(stored) FROM requests WHERE served_by='teacher' GROUP BY task` shows far fewer stored than escalated.
 
-- `finish_reason length`: the teacher runs out of tokens, usually while reasoning. Check the answer length on Token Factory; shorten the system prompt's demands or ask for a shorter answer. The client still got the cut-off answer.
+- `finish_reason length`: the teacher runs out of tokens, usually while reasoning: at the client's `max_tokens`, or at `RATCHET_TEACHER_MAX_TOKENS` (8,192) when the client sent none. Check the answer length on Token Factory; shorten the system prompt's demands or ask for a shorter answer. If clients send tight limits to a reasoning teacher, set `RATCHET_TEACHER_REASONING_HEADROOM` (about `RATCHET_TEACHER_REASONING_TOKENS`); with it, an answer over the client's own limit is also `length` ([CONFIGURATION.md](CONFIGURATION.md#generation-parameters-and-token-caps)). The client still got the answer, with `finish_reason: "length"`.
 - `empty answer`: the teacher never left its reasoning (`<think>` without `</think>`), or the endpoint returned the answer in a reasoning field only. Check the model ID and whether a reasoning parser is on.
-- `invalid answer`: the teacher does not answer a structured task with JSON. Check the task's system prompt (it must ask for JSON only) and send `response_format` once the gateway forwards it.
+- `invalid answer`: the teacher does not answer a structured task with JSON. Check the task's system prompt (it must ask for JSON only), and have the client send `response_format: {"type": "json_object"}`, which reaches the teacher (and is stored with the example).
 - `invalid after redaction`: a redaction pattern matched a number outside quotes in the JSON (a card-like order id). Make the prompt ask for ids as strings.
 - `finish_reason other` or `unknown`: the teacher endpoint reports a stop reason other than `stop`, `tool_calls` or the usual ones. `scripts/day1_check.py` prints each model's `finish_reason`; look at a raw response before changing anything, because storing only complete answers is invariant 16.
 
@@ -193,7 +193,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 4. Is the vLLM endpoint left running (GPU-hours)?
 5. Are teacher outputs long because of reasoning? Look at token usage on Token Factory.
 
-**Mitigations:** lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, cap `max_tokens` in prompts.
+**Mitigations:** lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
 
 ### PII leak
 

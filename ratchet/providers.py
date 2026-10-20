@@ -5,6 +5,10 @@
   adapter is addressed by its name (e.g. "student-v3") in the `model` field.
 
 Failures raise `UpstreamError` (defined in `resilience.py`, re-exported here), never a bare httpx error.
+
+A client's generation parameters travel as `GenParams`; `GenPolicy` derives what each role may send from them (the
+allowlists `RATCHET_TEACHER_PARAMS` and `RATCHET_STUDENT_PARAMS`, the token caps, the reasoning headroom), so the router,
+the live golden eval and the mock one apply the same rules (ADR 0017).
 """
 
 from __future__ import annotations
@@ -13,15 +17,27 @@ import math
 import random
 import re
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 import httpx
 
 from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_upstream, retry_call
 
-__all__ = ["COMPLETE", "CUT_OFF", "Completion", "OpenAICompatProvider", "Provider", "UpstreamError", "approx_tokens"]
+__all__ = [
+    "COMPLETE",
+    "CUT_OFF",
+    "Completion",
+    "GenParams",
+    "GenPlan",
+    "GenPolicy",
+    "OpenAICompatProvider",
+    "Provider",
+    "UpstreamError",
+    "approx_tokens",
+    "parse_param_allowlist",
+]
 
 # `Completion.finish_reason` values. The model ended its answer itself (`stop`) or with a tool call (`tool_calls`): only
 # such a teacher answer can be stored (INV-16). The answer was cut off, by the token limit or a content filter: a
@@ -53,7 +69,260 @@ class Completion:
         return math.exp(sum(self.token_logprobs) / len(self.token_logprobs))
 
 
+# ---------- generation parameters ----------
+# The request fields a provider can forward, by their OpenAI names: GenParams' fields, `extra` aside. A client's
+# `max_completion_tokens` arrives as `max_tokens` (openai_compat.ChatRequest) and goes upstream under that name.
+PARAM_FIELDS = (
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "logit_bias",
+    "response_format",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "logprobs",
+    "top_logprobs",
+    "reasoning_effort",
+)
+# Fields Ratchet sets itself (model, messages, n, stream) or never sends to a model (the end user's identity, the
+# storage and metadata choices, the legacy function fields): an allowlist that names one is a configuration mistake.
+NEVER_FORWARDED = frozenset(
+    {
+        "model",
+        "messages",
+        "n",
+        "stream",
+        "stream_options",
+        "user",
+        "safety_identifier",
+        "store",
+        "metadata",
+        "functions",
+        "function_call",
+    }
+)
+# RATCHET_TEACHER_PARAMS and RATCHET_STUDENT_PARAMS when unset. The student gets what shapes the answer it must give
+# (length, stops, format, tools), not the client's sampling: its own sampling is fixed (confidence.STUDENT_SAMPLING).
+DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS)
+DEFAULT_STUDENT_PARAMS = frozenset(
+    {"max_tokens", "stop", "seed", "response_format", "tools", "tool_choice", "logit_bias", "top_logprobs"}
+)
+DEFAULT_TEACHER_MAX_TOKENS = 8192  # RATCHET_TEACHER_MAX_TOKENS
+DEFAULT_STUDENT_MAX_TOKENS = 1024  # RATCHET_STUDENT_MAX_TOKENS
+_PARAM_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+@dataclass(frozen=True)
+class GenParams:
+    """Generation parameters for one model call, by OpenAI's names; None means not set. Built from a validated request
+    (`from_request`) or a stored example (`from_stored`); `GenPolicy` turns a client's into what each role sends. `stop` is
+    a tuple. `extra` holds top-level fields Ratchet does not know (vLLM's `top_k`, for example), which are forwarded only
+    when an allowlist names them. Never mutate one: the router shares them between calls and threads."""
+
+    max_tokens: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    stop: tuple[str, ...] | None = None
+    seed: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    logit_bias: dict[str, int] | None = None
+    response_format: dict[str, Any] | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
+    logprobs: bool | None = None
+    top_logprobs: int | None = None
+    reasoning_effort: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_request(cls, req: Any) -> GenParams:
+        """The parameters of an `openai_compat.ChatRequest` (already validated). Empty `stop`, `tools` and `logit_bias`
+        count as not sent, so they are never forwarded or stored as a condition."""
+        return cls(
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+            top_p=req.top_p,
+            stop=tuple(req.stop) if req.stop else None,
+            seed=req.seed,
+            presence_penalty=req.presence_penalty,
+            frequency_penalty=req.frequency_penalty,
+            logit_bias=req.logit_bias or None,
+            response_format=req.response_format,
+            tools=req.tools or None,
+            tool_choice=req.tool_choice,
+            parallel_tool_calls=req.parallel_tool_calls,
+            logprobs=req.logprobs,
+            top_logprobs=req.top_logprobs,
+            reasoning_effort=req.reasoning_effort,
+            extra=dict(req.extra),
+        )
+
+    @classmethod
+    def from_stored(cls, stored: Mapping[str, Any] | None) -> GenParams | None:
+        """The conditions stored with an example (`examples.params`, `ledger.STORED_PARAM_KEYS`), so the golden eval
+        samples the student under them (FR-5.1). None when there are none; a value of the wrong shape is left out."""
+        if not stored:
+            return None
+        stop = stored.get("stop")
+        tools = stored.get("tools")
+        response_format = stored.get("response_format")
+        tool_choice = stored.get("tool_choice")
+        return cls(
+            stop=tuple(stop) if isinstance(stop, list) and stop and all(isinstance(s, str) for s in stop) else None,
+            response_format=response_format if isinstance(response_format, dict) else None,
+            tools=tools if isinstance(tools, list) and tools else None,
+            tool_choice=tool_choice if isinstance(tool_choice, (str, dict)) else None,
+        )
+
+    def only(self, allow: Collection[str]) -> GenParams:
+        """These parameters without the fields and extra keys `allow` does not name (the same object when none is left
+        out, so the common case allocates nothing)."""
+        dropped = {name: None for name in PARAM_FIELDS if name not in allow and getattr(self, name) is not None}
+        extra = {k: v for k, v in self.extra.items() if k in allow}
+        if not dropped and len(extra) == len(self.extra):
+            return self
+        return replace(self, **dropped, extra=extra)
+
+    def to_body(self, allow: Collection[str] | None = None) -> dict[str, Any]:
+        """The fields that are set, as chat-completions body keys (`stop` as a list), then the extra keys; with `allow`,
+        only the names it lists. Extra keys never replace a standard field."""
+        body: dict[str, Any] = {}
+        for name in PARAM_FIELDS:
+            value = getattr(self, name)
+            if value is not None and (allow is None or name in allow):
+                body[name] = list(value) if name == "stop" else value
+        for key, value in self.extra.items():
+            if key not in body and key not in NEVER_FORWARDED and (allow is None or key in allow):
+                body[key] = value
+        return body
+
+
+def parse_param_allowlist(spec: str, default: frozenset[str], name: str = "the parameter allowlist") -> frozenset[str]:
+    """RATCHET_TEACHER_PARAMS / RATCHET_STUDENT_PARAMS: comma-separated request fields to forward. Empty means
+    `default`; `none` forwards nothing; `all` stands for every standard field (`all,top_k` adds a vendor field);
+    `max_completion_tokens` means `max_tokens`. A field Ratchet sets itself or never forwards (`model`, `n`, `user`,
+    `metadata`, ...) or a name that is not an identifier raises ValueError, so a typo stops startup."""
+    text = spec.strip()
+    if not text:
+        return default
+    if text.lower() == "none":
+        return frozenset()
+    out: set[str] = set()
+    for item in (part.strip() for part in text.split(",")):
+        if not item:
+            continue
+        if item.lower() == "all":
+            out.update(PARAM_FIELDS)
+            continue
+        if item == "max_completion_tokens":
+            item = "max_tokens"
+        if item in NEVER_FORWARDED or item.lower() == "none" or not _PARAM_NAME.fullmatch(item):
+            raise ValueError(
+                f"{name}: {item!r} cannot be forwarded; list request fields such as max_tokens, stop or top_k, "
+                "or use 'all' or 'none'"
+            )
+        out.add(item)
+    return frozenset(out)
+
+
+def _capped(requested: int | None, cap: int) -> int | None:
+    """`requested`, at most `cap` (0 = no cap); the cap itself when nothing was requested."""
+    if cap <= 0:
+        return requested
+    return cap if requested is None else min(requested, cap)
+
+
+# What a teacher audit or arbitration leaves out of the client's parameters: what makes the answer random or tilts it
+# token by token. The check is the teacher's deterministic answer (temperature 0) under the same conditions as the
+# answer it is compared with: the same length limit, stops, format and tools.
+CHECK_DROPS = ("top_p", "seed", "presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs")
+TEACHER_ROLES = ("serve", "audit", "arbitrate")
+
+
+@dataclass(frozen=True)
+class GenPlan:
+    """The parameters of one request's model calls: the student's samples (and the shadow's), the teacher when its
+    answer is served (escalation, cold start, pinned, teacher-only), and the teacher's audit or arbitration (`check`).
+    `visible_max` is the client's `max_tokens` when the teacher was allowed more (the reasoning headroom), else None:
+    a teacher answer whose visible part is longer than that is marked cut off (`Ratchet._ask_teacher`)."""
+
+    student: GenParams
+    serve: GenParams
+    check: GenParams
+    visible_max: int | None = None
+
+
+@dataclass(frozen=True)
+class GenPolicy:
+    """Which of a client's parameters each role sends, and the token caps (`Settings.gen_policy()`; ADR 0017).
+
+    - Student: the fields `student_allow` names, `max_tokens` at most `student_max_tokens`; its temperature, logprobs
+      and `n` are fixed (`confidence.STUDENT_SAMPLING`, `Settings.samples`), so the client's never apply.
+    - Teacher, serving: the fields `teacher_allow` names, temperature 0 unless the client set one, `max_tokens` = the
+      client's plus `reasoning_headroom`, at most `teacher_max_tokens` (the cap alone when the client sent none).
+    - Teacher, auditing or arbitrating: the same, at temperature 0 and without `CHECK_DROPS`.
+
+    A cap of 0 means no cap. A field outside an allowlist is never sent; the caps apply either way."""
+
+    teacher_allow: frozenset[str] = DEFAULT_TEACHER_PARAMS
+    student_allow: frozenset[str] = DEFAULT_STUDENT_PARAMS
+    teacher_max_tokens: int = DEFAULT_TEACHER_MAX_TOKENS
+    student_max_tokens: int = DEFAULT_STUDENT_MAX_TOKENS
+    reasoning_headroom: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("teacher_max_tokens", "student_max_tokens", "reasoning_headroom"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a whole number of tokens, 0 or more, not {value!r}")
+
+    def student(self, params: GenParams | None) -> GenParams:
+        p = (params or _NONE).only(self.student_allow)
+        return replace(p, max_tokens=_capped(p.max_tokens, self.student_max_tokens), temperature=None, logprobs=None)
+
+    def _teacher_max(self, requested: int | None) -> int | None:
+        if requested is None:
+            return self.teacher_max_tokens or None
+        return _capped(requested + self.reasoning_headroom, self.teacher_max_tokens)
+
+    def teacher(self, params: GenParams | None, role: str = "serve") -> GenParams:
+        if role not in TEACHER_ROLES:
+            raise ValueError(f"role must be one of {TEACHER_ROLES}, not {role!r}")
+        p = (params or _NONE).only(self.teacher_allow)
+        max_tokens = self._teacher_max(p.max_tokens)
+        if role == "serve":
+            return replace(p, max_tokens=max_tokens, temperature=0.0 if p.temperature is None else p.temperature)
+        return replace(p, max_tokens=max_tokens, temperature=0.0, **dict.fromkeys(CHECK_DROPS))
+
+    def visible_limit(self, params: GenParams | None) -> int | None:
+        """The client's `max_tokens` when the teacher may write more than it (headroom), else None."""
+        requested = params.max_tokens if params is not None and "max_tokens" in self.teacher_allow else None
+        if requested is None:
+            return None
+        sent = self._teacher_max(requested)
+        return requested if sent is not None and sent > requested else None
+
+    def plan(self, params: GenParams | None) -> GenPlan:
+        return GenPlan(
+            self.student(params), self.teacher(params, "serve"), self.teacher(params, "audit"), self.visible_limit(params)
+        )
+
+
+_NONE = GenParams()
+
+
 class Provider(Protocol):
+    """An OpenAI-compatible chat model. `params` carries the request's other generation parameters; the explicit `n`,
+    `temperature`, `logprobs` and `response_format` win over the same fields in it. Accept unknown keyword arguments
+    (`**_`), so a later argument does not break an older provider."""
+
     def complete(
         self,
         messages: list[dict[str, Any]],
@@ -62,6 +331,8 @@ class Provider(Protocol):
         temperature: float = 0.0,
         logprobs: bool = False,
         response_format: dict[str, Any] | None = None,
+        params: GenParams | None = None,
+        **_: Any,
     ) -> list[Completion]: ...
 
 
@@ -72,7 +343,8 @@ class OpenAICompatProvider:
     retries failed calls (`resilience.retry_call`; None = one attempt, as for the student, whose retry is the teacher).
     Every failure raises `UpstreamError` (ADR 0014). `transport` replaces the network (tests pass `httpx.MockTransport`)
     and `sleep`, `clock` and `rng` the waits between attempts; with none passed, it sends real requests and really
-    waits."""
+    waits. `allow` narrows the `GenParams` fields a call may send (None: every field it is given; the router has
+    already applied the role's allowlist)."""
 
     def __init__(
         self,
@@ -85,8 +357,10 @@ class OpenAICompatProvider:
         *,
         clock: Callable[[], float] = time.monotonic,
         rng: Callable[[], float] = random.random,
+        allow: frozenset[str] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
+        self.allow = allow
         self.timeout = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout)
         self.retry = retry or NO_RETRY
         self.sleep = sleep
@@ -122,10 +396,16 @@ class OpenAICompatProvider:
         attempts = self.retry.max_attempts
         return sum(phases) * attempts + self.retry.cap_s * (attempts - 1)
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
-        body: dict[str, Any] = {"model": model, "messages": messages, "n": n, "temperature": temperature}
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
+        """One chat completion, `n` choices. `params` (a `GenParams`) adds the request's other fields; the explicit
+        arguments win: `logprobs=False` also drops `top_logprobs`, and a `response_format` replaces the params' one."""
+        body: dict[str, Any] = params.to_body(self.allow) if params is not None else {}
+        body.update(model=model, messages=messages, n=n, temperature=temperature)
         if logprobs:
             body["logprobs"] = True
+        else:
+            body.pop("logprobs", None)
+            body.pop("top_logprobs", None)
         if response_format:
             body["response_format"] = response_format
         url = f"{self.base_url}/chat/completions"

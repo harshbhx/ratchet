@@ -54,7 +54,7 @@ from .openai_compat import (
     parse_modalities,
     validate_chat_request,
 )
-from .providers import OpenAICompatProvider
+from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import RETRY_STATUSES, as_upstream
@@ -113,7 +113,7 @@ class Runtime:
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
-            self.fleet = MockFleet(clock=self.clock)
+            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy())
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
@@ -522,8 +522,8 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     task = header_task or req.task  # the header wins over metadata.ratchet_task
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
-    try:
-        r = serve(messages, task, client=client)
+    try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017)
+        r = serve(messages, task, client=client, params=GenParams.from_request(req))
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
@@ -548,7 +548,7 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
             "object": "chat.completion",
             "created": created,
             "model": r.model,
-            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": r.text}}],
+            "choices": [{"index": 0, "finish_reason": r.finish_reason, "message": {"role": "assistant", "content": r.text}}],
             "ratchet": meta,
         }
         return JSONResponse(payload, headers=headers)
@@ -570,7 +570,7 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         yield chunk({"role": "assistant", "content": ""})
         for piece in _chunks(r.text):
             yield chunk({"content": piece})
-        yield chunk({}, "stop", ratchet=meta)
+        yield chunk({}, r.finish_reason, ratchet=meta)
         yield "data: [DONE]\n\n"
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

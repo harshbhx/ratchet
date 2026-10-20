@@ -8,15 +8,15 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from . import licenses, tasks
 from .confidence import STUDENT_SAMPLING, score
 from .config import Settings
-from .ledger import Ledger, Version
-from .providers import COMPLETE, Completion, Provider, UpstreamError, approx_tokens
-from .redact import redact, redact_messages
+from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
+from .providers import COMPLETE, Completion, GenParams, GenPlan, Provider, UpstreamError, approx_tokens
+from .redact import redact, redact_json, redact_messages
 from .resilience import BAD_RESPONSE, AdapterMissing, Breaker, CircuitOpen, describe_failure, endpoint_down, names_model
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
@@ -32,6 +32,8 @@ ROUTES = ("student", "confidence", "cold_start", "pinned", "student_error", "stu
 
 # finish_reason values a `skip_example` event names as they are; any other is `other`, so the reasons stay a short list.
 _FINISH_NAMED = frozenset({"length", "content_filter", "function_call", "abort", "error", "unknown"})
+# The finish_reason values a client gets (`Result.finish_reason`); any other upstream value is reported as `stop`.
+CLIENT_FINISH = ("stop", "length", "tool_calls", "content_filter")
 
 
 def answer_problem(task: tasks.Task, c: Completion) -> str | None:
@@ -71,6 +73,20 @@ def _endpoint(provider: Provider) -> str:
 
 
 @dataclass
+class RequestMeta:
+    """What a caller knows about a request besides its messages and parameters; later items fill more of it.
+    `storable=False` keeps every teacher answer of the request out of the training set (no example is inserted or
+    bumped); the request is still answered, audited and logged."""
+
+    request_id: str | None = None
+    client_request_id: str | None = None
+    retry_count: int = 0
+    storable: bool = True
+    end_user: str | None = None
+    idempotency_key: str | None = None
+
+
+@dataclass
 class Result:
     text: str
     served_by: str
@@ -82,6 +98,15 @@ class Result:
     latency_ms: float
     model: str
     route: str = ""  # one of ROUTES
+    finish_reason: str = "stop"  # the served answer's, one of CLIENT_FINISH ("length": cut off, or over max_tokens)
+
+
+def _client_finish(c: Completion) -> str:
+    return c.finish_reason if c.finish_reason in CLIENT_FINISH else "stop"
+
+
+def _task(task: str | tasks.Task | None) -> tasks.Task:
+    return task if isinstance(task, tasks.Task) else tasks.get(task)
 
 
 class Ratchet:
@@ -106,6 +131,9 @@ class Ratchet:
         self.rng = random.Random(seed)
         self.teacher_license = licenses.require_distillable(settings.teacher_model)
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
+        # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
+        self.gen = settings.gen_policy()
+        self._plain = self.gen.plan(None)  # the plan of a request without parameters (Scout, the simulator)
         self.clock = clock
         self.on_adapter_missing = on_adapter_missing
         # Failed upstream calls since start (health()). Scout calls handle from several threads, hence the lock.
@@ -185,24 +213,67 @@ class Ratchet:
             return canary
         return live  # None on cold start -> teacher
 
-    def _call_teacher(self, task: tasks.Task, messages: list[dict[str, Any]]) -> tuple[Completion, bool]:
-        """The teacher's answer, and whether it was stored as a training example (`_store_example`)."""
-        c = self.teacher.complete(messages, self.s.teacher_model)[0]
-        return c, self._store_example(task, messages, c)
+    def plan(self, params: GenParams | None) -> GenPlan:
+        """The parameters of each model call for a request with these client parameters (`GenPolicy.plan`)."""
+        return self._plain if params is None else self.gen.plan(params)
 
-    def _store_example(self, task: tasks.Task, messages: list[dict[str, Any]], c: Completion) -> bool:
+    def _ask_teacher(
+        self, task: tasks.Task, messages: list[dict[str, Any]], gen: GenParams, visible_max: int | None
+    ) -> Completion:
+        """One teacher answer under `gen`. When the reasoning headroom let the teacher write more than the client's
+        `max_tokens` (`visible_max`), an answer whose visible part (`tasks.clean_answer`) is longer than that, by
+        `approx_tokens`, is marked `length`: over the client's budget, so it is not stored (INV-16) and the client is told.
+        The text is not cut, because the count is an estimate."""
+        c = self.teacher.complete(
+            messages, self.s.teacher_model, temperature=gen.temperature or 0.0, logprobs=bool(gen.logprobs), params=gen
+        )[0]
+        if visible_max is not None and c.finish_reason in COMPLETE:
+            if approx_tokens(tasks.clean_answer(task, c.text)) > visible_max:
+                c = replace(c, finish_reason="length")
+        return c
+
+    def _call_teacher(
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        plan: GenPlan | None = None,
+        role: str = "serve",
+        meta: RequestMeta | None = None,
+    ) -> tuple[Completion, bool]:
+        """The teacher's answer, under the plan's `serve` parameters or, to audit or arbitrate, its `check` ones, and
+        whether it was stored as a training example (`_store_example`)."""
+        plan = plan or self._plain
+        gen = plan.serve if role == "serve" else plan.check
+        c = self._ask_teacher(task, messages, gen, plan.visible_max)
+        return c, self._store_example(task, messages, c, gen, meta)
+
+    def _store_example(
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        c: Completion,
+        gen: GenParams | None = None,
+        meta: RequestMeta | None = None,
+    ) -> bool:
         """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
         is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
-        `Settings.redact_pii`, with identifiers in the messages and the answer replaced (INV-12). Returns True when an
-        example was inserted or a duplicate's `seen` bumped; False, with a throttled `skip_example` event, when not."""
+        `Settings.redact_pii`, with identifiers in the messages, the answer and the stored conditions replaced (INV-12).
+        The conditions are the `STORED_PARAM_KEYS` of `gen`, the parameters the teacher answered under. Returns True when
+        an example was inserted or a duplicate's `seen` bumped; False, with a throttled `skip_example` event, when not.
+        A request whose `meta.storable` is False stores nothing and is not a skip."""
+        if meta is not None and not meta.storable:
+            return False
         problem = answer_problem(task, c)
         if problem is not None:
             self._skip_example(task, problem)
             return False
         clean = tasks.clean_answer(task, c.text)
+        conditions = target_params({k: getattr(gen, k) for k in STORED_PARAM_KEYS}) if gen is not None else None
         stored, found = messages, Counter()
         if self.s.redact_pii:  # the teacher saw the original; the training set gets placeholders
             stored, clean = redact_messages(messages, found), redact(clean, found)
+            if conditions:
+                conditions = redact_json(conditions, found)
             # A placeholder can break a structured answer (a card-like number outside quotes): never store that.
             if found and task.structured and task.canonical(clean) == tasks.INVALID:
                 self._skip_example(task, "invalid after redaction")
@@ -215,6 +286,7 @@ class Ratchet:
             self.teacher_license.name,
             self.teacher_license.url,
             redactions=sum(found.values()),
+            params=conditions,
         )
         return True
 
@@ -227,12 +299,19 @@ class Ratchet:
         if n in EVENT_ON_FAILURE:
             self.ledger.event("skip_example", f"{task.name}: {reason}")
 
-    def _arbitrate(self, task: tasks.Task, messages: list[dict[str, Any]], shadow: Version) -> tuple[Completion, bool] | None:
+    def _arbitrate(
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        shadow: Version,
+        plan: GenPlan | None = None,
+        meta: RequestMeta | None = None,
+    ) -> tuple[Completion, bool] | None:
         """The teacher settles a disagreement between the shadow and the served answer: its answer and whether it was
         stored. A failed call returns None and leaves the disagreement unarbitrated; the request it belongs to is
         already answered (INV-15)."""
         try:
-            return self._call_teacher(task, messages)
+            return self._call_teacher(task, messages, plan, "arbitrate", meta)
         except Exception as e:  # optional call: count it, never fail the request
             self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} arbitration: {describe_failure(e)}")
             return None
@@ -248,17 +327,20 @@ class Ratchet:
         return float(version.eval.get("threshold", self.s.confidence_threshold))
 
     def _sample(
-        self, version: Version, messages: list[dict[str, Any]], role: str = "student"
+        self, version: Version, messages: list[dict[str, Any]], role: str = "student", gen: GenParams | None = None
     ) -> tuple[list[Completion], float, str]:
-        """The student's samples, through the `role` breaker of its endpoint. Raises `CircuitOpen` without calling when
-        that breaker is open, and `AdapterMissing` when vLLM answers 404 naming the version's adapter (an endpoint
-        restart forgets runtime-loaded adapters; that 404 is the endpoint answering, so it does not count against it)."""
+        """The student's samples under `gen` (the plan's `student` parameters), through the `role` breaker of its
+        endpoint. Raises `CircuitOpen` without calling when that breaker is open, and `AdapterMissing` when vLLM answers
+        404 naming the version's adapter (an endpoint restart forgets runtime-loaded adapters; that 404 is the endpoint
+        answering, so it does not count against it)."""
         provider, model = self.resolve_student(version)
         breaker = self._breaker(role, provider)
         if not breaker.allow():
             raise CircuitOpen(breaker.name)
         try:
-            samples = provider.complete(messages, model, n=self.s.samples, **STUDENT_SAMPLING)
+            samples = provider.complete(
+                messages, model, n=self.s.samples, params=self._plain.student if gen is None else gen, **STUDENT_SAMPLING
+            )
             if not samples:
                 raise UpstreamError(502, "the student returned no choices", code=BAD_RESPONSE)
         except BaseException as e:
@@ -279,10 +361,13 @@ class Ratchet:
         cost = self.s.price("student").cost(samples[0].in_tokens, sum(s.out_tokens for s in samples))
         return samples, cost, model
 
-    def _pinned(self, task: tasks.Task, messages: list[dict[str, Any]], client: str | None = None) -> Result:
+    def _pinned(
+        self, task: tasks.Task, messages: list[dict[str, Any]], client: str | None = None, plan: GenPlan | None = None
+    ) -> Result:
         """Pinned tasks always go to the teacher. They are logged but never stored as training
         examples, so they cannot leak into a student that was never meant to do them."""
-        c = self.teacher.complete(messages, self.s.teacher_model)[0]
+        plan = plan or self._plain
+        c = self._ask_teacher(task, messages, plan.serve, plan.visible_max)
         cost = self._cost(self.s.teacher_model, c)
         self.ledger.log_request(
             task=task.name,
@@ -303,20 +388,38 @@ class Ratchet:
             stored=0,
         )
         text = tasks.clean_answer(task, c.text)
-        return Result(text, "teacher", None, None, False, cost, cost, c.latency_ms, c.model, "pinned")
+        return Result(text, "teacher", None, None, False, cost, cost, c.latency_ms, c.model, "pinned", _client_finish(c))
 
-    def teacher_only(self, messages: list[dict[str, Any]], task_name: str | None = None, client: str | None = None) -> Result:
+    def teacher_only(
+        self,
+        messages: list[dict[str, Any]],
+        task: str | tasks.Task | None = None,
+        client: str | None = None,
+        params: GenParams | None = None,
+        meta: RequestMeta | None = None,
+    ) -> Result:
         """A request the student cannot take, such as one with an image part the teacher reads
         (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers, the request is logged, and nothing is
         stored as a training example. No student, audit or shadow call."""
-        return self._pinned(tasks.get(task_name), messages, client)
+        return self._pinned(_task(task), messages, client, self.plan(params))
 
     # ------------------------------------------------------------------
-    def handle(self, messages: list[dict[str, Any]], task_name: str | None = None, client: str | None = None) -> Result:
-        """`client` is the API key name that sent the request (None for internal calls and open gateways)."""
-        task = tasks.get(task_name)
+    def handle(
+        self,
+        messages: list[dict[str, Any]],
+        task: str | tasks.Task | None = None,
+        client: str | None = None,
+        params: GenParams | None = None,
+        meta: RequestMeta | None = None,
+    ) -> Result:
+        """Answer one request. `task` is a task name (or a `tasks.Task`); `client` is the API key name that sent it (None
+        for internal calls and open gateways); `params` are the client's generation parameters, which each call gets as
+        its role allows (`GenPolicy`, ADR 0017); `meta` is what else the caller knows (`RequestMeta`). Scout and the
+        simulator pass only messages and a task name."""
+        task = _task(task)
+        plan = self.plan(params)
         if task.pinned:
-            return self._pinned(task, messages, client)
+            return self._pinned(task, messages, client, plan)
         version = self._pick_version()
         cost = 0.0
         latency = 0.0
@@ -334,7 +437,7 @@ class Ratchet:
         sc = None
         if version is not None:
             try:
-                samples, c, model_used = self._sample(version, messages)
+                samples, c, model_used = self._sample(version, messages, gen=plan.student)
             except CircuitOpen:  # the endpoint failed too often lately: not called, not counted again
                 escalated, route = True, "student_breaker"
             except Exception as e:  # student endpoint down or erroring: the teacher still answers
@@ -355,7 +458,7 @@ class Ratchet:
                 served, served_by, route = sc.answer, "student", "student"
                 if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
                     try:
-                        teacher_c, stored = self._call_teacher(task, messages)
+                        teacher_c, stored = self._call_teacher(task, messages, plan, "audit", meta)
                     except Exception as e:  # optional call: the student's answer is served (INV-15)
                         teacher_failed = True
                         self._count_failure("audit_errors", "audit_error", f"{task.name}: {describe_failure(e)}")
@@ -367,7 +470,7 @@ class Ratchet:
             else:
                 escalated, route = True, "confidence"
         if served_by == "teacher":
-            teacher_c, stored = self._call_teacher(task, messages)
+            teacher_c, stored = self._call_teacher(task, messages, plan, "serve", meta)
             cost += self._cost(self.s.teacher_model, teacher_c)
             latency += teacher_c.latency_ms
             served = teacher_c
@@ -392,7 +495,7 @@ class Ratchet:
         shadow_vid = shadow_serve = shadow_agree = None
         if shadow is not None:
             try:
-                s_samples, c, s_model = self._sample(shadow, messages, role="shadow")
+                s_samples, c, s_model = self._sample(shadow, messages, role="shadow", gen=plan.student)
             except CircuitOpen:  # the shadow's breaker is open: no shadow record, nothing counted again
                 s_samples = None
             except Exception as e:  # optional call: count it, never fail the request
@@ -408,7 +511,7 @@ class Ratchet:
             reference: Completion | None = teacher_c
             arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):
-                ruling = None if teacher_failed else self._arbitrate(task, messages, shadow)
+                ruling = None if teacher_failed else self._arbitrate(task, messages, shadow, plan, meta)
                 if ruling is None:
                     arbitrated = False
                 else:
@@ -449,4 +552,5 @@ class Ratchet:
             latency_ms=latency,
             model=served.model,
             route=route,
+            finish_reason=_client_finish(served),
         )

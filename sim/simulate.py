@@ -33,7 +33,7 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
     )
     ledger = Ledger(db, golden_fraction=0.10)
     corrupt = {f"student-v{args.bad_deploy_version}"} if args.bad_deploy_version else set()
-    fleet = MockFleet(corrupt_on_deploy=corrupt)
+    fleet = MockFleet(corrupt_on_deploy=corrupt, policy=settings.gen_policy())
     ratchet = Ratchet(settings, ledger, MockTeacher(settings.teacher_reasoning_tokens), fleet.resolve, seed=args.seed)
     gate = ReleaseGate(ledger, ReleasePolicy(min_shadow=args.min_shadow, min_audits=args.min_audits))
     return settings, ledger, fleet, ratchet, gate

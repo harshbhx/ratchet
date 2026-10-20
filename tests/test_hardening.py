@@ -14,7 +14,8 @@ from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, RecordingRu
 from ratchet import live, tasks
 from ratchet.config import Settings
 from ratchet.ledger import DAY_SECONDS, Ledger
-from ratchet.providers import Completion, OpenAICompatProvider
+from ratchet.nightschool import dataset
+from ratchet.providers import Completion, GenParams, OpenAICompatProvider
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
 
@@ -23,7 +24,7 @@ class FakeTeacher:
     def __init__(self, fail=False):
         self.fail = fail
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         if self.fail:
             raise httpx.ConnectError("teacher down")
         return [
@@ -224,7 +225,7 @@ class EchoTeacher:
     def __init__(self):
         self.seen = []
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None):
+    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         self.seen.append(messages)
         return [Completion(text='{"category": "account", "reply": "Mailed you at bob@example.com"}', model=model)]
 
@@ -436,6 +437,44 @@ def test_v04_database_gets_the_route_column(tmp_path):
     assert r.handle([{"role": "user", "content": "new"}], "ticket-triage").route == "cold_start"
     (task,) = led.stats_by_task()
     assert task["requests"] == 3 and task["routes"] == {"unrecorded": 2, "cold_start": 1}
+
+
+@pytest.mark.req("FR-1.13", "FR-4.1")
+def test_v04_database_gets_the_examples_params_column(tmp_path):
+    """A v0.4 ledger's examples (no `params`) open unchanged: the column is added, old rows have no conditions, their
+    hash and split stay, a repeat of an old request bumps it, and the same request under conditions is a new example."""
+    db = tmp_path / "v04.db"
+    msgs = [{"role": "user", "content": "Where is my refund?"}]
+    old_hash = hashlib.sha256(
+        json.dumps({"task": "default", "messages": msgs}, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()  # how v0.4 hashed an example
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE examples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, day INTEGER, task TEXT, hash TEXT UNIQUE, messages TEXT,
+            completion TEXT, teacher_model TEXT, license TEXT, license_url TEXT, split TEXT, seen INTEGER DEFAULT 1,
+            redactions INTEGER DEFAULT 0
+        );
+    """)
+    con.execute(
+        "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url, split)"
+        " VALUES (1800000000, 1, 'default', ?, ?, 'On its way.', ?, 'NVIDIA Open Model License', 'u', 'train')",
+        (old_hash, json.dumps(msgs), OPEN_TEACHER),
+    )
+    con.commit()
+    con.close()
+    led = Ledger(str(db))
+    assert "params" in {r["name"] for r in led.db.execute("PRAGMA table_info(examples)")}
+    assert led.add_example("default", msgs, "On its way.", OPEN_TEACHER, "l", "u") is False  # the same example
+    assert led.add_example("default", msgs, "{}", OPEN_TEACHER, "l", "u", params={"response_format": {"type": "json_object"}})
+    old, new = led.examples()
+    assert (old["hash"], old["seen"], old["params"]) == (old_hash, 2, None)
+    assert new["hash"] != old_hash and json.loads(new["params"]) == {"response_format": {"type": "json_object"}}
+    rows = dataset.rows(led, "train") + dataset.rows(led, "golden")
+    assert {r["provenance"]["hash"]: r["params"] for r in rows} == {
+        old_hash: None,
+        new["hash"]: {"response_format": {"type": "json_object"}},
+    }
 
 
 @pytest.mark.req("FR-1.7", "INV-13")
@@ -854,3 +893,41 @@ def test_finish_reason_values_are_read_safely(value, want):
         "https://m.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"choices": [choice]}))
     )
     assert p.complete(_ask(), "m")[0].finish_reason == want
+
+
+@pytest.mark.req("FR-1.13", "FR-1.11")
+def test_provider_sends_params_and_its_explicit_arguments_win():
+    """`OpenAICompatProvider.complete(params=...)` adds the request's fields to the body; the explicit `n`,
+    `temperature`, `logprobs` and `response_format` win (logprobs off drops top_logprobs too); `allow` narrows."""
+    server = FakeOpenAIServer("ok")
+    p = OpenAICompatProvider("https://m.test/v1", "k", transport=server.transport)
+    params = GenParams(
+        max_tokens=50,
+        temperature=0.9,
+        stop=("\n\n",),
+        logprobs=True,
+        top_logprobs=2,
+        response_format={"type": "json_object"},
+        extra={"top_k": 40},
+    )
+    schema = {"type": "json_schema", "json_schema": {"name": "x"}}
+    p.complete(_ask(), "m", params=params, response_format=schema)
+    p.complete(_ask(), "m", n=3, temperature=0.7, logprobs=True, params=params)
+    p.complete(_ask(), "m", some_later_argument=1)  # no params: the v0.4 body; an unknown keyword is ignored
+    first, second, plain = (c.json for c in server.calls)
+    assert first == {
+        "model": "m",
+        "messages": _ask(),
+        "n": 1,
+        "temperature": 0.0,
+        "max_tokens": 50,
+        "stop": ["\n\n"],
+        "response_format": schema,
+        "top_k": 40,
+    }
+    assert (second["n"], second["temperature"], second["logprobs"], second["top_logprobs"]) == (3, 0.7, True, 2)
+    assert second["response_format"] == {"type": "json_object"}
+    assert plain == {"model": "m", "messages": _ask(), "n": 1, "temperature": 0.0}
+    narrow = OpenAICompatProvider("https://m.test/v1", "k", transport=server.transport, allow=frozenset({"stop"}))
+    narrow.complete(_ask(), "m", params=params)
+    assert server.calls[-1].json == {"model": "m", "messages": _ask(), "n": 1, "temperature": 0.0, "stop": ["\n\n"]}

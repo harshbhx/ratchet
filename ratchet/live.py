@@ -233,7 +233,7 @@ def main(
         # behind it, and one failed call would end the night (ADR 0014). The judge is a teacher call.
         student = provider_factory(s.student_base, s.student_api_key, timeout=s.student_timeout(), retry=s.teacher_retry())
         judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
-        evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples)
+        evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples, policy=s.gen_policy())
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         rep = run_night(led, NebiusTrainer(s, run, http), evaluator, gate, s.student_base_model, signer=signer)
         if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket

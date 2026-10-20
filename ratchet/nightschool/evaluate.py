@@ -1,7 +1,8 @@
 """Golden-set evaluation and per-version threshold calibration.
 
 For each held-out golden example the student is sampled exactly as in production
-(n samples with `confidence.STUDENT_SAMPLING` + confidence score). From the (confidence,
+(n samples with `confidence.STUDENT_SAMPLING`, under the conditions stored with the example and the
+same `GenPolicy` as the router, + confidence score). From the (confidence,
 correct) pairs we pick the lowest threshold whose served answers reach the target
 precision, then report:
   precision = agreement with the teacher among answers it would serve
@@ -18,9 +19,11 @@ from typing import Any
 
 from .. import tasks
 from ..confidence import STUDENT_SAMPLING, calibrate_threshold, score
-from ..providers import Completion, Provider
+from ..providers import Completion, GenParams, GenPolicy, Provider
 
-SampleFn = Callable[[list[dict[str, Any]], int], list[Completion]]
+# sample(prompt, n, params): n student samples for a golden row's prompt, under the conditions stored with it (the row's
+# `params`, a dict of ledger.STORED_PARAM_KEYS, or None).
+SampleFn = Callable[[list[dict[str, Any]], int, "dict[str, Any] | None"], list[Completion]]
 
 JUDGE_PROMPT = (
     "You compare a CANDIDATE answer with a REFERENCE answer for the same request. "
@@ -39,7 +42,7 @@ def cascade_eval(
     for i, row in enumerate(golden_rows):
         task = tasks.get(row["task"])
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
-        sc = score(task, sample(prompt, samples))
+        sc = score(task, sample(prompt, samples, row.get("params")))
         (calib if i % 2 == 0 else test).append((sc.confidence, task.agree(sc.answer.text, ref)))
     thr = min(1.01, max(floor, calibrate_threshold(calib, target_precision)))  # 1.01 = serve nothing
     served = [ok for c, ok in test if c >= thr]
@@ -55,7 +58,8 @@ def cascade_eval(
 
 
 class LiveEvaluator:
-    """Evaluates an adapter served by vLLM (adapter name = model name)."""
+    """Evaluates an adapter served by vLLM (adapter name = model name). `policy` is the gateway's `GenPolicy`
+    (`Settings.gen_policy()`), so each golden row's student call gets what the router would send for it."""
 
     def __init__(
         self,
@@ -64,12 +68,14 @@ class LiveEvaluator:
         judge_model: str = "",
         samples: int = 3,
         target_precision: float = 0.97,
+        policy: GenPolicy | None = None,
     ):
         self.student = student
         self.judge = judge
         self.judge_model = judge_model
         self.samples = samples
         self.target_precision = target_precision
+        self.policy = policy or GenPolicy()
 
     def judge_score(self, request: list[dict[str, Any]], reference: str, candidate: str) -> int:
         assert self.judge is not None
@@ -85,8 +91,9 @@ class LiveEvaluator:
         return int(obj.get("score", 0) == 1)
 
     def evaluate(self, adapter_uri: str, golden_rows: list[dict[str, Any]]) -> dict[str, Any]:
-        def sample(prompt, n):
-            return self.student.complete(prompt, adapter_uri, n=n, **STUDENT_SAMPLING)
+        def sample(prompt, n, params=None):
+            gen = self.policy.student(GenParams.from_stored(params))
+            return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
         res = cascade_eval(sample, golden_rows, self.samples, self.target_precision)
         free_text = [r for r in golden_rows if not tasks.get(r["task"]).compare_keys]
@@ -94,7 +101,8 @@ class LiveEvaluator:
             ok = 0
             for row in free_text:
                 prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
-                cand = self.student.complete(prompt, adapter_uri, n=1, temperature=0.0)[0].text
+                gen = self.policy.student(GenParams.from_stored(row.get("params")))
+                cand = self.student.complete(prompt, adapter_uri, n=1, temperature=0.0, params=gen)[0].text
                 ok += self.judge_score(prompt, ref, cand)
             res["judge_pass_rate"] = ok / len(free_text)
         return res
