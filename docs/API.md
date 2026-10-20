@@ -503,16 +503,17 @@ The bill of materials of one adapter, written by Night School right after traini
 ```json
 {
   "manifest": {
-    "schema": "ratchet.bom/v1",
+    "schema": "ratchet.bom/v2",
     "generator": "ratchet 0.4.0",
     "created_at": "2026-10-20T00:15:12Z",
     "adapter": {"version": 1, "name": "student-v1", "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "day": 1},
     "training": {"examples": 1029, "dataset_sha256": "478eef…", "tasks": {"ticket-triage": 420, "source-triage": 362, "page-read": 247},
-                 "targets": "teacher answers only", "examples_with_pii_redacted": 0},
+                 "targets": "teacher answers only", "examples_with_pii_redacted": 0, "origins": {"live": 1029}},
     "golden": {"examples": 110, "sha256": "cbce0e…", "held_out": true},
     "sources": [{"teacher": "nvidia/Nemotron-3-Ultra-550b-a55b", "license": "OpenMDW-1.1",
                  "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
                  "distill_ok": true, "examples": 1029}],
+    "redactor": {"sha256": "e85726…", "rules": 9, "redact_pii": true},
     "eval": {"golden_n": 110, "golden_agreement": 0.89, "threshold": 0.65, "coverage": 0.96, "precision": 0.94, "test_n": 55}
   },
   "sha256": "9b1f…",
@@ -523,6 +524,7 @@ The bill of materials of one adapter, written by Night School right after traini
 - `sha256` and the signature cover the **canonical** manifest: JSON with sorted keys, no whitespace, UTF-8 (`ratchet.bom.canonical`).
 - `signature` is `null` when `RATCHET_BOM_SIGNING_KEY` is not set; the `sha256` still detects edits.
 - `training.dataset_sha256` equals the version's `dataset_hash`; `golden.sha256` fingerprints the golden rows the evaluation used. The `eval` block is the evaluation at training time; later re-checks update `/ratchet/stats` but not the signed BOM.
+- Schema `ratchet.bom/v2` ([ADR 0024](adr/0024-evidence-foundations.md)) keeps every v1 field and adds `training.origins` (training rows by where they came from; `live` for rows that did not record it) and `redactor` (a SHA-256 over the redaction rules, the number of rules, and whether redaction was on; `null` when the writer did not say). Later features add optional sections: `training.commitment` and `golden.commitment` (`{"alg": "ratchet.smt/v1", "root", "size"}`), `teacher`, `backfill_jobs` and `erasures_honored`. Adapters trained before keep their v1 documents, which still verify; any other schema is refused as unknown.
 
 Verify a downloaded BOM against the public key you published:
 

@@ -161,7 +161,10 @@ class Result:
 
     `student_cost_usd` and `teacher_cost_usd` split `cost_usd` (FR-15.1): the student's samples (live and shadow) and the
     teacher's calls (escalation, audit, arbitration, pinned). `cost_usd` is still summed call by call as before, so it
-    equals their sum up to float rounding."""
+    equals their sum up to float rounding.
+
+    `request_id` is the id of the request's row in the ledger (`Ledger.log_request`'s return value): what a receipt
+    or a replay names the request by. It is not `RequestMeta.request_id`, the caller's own id for the request."""
 
     text: str
     served_by: str
@@ -184,6 +187,7 @@ class Result:
     choices: list[Choice] = field(default_factory=list)
     student_cost_usd: float = 0.0  # cost_usd's student part (FR-15.1)
     teacher_cost_usd: float = 0.0  # cost_usd's teacher part
+    request_id: int | None = None  # the ledger row (`requests.id`) of this request; not RequestMeta.request_id
 
     def __post_init__(self) -> None:
         if not self.choices:
@@ -305,6 +309,7 @@ class Ratchet:
         fallback_teacher: Provider | None = None,
     ):
         self.s = settings
+        settings.check_reserved()  # a setting reserved for a feature not built yet stops startup here (ADR 0024)
         self.ledger = ledger
         self.teacher = teacher
         self.resolve_student = student_resolver
@@ -736,7 +741,7 @@ class Ratchet:
         route = "fallback_teacher" if fallback else route
         cost = self._call_cost(model, served)
         baseline = self._call_cost(self.s.teacher_model, served) if fallback else cost
-        self.ledger.log_request(
+        request_id = self.ledger.log_request(
             task=task.name,
             served_by="teacher",
             student_version=None,
@@ -776,6 +781,7 @@ class Ratchet:
             usage_breakdown=_breakdown(served),
             choices=choices,
             teacher_cost_usd=cost,
+            request_id=request_id,
         )
 
     def teacher_only(
@@ -1014,7 +1020,7 @@ class Ratchet:
                 ref_text = reference.text if reference is not None else served.text
                 shadow_agree = int(task.agree(s_sc.answer.text, ref_text))
 
-        self.ledger.log_request(
+        request_id = self.ledger.log_request(
             task=task.name,
             served_by=served_by,
             student_version=version.id if version else None,
@@ -1056,6 +1062,7 @@ class Ratchet:
             choices=choices,
             student_cost_usd=student_cost,
             teacher_cost_usd=teacher_cost,
+            request_id=request_id,
         )
 
     def _may_degrade(

@@ -8,6 +8,11 @@ check that a given adapter was trained on what its BOM says, and that nobody edi
 
     python -m ratchet.bom keygen                          # new signing key + public key
     python -m ratchet.bom verify bom.json --public-key K  # check a downloaded BOM
+
+Schema `ratchet.bom/v2` (ADR 0024) keeps every v1 field and adds `redactor` (which redaction rules the training text
+went through), `training.origins` (examples by where they came from) and optional sections later items fill: a set
+commitment per split (`training.commitment`, `golden.commitment`) and the `EXTRA_KEYS`. Stored v1 documents are never
+rewritten (invariant 14), and `verify` accepts both.
 """
 
 from __future__ import annotations
@@ -22,11 +27,18 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from . import __version__, licenses
+from . import __version__, licenses, redact
 from .ledger import Version
+from .merkle import SMT_ALG
 
-SCHEMA = "ratchet.bom/v1"
+SCHEMA = "ratchet.bom/v2"
+ACCEPTED = ("ratchet.bom/v1", SCHEMA)  # what `verify` checks; anything else is refused as an unknown schema
 ALG = "Ed25519"
+# Optional top-level sections of a v2 manifest, each owned by one feature: the teacher watch's self-agreement (FR-16.7),
+# the backfill jobs that contributed rows (FR-16.8) and the erasures this adapter honours (FR-16.9). `manifest(extra=)`
+# refuses any other key, so the shape changes only with a new schema version.
+EXTRA_KEYS = ("teacher", "backfill_jobs", "erasures_honored")
+COMMITMENT_SPLITS = {"training": "train", "golden": "golden"}  # manifest section -> example split
 
 
 def canonical(obj: Any) -> bytes:
@@ -41,7 +53,45 @@ def _rows_hash(rows: list[dict[str, Any]]) -> str:
     return h.hexdigest()
 
 
-def manifest(version: Version, train_rows: list[dict[str, Any]], golden_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def redactor(redact_pii: bool | None = None) -> dict[str, Any]:
+    """The `redactor` section: a SHA-256 over the redaction rules (`redact.PATTERNS`: each label, pattern, flags and the
+    name of its checksum), so two adapters' BOMs show whether their text went through the same rules, and whether
+    redaction was on (`redact_pii`; None when the caller did not say)."""
+    rules = [[label, rx.pattern, rx.flags, getattr(check, "__name__", None)] for label, rx, check in redact.PATTERNS]
+    return {"sha256": hashlib.sha256(canonical(rules)).hexdigest(), "rules": len(rules), "redact_pii": redact_pii}
+
+
+def _commitment(section: str, value: Any, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """{'alg', 'root', 'size'} from a (root hex, size) pair, which must cover exactly the split's rows."""
+    try:
+        root, size = value
+    except (TypeError, ValueError):
+        raise ValueError(f"commitments[{section!r}] must be (root hex, size), not {value!r}") from None
+    if not isinstance(root, str) or len(root) != 64 or any(c not in "0123456789abcdef" for c in root):
+        raise ValueError(f"commitments[{section!r}] root must be 64 lowercase hex characters, not {root!r}")
+    if isinstance(size, bool) or not isinstance(size, int) or size != len(rows):
+        raise ValueError(f"commitments[{section!r}] size must be the {len(rows)} rows it commits to, not {size!r}")
+    return {"alg": SMT_ALG, "root": root, "size": size}
+
+
+def manifest(
+    version: Version,
+    train_rows: list[dict[str, Any]],
+    golden_rows: list[dict[str, Any]],
+    commitments: dict[str, tuple[str, int]] | None = None,
+    extra: dict[str, Any] | None = None,
+    *,
+    redact_pii: bool | None = None,
+) -> dict[str, Any]:
+    """The adapter's bill of materials, from the exact rows it was trained and graded on. `commitments` maps
+    'training' and 'golden' to the (root hex, size) of the split's set commitment (`merkle.KeySet`); `extra` adds the
+    v2 sections in `EXTRA_KEYS` (ValueError for any other key); `redact_pii` is whether redaction was on."""
+    unknown = sorted(set(extra or {}) - set(EXTRA_KEYS))
+    if unknown:
+        raise ValueError(f"unknown BOM sections {unknown}; a v2 manifest takes {list(EXTRA_KEYS)}")
+    unknown = sorted(set(commitments or {}) - set(COMMITMENT_SPLITS))
+    if unknown:
+        raise ValueError(f"unknown commitments {unknown}; use {list(COMMITMENT_SPLITS)}")
     sources: Counter[tuple[str, str]] = Counter()
     for r in train_rows:
         sources[(r["provenance"]["teacher"], r["provenance"]["license"])] += 1
@@ -57,6 +107,19 @@ def manifest(version: Version, train_rows: list[dict[str, Any]], golden_rows: li
                 "examples": n,
             }
         )
+    training: dict[str, Any] = {
+        "examples": len(train_rows),
+        "dataset_sha256": version.dataset_hash,
+        "tasks": dict(sorted(Counter(r["task"] for r in train_rows).items())),
+        "targets": "teacher answers only",
+        "examples_with_pii_redacted": sum(1 for r in train_rows if r["provenance"].get("redactions")),
+        # Where the training examples came from (`examples.origin`; 'live' for rows that did not record one).
+        "origins": dict(sorted(Counter(r["provenance"].get("origin") or "live" for r in train_rows).items())),
+    }
+    golden: dict[str, Any] = {"examples": len(golden_rows), "sha256": _rows_hash(golden_rows), "held_out": True}
+    for section, value in (commitments or {}).items():
+        target = training if section == "training" else golden
+        target["commitment"] = _commitment(section, value, train_rows if section == "training" else golden_rows)
     return {
         "schema": SCHEMA,
         "generator": f"ratchet {__version__}",
@@ -67,16 +130,12 @@ def manifest(version: Version, train_rows: list[dict[str, Any]], golden_rows: li
             "base_model": version.base_model,
             "day": version.day,
         },
-        "training": {
-            "examples": len(train_rows),
-            "dataset_sha256": version.dataset_hash,
-            "tasks": dict(sorted(Counter(r["task"] for r in train_rows).items())),
-            "targets": "teacher answers only",
-            "examples_with_pii_redacted": sum(1 for r in train_rows if r["provenance"].get("redactions")),
-        },
-        "golden": {"examples": len(golden_rows), "sha256": _rows_hash(golden_rows), "held_out": True},
+        "training": training,
+        "golden": golden,
         "sources": out_sources,
+        "redactor": redactor(redact_pii),
         "eval": version.eval,
+        **(extra or {}),
     }
 
 
@@ -129,8 +188,11 @@ def verify(doc: dict[str, Any], public_key_b64: str | None = None) -> tuple[bool
     the document matches itself, not who signed it."""
     try:
         data = canonical(doc["manifest"])
-    except (KeyError, TypeError):
+        schema = doc["manifest"].get("schema")
+    except (KeyError, TypeError, AttributeError, ValueError):
         return False, "not a Ratchet BOM document"
+    if schema not in ACCEPTED:
+        return False, f"unknown schema {schema!r} (this verifier reads {', '.join(ACCEPTED)})"
     if hashlib.sha256(data).hexdigest() != doc.get("sha256"):
         return False, "sha256 does not match the manifest (edited after it was written)"
     sig = doc.get("signature")

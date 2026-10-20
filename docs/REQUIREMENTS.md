@@ -16,15 +16,15 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Replaced | 0 | 1 | 0 | 0 | 0 | 1 |
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
-| Invariant | 0 | 0 | 0 | 0 | 16 | 16 |
-| **Total** | **11** | **98** | **11** | **5** | **16** | **141** |
+| Invariant | 0 | 0 | 0 | 0 | 17 | 17 |
+| **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 84 | 11 | 0 | 16 | 122 |
+| Tested | 11 | 84 | 11 | 0 | 17 | 123 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
 | No check needed | 0 | 13 | 0 | 5 | 0 | 18 |
-| **Total** | **11** | **98** | **11** | **5** | **16** | **141** |
+| **Total** | **11** | **98** | **11** | **5** | **17** | **142** |
 
 ## 5. User stories and acceptance criteria
 
@@ -303,3 +303,4 @@ From [CLAUDE.md](../CLAUDE.md#invariants-do-not-break-these).
 | INV-14 | A BOM is written once, at training time, from the exact train and golden rows (`run_night` →… | — | `ratchet.bom:document`<br>`ratchet.bom:manifest` | `tests/test_hardening.py::test_signed_bom_per_adapter_verifies_and_detects_tampering`<br>`tests/test_hardening.py::test_bom_is_stored_unsigned_without_a_key_and_cli_verifies` | tested |
 | INV-15 | Optional teacher calls (audit, shadow arbitration) never fail a request the student already answere… | — | `ratchet.router:Ratchet.handle`<br>`ratchet.router:Ratchet._arbitrate` | `tests/test_resilience.py::test_audit_failure_still_serves_the_student`<br>`tests/test_resilience.py::test_audit_errors_are_counted_and_throttled_and_escalation_still_fails`<br>`tests/test_resilience.py::test_shadow_arbitration_failure_is_silent`<br>`tests/test_resilience.py::test_shadow_sampling_error_counted`<br>`tests/test_resilience.py::test_optional_teacher_failures_through_the_gateway`<br>`tests/test_resilience.py::test_shadow_breaker_is_its_own`<br>`tests/test_resilience.py::test_open_teacher_breaker_skips_audits_and_arbitration_without_counting_them` | tested |
 | INV-16 | Only complete, valid teacher answers are stored. `Ratchet._store_example` (the one caller of… | — | `ratchet.router:Ratchet._store_example`<br>`ratchet.router:answer_problem`<br>`ratchet.tasks:clean_answer`<br>`ratchet.tasks:Task.check` | `tests/test_contract.py::test_reasoning_headroom_marks_answers_over_the_clients_budget`<br>`tests/test_hardening.py::test_teacher_reasoning_and_fences_are_not_stored_or_served`<br>`tests/test_hardening.py::test_truncated_teacher_answer_is_not_stored`<br>`tests/test_hardening.py::test_empty_teacher_answer_not_stored`<br>`tests/test_hardening.py::test_invalid_json_teacher_answer_for_ticket_triage_not_stored`<br>`tests/test_hardening.py::test_redaction_that_breaks_a_structured_answer_is_not_stored`<br>`tests/test_hardening.py::test_unusable_teacher_answer_is_not_an_audit`<br>`tests/test_hardening.py::test_invalid_shadow_reference_leaves_shadow_agree_null`<br>`tests/test_hardening.py::test_unusable_audit_answer_is_no_shadow_reference`<br>`tests/test_hardening.py::test_answers_that_quote_think_tags_are_served_and_stored_whole`<br>`tests/test_hardening.py::test_skip_example_events_are_throttled_per_reason`<br>`tests/test_tasks.py::test_out_of_vocab_label_invalid`<br>`tests/test_tasks.py::test_invalid_teacher_answer_served_but_not_stored`<br>`tests/test_tasks.py::test_invalid_audit_not_counted`<br>`tests/test_tasks.py::test_dataset_rows_skip_invalid` | tested |
+| INV-17 | Committed leaves and sealed receipts are append-only. The ledger's triggers refuse UPDATE, DELETE a… | — | `ratchet.ledger:SCHEMA`<br>`ratchet.ledger:APPEND_ONLY_TABLES` | `tests/test_hardening.py::test_committed_leaves_and_sealed_receipts_are_append_only` | tested |

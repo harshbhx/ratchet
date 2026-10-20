@@ -1,0 +1,153 @@
+{
+  "captured_from": "v0.4.0 (commit 1f9b18c)",
+  "configs": {
+    "tickets-seed7": {
+      "argv": ["--seed", "7", "--days", "10", "--requests", "2000", "--drift-day", "5", "--bad-deploy-version", "3", "--workload", "tickets"],
+      "inputs": {"audit_rate": 0.1, "bad_deploy_version": 3, "days": 10, "drift_day": 5, "min_audits": 15, "min_new": 50, "min_shadow": 100, "requests": 2000, "seed": 7, "threshold": 0.8, "workload": "tickets"},
+      "days": [
+        {"day": 1, "requests": 2000, "student_share": 0.0, "escalation_rate": 0.0, "cost_per_1k": 1.0928205, "baseline_per_1k": 1.0928205, "savings_pct": 0.0, "avg_latency_ms": 2400.0, "audit_agreement": null},
+        {"day": 2, "requests": 2000, "student_share": 0.439, "escalation_rate": 0.0105, "cost_per_1k": 0.6748064500000001, "baseline_per_1k": 1.092629, "savings_pct": 0.38240111693905254, "avg_latency_ms": 1492.1977698116277, "audit_agreement": 1.0},
+        {"day": 3, "requests": 2000, "student_share": 0.978, "escalation_rate": 0.022, "cost_per_1k": 0.16020293, "baseline_per_1k": 1.092529, "savings_pct": 0.8533650548406495, "avg_latency_ms": 377.96991737407797, "audit_agreement": 1.0},
+        {"day": 4, "requests": 2000, "student_share": 0.9765, "escalation_rate": 0.0235, "cost_per_1k": 0.15961904, "baseline_per_1k": 1.0927755000000001, "savings_pct": 0.8539324499862964, "avg_latency_ms": 381.1316041511534, "audit_agreement": 0.9259259259259259},
+        {"day": 5, "requests": 2000, "student_share": 0.8595, "escalation_rate": 0.1405, "cost_per_1k": 0.27208831, "baseline_per_1k": 1.093388, "savings_pct": 0.7511511832944938, "avg_latency_ms": 662.6578917146679, "audit_agreement": 0.9683544303797469},
+        {"day": 6, "requests": 2000, "student_share": 0.885, "escalation_rate": 0.115, "cost_per_1k": 0.24648586, "baseline_per_1k": 1.093361, "savings_pct": 0.7745613205519495, "avg_latency_ms": 601.2161451084086, "audit_agreement": 0.9181286549707602},
+        {"day": 7, "requests": 2000, "student_share": 0.879, "escalation_rate": 0.121, "cost_per_1k": 0.25465666, "baseline_per_1k": 1.0932680000000001, "savings_pct": 0.7670684040875614, "avg_latency_ms": 615.8015086999792, "audit_agreement": 0.9698795180722891},
+        {"day": 8, "requests": 2000, "student_share": 0.949, "escalation_rate": 0.051, "cost_per_1k": 0.20039646, "baseline_per_1k": 1.0932115000000002, "savings_pct": 0.8166901281225087, "avg_latency_ms": 447.33685285303704, "audit_agreement": 0.986046511627907},
+        {"day": 9, "requests": 2000, "student_share": 0.976, "escalation_rate": 0.024, "cost_per_1k": 0.16203759, "baseline_per_1k": 1.0931790000000001, "savings_pct": 0.8517739638247717, "avg_latency_ms": 382.7627358456884, "audit_agreement": 0.9732620320855615},
+        {"day": 10, "requests": 2000, "student_share": 0.982, "escalation_rate": 0.018, "cost_per_1k": 0.14677214, "baseline_per_1k": 1.0932520000000001, "savings_pct": 0.865747201925997, "avg_latency_ms": 367.6342730014904, "audit_agreement": 0.994535519125683}
+      ],
+      "totals": {"baseline_usd": 21.860827, "cost_usd": 6.73977188, "requests": 20000, "saved_usd": 15.121055120000001, "savings_pct": 0.6916963900771},
+      "versions": [
+        {"id": 1, "state": "retired", "traffic_pct": 0, "train_examples": 941, "dataset_hash": "dde0e46d44a2a9f84c95c61888fee18efcfcc03f481ae481945fb1f9aa127fd6"},
+        {"id": 2, "state": "rejected", "traffic_pct": 0, "train_examples": 1404, "dataset_hash": "1045f230826ee3400ca9d8841a0d4486aa3682eb1c4c18cf87109430fa627572"},
+        {"id": 3, "state": "rolled_back", "traffic_pct": 0, "train_examples": 1507, "dataset_hash": "6a8f4366d93d4277f465dc5f8833226f1c2b9e83ad960f2f51977d7c18540873"},
+        {"id": 4, "state": "retired", "traffic_pct": 0, "train_examples": 1613, "dataset_hash": "ef9efb238ef921f8de8b62e08a9e0eaa8a12ae1fb93c2a2224ea887062123c00"},
+        {"id": 5, "state": "retired", "traffic_pct": 0, "train_examples": 2045, "dataset_hash": "ceb018a22692dc0a911238953f6d4dde57effbc5e13bc270778b73153dd3e7bd"},
+        {"id": 6, "state": "live", "traffic_pct": 100, "train_examples": 2378, "dataset_hash": "918e7388994367eeff84a78c0a85258a6340b9fc5f8e2ddfcaff71cfc1ce88d2"},
+        {"id": 7, "state": "shadow", "traffic_pct": 0, "train_examples": 2588, "dataset_hash": "af06ba06c7b024b94ef2d34d494bf78790c61dff9e3f03894ba4446bcc3751da"}
+      ],
+      "events": [
+        [1, "trained", 1, "v1 on 941 examples; golden agreement 97.0% (n=99)"],
+        [1, "canary", 1, "v1 first student: golden precision 95.8%, coverage 98.0%; canary 10%"],
+        [2, "canary", 1, "v1 audited precision 100.0% (n=16); canary 50%"],
+        [2, "live", 1, "v1 promoted to 100% (audited precision 100.0%, n=20)"],
+        [2, "trained", 2, "v2 on 1404 examples; golden agreement 93.9% (n=148)"],
+        [2, "rejected", 2, "v2: regresses vs live v1 (precision 100.0% vs 100.0%, coverage 94.6% vs 100.0%)"],
+        [3, "trained", 3, "v3 on 1507 examples; golden agreement 96.1% (n=152)"],
+        [3, "shadow", 3, "v3 passed golden gate (precision 98.6%, coverage 97.4%); shadowing live v1"],
+        [4, "canary", 3, "v3 shadow precision 100.0%, coverage 95.5% (live 97.5%); canary 10%"],
+        [4, "rollback", 3, "v3 audited precision 41.2% (n=17, upper bound 64.0% < 92%); traffic back to live v1"],
+        [4, "trained", 4, "v4 on 1613 examples; golden agreement 95.1% (n=162)"],
+        [4, "shadow", 4, "v4 passed golden gate (precision 98.7%, coverage 95.1%); shadowing live v1"],
+        [5, "canary", 4, "v4 shadow precision 96.6%, coverage 89.0% (live 87.0%); canary 10%"],
+        [5, "canary", 4, "v4 audited precision 100.0% (n=17); canary 50%"],
+        [5, "skip", 4, "v4 still in canary; no training tonight (saves GPU time)"],
+        [6, "live", 4, "v4 promoted to 100% (audited precision 92.1%, n=38)"],
+        [6, "trained", 5, "v5 on 2045 examples; golden agreement 94.7% (n=208)"],
+        [6, "shadow", 5, "v5 passed golden gate (precision 98.0%, coverage 98.1%); shadowing live v4"],
+        [7, "canary", 5, "v5 shadow precision 97.5%, coverage 99.0% (live 87.5%); canary 10%"],
+        [7, "skip", 5, "v5 still in canary; no training tonight (saves GPU time)"],
+        [8, "canary", 5, "v5 audited precision 93.3% (n=15); canary 50%"],
+        [8, "live", 5, "v5 promoted to 100% (audited precision 100.0%, n=23)"],
+        [8, "trained", 6, "v6 on 2378 examples; golden agreement 95.1% (n=247)"],
+        [8, "shadow", 6, "v6 passed golden gate (precision 99.2%, coverage 95.9%); shadowing live v5"],
+        [9, "canary", 6, "v6 shadow precision 97.0%, coverage 99.0% (live 98.5%); canary 10%"],
+        [9, "canary", 6, "v6 audited precision 100.0% (n=16); canary 50%"],
+        [9, "skip", 6, "v6 still in canary; no training tonight (saves GPU time)"],
+        [10, "live", 6, "v6 promoted to 100% (audited precision 94.1%, n=34)"],
+        [10, "trained", 7, "v7 on 2588 examples; golden agreement 95.9% (n=268)"],
+        [10, "shadow", 7, "v7 passed golden gate (precision 99.2%, coverage 97.0%); shadowing live v6"]
+      ]
+    },
+    "mixed-seed1": {
+      "argv": ["--seed", "1", "--days", "8", "--requests", "1500", "--workload", "mixed"],
+      "inputs": {"audit_rate": 0.1, "bad_deploy_version": 0, "days": 8, "drift_day": 5, "min_audits": 15, "min_new": 50, "min_shadow": 100, "requests": 1500, "seed": 1, "threshold": 0.8, "workload": "mixed"},
+      "days": [
+        {"day": 1, "requests": 1500, "student_share": 0.0, "escalation_rate": 0.0, "cost_per_1k": 1.1135933333333334, "baseline_per_1k": 1.1135933333333334, "savings_pct": 0.0, "avg_latency_ms": 2400.0, "audit_agreement": null},
+        {"day": 2, "requests": 1500, "student_share": 0.19533333333333333, "escalation_rate": 0.01, "cost_per_1k": 0.9334054933333333, "baseline_per_1k": 1.1125506666666667, "savings_pct": 0.16102203585035224, "avg_latency_ms": 1997.761508963139, "audit_agreement": 0.9767441860465116},
+        {"day": 3, "requests": 1500, "student_share": 0.956, "escalation_rate": 0.044, "cost_per_1k": 0.19473468000000002, "baseline_per_1k": 1.1121766666666668, "savings_pct": 0.824906702472329, "avg_latency_ms": 429.9284066917668, "audit_agreement": 0.99375},
+        {"day": 4, "requests": 1500, "student_share": 0.9573333333333334, "escalation_rate": 0.042666666666666665, "cost_per_1k": 0.1828213333333333, "baseline_per_1k": 1.1124426666666667, "savings_pct": 0.8356577477550903, "avg_latency_ms": 426.3772804065693, "audit_agreement": 0.9657534246575342},
+        {"day": 5, "requests": 1500, "student_share": 0.9093333333333333, "escalation_rate": 0.09066666666666667, "cost_per_1k": 0.21860200000000002, "baseline_per_1k": 1.1122293333333333, "savings_pct": 0.8034560018797082, "avg_latency_ms": 542.6662220079776, "audit_agreement": 0.9512195121951219},
+        {"day": 6, "requests": 1500, "student_share": 0.9013333333333333, "escalation_rate": 0.09866666666666667, "cost_per_1k": 0.2482464666666667, "baseline_per_1k": 1.111408, "savings_pct": 0.7766378623631766, "avg_latency_ms": 562.0787751836916, "audit_agreement": 0.9448275862068966},
+        {"day": 7, "requests": 1500, "student_share": 0.928, "escalation_rate": 0.072, "cost_per_1k": 0.21629697333333334, "baseline_per_1k": 1.1112466666666667, "savings_pct": 0.8053564705105977, "avg_latency_ms": 497.74824024897526, "audit_agreement": 0.9932432432432432},
+        {"day": 8, "requests": 1500, "student_share": 0.974, "escalation_rate": 0.026, "cost_per_1k": 0.17349924000000003, "baseline_per_1k": 1.112066, "savings_pct": 0.843984763494253, "avg_latency_ms": 388.29782993937323, "audit_agreement": 0.9868421052631579}
+      ],
+      "totals": {"baseline_usd": 13.34657, "cost_usd": 4.92179928, "requests": 12000, "saved_usd": 8.42477072, "savings_pct": 0.6312311492765557},
+      "versions": [
+        {"id": 1, "state": "retired", "traffic_pct": 0, "train_examples": 1019, "dataset_hash": "d083a4edc2a62e6c3f7fbdb8cf29ae6f59b9fd3b285f99c5d06bbbdf563563dc"},
+        {"id": 2, "state": "rejected", "traffic_pct": 0, "train_examples": 1710, "dataset_hash": "118e3bd428aa5bb883eb6d834a1fca7de6678955e4700c47cba1d6a1a57c0785"},
+        {"id": 3, "state": "rejected", "traffic_pct": 0, "train_examples": 1831, "dataset_hash": "c472ec7c7834b6a525f84616843d8fc3142a8aa0b218c1dbfcf59162102cb8fc"},
+        {"id": 4, "state": "rejected", "traffic_pct": 0, "train_examples": 1941, "dataset_hash": "fde10ca54650c4e03f80f641c6b87b97b1d78817e184adff23af8fadeebecab2"},
+        {"id": 5, "state": "live", "traffic_pct": 100, "train_examples": 2095, "dataset_hash": "ecca769a614bd50253241baf11ca0511b7e73f18297eb6d60a76a4d932b256b3"},
+        {"id": 6, "state": "canary", "traffic_pct": 50, "train_examples": 2390, "dataset_hash": "15a901a26de60570c516172ea9e504eb1fc0d57d96c243abe28a0bbfae6463f9"}
+      ],
+      "events": [
+        [1, "trained", 1, "v1 on 1019 examples; golden agreement 96.0% (n=99)"],
+        [1, "canary", 1, "v1 first student: golden precision 100.0%, coverage 93.9%; canary 10%"],
+        [2, "canary", 1, "v1 audited precision 100.0% (n=17); canary 50%"],
+        [2, "live", 1, "v1 promoted to 100% (audited precision 96.2%, n=26)"],
+        [2, "trained", 2, "v2 on 1710 examples; golden agreement 92.5% (n=173)"],
+        [2, "rejected", 2, "v2: regresses vs live v1 (precision 98.6% vs 98.8%, coverage 81.4% vs 94.2%)"],
+        [3, "trained", 3, "v3 on 1831 examples; golden agreement 93.9% (n=180)"],
+        [3, "rejected", 3, "v3: regresses vs live v1 (precision 100.0% vs 96.6%, coverage 90.0% vs 98.9%)"],
+        [4, "trained", 4, "v4 on 1941 examples; golden agreement 92.2% (n=192)"],
+        [4, "rejected", 4, "v4: regresses vs live v1 (precision 96.7% vs 96.8%, coverage 94.8% vs 96.9%)"],
+        [5, "trained", 5, "v5 on 2095 examples; golden agreement 92.8% (n=207)"],
+        [5, "shadow", 5, "v5 passed golden gate (precision 96.9%, coverage 94.2%); shadowing live v1"],
+        [6, "canary", 5, "v5 shadow precision 99.3%, coverage 98.0% (live 93.3%); canary 10%"],
+        [6, "skip", 5, "v5 still in canary; no training tonight (saves GPU time)"],
+        [7, "canary", 5, "v5 audited precision 100.0% (n=20); canary 50%"],
+        [7, "live", 5, "v5 promoted to 100% (audited precision 100.0%, n=16)"],
+        [7, "trained", 6, "v6 on 2390 examples; golden agreement 92.1% (n=239)"],
+        [7, "shadow", 6, "v6 passed golden gate (precision 96.5%, coverage 95.0%); shadowing live v5"],
+        [8, "canary", 6, "v6 shadow precision 97.2%, coverage 96.7% (live 98.7%); canary 10%"],
+        [8, "canary", 6, "v6 audited precision 93.3% (n=15); canary 50%"],
+        [8, "skip", 6, "v6 still in canary; no training tonight (saves GPU time)"]
+      ]
+    },
+    "research-seed7": {
+      "argv": ["--seed", "7", "--days", "8", "--requests", "1500", "--workload", "research"],
+      "inputs": {"audit_rate": 0.1, "bad_deploy_version": 0, "days": 8, "drift_day": 5, "min_audits": 15, "min_new": 50, "min_shadow": 100, "requests": 1500, "seed": 7, "threshold": 0.8, "workload": "research"},
+      "days": [
+        {"day": 1, "requests": 1500, "student_share": 0.0, "escalation_rate": 0.0, "cost_per_1k": 1.1326673333333332, "baseline_per_1k": 1.1326673333333332, "savings_pct": 0.0, "avg_latency_ms": 2400.0, "audit_agreement": null},
+        {"day": 2, "requests": 1500, "student_share": 0.15733333333333333, "escalation_rate": 0.023333333333333334, "cost_per_1k": 0.9788851733333332, "baseline_per_1k": 1.1305473333333333, "savings_pct": 0.13414932354299192, "avg_latency_ms": 2080.947248025738, "audit_agreement": 1.0},
+        {"day": 3, "requests": 1500, "student_share": 0.8166666666666667, "escalation_rate": 0.13866666666666666, "cost_per_1k": 0.31883650666666663, "baseline_per_1k": 1.131748, "savings_pct": 0.7182795934548445, "avg_latency_ms": 749.8679332553968, "audit_agreement": 0.9912280701754386},
+        {"day": 4, "requests": 1500, "student_share": 0.9526666666666667, "escalation_rate": 0.04733333333333333, "cost_per_1k": 0.19041386666666668, "baseline_per_1k": 1.1319613333333334, "savings_pct": 0.8317841245460681, "avg_latency_ms": 437.8833969610433, "audit_agreement": 0.9862068965517241},
+        {"day": 5, "requests": 1500, "student_share": 0.9513333333333334, "escalation_rate": 0.048666666666666664, "cost_per_1k": 0.19415794666666666, "baseline_per_1k": 1.1318993333333334, "savings_pct": 0.8284671251683748, "avg_latency_ms": 441.1277692284501, "audit_agreement": 0.9637681159420289},
+        {"day": 6, "requests": 1500, "student_share": 0.964, "escalation_rate": 0.036, "cost_per_1k": 0.17822561333333337, "baseline_per_1k": 1.131842, "savings_pct": 0.8425349003365016, "avg_latency_ms": 411.65401113137733, "audit_agreement": 0.9931972789115646},
+        {"day": 7, "requests": 1500, "student_share": 0.9713333333333334, "escalation_rate": 0.028666666666666667, "cost_per_1k": 0.15782916, "baseline_per_1k": 1.1329433333333334, "savings_pct": 0.8606910377983011, "avg_latency_ms": 393.8785591808645, "audit_agreement": 0.9692307692307692},
+        {"day": 8, "requests": 1500, "student_share": 0.962, "escalation_rate": 0.038, "cost_per_1k": 0.172292, "baseline_per_1k": 1.132238, "savings_pct": 0.8478305797897615, "avg_latency_ms": 416.16505348769994, "audit_agreement": 0.9925925925925926}
+      ],
+      "totals": {"baseline_usd": 13.58377, "cost_usd": 4.9849614, "requests": 12000, "saved_usd": 8.598808599999998, "savings_pct": 0.6330207740560978},
+      "versions": [
+        {"id": 1, "state": "retired", "traffic_pct": 0, "train_examples": 1094, "dataset_hash": "2d60f2a54c6b6bfe761c9c8dbf0fb1126758df1dcb74c3b70475bc56b67ddd4a"},
+        {"id": 2, "state": "rejected", "traffic_pct": 0, "train_examples": 1853, "dataset_hash": "a390a2cb9957c75b99da6d129b387334e60fee322cd5769eade412a68ff171ff"},
+        {"id": 3, "state": "live", "traffic_pct": 100, "train_examples": 1925, "dataset_hash": "63e1052d983b99aba2e49bda7c79c471c162f2484f5ed25ec36504324cea328c"},
+        {"id": 4, "state": "rejected", "traffic_pct": 0, "train_examples": 2120, "dataset_hash": "b82a756c4d57694ad5cea4eec30e4884fe6a426bbf772268433218f9affcb031"},
+        {"id": 5, "state": "rejected", "traffic_pct": 0, "train_examples": 2195, "dataset_hash": "91c575611f91a2d2ef641f08e62b6be4b3d1b58d6c831a1184cc31d71e1f99f7"},
+        {"id": 6, "state": "rejected", "traffic_pct": 0, "train_examples": 2259, "dataset_hash": "fdf385b12dc8b1766387e4eef38e848d4cd1448b3e2e813afeaf161748a5ee3f"}
+      ],
+      "events": [
+        [1, "trained", 1, "v1 on 1094 examples; golden agreement 92.0% (n=112)"],
+        [1, "canary", 1, "v1 first student: golden precision 100.0%, coverage 83.9%; canary 10%"],
+        [2, "canary", 1, "v1 audited precision 100.0% (n=16); canary 50%"],
+        [2, "skip", 1, "v1 still in canary; no training tonight (saves GPU time)"],
+        [3, "live", 1, "v1 promoted to 100% (audited precision 100.0%, n=20)"],
+        [3, "trained", 2, "v2 on 1853 examples; golden agreement 90.8% (n=174)"],
+        [3, "rejected", 2, "v2: regresses vs live v1 (precision 96.2% vs 96.5%, coverage 89.7% vs 97.7%)"],
+        [4, "trained", 3, "v3 on 1925 examples; golden agreement 95.3% (n=170)"],
+        [4, "shadow", 3, "v3 passed golden gate (precision 98.8%, coverage 96.5%); shadowing live v1"],
+        [5, "canary", 3, "v3 shadow precision 98.0%, coverage 98.7% (live 95.3%); canary 10%"],
+        [5, "skip", 3, "v3 still in canary; no training tonight (saves GPU time)"],
+        [6, "canary", 3, "v3 audited precision 100.0% (n=15); canary 50%"],
+        [6, "live", 3, "v3 promoted to 100% (audited precision 100.0%, n=21)"],
+        [6, "trained", 4, "v4 on 2120 examples; golden agreement 90.6% (n=181)"],
+        [6, "rejected", 4, "v4: regresses vs live v3 (precision 100.0% vs 100.0%, coverage 93.3% vs 96.7%)"],
+        [7, "trained", 5, "v5 on 2195 examples; golden agreement 94.1% (n=187)"],
+        [7, "rejected", 5, "v5: regresses vs live v3 (precision 97.8% vs 100.0%, coverage 96.8% vs 92.5%)"],
+        [8, "trained", 6, "v6 on 2259 examples; golden agreement 92.5% (n=186)"],
+        [8, "rejected", 6, "v6: regresses vs live v3 (precision 96.6% vs 98.8%, coverage 93.5% vs 90.3%)"]
+      ]
+    }
+  }
+}

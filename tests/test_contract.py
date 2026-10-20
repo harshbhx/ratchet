@@ -726,6 +726,41 @@ def test_concurrent_requests_keep_the_ledger_consistent():
     assert led.totals()["cost_usd"] == pytest.approx(sum(row["cost_usd"] for row in rows))
 
 
+def test_each_result_names_its_ledger_row():
+    """`Result.request_id` is the id of the row `log_request` wrote for that request (what receipts and replays name
+    a request by): on the student, pinned, teacher-only and cold-start paths, and still under concurrent requests."""
+    student, teacher = RecordingProvider(A), RecordingProvider(A)
+    led, vid, r, _ = _cascade(student, teacher)
+    results = [
+        r.handle(_ask(1), TRIAGE),
+        r.handle([{"role": "user", "content": "plan a search"}], "research-plan"),
+        r.teacher_only(_ask(2), TRIAGE),
+    ]
+    led.set_version(vid, "retired", 0)
+    results.append(r.handle(_ask(3), TRIAGE))
+    rows = _rows(led)
+    assert [res.request_id for res in results] == [row["id"] for row in rows]
+    assert [res.route for res in results] == [row["route"] for row in rows] == ["student", "pinned", "pinned", "cold_start"]
+    led.set_version(vid, "live", 100)
+    out: list[Any] = []
+    lock = threading.Lock()
+
+    def work(t: int) -> None:
+        for i in range(25):
+            res = r.handle(_ask(f"{t}-{i}"), TRIAGE)
+            with lock:
+                out.append(res)
+
+    pool = [threading.Thread(target=work, args=(t,)) for t in range(4)]
+    for th in pool:
+        th.start()
+    for th in pool:
+        th.join(timeout=60)
+    new_rows = {row["id"]: row for row in _rows(led)[len(rows) :]}
+    assert sorted(res.request_id for res in out) == sorted(new_rows) and len(new_rows) == 100
+    assert all(new_rows[res.request_id]["route"] == res.route for res in out)
+
+
 @pytest.mark.req("FR-2.2", "FR-2.6", "FR-2.14")
 def test_empty_json_answer_scores_zero():
     """Was a known bug until field comparators: '{}' is a valid object, so every compare key was None == None and three

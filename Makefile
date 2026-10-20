@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt trace sim demo day1 docker clean web web-dev
+.PHONY: install test lint fmt trace reference sim demo day1 docker clean web web-dev
 
 install:
 	pip install -e ".[dev]" ruff
@@ -14,6 +14,10 @@ lint:
 # Regenerate docs/REQUIREMENTS.md (PRD rows and invariants -> code and tests) after changing PRD rows or test markers.
 trace:
 	python scripts/reqtrace.py
+
+# Three pinned workloads (tickets, mixed, research) must still reproduce v0.4.0's behaviour (about 25 s; CI runs it).
+reference:
+	python scripts/reference_check.py
 
 fmt:
 	ruff format .

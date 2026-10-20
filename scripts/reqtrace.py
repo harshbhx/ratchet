@@ -767,6 +767,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.tasks:clean_answer",
         "ratchet.tasks:Task.check",
     ),
+    "INV-17": ("ratchet.ledger:SCHEMA", "ratchet.ledger:APPEND_ONLY_TABLES"),
 }
 
 _UI = "dashboard UI: checked in light and dark mode at 1440 and 390 px with Playwright; CI typechecks and builds it"

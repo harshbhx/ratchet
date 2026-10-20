@@ -24,9 +24,11 @@ jobs:
       - run: pip install -e ".[dev]" ruff
       - run: ruff check .
       - run: ruff format --check .
-      - run: pytest -q --cov=ratchet --cov=sim --cov-report=term-missing:skip-covered
+      - run: pytest -q --runslow --cov=ratchet --cov=sim --cov-report=term-missing:skip-covered
       - name: Requirements traceability
         run: python scripts/reqtrace.py --check
+      - name: Reference workloads reproduce v0.4.0 (tickets, mixed, research; mock models)
+        run: python scripts/reference_check.py
       - name: Simulation smoke test
         run: python -m sim.simulate --days 6 --requests 800 --bad-deploy-version 3 --out /tmp/sim.json
 

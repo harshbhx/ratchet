@@ -70,6 +70,53 @@ def test_reference_simulation_unchanged(reference_run, sim_reference):
     assert sim_reference.matches(want, have)  # the same rule `regen_sim_reference.py --check` applies
 
 
+def test_reference_workloads_reproduce_v040(reference_run, reference_check):
+    """scripts/reference_check.py pins three workloads captured from v0.4.0 (tickets, mixed, research). The tickets run
+    is the session's reference simulation, so it is checked here at no extra cost; CI and `make reference` run all
+    three. Every input the fixture pins is still the simulator's default, for all three."""
+    doc = reference_check.load()
+    assert doc["captured_from"].startswith("v0.4.0") and set(doc["configs"]) == set(reference_check.CONFIGS)
+    fresh = reference_check.summarize("tickets-seed7", reference_run)
+    assert reference_check.compare("tickets-seed7", doc["configs"]["tickets-seed7"], fresh) == []
+    for name, entry in doc["configs"].items():
+        assert entry["argv"] == list(reference_check.CONFIGS[name])
+        assert reference_check.compare(name, entry, {**entry, "inputs": reference_check.inputs(name)}) == []
+
+
+def test_reference_check_rules(reference_check):
+    """What counts as unchanged: floats within a relative 1e-9; new day keys, new totals keys and advisory event kinds
+    ignored; appended event text allowed; anything else reported, one line per difference."""
+    want = reference_check.load()["configs"]["mixed-seed1"]
+    compare = reference_check.compare
+
+    def changed(**edits: object) -> dict:
+        have = json.loads(json.dumps(want))
+        for key, fn in edits.items():
+            fn(have[key])  # type: ignore[operator]
+        return have
+
+    assert compare("m", want, changed()) == []
+    noisy = changed(days=lambda d: d[3].update(cost_per_1k=d[3]["cost_per_1k"] * (1 + 1e-12), new_key=1))
+    assert compare("m", want, noisy) == []
+    assert compare("m", want, changed(totals=lambda t: t.update(another=2))) == []
+    advisory = changed(events=lambda e: e.insert(2, [3, "drift", 1, "v1 (ticket-triage): traffic changed"]))
+    assert compare("m", want, advisory) == []
+    appended = changed(events=lambda e: e[0].__setitem__(3, e[0][3] + "; certified >= 90%"))
+    assert compare("m", want, appended) == []
+    share = want["days"][3]["student_share"]
+    moved = changed(days=lambda d: d[3].update(student_share=share + 0.001))
+    assert compare("m", want, moved) == [f"m: day 4 student_share: pinned {share!r}, now {share + 0.001!r}"]
+    assert len(compare("m", want, changed(days=lambda d: d[2].pop("audit_agreement")))) == 1
+    assert len(compare("m", want, changed(days=lambda d: d.pop()))) == 1
+    reworded = changed(events=lambda e: e[0].__setitem__(3, "v1 on many examples"))
+    assert ["text changed" in line for line in compare("m", want, reworded)] == [True]
+    extra = changed(events=lambda e: e.append([8, "alert", 2, "live v2 audited precision 80.0% (n=20) below floor"]))
+    assert len(compare("m", want, extra)) == 1
+    assert len(compare("m", want, changed(versions=lambda v: v[0].update(state="rolled_back")))) == 1
+    assert len(compare("m", want, changed(inputs=lambda i: i.update(audit_rate=0.2)))) == 1
+    assert compare("m", want, changed(inputs=lambda i: i.update(a_new_flag=True))) == []
+
+
 @pytest.mark.req("FR-3.3", "US-7", "INV-1")
 def test_provenance_only_lists_distillable_teachers():
     res = sim("--days", "2", "--requests", "300", "--drift-day", "0")

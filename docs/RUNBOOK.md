@@ -247,6 +247,10 @@ All request messages escalated or audited to the teacher are stored in `examples
 
 **Prevention:** keep `RATCHET_REDACT_PII=1`; add a pattern to `ratchet/redact.py` (with a test) for any identifier format you find leaking. Planned: NER-based detection for names and addresses, and Token Factory zero-data-retention settings. See [THREAT_MODEL.md](THREAT_MODEL.md) T4.
 
+### Startup refused: a reserved setting
+
+The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`).
+
 ## Backups
 
 The ledger is the source of truth for provenance, versions and training data. Back it up daily:
@@ -260,4 +264,4 @@ Keep at least 14 days. Adapters and `train.jsonl` are already in the bucket; kee
 
 **Restore:** stop the gateway, copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM.
 
-**Schema changes:** `CREATE TABLE IF NOT EXISTS` does not add new columns to an existing file. After upgrading Ratchet, compare `PRAGMA table_info(versions)` with `SCHEMA` in `ledger.py`, and `ALTER TABLE ... ADD COLUMN` anything missing.
+**Schema changes:** opening a ledger migrates it: `Ledger._migrate()` adds the columns in `MIGRATIONS`, `SCHEMA` creates new tables and triggers, and `INDEXES` the indexes, so an upgraded gateway or `python -m ratchet.live` brings an old file up to date by itself (back it up first). Never edit `version_leaves` or `receipts` by hand: they are append-only (INV-17) and the database refuses the change, because signed roots and receipt chains are built from those rows.

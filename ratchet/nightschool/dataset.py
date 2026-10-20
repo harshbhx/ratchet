@@ -86,6 +86,8 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
                     "license": r["license"],
                     "hash": r["hash"],
                     "redactions": int(r["redactions"] or 0),
+                    # Where the example came from (`examples.origin`): 'live' when the row did not record it.
+                    "origin": r["origin"] or "live",
                 },
             }
         )

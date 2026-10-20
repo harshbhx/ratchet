@@ -55,7 +55,14 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
             if (i + 1) % ticks == 0:
                 gate.tick()
         rep = run_night(
-            ledger, fleet, fleet, gate, settings.student_base_model, min_new_examples=args.min_new, task=night_task(workload)
+            ledger,
+            fleet,
+            fleet,
+            gate,
+            settings.student_base_model,
+            min_new_examples=args.min_new,
+            task=night_task(workload),
+            redact_pii=settings.redact_pii,
         )
         # The day's simulated compute on the synthetic clock: writes compute intervals only, so no other number moves.
         trained = ledger.version(rep.version) if rep.trained and rep.version is not None else None

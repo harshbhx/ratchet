@@ -21,41 +21,119 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass, fields
+from dataclasses import MISSING, dataclass, fields
 
 from .ledger import Ledger, Version
+from .stats import wilson  # defined in stats.py since ADR 0024; `release.wilson` stays importable
 
 CANARY_STEPS = [10, 50]
 
-
-def wilson(successes: float, n: int, z: float = 1.96) -> tuple[float, float]:
-    """95% Wilson score interval for a proportion."""
-    if n == 0:
-        return 0.0, 1.0
-    p = successes / n
-    denom = 1 + z * z / n
-    centre = (p + z * z / (2 * n)) / denom
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
-    return max(0.0, centre - half), min(1.0, centre + half)
+# ReleasePolicy fields declared for the evidence features (ADR 0024) before the items that read them are built: field ->
+# the feature. Their defaults keep today's decisions; until a feature lands, any other value stops startup (from
+# `ReleasePolicy.__post_init__`), so nobody relies on a rule that does nothing yet. The item that builds a feature
+# removes its fields here. `alert_eprocess` is 0 (today's Wilson alert) until the anytime-valid gate makes the e-process
+# the default.
+RESERVED_POLICY: dict[str, str] = {
+    "sequential": "the anytime-valid release gate (FR-16.1)",
+    "alpha_rollback": "the anytime-valid release gate (FR-16.1)",
+    "promote_evidence": "the anytime-valid release gate (FR-16.1)",
+    "alpha_promote": "the anytime-valid release gate (FR-16.1)",
+    "max_stage_audits": "the anytime-valid release gate (FR-16.1)",
+    "alert_eprocess": "the anytime-valid live alert (FR-16.2)",
+    "alpha_alert": "the anytime-valid live alert (FR-16.2)",
+    "min_certified_precision": "certified precision (FR-16.3)",
+    "paired_gate": "certified precision (FR-16.3)",
+    "regression_alpha": "certified precision (FR-16.3)",
+    "max_nfr": "certified precision (FR-16.3)",
+    "drift_alarm": "the drift alarm (FR-16.6)",
+    "drift_audit_boost": "the drift alarm (FR-16.6)",
+    "drift_early_night": "the drift alarm (FR-16.6)",
+    "teacher_noise_max": "the teacher watch (FR-16.7)",
+    "alpha_teacher": "the teacher watch (FR-16.7)",
+}
 
 
 @dataclass
 class ReleasePolicy:
+    """The release gate's thresholds. Every field can be set with RATCHET_<FIELD> (`from_env`). A value out of range
+    raises ValueError naming the variable, at construction, so a typo stops startup instead of changing decisions."""
+
     min_precision: float = 0.95
     min_coverage: float = 0.25
     tolerance: float = 0.02
     min_shadow: int = 100  # shadow answers it would have served
     min_audits: int = 20
     live_floor: float = 0.92  # audited precision floor for canary/live
+    # The anytime-valid gate (FR-16.1, FR-16.2): opt-in sequential canary, its error rates, the futility cap, and the
+    # live alert's rule and rate.
+    sequential: int = 0
+    alpha_rollback: float = 0.05
+    promote_evidence: int = 0
+    alpha_promote: float = 0.05
+    max_stage_audits: int = 400
+    alert_eprocess: int = 0
+    alpha_alert: float = 0.01
+    # Certified precision (FR-16.3): a floor on the certified lower bound (0 = off) and the paired regression gate.
+    min_certified_precision: float = 0.0
+    paired_gate: int = 0
+    regression_alpha: float = 0.05
+    max_nfr: float = 1.0
+    # The drift alarm (FR-16.6): the martingale's threshold and the opt-in actions on an alarm.
+    drift_alarm: float = 100.0
+    drift_audit_boost: float = 1.0
+    drift_early_night: int = 0
+    # The teacher watch (FR-16.7): the disagreement rate it tolerates and its error rate.
+    teacher_noise_max: float = 0.05
+    alpha_teacher: float = 0.01
+
+    def __post_init__(self) -> None:
+        def bad(name: str, value: object, want: str) -> ValueError:
+            return ValueError(f"ReleasePolicy.{name} (RATCHET_{name.upper()}) must be {want}, not {value!r}")
+
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.type in (int, "int"):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise bad(f.name, value, "a whole number, 0 or more")
+            elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise bad(f.name, value, "a finite number")
+        for name in ("min_precision", "min_coverage", "tolerance", "min_certified_precision"):
+            if not 0 <= getattr(self, name) <= 1:
+                raise bad(name, getattr(self, name), "from 0 to 1")
+        for name in ("live_floor", "alpha_rollback", "alpha_promote", "alpha_alert", "regression_alpha", "teacher_noise_max"):
+            if not 0 < getattr(self, name) < 1:
+                raise bad(name, getattr(self, name), "strictly between 0 and 1")
+        for name in ("sequential", "promote_evidence", "alert_eprocess", "paired_gate", "drift_early_night"):
+            if getattr(self, name) not in (0, 1):
+                raise bad(name, getattr(self, name), "0 or 1")
+        if not 0 < self.max_nfr <= 1:
+            raise bad("max_nfr", self.max_nfr, "more than 0 and at most 1")
+        if not self.drift_alarm > 1:
+            raise bad("drift_alarm", self.drift_alarm, "more than 1")
+        if not self.drift_audit_boost >= 1:
+            raise bad("drift_audit_boost", self.drift_audit_boost, "1 or more")
+        defaults = {f.name: f.default for f in fields(self) if f.default is not MISSING}
+        for name, feature in RESERVED_POLICY.items():
+            if getattr(self, name) != defaults[name]:
+                raise ValueError(
+                    f"RATCHET_{name.upper()}={getattr(self, name)!r} has no effect yet: it is reserved for {feature}, "
+                    f"not built yet; unset it or set it to {defaults[name]}"
+                )
 
     @classmethod
     def from_env(cls) -> ReleasePolicy:
-        """Override any field with RATCHET_<FIELD> (e.g. RATCHET_MIN_AUDITS=30)."""
-        kw = {}
+        """Override any field with RATCHET_<FIELD> (e.g. RATCHET_MIN_AUDITS=30). Integer fields take whole numbers, the
+        rest numbers; ValueError names the variable otherwise."""
+        kw: dict[str, float] = {}
         for f in fields(cls):
-            raw = os.environ.get(f"RATCHET_{f.name.upper()}")
+            env = f"RATCHET_{f.name.upper()}"
+            raw = os.environ.get(env)
             if raw is not None:
-                kw[f.name] = int(raw) if f.type in (int, "int") else float(raw)
+                integer = f.type in (int, "int")
+                try:
+                    kw[f.name] = int(raw) if integer else float(raw)
+                except ValueError:
+                    raise ValueError(f"{env} must be {'a whole number' if integer else 'a number'}, not {raw!r}") from None
         return cls(**kw)
 
 
@@ -104,60 +182,88 @@ class ReleaseGate:
 
     # ---- steps 2-4: call periodically (e.g. every few minutes in production) ----
     def tick(self) -> None:
-        p = self.policy
+        """One pass of the gate, in a fixed order: the drift monitor, the live version's alert, the shadow decision, the
+        canary decision, then the watchers. `live` is read once, before any step, so every step sees the live version
+        the tick started with (a canary promoted in this tick retires that one). Each step belongs to one feature and
+        changes only its own function (ADR 0024)."""
         live = self.ledger.live()
+        self._tick_drift()
+        self._tick_live(live)
+        self._tick_shadow(live)
+        self._tick_canary(live)
+        self._tick_watchers()
 
-        if live:
-            n, prec = self.ledger.version_live_quality(live.id)
-            if live.id not in self._alerted and n >= p.min_audits and prec is not None and wilson(prec * n, n)[1] < p.live_floor:
-                self._alerted.add(live.id)
+    def _tick_drift(self) -> None:
+        """The label-free drift monitor (FR-16.6) will update here, first, from the ledger. Nothing yet."""
+
+    def _tick_live(self, live: Version | None) -> None:
+        """Alert once per live version when its audited precision is strongly below the floor (it is never rolled back
+        automatically; see docs/RUNBOOK.md)."""
+        if live is None:
+            return
+        p = self.policy
+        n, prec = self.ledger.version_live_quality(live.id)
+        if live.id not in self._alerted and n >= p.min_audits and prec is not None and wilson(prec * n, n)[1] < p.live_floor:
+            self._alerted.add(live.id)
+            self.ledger.event(
+                "alert",
+                f"live v{live.id} audited precision {prec:.1%} (n={n}) below floor; "
+                "investigate or roll back manually (see docs/RUNBOOK.md)",
+            )
+
+    def _tick_shadow(self, live: Version | None) -> None:
+        """Decide on the shadow once it would have served `min_shadow` answers: reject it, or promote it to canary."""
+        p = self.policy
+        shadow = self.ledger.by_state("shadow")
+        if not shadow:
+            return
+        s = self.ledger.shadow_quality(shadow.id)
+        if s["served"] >= p.min_shadow:
+            live_cov = s["live_coverage"] if s["live_coverage"] is not None else 0.0
+            # Disagreements the teacher could not arbitrate already count against the candidate; say so.
+            unarbitrated = f" ({s['unarbitrated']} unarbitrated counted as disagreements)" if s["unarbitrated"] else ""
+            if s["precision"] < p.min_precision:
+                self._reject(shadow, f"shadow precision {s['precision']:.1%} < {p.min_precision:.0%}{unarbitrated}")
+            elif s["coverage"] < live_cov - p.tolerance:
+                self._reject(shadow, f"shadow coverage {s['coverage']:.1%} < live {live_cov:.1%}")
+            else:
+                self.ledger.set_version(shadow.id, "canary", CANARY_STEPS[0])
                 self.ledger.event(
-                    "alert",
-                    f"live v{live.id} audited precision {prec:.1%} (n={n}) below floor; "
-                    "investigate or roll back manually (see docs/RUNBOOK.md)",
+                    "canary",
+                    f"v{shadow.id} shadow precision {s['precision']:.1%}{unarbitrated}, coverage "
+                    f"{s['coverage']:.1%} (live {live_cov:.1%}); canary {CANARY_STEPS[0]}%",
                 )
 
-        shadow = self.ledger.by_state("shadow")
-        if shadow:
-            s = self.ledger.shadow_quality(shadow.id)
-            if s["served"] >= p.min_shadow:
-                live_cov = s["live_coverage"] if s["live_coverage"] is not None else 0.0
-                # Disagreements the teacher could not arbitrate already count against the candidate; say so.
-                unarbitrated = f" ({s['unarbitrated']} unarbitrated counted as disagreements)" if s["unarbitrated"] else ""
-                if s["precision"] < p.min_precision:
-                    self._reject(shadow, f"shadow precision {s['precision']:.1%} < {p.min_precision:.0%}{unarbitrated}")
-                elif s["coverage"] < live_cov - p.tolerance:
-                    self._reject(shadow, f"shadow coverage {s['coverage']:.1%} < live {live_cov:.1%}")
-                else:
-                    self.ledger.set_version(shadow.id, "canary", CANARY_STEPS[0])
-                    self.ledger.event(
-                        "canary",
-                        f"v{shadow.id} shadow precision {s['precision']:.1%}{unarbitrated}, coverage "
-                        f"{s['coverage']:.1%} (live {live_cov:.1%}); canary {CANARY_STEPS[0]}%",
-                    )
-
+    def _tick_canary(self, live: Version | None) -> None:
+        """Roll the canary back when the Wilson upper bound of its audited precision in this stage is below the floor;
+        hold while the point estimate is below it; otherwise advance a stage, or promote it to live over `live`."""
+        p = self.policy
         canary = self.ledger.by_state("canary")
-        if canary:
-            n, prec = self.ledger.version_live_quality(canary.id)
-            if n >= p.min_audits and prec is not None:
-                lo, hi = wilson(prec * n, n)
-                if hi < p.live_floor:
-                    self.ledger.set_version(canary.id, "rolled_back", 0)
-                    back = f"live v{live.id}" if live else "the teacher"
-                    self.ledger.event(
-                        "rollback",
-                        f"v{canary.id} audited precision {prec:.1%} (n={n}, upper bound "
-                        f"{hi:.1%} < {p.live_floor:.0%}); traffic back to {back}",
-                    )
-                    return
-                if prec < p.live_floor:
-                    return  # not enough evidence either way yet: hold this stage, keep auditing
-                nxt = [s for s in CANARY_STEPS if s > canary.traffic_pct]
-                if nxt:
-                    self.ledger.set_version(canary.id, "canary", nxt[0])
-                    self.ledger.event("canary", f"v{canary.id} audited precision {prec:.1%} (n={n}); canary {nxt[0]}%")
-                else:
-                    if live:
-                        self.ledger.set_version(live.id, "retired", 0)
-                    self.ledger.set_version(canary.id, "live", 100)
-                    self.ledger.event("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n})")
+        if not canary:
+            return
+        n, prec = self.ledger.version_live_quality(canary.id)
+        if n >= p.min_audits and prec is not None:
+            lo, hi = wilson(prec * n, n)
+            if hi < p.live_floor:
+                self.ledger.set_version(canary.id, "rolled_back", 0)
+                back = f"live v{live.id}" if live else "the teacher"
+                self.ledger.event(
+                    "rollback",
+                    f"v{canary.id} audited precision {prec:.1%} (n={n}, upper bound "
+                    f"{hi:.1%} < {p.live_floor:.0%}); traffic back to {back}",
+                )
+                return
+            if prec < p.live_floor:
+                return  # not enough evidence either way yet: hold this stage, keep auditing
+            nxt = [s for s in CANARY_STEPS if s > canary.traffic_pct]
+            if nxt:
+                self.ledger.set_version(canary.id, "canary", nxt[0])
+                self.ledger.event("canary", f"v{canary.id} audited precision {prec:.1%} (n={n}); canary {nxt[0]}%")
+            else:
+                if live:
+                    self.ledger.set_version(live.id, "retired", 0)
+                self.ledger.set_version(canary.id, "live", 100)
+                self.ledger.event("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n})")
+
+    def _tick_watchers(self) -> None:
+        """The teacher watch (FR-16.7) will check here, last. Nothing yet."""

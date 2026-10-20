@@ -222,6 +222,7 @@ def main(
     http: httpx.Client | None = None,
 ) -> None:
     s = Settings(mode="live")
+    s.check_reserved()  # a setting reserved for a feature not built yet stops here (ADR 0024)
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
@@ -242,7 +243,14 @@ def main(
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
-            led, NebiusTrainer(s, run, http), evaluator, gate, s.student_base_model, signer=signer, train_gpu=policy.train
+            led,
+            NebiusTrainer(s, run, http),
+            evaluator,
+            gate,
+            s.student_base_model,
+            signer=signer,
+            train_gpu=policy.train,
+            redact_pii=s.redact_pii,
         )
         if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
             doc = led.version_bom(rep.version)
