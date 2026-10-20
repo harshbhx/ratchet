@@ -21,6 +21,8 @@ import {
   baselineOf,
   codeParts,
   dailySavings,
+  fmtAxisMoney,
+  fmtDecade,
   fmtHours,
   fmtMoney,
   fmtRate,
@@ -321,20 +323,20 @@ function BreakEven({ report }: { report: CostReport }) {
             ))}
           </div>
           <div aria-hidden className="relative mt-1.5 h-4 text-[11px] text-muted tabular">
-            {scale.ticks.map((t, i) => (
+            {scale.ticks.map((t) => (
               <span
                 key={t.value}
                 className="absolute top-0 whitespace-nowrap"
                 style={{
                   left: `${t.at * 100}%`,
-                  transform: i === 0 ? "none" : i === scale.ticks.length - 1 ? "translateX(-100%)" : "translateX(-50%)",
+                  transform: t.at <= 0 ? "none" : t.at >= 1 ? "translateX(-100%)" : "translateX(-50%)",
                 }}
               >
                 {t.label}
               </span>
             ))}
           </div>
-          <p className="mt-1 text-right text-[11px] text-muted">{scale.log ? "Log scale: each gridline is 10× the last." : "Linear scale from 0."}</p>
+          <p className="mt-1 text-right text-[11px] text-muted">{scale.log ? `Log scale: each gridline is ${fmtDecade(scale.ratio)}× the last.` : "Linear scale from 0."}</p>
         </div>
       ) : (
         <Empty icon={Coins} title="Nothing to compare yet" className="py-6">
@@ -482,13 +484,6 @@ function DailyTip(p: TooltipContentProps) {
       </div>
     </div>
   );
-}
-
-function fmtAxisMoney(v: number, step: number): string {
-  if (v === 0) return "$0";
-  const a = Math.abs(v);
-  const digits = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
-  return (v < 0 ? "−" : "") + "$" + a.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 function DailySavingsChart({ daily, truncated }: { daily: CostDay[]; truncated: boolean }) {

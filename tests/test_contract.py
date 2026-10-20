@@ -24,6 +24,8 @@ import hashlib
 import json
 import math
 import re
+import shutil
+import subprocess
 import threading
 from collections import Counter
 from collections.abc import Iterator
@@ -327,6 +329,15 @@ def _spec_paths(spec: dict[str, Any], prefix: str = "") -> Iterator[str]:
             yield from _spec_paths(sub, path)
 
 
+def _spec_types(spec: dict[str, Any], prefix: str = "") -> Iterator[tuple[str, str]]:
+    """Each key path with its type spec; a nested object (or a list's item) is "object"."""
+    for key, sub in spec.items():
+        path = f"{prefix}.{key}" if prefix else key
+        yield path, "object" if isinstance(sub, dict) else sub
+        if isinstance(sub, dict):
+            yield from _spec_types(sub, path)
+
+
 def _spec_errors(spec: dict[str, Any], where: str = "keys") -> list[str]:
     """The fixture itself: leaves name known types, and a list key ([]) or a nested object maps keys to specs."""
     errors = []
@@ -401,25 +412,36 @@ def test_stats_contract(gw_env):
     assert stats["versions"][0]["bom"] == "unsigned"
 
 
-# The keys the Economics panel started with: cost_keys.json may grow, but it must keep these.
-COST_MINIMUM = [
-    "views.per_token.total_usd",
-    "views.per_token.savings_usd",
-    "views.per_token.savings_pct",
-    "views.gpu_hours.total_usd",
-    "views.gpu_hours.savings_usd",
-    "views.gpu_hours.savings_pct",
-    "baseline_usd",
-    "recommendation",
-    "explanation",
-    "prices.verified",
-    "observed_student_requests_per_endpoint_hour",
-    "break_even_student_requests_per_gpu_hour",
-    "self_host_beats_hosted_above_requests_per_hour",
-    "daily[].savings_pct_per_token",
-    "daily[].savings_pct_gpu_hours",
-    "warnings",
-]
+# Every key cost_keys.json held when the Economics panel shipped, with its type. The fixture may grow, but deleting or
+# retyping any of these fails test_cost_report_contract. New keys go in the fixture only; this snapshot stays as it is.
+COST_MINIMUM: dict[str, str] = dict(
+    item.split("=", 1)
+    for item in """
+window=object window.since_day=number|null window.until_day=number window.now=number model=string headline=object
+headline.model=string headline.total_usd=number headline.savings_usd=number headline.savings_pct=number|null
+prices=object prices.verified=bool prices.label=string prices.student_gpu_usd_per_hour=number prices.student_gpus=number
+prices.student_endpoint_usd_per_hour=number prices.train_gpu_usd_per_hour=number prices.train_gpus=number
+prices.teacher_model=string prices.teacher_usd_per_m_tokens=object prices.teacher_usd_per_m_tokens.input=number
+prices.teacher_usd_per_m_tokens.output=number prices.student_usd_per_m_tokens=object
+prices.student_usd_per_m_tokens.input=number prices.student_usd_per_m_tokens.output=number
+prices.fallback_student_model=string prices.fallback_student_usd_per_m_tokens=object
+prices.fallback_student_usd_per_m_tokens.input=number prices.fallback_student_usd_per_m_tokens.output=number
+requests=number student_served=number teacher_usd=number student_per_token_usd=number hosted_student_usd=number
+student_served_off_endpoint=number baseline_usd=number endpoint_hours=number endpoint_usd=number idle_hours=number
+idle_share=number|null training_hours=number training_usd=number views=object views.per_token=object
+views.per_token.total_usd=number views.per_token.savings_usd=number views.per_token.savings_pct=number|null
+views.gpu_hours=object views.gpu_hours.total_usd=number views.gpu_hours.savings_usd=number
+views.gpu_hours.savings_pct=number|null avoided_teacher_usd_per_student_request=number|null
+break_even_student_requests_per_gpu_hour=number|null hosted_fallback_usd_per_request=number|null
+self_host_beats_hosted_above_requests_per_hour=number|null observed_student_requests_per_endpoint_hour=number|null
+utilization_vs_break_even=number|null recommendation=string explanation=string open_intervals[]=object
+open_intervals[].id=number open_intervals[].kind=string open_intervals[].start_ts=number open_intervals[].hours=number
+warnings=list daily[]=object daily[].day=number daily[].requests=number daily[].student_served=number
+daily[].teacher_usd=number daily[].student_per_token_usd=number daily[].endpoint_hours=number
+daily[].endpoint_usd=number daily[].training_usd=number daily[].baseline_usd=number
+daily[].savings_pct_per_token=number|null daily[].savings_pct_gpu_hours=number|null daily_truncated=bool
+""".split()
+)
 COST_PINNED = {  # the cost settings the report depends on, so the shell cannot move this test
     "RATCHET_STUDENT_COST_MODEL": "per_token",
     "RATCHET_STUDENT_GPU_USD_PER_HOUR": "1.55",
@@ -438,8 +460,13 @@ def test_cost_report_contract(gw_env):
     panel derives, web/src/pages/dashboard/economics-model.ts `dailySavings`) to the report's daily shares."""
     spec = json.loads(COST_KEYS.read_text(encoding="utf-8"))["keys"]
     assert _spec_errors(spec) == []
-    lost = sorted(set(COST_MINIMUM) - set(_spec_paths(spec)))
+    held = dict(_spec_types(spec))
+    lost = sorted(set(COST_MINIMUM) - set(held))
     assert not lost, f"cost_keys.json lost {lost}: add keys, never remove them"
+    retyped = sorted(
+        f"{path}: {kind} -> {held[path]}" for path, kind in COST_MINIMUM.items() if path in held and held[path] != kind
+    )
+    assert not retyped, f"cost_keys.json retyped {retyped}: add keys, never retype them"
 
     gw = _gateway(gw_env, **COST_PINNED)
     c = TestClient(gw.app)
@@ -489,6 +516,39 @@ def test_cost_report_contract(gw_env):
     assert summary["endpoint_hours"] == pytest.approx(r["endpoint_hours"])
     assert summary["gpu_hours_savings_pct"] == pytest.approx(gpu["savings_pct"], rel=1e-3)
     assert summary["break_even_student_requests_per_gpu_hour"] == pytest.approx(r["break_even_student_requests_per_gpu_hour"])
+
+
+WEB = Path(__file__).resolve().parents[1] / "web"
+NODE = shutil.which("node")
+
+
+def _node_strips_types() -> bool:
+    """Node 22.6 added --experimental-strip-types, which the web tests use to import the app's TypeScript."""
+    if NODE is None:
+        return False
+    out = subprocess.run([NODE, "--version"], capture_output=True, text=True, check=False).stdout.strip()
+    m = re.fullmatch(r"v(\d+)\.(\d+)\.\d+", out)
+    return bool(m) and (int(m[1]), int(m[2])) >= (22, 6)
+
+
+@pytest.mark.req("FR-7.20")
+@pytest.mark.skipif(not _node_strips_types(), reason="needs Node 22.6 or later (the CI web job runs npm test)")
+@pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")
+def test_economics_panel_helpers():
+    """The Economics panel's pure helpers under Node's test runner (web/tests/economics-model.test.mjs, `npm test`):
+    every gridline label on the break-even meter and the daily chart prints the value it sits at (a 2.5 step once
+    printed 3), both ends of the meter carry a tick and the log caption names the real ratio, the empty state needs a
+    report that says it is empty, and a truncated daily list does not give the window's first day."""
+    r = subprocess.run(
+        [NODE, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/economics-model.test.mjs"],
+        cwd=WEB,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert re.search(r"^# fail 0$", r.stdout, re.M) and not re.search(r"^# pass 0$", r.stdout, re.M), r.stdout[-2000:]
 
 
 # The keys the Task registry panel started with: tasks_keys.json may grow, but it must keep these.

@@ -60,9 +60,12 @@ export function recMeta(r: Recommendation): RecMeta {
   return REC_META[r] ?? { tone: "neutral", label: r.replace(/_/g, " ") };
 }
 
-/** True when the report has nothing in it yet: no requests, no endpoint hours, no training time. */
+/**
+ * True when the report says it has nothing in it yet: no requests, no endpoint hours, no training time, no days. A
+ * missing field is unknown, not zero, so a gateway that sends only `views` and `recommendation` still shows them.
+ */
 export function isEmptyReport(r: CostReport): boolean {
-  return !(r.requests ?? 0) && !(r.endpoint_hours ?? 0) && !(r.training_hours ?? 0) && (r.daily ?? []).length === 0;
+  return r.requests === 0 && r.endpoint_hours === 0 && r.training_hours === 0 && (r.daily ?? []).length === 0;
 }
 
 /** The all-teacher baseline of the window. `views.*.savings_usd` is defined as baseline − total, so either gives it. */
@@ -100,21 +103,43 @@ export function niceStep(span: number, n = 5): number {
   return 10 * k;
 }
 
-/** Ticks from below `min` to above `max`, always including 0, for a chart whose values can be negative. */
+/**
+ * The decimals a tick label needs so every multiple of `step` prints exactly: 0 for 10, 1 for 2.5, 2 for 0.25, 3 for
+ * 0.025. Fewer would round 2.5 to "3" and print a gridline at a value it is not at.
+ */
+export function stepDigits(step: number): number {
+  if (!(step > 0) || !Number.isFinite(step)) return 0;
+  const [mantissa, exp] = String(+step.toPrecision(12)).split("e");
+  const decimals = (mantissa.split(".")[1] ?? "").length - (exp ? Number(exp) : 0);
+  return Math.min(20, Math.max(0, decimals));
+}
+
+/** A money axis label with the step's decimals on every tick: `−$12.5`, `$0`, `$2.5`. */
+export function fmtAxisMoney(v: number, step: number): string {
+  if (v === 0) return "$0";
+  const digits = stepDigits(step);
+  return (v < 0 ? MINUS : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/**
+ * Ticks from below `min` to above `max`, always including 0, for a chart whose values can be negative. Each tick is a
+ * whole multiple of the step, so 0 is exactly 0 rather than a rounding residue that would print as "−$0.00".
+ */
 export function signedTicks(min: number, max: number, n = 5): number[] {
   const lo = Math.min(0, min);
   const hi = Math.max(0, max);
   const step = niceStep(hi - lo || 1, n);
-  const a = Math.floor(lo / step + 1e-9) * step;
-  const b = Math.ceil(hi / step - 1e-9) * step;
+  const a = Math.floor(lo / step + 1e-9);
+  const b = Math.ceil(hi / step - 1e-9);
   const out: number[] = [];
-  for (let t = a; t <= b + step / 2; t += step) out.push(+t.toPrecision(12));
-  if (out.length < 2) out.push(+(a + step).toPrecision(12));
+  for (let i = a; i <= b; i++) out.push(+(i * step).toPrecision(12));
+  if (out.length < 2) out.push(+((a + 1) * step).toPrecision(12));
   return out;
 }
 
 export type MeterTick = { value: number; at: number; label: string };
-export type MeterScale = { log: boolean; at: (v: number) => number; ticks: MeterTick[] };
+/** `ratio` is how many times each log gridline is the one before it (10, or 100 over a wide span); 1 on a linear scale. */
+export type MeterScale = { log: boolean; ratio: number; at: (v: number) => number; ticks: MeterTick[] };
 
 /** `1`, `10`, `100`, `1k`, `10k`, `100k`, `1M`. */
 export function fmtDecade(v: number): string {
@@ -126,7 +151,8 @@ export function fmtDecade(v: number): string {
 /**
  * The break-even meter's scale. A log scale (decades) when the values span 20× or more, as observed volume and
  * break-even usually do, so both stay readable; a linear one from 0 otherwise. `at` maps a value to 0..1; zero and
- * negative values sit at the left end of a log scale.
+ * negative values sit at the left end of a log scale. Both ends always carry a tick: over more than 6 decades the
+ * gridlines are 100× apart, and the axis is widened by a decade where needed so the last one lands on its right end.
  */
 export function meterScale(values: Array<number | null | undefined>): MeterScale | null {
   const vs = values.filter((v): v is number => v != null && Number.isFinite(v) && v >= 0);
@@ -138,30 +164,36 @@ export function meterScale(values: Array<number | null | undefined>): MeterScale
     const lo = Math.floor(Math.log10(min));
     let hi = Math.ceil(Math.log10(max));
     if (hi === lo) hi = lo + 1;
+    const every = hi - lo > 6 ? 2 : 1;
+    hi += (every - ((hi - lo) % every)) % every;
     const span = hi - lo;
     const at = (v: number) => (v <= 0 ? 0 : Math.min(1, Math.max(0, (Math.log10(v) - lo) / span)));
-    const every = span > 6 ? 2 : 1;
     const ticks: MeterTick[] = [];
     for (let e = lo; e <= hi; e += every) ticks.push({ value: 10 ** e, at: (e - lo) / span, label: fmtDecade(10 ** e) });
-    return { log: true, at, ticks };
+    return { log: true, ratio: 10 ** every, at, ticks };
   }
   const step = niceStep(max * 1.1, 4);
-  const top = Math.ceil((max * 1.1) / step) * step;
+  const top = +(Math.ceil((max * 1.1) / step) * step).toPrecision(12);
   const at = (v: number) => Math.min(1, Math.max(0, v / top));
   const ticks: MeterTick[] = [];
-  const digits = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+  const digits = stepDigits(step);
   for (let i = 0; i * step <= top + step / 2; i++) {
     const t = +(i * step).toPrecision(12);
     ticks.push({ value: t, at: t / top, label: t.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }) });
   }
-  return { log: false, at, ticks };
+  return { log: false, ratio: 1, at, ticks };
 }
 
-/** "Days 1–4", "Day 4": the days the report covers, from its window and its first daily row. */
+/**
+ * "Days 1–4", "Day 4": the days the report covers, from its window and its first daily row. A truncated daily list
+ * starts after the window does, so without a `since_day` it gives "Through day 1730" rather than a wrong first day.
+ */
 export function windowLabel(r: CostReport): string | null {
   const until = r.window?.until_day;
   if (until == null) return null;
-  const first = r.window?.since_day ?? r.daily?.[0]?.day ?? until;
+  const since = r.window?.since_day;
+  if (since == null && r.daily_truncated) return `Through day ${until}`;
+  const first = since ?? r.daily?.[0]?.day ?? until;
   return first >= until ? `Day ${until}` : `Days ${first}–${until}`;
 }
 
