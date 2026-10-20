@@ -2,12 +2,13 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 728 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration), ~80 s
+pytest -q                     # 746 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
+python -m sim.simulate --workload schema --days 8 --requests 1500     # structured outputs (the generic mock world)
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
 python scripts/reference_check.py                    # do tickets, mixed and research still reproduce the pinned runs? (make reference, CI)
 ```
@@ -31,12 +32,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
 | `tests/test_calibration.py` | 22 (20 functions; one has 3 cases) |
-| **Total** | **728** |
+| `tests/test_mock_world.py` | 18 |
+| **Total** | **746** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_calibration.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_mock_world.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -211,7 +213,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_reference_check_rules` | ADR 0024: `reference_check.compare` ignores float noise below a relative 1e-9, new day and totals keys, advisory event kinds and text appended to an event, and reports one line for a moved number, a removed key or day, reworded event text, an extra event, a changed version or a changed input default |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
 | `test_gateway_openai_shape_and_demo_flow` | Mock gateway: `/` (landing page) returns 200; `/ratchet/demo/day` works; `/v1/chat/completions` returns a valid `chat.completion` with the right category; stats count 401 requests; break-next and reset work |
-| `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request that fails validation gets a normal HTTP 400 before any stream starts |
+| `test_gateway_rejects_bad_requests` | Empty `messages` returns 400; a `stream: true` request the cascade refuses (the strict mock, `RATCHET_MOCK_STRICT=1`, does not know it) gets a normal HTTP 400 before any stream starts |
 | `test_openai_compat_provider_parses_logprobs_and_usage` | `OpenAICompatProvider` against an `httpx.MockTransport`: sends `logprobs` and `n`, sends the bearer header, parses logprobs per choice, splits completion tokens across choices (evenly here, because one choice has no logprobs), computes `mean_prob` |
 
 ### `tests/test_hardening.py`
@@ -226,7 +228,7 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_redact_leaves_ordinary_text_alone` | Order numbers, dates, times, prices, version strings, page counts, URLs and an ISBN are not touched |
 | `test_redact_messages_handles_content_parts` | OpenAI content-part lists are redacted part by part; non-text parts and the caller's copy are untouched |
 | `test_redact_messages_covers_names_refusals_and_call_arguments` | `name`, an assistant's `refusal`, tool-call and legacy function-call arguments are redacted and counted; a malformed tool call and the caller's copy are untouched |
-| `test_redaction_is_a_no_op_on_the_mock_world` | 2,000 requests from the `mixed` stream and their teacher answers are unchanged by redaction, so mock lookups and simulation numbers cannot shift |
+| `test_redaction_is_a_no_op_on_the_mock_world` | 2,000 requests from the `mixed` stream and 800 each from `schema` and `tools`, their stored conditions and their teacher answers (text and tool-call arguments) are unchanged by redaction, so mock lookups and simulation numbers cannot shift |
 | `test_examples_are_stored_redacted_but_the_teacher_sees_the_original` | The teacher receives the email and phone; the stored example has `[EMAIL]` and `[PHONE]` in messages and completion, `redactions == 3`, and `privacy_stats` agrees; with `redact_pii=False` the example is stored verbatim |
 | `test_keyring_parses_and_identifies` | Named and bare keys, lookup, short keys, bad names and duplicate names raise; `bearer()` reads `Authorization` and `X-API-Key` |
 | `test_api_keys_protect_v1_and_name_the_client` | No key or a wrong key gets 401 on `/v1/chat/completions` and `/v1/models`; Bearer and `X-API-Key` both work; `clients` in stats lists both names and never the keys; Scout stays public |
@@ -395,20 +397,20 @@ OpenAI compatibility of `/v1/chat/completions` (FR-1.5, FR-1.10, FR-1.12, US-1; 
 | Test | Covers |
 |---|---|
 | `test_bad_request_gets_an_openai_error` (22 cases) | `["hi"]` as messages, `metadata: "x"`, a missing role, role `robot`, temperature 3, `n` 0 and 5 (above `RATCHET_MAX_N`), five stop strings, `top_logprobs` without `logprobs`, `json_schema` without a name, bad JSON (incl. `NaN`, 100,000 nested brackets, bad UTF-8, an empty body, an unpaired UTF-16 surrogate escaped or as UTF-8 bytes), a non-object body, a body over 2 MiB (413), 120,001 characters of input, an image part, and a bad field with `stream: true`: each gets the expected status, `code` and `param` in the envelope (with `detail` repeating the message), as JSON, with nothing logged |
-| `test_no_client_mistake_gives_500` | Every value of a request that uses every field (developer role, text parts, tool calls, metadata, `json_schema`, tools) swapped for one of eight kinds of junk, or deleted, each judged by `validate_chat_request` first: one it refuses gets that exact `code` and `param` from the gateway; one it accepts gets 200 from a live-mode gateway with the teacher behind `MockTransport`, and the mock's own 400 in mock mode. Never a 500; refused requests are never logged |
+| `test_no_client_mistake_gives_500` | Every value of a request that uses every field (developer role, text parts, tool calls, metadata, `json_schema`, tools) swapped for one of eight kinds of junk, or deleted, each judged by `validate_chat_request` first: one it refuses gets that exact `code` and `param` from the gateway; one it accepts gets 200 from a live-mode gateway with the teacher behind `MockTransport` and from the mock gateway (the generic mock world answers it). Never a 500; refused requests are never logged |
 | `test_unpaired_surrogate_is_a_400_in_both_modes` | An unpaired surrogate in a system message sent with a demo ticket, in `name`, in a text part or in a key is 400 `invalid_json` with its JSON path in mock mode, and in live mode the teacher is never called; a valid escaped pair (an emoji) reaches the teacher as one character |
 | `test_unknown_v1_path_and_wrong_method` | Unknown paths under `/v1` and `/openai` get 404 `not_found_error` / `unknown_url` with `Unknown request URL: METHOD path.`; `GET /v1/chat/completions` gets 405 with `Allow: POST`; other paths keep `{"detail": "Not Found"}` |
 | `test_unhandled_error_is_a_500_envelope_and_an_event` | A crash in the cascade gives 500 `api_error` without the exception's message; the ledger gets `gateway_error` events (class name only) at the 1st and 10th crash; a crash outside `/v1` keeps the plain-text 500 and is counted but not written (11th); when the ledger itself fails at the 100th, the 500 still goes out |
-| `test_mock_keyerror_is_400_and_live_keyerror_is_500` | In mock mode an unknown request, a request without a user message and a Scout writer request without JSON facts (also facts nested too deeply to parse) get 400 `mock mode only answers demo requests`; in live mode a `KeyError` from the cascade is a 500 |
+| `test_mock_keyerror_is_400_and_live_keyerror_is_500` | FR-9.7: with `RATCHET_MOCK_STRICT=1` an unknown request, a request without a user message and a Scout writer request without JSON facts (also facts nested too deeply to parse) get 400 `mock mode only answers demo requests` and log nothing; without it the generic mock world answers all four with a 200; in live mode a `KeyError` from the cascade is a 500 |
 | `test_framework_validation_errors_become_400_on_v1_only` | FastAPI's validation errors are 400 envelopes with `param` and `code` on `/v1`, and stay 422 `{"detail": [...]}` elsewhere |
 | `test_ratchet_routes_keep_detail` | `/ratchet/redact` (400, and 413 over a 1,000-byte limit), `/ratchet/versions/999/bom`, `/ratchet/demo/day` and `/scout/run` errors keep `{"detail": ...}` |
 | `test_checks_run_in_order_and_refusals_cost_nothing` | With a key and a quota of 1: no key and a bad body is 401 (`invalid_api_key`, `WWW-Authenticate` kept); a bad body with a key is 400 and uses no quota; the next good request is 200; the one after is 429 `rate_limit_error` with `Retry-After` and `X-Should-Retry: false`; a bad body at the quota is still 400; one ledger row |
 | `test_body_limit_declared_and_streamed` | A declared `Content-Length` over the limit is 413; a chunked body driven straight into the ASGI app is refused at the chunk that passes the limit, with the rest left unread; outside `/v1` the 413 is `{"detail"}`; a chunked body under the limit is answered; a client that disconnects halfway through its body gets a 400, not a 500; `0` turns the limit off |
-| `test_message_and_input_limits_come_from_settings` | `RATCHET_MAX_MESSAGES` and `RATCHET_MAX_INPUT_CHARS` (text parts added up) give 400; `0` turns both off |
+| `test_message_and_input_limits_come_from_settings` | `RATCHET_MAX_MESSAGES` and `RATCHET_MAX_INPUT_CHARS` (text parts added up) give 400; `0` turns both off (a 301-message, 200,000-character request is answered) |
 | `test_developer_role_reaches_the_teacher_as_system` | A `developer` message reaches the teacher, and the stored example, as `system`; `RATCHET_MERGE_SYSTEM=1` merges the leading system messages with a blank line |
 | `test_dropped_keys_and_redacted_tool_calls_end_to_end` | Keys a message's role does not use (a vendor field, `annotations`, a tool call's `index`) reach neither the teacher nor the stored example; a tool call's arguments reach the teacher as sent and are stored with `[EMAIL]` (INV-12) |
 | `test_text_parts_ticket_matches_the_string_form` | A demo ticket sent as text parts gets the same message back as the string form, and one stored example, seen twice, under the string form's hash |
-| `test_multimodal_parts_go_to_the_teacher_only` | With `RATCHET_TEACHER_MODALITIES=text,image_url` and a live student, an image request reaches the teacher with its parts as sent, never the student, stores nothing and logs one teacher row; a text request on the same gateway is still served by the student; audio stays refused; the mock teacher gives a 400 for the image request |
+| `test_multimodal_parts_go_to_the_teacher_only` | With `RATCHET_TEACHER_MODALITIES=text,image_url` and a live student, an image request reaches the teacher with its parts as sent, never the student, stores nothing and logs one teacher row; a text request on the same gateway is still served by the student; audio stays refused; the mock teacher answers the image request from its text part, and nothing is stored |
 | `test_generation_parameters_reach_teacher_student_and_audit` | FR-1.13, FR-2.1, FR-2.5, INV-1: a live gateway, both models behind `MockTransport`: for `max_completion_tokens` 50, a stop, seed 7, temperature 0.9, `model: gpt-4o` and a vendor `top_k`, the escalated teacher's body has `max_tokens` 50, the stop, the seed and 0.9 under the configured model, the student's has 0.7, `n` 3, logprobs, the stop, the seed and 50, and a forced audit's has 0 with the same stop and limit and no seed; `top_k` reaches the teacher only with `RATCHET_TEACHER_PARAMS=all,top_k` |
 | `test_allowlists_and_token_caps_through_the_gateway` | FR-1.13, NFR-3: `max_tokens` 10⁶ is sent as 8,192 to the teacher and 1,024 to the student; without `logit_bias` in `RATCHET_TEACHER_PARAMS` it is not forwarded; `RATCHET_STUDENT_PARAMS=none` leaves the student its cap; `RATCHET_TEACHER_MAX_TOKENS=0` sends the client's value; a request without parameters still carries both caps; a forbidden allowlist entry or a negative cap stops `Runtime` |
 | `test_a_cut_off_teacher_answer_reaches_the_client_as_length` | FR-1.13, FR-2.13, FR-1.6: a teacher answer with `finish_reason` `length` is returned with `length` (and only the stream's last chunk carries it), and is not stored; an upstream value clients do not know is returned as `stop` |
@@ -476,7 +478,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_production_and_both_evaluators_share_student_sampling` | FR-5.1, FR-2.1: `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate` send the same sampling arguments, `{"n": 3, **STUDENT_SAMPLING, "params": GenParams(max_tokens=1024)}` |
 | `test_train_parse_args_defaults_and_row_contract` | FR-4.5: `train.py` defaults (epochs, learning rate, rank, sequence length, batch, Mamba projections in the targets), required `--data` and `--out`, the same base model in `config.py`, `train_job.sh` and `student_endpoint.sh`; rows written by Night School load back unchanged (blank lines skipped), end with the teacher's stored answer and carry teacher and license; `train.manifest` (saved as `ratchet_manifest.json`) names the base model and the licenses |
 | `test_scout_cli_over_http` | FR-10.6, FR-1.7: `python -m ratchet.scout` against the mock gateway in-process, with an API key: every agent prints a line, `--max-results` reaches search, citations and the cost summary print, every call is logged under the key's name with its task header (one planner and one writer request); the key also comes from `RATCHET_API_KEY`; a wrong key exits 1 with the 401 on stderr |
-| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation) and every event, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours) |
+| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation), every event and a line saying the run is a simulation with mock models, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours) |
 | `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
 | `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every model request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; then the teacher gets `max_tokens` 8,192 with a stop, a seed, a temperature and JSON mode, and a 400 there fails the check; all present exits 0 with "All good." |
@@ -588,6 +590,31 @@ Per-task calibration when several tasks share one adapter (FR-14.1, [ADR 0040](a
 | `test_ledger_merges_a_task_record_atomically` | FR-14.1: `merge_task_eval` merges into one record, keeps the others, and rolls back on an unknown version |
 | `test_mixed_workload_calibrates_each_task` | FR-14.1, FR-9.5, US-4: a 6-day mixed simulation (mock models): every trained version has a record for `ticket-triage`, `source-triage` and `page-read` under their current specs, and the student still takes over (over 80% on the last day) at audited agreement of 90% or more |
 
+### `tests/test_mock_world.py`
+
+The generic mock world (FR-9.7, [ADR 0041](adr/0041-generic-mock-world.md)): every request the ticket and research worlds do not know gets a deterministic answer from mock models. Schemas are checked with a small validator in the test file (the subset the mock fills), since `jsonschema` is not a dependency; when it is installed, one test checks the same instances with it too. The simulation numbers are trends from mock models.
+
+| Test | Covers |
+|---|---|
+| `test_lookup_tries_tickets_then_research_then_the_generic_world` | FR-9.7: a demo ticket keeps its world whatever it is sent with (a schema too), a research request as well; `hello`, a system-only request, an image-only request and an empty list get a generic item that answers, and each raises `KeyError` under `strict` (RATCHET_MOCK_STRICT); a schema or tools pick the `schema` or `tools` sub-world |
+| `test_generic_items_are_deterministic_and_keyed_by_what_a_model_sees` | FR-9.7: the same request gives the same template, labels and answer whatever task it is sent under; another system prompt gives another template; 60 texts spread over all four framings |
+| `test_free_text_world_restates_the_prompt` | FR-9.7: `[mock teacher] You asked: "hello". ...`; a wrong framing differs; a long prompt quotes 12 words and `...`; a 1,000,000-character prompt in under 0.5 s; text parts joined; json_object gives `{"answer": ...}` |
+| `test_instance_from_schema_fills_the_structured_outputs_subset` | FR-9.7: 200 seeds of a schema with an enum, a boolean, bounded and exclusive (draft 4 and draft 6) integers and numbers, `multipleOf`, formats (date, date-time, UUID), min and max lengths, a nullable type, `anyOf` with null, `const`, arrays with prefixItems, minItems and uniqueItems, `allOf`, local `$ref`: every instance validates, the same seed gives the same instance, and enums, booleans and integers are drawn |
+| `test_instance_from_schema_ends_and_never_raises_on_hostile_schemas` | FR-9.7: a recursive `$ref` ends within `MAX_DEPTH`, a `$ref` loop and 50 × 50 × 50 nested arrays end, bounds of ±1.7e308 and 10^400 give finite JSON, all in under 1 s; 1,500 seeded junk schemas, also as a json_schema and as tool parameters (with `tool_choice` required), never raise, and every label space keeps a wrong value to draw |
+| `test_instance_from_schema_agrees_with_jsonschema` | FR-9.7: with `jsonschema` installed (skipped otherwise), the subset and the workload schemas validate under Draft 2020-12 for 100 seeds each |
+| `test_schema_answers_stay_valid_for_any_labels_and_wrong_ones_change_enums_first` | FR-9.7: 300 schema-workload items: the teacher's answer and a guessing student's both validate; labels list enums first; every schema task appears; a corrupted deploy's three samples agree on enum values that are all wrong; the mock teacher writes the item's answer |
+| `test_mock_teacher_calls_the_catalogue_with_arguments_read_from_the_prompt` | FR-9.7: `lookup_order` with `order_id` 48213, no content, finish `tool_calls`, a stable `call_` id; `refund` with the amount and a reason for each wording (`damaged`, `duplicate_charge`, `not_received`, `wrong_item`, `changed_mind`, a `$` amount too); a plain reply without an order number; after the tool's result a final text answer restating it (inside `{"answer": ...}` for json_object) |
+| `test_tool_choice_and_client_tools` | FR-9.7: a forced `tool_choice` wins, `none` gives free text, `required` calls a tool even without an order number; a client's own tool gets arguments that validate against its schema; an integer `order_id` gets an integer |
+| `test_mock_student_tool_calls_improve_with_training` | FR-9.7, FR-9.2: on 300 tools-workload requests a student trained on 200 examples of the template makes the teacher's call (name and arguments) over 75% of the time, an untrained one under 60%; a tool-call sample lists no content tokens |
+| `test_mock_fleet_trains_and_evaluates_on_generic_and_ticket_rows` | FR-9.7, FR-9.3: a ticket row, a free-text row, a schema row and a tool row with their stored conditions, a system-only row and a content-parts row train without raising (also with `strict`), every template is counted and the golden eval scores all six; a strict fleet's live student raises `KeyError` for `hello` and still answers a ticket; a lenient shadow student answers `hello` on staging |
+| `test_strict_teacher_and_unreadable_scout_writer_requests` | FR-9.7: a Scout writer request without readable facts gets a generic answer, and `KeyError` from the strict teacher, as `hello` does |
+| `test_mock_strict_setting` | FR-9.7: `RATCHET_MOCK_STRICT` `1` and `0` |
+| `test_schema_workload_student_takes_over` | FR-9.7, FR-9.4: `--workload schema`, 4 days × 300 (seed 7, 5 audits and 40 shadow answers to move a release): no student on day 1, over 50% on day 4 and above day 2, audited agreement of 90% or more on the last day; every stored example is one of the three schema tasks and keeps its json_schema condition |
+| `test_tools_workload_runs_with_tools_kept_from_both_models` | FR-9.7: `--workload tools`, 3 days × 300 runs and the student's share rises; with the default allowlists no model sees the tools, so every stored `order-support` example is a prose answer with no stored condition |
+| `test_demo_day_runs_the_schema_and_tools_workloads` | FR-9.7, INV-8: `gateway.WORKLOADS` is `sim.world.WORKLOADS`; `/ratchet/demo/day?workload=schema` and `tools` answer 200 with `simulation: true`, their tasks appear in `/ratchet/stats`, and an unknown workload is a 400 |
+| `test_sdk_gets_answers_and_structured_outputs_from_the_mock_gateway` | FR-9.7, FR-1.1, US-1: through the OpenAI SDK, `hello` gets a 200 restating it, and `client.chat.completions.parse(response_format=Claim)` (a Pydantic model with a `Literal`, a bounded integer, a date, a nested list and an optional field) returns a parsed `Claim` whose raw content validates against the schema the SDK sent |
+| `test_a_mock_tool_call_is_refused_until_tool_calls_pass_through` | FR-9.7: with `RATCHET_TEACHER_PARAMS=all` the mock teacher's tool call reaches the router, which refuses it (502 `tool_calls_unsupported`) and stores nothing; with the default the same request gets a prose answer |
+
 ## Live-path tests
 
 Live mode, the training job, the day-1 check, the Scout CLI and the deploy scripts would otherwise run for the first time on paid Nebius resources. `tests/test_live.py` runs each of them offline first, through seams that are default arguments, so production code passes nothing and talks to the real services:
@@ -633,7 +660,7 @@ Rules:
 | `--min-new` | 50 | `run_night(min_new_examples=…)` |
 | `--drift-day` | 5 | Product launch day (0 = never) |
 | `--bad-deploy-version` | 0 | Fault injection: this version is served corrupted once in canary/live |
-| `--workload` | `tickets` | `tickets` (support tickets), `research` (Scout's triage and reader calls), `mixed` (half each). With `tickets` the night trains on `ticket-triage` only; otherwise on every task |
+| `--workload` | `tickets` | `tickets` (support tickets), `research` (Scout's triage and reader calls), `mixed` (half each), `schema` (structured outputs) or `tools` (support requests with the mock tool catalogue). With `tickets` the night trains on `ticket-triage` only; otherwise on every task |
 | `--seed` | 7 | Seed for traffic and routing |
 | `--out` | `sim_results.json` | Results file |
 
@@ -651,6 +678,13 @@ Rules:
 - Each template has fixed labels. 6 of the 12 are `hard` (for example a good forum answer next to an off-topic one, or a broad survey paper).
 - From `--drift-day`, 20% of traffic comes from questions 7 and 8, which the student has not seen.
 - `mixed` alternates between the ticket and research streams at random (50/50, its own seed), so both keep their own sequences.
+
+**Schema and tools traffic** (`sim/generic.py`, `--workload schema`, `--workload tools`; [ADR 0041](adr/0041-generic-mock-world.md)):
+
+- `schema`: requests with `response_format` json_schema over three schemas, each its own task (`review-rating`: an enum, a 1 to 5 integer, a boolean; `ticket-route`: two enums and a boolean; `meeting-extract`: two enums, an integer and an array of enums). From `--drift-day`, 20% of traffic is a fourth schema the student has not seen (`warranty-claim`, with nested records through `$ref`). Prompts combine products, opinions and a four-digit reference, so most texts are distinct.
+- `tools`: support requests sent with the mock catalogue (`lookup_order`, `refund`) under `order-support`: 40% look-ups, 45% refunds with an amount and a reason, 15% questions no tool answers; new wordings from `--drift-day`.
+- The right answer is drawn from sha256 of the request's text, not read from it (the mock teacher is right by definition). A schema's labels are its enum, boolean and number fields; a template is a schema name (or a tool set, or a system prompt), and a schema with more than three labels is `hard`.
+- The default allowlists forward `tools` to neither model yet, so the `tools` workload is answered, stored and learned as free text: one easy template, learned within a few nights.
 
 **Mock teacher:**
 
@@ -675,7 +709,7 @@ Research items use the same skill model, per result template. Scout's pinned pla
 **Fault injection:**
 
 - The corrupted version is fine on the staging copy, which golden eval and shadow use.
-- Once it reaches canary or live, its "fragile" slices become confidently wrong: billing, refund and security tickets; `paper` and `docs` triage results; `date` reads. This models pushing the wrong adapter file to production.
+- Once it reaches canary or live, its "fragile" slices become confidently wrong: billing, refund and security tickets; `paper` and `docs` triage results; `date` reads; in the generic world refund calls, schema answers whose first enum takes its first value, and free text framed as steps. This models pushing the wrong adapter file to production.
 
 **Costs:** Ultra $1/$3 per 1M tokens. The student uses the $0.06/$0.24 proxy, with 3 samples billed.
 
@@ -744,6 +778,39 @@ Seeds 1, 2, 3, 7, 11 (same settings):
 | mixed | 93–96% | 80–85% | 51–60% | 95–98% | day 2–3 |
 
 On mixed traffic the first student comes a night later with seed 7 (v1 was rejected at 94.3% golden precision), so total savings are lower. With one pooled threshold (before per-task calibration) the student served a few points more (final share 96–98% on research, 92–98% on mixed; total savings up to 65% and 63%) at a lower worst day of audited agreement (96% and 93%): a task's own threshold, calibrated on a few dozen golden rows, is conservative.
+
+### Workloads: schema and tools
+
+Simulation, mock models. 8 days × 1,500 requests/day, drift day 5, no fault injection. Both come from the generic mock world ([ADR 0041](adr/0041-generic-mock-world.md)); their right answers are drawn from each request's text, so these numbers show the loop on structured outputs, not how well a model reads a review.
+
+```
+python -m sim.simulate --workload schema --days 8 --requests 1500       (seed 7)
+day  student  escal. audit ok     $/1k all-Ultra  saved
+  1       0%      0%        -    1.020     1.020     0%
+  2      15%      4%     100%    0.893     1.020    12%
+  3      77%     19%     100%    0.334     1.020    67%
+  4      85%     15%      97%    0.248     1.020    76%
+  5      80%     20%      96%    0.312     1.023    70%
+  8      93%      7%      97%    0.193     1.023    81%
+total: 12000 requests, $5.33 vs $12.26 all-Ultra -> saved 57%
+
+python -m sim.simulate --workload tools --days 8 --requests 1500        (seed 7)
+day  student  escal. audit ok     $/1k all-Ultra  saved
+  1       0%      0%        -    1.044     1.044     0%
+  2      22%      0%     100%    0.854     1.045    18%
+  3      98%      2%     100%    0.141     1.045    86%
+  8      99%      1%     100%    0.135     1.047    87%
+total: 12000 requests, $4.06 vs $12.55 all-Ultra -> saved 68%
+```
+
+Seeds 1, 2, 3, 7, 11 (same settings):
+
+| Workload | Final student share | Final-day savings | Total savings | Lowest daily audit agreement | First version live |
+|---|---|---|---|---|---|
+| schema | 78–94% | 69–82% | 51–57% | 92–97% | day 3 |
+| tools | 99–100% | 85–87% | 62–68% | 97–99% | day 2–3 |
+
+On `schema` the drift schema (`warranty-claim`, five or more labels, `hard`) holds the share near 80% for two nights from day 5. On `tools` both models answer in prose, because the default allowlists forward `tools` to neither: one easy free-text template, learned within two nights. It shows what the gateway does with tool requests today, not tool-call distillation.
 
 ## Bugs the simulation found (and the fixes)
 

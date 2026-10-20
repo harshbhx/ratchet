@@ -112,6 +112,7 @@ class Ticket:
     difficulty: str
 
     task = "ticket-triage"
+    params = None  # sent without generation parameters (sim/world.py `Item.params`)
 
     def messages(self) -> list[dict[str, str]]:
         return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": self.text}]

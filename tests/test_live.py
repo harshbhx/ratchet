@@ -574,6 +574,7 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     assert [ln.split()[0] for ln in lines[1:3]] == ["1", "2"]  # one table row per day
     assert f"total: 400 requests, ${res['totals']['cost_usd']:.2f} vs ${res['totals']['baseline_usd']:.2f}" in printed
     assert "events:" in printed and "[trained]" in printed and lines[-1] == f"wrote {out}"
+    assert lines[-3] == "simulation: mock models, workload mixed, seed 7; not a measure of real model quality"
     for e in res["events"]:
         assert f"  day {e['day']}: [{e['kind']}] {e['detail']}" in lines
 

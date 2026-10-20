@@ -320,7 +320,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | Status | `type` | `code` | When | Retried by OpenAI SDKs? |
 |---|---|---|---|---|
 | 400 | `invalid_request_error` | `invalid_json`, `invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `context_length_exceeded`, `unsupported_content_type` | The request breaks a rule in [Request validation](#request-validation); `param` names the field | No |
-| 400 | `invalid_request_error` | `null` | Mock mode only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`) | No |
+| 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
 | 400 | `invalid_request_error` | `unknown_task` | `RATCHET_UNKNOWN_TASKS=reject` and the task is not registered (`unknown task "x"; registered: default, page-read, ...`, at most 20 names, only tasks this key may use); `param` is `metadata.ratchet_task` when the name came from there | No |
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
 | 403 | `permission_error` | `task_not_allowed` | The task's `clients` do not name this key, or the request has no key (`task not allowed for this key`). Checked before the quota, so it uses none | No |
@@ -330,7 +330,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 400 | `invalid_request_error` | the teacher's (`context_length_exceeded`, ...), `request_too_large` for an upstream 413 without one, or `null` | Live mode: the teacher refused the request with 400, 413 or 422, so it cannot succeed as sent (too long for the model, a content part it cannot read). `message` and `param` are the teacher's; `X-Should-Retry: false` | No |
 | 429 | `insufficient_quota` | `daily_quota_exceeded` | The key's daily quota is used up (`daily request quota of N used up for 'acme'; resets at 00:00 UTC`); `Retry-After` (seconds to 00:00 UTC), `X-RateLimit-Reset-Requests` and `X-Should-Retry: false` | No: the response tells them not to |
 | 429 | `rate_limit_error` | `upstream_rate_limited` | Live mode: Token Factory rate-limited the teacher call, after the gateway's own retries (`teacher rate limited: upstream 429; retry after 7 s`). `Retry-After` is the teacher's wait, clamped to 1 to 60 s (1 when it sent none) | Yes, after `Retry-After` |
-| 500 | `api_error` | `null` | A bug in the gateway (`The server had an error while processing your request.`). The message never includes request text; the ledger records a `gateway_error` event with the exception's class at the 1st, 10th, 100th, ... occurrence. In live mode this includes a `KeyError` from the cascade, which is a 400 only in mock mode | Yes |
+| 500 | `api_error` | `null` | A bug in the gateway (`The server had an error while processing your request.`). The message never includes request text; the ledger records a `gateway_error` event with the exception's class at the 1st, 10th, 100th, ... occurrence. In live mode this includes a `KeyError` from the cascade, which is a 400 only in strict mock mode (`RATCHET_MOCK_STRICT=1`) | Yes |
 | 502 | `api_error` | `teacher_unavailable` | Live mode: a teacher call whose answer was needed failed after its retries: an escalation, a cold start, a pinned task or a teacher-only request (`teacher unavailable: upstream 503`, `teacher unavailable: upstream 502 upstream_unreachable` when Token Factory could not be reached, `... bad_upstream_response` when its answer could not be read). Student failures do not cause errors: they fall back to the teacher. Neither do a failed audit or shadow arbitration: the student's answer is served ([ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)). An upstream redirect or 4xx outside the other rows (402, for example) adds `X-Should-Retry: false`. When Token Factory sent a wait (`Retry-After` on a 503, for example), it is passed on as `Retry-After`, clamped to 1 to 60 s. See [RUNBOOK.md](RUNBOOK.md#teacher-api-down-token-factory-errors-or-timeouts) | Yes (after `Retry-After` when present), unless `X-Should-Retry: false` |
 | 502 | `api_error` | `upstream_auth_error` | Live mode: Token Factory refused the gateway's own key (401 or 403): `NEBIUS_API_KEY` is wrong or lacks access. `X-Should-Retry: false` | No |
 | 502 | `api_error` | `upstream_not_found` | Live mode: Token Factory answered 404: `RATCHET_TEACHER_MODEL` or `RATCHET_TEACHER_BASE` is wrong. The request's `model` never selects the teacher, so this is the gateway's configuration, not the client's mistake. `X-Should-Retry: false` | No |
@@ -390,7 +390,19 @@ const r = await client.chat.completions.create(
 );
 ```
 
-In mock mode, only the synthetic tickets generated by `sim/tickets.py` and Scout's requests for the example questions (`sim/research.py`) can be answered. Use the demo endpoints, take a ticket from `sim.tickets.TicketStream` in Python, or run the Scout CLI (`python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1`).
+### Mock mode answers
+
+In mock mode every request gets an answer from mock models (simulation; nothing here measures a real model). The synthetic tickets generated by `sim/tickets.py` and Scout's requests for the example questions (`sim/research.py`) get their demo answers: use the demo endpoints, take a ticket from `sim.tickets.TicketStream` in Python, or run the Scout CLI (`python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1`). Any other request gets a deterministic answer from the generic mock world (`sim/generic.py`, [ADR 0041](adr/0041-generic-mock-world.md)), the same every time for the same text:
+
+| The request | The mock teacher's answer |
+|---|---|
+| Plain text (`hello`) | `[mock teacher] You asked: "hello". ...`: a restatement of the prompt (at most 12 words) and one of four closing sentences |
+| `response_format` `json_schema` | JSON that validates against the schema: enum values and booleans drawn, integers and numbers within their bounds, `mock text` for strings (a date, time, UUID or URI for those formats), 1 or 2 array items, nested objects and local `$ref`s. The OpenAI SDK's `client.chat.completions.parse(response_format=SomeModel)` parses it |
+| `response_format` `json_object` | `{"answer": "[mock teacher] You asked: ..."}` |
+| Ending with a `tool` message | `[mock teacher] The tool returned: "...". ...` |
+| `tools` that reach the teacher | A tool call: `lookup_order(order_id)` or `refund(order_id, amount, reason)` (the mock catalogue, `sim.generic.TOOLS`) with the order number, amount and reason read from the prompt, or a call to your own tool with arguments built from its parameters schema. The default `RATCHET_TEACHER_PARAMS` does not forward `tools` yet, so by default the teacher answers in prose; with `tools` allowed, the call is refused as a real one would be (502 `tool_calls_unsupported`) |
+
+The mock student learns these requests as it learns tickets, per schema name, tool set or system prompt. `RATCHET_MOCK_STRICT=1` restores the earlier behaviour: anything but a demo request is a 400 `mock mode only answers demo requests`.
 
 ---
 
@@ -724,12 +736,12 @@ Advances `Ledger.day` by one and sends `requests` simulated requests through the
 | Query param | Default | Values |
 |---|---|---|
 | `requests` | `1500` | Requests for the day (clamped to 100–5000) |
-| `workload` | `tickets` | `tickets` (support tickets), `research` (Scout's triage and reader calls), `mixed` (half each). Anything else returns **400** `workload must be one of [...]` |
+| `workload` | `tickets` | `tickets` (support tickets), `research` (Scout's triage and reader calls), `mixed` (half each), `schema` (structured outputs: `response_format` json_schema requests over three schemas under the tasks `review-rating`, `ticket-route` and `meeting-extract`, and from day 5 `warranty-claim`, with nested records) or `tools` (support requests sent with the mock tool catalogue under the task `order-support`). Anything else returns **400** `workload must be one of [...]` |
 
-With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. With `research` or `mixed` it trains on every stored task. Each workload has its own seeded stream, so the three streams do not affect each other. The dashboard's **Traffic** selector sets `workload` (default there: `mixed`).
+With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. With any other workload it trains on every stored task. Each workload has its own seeded stream, so the streams do not affect each other. The dashboard's **Traffic** selector sets `workload` (default there: `mixed`). Until tool calls pass through the gateway, the default allowlists forward `tools` to neither model, so the `tools` workload is answered, stored and learned as free text. The numbers are simulation output from mock models, and the response says so (`simulation: true`).
 
 ```json
-{"day": 4, "workload": "tickets",
+{"day": 4, "workload": "tickets", "simulation": true,
  "night": {"trained": false, "version": null, "admitted": false,
            "reason": "release in flight", "eval": null}}
 ```

@@ -58,7 +58,12 @@ class Completion:
     `token_logprobs` are the finite token logprobs the confidence score uses. `logprobs_content` is the choice's
     `logprobs.content` as the server sent it (OpenAI's `[{token, logprob, bytes, top_logprobs}]`; None without one). It
     is kept as it came, not copied or checked, so a request that does not return logprobs pays nothing for it;
-    `served_logprobs` checks it and puts it in OpenAI's shape for a client that asked. Never mutate it."""
+    `served_logprobs` checks it and puts it in OpenAI's shape for a client that asked. Never mutate it.
+
+    `tool_calls` are the choice's `message.tool_calls` in OpenAI's shape (`[{id, type: "function", function: {name,
+    arguments}}]`, `arguments` a JSON string), or None. Only the mock models fill it so far (sim/generic.py): this
+    provider does not read tool calls yet, the router refuses a teacher answer that ends in one (`tool_calls_unsupported`)
+    and the gateway never returns one."""
 
     text: str
     model: str
@@ -70,6 +75,7 @@ class Completion:
     reasoning_tokens: int = 0
     cached_tokens: int = 0
     logprobs_content: list[Any] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
     @property
     def mean_prob(self) -> float | None:

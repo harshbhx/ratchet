@@ -207,20 +207,30 @@ def test_redact_messages_covers_names_refusals_and_call_arguments():
     assert c == Counter(EMAIL=3, PHONE=1) and msgs == snapshot  # the caller's messages are untouched
 
 
-@pytest.mark.req("FR-4.7")
+@pytest.mark.req("FR-4.7", "FR-9.7")
 def test_redaction_is_a_no_op_on_the_mock_world():
-    """Mock models look requests up by exact text, so redaction must never change a synthetic request."""
+    """Mock models look requests up by exact text, so redaction must never change a synthetic request, the conditions
+    stored with it or the mock teacher's answer (its text or its tool call's arguments), in any workload: the generic
+    world's schema and tools streams too."""
+    from ratchet.ledger import target_params
+    from ratchet.redact import redact_json
     from sim.mock_models import MockTeacher
     from sim.world import make_stream
 
-    stream, teacher = make_stream("mixed", seed=3), MockTeacher()
-    for day in range(1, 9):
-        for _ in range(250):
-            item = stream.sample(day)
-            msgs = item.messages()
-            assert redact_messages(msgs) == msgs
-            answer = teacher.complete(msgs, "t")[0].text
-            assert redact(answer) == answer
+    teacher = MockTeacher()
+    for workload, per_day in (("mixed", 250), ("schema", 100), ("tools", 100)):
+        stream = make_stream(workload, seed=3)
+        for day in range(1, 9):
+            for _ in range(per_day):
+                item = stream.sample(day)
+                msgs = item.messages()
+                assert redact_messages(msgs) == msgs
+                (c,) = teacher.complete(msgs, "t", params=item.params)
+                assert redact(c.text) == c.text
+                for call in c.tool_calls or []:
+                    assert redact(call["function"]["arguments"]) == call["function"]["arguments"]
+                stored = target_params(vars(item.params)) if item.params is not None else None
+                assert redact_json(stored) == stored
 
 
 class EchoTeacher:

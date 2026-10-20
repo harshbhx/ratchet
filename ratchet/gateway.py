@@ -75,7 +75,7 @@ SCOUT_PAGE = HERE / "web" / "scout.html"
 # without `npm run build`), the hand-written pages above are served instead.
 DIST = HERE / "web" / "dist"
 SPA_INDEX = DIST / "index.html"
-WORKLOADS = ("tickets", "research", "mixed")
+WORKLOADS = ("tickets", "research", "mixed", "schema", "tools")  # sim.world.WORKLOADS, for /ratchet/demo/day
 MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
 
@@ -120,11 +120,12 @@ class Runtime:
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
-            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy(), min_task_n=min_task_n)
+            # RATCHET_MOCK_STRICT=1: the mock models answer only the demo's own requests (the 400 below otherwise).
+            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy(), min_task_n=min_task_n, strict=s.mock_strict)
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
-            self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
-            teacher = MockTeacher(s.teacher_reasoning_tokens)
+            self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in WORKLOADS[1:]}}
+            teacher = MockTeacher(s.teacher_reasoning_tokens, strict=s.mock_strict)
             resolver = self.fleet.resolve
             s.audit_rate = max(s.audit_rate, 0.10)
             policy = ReleasePolicy(min_audits=15)
@@ -226,7 +227,7 @@ class Runtime:
         ticks = max(1, requests // 10)
         for i in range(requests):
             item = stream.sample(self.ledger.day)
-            self.ratchet.handle(item.messages(), item.task)
+            self.ratchet.handle(item.messages(), item.task, params=item.params)  # a schema or tools; None for tickets
             if (i + 1) % ticks == 0:
                 self.tick()
         rep = run_night(
@@ -625,7 +626,8 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
-        raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e  # sim.world.lookup
+        # sim.world.lookup under RATCHET_MOCK_STRICT=1; without it the generic mock world answers every request.
+        raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e
     except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
         raise _map_upstream(e) from e
     rt.tick()
@@ -1021,7 +1023,8 @@ def _demo_busy() -> HTTPException:
 
 @app.post("/ratchet/demo/day")
 def demo_day(requests: int = 1500, workload: str = "tickets") -> dict[str, Any]:
-    """Simulate one day of traffic (support tickets, Scout research calls, or both), then one night of training."""
+    """Simulate one day of traffic (support tickets, Scout research calls, both, structured outputs or tool requests),
+    then one night of training. Mock models: `simulation` says so in the response."""
     _mock_only()
     if workload not in WORKLOADS:
         raise HTTPException(400, f"workload must be one of {list(WORKLOADS)}")
@@ -1031,7 +1034,7 @@ def demo_day(requests: int = 1500, workload: str = "tickets") -> dict[str, Any]:
         rep = rt.simulate_day(max(100, min(requests, 5000)), workload)
     finally:
         _demo_lock.release()
-    return {"day": rt.ledger.day, "workload": workload, "night": rep.__dict__}
+    return {"day": rt.ledger.day, "workload": workload, "simulation": True, "night": rep.__dict__}
 
 
 @app.post("/ratchet/demo/break-next")

@@ -334,6 +334,9 @@ class Settings:
     # Mock mode only: Scout's live stream waits this fraction of each call's simulated latency,
     # so the page shows agents working instead of finishing in 20 ms. 0 = no waiting.
     mock_pace: float = field(default_factory=lambda: float(_env("RATCHET_MOCK_PACE", "0.25")))
+    # Mock mode only: answer just the demo's own requests (tickets, research calls), a 400 for anything else, as before
+    # the generic mock world (sim/generic.py) answered every request.
+    mock_strict: bool = field(default_factory=lambda: _env("RATCHET_MOCK_STRICT", "0") == "1")
 
     prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
 

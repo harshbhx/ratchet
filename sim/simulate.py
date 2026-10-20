@@ -2,6 +2,7 @@
 
     python -m sim.simulate --days 8 --requests 2000 --bad-deploy-version 3
     python -m sim.simulate --workload research   # Scout's triage + read calls
+    python -m sim.simulate --workload schema     # structured outputs (sim/generic.py)
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -51,7 +52,7 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         ticks = max(1, args.requests // 10)
         for i in range(args.requests):
             t = stream.sample(day)
-            ratchet.handle(t.messages(), t.task)
+            ratchet.handle(t.messages(), t.task, params=t.params)  # params: a schema or tools; None for tickets
             if (i + 1) % ticks == 0:
                 gate.tick()
         rep = run_night(
@@ -122,7 +123,12 @@ def parser() -> argparse.ArgumentParser:
         default=0,
         help="fault injection: this student version is pushed corrupted to production",
     )
-    ap.add_argument("--workload", choices=WORKLOADS, default="tickets", help="tickets, Scout research calls, or both")
+    ap.add_argument(
+        "--workload",
+        choices=WORKLOADS,
+        default="tickets",
+        help="tickets, Scout research calls, both (mixed), structured outputs (schema) or tool requests (tools)",
+    )
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out", default="sim_results.json")
     return ap
@@ -134,6 +140,7 @@ def main(argv: list[str] | None = None) -> None:
         args.drift_day = None
     res = run(args)
     print(table(res))
+    print(f"\nsimulation: mock models, workload {args.workload}, seed {args.seed}; not a measure of real model quality")
     Path(args.out).write_text(json.dumps(res, indent=2, default=str))
     print(f"\nwrote {args.out}")
 
