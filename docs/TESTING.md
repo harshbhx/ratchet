@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 781 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure), ~80 s
+pytest -q                     # 784 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -31,8 +31,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
 | `tests/test_privacy.py` | 26 |
-| `tests/test_erasure.py` | 49 (31 functions; one has 13 cases, one has 4, three have 2) |
-| **Total** | **781** |
+| `tests/test_erasure.py` | 52 (34 functions; one has 13 cases, one has 4, three have 2) |
+| **Total** | **784** |
 
 There are three layers:
 
@@ -615,7 +615,9 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_erasure_holds_under_concurrent_stores` | FR-13.3: three threads storing duplicates while 150 examples are erased: no error, every row erased, none revived |
 | `test_admin_erase_endpoint_needs_an_admin_key_and_is_a_dry_run_by_default` | FR-13.3: 401 without a key, 403 for an API key; a dry run by default; eight bad bodies are 400s that never quote the end user; an end user without a client is erased in every key's scope and the keyless one; events |
 | `test_a_client_erases_its_own_end_users_examples` | FR-13.3: `DELETE /v1/ratchet/examples` erases the caller's end user's examples and unlinks its request rows, not another client's same identifier; 401 without a key; an `end_user` in the URL is a 400 that does not echo it; 403 for another client's scope; dry run; bad bodies; the actor and default reason; an admin erases across clients |
+| `test_keyless_erasure_callers_learn_nothing_and_admins_reach_removed_keys` | FR-13.3: with API keys off, `DELETE /v1/ratchet/examples` answers a keyless caller with null counts for an identifier with data and one without (dry run and real); an admin's erasure of an end user for every client, by `POST` and by `DELETE`, reaches a key no longer configured |
 | `test_retention_purges_examples_not_seen_within_the_window_golden_included` | FR-13.4, NFR-4: train and golden rows not seen for 30 days lose their text (reason `retention`), a recently seen duplicate keeps its row, one `purge` event; a second run purges nothing |
+| `test_retention_purges_examples_a_chunk_per_transaction` | FR-13.4: with chunks of 2, seven expired examples are purged in four transactions, each under the ledger lock and the lock free before each; the rows, the result and the one `purge` event equal a single pass; a chunk of 0 is refused |
 | `test_request_rollup_keeps_every_stat_identical` | FR-13.4 (chunks of 20,000 and 7): folding half the rows (a day split across the cut), then the rest, leaves `stats_by_day`, `stats_by_task`, `stats_by_client` (but `end_users`), `totals`, the opt-out counts and `cost_by_day` (also a day window) equal within 1e-9 |
 | `test_fold_dry_run_counts_and_writes_nothing` | FR-13.4: a dry fold counts and writes nothing |
 | `test_retention_never_folds_rows_of_a_release_in_flight` | FR-13.4: a canary's rows older than the window stay (its audited precision unchanged) until it is promoted |
@@ -624,13 +626,14 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_live_gateway_purges_hourly_off_the_request_path` | FR-13.4: a live `Runtime` purges on its first tick on a background thread, not again within the hour, again after it; a failure is a `purge_failed` event with the class only; mock mode and zero windows never purge |
 | `test_bad_retention_settings_stop_startup` | FR-13.4 (4 cases): a negative or too large window, a bool, or an unknown `RATCHET_ERASURE_SHARED` stop `Settings.retention()` and the `Runtime`; spaces and case are forgiven, empty is the default |
 | `test_retention_days_must_be_whole_numbers_in_the_environment` | A non-number in `RATCHET_REQUEST_RETENTION_DAYS` stops startup naming it |
-| `test_live_purge_cli` | FR-13.4: `python -m ratchet.live purge` with `--dry-run`, `--client`, `--older-than-days`, a bad window and no windows |
-| `test_run_night_trains_again_after_deletions_once_50_new_examples_arrive` | FR-4.4, FR-13.3, FR-13.4 (`erasure`, `retention`): after 60 of v1's 100 rows are purged, 49 new rows skip (`only 49 new examples`) and 50 train on 90 rows without the purged ones (v0.4's rule said -11) |
+| `test_live_purge_cli` | FR-13.4: `python -m ratchet.live purge` with `--dry-run`, `--client`, `--older-than-days`, a bad window and no windows; a bad `--client` or a window past 36,500 days exits with a message, not a traceback |
+| `test_run_night_trains_again_after_deletions_once_50_new_examples_arrive` | FR-4.4, FR-13.3, FR-13.4 (`erasure`, `retention`): after 60 of v1's 100 rows are purged, 49 new rows skip (`only 49 new examples`) and 50 train on 90 rows without the purged ones (v0.4's rule said -11); then three nights with no new data do not train (`only 0 new examples`; measured against v1's purges they retrained every night), a deletion of 10 of v2's rows is not new data either, and 50 new rows train on 130 |
 | `test_a_purged_variant_still_counts_toward_its_requests_frequency` | INV-3, FR-13.4: a golden prompt seen three times over a bare and a stop variant trains; purging the stop variant keeps its prompt key and its count, so the bare variant stays in training |
 | `test_export_round_trips_with_provenance_and_holds_no_keys` | FR-13.5, NFR-4, INV-13: every kind streams NDJSON as an attachment; examples equal the ledger's kept rows with their provenance and clients; requests have no end user; versions, erasures (items) and events; no API key, admin key, end-user key, end-user hash or raw end user in any line |
 | `test_export_filters_and_refusals` | FR-13.5: `split`, `task`, `client` and `since` (ISO date, epoch, date-time) filters; 401 and 403; an unknown kind, a filter the kind does not take, a bad `since`, `split` or client name are 400s |
 | `test_export_pages_through_large_tables` | FR-13.5: pages of 5 give all 23 rows in order, one line each |
 | `test_admin_cli_erases_and_exports` | FR-13.3, FR-13.5: `python -m ratchet.admin erase` (a dry run, then `--apply` with the end user from stdin across every scope), its errors, and `export` to a file and to stdout, with a refused filter |
+| `test_admin_cli_erases_end_users_only_with_the_gateways_key_and_never_writes_otherwise` | FR-13.3: `python -m ratchet.admin erase --end-user` in a shell without the gateway's `RATCHET_END_USER_KEY`, with another key or a short one is refused (dry run and `--apply`) and the ledger's meta, events and erasures stay unchanged; with the right key and no `RATCHET_API_KEYS` it finds the end user in every scope the ledger holds (a removed key's too) and logs no key change; a gateway's generated key is used from the ledger; a ledger that never hashed an end user is refused; a free-text `--actor` is refused |
 | `test_a_ledger_from_before_retention_gains_its_columns_and_tables` | FR-13.3, FR-13.4: a file with the old `erasures` table gains the new columns and tables twice without change; `last_seen_ts` is backfilled from `ts`, and retention works on it |
 
 ## Live-path tests

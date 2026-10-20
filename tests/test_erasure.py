@@ -565,6 +565,32 @@ def test_a_client_erases_its_own_end_users_examples(gw_env):
     assert r.json()["purged"] == 1 and "globex" not in {r["client"] for r in led.examples() if r["purged_ts"] is None}
 
 
+@pytest.mark.req("FR-13.3")
+def test_keyless_erasure_callers_learn_nothing_and_admins_reach_removed_keys(gw_env):
+    gw = _gateway(gw_env, RATCHET_ADMIN_KEYS=f"ops:{ADMIN_KEY}")  # API keys off: chat and erasure are open
+    led = gw.rt.ledger
+    stored = _store(led, "a keyless end user's example", end_user=gw.rt.end_users.hash("person-5", None))
+    c = TestClient(gw.app)
+    counts = ("matched", "purged", "kept", "requests_unlinked", "affected_versions")
+    # Without a key the reply never says whether an identifier had anything stored: the same for one that had none.
+    for user in ("person-5", "nobody-at-all"):
+        r = c.request("DELETE", EXAMPLES, json={"end_user": user, "dry_run": True})
+        assert r.status_code == 200, r.text
+        assert {k: r.json()[k] for k in counts} == dict.fromkeys(counts) and r.json()["dry_run"] is True
+    assert _row(led, stored)["messages"] is not None
+    r = c.request("DELETE", EXAMPLES, json={"end_user": "person-5"})
+    assert r.json()["purged"] is None and isinstance(r.json()["id"], int) and _row(led, stored)["messages"] is None
+
+    # An admin erasing an end user for every client also reaches a key no longer configured (renamed or removed).
+    old = _store(led, "an old key's example", client="initech", end_user=gw.rt.end_users.hash("person-6", "initech"))
+    r = c.post(ERASE, json={"end_user": "person-6", "reason": "DSR 9"}, headers=_auth(ADMIN_KEY))
+    assert (r.json()["matched"], r.json()["scope"]["end_users"]) == (1, 2)  # keyless and initech
+    r = c.request("DELETE", EXAMPLES, json={"end_user": "person-6", "dry_run": True}, headers=_auth(ADMIN_KEY))
+    assert r.json()["matched"] == 1  # an admin is told
+    r = c.request("DELETE", EXAMPLES, json={"end_user": "person-6"}, headers=_auth(ADMIN_KEY))
+    assert r.json()["purged"] == 1 and _row(led, old)["messages"] is None
+
+
 # ---------- retention (FR-13.4) ----------
 @pytest.mark.req("FR-13.4", "NFR-4")
 def test_retention_purges_examples_not_seen_within_the_window_golden_included():
@@ -592,6 +618,59 @@ def test_retention_purges_examples_not_seen_within_the_window_golden_included():
     assert event["detail"] == "retention: 7 examples not seen for 30 days lost their text"
     again = privacy.apply_retention(led, Retention(example_days=30))
     assert again["examples_purged"] == 0 and len([e for e in led.events() if e["kind"] == "purge"]) == 1
+
+
+@pytest.mark.req("FR-13.4")
+def test_retention_purges_examples_a_chunk_per_transaction():
+    def aged() -> tuple[Ledger, list[str]]:
+        led = Ledger(":memory:", golden_fraction=0.3)
+        hashes = [e.hash for e in _examples(led, train=5, golden=2, prefix="chunked")]
+        _age(led, hashes, days=40)
+        return led, hashes
+
+    whole, hashes = aged()
+    out = privacy.apply_retention(whole, Retention(example_days=30), now=NOW)
+    led, _ = aged()
+    lock = led.locked()
+
+    def free_elsewhere() -> bool:
+        """Whether another thread could take the ledger's lock now (an RLock: only when no thread holds it)."""
+        got: list[bool] = []
+
+        def probe() -> None:
+            got.append(lock.acquire(blocking=False))
+            if got[0]:
+                lock.release()
+
+        t = threading.Thread(target=probe)
+        t.start()
+        t.join()
+        return got[0]
+
+    sizes: list[int] = []
+    starts: list[bool] = []
+    purge, locked = led.purge_examples, led.locked
+
+    def recording(rows: Any, reason: str, now: float | None = None) -> int:
+        assert not free_elsewhere()  # each chunk reads, decides and writes under the lock
+        sizes.append(len(rows))
+        return purge(rows, reason, now=now)
+
+    def checked() -> Any:
+        starts.append(free_elsewhere())  # the lock is free before each chunk: request threads get their turn
+        return locked()
+
+    led.purge_examples = recording  # type: ignore[method-assign]
+    led.locked = checked  # type: ignore[method-assign]
+    assert privacy.apply_retention(led, Retention(example_days=30), now=NOW, chunk=2) == out
+    assert sizes == [2, 2, 2, 1] and out["examples_purged"] == 7 and starts == [True] * 4
+    columns = "hash, purged_ts, purge_reason, purged_train, messages"
+    assert [tuple(r) for r in led.db.execute(f"SELECT {columns} FROM examples ORDER BY hash")] == [
+        tuple(r) for r in whole.db.execute(f"SELECT {columns} FROM examples ORDER BY hash")
+    ]
+    assert [e["detail"] for e in led.events()] == [e["detail"] for e in whole.events()]  # one purge event
+    with pytest.raises(ValueError, match="chunk must be a whole number, 1 or more"):
+        privacy.apply_retention(led, Retention(example_days=30), chunk=0)
 
 
 def _requests(led: Ledger, n: int = 360, seed: int = 3, ts0: float = NOW - 400 * 3600) -> None:
@@ -832,6 +911,11 @@ def test_live_purge_cli(tmp_path, monkeypatch, capsys):
     assert [e["detail"] for e in after.events() if e["kind"] == "purge"][0].startswith("retention (client acme): ")
     with pytest.raises(SystemExit, match="--older-than-days must be 1 or more"):
         live.main(["purge", "--older-than-days", "0"])
+    # Bad values the settings' checks catch: a message, never a traceback.
+    with pytest.raises(SystemExit, match="purge: client must be an API key name"):
+        live.main(["purge", "--client", "bad name"])
+    with pytest.raises(SystemExit, match="purge: example_days must be a whole number of days, 0 to 36500"):
+        live.main(["purge", "--older-than-days", "99999"])
     _purge_env(monkeypatch, RATCHET_DB=str(db))
     live.main(["purge"])
     assert "nothing to purge" in capsys.readouterr().out
@@ -851,9 +935,9 @@ def test_run_night_trains_again_after_deletions_once_50_new_examples_arrive(how)
     else:
         _age(led, gone, days=40)
         privacy.apply_retention(led, Retention(example_days=30), now=time.time())
-    assert led.train_rows_purged_since() == 60
+    assert led.train_rows_kept() == 40
 
-    _examples(led, train=49, prefix="second")
+    second = _examples(led, train=49, prefix="second")
     rep = run_night(led, trainer, evaluator, gate, BASE_MODEL)
     assert (rep.trained, rep.reason) == (False, "not enough new data")
     assert "only 49 new examples (< 50)" in led.events()[-1]["detail"]  # v0.4's rule said -11 and never trained again
@@ -861,6 +945,28 @@ def test_run_night_trains_again_after_deletions_once_50_new_examples_arrive(how)
     rep = run_night(led, trainer, evaluator, gate, BASE_MODEL)
     assert rep.trained and len(trainer.calls[-1].rows) == 90
     assert not expired_in(trainer.calls[-1].rows, gone)
+
+    # v2 trained on fewer rows than v1: with no new data, no night trains again. Measured against v1's purges, the 60
+    # rows would come back as new every night (a paid GPU job each time in live mode).
+    for _ in range(3):
+        rep = run_night(led, trainer, evaluator, gate, BASE_MODEL)
+        assert (rep.trained, rep.reason) == (False, "not enough new data")
+        assert "only 0 new examples (< 50)" in led.events()[-1]["detail"]
+    assert [v.train_examples for v in led.versions()] == [100, 90] and len(trainer.calls) == 2
+    # A deletion of rows only v2 had is not new data either; 50 new rows are.
+    later = [e.hash for e in second[:10]]
+    if how == "erasure":
+        _erase(led, hashes=later)
+    else:
+        _age(led, later, days=40)
+        privacy.apply_retention(led, Retention(example_days=30), now=time.time())
+    assert led.train_rows_kept() == 80
+    rep = run_night(led, trainer, evaluator, gate, BASE_MODEL)
+    assert (rep.trained, rep.reason) == (False, "not enough new data") and "only 0 new" in led.events()[-1]["detail"]
+    _examples(led, train=50, prefix="fourth")
+    rep = run_night(led, trainer, evaluator, gate, BASE_MODEL)
+    assert rep.trained and len(trainer.calls[-1].rows) == 130
+    assert not expired_in(trainer.calls[-1].rows, gone + later)
 
 
 @pytest.mark.req("INV-3", "FR-13.4")
@@ -1014,6 +1120,79 @@ def test_admin_cli_erases_and_exports(tmp_path, monkeypatch):
     assert [e["purged"] for e in _lines(out.getvalue())] == [2]
     with pytest.raises(SystemExit, match="export: events take since, not task"):
         admin.main(["export", "events", "--task", "x"], stdout=io.StringIO())
+
+
+@pytest.mark.req("FR-13.3")
+def test_admin_cli_erases_end_users_only_with_the_gateways_key_and_never_writes_otherwise(tmp_path, monkeypatch):
+    db = tmp_path / "live.db"
+    led = Ledger(str(db), auto_day=True)
+    gateway = privacy.end_users(led, END_USER_KEY)  # the gateway's startup, with RATCHET_END_USER_KEY set
+    acme = _store(led, "acme person's request", client="acme", end_user=gateway.hash("person-1", "acme"))
+    # A key removed from RATCHET_API_KEYS since: its rows still name the end user in its scope.
+    initech = _store(led, "initech person's request", client="initech", end_user=gateway.hash("person-1", "initech"))
+    led.db.close()
+
+    def snapshot() -> tuple[Any, ...]:
+        check = Ledger(str(db))
+        try:
+            meta = dict(check.db.execute("SELECT key, value FROM meta").fetchall())
+            erasures = check.db.execute("SELECT COUNT(*) FROM erasures").fetchone()[0]
+            return meta, [(e["kind"], e["detail"]) for e in check.events()], erasures, _row(check, acme)["messages"]
+        finally:
+            check.db.close()
+
+    before = snapshot()
+    erase = ["erase", "--reason", "DSR 31", "--end-user", "-"]
+    # The operator's shell lacks the gateway's key, or has another one: refused, for a dry run and with --apply, and
+    # nothing in the ledger changes (no generated key, no key-change event, no erasure that erased nothing).
+    for env, words in (
+        ({}, "RATCHET_END_USER_KEY is not set here, but the gateway hashes end users with a key of its own"),
+        ({"RATCHET_END_USER_KEY": "another-end-user-key-0123456789"}, "is not the key the gateway hashes end users with"),
+        ({"RATCHET_END_USER_KEY": "short"}, "at least 16 characters"),
+    ):
+        _purge_env(monkeypatch, RATCHET_DB=str(db), **env)
+        for apply in ([], ["--apply"]):
+            with pytest.raises(SystemExit, match=words) as stop:
+                admin.main(erase + apply, stdin=io.StringIO("person-1\n"), stdout=io.StringIO())
+            assert "person-1" not in str(stop.value)
+            assert snapshot() == before
+
+    # With the gateway's key and no RATCHET_API_KEYS at all, every scope the ledger holds end users in is searched.
+    _purge_env(monkeypatch, RATCHET_DB=str(db), RATCHET_END_USER_KEY=END_USER_KEY)
+    out = io.StringIO()
+    assert admin.main(erase, stdin=io.StringIO("person-1\n"), stdout=out) == 0
+    preview = json.loads(out.getvalue().split("\ndry run")[0])
+    assert (preview["matched"], preview["scope"]["end_users"]) == (2, 3)  # keyless, acme and initech
+    assert snapshot() == before  # a dry run writes nothing
+    out = io.StringIO()
+    assert admin.main([*erase, "--apply"], stdin=io.StringIO("person-1\n"), stdout=out) == 0
+    assert json.loads(out.getvalue())["purged"] == 2
+    check = Ledger(str(db))
+    assert _row(check, acme)["messages"] is None and _row(check, initech)["messages"] is None
+    assert [e["kind"] for e in check.events()] == ["erase"]  # no end_user_key event
+    # An actor is a name, never free text: it is shown in the public events.
+    with pytest.raises(SystemExit, match="actor must be a name"):
+        admin.main(["erase", "--reason", "x", "--client", "acme", "--actor", "jane@example.com"], stdout=io.StringIO())
+
+    # A gateway without RATCHET_END_USER_KEY keeps a generated key in the ledger: a shell without one uses it.
+    fresh = tmp_path / "generated.db"
+    led = Ledger(str(fresh), auto_day=True)
+    keyless = _store(led, "a keyless request", end_user=privacy.end_users(led).hash("person-2", None))
+    led.db.close()
+    _purge_env(monkeypatch, RATCHET_DB=str(fresh), RATCHET_END_USER_KEY=END_USER_KEY)
+    with pytest.raises(SystemExit, match="the gateway uses the key generated into the ledger: unset RATCHET_END_USER_KEY"):
+        admin.main(erase, stdin=io.StringIO("person-2\n"), stdout=io.StringIO())
+    _purge_env(monkeypatch, RATCHET_DB=str(fresh))
+    out = io.StringIO()
+    admin.main([*erase, "--apply"], stdin=io.StringIO("person-2\n"), stdout=out)
+    assert json.loads(out.getvalue())["purged"] == 1 and _row(Ledger(str(fresh)), keyless)["messages"] is None
+    # A ledger that never hashed an end user has none to find.
+    empty = tmp_path / "empty.db"
+    Ledger(str(empty)).db.close()
+    _purge_env(monkeypatch, RATCHET_DB=str(empty), RATCHET_END_USER_KEY=END_USER_KEY)
+    with pytest.raises(SystemExit, match="never hashed an end user"):
+        admin.main(erase, stdin=io.StringIO("person-2\n"), stdout=io.StringIO())
+    assert Ledger(str(empty)).meta_get(privacy.KEY_ID_META) is None
 
 
 # ---------- schema ----------

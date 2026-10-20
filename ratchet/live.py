@@ -239,9 +239,12 @@ def purge(led: Ledger, s: Settings, argv: list[str]) -> dict[str, Any]:
     days = args.older_than_days
     if days is not None and days < 1:
         raise SystemExit("--older-than-days must be 1 or more")
-    out = privacy.apply_retention(
-        led, s.retention(), client=args.client, example_days=days, request_days=days, dry_run=args.dry_run
-    )
+    try:
+        out = privacy.apply_retention(
+            led, s.retention(), client=args.client, example_days=days, request_days=days, dry_run=args.dry_run
+        )
+    except ValueError as e:  # a bad --client or window: a message, not a traceback
+        raise SystemExit(f"purge: {e}") from None
     verb = "would purge" if args.dry_run else "purged"
     if not out["example_days"] and not out["request_days"]:
         print("nothing to purge: RATCHET_EXAMPLE_RETENTION_DAYS and RATCHET_REQUEST_RETENTION_DAYS are 0 (keep forever)")

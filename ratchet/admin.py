@@ -8,8 +8,11 @@
     python -m ratchet.admin export requests --since 2026-10-01
 
 `erase` is a dry run unless `--apply` is given, as `POST /ratchet/admin/privacy/erase` is. An end user given without
-`--client` is erased in every API key's scope (RATCHET_API_KEYS) and the keyless scope, the scopes requests and
-examples are attributed in. Pass `--end-user -` to read the value from standard input, so it stays out of the shell history.
+`--client` is erased in every scope the ledger holds end users in (each API key name its examples and request rows
+name, and the keyless scope). It is hashed with the gateway's end-user key: RATCHET_END_USER_KEY must be the gateway's
+(or unset when the gateway uses the key generated into the ledger), checked against the key id the ledger recorded, and
+the command refuses otherwise instead of matching nothing. Pass `--end-user -` to read the value from standard input,
+so it stays out of the shell history.
 `export` writes NDJSON to standard output or `--out`. Both open the same ledger file as the gateway; the ledger's
 writes are transactions, so they can run while the gateway serves.
 """
@@ -23,7 +26,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from . import privacy
-from .auth import KeyRing
 from .config import Settings
 from .ledger import EXPORT_KINDS, Ledger
 
@@ -41,7 +43,11 @@ def parser() -> argparse.ArgumentParser:
     e.add_argument("--hash", action="append", dest="hashes", help="an example hash (repeat for more)")
     e.add_argument("--contains", help="text in the stored (already redacted) messages, answer or conditions")
     e.add_argument("--apply", action="store_true", help="erase; without it nothing changes")
-    e.add_argument("--actor", default=CLI_ACTOR, help=f"who asks, for the erasure log (default {CLI_ACTOR!r})")
+    e.add_argument(
+        "--actor",
+        default=CLI_ACTOR,
+        help=f"who asks, for the erasure log: a name of letters, digits, '_', '.', '-' (default {CLI_ACTOR!r})",
+    )
     x = sub.add_parser("export", help="one table as NDJSON")
     x.add_argument("kind", choices=EXPORT_KINDS)
     x.add_argument("--task")
@@ -65,8 +71,9 @@ def run_erase(led: Ledger, s: Settings, args: argparse.Namespace, stdin: TextIO 
     end_user = _end_user(args.end_user, stdin)
     clients = None
     if end_user is not None and args.client is None:
-        clients = [*KeyRing(s.api_keys).names, None]  # every API key's scope and the keyless one
-    hasher = privacy.end_users(led, s.end_user_key) if end_user is not None else None
+        clients = led.end_user_scopes()  # every scope the ledger holds end users in, whatever this shell's keys are
+    # The gateway's key, checked against the ledger and never written: this shell's environment may not be the gateway's.
+    hasher = privacy.recorded_end_users(led, s.end_user_key) if end_user is not None else None
     return privacy.erase(
         led,
         client=args.client,

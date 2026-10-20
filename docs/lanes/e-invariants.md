@@ -121,3 +121,18 @@ after a fold. The first fold records day 1's start in `meta`, so day numbers nev
 - `test_retention_never_folds_rows_of_a_release_in_flight`: a canary's old rows stay, its audited precision unchanged
 - `test_request_rollup_keeps_every_stat_identical`: half and full folds, also in chunks of 7
 - `test_day_numbers_survive_folding_the_rows_that_defined_day_one`
+
+## For the integrator: spec deviations in PRIV-RETENTION-ERASURE-EXPORT
+
+These are not invariants; they are listed here so the merge does not miss them.
+
+- `DELETE /v1/ratchet/examples` reads the end user from the JSON body, not from `?end_user=` as the spec wrote: access
+  logs keep URLs. A URL with `end_user` is a 400 `end_user_in_url`. A keyless caller (API keys off) gets the counts as
+  null. See ADR 0081 (Alternatives) and docs/API.md.
+- Night School's new-data count is `manifest - Ledger.train_rows_kept()` (each version's training rows less its own
+  purged ones, the largest), not the spec's "rows stored after the last version", which changes v0.4's count without
+  any deletion. `tests/test_erasure.py::test_run_night_trains_again_after_deletions_once_50_new_examples_arrive` runs
+  nights with no new data after a net deletion and asserts none trains.
+- `python -m ratchet.admin erase --end-user` refuses unless its RATCHET_END_USER_KEY (or the ledger's generated key) has
+  the key id the ledger recorded, and never writes when it refuses (`privacy.recorded_end_users`); without `--client`
+  it searches every scope the ledger holds end users in (`Ledger.end_user_scopes`), not RATCHET_API_KEYS.

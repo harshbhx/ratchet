@@ -46,7 +46,7 @@ from typing import Any
 
 from .auth import valid_name
 from .config import ERASURE_SHARED, MAX_RETENTION_DAYS, Retention
-from .ledger import DAY_SECONDS, EXPORT_FILTERS, EXPORT_KINDS, Ledger
+from .ledger import DAY_SECONDS, EXPORT_FILTERS, EXPORT_KINDS, PURGE_CHUNK, Ledger
 from .nightschool import dataset
 from .openai_compat import STORE_METADATA
 from .redact import redact
@@ -169,6 +169,51 @@ def end_users(ledger: Ledger, configured: str = "") -> EndUsers:
     return out
 
 
+def recorded_end_users(ledger: Ledger, configured: str = "") -> EndUsers:
+    """The gateway's `EndUsers` for a command run beside it (`python -m ratchet.admin erase --end-user`), which never
+    writes: RATCHET_END_USER_KEY when this process has it, else the ledger's generated key, and only when its id is the
+    one the ledger last hashed with (`KEY_ID_META`). ValueError otherwise: a shell without the gateway's key would hash
+    with another one, match nothing and record an erasure that looks done, and `end_users` would also store a new key
+    and log a key change that is not one."""
+    if not isinstance(configured, str):
+        raise ValueError("RATCHET_END_USER_KEY must be a string")
+    recorded = ledger.meta_get(KEY_ID_META)
+    if recorded is None:
+        raise ValueError("this ledger has never hashed an end user (no end-user key id in its meta table): nothing to find")
+    if configured:
+        if len(configured) < MIN_KEY_CHARS:
+            raise ValueError(f"RATCHET_END_USER_KEY must be at least {MIN_KEY_CHARS} characters")
+        out = EndUsers(configured.encode("utf-8"), "env")
+    else:
+        stored = ledger.meta_get(KEY_META)
+        if stored is None:
+            raise ValueError(
+                f"RATCHET_END_USER_KEY is not set here, but the gateway hashes end users with a key of its own (key id "
+                f"{recorded}): run this with the gateway's environment"
+            )
+        try:
+            out = EndUsers(bytes.fromhex(stored), "ledger")
+        except ValueError:
+            raise ValueError(f"the ledger's {KEY_META} is not a valid key; restore it from a backup") from None
+    if out.key_id != recorded:
+        where = "RATCHET_END_USER_KEY here" if configured else f"the ledger's {KEY_META}"
+        fix = "run this with the gateway's RATCHET_END_USER_KEY"
+        stored = ledger.meta_get(KEY_META) if configured else None
+        if stored is not None and _key_id_of_hex(stored) == recorded:
+            fix = "the gateway uses the key generated into the ledger: unset RATCHET_END_USER_KEY here"
+        raise ValueError(
+            f"{where} (key id {out.key_id}) is not the key the gateway hashes end users with (key id {recorded}): {fix}"
+        )
+    return out
+
+
+def _key_id_of_hex(stored: str) -> str | None:
+    try:
+        return _key_id(bytes.fromhex(stored))
+    except ValueError:
+        return None
+
+
 def no_train_scopes(key_names: Sequence[str] | None) -> list[str | None]:
     """The scopes a request's end user can be hashed in, so the scopes in which a no-train registration can match:
     each configured API key name (`key_names`; None when keys are off, and every request is keyless) or the keyless
@@ -235,8 +280,9 @@ def _check_erasure(
         raise ValueError("name at least one of client, end_user, hashes or contains")
     if not isinstance(reason, str) or not reason.strip() or len(reason) > MAX_REASON_CHARS:
         raise ValueError(f"reason must be 1 to {MAX_REASON_CHARS} characters")
-    if not isinstance(actor, str) or not actor.strip() or len(actor) > MAX_ACTOR_CHARS:
-        raise ValueError(f"actor must be 1 to {MAX_ACTOR_CHARS} characters")
+    if not isinstance(actor, str) or not valid_name(actor.strip()):
+        # A name, never free text: the actor goes into the `erase` event, which /ratchet/stats shows to anyone.
+        raise ValueError(f"actor must be a name (letters, digits, '_', '.', '-'; 1 to {MAX_ACTOR_CHARS}), such as an admin key's")
     return wanted, redact(reason.strip())
 
 
@@ -356,17 +402,21 @@ def apply_retention(
     example_days: int | None = None,
     request_days: int | None = None,
     dry_run: bool = False,
+    chunk: int = PURGE_CHUNK,
 ) -> dict[str, Any]:
     """Apply the retention windows (FR-13.4). Examples last stored or seen more than `example_days` ago (default
     `retention.example_days`; golden ones too) lose their text with reason `retention`: a later duplicate that may be
     stored brings it back. Request rows logged more than `request_days` ago (default `retention.request_days`) are folded
     into `daily_rollup` and deleted, except rows of a release in flight (`Ledger.fold_requests`). 0 skips a window.
-    `client` limits both to one API client's rows; `dry_run` only counts. Writes a `purge` event when anything went.
+    `client` limits both to one API client's rows; `dry_run` only counts. Examples are purged `chunk` at a time, as
+    request rows are folded (`Ledger.fold_requests`). Writes a `purge` event when anything went.
     Runs hourly from the live gateway's tick, at the start of every live night, and from `python -m ratchet.live purge`."""
     if client is not None and not valid_name(client):
         raise ValueError("client must be an API key name (letters, digits, '_', '.', '-'; 1 to 64)")
     ex_days = _check_days(retention.example_days if example_days is None else example_days, "example_days")
     rq_days = _check_days(retention.request_days if request_days is None else request_days, "request_days")
+    if isinstance(chunk, bool) or not isinstance(chunk, int) or chunk < 1:
+        raise ValueError(f"chunk must be a whole number, 1 or more, not {chunk!r}")
     now = time.time() if now is None else float(now)
     out: dict[str, Any] = {
         "dry_run": bool(dry_run),
@@ -376,15 +426,22 @@ def apply_retention(
         "examples_purged": 0,
         "requests_folded": 0,
     }
-    if ex_days:
-        with led.locked():
-            rows = led.retention_candidates(now - ex_days * DAY_SECONDS, client)
-            if rows and not dry_run:
+    if ex_days and dry_run:
+        out["examples_purged"] = len(led.retention_candidates(now - ex_days * DAY_SECONDS, client))
+    elif ex_days:
+        # `chunk` examples per transaction, the lock free between them, so the first run after a window is set never
+        # stalls the request path (every request logs to the ledger); each chunk reads, decides and writes under the lock.
+        while True:
+            with led.locked():
+                rows = led.retention_candidates(now - ex_days * DAY_SECONDS, client, limit=chunk)
+                if not rows:
+                    break
                 seen = led.prompt_counts()
                 counted = {r["hash"]: dataset.counts_as_train(r, seen) for r in rows}
-                out["examples_purged"] = led.purge_examples(counted, "retention", now=now)
-            else:
-                out["examples_purged"] = len(rows)
+                n = led.purge_examples(counted, "retention", now=now)
+            out["examples_purged"] += n
+            if n == 0 or len(rows) < chunk:
+                break
     if rq_days:
         out["requests_folded"] = led.fold_requests(now - rq_days * DAY_SECONDS, client, dry_run=dry_run, now=now)
     if not dry_run and (out["examples_purged"] or out["requests_folded"]):
