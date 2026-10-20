@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, tasks, taskspec
+from . import __version__, certificate, live, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
@@ -79,6 +79,8 @@ WORKLOADS = ("tickets", "research", "mixed")
 MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
 EVIDENCE_STATES = ("canary", "live")  # versions whose `/ratchet/stats` entry carries the release gate's evidence
+# Versions that serve or once served traffic, so audits and the gate's evidence exist for them (the certificate endpoint).
+SERVED_STATES = ("canary", "live", "rolled_back", "retired")
 
 
 TRANSPORT_KEYS = ("teacher", "student")
@@ -115,12 +117,19 @@ class Runtime:
     def reset(self) -> None:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
+        cert = s.cert_policy()  # a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA stops startup here (ADR 0026)
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
-            self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy())
+            self.fleet = MockFleet(
+                clock=self.clock,
+                policy=s.gen_policy(),
+                calibration=cert.calibration,
+                cert_target=cert.target,
+                cert_delta=cert.delta,
+            )
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
@@ -765,6 +774,35 @@ def version_bom(vid: int) -> dict[str, Any]:
     if doc is None:
         raise HTTPException(404, f"no bill of materials for version {vid}")
     return doc
+
+
+@app.get("/ratchet/versions/{vid}/certificate")
+def version_certificate(vid: int) -> dict[str, Any]:
+    """What a version's golden evals certify about the answers it serves (FR-16.3, ADR 0026): the certificate signed in
+    its BOM at training time, the one from the latest re-score (`current`; a live version is re-scored every training
+    night), the release gate's evidence from its audits, and what every certificate assumes. Check the signed numbers
+    with `python -m ratchet.stats check`."""
+    v = rt.ledger.version(vid)
+    if v is None:
+        raise HTTPException(404, f"no version {vid}")
+    doc = rt.ledger.version_bom(vid)
+    m = doc.get("manifest") if isinstance(doc, dict) else None
+    training = certificate.section(m.get("eval") if isinstance(m, dict) else None)
+    current = certificate.section(v.eval)
+    if current is not None:
+        current["rechecked_day"] = v.eval.get("rechecked_day")
+    drift = None  # the drift alarm (FR-16.6) reports here; an open alarm makes the status 'suspended'
+    return {
+        "version": v.id,
+        "state": v.state,
+        "status": certificate.status(current, training, drift),
+        "training": training,
+        "current": current,
+        "bom": {"sha256": doc.get("sha256"), "signed": bool(doc.get("signature"))} if isinstance(doc, dict) else None,
+        "live": rt.gate.evidence(v) if v.state in SERVED_STATES else None,
+        "drift": drift,
+        "assumptions": list(certificate.ASSUMPTIONS),
+    }
 
 
 # ----- tasks (FR-2.15, ADR 0022) -----

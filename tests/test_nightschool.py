@@ -564,3 +564,196 @@ def test_golden_eval_runs_under_production_conditions(monkeypatch):
     fleet.train(rows[:1], BASE_MODEL, "student-v1")
     fleet.evaluate("student-v1", rows[:1])
     assert seen == production[:1]
+
+
+# ---------- certified precision (FR-16.3, ADR 0026) ----------
+import math  # noqa: E402
+import random  # noqa: E402
+
+from ratchet import certificate, tasks  # noqa: E402
+from ratchet.confidence import calibrate_threshold, score  # noqa: E402
+from ratchet.stats import CERT_GRID, SERVE_NOTHING, cp_lower  # noqa: E402
+
+DEFAULT_RIGHT, DEFAULT_WRONG = "the answer is 4", "the answer is 5"
+
+
+def _mixed_golden(n: int) -> list[dict]:
+    """`n` golden rows, in blocks of four alternating between two tasks, so both halves hold both."""
+    rows = []
+    for i in range(n):
+        task = "ticket-triage" if (i // 4) % 2 == 0 else "default"
+        ref = RIGHT if task == "ticket-triage" else DEFAULT_RIGHT
+        rows.append(
+            {"task": task, "messages": [{"role": "user", "content": f"ticket {i}"}, {"role": "assistant", "content": ref}]}
+        )
+    return rows
+
+
+def _scripted(plan: dict[int, tuple[float, bool]]):
+    """A sampler whose three samples for row i are unanimous at token probability plan[i][0] (confidence 0.4 p + 0.6),
+    right or wrong as plan[i][1] says."""
+
+    def sample(prompt, k, params=None):
+        i = int(prompt[-1]["content"].split()[-1])
+        p, right = plan[i]
+        triage = (i // 4) % 2 == 0
+        text = (RIGHT if right else WRONG) if triage else (DEFAULT_RIGHT if right else DEFAULT_WRONG)
+        return RecordingProvider(text, logprob=math.log(p)).complete(prompt, "m", n=k, temperature=0.7, logprobs=True)
+
+    return sample
+
+
+@pytest.mark.req("FR-16.3", "INV-6", "FR-5.2")
+def test_cascade_eval_certifies_on_the_held_out_half():
+    rows = _mixed_golden(80)
+    rng = random.Random(5)
+    plan = {}
+    for i in range(80):
+        p = rng.uniform(0.3, 1.0)
+        plan[i] = (p, rng.random() < p)
+    sample = _scripted(plan)
+    res = cascade_eval(sample, rows, samples=3, target_precision=0.97)
+
+    # The points, as the eval sees them: even rows calibrate, odd rows measure.
+    points = []
+    for row in rows:
+        task = tasks.get(row["task"])
+        sc = score(task, sample(row["messages"][:-1], 3))
+        points.append((sc.confidence, task.agree(sc.answer.text, row["messages"][-1]["content"])))
+    calib, test = points[0::2], points[1::2]
+    before = min(SERVE_NOTHING, max(0.5, calibrate_threshold(calib, 0.97)))  # the pre-change rule, unchanged
+    assert res["threshold"] == before
+    served = [ok for c, ok in test if c >= before]
+    assert (res["coverage"], res["precision"]) == (len(served) / len(test), sum(served) / len(served))
+    assert (res["certificate"]["precision"], res["certificate"]["served"]) == (res["precision"], len(served))
+
+    cert = res["certificate"]
+    thr = res["threshold"]
+    want_served = sum(c >= thr for c, _ in test)
+    want_errors = sum(c >= thr and not ok for c, ok in test)
+    assert (cert["served"], cert["errors"], cert["threshold"]) == (want_served, want_errors, thr)
+    assert (cert["method"], cert["calibration"], cert["target"], cert["delta"]) == ("clopper-pearson", "point", 0.95, 0.05)
+    assert cert["lcb"] == cp_lower(want_served - want_errors, want_served, 0.05) <= cert["precision"]
+    assert cert["certified"] is (cert["lcb"] >= 0.95) and "ltt_trace" not in cert
+    assert len(res["test_vector"]) == res["test_n"] == 40
+    assert res["test_vector"] == certificate.outcome_vector(test, thr)
+    by_threshold = sorted(res["frontier"], key=lambda r: r["threshold"])
+    assert [r["threshold"] for r in by_threshold] == sorted(CERT_GRID)
+    assert all(a["coverage"] >= b["coverage"] for a, b in zip(by_threshold, by_threshold[1:], strict=False))
+    assert all(r["lcb"] <= r["precision"] and r["delta"] == 0.005 for r in res["frontier"])
+    per = res["per_task"]
+    assert set(per) == {"ticket-triage", "default"}
+    assert sum(t["n_test"] for t in per.values()) == 40
+    assert (sum(t["served"] for t in per.values()), sum(t["errors"] for t in per.values())) == (want_served, want_errors)
+    assert certificate.recheck(json.loads(json.dumps(res)))[1] == []
+
+    # Other certificate settings change the certificate only, never the threshold or the v0.4 keys.
+    strict = cascade_eval(sample, rows, samples=3, cert_target=0.99, cert_delta=0.01)
+    v04 = ("golden_n", "golden_agreement", "threshold", "coverage", "precision", "test_n", "refused_n", "golden_invalid_refs")
+    assert {k: strict[k] for k in v04} == {k: res[k] for k in v04}
+    assert (strict["certificate"]["target"], strict["certificate"]["delta"]) == (0.99, 0.01)
+    assert strict["certificate"]["lcb"] <= cert["lcb"]
+
+
+@pytest.mark.req("FR-16.3", "INV-6")
+def test_cascade_eval_ltt_picks_a_grid_threshold():
+    sure = {i: (0.95, True) for i in range(240)}  # confidence 0.98, always right
+    res = cascade_eval(_scripted(sure), _mixed_golden(240), samples=3, calibration="ltt")
+    cert = res["certificate"]
+    assert res["threshold"] == 0.5 and cert["calibration"] == "ltt"  # every grid threshold is certified on 120 rows
+    assert [t["threshold"] for t in cert["ltt_trace"]] == sorted(CERT_GRID, reverse=True)
+    assert all(t["n"] == t["k"] == 120 and t["p_value"] <= 0.05 for t in cert["ltt_trace"])
+    assert (cert["served"], cert["errors"], cert["certified"]) == (120, 0, True)
+    assert cert["lcb"] == pytest.approx(0.05 ** (1 / 120))
+
+    # Ten calibration rows cannot certify 95% even when all are right (0.95^10 = 0.60 > 0.05): nothing is served.
+    few = cascade_eval(_scripted(sure), _mixed_golden(20), samples=3, calibration="ltt")
+    assert (few["threshold"], few["coverage"], few["certificate"]["served"], few["certificate"]["certified"]) == (
+        SERVE_NOTHING,
+        0.0,
+        0,
+        False,
+    )
+    assert len(few["certificate"]["ltt_trace"]) == 1
+
+    # Confident rows right, unsure rows wrong: Learn-then-Test stops at the first threshold it cannot certify.
+    split = {i: ((0.95, True) if i % 3 else (0.5, False)) for i in range(240)}  # confidence 0.98 or 0.80
+    mixed = cascade_eval(_scripted(split), _mixed_golden(240), samples=3, calibration="ltt", cert_target=0.9)
+    assert mixed["threshold"] in CERT_GRID and mixed["threshold"] > 0.80
+    assert mixed["certificate"]["errors"] == 0 and mixed["certificate"]["certified"]
+    assert certificate.recheck(json.loads(json.dumps(mixed)))[1] == []
+
+
+def test_cascade_eval_refuses_bad_certification_settings():
+    rows, sample = _mixed_golden(4), _scripted({i: (0.9, True) for i in range(4)})
+    for kwargs, says in (
+        ({"calibration": "magic"}, "calibration must be point or ltt"),
+        ({"cert_target": 1.0}, "cert_target must be"),
+        ({"cert_delta": 0}, "cert_delta must be"),
+        ({"cert_delta": True}, "cert_delta must be"),
+    ):
+        with pytest.raises(ValueError, match=says):
+            cascade_eval(sample, rows, **kwargs)
+
+
+def _vector_eval(vec: str | None, **extra) -> dict:
+    """A golden result the gate admits, with `vec` as its test vector (None: an evaluator that writes none)."""
+    ev = {"precision": 0.97, "coverage": 0.9, "threshold": 0.8, "golden_agreement": 0.9, "golden_n": 20, **extra}
+    return ev if vec is None else {**ev, "test_n": len(vec), "test_vector": vec}
+
+
+@pytest.mark.req("FR-16.3", "FR-6.30", "INV-4", "INV-14")
+def test_run_night_pairs_the_candidate_with_the_rescored_live_version():
+    led = Ledger(":memory:", golden_fraction=0.3)
+    live = _version(led, "live", {"precision": 0.97, "coverage": 0.9, "threshold": 0.8}, train_examples=0)
+    _examples(led, train=60, golden=10)
+    vectors = {"student-v1": "SSSSWEEESS", "student-v2": "SSSEESWESS"}
+    evaluator = RecordingEvaluator(lambda uri, rows: _vector_eval(vectors[uri]))
+    rep = run_night(led, RecordingTrainer(), evaluator, ReleaseGate(led), BASE_MODEL)
+    want = {**certificate.paired(vectors["student-v1"], vectors["student-v2"]), "against": live}
+    assert rep.eval["paired"] == want and led.version(rep.version).eval["paired"] == want
+    assert led.version_bom(rep.version)["manifest"]["eval"]["paired"] == want  # signed with the BOM
+    assert "paired" not in led.version(live).eval  # the champion's re-score carries no comparison
+
+    # No comparison when the vectors differ in length, when an eval has none, or with no live version.
+    for live_vec, cand_vec in (("SSSS", "SSS"), (None, "SSS"), ("", "")):
+        led2 = Ledger(":memory:", golden_fraction=0.3)
+        _version(led2, "live", {"precision": 0.97, "coverage": 0.9}, train_examples=0)
+        _examples(led2, train=60, golden=10)
+        evs = {"student-v1": live_vec, "student-v2": cand_vec}
+        ev = RecordingEvaluator(lambda uri, rows, evs=evs: _vector_eval(evs[uri]))
+        rep2 = run_night(led2, RecordingTrainer(), ev, ReleaseGate(led2), BASE_MODEL)
+        assert rep2.trained and "paired" not in rep2.eval
+    led3 = Ledger(":memory:", golden_fraction=0.3)
+    _examples(led3, train=60, golden=10)
+    rep3 = run_night(
+        led3, RecordingTrainer(), RecordingEvaluator(lambda uri, rows: _vector_eval("SSS")), ReleaseGate(led3), BASE_MODEL
+    )
+    assert "paired" not in rep3.eval and led3.version(rep3.version).state == "canary"
+
+
+@pytest.mark.req("FR-6.30", "FR-16.3", "INV-4")
+def test_paired_gate_admits_what_the_unpaired_rule_rejects_on_noise():
+    """The reference simulation's v2 (simulation, mock models): it serves 70 of 74 held-out rows that live v1 serves all
+    of, every served answer right. The unpaired rule rejects it (coverage 94.6% vs 100%, beyond the 2-point tolerance);
+    on the same rows that is 4 discordant pairs, McNemar p = 0.0625, not significant at 5%, so the paired gate admits."""
+    from ratchet.release import ReleasePolicy
+
+    outcomes = []
+    for paired_gate in (0, 1):
+        led = Ledger(":memory:", golden_fraction=0.3)
+        _version(led, "live", {"precision": 1.0, "coverage": 1.0}, train_examples=0)
+        _examples(led, train=60, golden=10)
+        vectors = {"student-v1": "S" * 74, "student-v2": "S" * 70 + "E" * 4}
+        evals = {
+            "student-v1": _vector_eval(vectors["student-v1"], precision=1.0, coverage=1.0),
+            "student-v2": _vector_eval(vectors["student-v2"], precision=1.0, coverage=70 / 74),
+        }
+        gate = ReleaseGate(led, ReleasePolicy(paired_gate=paired_gate))
+        rep = run_night(led, RecordingTrainer(), RecordingEvaluator(lambda uri, rows, evals=evals: evals[uri]), gate, BASE_MODEL)
+        outcomes.append((rep.admitted, led.events()[-1]["detail"]))
+    (unpaired_ok, unpaired_why), (paired_ok, paired_why) = outcomes
+    assert not unpaired_ok and "regresses vs live v1" in unpaired_why
+    assert paired_ok and paired_why.endswith(
+        "shadowing live v1; serves -4 of 74 vs live v1 (McNemar p=0.06); 0 negative flips, 0 positive flips"
+    )

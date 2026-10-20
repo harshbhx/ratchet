@@ -231,6 +231,7 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
         RATCHET_JUDGE_MODEL=JUDGE,
         RATCHET_SAMPLES="3",
         RATCHET_BOM_SIGNING_KEY=seed,
+        RATCHET_CERT_DELTA="0.1",
     )
     _examples(Ledger(str(db)), train=60, golden=6)  # the live ledger after some days of teacher answers
     vllm = FakeOpenAIServer(_answer_like_the_teacher)
@@ -282,6 +283,11 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert all(c.json["response_format"] == {"type": "json_object"} for c in judged)
     assert all(c.headers["authorization"] == f"Bearer {TEACHER_KEY}" for c in judged)
     assert led.version(1).eval["judge_pass_rate"] == 1.0 and led.version(1).eval["precision"] == 1.0
+    # The certificate (FR-16.3) is signed with the BOM, at the settings' level (RATCHET_CERT_DELTA).
+    cert = doc["manifest"]["eval"]["certificate"]
+    assert (cert["calibration"], cert["delta"], cert["target"], cert["served"]) == ("point", 0.1, 0.95, 3), doc["manifest"][
+        "eval"
+    ]
 
     # After an endpoint restart, reload loads the canary again; tick leaves a canary without audits where it is.
     assert main("reload").splitlines()[0] == "reloaded: ['student-v1']"
@@ -620,6 +626,43 @@ def test_sim_cli_compares_release_rules(tmp_path, capsys):
         with pytest.raises(SystemExit) as exc:
             simulate.main([*argv[:6], *bad])
         assert exc.value.code == 2
+
+
+@pytest.mark.req("FR-9.4", "FR-16.3", "FR-6.30", "FR-6.31")
+def test_sim_cli_certificate_flags(tmp_path, capsys):
+    """--calibration, --cert-target, --cert-delta, --paired-gate and --min-certified reach the golden eval and the
+    gate, and the table lists each trained version's certificate as simulation; bad values are usage errors (exit 2)."""
+    out = tmp_path / "cert.json"
+    argv = ["--days", "2", "--requests", "200", "--drift-day", "0", "--out", str(out)]
+    simulate.main([*argv, "--calibration", "ltt", "--cert-target", "0.9", "--cert-delta", "0.1"])
+    printed = capsys.readouterr().out
+    res = json.loads(out.read_text(encoding="utf-8"))
+    certs = [n["eval"]["certificate"] for n in res["nights"] if n["trained"]]
+    assert certs and all((c["calibration"], c["target"], c["delta"]) == ("ltt", 0.9, 0.1) for c in certs)
+    assert "certificates (simulation, mock models):" in printed
+    assert f"  v1: {certs[0]['served'] - certs[0]['errors']}/{certs[0]['served']} served answers agree" in printed
+    args = simulate.parser().parse_args([*argv, "--paired-gate", "--min-certified", "0.9"])
+    _, _, fleet, _, gate = simulate.build(args)
+    assert (gate.policy.paired_gate, gate.policy.min_certified_precision, fleet.calibration) == (1, 0.9, "point")
+    for bad in (["--cert-target", "1"], ["--cert-delta", "0"], ["--min-certified", "1.5"], ["--calibration", "conformal"]):
+        with pytest.raises(SystemExit) as exc:
+            simulate.main([*argv, *bad])
+        assert exc.value.code == 2
+
+
+@pytest.mark.req("FR-16.3", "FR-8.3")
+def test_live_evaluator_passes_its_certificate_settings():
+    rows = [
+        {"task": TRIAGE, "messages": [{"role": "user", "content": f"ticket {i}"}, {"role": "assistant", "content": LABELS}]}
+        for i in range(8)
+    ]
+    student = RecordingProvider(LABELS)
+    res = LiveEvaluator(student, None, calibration="ltt", cert_target=0.6, cert_delta=0.2).evaluate("student-v7", rows)
+    cert = res["certificate"]
+    assert (cert["calibration"], cert["target"], cert["delta"]) == ("ltt", 0.6, 0.2) and "ltt_trace" in cert
+    # Four calibration rows, all right: 0.6^4 = 0.13 <= 0.2 certifies every grid threshold, so the floor (0.5) serves.
+    assert res["threshold"] == 0.5 and (cert["served"], cert["errors"]) == (4, 0) and res["test_vector"] == "SSSS"
+    assert LiveEvaluator(student, None).evaluate("student-v7", rows)["certificate"]["calibration"] == "point"
 
 
 @pytest.mark.req("FR-9.6")

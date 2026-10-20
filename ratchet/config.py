@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .certificate import CALIBRATIONS
 from .openai_compat import DEFAULT_MAX_N, Limits
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
@@ -63,9 +64,6 @@ def _float_or_none(name: str) -> float | None:
 # relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
 # checks). docs/CONFIGURATION.md lists them under "Reserved settings".
 RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
-    "calibration": ("RATCHET_CALIBRATION", "point", "certified precision (FR-16.3)"),
-    "cert_target": ("RATCHET_CERT_TARGET", "0.95", "certified precision (FR-16.3)"),
-    "cert_delta": ("RATCHET_CERT_DELTA", "0.05", "certified precision (FR-16.3)"),
     "teacher_probes": ("RATCHET_TEACHER_PROBES", "20", "the teacher watch (FR-16.7)"),
     "adjudicate_max": ("RATCHET_ADJUDICATE_MAX", "50", "the teacher watch (FR-16.7)"),
     "take_rate": ("RATCHET_TAKE_RATE", "0.25", "verified savings receipts (FR-15.5)"),
@@ -155,6 +153,16 @@ class CostPolicy:
     train: GpuRate
     mock_endpoint_hours: float
     prices_verified: bool
+
+
+@dataclass(frozen=True)
+class CertPolicy:
+    """How each version's golden eval picks its threshold and certifies it (`Settings.cert_policy()`, ADR 0026): the
+    calibration rule (`certificate.CALIBRATIONS`), the precision a certificate must show and its error rate."""
+
+    calibration: str
+    target: float
+    delta: float
 
 
 DEFAULT_PRICES: dict[str, Price] = {
@@ -310,14 +318,18 @@ class Settings:
     # Read with `checked_canary_audit_rate()`.
     canary_audit_rate: float | None = field(default_factory=lambda: _float_or_none("RATCHET_CANARY_AUDIT_RATE"))
 
-    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
-    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the golden eval's calibration rule and
-    # certificate level; teacher-watch probes and adjudications per night; the receipts' take rate, audits needed per
-    # task and the mock teacher's mean reasoning tokens (unset = the fixed RATCHET_TEACHER_REASONING_TOKENS); the
-    # backfill's batch API, discount and output cap; the ledger's sync mode.
+    # Certified precision (FR-16.3, ADR 0026): how the golden eval picks each version's threshold ('point': the lowest
+    # whose calibration answers reach 97%, as in v0.4; 'ltt': Learn-then-Test over a fixed grid, certified at the target),
+    # and the precision a certificate must show with error rate RATCHET_CERT_DELTA. Read with `cert_policy()`.
     calibration: str = field(default_factory=lambda: _env("RATCHET_CALIBRATION", "point"))
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
     cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
+
+    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: teacher-watch probes and adjudications
+    # per night; the receipts' take rate, audits needed per task and the mock teacher's mean reasoning tokens (unset =
+    # the fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap; the ledger's sync
+    # mode.
     teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
     adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
     take_rate: float = field(default_factory=lambda: _float("RATCHET_TAKE_RATE", "0.25"))
@@ -450,6 +462,22 @@ class Settings:
         if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 < rate <= 1:
             raise ValueError(f"RATCHET_CANARY_AUDIT_RATE must be more than 0 and at most 1 (or unset), not {rate!r}")
         return float(rate)
+
+    def cert_policy(self) -> CertPolicy:
+        """RATCHET_CALIBRATION (`point`, the default also when set but empty, or `ltt`), RATCHET_CERT_TARGET and
+        RATCHET_CERT_DELTA (each strictly between 0 and 1), checked. A bad value raises ValueError naming the variable,
+        so the gateway, the simulator and the nightly job stop at startup instead of certifying against the wrong
+        target."""
+        raw = self.calibration
+        mode = raw.strip().lower() if isinstance(raw, str) else None
+        if mode == "":
+            mode = "point"
+        if mode not in CALIBRATIONS:
+            raise ValueError(f"RATCHET_CALIBRATION must be {' or '.join(CALIBRATIONS)}, not {raw!r}")
+        for env, value in (("RATCHET_CERT_TARGET", self.cert_target), ("RATCHET_CERT_DELTA", self.cert_delta)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
+                raise ValueError(f"{env} must be a number strictly between 0 and 1, not {value!r}")
+        return CertPolicy(mode, float(self.cert_target), float(self.cert_delta))
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

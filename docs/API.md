@@ -24,6 +24,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/stats` | both | Everything the dashboard shows |
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
+| GET | `/ratchet/versions/{id}/certificate` | both | What a version's golden evals certify: the signed and the latest certificate, frontier and per-task bounds, the gate's evidence and the assumptions ([Certificates](#get-ratchetversionsidcertificate)) |
 | GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
 | GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
@@ -474,7 +475,7 @@ Needs a key when `RATCHET_API_KEYS` is set.
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
   Later versions add routes; a client should show an unknown route as it is.
-- `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4. `evidence` (v0.5) is what the release gate reads for the version in `canary` or `live` state, recomputed from its audit counts on every call (`ReleaseGate.evidence`, [ADR 0025](adr/0025-anytime-valid-release-gate.md)); `null` for every other state. Anyone can re-check a gate decision from it:
+- `versions`: every version, oldest first. `eval` is the version's latest golden eval (the nightly re-score's for the live version); since v0.5 it also has `certificate`, `frontier`, `per_task`, `test_vector` and, for a candidate trained while a version was live, `paired` ([Certificates](#get-ratchetversionsidcertificate)), and its `threshold` is exact rather than rounded. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4. `evidence` (v0.5) is what the release gate reads for the version in `canary` or `live` state, recomputed from its audit counts on every call (`ReleaseGate.evidence`, [ADR 0025](adr/0025-anytime-valid-release-gate.md)); `null` for every other state. Anyone can re-check a gate decision from it:
 
   | Key | Meaning |
   |---|---|
@@ -544,7 +545,7 @@ The bill of materials of one adapter, written by Night School right after traini
 
 - `sha256` and the signature cover the **canonical** manifest: JSON with sorted keys, no whitespace, UTF-8 (`ratchet.bom.canonical`).
 - `signature` is `null` when `RATCHET_BOM_SIGNING_KEY` is not set; the `sha256` still detects edits.
-- `training.dataset_sha256` equals the version's `dataset_hash`; `golden.sha256` fingerprints the golden rows the evaluation used. The `eval` block is the evaluation at training time; later re-checks update `/ratchet/stats` but not the signed BOM.
+- `training.dataset_sha256` equals the version's `dataset_hash`; `golden.sha256` fingerprints the golden rows the evaluation used. The `eval` block is the evaluation at training time; later re-checks update `/ratchet/stats` but not the signed BOM. Since v0.5 it also carries the certificate, the frontier, the per-task bounds, the per-row outcomes (`test_vector`) and, for a candidate trained while a version was live, the paired comparison with it ([Certificates](#get-ratchetversionsidcertificate)); `python -m ratchet.stats check bom.json` recomputes every one of those numbers from the signed counts.
 - Schema `ratchet.bom/v2` ([ADR 0024](adr/0024-evidence-foundations.md)) keeps every v1 field and adds `training.origins` (training rows by where they came from; `live` for rows that did not record it) and `redactor` (a SHA-256 over the redaction rules, the number of rules, and whether redaction was on; `null` when the writer did not say). Later features add optional sections: `training.commitment` and `golden.commitment` (`{"alg": "ratchet.smt/v1", "root", "size"}`), `teacher`, `backfill_jobs` and `erasures_honored`. Adapters trained before keep their v1 documents, which still verify; any other schema is refused as unknown.
 
 Verify a downloaded BOM against the public key you published:
@@ -556,6 +557,68 @@ python -m ratchet.bom verify bom.json --public-key "<base64 public key>"
 ```
 
 Without `--public-key` the check uses the key embedded in the document, which only proves the document is consistent with itself.
+
+## GET `/ratchet/versions/{id}/certificate`
+
+What a version's golden evals certify about the answers it serves (FR-16.3, [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). The threshold is chosen on the even half of the golden rows and measured on the odd half (INV-6), so the odd half's counts at that threshold are one exact binomial test: with probability at least 1 − `delta`, the precision of what the version serves at its threshold is at least `lcb`. **404** for an unknown version. Public, like `/ratchet/stats`.
+
+```json
+{
+  "version": 3,
+  "state": "live",
+  "status": "certified",
+  "training": {
+    "certificate": {"method": "clopper-pearson", "calibration": "point", "delta": 0.05, "target": 0.95,
+                    "threshold": 0.5, "served": 119, "errors": 1, "precision": 0.9916, "lcb": 0.9608, "certified": true},
+    "frontier": [
+      {"threshold": 0.95, "coverage": 0.776, "served": 97, "errors": 0, "precision": 1.0, "lcb": 0.9468, "delta": 0.005},
+      {"threshold": 0.9, "coverage": 0.824, "served": 103, "errors": 0, "precision": 1.0, "lcb": 0.9499, "delta": 0.005}
+    ],
+    "per_task": {
+      "page-read": {"n_test": 31, "served": 29, "errors": 0, "precision": 1.0, "lcb": 0.9019, "coverage": 0.9355},
+      "source-triage": {"n_test": 42, "served": 38, "errors": 0, "precision": 1.0, "lcb": 0.9242, "coverage": 0.9048},
+      "ticket-triage": {"n_test": 52, "served": 52, "errors": 1, "precision": 0.9808, "lcb": 0.912, "coverage": 1.0}
+    },
+    "threshold": 0.5,
+    "calibration": "point",
+    "paired": {"n": 125, "cov_only_live": 5, "cov_only_cand": 8, "p_cov": 0.8666, "neg_flips": 1, "pos_flips": 3,
+               "p_err": 0.9375, "neg_flips_served": 1, "live_served_ok": 113, "nfr": 0.0088,
+               "nfr_95": [0.0016, 0.0484], "against": 2}
+  },
+  "current": {"certificate": {"…": "the same keys"}, "frontier": ["…"], "per_task": {}, "threshold": 0.5,
+              "calibration": "point", "paired": null, "rechecked_day": 5},
+  "bom": {"sha256": "dd71bf42…", "signed": false},
+  "live": {"rule": "wilson", "floor": 0.92, "n": 117, "s": 113, "cs": [0.89, 0.996], "…": "ReleaseGate.evidence"},
+  "drift": null,
+  "assumptions": ["Golden rows are assumed exchangeable with live traffic, …", "Precision means agreement with the teacher model …", "Which requests are golden is decided by a hash of the request, …"]
+}
+```
+
+(Mock gateway after five simulated days of mixed traffic; simulation numbers from mock models, rounded here.)
+
+- `status`: `certified` or `not certified` from the latest certificate (`current`'s when the version was re-scored, else `training`'s); `suspended` while a drift alarm is open for the version (FR-16.6, not built yet, so never today); `no certificate` for a version evaluated before v0.5 or by an evaluator that writes none.
+- `training`: from the signed BOM's `manifest.eval`, written once at training time (INV-14); `null` without a BOM. `current`: from the version's eval, which the nightly champion re-score overwrites for the live version (with `rechecked_day`, `null` until then). Each holds `certificate`, `frontier`, `per_task`, `threshold`, `calibration` and `paired` (`null` when that eval lacks one).
+- `certificate`: the Clopper–Pearson certificate at the version's threshold, on the held-out half: `served` answers, `errors` among them, `precision`, the one-sided lower bound `lcb` at level `delta` (`RATCHET_CERT_DELTA`), and `certified` (`lcb ≥ target`, `RATCHET_CERT_TARGET`). `calibration` is how the threshold was chosen: `point` (v0.4's rule, 97% on the calibration half) or `ltt` (Learn-then-Test over a fixed grid, `RATCHET_CALIBRATION=ltt`), which adds `ltt_trace` (each grid threshold tested on the calibration half, `{threshold, n, k, p_value}`, highest first, stopping at the first that fails).
+- `frontier`: the same counts at each threshold of the fixed grid 0.95, 0.90, …, 0.50, each `lcb` at `delta / 10` (Bonferroni), so every row holds at once: an operator may pick any threshold on it afterwards and keep the guarantee.
+- `per_task`: the certificate's counts per task, each bound at `delta` on its own. A diagnostic that shows a weak task inside a pooled number; it is not corrected for the number of tasks and never changes routing.
+- `paired` (a candidate trained while a version was live): the exact comparison with that version (`against`) on the same held-out rows. `cov_only_live` and `cov_only_cand` are the rows only one of them serves, with `p_cov` the one-sided McNemar p-value for "the candidate serves less"; `neg_flips` are rows the candidate answers wrong where live's answer was right (served right, or escalated to the teacher), `pos_flips` the reverse, with `p_err`; `nfr` is `neg_flips_served / live_served_ok` (answers live served right that the candidate serves wrong), with its 95% Wilson interval `nfr_95`. The opt-in paired gate reads these ([Configuration](CONFIGURATION.md#release-policy-ratchetreleasepy)).
+- `bom`: the BOM's `sha256` and whether it is signed; `null` without one. `live`: the release gate's evidence from the version's audits (the same object as `/ratchet/stats`' `evidence`) for a version that serves or once served (`canary`, `live`, `rolled_back`, `retired`), else `null`. `drift`: the drift monitor's status for the version (FR-16.6), `null` today.
+- `assumptions`: what every certificate assumes, in plain words. Precision is agreement with the teacher, not ground truth; golden rows over-represent hard requests, so a certificate is conservative for easy traffic only to the extent that exchangeability fails in that direction.
+
+Check a downloaded BOM's numbers yourself:
+
+```bash
+curl -s https://<gateway>/ratchet/versions/3/bom > bom.json
+python -m ratchet.stats check bom.json --public-key "<base64 public key>"
+# OK: signature valid (Ed25519, key 6cf6bc1a39c4491d, trusted key)
+# OK: certificate: 118 of 119 served answers agree at threshold 0.5 (delta 0.05): lower bound 0.9608 vs target 0.95, certified
+# OK: frontier: 10 thresholds, each bound at delta 0.005 (Bonferroni)
+# OK: per_task: 3 tasks
+# OK: paired against v2: p_cov 0.8666, p_err 0.9375
+# check: every number recomputed from the signed counts
+```
+
+It exits 1 when the signature or hash fails or when any recomputed number differs from the signed one by more than 1e-9, and 0 for a BOM written before v0.5 (no certificate to check).
 
 ## GET `/ratchet/bom/public-key`
 

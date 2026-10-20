@@ -31,7 +31,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `trained` | `run_night` | A new version was trained and scored on the golden set | None |
 | `skip` | `run_night` | No training tonight: release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight |
 | `rejected` | `admit` / `tick` | Candidate failed the golden gate or shadow (reason in detail) | Repeated rejections: see [Persistent rejections](#persistent-rejections) |
-| `shadow` | `admit` | Candidate passed the golden gate and is running silently | None |
+| `shadow` | `admit` | Candidate passed the golden gate and is running silently. Appends `serves +c−b of n vs live vL (McNemar p=…); nf negative flips, pf positive flips` with the paired gate, and `certified >= 95% (lcb 96.4%, delta 0.05)` when its certificate holds ([Checking a certificate](#checking-a-certificate)) | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
 | `live` | `tick` | Candidate promoted to 100%; previous live retired | None |
 | `retired` | `admit` | An in-flight shadow or canary was replaced by a newer candidate | None |
@@ -203,9 +203,22 @@ v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 
 
 - "golden precision < 95%": the base model may be too small for the task, the task too subjective, or the task's fields too strict (an `exact` field where a `number` with a tolerance, a `set` or a `label` with aliases fits; [CONFIGURATION.md](CONFIGURATION.md#tasks)). Check the task's `fields`, and `golden_invalid_refs` in the version's eval: references the spec refuses are not graded.
 - "golden coverage < 25%": too few examples per pattern. Wait for more data, or lower `min_coverage` in code.
-- "regresses vs live": live is already good. This is expected and harmless.
+- "regresses vs live": live is already good. This is expected and harmless. If the difference looks like noise (a few rows on a small golden set), `RATCHET_PAIRED_GATE=1` compares the two versions row by row and rejects only a significant regression ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)).
+- "serves N fewer of M golden rows than live", "N negative flips vs P positive flips", "negative flip rate …": the paired gate found a regression that is larger than `tolerance` and significant (McNemar p below `RATCHET_REGRESSION_ALPHA`), or a flip rate above `RATCHET_MAX_NFR`. The candidate is worse on the same rows; look at the tasks its `per_task` block shows weakest.
+- "certified lower bound X% < Y%": `RATCHET_MIN_CERTIFIED_PRECISION` is set and the held-out rows do not support it. More golden rows fix this faster than a better model: `python -m ratchet.stats plan --target Y` says how many served rows the target needs. "no certificate to check": the evaluator wrote none (a custom evaluator, or one from before v0.5).
 - "shadow precision/coverage": real traffic differs from the golden set. Check for drift.
 - "shadow precision ... (N unarbitrated counted as disagreements)": the teacher failed some arbitrations (`shadow_error` events). If N explains the shortfall, the candidate may be fine; the next night trains a new one.
+
+### Checking a certificate
+
+`GET /ratchet/versions/{id}/certificate` gives a version's status (`certified` or `not certified` from the latest certificate; `no certificate` before v0.5) with the signed certificate from training and the latest re-score's ([API.md](API.md#get-ratchetversionsidcertificate)). To check a BOM someone sent you, or one you are about to publish:
+
+```bash
+curl -s https://<gateway>/ratchet/versions/3/bom > bom.json
+python -m ratchet.stats check bom.json --public-key "<base64 public key>"
+```
+
+Exit 0 means the signature holds and every bound, verdict, frontier row, per-task row, Learn-then-Test step and paired p-value follows from the signed counts. Exit 1 prints each `FAIL:` line: a signature or hash failure means the document was edited or signed by another key; a number that does not follow from the counts means whoever wrote it computed it differently (or edited the document and re-hashed it). A certificate is about agreement with the teacher on the golden rows; read the `assumptions` before quoting it. When a live version is `not certified` but its audits look fine (`live` evidence), the golden set is usually too small: `python -m ratchet.stats plan` says how many served held-out rows the target needs.
 
 ### Teacher answers not stored
 
@@ -264,7 +277,7 @@ All request messages escalated or audited to the teacher are stored in `examples
 
 ### Startup refused: a reserved setting
 
-The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`). One that names `RATCHET_PROMOTE_EVIDENCE` or `RATCHET_MAX_STAGE_AUDITS` is a sequential-gate setting that would decide nothing (evidence-based promotion without `RATCHET_SEQUENTIAL=1`, or a cap that would retire every canary); the message says how many audits are needed. `RATCHET_CANARY_AUDIT_RATE` must be more than 0 and at most 1.
+The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`). One that names `RATCHET_PROMOTE_EVIDENCE` or `RATCHET_MAX_STAGE_AUDITS` is a sequential-gate setting that would decide nothing (evidence-based promotion without `RATCHET_SEQUENTIAL=1`, or a cap that would retire every canary); the message says how many audits are needed. `RATCHET_CANARY_AUDIT_RATE` must be more than 0 and at most 1. `RATCHET_CALIBRATION` must be `point` or `ltt`, and `RATCHET_CERT_TARGET` and `RATCHET_CERT_DELTA` strictly between 0 and 1.
 
 ## Backups
 

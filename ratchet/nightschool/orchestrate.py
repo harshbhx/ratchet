@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, tasks
+from .. import bom, certificate, tasks
 from ..config import GpuRate
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
@@ -50,6 +50,20 @@ def stale_tasks(version: Version, hashes: dict[str, str]) -> list[str]:
     if not isinstance(recorded, dict):
         return []
     return sorted(t for t, h in hashes.items() if t in recorded and recorded[t] != h)
+
+
+def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: int) -> dict[str, Any] | None:
+    """The candidate's exact paired comparison with the live version (`certificate.paired`, ADR 0026), from the test
+    vectors of tonight's re-score and the candidate's eval, plus `against` (the live version's id), or None when either
+    eval has no vector or they differ in length. Both evals ran on the same golden rows tonight (INV-4), so the vectors
+    are the same held-out rows in the same order."""
+    live_vec, cand_vec = recheck.get("test_vector"), result.get("test_vector")
+    if not (isinstance(live_vec, str) and isinstance(cand_vec, str) and live_vec and len(live_vec) == len(cand_vec)):
+        return None
+    try:
+        return {**certificate.paired(live_vec, cand_vec), "against": live_id}
+    except ValueError:  # a vector from another evaluator, with letters the comparison does not know
+        return None
 
 
 def run_night(
@@ -135,6 +149,10 @@ def run_night(
             note = None if ended is not None else f"adapter {name}: training failed"
             ledger.compute_stop("training_job", ts=ended if ended is not None else now(), interval_id=job, version=vid, note=note)
     result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
+    if live is not None:  # paired evidence, before the eval is stored and the BOM signed, so the BOM carries it
+        pair = paired_evidence(recheck, result, live.id)
+        if pair is not None:
+            result["paired"] = pair
     ledger.update_eval(vid, result)
     # The adapter's own bill of materials, written now, while we know exactly what it was trained on. Features add their
     # sections (bom.EXTRA_KEYS) to `bom_extra` above this line.

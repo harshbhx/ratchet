@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 735 tests
+pytest -q                                                                # 759 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -141,6 +141,22 @@ With **unverified list prices** (an L40S at about $1.55/hour, about $0.001 of Ul
 - **Training data:** only teacher answers, never the student's own (avoids model collapse). Retrains from the base model on the cumulative set each night (limits forgetting). Requests that repeat 3+ times always go to training, so frequent questions are never held out forever.
 - **No training while a release is in flight**, which saves GPU money.
 
+## What a certificate means
+
+Every adapter's golden eval, and so its signed bill of materials, carries a **certificate** ([ADR 0026](docs/adr/0026-certified-thresholds-and-a-paired-release-gate.md)): of the held-out golden rows the threshold was *not* tuned on, how many the version would serve and how many of those agree with the teacher, and an exact one-sided Clopper–Pearson lower bound on its precision. "Certified at 95% (lcb 96.4%, delta 0.05)" means: with probability at least 95%, the answers this version serves at its threshold agree with the teacher at least 96.4% of the time. That is a statement about agreement with the teacher, not ground truth, and it assumes the golden rows look like live traffic (they come from escalations, audits and arbitrations, so they lean towards requests the student found hard). A point estimate such as "99.2% precision" on 130 rows cannot tell 0.96 from 0.99; the bound can.
+
+- **Frontier:** the same bound at every threshold from 0.95 down to 0.50, corrected so all ten hold at once: the certified trade-off between precision and the share of traffic served.
+- **Per task:** the counts per task, so a weak task cannot hide inside a pooled number (a diagnostic; it does not change routing).
+- **Paired gate (opt-in, `RATCHET_PAIRED_GATE=1`):** the candidate and the live version are compared row by row on the same golden rows with exact McNemar tests, so a difference within noise no longer rejects a better model, and a significant regression still does. In the reference run (simulation) v2 was rejected for serving 70 of 74 rows against live's 74: four discordant rows, p = 0.0625.
+- **Learn-then-Test (opt-in, `RATCHET_CALIBRATION=ltt`):** the threshold itself is chosen so its precision is certified, over a fixed grid of thresholds.
+
+```bash
+python -m ratchet.stats plan --target 0.95 --delta 0.05        # 0 errors: 59 rows, 1: 93, 2: 124, 3: 153
+curl -s localhost:8000/ratchet/versions/2/certificate          # signed and latest certificate, assumptions
+curl -s localhost:8000/ratchet/versions/2/bom > bom.json
+python -m ratchet.stats check bom.json --public-key <yours>     # recompute every number from the signed counts
+```
+
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
@@ -183,6 +199,8 @@ ratchet/taskspec.py     task specs as data: RATCHET_TASKS_FILE and the admin API
 ratchet/compare.py      field comparators (label, number, date, set, records, ...)
 ratchet/confidence.py   confidence score (pairwise agreement) + threshold calibration
 ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds, or an anytime-valid e-process)
+ratchet/certificate.py  certified precision: Clopper-Pearson certificates, frontier, paired McNemar comparison
+ratchet/stats.py        exact statistics, `python -m ratchet.stats plan|bound|mcnemar|check`
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/redact.py       PII placeholders before examples are stored

@@ -745,3 +745,132 @@ def test_stats_versions_carry_the_gates_evidence(gw_env, monkeypatch):
     assert ev == gw.rt.gate.evidence(led.version(cand)) and (ev["rule"], ev["n"], ev["s"]) == ("sequential", 4, 3)
     gw = gw_env(RATCHET_SEQUENTIAL="0", RATCHET_MIN_AUDITS="30")
     assert (gw.rt.gate.policy.sequential, gw.rt.gate.policy.min_audits) == (0, 30)
+
+
+# ---------- certified precision: the certified floor and the paired gate (FR-16.3, FR-6.30, FR-6.31, ADR 0026) ----------
+from ratchet import certificate  # noqa: E402
+
+
+def _cert(served: int, errors: int, target: float = 0.95, delta: float = 0.05, **override) -> dict:
+    """A certificate as `cascade_eval` writes it, from its counts."""
+    lcb = stats.cp_lower(served - errors, served, delta)
+    cert = {
+        "method": "clopper-pearson",
+        "calibration": "point",
+        "delta": delta,
+        "target": target,
+        "threshold": 0.5,
+        "served": served,
+        "errors": errors,
+        "precision": (served - errors) / served,
+        "lcb": lcb,
+        "certified": lcb >= target,
+    }
+    return {**cert, **override}
+
+
+@pytest.mark.req("FR-6.31", "FR-16.3")
+def test_min_certified_precision_rejects_a_weak_certificate():
+    weak = {**GOOD, "certificate": _cert(48, 2)}  # 46/48: lower bound 0.8746 (the reference run's v1, simulation)
+    led = Ledger(":memory:")
+    vid = _version(led, eval=weak)
+    assert not ReleaseGate(led, ReleasePolicy(min_certified_precision=0.90)).admit(vid)
+    assert led.events()[-1]["detail"] == f"v{vid}: certified lower bound 87.5% < 90% (46/48 served answers agree, delta 0.05)"
+    for floor, admitted in ((0.85, True), (0.0, True)):
+        led = Ledger(":memory:")
+        vid = _version(led, eval=weak)
+        assert ReleaseGate(led, ReleasePolicy(min_certified_precision=floor)).admit(vid) is admitted
+    # The bound is recomputed from the counts, never read from the stored `lcb`; no certificate fails a floor.
+    for ev, says in (
+        ({**GOOD, "certificate": _cert(48, 2, lcb=0.99, certified=True)}, "certified lower bound 87.5% < 90%"),
+        (GOOD, "no certificate to check against RATCHET_MIN_CERTIFIED_PRECISION=0.9"),
+        ({**GOOD, "certificate": {**_cert(48, 2), "errors": 60}}, "no certificate"),
+    ):
+        led = Ledger(":memory:")
+        vid = _version(led, eval=ev)
+        assert not ReleaseGate(led, ReleasePolicy(min_certified_precision=0.9)).admit(vid)
+        assert says in led.events()[-1]["detail"]
+    led = Ledger(":memory:")
+    vid = _version(led, eval={**GOOD, "precision": 0.90, "certificate": _cert(130, 1)})
+    assert not ReleaseGate(led, ReleasePolicy(min_certified_precision=0.9)).admit(vid)  # the precision floor comes first
+    assert "golden precision" in led.events()[-1]["detail"]
+
+
+@pytest.mark.req("FR-16.3")
+def test_certified_versions_say_so_in_their_gate_events():
+    led = Ledger(":memory:")
+    first = _version(led, eval={**GOOD, "certificate": _cert(130, 1)})  # 129/130: lower bound 0.964
+    assert ReleaseGate(led).admit(first)
+    assert led.events()[-1]["detail"] == (
+        f"v{first} first student: golden precision 98.0%, coverage 60.0%; canary 10%; certified >= 95% (lcb 96.4%, delta 0.05)"
+    )
+    led.set_version(first, "live", 100)
+    second = _version(led, eval={**GOOD, "certificate": _cert(48, 2)})  # not certified: nothing appended
+    assert ReleaseGate(led).admit(second)
+    assert led.events()[-1]["detail"].endswith(f"shadowing live v{first}")
+    third = _version(led, eval={**GOOD, "certificate": _cert(80, 0, target=0.965, delta=0.1)})  # 0.1^(1/80) = 0.9716
+    assert ReleaseGate(led).admit(third)
+    assert led.events()[-1]["detail"].endswith("; certified >= 96.5% (lcb 97.2%, delta 0.1)")
+    fourth = _version(led, eval={**GOOD, "certificate": _cert(48, 2, certified=True)})  # a claim the counts do not back
+    assert ReleaseGate(led).admit(fourth)
+    assert "certified" not in led.events()[-1]["detail"]
+
+
+def _paired_case(live_vec: str, cand_vec: str, policy: ReleasePolicy, *, against: int | None = None, **pair_edit):
+    """A live v1 and a candidate whose evals have the coverage of their vectors (every served answer right unless the
+    vector says W), the candidate's carrying the paired comparison; returns (admitted, the last event's detail)."""
+
+    def ev(vec: str) -> dict:
+        served = len(vec) - vec.count("E")
+        return {"precision": 1.0 if not served else (served - vec.count("W")) / served, "coverage": served / len(vec)}
+
+    led = Ledger(":memory:")
+    live = _version(led, "live", ev(live_vec))
+    pair = {**certificate.paired(live_vec, cand_vec), "against": live if against is None else against, **pair_edit}
+    vid = _version(led, eval={**ev(cand_vec), "paired": pair})
+    admitted = ReleaseGate(led, policy).admit(vid)
+    return admitted, led.events()[-1]["detail"]
+
+
+@pytest.mark.req("FR-6.30", "FR-16.3")
+def test_paired_gate_rejects_only_large_significant_regressions():
+    paired = ReleasePolicy(paired_gate=1, min_precision=0.9)  # a precision floor the cases below pass
+    # Coverage within noise: 12 rows only live serves, 10 only the candidate, of 63 (2 rows, 3.2% > the 2-point
+    # tolerance; McNemar p = 0.42). The unpaired rule rejects it (coverage 81.0% vs 84.1%); the paired gate admits it.
+    live_vec, cand_vec = "S" * 12 + "E" * 10 + "S" * 41, "E" * 12 + "S" * 10 + "S" * 41
+    ok, why = _paired_case(live_vec, cand_vec, ReleasePolicy())
+    assert not ok and "regresses vs live v1" in why
+    ok, why = _paired_case(live_vec, cand_vec, paired)
+    assert ok and why.endswith("serves -2 of 63 vs live v1 (McNemar p=0.42); 0 negative flips, 0 positive flips")
+    # Data that is not a comparison with this live version, or not readable, falls back to the unpaired rule.
+    for kwargs in ({"against": 99}, {"cov_only_live": "12"}, {"cov_only_live": 64}):
+        ok, why = _paired_case(live_vec, cand_vec, paired, **kwargs)
+        assert not ok and "regresses vs live v1" in why
+
+    # A large, significant coverage loss: 10 rows only live serves, none only the candidate (p = 0.001).
+    ok, why = _paired_case("S" * 60, "E" * 10 + "S" * 50, paired)
+    assert not ok and why == (
+        "v2: serves 10 fewer of 60 golden rows than live v1 (10 only live, 0 only the candidate; McNemar p=0.000977 < 0.05)"
+    )
+    # More wrong answers: 8 rows newly wrong (5 that live served right, 3 it escalated), none fixed, of 100 (p = 0.004).
+    ok, why = _paired_case("S" * 92 + "E" * 8, "W" * 5 + "S" * 87 + "W" * 3 + "E" * 5, paired)
+    assert (
+        not ok and why == "v2: 8 negative flips vs 0 positive flips on 100 golden rows against live v1 (McNemar p=0.00391 < 0.05)"
+    )
+    # The same 8 wrong answers on 1,000 rows are within the tolerance (0.8%), so only the flip-rate bound can catch them.
+    ok, _ = _paired_case("S" * 992 + "E" * 8, "W" * 5 + "S" * 987 + "W" * 3 + "E" * 5, paired)
+    assert ok
+
+    # Negative flips: 6 of the 60 answers live served right are now wrong, offset by 5 rows live got wrong that the
+    # candidate gets right, so the error count is within noise (p = 0.5); the flip rate's 95% lower bound is 4.7%.
+    live_vec, cand_vec = "S" * 60 + "W" * 5, "W" * 6 + "S" * 54 + "S" * 5
+    ok, why = _paired_case(live_vec, cand_vec, ReleasePolicy(paired_gate=1, min_precision=0.9, max_nfr=0.02))
+    assert (
+        not ok and why == "v2: negative flip rate 10.0% (95% lower bound 4.7% > 2.0%): 6 of the 60 answers live v1 served right"
+    )
+    ok, why = _paired_case(live_vec, cand_vec, paired)  # max_nfr 1: off
+    assert ok and why.endswith("serves +0 of 65 vs live v1 (McNemar p=1.00); 6 negative flips, 5 positive flips")
+    ok, _ = _paired_case(live_vec, cand_vec, ReleasePolicy(paired_gate=1, min_precision=0.9, max_nfr=0.05))
+    assert ok  # 4.7% <= 5%
+    ok, _ = _paired_case(live_vec, cand_vec, ReleasePolicy(paired_gate=1, min_precision=0.9, regression_alpha=0.6, tolerance=0.0))
+    assert not ok  # a looser alpha and no tolerance: 1 more wrong answer than live, p = 0.5 < 0.6

@@ -662,6 +662,14 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-6.6": ("ratchet.release:wilson", "ratchet.release:ReleaseGate.tick"),
     "FR-6.7": ("ratchet.release:ReleaseGate.tick",),
     "FR-6.8": ("ratchet.release:ReleaseGate.admit",),
+    "FR-6.30": (
+        "ratchet.release:ReleaseGate.admit",
+        "ratchet.release:ReleaseGate._paired_regression",
+        "ratchet.certificate:paired",
+        "ratchet.nightschool.orchestrate:paired_evidence",
+        "ratchet.stats:mcnemar_one_sided",
+    ),
+    "FR-6.31": ("ratchet.release:ReleaseGate.admit", "ratchet.release:_below_certified_floor"),
     # 6.7 Dashboard
     "FR-7.1": ("web/src/pages/dashboard/kpis.tsx", "ratchet.ledger:Ledger.totals"),
     "FR-7.2": ("web/src/pages/dashboard/charts.tsx", "ratchet.ledger:Ledger.stats_by_day"),
@@ -736,6 +744,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "sim.simulate:compare_release",
     ),
     "FR-16.2": ("ratchet.release:ReleaseGate._tick_live", "ratchet.stats:log_e_bernoulli"),
+    "FR-16.3": (
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.certificate:certificate",
+        "ratchet.certificate:frontier",
+        "ratchet.certificate:per_task",
+        "ratchet.certificate:recheck",
+        "ratchet.stats:cp_lower",
+        "ratchet.stats:ltt_fixed_sequence",
+        "ratchet.stats:main",
+        "ratchet.config:Settings.cert_policy",
+        "ratchet.gateway:version_certificate",
+    ),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (

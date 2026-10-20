@@ -722,35 +722,38 @@ class Ledger:
             out[int(r["id"])] = "signed" if json.loads(r["bom"]).get("signature") else "unsigned"
         return out
 
+    @staticmethod
+    def _version(r: sqlite3.Row) -> Version:
+        return Version(
+            r["id"],
+            r["day"],
+            r["base_model"],
+            r["adapter_uri"],
+            r["train_examples"],
+            r["dataset_hash"],
+            json.loads(r["eval"] or "{}"),
+            r["state"],
+            r["traffic_pct"],
+            r["stage_since"] or 0,
+        )
+
     @_locked
     def versions(self, states: Iterable[str] | None = None) -> list[Version]:
-        rows = self.db.execute("SELECT * FROM versions ORDER BY id").fetchall()
-        out = [
-            Version(
-                r["id"],
-                r["day"],
-                r["base_model"],
-                r["adapter_uri"],
-                r["train_examples"],
-                r["dataset_hash"],
-                json.loads(r["eval"] or "{}"),
-                r["state"],
-                r["traffic_pct"],
-                r["stage_since"] or 0,
-            )
-            for r in rows
-        ]
-        if states is not None:
-            wanted = set(states)
-            out = [v for v in out if v.state in wanted]
-        return out
+        """Versions by id, all or those in `states`. The states are filtered in SQL, so only the rows returned have their
+        eval parsed: the request path asks for the live and canary versions on every request, and an eval carries a
+        certificate, a frontier and a per-task breakdown (ADR 0026)."""
+        if states is None:
+            rows = self.db.execute("SELECT * FROM versions ORDER BY id").fetchall()
+        else:
+            wanted = sorted(set(states))
+            marks = ",".join("?" * len(wanted))
+            rows = self.db.execute(f"SELECT * FROM versions WHERE state IN ({marks}) ORDER BY id", wanted).fetchall()
+        return [self._version(r) for r in rows]
 
     @_locked
     def version(self, vid: int) -> Version | None:
-        for v in self.versions():
-            if v.id == vid:
-                return v
-        return None
+        r = self.db.execute("SELECT * FROM versions WHERE id=?", (vid,)).fetchone()
+        return self._version(r) if r else None
 
     @_locked
     def live(self) -> Version | None:

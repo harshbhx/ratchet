@@ -21,6 +21,13 @@ A row the student endpoint refuses (`REFUSED`: a stored condition it cannot serv
 `tools` on a vLLM without a tool parser or a schema its guided decoding cannot compile, or a
 prompt too long for it) escalates in production (INV-7), so here it scores as a request the
 student would not serve: confidence 0, wrong. It never stops the night.
+
+Certified precision (FR-16.3, ADR 0026): the held-out half played no part in choosing the
+threshold, so its counts at that threshold are one exact test. Every eval carries a
+Clopper-Pearson certificate, a Bonferroni-valid frontier over `stats.CERT_GRID`, a per-task
+breakdown and the per-row outcomes (`test_vector`) that `paired` compares row by row
+(`ratchet/certificate.py`). `calibration='ltt'` picks the threshold by Learn-then-Test over the
+fixed grid instead of the point rule.
 """
 
 from __future__ import annotations
@@ -29,9 +36,11 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from .. import tasks
+from .. import certificate, tasks
+from ..certificate import CALIBRATIONS, paired  # noqa: F401  (`evaluate.paired`: the paired comparison, ADR 0026)
 from ..confidence import SERVE_NOTHING, STUDENT_SAMPLING, calibrate_threshold, score
 from ..providers import Completion, GenParams, GenPolicy, Provider, UpstreamError
+from ..stats import CERT_GRID, ltt_fixed_sequence
 
 # sample(prompt, n, params): n student samples for a golden row's prompt, under the conditions stored with it (the row's
 # `params`, a dict of ledger.STORED_PARAM_KEYS, or None).
@@ -55,8 +64,21 @@ JUDGE_PROMPT = (
 )
 
 
+def _level(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
+        raise ValueError(f"{name} must be a number strictly between 0 and 1, not {value!r}")
+    return float(value)
+
+
 def cascade_eval(
-    sample: SampleFn, golden_rows: list[dict[str, Any]], samples: int = 3, target_precision: float = 0.97, floor: float = 0.5
+    sample: SampleFn,
+    golden_rows: list[dict[str, Any]],
+    samples: int = 3,
+    target_precision: float = 0.97,
+    floor: float = 0.5,
+    calibration: str = "point",
+    cert_target: float = 0.95,
+    cert_delta: float = 0.05,
 ) -> dict[str, Any]:
     """Calibrate the threshold on one half of the golden set and measure on the other half,
     so the reported precision is not graded on the data the threshold was tuned on. A row the
@@ -64,9 +86,20 @@ def cascade_eval(
     escalate it; `refused_n` says how many there were. A row whose reference is not valid under
     its task's spec is skipped before the student is sampled (`golden_invalid_refs`), and so is a
     row of a task that is pinned now (`excluded_pinned`, only when there is one); the halves
-    alternate over the rows that are scored, so they stay the same size."""
+    alternate over the rows that are scored, so they stay the same size.
+
+    The threshold is the point rule's (`calibrate_threshold` at `target_precision`), or with
+    `calibration='ltt'` Learn-then-Test's over `CERT_GRID` (`cert_target`, `cert_delta`), clamped
+    the same way. Certified precision (ADR 0026) adds `certificate` (Clopper-Pearson at `cert_delta`
+    against `cert_target`), `frontier`, `per_task` and `test_vector`, all from the held-out half at
+    the same threshold as `coverage` and `precision`, the one stored and served at. Nothing here
+    draws a random number."""
+    if calibration not in CALIBRATIONS:
+        raise ValueError(f"calibration must be {' or '.join(CALIBRATIONS)}, not {calibration!r}")
+    cert_target, cert_delta = _level(cert_target, "cert_target"), _level(cert_delta, "cert_delta")
     calib: list[tuple[float, bool]] = []
     test: list[tuple[float, bool]] = []
+    test_tasks: list[str] = []  # the task of each held-out row, for the per-task breakdown
     n_refused = n_invalid = n_pinned = 0
     specs: dict[str, tasks.Task] = {}
     i = 0  # index among the scored rows: even calibrates, odd measures
@@ -89,22 +122,38 @@ def cascade_eval(
         else:
             sc = score(task, got)
             point = (sc.confidence, task.agree(sc.answer.text, ref))
-        (calib if i % 2 == 0 else test).append(point)
+        if i % 2 == 0:
+            calib.append(point)
+        else:
+            test.append(point)
+            test_tasks.append(task.name)
         i += 1
-    thr = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib, target_precision)))
+    trace = None
+    if calibration == "ltt":
+        lam, trace = ltt_fixed_sequence(calib, CERT_GRID, cert_target, cert_delta)
+    else:
+        lam = calibrate_threshold(calib, target_precision)
+    thr = min(SERVE_NOTHING, max(floor, lam))
     served = [ok for c, ok in test if c >= thr]
     allpts = calib + test
     extra = {"excluded_pinned": n_pinned} if n_pinned else {}
     return {
         "golden_n": len(allpts),
         "golden_agreement": sum(ok for _, ok in allpts) / len(allpts) if allpts else 0.0,
-        "threshold": round(thr, 4),
+        # Exactly the threshold measured below: the router serves at it (`Ratchet.threshold`). Rounded to 4 decimals, as
+        # before v0.5, it could round up past the confidence it was calibrated at, so the version served less than its
+        # eval measured (nothing at all when every row has one confidence).
+        "threshold": thr,
         "coverage": len(served) / len(test) if test else 0.0,
         "precision": sum(served) / len(served) if served else 0.0,
         "test_n": len(test),
         "refused_n": n_refused,
         "golden_invalid_refs": n_invalid,
         **extra,
+        "certificate": certificate.certificate(test, thr, cert_target, cert_delta, calibration, trace),
+        "frontier": certificate.frontier(test, cert_delta),
+        "per_task": certificate.per_task(test, test_tasks, thr, cert_delta),
+        "test_vector": certificate.outcome_vector(test, thr),
     }
 
 
@@ -120,6 +169,9 @@ class LiveEvaluator:
         samples: int = 3,
         target_precision: float = 0.97,
         policy: GenPolicy | None = None,
+        calibration: str = "point",
+        cert_target: float = 0.95,
+        cert_delta: float = 0.05,
     ):
         self.student = student
         self.judge = judge
@@ -127,6 +179,8 @@ class LiveEvaluator:
         self.samples = samples
         self.target_precision = target_precision
         self.policy = policy or GenPolicy()
+        # Certified precision (ADR 0026): `Settings.cert_policy()` in live mode.
+        self.calibration, self.cert_target, self.cert_delta = calibration, cert_target, cert_delta
 
     def judge_score(self, request: list[dict[str, Any]], reference: str, candidate: str) -> int:
         assert self.judge is not None
@@ -146,7 +200,15 @@ class LiveEvaluator:
             gen = self.policy.student(GenParams.from_stored(params))
             return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
-        res = cascade_eval(sample, golden_rows, self.samples, self.target_precision)
+        res = cascade_eval(
+            sample,
+            golden_rows,
+            self.samples,
+            self.target_precision,
+            calibration=self.calibration,
+            cert_target=self.cert_target,
+            cert_delta=self.cert_delta,
+        )
         free_text = [r for r in golden_rows if not tasks.get(r["task"]).fields and not tasks.get(r["task"]).pinned]
         if self.judge and free_text:
             ok = 0
