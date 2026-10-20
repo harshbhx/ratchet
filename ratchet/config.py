@@ -75,6 +75,9 @@ def _bool(name: str) -> bool | None:
 MAX_INTERVAL_S = 3600.0
 # RATCHET_DB_SYNC values (`ledger.SYNC_MODES` repeats them; config imports nothing from the ledger).
 SYNC_MODES = ("NORMAL", "FULL")
+# RATCHET_LOG_FORMAT and RATCHET_LOG_LEVEL values (`obs.LOG_FORMATS` and `obs.LOG_LEVELS` repeat them).
+LOG_FORMATS = ("json", "text")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
 
 def _seconds(env: str, value: object, default: float) -> float:
@@ -397,6 +400,13 @@ class Settings:
     tick_interval_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_TICK_INTERVAL_S"))
     stats_ttl_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_STATS_TTL_S"))
 
+    # Observability (ADR 0062). Log lines on stderr as JSON objects or key=value text, at a level (unset: text and WARNING
+    # in mock mode, so tests and the demo stay quiet; JSON and INFO in live mode, one line per chat request). A bearer
+    # token a Prometheus scraper may send to GET /metrics besides the admin and dashboard keys (empty: none).
+    log_format: str = field(default_factory=lambda: _env("RATCHET_LOG_FORMAT", ""))
+    log_level: str = field(default_factory=lambda: _env("RATCHET_LOG_LEVEL", ""))
+    metrics_token: str = field(default_factory=lambda: _env("RATCHET_METRICS_TOKEN", ""))
+
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
     mock_warmup_days: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_DAYS", "0")))
@@ -527,6 +537,23 @@ class Settings:
         """RATCHET_STATS_TTL_S: how long /ratchet/stats serves one computed payload (unset: 2 s in live mode, 0 in mock
         mode, a fresh payload per read)."""
         return _seconds("RATCHET_STATS_TTL_S", self.stats_ttl_s, 0.0 if self.mode == "mock" else 2.0)
+
+    def log_settings(self) -> tuple[str, str]:
+        """(RATCHET_LOG_FORMAT, RATCHET_LOG_LEVEL), checked: `json` or `text` and DEBUG, INFO, WARNING or ERROR, in any
+        case; unset (or set but empty) means text and WARNING in mock mode, json and INFO in live mode. Anything else raises
+        ValueError naming the variable, so a typo stops startup instead of silencing the logs."""
+        mock = self.mode == "mock"
+        fmt = self.log_format.strip().lower() if isinstance(self.log_format, str) else None
+        level = self.log_level.strip().upper() if isinstance(self.log_level, str) else None
+        if fmt == "":
+            fmt = "text" if mock else "json"
+        if level == "":
+            level = "WARNING" if mock else "INFO"
+        if fmt not in LOG_FORMATS:
+            raise ValueError(f"RATCHET_LOG_FORMAT must be {' or '.join(LOG_FORMATS)}, not {self.log_format!r}")
+        if level not in LOG_LEVELS:
+            raise ValueError(f"RATCHET_LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, not {self.log_level!r}")
+        return fmt, level
 
     def access(self) -> Access:
         """The access switches, checked and resolved by mode (ADR 0061): unset means public dashboard and /docs in mock

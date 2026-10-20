@@ -95,7 +95,7 @@ Read in `ratchet/config.py`; used by `ratchet/router.py`, `ratchet/auth.py`, `ra
 
 The switches above take `0` or `1`; any other value stops startup, and unset or empty takes the default. Every response also carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` ([ADR 0061](adr/0061-endpoint-access-levels.md)).
 
-Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS`, `RATCHET_DASHBOARD_KEYS` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
+Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS`, `RATCHET_DASHBOARD_KEYS`, `RATCHET_METRICS_TOKEN` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
 
 ## Scout, the multi-agent demo
 
@@ -202,6 +202,18 @@ How the ledger file is written and how often the request path does periodic work
 | `RATCHET_DB_SYNC` | `NORMAL` | How a ledger file is journaled, `NORMAL` or `FULL` (any case; empty means `NORMAL`). `NORMAL`: the WAL journal with `synchronous=NORMAL`. Readers never wait for the writer, the dashboard reads on a second, read-only connection, and a commit does not wait for the disk: a power cut or an operating-system crash (not a crash of the gateway process) can lose the last commits, never corrupt the file. `FULL`: the rollback journal with `synchronous=FULL`, v0.4's behaviour, for a ledger on a filesystem without shared memory (a network or bucket mount, where WAL does not work) or when every commit must reach the disk before the client gets its answer. Give the gateway, the cron jobs and the cost CLI the same value: `FULL` cannot take a file out of WAL while another process has it open, and stops startup instead. Mock mode's in-memory ledger has no journal to set (a bad value still stops startup) |
 | `RATCHET_TICK_INTERVAL_S` | unset: `5` in live mode, `0` in mock mode | Seconds between two release-gate ticks run from the request path (0 to 3600). A tick less than this after the previous one, or while another thread is ticking, is skipped, so requests pay for a tick at most once per interval and never wait for one. A rollback can wait this long; the cron `python -m ratchet.live tick` runs regardless. `0` ticks after every request (mock mode, so simulations and tests behave as before); the mock demo's simulated days always tick |
 | `RATCHET_STATS_TTL_S` | unset: `2` in live mode, `0` in mock mode | Seconds `/ratchet/stats` serves one computed payload (0 to 3600). However many dashboards poll, it is computed at most once per TTL, by one caller at a time; the others get the previous payload. `0` computes it on every read |
+
+## Observability
+
+Logs, metrics and request ids ([ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md), [API.md](API.md#request-ids), [RUNBOOK.md](RUNBOOK.md#failures-and-request-ids)). Read in `ratchet/config.py`; used by `ratchet/obs.py` and `ratchet/gateway.py`. A bad value stops startup with a `ValueError` naming the variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_LOG_FORMAT` | unset: `text` in mock mode, `json` in live mode | How the `ratchet` logger writes to stderr: `json` (one object per line: `ts`, `level`, `logger`, `event`, then the fields) or `text` (`<ts> <LEVEL> <event> key=value ...`), any case. Lines carry ids, names, numbers and statuses, never prompt or answer text, URLs or keys |
+| `RATCHET_LOG_LEVEL` | unset: `WARNING` in mock mode, `INFO` in live mode | `DEBUG`, `INFO`, `WARNING` or `ERROR`, any case. `INFO` writes one `chat` line per chat request (request id, client request id, trace id, client name, task, served_by, route, version, confidence, escalated, audited, latency_ms, wall_ms, cost_usd, status) and every release-log event (`ledger_event`, scrubbed of URLs and error messages); `WARNING` keeps the `upstream_error` lines (role, exception class, status), so mock mode and the tests stay quiet |
+| `RATCHET_METRICS_TOKEN` | empty | A bearer token that reads `GET /metrics` (and nothing else), for a Prometheus scraper, besides the admin and dashboard keys. At least 16 characters; it may not also be an API, admin or dashboard key (startup error). Compared as a constant-time digest, never stored or logged. Empty: only admin and dashboard keys read a private `/metrics`. A public dashboard (`RATCHET_PUBLIC_DASHBOARD=1`) makes `/metrics` public too |
+
+Keep `RATCHET_METRICS_TOKEN` out of git, like the keys.
 
 ## Release policy (`ratchet/release.py`)
 

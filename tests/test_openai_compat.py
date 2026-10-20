@@ -81,7 +81,8 @@ def _nest(depth: int) -> dict[str, Any]:
 
 def _error(resp: Any) -> dict[str, Any]:
     body = resp.json()
-    assert set(body) == {"error", "detail"}, body
+    assert set(body) == {"error", "detail", "request_id"}, body
+    assert body["request_id"] == resp.headers["x-request-id"]  # the request's id beside OpenAI's error (ADR 0062)
     assert set(body["error"]) == {"message", "type", "param", "code"}
     assert body["detail"] == body["error"]["message"]  # kept for one release, for {"detail"} clients
     return body["error"]

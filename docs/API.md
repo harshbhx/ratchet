@@ -9,7 +9,7 @@ RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app --port 8000
 
 FastAPI also serves interactive docs at `/docs` and the schema at `/openapi.json`, in mock mode by default and in live mode only with `RATCHET_OPENAPI=1`.
 
-Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed exceptions with `code` and `param` ([Errors](#errors)); every other route answers errors as `{"detail": ...}`. Every `POST`, `PUT` and `PATCH` body is limited to `RATCHET_MAX_BODY_BYTES` (2 MiB by default; larger is **413**).
+Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed exceptions with `code` and `param` ([Errors](#errors)); every other route answers errors as `{"detail": ...}`. Every `POST`, `PUT` and `PATCH` body is limited to `RATCHET_MAX_BODY_BYTES` (2 MiB by default; larger is **413**). Every response, errors included, carries `x-request-id` (the request's id, `req_` and 32 hex digits) and `openai-processing-ms` ([Request ids](#request-ids)).
 
 | Method | Path | Mode | Access | Purpose |
 |---|---|---|---|---|
@@ -22,7 +22,10 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/healthz` | both | [public](#access-levels) | Liveness check; always public |
 | GET | `/v1/models` | both | [api](#access-levels) | OpenAI-style model list (API key when keys are on) |
 | POST | `/v1/chat/completions` | both | [api](#access-levels) | The cascade; `stream: true` supported (API key when keys are on) |
+| GET | `/v1/ratchet/requests/{request_id}` | both | [api](#access-levels) | One request this API key sent, by its id: metadata and failures, never text ([Request ids](#request-ids)) |
 | GET | `/ratchet/stats` | both | [dashboard](#access-levels) | Everything the dashboard shows |
+| GET | `/ratchet/requests/{request_id}` | both | [dashboard](#access-levels) | Any request by its id: metadata and failures, never text ([Request ids](#request-ids)) |
+| GET | `/metrics` | both | [metrics](#access-levels) | Prometheus metrics, text format 0.0.4 ([Metrics](#get-metrics)) |
 | GET | `/ratchet/bom` | both | [bom](#access-levels) | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | [bom](#access-levels) | One adapter's bill of materials, written at training time, signed when a key is set |
 | GET | `/ratchet/bom/public-key` | both | [public](#access-levels) | Ed25519 public key that verifies adapter BOMs |
@@ -72,12 +75,13 @@ Every route has one access level (the Access column above; `ratchet/access.py`, 
 | `api` | With `RATCHET_API_KEYS` set: an API key. Without: anyone (mock mode, or live mode with `RATCHET_ALLOW_UNAUTHENTICATED=1`) | **401** `invalid_api_key` in OpenAI's envelope |
 | `dashboard` | With `RATCHET_PUBLIC_DASHBOARD=1` (the default in mock mode): anyone. Else (the default in live mode): an admin or dashboard key | **401** `invalid or missing dashboard key` (`WWW-Authenticate: Bearer`); **403** for an API key; **403** `the dashboard API is private: ...` when neither `RATCHET_ADMIN_KEYS` nor `RATCHET_DASHBOARD_KEYS` is set |
 | `bom` | As `dashboard`, and anyone with `RATCHET_PUBLIC_BOM=1`, so auditors can read provenance from a private gateway | As `dashboard` |
+| `metrics` | As `dashboard`, and a scraper that sends `RATCHET_METRICS_TOKEN` as its bearer token | As `dashboard`; the 403 for a private dashboard needs `RATCHET_METRICS_TOKEN` unset too |
 | `admin` | An admin key. Without `RATCHET_ADMIN_KEYS`: nobody in live mode, anyone in mock mode (as `mock-admin`) | **401** `invalid or missing admin key`; **403** for an API key or a dashboard key; **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys |
 | `mock` | Anyone, in mock mode only (invariant 8) | **403** `demo controls are only available in mock mode` in live mode |
 
-On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public), `/metrics` and `/ratchet/kpis` (dashboard).
+On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public) and `/ratchet/kpis` (dashboard).
 
-**Scrubbed reads.** A dashboard shown to anyone should not show who your clients are or where your endpoints live. By default an anonymous read of a public dashboard in live mode is scrubbed (`RATCHET_SCRUB_STATS=1` scrubs every read, `0` none): in `/ratchet/stats` client names become `client-1`, `client-2`, ... (stable, by sorted name; the same pseudonyms replace the names in task allow-lists from `GET /ratchet/tasks`), every `http(s)://` URL in an event detail becomes `<url>`, and an error message after an exception's class is cut (`ConnectError: [Errno 111] ...` becomes `ConnectError`). `security.scrubbed` says whether a payload was scrubbed. A reader who sends an admin or dashboard key gets the full payload. Only names and pseudonyms ever appear, never keys (invariant 13).
+**Scrubbed reads.** A dashboard shown to anyone should not show who your clients are or where your endpoints live. By default an anonymous read of a public dashboard in live mode is scrubbed (`RATCHET_SCRUB_STATS=1` scrubs every read, `0` none): in `/ratchet/stats` client names become `client-1`, `client-2`, ... (stable, by sorted name; the same pseudonyms replace the names in task allow-lists from `GET /ratchet/tasks`, in a request lookup and in the `client` labels of `/metrics`), every `http(s)://` URL in an event detail becomes `<url>`, and an error message after an exception's class is cut (`ConnectError: [Errno 111] ...` becomes `ConnectError`). `security.scrubbed` says whether a payload was scrubbed. A reader who sends an admin or dashboard key gets the full payload. Only names and pseudonyms ever appear, never keys (invariant 13).
 
 **Security headers.** Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and the `Content-Security-Policy` in `RATCHET_CSP` when it is set (none by default, so the pages never break; [CONFIGURATION.md](CONFIGURATION.md#privacy-and-security) has a recommended value).
 
@@ -190,7 +194,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 
 ```json
 {
-  "id": "chatcmpl-3f1c0a9b8e7d6c5b4a3f2e1d",
+  "id": "chatcmpl-3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
   "object": "chat.completion",
   "created": 1792400000,
   "model": "student-v5",
@@ -223,7 +227,8 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
       "served": {"in": 104, "out": 31},
       "audit": null, "shadow": null, "arbitration": null
     },
-    "degraded": null
+    "degraded": null,
+    "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79"
   }
 }
 ```
@@ -238,6 +243,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `all_teacher_cost_usd` | Estimated cost if the teacher had answered alone |
 | `latency_ms` | Student latency plus teacher latency when the teacher answered |
 | `degraded` | `null`, or `"teacher_unavailable"` when the teacher (and the fallback teacher, if set) could not answer an escalated request and, with `RATCHET_ON_TEACHER_FAILURE=serve_student`, the student's own answer was served although it was below the version's threshold ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)). Such an answer is never stored, audited or shadowed; `served_by` is `student` and `escalated` is `true` |
+| `request_id` | The request's id, as in `x-request-id`; `id` is `chatcmpl-` and the same 32 hex digits ([Request ids](#request-ids)) |
 | `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call; every choice, for `n` > 1), `audit`, `shadow` (the candidate's samples) and `arbitration` ([Usage](#usage)) |
 
 `model` is the model that produced the served answer: the adapter name (`student-vN`), the teacher model ID, or the fallback teacher's (`RATCHET_TEACHER_FALLBACK_MODEL`) when it answered for an unavailable teacher.
@@ -248,7 +254,15 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 
 `finish_reason` is the served answer's: `stop`, `length` (cut off by `max_tokens` or a cap, or over the client's `max_tokens` with the reasoning headroom) or `content_filter`; any other value an upstream model reports is returned as `stop`. It is never `tool_calls`, because `message.tool_calls` is not returned yet ([Generation parameters](#generation-parameters)). A student answer is always one that ended by itself.
 
-Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
+Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set, and on every response `x-request-id` and `openai-processing-ms` ([Request ids](#request-ids)).
+
+#### Request ids
+
+Every request gets an id from the gateway, `req_` and 32 hex digits (a UUID4), returned as `x-request-id` on every response, errors and streams included, beside `openai-processing-ms` (the gateway's time until the response started, in whole ms), the two headers OpenAI's API sends. OpenAI's SDKs read the header as `response._request_id` and `error.request_id`. The same id is `ratchet.request_id`, `request_id` in every error envelope on `/v1/*`, the ledger's `requests.request_id` and `failures.request_id`, and the request's log line; the completion's `id` is `chatcmpl-` and the same digits. Look a request up with `GET /v1/ratchet/requests/{id}` (an API client, its own requests) or `GET /ratchet/requests/{id}` (the dashboard API); either takes the `req_` id or the `chatcmpl-` id.
+
+Your own id: send `X-Request-Id` (or `X-Client-Request-Id`, which OpenAI's API also takes) with 1 to 128 letters, digits, `.`, `_` or `-`, and it is stored as the request's `client_request_id` and logged beside the gateway's id. Any other value is ignored, never an error. The gateway's id is always its own; yours never replaces it.
+
+Tracing: a valid W3C `traceparent` (version `00`, lower-case hex, no all-zero ids) is accepted, its trace id is logged with the request, and every call to the teacher and the student (each HTTP attempt) carries it with a new span id and the same flags, with `tracestate` passed on when it is printable ASCII of at most 512 characters. A malformed `traceparent` is ignored. A request without one starts no trace ([ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md)).
 
 #### Usage
 
@@ -333,11 +347,12 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 {
   "error": {"message": "Invalid value for 'temperature': expected a number from 0 to 2, but got 3 instead.",
             "type": "invalid_request_error", "param": "temperature", "code": "invalid_value"},
-  "detail": "Invalid value for 'temperature': expected a number from 0 to 2, but got 3 instead."
+  "detail": "Invalid value for 'temperature': expected a number from 0 to 2, but got 3 instead.",
+  "request_id": "req_0b6f3a7c2d1e4f5a8b9c0d1e2f3a4b5c"
 }
 ```
 
-`detail` repeats `error.message` for one release (v0.5), for clients written against earlier versions, then goes away: read `error`. Routes outside `/v1` (`/ratchet/*`, Scout, pages) keep FastAPI's `{"detail": ...}`.
+`detail` repeats `error.message` for one release (v0.5), for clients written against earlier versions, then goes away: read `error`. `request_id` (since v0.5) is the request's id, also in the `x-request-id` header; `error` keeps exactly OpenAI's four fields. Routes outside `/v1` (`/ratchet/*`, Scout, pages) keep FastAPI's `{"detail": ...}`, with the id in `x-request-id`.
 
 | Status | `type` | `code` | When | Retried by OpenAI SDKs? |
 |---|---|---|---|---|
@@ -465,7 +480,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   ],
   "events": [{"id": 57, "ts": 1792400000.0, "day": 9, "kind": "live", "detail": "v5 promoted to 100% (audited precision 94.1%, n=17)"}],
   "totals": {"requests": 13500, "cost_usd": 5.21, "baseline_usd": 14.58, "saved_usd": 9.37, "savings_pct": 0.64,
-             "cost_model": "per_token"},
+             "failed_cost_usd": 0.0, "cost_model": "per_token"},
   "bill_of_materials": {"generated_at": 1792400000.0, "examples_sha256": "07ac2c…", "sources": [ … ]},
   "clients": [
     {"client": "acme", "requests": 40, "student_share": 0.95, "cost_usd": 0.0044, "baseline_usd": 0.044, "savings_pct": 0.9}
@@ -473,7 +488,8 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   "privacy": {"redaction": true, "examples": 2742, "redacted_examples": 12, "placeholders": 19},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
-           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"}
+           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
+  "errors": {"last_hour": {"student": 3, "auth": 1}}
 }
 ```
 
@@ -501,11 +517,81 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)).
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
+- `totals.failed_cost_usd` (v0.5): what requests that failed spent without leaving a request row, such as the student's samples of an escalation whose teacher call then failed (NFR-3). It counts against the savings: `saved_usd = baseline_usd − cost_usd − failed_cost_usd` and `savings_pct = 1 − (cost_usd + failed_cost_usd) / baseline_usd`. Without failures both are what they were before. `days`, `tasks` and `clients` leave it out.
+- `errors.last_hour` (v0.5): the failures of the last hour by stage (`failures.stage`: `teacher`, `student`, `audit`, `shadow`, `quota`, `auth`, `budget`, `rate`, `upstream`, `gateway`), busiest first; `{}` when nothing failed. A failed student call the teacher covered counts here too, although the client got its answer. [RUNBOOK.md](RUNBOOK.md#failures-and-request-ids) explains each stage.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
 
 Freshness: in live mode the payload is computed at most once every `RATCHET_STATS_TTL_S` seconds (default 2) by one request at a time, and every other read in between gets that payload; in mock mode (default 0) every read computes it. On a ledger file it is read from a read-only connection, so a dashboard never waits for requests nor slows them ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)).
+
+## Request lookups
+
+What the ledger knows about one request, by the id the gateway gave it ([Request ids](#request-ids)): its `requests` row (metadata only; the table holds no prompt or answer text) and its `failures` rows. Either id form works: `req_<32 hex>` or the completion's `chatcmpl-<32 hex>`.
+
+```json
+{
+  "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
+  "request": {"id": 1204, "ts": 1792400000.1, "day": 9, "task": "ticket-triage", "served_by": "teacher",
+              "student_version": 5, "confidence": 0.41, "escalated": 1, "audited": 0, "route": "confidence",
+              "latency_ms": 2711.0, "wall_ms": 2713.2, "cost_usd": 0.00133, "baseline_cost_usd": 0.00131,
+              "client": "acme", "client_request_id": "order-77-retry-1", "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
+              "...": "every other column of the requests table"},
+  "failures": [{"id": 88, "ts": 1792400000.1, "day": 9, "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
+                "client": "acme", "task": "ticket-triage", "stage": "student", "error": "UpstreamError 504 upstream_timeout",
+                "status": 504, "latency_ms": 15002.4, "cost_usd": 0.0}]
+}
+```
+
+`request` is `null` for a request that failed before the cascade logged it (a teacher error after the student's samples, a quota 429, an unhandled error); then its `failures` row says where it failed, what it spent (`cost_usd`) and the status (`status`: the status of the stage that failed; for an upstream stage the upstream's, such as 504 for a timeout or 503 for an open breaker). `failures` also lists the optional calls that failed around an answered request: a student call the teacher covered, a failed audit, shadow sample or arbitration. `error` is the exception's class, status and code (`UpstreamError 502 upstream_unreachable`, `APIError 429 daily_quota_exceeded`), never a message. A request that is not found, and an id that is not one of the two forms, is a 404.
+
+### GET `/ratchet/requests/{request_id}`
+
+Access level `dashboard`: any request, whoever sent it. A scrubbed read ([Access levels](#access-levels)) gets the `client` names as pseudonyms. 404 `{"detail": "no request has this id"}` when there is nothing to show.
+
+### GET `/v1/ratchet/requests/{request_id}`
+
+Access level `api`: the caller's own requests only. With `RATCHET_API_KEYS` set, `request` and `failures` keep only what this key sent, and an id another key sent is a 404 `not_found_error` with code `request_not_found`, the same answer as for an id that never existed, so a key learns nothing about other clients. With keys off, it finds the requests sent without a key.
+
+```python
+import httpx
+
+r = httpx.get(f"{BASE}/v1/ratchet/requests/{completion.id}", headers={"Authorization": f"Bearer {KEY}"})
+print(r.json()["request"]["route"])  # student, confidence, cold_start, ...
+```
+
+## GET `/metrics`
+
+Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plain; version=0.0.4; charset=utf-8`), from `ratchet/metrics.py` ([ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md)). Access level `metrics`: an admin or dashboard key, or `RATCHET_METRICS_TOKEN` as the bearer token (Prometheus' `authorization: {credentials: ...}` or `bearer_token`), or anyone when the dashboard is public (an anonymous scrape of a public live dashboard gets client pseudonyms in the `client` labels).
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `ratchet_requests_total` | counter | `task`, `served_by`, `route`, `status` | Requests. The cascade counts each answered one with `status="200"` (chat requests, and Scout's agents, which call it in-process); the gateway counts each chat request that ended in an error, with `served_by="none"`, `route="none"` and its status |
+| `ratchet_request_seconds` | histogram | `served_by` | Wall-clock time per request (`requests.wall_ms` for answered ones; `none`: until the error) |
+| `ratchet_upstream_requests_total` | counter | `upstream`, `outcome` | Model calls: `upstream` is `teacher`, `fallback_teacher`, `student`, `shadow`, `audit` or `arbitration`; `outcome` is `ok`, `error`, `timeout` or `circuit_open` (refused by the breaker, no call made) |
+| `ratchet_upstream_seconds` | histogram | `upstream` | Time per model call made, the provider's retries included |
+| `ratchet_cost_usd_total` | counter | `client` | US dollars spent, failed requests' spend included (per-token prices; simulated in mock mode) |
+| `ratchet_failed_cost_usd_total` | counter | `client` | What requests that failed without an answer spent (the student's samples before a teacher failure); also in `ratchet_cost_usd_total` and in `/ratchet/stats`' `totals.failed_cost_usd` |
+| `ratchet_baseline_usd_total` | counter | `client` | What the answered requests would have cost with the teacher alone |
+| `ratchet_escalations_total` | counter | `task` | Requests the student tried and the teacher answered |
+| `ratchet_audits_total` | counter | `result` | Teacher audits of served student answers: `agree`, `disagree`, `invalid` (the teacher's answer measured nothing), `error`, `circuit_open` |
+| `ratchet_examples_stored_total` | counter | `task`, `split` | New training examples (`train` or `golden`); a duplicate's `seen` bumped is not one |
+| `ratchet_failures_total` | counter | `stage` | Failures by stage (`failures.stage`), every one: the table samples breaker refusals 1 in 10 and throttles the gateway's rows, this counter does not |
+| `ratchet_rejections_total` | counter | `reason` | Chat requests refused before the cascade: `auth`, `invalid_request`, `unknown_task`, `task_not_allowed`, `quota`, `too_large`, `disconnected`, `forbidden`, `other` |
+| `ratchet_circuit_open` | gauge | `breaker` | 1 while a breaker (`student`, `shadow`, `teacher`, `fallback_teacher`, ...) is open or half-open, else 0 |
+| `ratchet_version_traffic_pct` | gauge | `version`, `state` | Traffic share of the live, canary and shadow versions (`v5`, `live`, 100) |
+| `ratchet_spend_today_usd` | gauge | `client` | US dollars spent since 00:00 UTC, failed requests included |
+| `ratchet_info` | gauge | `version`, `mode` | Always 1 |
+
+Label values stay a small set: `task` is a registered task's name, `other` for a name the registry does not hold, or `none` before a request named one; `client` is a `RATCHET_API_KEYS` name, `none` (no key: an open gateway, Scout) or `other`. Counters count from the start of the process (a demo reset keeps them); use `rate()` or `increase()`. Validation 400s are counted here (`ratchet_requests_total{status="400"}`, `ratchet_rejections_total`) and nowhere else. Alert examples are in [RUNBOOK.md](RUNBOOK.md#alerts).
+
+```yaml
+scrape_configs:
+  - job_name: ratchet
+    metrics_path: /metrics
+    authorization: {credentials_file: /etc/prometheus/ratchet_token}   # RATCHET_METRICS_TOKEN
+    static_configs: [{targets: ["ratchet:8000"]}]
+```
 
 ## GET `/ratchet/bom`
 

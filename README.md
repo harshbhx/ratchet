@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 739 tests
+pytest -q                                                                # 764 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -149,6 +149,7 @@ Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md))
 - **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, and cost and savings per client: the basis for per-customer receipts.
 - **Private by default in live mode**: every route has an access level; the dashboard API needs an admin or read-only dashboard key unless you make it public, and then anonymous readers see client pseudonyms, not names. Live mode does not start without API keys, `/docs` is off, and every response carries `nosniff` and `no-referrer` ([ADR 0061](docs/adr/0061-endpoint-access-levels.md)).
 - **Streaming** (`stream: true`) in the OpenAI chunk format, so streaming clients work unchanged.
+- **Request ids, failures, logs and metrics** ([ADR 0062](docs/adr/0062-request-ids-failures-logs-and-metrics.md)): every response carries `x-request-id`, which also names the request's ledger row, its log line and its failures; failed requests are recorded with what they spent; live mode logs one JSON line per request with no prompt or answer text, and `/metrics` serves Prometheus metrics.
 - **Signed bill of materials per adapter** ([ADR 0010](docs/adr/0010-signed-adapter-bom.md)): teachers, licenses, dataset and golden-set hashes and the evaluation, written at training time.
 
 ```bash

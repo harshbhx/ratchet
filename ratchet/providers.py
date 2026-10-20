@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from .obs import upstream_headers
 from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_upstream, retry_call
 
 __all__ = [
@@ -459,7 +460,8 @@ class OpenAICompatProvider:
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         """One chat completion, `n` choices. `params` (a `GenParams`) adds the request's other fields; the explicit
-        arguments win: `logprobs=False` also drops `top_logprobs`, and a `response_format` replaces the params' one."""
+        arguments win: `logprobs=False` also drops `top_logprobs`, and a `response_format` replaces the params' one. Inside
+        a request that came with a W3C `traceparent`, each attempt forwards it with a new span id (`obs.upstream_headers`)."""
         body: dict[str, Any] = params.to_body(self.allow) if params is not None else {}
         body.update(model=model, messages=messages, n=n, temperature=temperature)
         if logprobs:
@@ -472,7 +474,8 @@ class OpenAICompatProvider:
         url = f"{self.base_url}/chat/completions"
 
         def attempt(remaining: float) -> httpx.Response:
-            resp = self.client.post(url, json=body, timeout=self._within(remaining))
+            # The request's W3C trace context with a new span id per attempt (ADR 0062); nothing outside a traced request.
+            resp = self.client.post(url, json=body, timeout=self._within(remaining), headers=upstream_headers() or None)
             if not resp.is_success:
                 raise UpstreamError.from_response(resp)
             return resp

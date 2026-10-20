@@ -79,8 +79,10 @@ def _routes(app: Any) -> list[tuple[str, str]]:
     return sorted((m, r.path) for r in app.routes if isinstance(r, APIRoute) for m in r.methods)
 
 
-def _call(c: TestClient, method: str, template: str, headers: dict[str, str] | None = None) -> Any:
-    path = template.replace("{vid}", "1").replace("{name}", "ticket-triage")
+def _call(
+    c: TestClient, method: str, template: str, headers: dict[str, str] | None = None, request_id: str = "req_" + "0" * 32
+) -> Any:
+    path = template.replace("{vid}", "1").replace("{name}", "ticket-triage").replace("{request_id}", request_id)
     body = {"text": "mail jane@example.com"} if method == "POST" else None
     return c.request(method, path, json=body, headers=headers or {})
 
@@ -110,7 +112,8 @@ def test_every_route_has_an_access_level(gw):
     assert access.route_access("GET", "/ratchet/versions/{vid}/commitment") == access.DASHBOARD
     assert access.route_access("POST", "/v1/ratchet/no-train") == access.API
     assert access.route_access("GET", "/livez") == access.route_access("GET", "/readyz") == access.PUBLIC
-    assert access.route_access("GET", "/metrics") == access.route_access("GET", "/ratchet/kpis") == access.DASHBOARD
+    assert access.route_access("GET", "/ratchet/kpis") == access.DASHBOARD
+    assert access.route_access("GET", "/metrics") == access.METRICS  # a dashboard read that also takes the metrics token
     assert access.route_access("GET", "/ratchet/new-thing") is None
 
 
@@ -121,10 +124,13 @@ def test_private_live_dashboard_needs_an_admin_or_dashboard_key(gw_env, tmp_path
     vid = _version(rt.ledger, "live", {"threshold": 0.5})
     rt.ledger.set_bom(vid, {"schema": "ratchet.bom/v1", "adapter": "student-v1"})
     c = TestClient(gw.app)
-    assert c.post(CHAT, json={"messages": [{"role": "user", "content": "hi"}]}, headers=ACME).status_code == 200
+    answered = c.post(CHAT, json={"messages": [{"role": "user", "content": "hi"}]}, headers=ACME)
+    assert answered.status_code == 200
+    rid = answered.headers["x-request-id"]  # so the request lookup has a request to find (ADR 0062)
 
     readers = [r for r in _routes(gw.app) if access.route_access(*r) in access.READER_LEVELS]
     assert ("GET", "/ratchet/stats") in readers and ("GET", "/ratchet/versions/{vid}/bom") in readers
+    assert ("GET", "/metrics") in readers and ("GET", "/ratchet/requests/{request_id}") in readers
     for method, path in readers:
         r = _call(c, method, path)
         assert (r.status_code, r.headers.get("www-authenticate")) == (401, "Bearer"), (method, path, r.text)
@@ -133,7 +139,7 @@ def test_private_live_dashboard_needs_an_admin_or_dashboard_key(gw_env, tmp_path
         r = _call(c, method, path, ACME)  # a client's API key reads nothing here
         assert r.status_code == 403 and "API key" in r.json()["detail"], (method, path)
         for key in (ADMIN, DASH, {"X-API-Key": ADMIN_KEY}, {"Authorization": f"Bearer {DASH_KEY}"}):
-            assert _call(c, method, path, key).status_code == 200, (method, path, key)
+            assert _call(c, method, path, key, request_id=rid).status_code == 200, (method, path, key)
 
     # Always public: health, the BOM public key, the pages and Scout.
     for path in ("/healthz", "/ratchet/bom/public-key", "/", "/dashboard", "/scout", "/lite", "/scout/examples"):

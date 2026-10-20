@@ -1,4 +1,4 @@
-"""Gateway keys: API keys for `/v1/*` and admin keys for management writes.
+"""Gateway keys: API keys for `/v1/*`, admin keys for management writes, dashboard keys and the metrics token.
 
 API keys come from `RATCHET_API_KEYS` and admin keys from `RATCHET_ADMIN_KEYS`, both as `name:key,name:key`. The name is
 what the ledger records (per request, or as `updated_by` of a task an admin wrote), so cost and changes can be reported
@@ -66,6 +66,28 @@ class KeyRing:
         client change what the gateway does, so the gateway refuses that at startup."""
         theirs = {digest for digest, _ in other._keys}
         return [name for digest, name in self._keys if digest in theirs]
+
+
+class Token:
+    """One shared secret from `env` (RATCHET_METRICS_TOKEN: what a Prometheus scraper sends as its bearer token). Kept
+    as a SHA-256 digest and compared in constant time, like a key; never stored or logged. Empty: no token. A token
+    shorter than MIN_KEY_CHARS raises ValueError, so a weak one stops startup."""
+
+    def __init__(self, value: str = "", env: str = "RATCHET_METRICS_TOKEN"):
+        self.env = env
+        value = value.strip()
+        if value and len(value) < MIN_KEY_CHARS:
+            raise ValueError(f"{env} is shorter than {MIN_KEY_CHARS} characters")
+        self._digest = _digest(value) if value else None
+
+    @property
+    def enabled(self) -> bool:
+        return self._digest is not None
+
+    def matches(self, key: str | None) -> bool:
+        if not key or self._digest is None:
+            return False
+        return hmac.compare_digest(_digest(key), self._digest)
 
 
 def bearer(authorization: str | None, x_api_key: str | None = None) -> str | None:
