@@ -532,6 +532,16 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.router:Ratchet.health",
         "ratchet.ledger:Ledger.shadow_quality",
     ),
+    "FR-2.11": (
+        "ratchet.resilience:Breaker",
+        "ratchet.resilience:endpoint_down",
+        "ratchet.router:Ratchet._sample",
+        "ratchet.router:Ratchet._breaker",
+        "ratchet.live:AdapterReloader",
+        "ratchet.ledger:Ledger.stats_by_task",
+        "ratchet.gateway:demo_student_outage",
+        "sim.mock_models:MockFleet.student_outage",
+    ),
     # 6.3 Provenance and licensing
     "FR-3.1": ("ratchet.licenses:REGISTRY", "ratchet.licenses:require_distillable"),
     "FR-3.2": ("ratchet.licenses:CLOSED", "ratchet.licenses:require_distillable"),
@@ -606,7 +616,13 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
-    "NFR-2": ("ratchet.router:Ratchet.handle", "ratchet.resilience:retry_call", "ratchet.live:reload_adapters"),
+    "NFR-2": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.resilience:retry_call",
+        "ratchet.resilience:Breaker",
+        "ratchet.live:AdapterReloader",
+        "ratchet.live:reload_adapters",
+    ),
     "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night"),
     "NFR-4": ("ratchet.redact:redact_messages",),
     "NFR-5": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_quota"),

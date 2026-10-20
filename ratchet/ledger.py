@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS requests (
     shadow_version INTEGER, shadow_serve INTEGER, shadow_agree INTEGER,
     latency_ms REAL,
     cost_usd REAL, baseline_cost_usd REAL,
-    client TEXT                -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
+    client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
+    route TEXT                 -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | ...
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +78,7 @@ class Version:
 
 # Columns added after v0.1's first schema; existing database files are migrated on open.
 MIGRATIONS: dict[str, dict[str, str]] = {
-    "requests": {"shadow_serve": "INTEGER", "client": "TEXT"},
+    "requests": {"shadow_serve": "INTEGER", "client": "TEXT", "route": "TEXT"},
     "examples": {"seen": "INTEGER DEFAULT 1", "redactions": "INTEGER DEFAULT 0"},
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
 }
@@ -85,6 +86,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
 INDEXES = ["CREATE INDEX IF NOT EXISTS requests_client_ts ON requests (client, ts)"]
 
 DAY_SECONDS = 86400
+# The route reported for rows written before requests had a route column (v0.4 and earlier files).
+UNRECORDED_ROUTE = "unrecorded"
 
 
 def _locked(fn):
@@ -401,11 +404,19 @@ class Ledger:
 
     @_locked
     def stats_by_task(self) -> list[dict[str, Any]]:
+        """Per task: requests, student share, escalations, cost, savings, latency, and `routes`: how many requests took
+        each route (`unrecorded` for rows older than the route column), most frequent first."""
         rows = self.db.execute(
             """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms
                FROM requests GROUP BY task ORDER BY COUNT(*) DESC"""
         ).fetchall()
+        routes: dict[str, dict[str, int]] = {}
+        counted = self.db.execute("SELECT task, route, COUNT(*) n FROM requests GROUP BY task, route ORDER BY n DESC, route")
+        for r in counted:
+            per_task = routes.setdefault(r["task"], {})
+            key = r["route"] or UNRECORDED_ROUTE
+            per_task[key] = per_task.get(key, 0) + int(r["n"])
         out = []
         for r in rows:
             n = r["requests"] or 1
@@ -421,6 +432,7 @@ class Ledger:
                     "baseline_usd": base,
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                     "avg_latency_ms": r["latency_ms"],
+                    "routes": routes.get(r["task"], {}),
                 }
             )
         return out

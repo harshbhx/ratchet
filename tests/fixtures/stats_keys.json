@@ -38,7 +38,8 @@
       "cost_usd": "number",
       "baseline_usd": "number",
       "savings_pct": "number",
-      "avg_latency_ms": "number"
+      "avg_latency_ms": "number",
+      "routes": "object"
     },
     "versions[]": {
       "id": "number",

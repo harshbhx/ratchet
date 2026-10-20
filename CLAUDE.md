@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (364 tests, ~35 s, no network, no GPU)
+make test           # pytest -q (377 tests, ~35 s, no network, no GPU)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -113,6 +113,7 @@ Always run `make lint test` before committing.
 
 - Unreleased: requirements traceability. Every PRD row and invariant maps to code and tests in the generated [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), checked by `make lint` and CI; done requirements without a test are listed there as known gaps (none left).
 - Unreleased: the live entry points are tested offline (`tests/test_live.py`): `ratchet.live`, the gateway's live `Runtime`, `LiveEvaluator`, `train.py`'s arguments, the Scout and simulator CLIs, the mock warm-up, `RATCHET_TRUST_PROXY`, the day-1 check and the deploy scripts. The student's sampling is one constant, `confidence.STUDENT_SAMPLING`.
+- Unreleased: a student circuit breaker (FR-2.11): after 5 endpoint failures in a row requests skip the student for 30 s (doubling to 300 s per failed probe), with a separate shadow breaker and `circuit` events; vLLM's 404 for a lost adapter queues an automatic reload (once a minute per adapter); every request row records its `route`, reported per task in `/ratchet/stats`; mock-only `POST /ratchet/demo/student-outage` shows it ([ADR 0015](docs/adr/0015-student-circuit-breaker-and-adapter-reload.md)).
 - Unreleased: upstream resilience (FR-1.11): teacher calls retried within a deadline (full jitter, `Retry-After`, a read timeout once), the student on its own short timeouts and never retried, every failure an `UpstreamError`, and the gateway answering 400/429/502/504 by cause with `X-Should-Retry: false` where a retry cannot help; the daily quota's 429 is `insufficient_quota` ([ADR 0014](docs/adr/0014-upstream-failure-semantics.md)).
 - Unreleased: a teacher failure during an audit or a shadow arbitration no longer fails a request the student answered (INV-15, FR-2.10); failures are counted in `Ratchet.health()` and logged as throttled events, and an unarbitrated shadow disagreement counts against the candidate ([ADR 0013](docs/adr/0013-optional-teacher-calls-fail-open.md)).
 - Unreleased: strict `/v1/chat/completions` validation and normalisation (FR-1.10): client mistakes are 400s in OpenAI's error envelope, never 500s, and cost nothing; body, message and input limits; the developer role and text content parts work ([ADR 0012](docs/adr/0012-openai-request-validation-and-error-envelope.md)).

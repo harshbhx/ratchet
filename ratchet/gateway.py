@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__
+from . import __version__, live
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import Settings
@@ -84,14 +84,18 @@ class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
     `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ...}, each an
-    `httpx.BaseTransport` such as `httpx.MockTransport`), so live mode can run offline in tests, and `sleep` the
-    teacher's waits between retries. Mock mode has no HTTP providers and ignores both."""
+    `httpx.BaseTransport` such as `httpx.MockTransport`; the student's also carries adapter reloads), so live mode can
+    run offline in tests, and `sleep` the teacher's waits between retries; mock mode has no HTTP providers and ignores
+    both. `clock` times the student breakers, adapter reloads and demo outages (tests pass a fake one).
+
+    `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None."""
 
     def __init__(
         self,
         settings: Settings | None = None,
         transports: dict[str, httpx.BaseTransport] | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ):
         unknown = set(transports or {}) - set(TRANSPORT_KEYS)
         if unknown:
@@ -99,6 +103,7 @@ class Runtime:
         self.settings = settings or Settings()
         self.transports = dict(transports or {})
         self.sleep = sleep
+        self.clock = clock
         self.reset()
 
     def reset(self) -> None:
@@ -108,7 +113,8 @@ class Runtime:
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
-            self.fleet = MockFleet()
+            self.fleet = MockFleet(clock=self.clock)
+            self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
             teacher = MockTeacher(s.teacher_reasoning_tokens)
@@ -129,10 +135,15 @@ class Runtime:
                 transport=self.transports.get("teacher"),
                 sleep=self.sleep,
             )
+            self.reloader = None
             if s.student_base:
+                student_transport = self.transports.get("student")
                 student = OpenAICompatProvider(
-                    s.student_base, s.student_api_key, timeout=s.student_timeout(), transport=self.transports.get("student")
+                    s.student_base, s.student_api_key, timeout=s.student_timeout(), transport=student_transport
                 )
+                # vLLM forgets runtime-loaded adapters when it restarts; a 404 for one queues its reload (ADR 0015).
+                http = httpx.Client(transport=student_transport) if student_transport is not None else None
+                self.reloader = live.adapter_reloader(s, self.ledger, http, clock=self.clock)
 
                 def resolver(v: Version):
                     return student, v.adapter_uri  # vLLM serves each LoRA adapter under its own name
@@ -152,7 +163,8 @@ class Runtime:
         self.limits = Limits(max_messages=s.max_messages, max_input_chars=s.max_input_chars)
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
-        self.ratchet = Ratchet(s, self.ledger, teacher, resolver, seed=7)
+        reload = self.reloader.request if self.reloader is not None else None
+        self.ratchet = Ratchet(s, self.ledger, teacher, resolver, seed=7, clock=self.clock, on_adapter_missing=reload)
         self.gate = ReleaseGate(self.ledger, policy)
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
@@ -619,6 +631,7 @@ def version_bom(vid: int) -> dict[str, Any]:
 _demo_lock = threading.Lock()
 _last_reset = [0.0]
 RESET_COOLDOWN_S = 30.0
+OUTAGE_MIN_S, OUTAGE_MAX_S = 5, 300
 
 
 def _mock_only() -> None:
@@ -653,6 +666,17 @@ def demo_break_next() -> dict[str, Any]:
     rt.fleet.corrupt_on_deploy.add(nxt)
     rt.ledger.event("fault", f"{nxt} will be deployed corrupted (demo fault injection)")
     return {"corrupt": nxt}
+
+
+@app.post("/ratchet/demo/student-outage")
+def demo_student_outage(seconds: int = 60) -> dict[str, Any]:
+    """Fault injection: the student endpoint refuses connections for `seconds` (5 to 300), to show the circuit breaker
+    open, the teacher answer meanwhile, and a half-open probe close it again (`circuit` events)."""
+    _mock_only()
+    seconds = max(OUTAGE_MIN_S, min(seconds, OUTAGE_MAX_S))
+    rt.fleet.student_outage(seconds)
+    rt.ledger.event("fault", f"student endpoint down for {seconds} s (demo fault injection)")
+    return {"seconds": seconds, "until": time.time() + seconds}
 
 
 @app.post("/ratchet/demo/reset")
