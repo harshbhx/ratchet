@@ -702,6 +702,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "web/src/pages/landing/trust-model.ts",
         "ratchet.bom:verify",
     ),
+    "FR-7.40": (
+        "ratchet.gateway:Runtime.student_serving",
+        "ratchet.gateway:scout_status",
+        "web/src/lib/who-model.ts",
+        "web/src/components/ui/who.tsx",
+    ),
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),

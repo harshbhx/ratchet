@@ -2,10 +2,12 @@ import { ArrowLeft, ArrowRight, Pin, Sprout } from "lucide-react";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Eyebrow } from "@/components/ui/section";
-import { WhoBadge } from "@/components/ui/who";
+import { WhoBadge, useWho } from "@/components/ui/who";
 
 /** Why some calls move to the owned model and others never do. */
 export function Explainer() {
+  // The student that answers these calls now: our adapter, or the hosted fallback while the GPU endpoint is off.
+  const who = useWho();
   return (
     <section aria-labelledby="h-explain" className="pt-10 sm:pt-16">
       <Eyebrow>How Scout routes</Eyebrow>
@@ -46,8 +48,10 @@ export function Explainer() {
             becomes tomorrow's training data.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <WhoBadge servedBy="student" />
-            <span className="self-center text-[13px] text-muted">most of the time, once trained</span>
+            <WhoBadge servedBy="student" model={who.serving} />
+            <span className="self-center text-[13px] text-muted">
+              {who.hosted ? "now: our GPU endpoint is off, so the untuned hosted Nano answers" : "most of the time, once trained"}
+            </span>
           </div>
         </Card>
         <Card className="p-6 sm:p-7">

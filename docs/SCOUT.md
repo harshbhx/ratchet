@@ -33,7 +33,7 @@ It exists to show Ratchet on real agent traffic: the case NVIDIA Research estima
 | GET | `/scout/examples` | `{"mode": "mock"\|"live", "examples": [str, ...], "free_text": bool}`. `free_text` is false in mock mode |
 | GET | `/scout/stream?q=<question>` | Server-Sent Events, one JSON object per `data:` line (below) |
 | POST | `/scout/run` | Body `{"question": str}`. Returns `{"events": [ ...same objects... ]}` once the run finishes |
-| GET | `/scout/status` | `{"mode", "budget_usd", "spent_today_usd", "runs_today", "runs_per_hour_per_ip", "max_runs_per_day", "tavily": bool}`. `budget_usd` and `max_runs_per_day` are `null` in mock mode |
+| GET | `/scout/status` | `{"mode", "budget_usd", "spent_today_usd", "runs_today", "runs_per_hour_per_ip", "max_runs_per_day", "tavily": bool, "fallback_student", "student_serving"}`. `budget_usd` and `max_runs_per_day` are `null` in mock mode; the last two (v0.5) say which model answers student calls ([Who answered](#who-answered)) |
 
 Request and response details for each endpoint are in [API.md](API.md#scout-endpoints).
 
@@ -70,10 +70,23 @@ Request and response details for each endpoint are in [API.md](API.md#scout-endp
 {"type": "error", "message": "The daily demo budget is used up. Try again tomorrow (UTC), or run Ratchet yourself."}
 ```
 
-- `served_by` is `student`, `teacher` or `tool`. `escalated` is true when a student was tried and was below its threshold.
+- `served_by` is `student`, `teacher` or `tool`. `escalated` is true when a student was tried and was below its threshold. `model` is the id the call came back with: a student step from the hosted fallback carries `fallback_student` ([Who answered](#who-answered)).
 - `baseline_usd` is what the same call would cost on Ultra alone (Ratchet's `all_teacher_cost_usd`).
 - Steps for parallel agents may arrive in any order. Use `detail.id` to match a triage step and its reader step to a search result.
 - An `error` event ends the stream. `/scout/stream` always answers HTTP 200 and reports problems as an `error` event, because browsers' `EventSource` cannot read status codes. `/scout/run` uses HTTP codes instead: 400 (empty question, a question over 300 characters, or a non-example question in mock mode), 429 (rate limit, daily run cap or budget), 503 (live mode without `TAVILY_API_KEY`), 502 (a model or search call failed during the run).
+
+## Who answered
+
+Each step's badge names the model that answered it (`web/src/lib/who-model.ts`, `whoLabel`; FR-7.40). A step's `served_by` says student, teacher or tool; for a student step only its `model` tells our adapter from the hosted fallback, which the live gateway sends student calls to when the GPU endpoint is off (no `RATCHET_STUDENT_BASE`). The page reads `fallback_student` and `student_serving` from `/scout/status` and compares:
+
+| Step | Badge | Tooltip |
+|---|---|---|
+| `student`, `model` is a Night School adapter (`student-vN`) | Nano · yours | "Nemotron 3 Nano 4B with our LoRA adapter v[N], on a Nebius Serverless Endpoint" |
+| `student`, `model` is `fallback_student` | Nano 30B · hosted | "Untuned Nemotron 3 Nano 30B on Token Factory, held to confidence threshold [T]. Not covered by our adapter's precision certificate." [T] is `student_serving.threshold`. With daily endpoint windows (`student_serving.window`) it adds "Our adapter answers during the daily endpoint windows." |
+| `teacher` | Ultra · Token Factory | "Nemotron 3 Ultra on Nebius Token Factory" |
+| `tool` | Tavily, or Search | the tool's id |
+
+In mock mode the tooltips start with "Simulation: a mock model plays". When a student answer of the run came from the hosted fallback, or none came from the student while the hosted fallback serves, the totals read "Answered by the student" and the summary says "answered by the hosted Nano (untuned)" instead of "by your model". The lite page (`/lite/scout`) uses the same words.
 
 ## Budget guard (live mode)
 

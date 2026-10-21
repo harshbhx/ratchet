@@ -3,7 +3,7 @@ import { animate, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, CornerRightUp, Pin, Sprout, Wrench, X } from "lucide-react";
 import type { ScoutStep } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { WhoBadge } from "@/components/ui/who";
+import { WhoBadge, useWho } from "@/components/ui/who";
 import { cn, domainOf, fmtMs, fmtUsd, safeHref } from "@/lib/utils";
 import type { AgentRow, NodeState } from "./state";
 
@@ -116,6 +116,7 @@ export function shortModel(model: string): string {
 
 /** Who answered, confidence, escalation, cost vs Ultra, latency. One row, wraps on small screens. */
 export function StepMeta({ step, className }: { step: ScoutStep; className?: string }) {
+  const who = useWho();
   const tool = step.served_by === "tool";
   const same = Math.abs(step.cost_usd - step.baseline_usd) <= Math.max(1e-9, step.baseline_usd * 0.01);
   // Cost includes any audit or shadow call Ratchet made for this step (docs/SCOUT.md), so a
@@ -131,7 +132,10 @@ export function StepMeta({ step, className }: { step: ScoutStep; className?: str
       )}
       {step.served_by === "student" && step.confidence != null && <span>conf {step.confidence.toFixed(2)}</span>}
       {step.escalated && (
-        <Badge tone="rented" title="Your model tried first, was below its confidence threshold, and handed the call to Ultra.">
+        <Badge
+          tone="rented"
+          title={`${who.hosted ? "The hosted Nano (untuned)" : "Your model"} tried first, was below its confidence threshold, and handed the call to Ultra.`}
+        >
           <CornerRightUp aria-hidden /> escalated
           {step.confidence != null && <span className="font-normal opacity-80">· conf {step.confidence.toFixed(2)}</span>}
         </Badge>

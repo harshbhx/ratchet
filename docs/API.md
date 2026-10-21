@@ -39,7 +39,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/demo/student-outage` | mock only | Take the student endpoint down for a while, to show the circuit breaker |
 | POST | `/ratchet/demo/reset` | mock only | Start over |
 | GET | `/scout/examples` | both | Example questions and whether free text is allowed |
-| GET | `/scout/status` | both | Budget guard state |
+| GET | `/scout/status` | both | Budget guard state, and which model answers student calls (`fallback_student`, `student_serving`) |
 | GET | `/scout/stream?q=` | both | Run Scout, stream events (Server-Sent Events) |
 | POST | `/scout/run` | both | Run Scout, return all events at the end |
 
@@ -419,6 +419,8 @@ Needs a key when `RATCHET_API_KEYS` is set.
   "day": 9,
   "teacher": "nvidia/Nemotron-3-Ultra-550b-a55b",
   "student_base": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+  "fallback_student": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "student_serving": {"kind": "mock", "model": "student-v5", "version": 5, "threshold": 0.76, "certified": true},
   "days": [
     {"day": 3, "requests": 1500, "student_share": 0.98, "escalation_rate": 0.02,
      "cost_per_1k": 0.16, "baseline_per_1k": 1.093, "savings_pct": 0.85,
@@ -457,6 +459,18 @@ Needs a key when `RATCHET_API_KEYS` is set.
 }
 ```
 
+- `fallback_student` (v0.5): the hosted, untuned model that answers student calls in live mode without a student endpoint (`RATCHET_FALLBACK_STUDENT`). A response whose `ratchet.served_by` is `student` and whose `model` is this id came from it, not from our adapter.
+- `student_serving` (v0.5, FR-7.40): which model answers a student call now, so a page can name it. Read from settings and the versions table; it calls no model.
+
+  | Key | Meaning |
+  |---|---|
+  | `kind` | `mock` (mock mode: the mock fleet serves each version's own adapter); `endpoint` (live, `RATCHET_STUDENT_BASE` set: our adapter on the student endpoint); `hosted_fallback` (live, no student endpoint, a version serves: every student call goes to `fallback_student`); `none` (no live or canary version: the teacher answers everything). Later versions may add kinds; show an unknown one as it is |
+  | `model` | The model id student calls are sent to: the version's `adapter_uri`, or `fallback_student` for `hosted_fallback`; `null` without a version |
+  | `version` | The live version's id; on a cold start whose first student is in canary, the canary's; `null` for none |
+  | `threshold` | The confidence threshold that model is held to (`Ratchet.threshold`): the version's calibrated one, or `RATCHET_CONFIDENCE_THRESHOLD` for the hosted fallback, which was never calibrated; `null` without a version |
+  | `certified` | The version's eval carries a certificate that certifies (`certificate.certified`), and our adapter serves. Always `false` for `hosted_fallback`: the certificate was computed for our adapter, never for the hosted model |
+
+  While `kind` is `hosted_fallback`, the pages say "Nano 30B · hosted" for a student answer (with the threshold, and "not covered by the certificate"), stop saying "your model", and hide the live version's golden precision ([SCOUT.md](SCOUT.md#who-answered)).
 - `days`: one entry per `requests.day` (see `Ledger.stats_by_day`). `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below).
 - `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher". `routes` counts the task's requests by how they were served (the ledger's `requests.route`), most frequent first, and adds up to `requests`:
 
@@ -876,7 +890,10 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 
 ```json
 {"mode": "live", "budget_usd": 3.0, "spent_today_usd": 0.0412, "runs_today": 3,
- "runs_per_hour_per_ip": 6, "max_runs_per_day": 30, "tavily": true}
+ "runs_per_hour_per_ip": 6, "max_runs_per_day": 30, "tavily": true,
+ "fallback_student": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+ "student_serving": {"kind": "hosted_fallback", "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B", "version": 3,
+                     "threshold": 0.8, "certified": false}}
 ```
 
 | Field | Meaning |
@@ -887,6 +904,8 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 | `runs_per_hour_per_ip` | Per-IP limit. Mock mode uses 10 × `RATCHET_SCOUT_RUNS_PER_HOUR` |
 | `max_runs_per_day` | `RATCHET_SCOUT_MAX_RUNS_PER_DAY`; `null` in mock mode (no cap) |
 | `tavily` | `true` when live search (Tavily) is configured |
+| `fallback_student` | v0.5: the hosted fallback's model id, as in `/ratchet/stats`. A `step` whose `served_by` is `student` and whose `model` is this id came from the untuned hosted Nano, not our adapter |
+| `student_serving` | v0.5: the same object as in [`/ratchet/stats`](#get-ratchetstats), so the Scout page labels each call without a stats call |
 
 The counters live in memory and reset at 00:00 UTC and when the process restarts.
 

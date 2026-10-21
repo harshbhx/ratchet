@@ -8,7 +8,7 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Status | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Done | 0 | 83 | 7 | 0 | 0 | 90 |
+| Done | 0 | 84 | 7 | 0 | 0 | 91 |
 | Done, untested live | 0 | 11 | 1 | 0 | 0 | 12 |
 | Done, more planned | 0 | 1 | 2 | 0 | 0 | 3 |
 | Partial | 0 | 0 | 2 | 0 | 0 | 2 |
@@ -17,14 +17,14 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
 | Invariant | 0 | 0 | 0 | 0 | 21 | 21 |
-| **Total** | **11** | **105** | **12** | **5** | **21** | **154** |
+| **Total** | **11** | **106** | **12** | **5** | **21** | **155** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 94 | 12 | 0 | 21 | 138 |
+| Tested | 11 | 95 | 12 | 0 | 21 | 139 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
 | No check needed | 0 | 10 | 0 | 5 | 0 | 15 |
-| **Total** | **11** | **105** | **12** | **5** | **21** | **154** |
+| **Total** | **11** | **106** | **12** | **5** | **21** | **155** |
 
 ## 5. User stories and acceptance criteria
 
@@ -162,6 +162,7 @@ From [PRD §6.7](PRD.md#67-dashboard).
 | FR-7.22 | Resilience panel from `/ratchet/stats`: each circuit breaker's state (closed, open, half-open; with… | Done (v0.5) | `web/src/pages/dashboard/resilience.tsx`<br>`web/src/pages/dashboard/resilience-model.ts`<br>`ratchet.gateway:demo_student_outage` | `tests/test_contract.py::test_resilience_panel_contract` | tested |
 | FR-7.23 | Story page, The honest bill chapter: the same traffic priced per token and by the GPU-hours the stu… | Done (v0.5) | `web/src/pages/landing/sections/bill.tsx`<br>`web/src/pages/landing/bill-model.ts`<br>`web/src/lib/sim.ts`<br>`ratchet.gateway:cost` | `tests/test_contract.py::test_story_simulation_numbers_match_reference_run`<br>`tests/test_contract.py::test_story_page_helpers` | tested |
 | FR-7.24 | Story page, Built to be checked chapter: what can be verified today and how to check it: PII redact… | Done (v0.5) | `web/src/pages/landing/sections/checked.tsx`<br>`web/src/pages/landing/trust-model.ts`<br>`ratchet.bom:verify` | `tests/test_contract.py::test_story_page_helpers`<br>`tests/test_contract.py::test_story_trust_claims_match_code` | tested |
+| FR-7.40 | Pages and the dashboard name the model that answered: the owned adapter, the hosted fallback or the… | Done (v0.5) | `ratchet.gateway:Runtime.student_serving`<br>`ratchet.gateway:scout_status`<br>`web/src/lib/who-model.ts`<br>`web/src/components/ui/who.tsx` | `tests/test_contract.py::test_who_model_helpers`<br>`tests/test_contract.py::test_student_serving_kinds_match_the_ui`<br>`tests/test_live.py::test_stats_student_serving_kinds`<br>`tests/test_live.py::test_hosted_fallback_is_never_certified`<br>`tests/test_live.py::test_hosted_fallback_response_names_the_fallback_model`<br>`tests/test_live.py::test_scout_status_has_fallback_student` | tested |
 
 ## 6.8 Live operations on Nebius
 
@@ -171,7 +172,7 @@ From [PRD §6.8](PRD.md#68-live-operations-on-nebius).
 |---|---|---|---|---|---|
 | FR-8.1 | Teacher and judge via Token Factory OpenAI-compatible API | Done (v0.1), untested (live) | `ratchet.providers:OpenAICompatProvider`<br>`ratchet.gateway:Runtime.reset`<br>`ratchet.live:main` | `tests/test_live.py::test_live_runtime_wiring`<br>`tests/test_resilience.py::test_live_runtime_passes_timeouts_and_retries`<br>`tests/test_resilience.py::test_live_runtime_wires_the_fallback_teacher`<br>`tests/test_system.py::test_openai_compat_provider_parses_logprobs_and_usage` | offline test; live check: `scripts/day1_check.py` (model ids, logprobs and JSON mode on Token Factory) |
 | FR-8.2 | Student served by vLLM on a Nebius Serverless Endpoint with runtime LoRA loading | Done (v0.1), untested (live) | `ratchet.live:load_adapter`<br>`deploy/student_endpoint.sh` | `tests/test_cost.py::test_deploy_script_records_uptime_and_never_fails_on_it`<br>`tests/test_live.py::test_nebius_trainer_writes_syncs_trains_and_hot_loads`<br>`tests/test_live.py::test_load_adapter_tolerates_already_loaded_and_raises_otherwise`<br>`tests/test_resilience.py::test_live_gateway_reloads_a_lost_adapter_once_a_minute` | offline test; live check: `deploy/student_endpoint.sh` (needs a vLLM Serverless Endpoint with runtime LoRA loading) |
-| FR-8.3 | Fallback to hosted untuned Nemotron Nano on Token Factory when no student endpoint | Done (v0.1) | `ratchet.gateway:Runtime.reset`<br>`ratchet.router:Ratchet.threshold` | `tests/test_hardening.py::test_fallback_model_uses_default_threshold`<br>`tests/test_live.py::test_live_runtime_wiring`<br>`tests/test_live.py::test_live_evaluator_passes_its_certificate_settings` | tested |
+| FR-8.3 | Fallback to hosted untuned Nemotron Nano on Token Factory when no student endpoint | Done (v0.1) | `ratchet.gateway:Runtime.reset`<br>`ratchet.router:Ratchet.threshold` | `tests/test_hardening.py::test_fallback_model_uses_default_threshold`<br>`tests/test_live.py::test_live_runtime_wiring`<br>`tests/test_live.py::test_stats_student_serving_kinds`<br>`tests/test_live.py::test_hosted_fallback_is_never_certified`<br>`tests/test_live.py::test_hosted_fallback_response_names_the_fallback_model`<br>`tests/test_live.py::test_live_evaluator_passes_its_certificate_settings` | tested |
 | FR-8.4 | `python -m ratchet.live night` and `tick` commands for cron | Done (v0.1), untested (on Nebius) | `ratchet.live:main` | `tests/test_live.py::test_live_main_tick_reload_night_offline` | offline test; live check: `docs/RUNBOOK.md` (runs against the live ledger, a Serverless Job and the student endpoint) |
 | FR-8.5 | `scripts/day1_check.py` verifies model IDs, logprobs, JSON mode | Done (v0.1), untested (live) | `scripts/day1_check.py` | `tests/test_live.py::test_day1_check_reports_missing_models_and_logprobs` | offline test; live check: `docs/DAY1.md` (the script is the live check; it needs NEBIUS_API_KEY) |
 

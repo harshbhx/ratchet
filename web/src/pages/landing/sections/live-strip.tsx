@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Container } from "@/components/ui/section";
 import type { Stats } from "@/lib/api";
 import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
+import { studentShareCopy } from "@/lib/who-model";
 
 /** The gateway's real numbers right now. Hidden when the API is unreachable (static preview). */
 export function LiveStrip({ stats }: { stats: Stats | null }) {
@@ -13,6 +14,8 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const canary = [...stats.versions].reverse().find((v) => v.state === "canary");
   const shadow = [...stats.versions].reverse().find((v) => v.state === "shadow");
   const mock = stats.mode === "mock";
+  // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
+  const share = studentShareCopy(stats.student_serving);
 
   const items = [
     {
@@ -21,9 +24,9 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
       sub: `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
     },
     {
-      label: "Answered by your model",
+      label: share.label,
       value: latest ? fmtPct(latest.student_share) : "–",
-      sub: latest ? `day ${latest.day} · ${fmtPct(latest.escalation_rate)} to the teacher` : "no traffic yet",
+      sub: share.sub ?? (latest ? `day ${latest.day} · ${fmtPct(latest.escalation_rate)} to the teacher` : "no traffic yet"),
     },
     {
       label: "Live version",
@@ -73,7 +76,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
               >
                 <dt className="min-h-[2.5em] text-[12px] leading-tight text-muted sm:min-h-0">{it.label}</dt>
                 <dd className="mt-1.5 text-[22px] font-semibold leading-none tracking-[-0.025em] text-ink tabular sm:text-[24px]">{it.value}</dd>
-                <dd className="mt-1.5 truncate text-[12px] text-muted">{it.sub}</dd>
+                <dd className="mt-1.5 text-[12px] leading-snug text-muted [overflow-wrap:anywhere]">{it.sub}</dd>
               </div>
             ))}
           </dl>

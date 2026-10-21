@@ -107,11 +107,32 @@ export interface RedactPreview {
   enabled: boolean;
 }
 
+/** v0.5 (FR-7.40): which model answers a student call now. `string` too: a newer gateway may add a kind. */
+export type StudentServingKind = "mock" | "endpoint" | "hosted_fallback" | "none" | (string & {});
+
+export interface StudentServing {
+  /** `mock` models; our adapter on the student `endpoint`; the untuned `hosted_fallback` (endpoint off); `none` yet. */
+  kind: StudentServingKind;
+  /** The served model id: the version's adapter, or the fallback id. null without a version. */
+  model: string | null;
+  /** The live version, or the first student's canary on a cold start. */
+  version: number | null;
+  /** The confidence threshold the serving model is held to (the global one for the hosted fallback). */
+  threshold: number | null;
+  /** A certificate covers the serving model: never for the hosted fallback. */
+  certified: boolean;
+  /** The daily endpoint windows (W10, RATCHET_STUDENT_WINDOWS); null or absent when none are set. */
+  window?: { open: boolean; next_start_utc: string | null } | null;
+}
+
 export interface Stats {
   mode: Mode;
   day: number;
   teacher: string;
   student_base: string;
+  /** v0.5: the hosted, untuned model that answers student calls while the GPU endpoint is off (RATCHET_FALLBACK_STUDENT). */
+  fallback_student?: string;
+  student_serving?: StudentServing;
   days: DayStats[];
   tasks: TaskStats[];
   versions: Version[];
@@ -406,6 +427,9 @@ export interface ScoutStatus {
   runs_per_hour_per_ip: number;
   max_runs_per_day: number | null;
   tavily: boolean;
+  /** v0.5: a step whose `model` is this id came from the hosted fallback, not our adapter (FR-7.40). */
+  fallback_student?: string;
+  student_serving?: StudentServing;
 }
 
 // ---------- fetch helpers ----------

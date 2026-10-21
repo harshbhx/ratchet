@@ -79,7 +79,7 @@
   <section class="tiles">
     <div class="tile"><div class="v" id="tSaved">$0</div><div class="l">saved vs all-teacher</div></div>
     <div class="tile"><div class="v" id="tPct">0%</div><div class="l">cost reduction (latest day)</div></div>
-    <div class="tile"><div class="v" id="tShare">0%</div><div class="l">answered by your model (latest day)</div></div>
+    <div class="tile"><div class="v" id="tShare">0%</div><div class="l" id="tShareL">answered by your model (latest day)</div></div>
     <div class="tile"><div class="v" id="tLive">none</div><div class="l">live student version</div></div>
   </section>
 
@@ -172,10 +172,18 @@ function drawShare(days) {
 }
 function render(s) {
   const days = s.days, last = days[days.length - 1];
-  $("sub").textContent = `${s.mode === "mock" ? "Simulation (mock models)" : "Live"} · teacher ${s.teacher} · student base ${s.student_base} · ${s.totals.requests} requests`;
+  // The student that answers now (FR-7.40): our adapter, or the hosted fallback while the GPU endpoint is off.
+  // Same words as the React dashboard (web/src/lib/who-model.ts, servingLine).
+  const sv = s.student_serving || {};
+  const thr = typeof sv.threshold === "number" ? ` · threshold ${sv.threshold.toFixed(3).replace(/0$/, "")}` : "";
+  const student = sv.kind === "hosted_fallback" ? `student: Nano 30B · hosted on Token Factory (endpoint off)${thr} · not covered by the certificate`
+    : sv.kind === "endpoint" ? `student: Nano 4B + LoRA${sv.version != null ? " v" + sv.version : ""} · Nebius Serverless Endpoint`
+    : sv.kind === "none" ? "No student yet" : `student base ${s.student_base}`;
+  $("sub").textContent = `${s.mode === "mock" ? "Simulation (mock models)" : "Live"} · teacher ${s.teacher} · ${student} · ${s.totals.requests} requests`;
   $("tSaved").textContent = "$" + (s.totals.saved_usd || 0).toFixed(2);
   $("tPct").textContent = last ? pct(last.savings_pct) : "0%";
   $("tShare").textContent = last ? pct(last.student_share) : "0%";
+  $("tShareL").textContent = sv.kind === "hosted_fallback" ? "answered by the student (hosted Nano 30B, latest day)" : "answered by your model (latest day)";
   const live = s.versions.filter((v) => v.state === "live").pop();
   $("tLive").textContent = live ? "v" + live.id : "none";
   drawCost(days); drawShare(days);

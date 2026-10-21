@@ -4,8 +4,9 @@ import { ArrowRight, BookOpen, Filter, ListTree, PenLine, Search, type LucideIco
 import type { ServedBy } from "@/lib/api";
 import { ButtonLink } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
-import { WhoBadge } from "@/components/ui/who";
+import { WhoBadge, useWho } from "@/components/ui/who";
 import { cn } from "@/lib/utils";
+import { WHO_TEXT } from "@/lib/who-model";
 import { Chapter, ChapterHead, EASE, ExtLink, LINKS, Lead, Reveal, SimBadge } from "../shared";
 
 const AGENTS: { name: string; icon: LucideIcon; task: string | null; calls: string; who: ServedBy; route: string; why: string }[] = [
@@ -26,10 +27,12 @@ const RUN: { agent: string; who: "student" | "teacher" }[] = [
 const STUDENT_CALLS = RUN.filter((r) => r.who === "student").length;
 
 function Pipeline() {
+  const who = useWho();
   return (
     <ol className="grid grid-cols-1 gap-3 md:grid-cols-5 md:gap-4">
       {AGENTS.map((a, i) => {
-        const tone = a.who === "student" ? "bg-owned" : a.who === "teacher" ? "bg-rented" : "bg-line-strong";
+        // The owned blue only while our adapter answers the distilled agents' calls.
+        const tone = a.who === "student" ? (who.hosted ? "bg-line-strong" : "bg-owned") : a.who === "teacher" ? "bg-rented" : "bg-line-strong";
         const last = i === AGENTS.length - 1;
         return (
           <Reveal as="li" key={a.name} delay={i * 0.07} className="relative">
@@ -56,7 +59,8 @@ function Pipeline() {
                 </div>
                 <code className="mt-1 block font-mono text-[12px] text-ink-2">{a.task ?? "tool call"}</code>
                 <div className="mt-3">
-                  <WhoBadge servedBy={a.who} model={a.who === "tool" ? "tavily" : undefined} />
+                  {/* Who answers this agent's calls now: our adapter, or the hosted fallback while the endpoint is off. */}
+                  <WhoBadge servedBy={a.who} model={a.who === "tool" ? "tavily" : a.who === "student" ? who.serving : undefined} />
                 </div>
                 <p className="mt-3 text-[13px] leading-relaxed text-ink-2">{a.why}</p>
                 <p className="mt-2 font-mono text-[11.5px] text-muted">{a.calls}</p>
@@ -113,10 +117,10 @@ function RunStrip() {
       </div>
       <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-ink-2">
         <span className="inline-flex items-center gap-2">
-          <span className="size-2.5 rounded-[3px] bg-owned" aria-hidden /> Nano · yours
+          <span className="size-2.5 rounded-[3px] bg-owned" aria-hidden /> {WHO_TEXT.owned}
         </span>
         <span className="inline-flex items-center gap-2">
-          <span className="size-2.5 rounded-[3px] bg-rented" aria-hidden /> Ultra · rented
+          <span className="size-2.5 rounded-[3px] bg-rented" aria-hidden /> {WHO_TEXT.rented}
         </span>
         <span className="text-muted">P = Planner, W = Writer. The 3 searches are tool calls, not shown.</span>
       </div>
