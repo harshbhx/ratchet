@@ -653,6 +653,23 @@ Rate limits (429 `rate_limit_exceeded`, 503 `overloaded`) wait `Retry-After` (at
 
 **Tavily:** `--scout-runs K` runs Scout's example questions over `/v1` with live search: up to 3 credits a run from the same monthly allowance as the demo. Subtract them from `RATCHET_TAVILY_MONTHLY_CREDITS`'s pacing, since the gateway's credit meter does not see the harness's searches. `RATCHET_TEACHER_PROBES` and `RATCHET_ADJUDICATE_MAX` must be whole numbers from 0 to 10,000, and `RATCHET_TEACHER_NOISE_MAX` and `RATCHET_ALPHA_TEACHER` strictly between 0 and 1.
 
+## Demo watchdog (host cron, `python3 -m ratchet.watch`)
+
+Setup and what it does: [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#watchdog). Log: `/var/log/ratchet/watch.log`. `python3 -m ratchet.watch status` shows the last probe, restarts in the last hour and failing checks.
+
+| Alert | Meaning | Do |
+|---|---|---|
+| `watchdog_restart`: restarted ratchet after 3 failed liveness checks | The gateway did not answer `/healthz` three times in a row | Read `docker compose logs ratchet`. Nothing else is needed unless it repeats |
+| `watchdog_restart`: ... not restarting until `<time>`; it needs a person | Two restarts in an hour did not help | Look at the logs, the disk and the memory of the VM; fix, then `docker compose restart ratchet` |
+| `watchdog_restart`: ratchet is not running | The container is stopped or exited (the restart policy handles crashes; the watchdog never starts a stopped one) | `docker compose up -d` if it was not stopped on purpose |
+| `probe`: `upstream_402`, `upstream_auth`, `upstream_rate_limited`, `upstream_not_found` | Token Factory refused or could not find the model for the demo's key. Exhausted credit or a suspended account may look like 402, 401 or 403 (**unverified**) | Token Factory console: balance, key, model id. See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
+| `probe`: `teacher_unavailable`, `teacher_timeout`, `teacher_circuit_open` | The teacher is failing; the `live_check` flag shows a banner-ready `failing` | [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
+| `probe`: `watchdog_key_refused`, `edge_guard_refused`, `probe_task_*`, `watchdog_quota`, `watchdog_budget` | The probe's own setup: key, `RATCHET_ADMIN_TOKEN`, the pinned task, the key's caps. The flag stays `unknown` | Fix `.env` per the VM guide |
+| `probe`: `probe_task_not_pinned` | The probe refused to send: `watchdog-probe` is not registered, pinned and the `watchdog` key's alone (INV-10) | Set `RATCHET_TASKS_FILE=/config/tasks.json`; restart |
+| `probe`: `mode_mismatch` | The gateway reports another mode than `.env` | Stage One needs live mode: `update.sh` again, then check `.env` |
+| `probe`: `unreachable`, `probe_timeout`, `edge_upstream_down` | The public path fails (DNS, Caddy, the VM) | From outside: `scripts/demo_check.py`; on the VM: `docker compose ps`. Try `RATCHET_WATCH_CONNECT=local` if only the VM cannot reach itself |
+| `probe`: `scout_search` | Scout's search is unavailable ([Tavily](#tavily-credits-running-low-or-search-unavailable)) | Scout still runs, labelled "search unavailable" |
+
 ## Backups
 
 The ledger is the source of truth for provenance, versions and training data. Back it up daily:
@@ -664,6 +681,6 @@ aws s3 cp /var/backups/ratchet-$(date +%F).db s3://<bucket>/backups/ --endpoint-
 
 Keep at least 14 days. Adapters and `train.jsonl` are already in the bucket; keep every adapter referenced by a `live` version for rollback. Use `.backup` (or `deploy/vm/backup.sh`, which uses the same API), never `cp`: in the WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default) recent commits live in `ratchet.db-wal` until a checkpoint, and a copy of the main file alone misses them.
 
-**Restore:** stop the gateway (and the cron jobs), remove `ratchet.db-wal` and `ratchet.db-shm` next to `RATCHET_DB` if they are there (a stale WAL file would be replayed onto the restored copy), copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM. A backup taken before an erasure still holds the erased text: after a restore, run every erasure since the backup again (the `erasures` table of the newer file, or your record of them), and keep backups no longer than your retention window.
+**Restore:** `deploy/vm/restore.sh <backup.db.gz>` with the gateway stopped does the following for you (and keeps the replaced file and its WAL as `ratchet.db.before-restore-<time>`). By hand: stop the gateway (and the cron jobs), remove `ratchet.db-wal` and `ratchet.db-shm` next to `RATCHET_DB` if they are there (a stale WAL file would be replayed onto the restored copy), copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM. A backup taken before an erasure still holds the erased text: after a restore, run every erasure since the backup again (the `erasures` table of the newer file, or your record of them), and keep backups no longer than your retention window.
 
 **Schema changes:** opening a ledger migrates it: `Ledger._migrate()` adds the columns in `MIGRATIONS`, `SCHEMA` creates new tables and triggers, and `INDEXES` the indexes, so an upgraded gateway or `python -m ratchet.live` brings an old file up to date by itself (back it up first). Never edit `version_leaves` or `receipts` by hand: they are append-only (INV-17) and the database refuses the change, because signed roots and receipt chains are built from those rows.

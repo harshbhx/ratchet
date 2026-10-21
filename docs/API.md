@@ -2195,6 +2195,7 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 | `tavily` | `true` when live search (Tavily) is configured |
 | `fallback_student` | v0.5: the hosted fallback's model id, as in `/ratchet/stats`. A `step` whose `served_by` is `student` and whose `model` is this id came from the untuned hosted Nano, not our adapter |
 | `student_serving` | v0.5: the same object as in [`/ratchet/stats`](#get-ratchetstats), so the Scout page labels each call without a stats call |
+| `live_check` | The demo watchdog's flag (FR-11.33, [ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)): `{"state", "since", "checked", "search"}`. `state` is `failing` only after the watchdog's hourly probe, through the public URL, got a teacher-side or gateway-side failure within `RATCHET_WATCH_FLAG_MAX_AGE_S`; `ok`; `stale` (the watchdog stopped); `unknown` (no row yet); `off` (mock mode). Never an error code or text, so a keyword monitor can match `"state":"failing"` and a page can show a banner |
 | `public_runs_left_today` | Runs the public can still start today: the run cap minus the judges' reserve, minus public runs and judge runs past the reserve; `null` without a cap (mock mode) |
 | `public_budget_left_usd` | The same for spend; `null` without a budget. A public run can be refused a little earlier, while a judge budget is reserved: the largest finished run today is kept as a margin |
 | `judge_runs_today` | Judge runs admitted today |

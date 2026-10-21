@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1781 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1850 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -62,7 +62,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1781** |
+| `tests/test_watch.py` | 69 (37 functions; one has 26 cases, one 8) |
+| **Total** | **1850** |
 
 There are three layers:
 
@@ -1031,6 +1032,10 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 | `test_metrics_module_format` | Label and help escaping, a counter refusing to go down or take the wrong label count, duplicate names refused, bad buckets refused, `Gauge.replace` dropping old series, NaN observations ignored, cumulative buckets, `number()` formatting, relabelled series added together, `client_label` |
 | `test_a_failure_never_starts_the_live_ledgers_day_one` | On a fresh live (`auto_day`) file a 401 leaves the origin unset (day 0); day 1 starts at the first request 20 h later; a later failure is filed under day 2; after reopening the file the origin is the same and the next request is still day 1 |
 | `test_old_ledger_gains_request_ids_and_the_failures_table` | An old file gains `request_id`, `client_request_id` and the `failures` table; the lookup uses `requests_request_id`; the stage list; `spend_since` adds answered and failed spend per client since a time |
+
+### `tests/test_watch.py`
+
+The demo watchdog (FR-11.32 to FR-11.34, NFR-66, [ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)), offline through the seams of `ratchet.watch.Env` (`fetch`, `run`, `clock`, `sleep`, `out`): the module's import without site-packages; the settings and their checks; the signed alert, its retries and de-duplication; the classification table (a 502 with `upstream 402` is a different code from the same 502 with `upstream 503`); the restart rule on a fake `docker` (a teacher outage and a busy ledger never restart; a hung gateway and a broken ledger do; the grace, cooldown, hourly cap, pause and update lock; a stopped container is never started); the probe (the pinned-task preflight, the request's headers and size, retry once, the flag, no leak of a key or an upstream message); `flag_view`, `Runtime.live_check` and `inside flag|inspect` on a real ledger; `scripts/demo_check.py`; the cron file and cloud-init; and `update.sh`, `backup.sh` and `restore.sh` run with a fake `docker` and `sleep` first on `PATH` (the dry run, the backup-first order, the rollback, the restore only when the old image cannot open the ledger, no rollback for a teacher outage, a refused config check).
 
 ### `tests/test_readiness.py`
 
