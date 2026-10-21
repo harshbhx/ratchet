@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1777 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1778 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -42,7 +42,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
 | `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
-| `tests/test_feedback.py` | 31 |
+| `tests/test_feedback.py` | 32 |
 | `tests/test_docs_claims.py` | 10 |
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1777** |
+| **Total** | **1778** |
 
 There are three layers:
 
@@ -888,6 +888,7 @@ Ground truth from people: request ids, verdicts and corrections, human labels as
 | `test_counts_as_train_reads_human_labels` | a human training row counts toward the new-data count, a golden-only row never |
 | `test_export_carries_label_flags` | the NDJSON export carries `verified`, `golden_only` and the provenance |
 | `test_a_correction_a_policy_keeps_out_is_never_redacted` | FR-13.30, NFR-5: a correction under the request's opt-out or a key's `store=0` records its verdict without `prepare` running; a kept one prepares once; an answer the spec refuses is still a 400 whatever the policy |
+| `test_import_refuses_a_client_whose_key_stores_nothing` | FR-13.31, FR-13.1: `--client globex` with `globex:store=0` is refused before any row is read (nothing stored, no event); another key and a name that is no key import; a limits spec the gateway would not start with is `cannot read the key limits` |
 
 ### `tests/test_receipts.py`
 

@@ -927,6 +927,23 @@ def test_import_refuses_pinned_task():
     assert feedback.store_human_example(led, tasks.get("default"), _msgs("y"), "z", None, _settings()).reason == "pinned"
 
 
+@pytest.mark.req("FR-13.31", "FR-13.1")
+def test_import_refuses_a_client_whose_key_stores_nothing():
+    """`--client` attributes the rows to an API key (erasure and export list them under it). A key with `store=0` in
+    RATCHET_KEY_LIMITS stores nothing it sends, so the import refuses it before reading a row; another key, a name that is
+    no key, and a bad limits spec (the gateway's own message) are told apart."""
+    led = Ledger(":memory:")
+    keys = f"acme:{ACME_KEY},globex:{GLOBEX_KEY}"
+    s = _settings(api_keys=keys, key_limits="globex:store=0")
+    with pytest.raises(importer.ImportRefused, match="'globex' is an API key with store=0 in RATCHET_KEY_LIMITS"):
+        _import(led, _ft("x", A), settings=s, client="globex")
+    assert _examples(led) == [] and led.events() == []
+    assert _import(led, _ft("x", A), settings=s, client="acme").inserted == 1
+    assert _import(led, _ft("y", A), settings=s, client="not-a-key").inserted == 1  # only a label, as before
+    with pytest.raises(importer.ImportRefused, match="cannot read the key limits"):
+        _import(led, _ft("z", A), settings=_settings(api_keys=keys, key_limits="nobody:store=0"), client="acme")
+
+
 @pytest.mark.req("FR-4.50", "FR-13.31", "INV-3", "INV-6")
 def test_golden_only_rows_never_trained():
     led = Ledger(":memory:")

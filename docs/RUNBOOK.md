@@ -518,7 +518,8 @@ Labels you already own (a fine-tuning dataset written by your team, a golden set
 #    first problems. A --db path (or RATCHET_DB) with no ledger file is refused, so a typo creates nothing.
 python -m ratchet.importer labels.jsonl --task ticket-triage --source human \
     --attest "Written by the support leads, Q3 2026; owned by Acme" --dry-run
-# 2. Import. --client attributes the rows to an API key name (for erasure and export by client).
+# 2. Import. --client attributes the rows to an API key name (for erasure and export by client); a key with store=0
+#    in RATCHET_KEY_LIMITS stores nothing, so the import refuses it.
 python -m ratchet.importer labels.jsonl --task ticket-triage --source human --attest "..." --client acme
 # A human-verified golden set: never trained on, even past the frequent-request rule.
 python -m ratchet.importer golden.jsonl --task ticket-triage --source human --attest "..." --golden-only
