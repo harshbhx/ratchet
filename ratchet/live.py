@@ -89,21 +89,39 @@ def _run(cmd: str, run: RunFn = subprocess.run) -> None:
     run(shlex.split(cmd), check=True)
 
 
-def load_adapter(student_base: str, api_key: str, name: str, path: str, client: httpx.Client | None = None) -> None:
+def _vllm_root(student_base: str) -> str:
+    """The vLLM server's root: the student's base URL without `/v1` or a trailing slash."""
+    return student_base.rstrip("/").removesuffix("/v1")
+
+
+def load_adapter(student_base: str, api_key: str, name: str, path: str, client: httpx.Client | None = None) -> httpx.Response:
     """Hot-load a LoRA adapter into a running vLLM server. An adapter that is already loaded is not an error.
 
-    Needs the server started with VLLM_ALLOW_RUNTIME_LORA_UPDATING=True and --enable-lora.
+    Needs the server started with VLLM_ALLOW_RUNTIME_LORA_UPDATING=True and --enable-lora. Returns the response, so
+    a caller can tell a fresh load (200) from a second one (vLLM v0.18.0: 400 "... has already been loaded ...").
     """
-    root = student_base.rstrip("/").removesuffix("/v1")
     post = client.post if client is not None else httpx.post
     r = post(
-        f"{root}/v1/load_lora_adapter",
+        f"{_vllm_root(student_base)}/v1/load_lora_adapter",
         json={"lora_name": name, "lora_path": path},
         headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
         timeout=300,
     )
     if r.status_code >= 400 and "already" not in r.text.lower():
         r.raise_for_status()
+    return r
+
+
+def unload_adapter(student_base: str, api_key: str, name: str, client: httpx.Client | None = None) -> httpx.Response:
+    """Unload a LoRA adapter from a running vLLM server and return the response, whatever its status: vLLM's 404
+    "... cannot be found." means it is already gone, and the caller decides. Only scripts/day1_check.py uses it."""
+    post = client.post if client is not None else httpx.post
+    return post(
+        f"{_vllm_root(student_base)}/v1/unload_lora_adapter",
+        json={"lora_name": name},
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        timeout=60,
+    )
 
 
 class NebiusTrainer:

@@ -42,9 +42,9 @@ from .resilience import (
     AdapterMissing,
     Breaker,
     CircuitOpen,
+    adapter_missing,
     describe_failure,
     endpoint_down,
-    names_model,
     teacher_unavailable,
 )
 from .routing import INELIGIBLE_REASONS
@@ -1756,12 +1756,7 @@ class Ratchet:
                 metrics.UPSTREAM.inc(role, _outcome(e))
                 metrics.UPSTREAM_SECONDS.observe(time.perf_counter() - start, role)
                 obs.upstream_failure(role, e)
-            if (
-                isinstance(e, UpstreamError)
-                and e.status == 404
-                and model == version.adapter_uri
-                and names_model(e.message, model)
-            ):
+            if model == version.adapter_uri and adapter_missing(e, model):
                 raise AdapterMissing(model, e.message) from e
             raise
         breaker.record(True)
