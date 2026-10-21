@@ -47,5 +47,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0070](0070-configuration-checks-and-readiness.md) | Configuration checks that list every bad variable, a config check CLI, liveness apart from readiness, and `/readyz` with bounded dependency probes | Accepted | 2026-10-21 |
 | [0071](0071-idempotency-keys-and-retry-de-duplication.md) | Idempotency keys, and retries that never count as repeats | Accepted | 2026-10-21 |
 | [0072](0072-off-path-audits-and-shadow.md) | Off-path audits and shadow: a bounded sidecar, the same draws and calls, pending rows the gate ignores, and audits that are never dropped | Accepted | 2026-10-21 |
+| [0063](0063-spend-and-rate-limits.md) | Spend and rate limits: per-key budgets, a gateway budget with a student-only mode, and limits that refuse instead of queueing | Accepted | 2026-10-21 |
+| [0064](0064-admin-api-compare-and-set-and-audit-trail.md) | Admin API, compare-and-set transitions, audit trail: one module for manual changes (HTTP and CLI), runtime switches and pins, and release moves that two processes make once | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

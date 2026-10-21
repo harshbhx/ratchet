@@ -299,7 +299,7 @@ EXAMPLES = REGISTRY.counter(
 REJECTIONS = REGISTRY.counter(
     "ratchet_rejections_total",
     "Chat requests refused before the cascade, by reason (auth, invalid_request, unknown_task, task_not_allowed, quota, "
-    "too_large, disconnected, forbidden, idempotency, other).",
+    "budget, rate, overloaded, too_large, disconnected, forbidden, idempotency, other).",
     ("reason",),
 )
 IDEMPOTENT = REGISTRY.counter(
@@ -342,4 +342,7 @@ SIDECAR_SECONDS = REGISTRY.histogram(
 )
 SIDECAR_QUEUE = REGISTRY.gauge(
     "ratchet_sidecar_jobs", "Off-path jobs waiting (queued, reserved places included) and running, at scrape time.", ("state",)
+)
+INFLIGHT = REGISTRY.gauge(
+    "ratchet_inflight_requests", "Chat requests in flight now; RATCHET_MAX_INFLIGHT refuses past it with a 503."
 )

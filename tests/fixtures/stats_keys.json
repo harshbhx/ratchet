@@ -105,7 +105,9 @@
       "baseline_usd": "number",
       "savings_pct": "number",
       "end_users": "number",
-      "stored_share": "number|null"
+      "stored_share": "number|null",
+      "spent_today_usd": "number",
+      "daily_cap_usd": "number|null"
     },
     "privacy": {
       "redaction": "bool",
@@ -137,7 +139,18 @@
       "admin_keys": "bool",
       "dashboard_keys": "bool",
       "public_dashboard": "bool",
-      "scrubbed": "bool"
+      "scrubbed": "bool",
+      "key_limits": "bool",
+      "ip_rpm": "number|null",
+      "max_inflight": "number|null"
+    },
+    "budget": {
+      "daily_usd": "number|null",
+      "mode": "string",
+      "spent_today_usd": "number",
+      "remaining_usd": "number|null",
+      "exceeded": "bool",
+      "alert_pct": "list"
     },
     "cost": {
       "model": "string",
@@ -189,6 +202,13 @@
         "audits_abandoned": "number",
         "shadows_abandoned": "number"
       }
+    },
+    "controls": {
+      "student_disabled": "bool",
+      "releases_frozen": "bool",
+      "training_paused": "bool",
+      "audit_rate": "number|null",
+      "pinned_tasks": "list"
     }
   }
 }

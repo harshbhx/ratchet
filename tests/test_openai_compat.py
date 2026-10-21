@@ -247,6 +247,7 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
             teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
             audit_rate=0.0,
             allow_unauthenticated=True,
+            ip_rpm=0,  # every mutation comes from one address: no per-IP limit (ADR 0063)
         ),
         transports={"teacher": FakeOpenAIServer(A).transport},
     )
