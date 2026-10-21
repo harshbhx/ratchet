@@ -130,6 +130,58 @@ def test_parse_number_cases(text, decimal, want):
     assert (None if got is INVALID else got) == want
 
 
+@pytest.mark.req("FR-13.8", "FR-2.14")
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("Rs. 1,23,456.50", 123456.5),  # Indian grouping after 'Rs.'
+        ("Rs.1,23,456.50/-", 123456.5),  # '/-': no paise
+        ("rs 1500", 1500.0),
+        ("Rs1500", 1500.0),
+        ("Re. 1", 1.0),  # one rupee
+        ("INR 1,00,000", 100000.0),
+        ("1,00,000 INR", 100000.0),
+        ("₹10,00,00,000", 100000000.0),  # 10 crore, grouped
+        ("500 Rs.", 500.0),
+        ("500 rupees", 500.0),
+        ("1.5 lakh", 150000.0),
+        ("1.15 lakh", 115000.0),  # scaled in decimal: float would give 114999.99999999999
+        ("₹ 2.5 Crore", 25000000.0),
+        ("Rs. 12 lakhs", 1200000.0),
+        ("3 lacs", 300000.0),
+        ("1 lakh crore", 1e12),
+        ("10 crore rupees", 1e8),
+        ("-Rs. 500", -500.0),
+        ("(Rs. 1,000)", -1000.0),
+        ("Rs. -500", -500.0),
+        ("Rs", None),  # no number
+        ("lakh", None),
+        ("5 Cr", None),  # 'Cr' is credit on a bank statement
+        ("5L", None),
+        ("2 crores lakh", None),
+        ("500 hrs", None),  # 'rs' inside a word is not rupees
+        ("Rest 5", None),
+        ("1,23,45,6789", None),  # broken grouping
+        ("1,5 lakh", None),  # a one-digit group under '.' is still ambiguous
+    ],
+)
+def test_number_reads_indian_amounts(text, want):
+    got = compare.parse_number(text)
+    assert (None if got is INVALID else got) == want
+    if want is not None:  # the comparator agrees with the plain number, exactly
+        assert agree(FieldSpec("total", "number"), text, want)
+
+
+@pytest.mark.req("FR-13.8", "FR-2.14")
+def test_indian_amounts_under_a_comma_decimal_and_with_tolerance():
+    assert compare.parse_number("1,5 lakh", ",") == 150000.0
+    assert compare.parse_number("Rs. 1.234,50", ",") == 1234.5
+    assert compare.parse_number("Rs. 1.23.456,50", ",") is INVALID  # Indian grouping goes with a '.' decimal mark only
+    cents = FieldSpec("total", "number", abs_tol=0.01)
+    assert agree(cents, "Rs. 1,23,456.50", "INR 123456.505") and agree(cents, "₹1.2 lakh", "1,20,000/-")
+    assert not agree(cents, "1.2 lakh", "1.2 crore")
+
+
 @pytest.mark.req("FR-2.14")
 def test_number_refuses_non_finite_and_non_numbers():
     f = FieldSpec("x", "number")

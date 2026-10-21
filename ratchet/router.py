@@ -20,7 +20,7 @@ import httpx
 from . import calibration, licenses, metrics, obs, schema_tasks, tasks, taskspec
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
-from .ledger import STORED_PARAM_KEYS, Ledger, RuntimeFlags, Version, target_params
+from .ledger import STORED_PARAM_KEYS, Ledger, RuntimeFlags, Version, example_hash, target_params
 from .openai_compat import tool_turns
 from .providers import (
     COMPLETE,
@@ -32,7 +32,7 @@ from .providers import (
     approx_tokens,
     served_logprobs,
 )
-from .redact import redact, redact_json, redact_messages
+from .redact import Detector, Pseudonymizer, RedactionError, redact, redact_json, redact_messages
 from .resilience import (
     BAD_RESPONSE,
     TEACHER_CIRCUIT_OPEN,
@@ -618,6 +618,10 @@ class Ratchet:
         self._json_schema_refused: dict[str, set[str]] = {}  # teacher endpoint -> digests of the schemas it refused
         # teacher endpoint -> the probe's verdict: True refused (json_schema off), False answered, None being asked
         self._json_schema_probed: dict[str, bool | None] = {}
+        # Redaction (ADR 0082): the placeholder style (RATCHET_REDACT_STYLE) and the detector plugin
+        # (RATCHET_REDACT_PLUGIN), imported here, so a bad style or a missing plugin stops startup.
+        self.redact_style = settings.redaction_style()
+        self.detector: Detector | None = settings.redact_detector()
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
@@ -1223,7 +1227,9 @@ class Ratchet:
     ) -> bool:
         """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
         is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
-        `Settings.redact_pii`, with identifiers in the messages, the answer and the stored conditions replaced (INV-12).
+        `Settings.redact_pii`, with identifiers in the messages, the stored conditions and the answer replaced (INV-12),
+        in the task's style (its spec's `privacy.redact_style`, else RATCHET_REDACT_STYLE), one value one placeholder
+        across the three; when the detector plugin fails, nothing is stored (`redaction failed`; FR-13.7).
         The conditions are the `STORED_PARAM_KEYS` of `gen`, the parameters the teacher answered under. An answer written
         under a client's label-altering sampling (`GenParams.unstorable`: `logit_bias`, a penalty, a temperature above 1,
         a vendor field) is not stored either: the client may choose the answer it gets, not the label everyone's student
@@ -1234,9 +1240,10 @@ class Ratchet:
         teacher's), and then with its own model and license (INV-1). An answer that is not valid under the task's spec
         (`Task.check`: a required field missing, a label outside its vocabulary) is served but skipped, with the field's
         path as the reason (FR-2.14). The example records `client` (the API key name) and the end user's hash. An example
-        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3). An opt-out that arrived while
-        the request ran (an end user registered as no-train meanwhile) is written onto `meta`, the request's own copy
-        (`_opted_out`), so the row and the Result report it like one found at the start."""
+        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3), also when it was erased under
+        another redaction style or plugin setting (its key under the default redaction, `canon_hash`). An opt-out that
+        arrived while the request ran (an end user registered as no-train meanwhile) is written onto `meta`, the
+        request's own copy (`_opted_out`), so the row and the Result report it like one found at the start."""
         late = self.store_opt_out(task, meta)
         if late is not None:
             if meta is not None and meta.storable:
@@ -1250,11 +1257,27 @@ class Ratchet:
             return False
         clean = tasks.clean_answer(task, c.text)
         conditions = target_params({k: getattr(gen, k) for k in STORED_PARAM_KEYS}) if gen is not None else None
-        stored, found = messages, Counter()
+        stored, found, canon = messages, Counter(), None
         if self.s.redact_pii:  # the teacher saw the original; the training set gets placeholders
-            stored, clean = redact_messages(messages, found), redact(clean, found)
-            if conditions:
-                conditions = redact_json(conditions, found)
+            # One Pseudonymizer per example: a value gets the same placeholder in the prompt, the conditions and the
+            # answer, and nothing of it outlives this call (ADR 0082). The request is numbered before the answer, so
+            # the example's hash (messages and conditions) never depends on which answer the teacher gave.
+            pseudo = Pseudonymizer(task.redact_style or self.redact_style, self.detector)
+            raw_conditions = conditions
+            try:
+                stored = redact_messages(messages, found, pseudo)
+                if conditions:
+                    conditions = redact_json(conditions, found, pseudo)
+                clean = redact(clean, found, pseudo)
+            except RedactionError:  # the plugin failed: never store what it was meant to find
+                self._skip_example(task, "redaction failed")
+                return False
+            if pseudo.style != "label" or pseudo.detector is not None:
+                # The key this request has under the default redaction, which an erasure tombstones too: an example
+                # erased under one style or plugin setting stays erased under any other (ADR 0081, ADR 0082).
+                canon = example_hash(
+                    task.name, redact_messages(messages), redact_json(raw_conditions) if raw_conditions else None
+                )
             # A placeholder can break a structured answer (a card-like number outside quotes, an identifier inside a
             # field the spec checks): never store that.
             if found and task.check(clean) is not None:
@@ -1277,6 +1300,7 @@ class Ratchet:
             # for the same sender, so retries cannot move a golden example into training (FR-1.70, INV-3).
             count_seen=meta is None or meta.retry_count <= 0,
             sender=self._sender(meta),
+            canon_hash=canon,
         )
         if added is None:  # an erasure tombstoned this example (FR-13.3): it is never stored again
             self._skip_example(task, "erased")

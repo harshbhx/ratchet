@@ -141,7 +141,10 @@
       "purged_by_reason": "object",
       "erasures": "number",
       "erasure_refusals": "number",
-      "rolled_up_requests": "number"
+      "rolled_up_requests": "number",
+      "redaction_style": "string",
+      "redaction_task_styles": "object",
+      "redaction_plugin": "bool"
     },
     "security": {
       "api_keys": "bool",
@@ -221,6 +224,78 @@
       "training_paused": "bool",
       "audit_rate": "number|null",
       "pinned_tasks": "list"
+    },
+    "kpis": {
+      "mode": "string",
+      "simulated": "bool",
+      "window_days": "number",
+      "window": {
+        "from": "number|null",
+        "to": "number|null",
+        "days": "number",
+        "complete": "bool"
+      },
+      "metrics": {
+        "SM-1": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-2": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-3": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-4": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-5": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "NFR-1": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        }
+      },
+      "summary": {
+        "met": "number",
+        "not_met": "number",
+        "unknown": "number"
+      }
     }
   }
 }

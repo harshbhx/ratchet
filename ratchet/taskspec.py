@@ -19,7 +19,8 @@ inside RATCHET_FIXTURES_DIR (`fixtures_dir`), which is read and loaded when the 
 or broken fixture is a spec error with its path like any other; `{"dialect": "postgres"}` runs nothing.
 
 `extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `sql`,
-`policy`, `match` and `routing` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and
+`policy`, `match`, `privacy` and `routing` merge by key (null removes the base's entry), every other key replaces the base's, and
+`name` and
 `description` are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
 because startup reads the file before it registers the stored API tasks; an API body may extend any registered task.
 The result is what is registered and stored, so later changes to the base do not reach a task that extended it.
@@ -51,6 +52,7 @@ SPEC_KEYS = (
     "sql",
     "pinned",
     "store",
+    "privacy",
     "match",
     "routing",
     "policy",
@@ -60,7 +62,7 @@ SPEC_KEYS = (
 INPUT_KEYS = frozenset(SPEC_KEYS) | {"extends"}
 # `extends` merges these by key; any other key replaces the base's (a routing block's `escalate_when` and `critical`
 # lists are replaced whole).
-MERGED = frozenset({"fields", "sql", "policy", "match", "routing"})
+MERGED = frozenset({"fields", "sql", "policy", "match", "routing", "privacy"})
 MAX_JSON_DEPTH = 32  # nesting of a `routing` value
 MAX_PATH = 256  # characters of a field path
 _PATH = re.compile(r"\$|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")  # '$' or dot-separated names
@@ -427,6 +429,18 @@ def _build(
     for key in ("pinned", "store"):
         if key in spec and not isinstance(spec[key], bool):
             errs.append(f"{_at(where, key)}: must be true or false")
+    privacy = spec.get("privacy", {})
+    redact_style = None
+    if not isinstance(privacy, Mapping):
+        errs.append(f"{_at(where, 'privacy')}: must be an object")
+    else:
+        for key, value in privacy.items():
+            if key not in tasks.PRIVACY_KEYS:
+                errs.append(f"{_at(where, 'privacy')}.{key}: unknown key; use {', '.join(tasks.PRIVACY_KEYS)}")
+            elif value is not None and value not in tasks.REDACT_STYLES:
+                errs.append(f"{_at(where, 'privacy')}.{key}: must be one of {', '.join(tasks.REDACT_STYLES)} or null")
+            else:
+                redact_style = value
     tools = spec.get("tools", "teacher")
     if tools not in tasks.TOOLS:
         errs.append(f"{_at(where, 'tools')}: must be one of {', '.join(tasks.TOOLS)}")
@@ -483,6 +497,7 @@ def _build(
             clients=tuple(clients),
             match_rules=match,
             sql=sql,
+            redact_style=redact_style,
         )
     except ValueError as e:  # a rule between keys: a text task with a field other than '$', a pinned auto task, ...
         errs.append(f"{where or '$'}: {_reason(e, _TASK_PREFIX)}")
@@ -671,6 +686,7 @@ def document(task: tasks.Task) -> dict[str, Any]:
         "sql": task.sql.document() if task.sql is not None else None,
         "pinned": task.pinned,
         "store": task.store,
+        "privacy": {"redact_style": task.redact_style} if task.redact_style is not None else {},
         "match": {k: list(v) if isinstance(v, tuple) else v for k, v in task.match_rules.items()},
         "routing": json.loads(json.dumps(dict(task.routing))),
         "policy": dict(task.policy),

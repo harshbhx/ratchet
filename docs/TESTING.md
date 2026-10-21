@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1564 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints), ~120 s
+pytest -q                     # 1654 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -19,17 +19,17 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | File | Tests |
 |---|---|
 | `tests/test_core.py` | 66 (44 functions; one has 19 cases, one has 5; 1 slow: skipped without `--runslow`) |
-| `tests/test_tasks.py` | 99 (44 functions; one has 37 cases, one has 20) |
+| `tests/test_tasks.py` | 129 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
 | `tests/test_nightschool.py` | 29 (25 functions; one has 5 cases) |
 | `tests/test_release.py` | 41 (32 functions; one has 8 cases, two have 2) |
-| `tests/test_system.py` | 19 |
+| `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 104 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 40 |
 | `tests/test_contract.py` | 56 (45 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
-| `tests/test_traceability.py` | 45 (23 functions; one has 23 cases) |
+| `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
 | `tests/test_live.py` | 61 (3 of them strict xfails for NFR-60) |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
@@ -37,6 +37,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_receipts.py` | 43 (32 functions; one has 8 cases, one has 5) |
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 54 (36 functions; one has 13 cases, one has 4, three have 2) |
+| `tests/test_redaction.py` | 43 (27 functions; one has 9 cases, one has 7, one has 3) |
+| `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
 | `tests/test_feedback.py` | 30 |
 | `tests/test_docs_claims.py` | 10 |
@@ -56,12 +58,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_routing.py` | 54 (22 functions; one has 33 cases) |
 | `tests/test_adjacent_endpoints.py` | 22 |
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
-| **Total** | **1564** |
+| **Total** | **1654** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_receipts.py`, `tests/test_calibration.py`, `tests/test_sqlcheck.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`, `tests/test_licensing.py`, `tests/test_feedback.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`, `tests/test_readiness.py`, `tests/test_idempotency.py`, `tests/test_offpath.py`, `tests/test_limits.py`, `tests/test_admin.py`, `tests/test_mock_world.py`, `tests/test_structured.py`, `tests/test_adjacent_endpoints.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)), the startup configuration check, liveness and readiness ([`tests/test_readiness.py`](#teststest_readinesspy)), retry de-duplication ([`tests/test_idempotency.py`](#teststest_idempotencypy)), and audits and shadows run after the response ([`tests/test_offpath.py`](#teststest_offpathpy)), and the spend and rate limits ([`tests/test_limits.py`](#teststest_limitspy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`, `tests/test_redaction.py`, `tests/test_kpis.py`, `tests/test_licensing.py`, `tests/test_feedback.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`, `tests/test_readiness.py`, `tests/test_idempotency.py`, `tests/test_offpath.py`, `tests/test_limits.py`, `tests/test_admin.py`, `tests/test_mock_world.py`, `tests/test_structured.py`, `tests/test_adjacent_endpoints.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)), the startup configuration check, liveness and readiness ([`tests/test_readiness.py`](#teststest_readinesspy)), retry de-duplication ([`tests/test_idempotency.py`](#teststest_idempotencypy)), and audits and shadows run after the response ([`tests/test_offpath.py`](#teststest_offpathpy)), and the spend and rate limits ([`tests/test_limits.py`](#teststest_limitspy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -134,6 +136,8 @@ Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators
 | `test_bool_reads_words_and_json` | `yes`/`no`/`y`/`n`/`1`/`0` and JSON booleans; `maybe` and `2` invalid |
 | `test_number_reads_money_separators_and_tolerances` | `1,234.50` == 1234.5 with `abs_tol` 0.01; `1.234,50 €` with `decimal=","`; `(5)` == -5; relative tolerance; percent as number or fraction |
 | `test_parse_number_cases` (20 cases) | Thousands groupings (also Indian, apostrophe, space), `US$`, ISO codes, exponents, signs; ambiguous `1,5`, lower-case codes, units, NaN, infinities, `1_000`, double signs refused |
+| `test_number_reads_indian_amounts` (29 cases) | FR-13.8: `Rs.`, `Rs`, `Re.` before or after (any case), `rupees`, `/-`, `INR` and `₹` with the Indian grouping, lakh, lakhs, lacs, crore and lakh crore scaled exactly (`1.15 lakh` is 115000), signs and `(...)`; `Rs` or `lakh` alone, `Cr`, `L`, `hrs`, `Rest 5`, a broken grouping and `1,5 lakh` refused; the comparator agrees with the plain number |
+| `test_indian_amounts_under_a_comma_decimal_and_with_tolerance` | FR-13.8: lakh and `Rs.` under `decimal=","` (the Indian grouping only with `.`); `abs_tol` 0.01 across `Rs.`, `INR`, `₹`, lakh and `/-`; lakh is not crore |
 | `test_number_refuses_non_finite_and_non_numbers` | Strings, booleans, lists, `1e999`, NaN and an integer too large for a float are invalid |
 | `test_ordinal_tolerance` | `low` and `medium` agree with tolerance 1, `low` and `high` do not; an unknown label is invalid; `order` is required |
 | `test_text_modes` | `loose` with suffixes (`Acme Corp.` == `ACME corp` == `Acme, Inc.` == `Acme,Inc.`, a two-token suffix), punctuation as a word break (`hello-world`), apostrophes and initials joined (`O'Brien`, `U.S.A.`), a suffix that is the whole name kept, `exact`, `token_set` |
@@ -283,13 +287,15 @@ The last six check that the student trains on the prompt it is served (FR-8.42, 
 
 | Test | Covers |
 |---|---|
-| `test_loop_learns_and_saves_money` | 6 days × 1,500 requests with no drift: day 1 is 0% student; final day is above 80% student and above 60% savings; a version reaches `live`; daily audited agreement never falls below 85% |
+| `test_loop_learns_and_saves_money` | 6 days × 1,500 requests with no drift: day 1 is 0% student; final day is above 80% student; a version reaches `live`; over the last three days the run meets PRD §8.1's SM-1 (savings ≥ 70%, also on the final day), SM-2 (pooled audited precision ≥ 95%) and SM-3 (student share ≥ 80%); no day's audited agreement falls below 85% |
 | `test_bad_deploy_is_rolled_back_and_users_return_to_live` | Fault-injects `student-v3`; v3 ends `rolled_back` and v1 stays `live` (skips if v3 was rejected before deploy for that seed). Shares the module fixture `bad_deploy` (the run under each canary rule) with the next test |
 | `test_sequential_gate_reduces_bad_deploy_exposure` | FR-16.1, FR-9.4: the same corrupted v3 under the anytime-valid rule is rolled back too, after serving no more answers than under Wilson; each run's `exposure`, `rollbacks` and `served` agree; the rollback event carries an e-value and a confidence sequence (simulation, mock models) |
 | `test_every_version_proves_its_golden_rows_were_never_trained_on` | INV-3, INV-6, FR-16.4: over the six-day corrupted-deploy run (the module fixture `bad_deploy_runs`, which `bad_deploy` reads), every version's committed leaves rebuild the training and golden roots its BOM signs, the sets are disjoint (brute force), and a held-out certificate built from the leaves verifies with `proof.verify_heldout` from the signed roots alone (simulation, mock models) |
 | `test_replay_reproduces_each_versions_logged_coverage_and_audits` | FR-16.5, FR-6.5: over the same run, for every version, the replay at each request's logged threshold serves exactly the requests the student served, each group of requests logged at one threshold reproduces its coverage at that threshold, and the replayed precision equals the audited precision the gate counted (`audit_counts`), inside its interval; nothing is left out (simulation, mock models) |
 | `test_label_p_and_student_agree_follow_the_design` | FR-16.5, FR-6.4, INV-15: on every row of the run, `label_p` is 0.10 on served answers and 1.0 on escalations; `student_agree` equals `audit_agree` on audited rows, is set on every escalation with a valid student answer, and is never set on a served row that only a shadow arbitration took to the teacher (some exist); `baseline_est_usd` is always set || `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
 | `test_reference_simulation_unchanged` | The pinned reference run equals `tests/fixtures/sim_reference_seed7.json` exactly: the pinned inputs (a flag added later is not compared), daily numbers, release events and final versions ([below](#the-pinned-reference-simulation)) |
+| `test_reference_simulation_meets_success_metrics` | SM-1 to SM-4, US-9, NFR-1, FR-7.9: on the reference run, `ratchet/kpis.py` over days 8 to 10 gives savings ≥ 70%, pooled audited precision ≥ 95% on at least the minimum audits (inside its Wilson interval), student share ≥ 80%, no bad deploy at 100% (the corrupted v3 was rolled back as a canary), the latency target met, and a drift episode that opens on day 5 and has closed; these back the PRD's `Met in simulation (seed 7)` statuses |
+| `test_sm5_drift_recovery_within_three_nights` | SM-5, strict xfail: drift recovery within 3 nights; it takes 4 in the reference run (day 5 to day 9), so the PRD says `Not met`. It starts passing, and so fails the suite, once drift handling gets it within target |
 | `test_reference_workloads_reproduce_v040` | ADR 0024: the tickets workload of `tests/fixtures/reference.json` (captured from v0.4.0) matches the session's reference run under `scripts/reference_check.py`'s rules, and every input the fixture pins for all three workloads is still the simulator's default |
 | `test_reference_check_runs_with_per_task_calibration_off` | ADR 0040: `reference_check.capture` runs each workload with `RATCHET_PER_TASK_CALIBRATION=0` (`LEGACY_ENV`), whatever the caller's shell says, and puts the caller's `RATCHET_*` variables back afterwards |
 | `test_reference_check_rules` | ADR 0024: `reference_check.compare` ignores float noise below a relative 1e-9, new day and totals keys, advisory event kinds and text appended to an event, and reports one line for a moved number, a removed key or day, reworded event text, an extra event, a changed version or a changed input default |
@@ -571,6 +577,8 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_missing_sources_are_findings_not_crashes` | With no PRD, CLAUDE.md, API.md or CONFIGURATION.md, every rule reports what is missing instead of raising |
 | `test_doc_rules_catch_drift` | A wrong "N tests" line and a wrong per-file count are reported with file and line; a route documented without its method is reported; the env-var scan finds `os.environ.get`, `getenv`, `_env`, `os.environ[...]` and `_int` reads and skips non-literal names and writes |
 | `test_invariants_keep_their_list_numbers` | INV-n is the list number; a gap in the numbering is one error; continuation lines join the item |
+| `test_metric_targets_match_the_prd` | FR-7.9: rule (j) on the repo: every SM row's Target equals `ratchet.kpis.SM_TARGETS` |
+| `test_metric_target_rule_catches_drift` | FR-7.9: with a swapped target table, a changed number, operator or unit, a missing entry, an extra entry, an unparseable PRD cell and a broken import each give exactly one error; `parse_target` reads `≥ 70%`, `0`, `≤ 3 nights` and `< 1 s` |
 | `test_clip_keeps_table_cells_valid` | Matrix text is at most 100 characters, ends in an ellipsis, never leaves an open code span or half an escaped pipe |
 
 ### `tests/test_live.py`
@@ -594,7 +602,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_production_and_both_evaluators_share_student_sampling` | FR-5.1, FR-2.1: `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate` send the same sampling arguments, `{"n": 3, **STUDENT_SAMPLING, "params": GenParams(max_tokens=1024)}` |
 | `test_train_parse_args_defaults_and_row_contract` | FR-4.5: `train.py` defaults (epochs, learning rate, rank, sequence length, batch, Mamba projections in the targets), required `--data` and `--out`, the same base model in `config.py`, `train_job.sh` and `student_endpoint.sh`; rows written by Night School (`dataset.write_training`) load back unchanged (blank lines skipped), pass `train.check_rows`, have the teacher's stored answer as their completion and carry teacher and license; `train.manifest` (saved as `ratchet_manifest.json`) names the base model, the licenses and the chat-template arguments |
 | `test_scout_cli_over_http` | FR-10.6, FR-1.7: `python -m ratchet.scout` against the mock gateway in-process, with an API key: every agent prints a line, `--max-results` reaches search, citations and the cost summary print, every call is logged under the key's name with its task header (one planner and one writer request); the key also comes from `RATCHET_API_KEY`; a wrong key exits 1 with the 401 on stderr |
-| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation), every event and a line saying the run is a simulation with mock models, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours), and `exposure`, `rollbacks` and `served` |
+| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3, FR-7.9: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation), the success metrics (labelled simulation, one line per metric with its target and verdict), every event and a line saying the run is a simulation with mock models, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours), and `exposure`, `rollbacks` and `served` |
 | `test_sim_cli_compares_release_rules` | FR-9.4, FR-16.1: `--compare-release` (with `--promote-evidence` for the sequential run and `--canary-audit-rate`) writes both rules' results with the same requests and prints the comparison header; `compare_table` gives one row per rule for each version either rule rolled back ("-" for audits and day where that rule did not); `--promote-evidence` without `--release sequential`, a canary audit rate of 0 or 1.5 and an unknown rule are usage errors (exit 2) |
 | `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
@@ -810,6 +818,7 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_a_ledger_from_before_retention_gains_its_columns_and_tables` | FR-13.3, FR-13.4: a file with the old `erasures` table gains the new columns and tables twice without change; `last_seen_ts` is backfilled from `ts`, and retention works on it |
 
 ### `tests/test_licensing.py`
+### `tests/test_redaction.py`
 
 Licenses that travel with the adapter and configured teachers (FR-3.50 to FR-3.53, NFR-7, NFR-9, INV-1, INV-14, [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)). It extends invariants 1 (configuration cannot relabel a known closed teacher) and 14 (the NOTICE is part of the signed BOM); the proving tests carry `INV-1` and `INV-14`. The live night runs through `live.main`'s seams (`run=`, `http=`, `provider_factory=`), offline.
 
@@ -1389,6 +1398,55 @@ Text-to-SQL tasks (FR-2.56, [ADR 0055](adr/0055-sql-tasks-compared-by-execution.
 | `test_sql_golden_eval_and_dataset` | FR-2.56, INV-6: `cascade_eval` skips references that fail on the fixture (`golden_invalid_refs`) and scores equivalent student queries as agreeing; `dataset.rows` leaves stored answers that fail out (`skipped_invalid`) |
 | `test_sql_task_through_the_admin_api_and_tasks_file` | FR-2.56, FR-2.15: PUT creates a sql task (verifiable, its `sql` shown); the same body is no change until the fixture's text changes, then a new spec_hash and a `task_changed` event; a path outside the directory is a 422; validate; a chat request; a tasks file with a sql task starts, and one whose fixture is gone stops startup with the path |
 
+
+Redaction for extraction tasks, the detector plugin and Indian identifiers (FR-13.7, FR-13.8, FR-4.7, NFR-4, INV-12, [ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Detector plugins for the tests are in `tests/redact_plugins.py` (a working one, ones that fail at store time or return bad spans, ones that fail the startup probe); nothing imports Presidio.
+
+| Test | Covers |
+|---|---|
+| `test_two_emails_distinct_placeholders` | FR-13.7: `label` loses which email is which; `numbered` and `surrogate` keep them apart, repeats and case included, every placeholder counted; numbers per label and per example; a phone with and without its country code, and a card with spaces or dashes, is one value; an unknown style refused |
+| `test_numbered_placeholders_consistent_between_prompt_and_answer` | FR-13.7, INV-12: the teacher sees the original; the stored prompt has `[EMAIL_1]`, `[EMAIL_2]`, `[PHONE_1]` and the stored answer names `[EMAIL_2]`; the comparator tells the right placeholder from the wrong one |
+| `test_one_pseudonymizer_covers_messages_answer_and_conditions` | FR-13.7: content parts, `name`, `refusal`, tool-call arguments, the answer and the conditions share one numbering; the caller's messages are untouched |
+| `test_surrogate_values_stable_under_second_pass` | FR-13.7: `redact(redact(x)) == redact(x)` in every style for a text with one of each identifier; surrogates are `example.com`, 555-01xx in E.164, RFC 5737, valid `ZZ` IBANs and card numbers that fail Luhn and hold no Aadhaar; no original left |
+| `test_surrogates_are_reserved_and_distinct_until_they_run_out` | FR-13.7: 300 emails, 79,800 phones, 999 cards, IBANs and 762 IPs distinct and reserved, then the numbered fallback |
+| `test_label_style_matches_v04` | FR-13.7, FR-4.7, NFR-4: the nine v0.4 rules' SHA-256; on 4,500 fuzzed texts exactly v0.4's spans and v0.4's sequential replacement with today's rules, and on those without GSTIN or UPI ids exactly v0.4's output with v0.4's rules; on 8,000 long reference numbers (5 to 8 groups of four digits, spaced, dashed or unspaced) exactly v0.4's output; numbered placeholders find the same spans |
+| `test_a_refused_match_no_longer_hides_a_card` | FR-4.7, NFR-4, INV-12: a card with its CVV or expiry, two cards in a row, a card before a GSTIN, and a 16-character IBAN before a year or a short word are found where v0.4 left them; a card with digits or a word before it on its run, more than 4 digits after it, a tail that joins an IP address or a phone number, and a non-Luhn run stay as v0.4 left them; on 3,000 fuzzed texts, wherever the output differs from v0.4's it is that rule and nothing else; numbered and surrogate alike |
+| `test_redaction_is_idempotent_on_realistic_text` | FR-13.7, FR-4.7: 3,000 texts of identifiers and words between ordinary separators, never two numbers one space apart (the known exception its docstring names), redacted twice, are unchanged in every style |
+| `test_default_settings_store_v04_examples` | FR-13.7, FR-4.7: with the default settings the stored example is v0.4's byte for byte |
+| `test_gstin_and_upi_ids_are_redacted` | FR-13.8, FR-4.7, NFR-4: GSTINs (also entity `A` and a company PAN) and UPI ids (`name@okicici`, `9876543210@ybl`, a sentence's full stop) replaced; package tags, `a+b@ybl`, one-letter handles, a space after `@` and a 14-character near-GSTIN kept |
+| `test_redact_plugin_detector_applied` | FR-13.7, NFR-4: a fake NER detector tags names, numbered with the emails; label and surrogate styles; an empty text never reaches the plugin; a dotted path, a lower-case label and offsets of an integer type that is not `int` (numpy's) |
+| `test_detector_spans_merge_with_patterns_earlier_then_longer` | FR-13.7: overlapping spans: the earlier wins, then the longer, then the pattern's, covering all it overlaps; touching spans stay apart |
+| `test_missing_plugin_fails_startup` (9 cases) | FR-13.7, NFR-4: a missing module or attribute, a non-callable, a malformed spec and a detector failing the empty-text probe stop `load_detector`, `Ratchet` and the gateway's `Runtime` |
+| `test_bad_style_fails_startup_and_style_is_read_loosely` | FR-13.7: an unknown style or a non-string plugin stops `Ratchet`; case and spaces are ignored and empty means `label`; both settings read from the environment |
+| `test_a_failing_detector_stores_nothing_and_never_leaks_the_text` (7 cases) | FR-13.7, INV-12, INV-16: a detector that raises, returns an out-of-range, empty or malformed span, bool or float offsets, or a bad label: the answer is served, nothing stored, one `skip_example` `redaction failed`, no table holds the text, and the error carries neither the text nor the plugin's message |
+| `test_original_values_never_stored` (3 cases) | FR-13.7, NFR-4, INV-12: in each style, with the plugin and a stop string, no original value reaches any table; numbered placeholders in the answer match the prompt's |
+| `test_task_spec_privacy_redact_style_overrides_the_default` | FR-13.7, FR-2.15: `privacy.redact_style` parsed, documented and round-tripped, outside `spec_hash`; bad values and keys listed with their paths; `extends` merges it (null removes it); the cascade stores that task numbered and another task labelled |
+| `test_admin_api_sets_a_tasks_style_without_recalibrating` | FR-13.7, FR-2.15: a `PUT` that only sets `privacy.redact_style` changes the task, keeps its `spec_hash` (not recalibrating), shows in `/ratchet/stats` and writes a `task_changed` event saying the hash was kept; a bad style is a 422 with its path |
+| `test_changing_the_style_stores_a_new_example_once` | FR-13.7: the same request under `label` twice and `numbered` twice is two examples seen twice each |
+| `test_an_erasure_holds_under_every_style_and_plugin` | FR-13.3, FR-13.7, INV-12: an example erased under each of five style and plugin settings is refused under all five; both its hash and its key under the default redaction (`canon_hash`) are tombstoned; default rows record no `canon_hash` |
+| `test_long_reference_numbers_store_as_in_v04` | FR-4.7, NFR-4, INV-12, INV-3: 40 tracking numbers in a prompt and unspaced in the answer are stored exactly as v0.4 stored them, with v0.4's example hash, so the target never holds digits its prompt lacks |
+| `test_stored_conditions_are_numbered_in_key_order` | FR-13.7, INV-12, INV-3: conditions that differ only in key order get the same numbering and the same example hash; each copy keeps the client's key order |
+| `test_the_example_hash_never_depends_on_the_answer` | FR-13.7, INV-3: three different answers to one request with a stop string are one example seen three times; the conditions are numbered before the answer |
+| `test_concurrent_examples_never_share_placeholders` | FR-13.7, INV-12: 16 threads each store an example that starts at `[EMAIL_1]` and names its own `[EMAIL_2]` |
+| `test_redact_preview_shows_the_style_and_takes_style` | FR-13.7: `POST /ratchet/redact` in the gateway's style, with the plugin for an API or admin key and without it (`plugin_skipped`) for no key or a wrong one, `?style=` in any case, 400 for an unknown style; `/ratchet/stats` `privacy` style keys, a task's override included |
+| `test_redact_preview_reports_a_failing_plugin_without_the_text` | FR-13.7: a failing plugin is a 500 naming its exception class only, for a caller with a key; a keyless preview never reaches it; without a plugin, names are left |
+| `test_gateway_stores_numbered_examples_end_to_end` | FR-13.7, INV-12: over HTTP under `RATCHET_REDACT_STYLE=numbered` the stored prompt and answer share placeholders |
+
+### `tests/test_kpis.py`
+
+Success metrics (FR-7.9, SM-1 to SM-5, NFR-1, [ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Each metric is checked on synthetic day rows built in the test, and the ledger reads against brute force over request rows the test logged; the reference run's metrics are in `test_system.py`.
+
+| Test | Covers |
+|---|---|
+| `test_kpis_unit` | SM-1, SM-2, SM-3, SM-5, FR-7.9: the window is the last W days with traffic (a quiet day skipped, fewer days, bad sizes refused); SM-1 with and without failed spend, a share at the target counting whatever the float rounding, no baseline as `None`; SM-3; SM-2's pooled point estimate with `stats.wilson`'s bounds, `None` below the minimum audits or without audits, exactly 95% met, bad counts refused; SM-5 episodes (3 nights met, 4 not, open within the target `None`, open past it not met, the longest of two, none at all 0, too few days `None`) |
+| `test_drift_episode_boundaries_and_what_counts_as_a_day` | SM-5: exactly 5 points above the baseline starts an episode and exactly 2 points above ends it; a slow climb never starts one; days with fewer than 50 judged requests are skipped and nights count calendar days; the rate ignores escalations the student never judged (an outage) |
+| `test_bad_deploys_count_versions_found_bad_at_full_traffic` | SM-4: a canary rolled back before 100% does not count; an alert on a live version does (also in the anytime-valid wording, without a logged promotion, repeated); a manual rollback after 100% by its event or by the version's state; `None` before any version reached 100%; events that name no version ignored |
+| `test_report_reads_the_ledger_and_survives_folding` | SM-1, SM-2, SM-3, NFR-1, FR-7.9, FR-13.4: `report` over six days of logged rows equals brute force (savings, share, pooled audits, nearest-rank median latency); `kpi_days`' judged and judged-escalated counts; folding days 1 to 2.5 and then everything into `daily_rollup` keeps every day's sums and the audits, while latency reads only the rows still kept; a `failures` table's spend counts against SM-1 inside the window only |
+| `test_latency_quantile_is_nearest_rank` | NFR-1, FR-7.9: every quantile from 0 to 1 against the nearest-rank rule, per server and per day range, no rows as `None`, bad arguments refused; once `requests.wall_ms` exists it is read where a row in the range recorded it, `latency_ms` otherwise |
+| `test_report_on_an_empty_or_odd_ledger_stays_valid_json` | FR-7.9, SM-4: an empty ledger (every metric unknown, SM-4 0); a version live now and a promotion event count as reaching 100%, an alert then makes it a bad deploy; an infinite cost gives `None`, never invalid JSON; bad arguments refused |
+| `test_report_while_requests_are_logged` | FR-7.9: two threads build reports while four log 600 requests; no error, every report valid JSON with a request count between the bounds, and the final count exact |
+| `test_kpis_endpoint_shape` | FR-7.9, SM-1 to SM-5, NFR-1: `GET /ratchet/kpis` on a fresh mock gateway (all unknown) and after three simulated days: `simulated`, the window, every metric's keys and types, the targets equal to `SM_TARGETS`, SM-2's minimum the gate's, a version at 100%; the same report as `/ratchet/stats`' `kpis` block; `?days=1` and a window larger than the ledger; 400 for 0, -2 and 3,651, 422 for a non-number |
+| `test_bad_kpi_window_stops_startup` (5 cases) | FR-7.9: `RATCHET_KPI_WINDOW_DAYS` of 0, -3, 3651, `two` and `1.5` stop the gateway's `Runtime` naming the variable; 7 and the default 3 are read |
+
 ## Live-path tests
 
 Live mode, the training job, the day-1 check, the Scout CLI and the deploy scripts would otherwise run for the first time on paid Nebius resources. `tests/test_live.py` runs each of them offline first, through seams that are default arguments, so production code passes nothing and talks to the real services:
@@ -1675,6 +1733,7 @@ The check fails when:
 | (g) | A `Not met` metric has no strict-xfail test (so the test fails loudly once the target is met) |
 | (h) | `docs/REQUIREMENTS.md` differs from a fresh render |
 | (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md) or from `config.KNOWN_ENV` (or `KNOWN_ENV` lists one nothing reads, `rule_env_known`); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, `DEPLOYMENT.md` or `HACKATHON_SUBMISSION.md` differs from the parametrize-expanded count |
+| (j) | An SM row's Target in PRD §8.1 differs from `ratchet.kpis.SM_TARGETS` (operator, number or unit), has no entry there, or does not parse; or `SM_TARGETS` lists a metric the PRD does not have |
 
 To change behaviour:
 
