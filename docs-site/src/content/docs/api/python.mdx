@@ -353,7 +353,7 @@ What each table holds is on [the ledger](/guides/ledger/) page.
 Never call real APIs in tests. Every live piece takes its network and clocks as arguments:
 
 - `OpenAICompatProvider(base_url, api_key, timeout=..., retry=..., transport=httpx.MockTransport(handler), sleep=lambda _: None, clock=..., rng=...)` runs live code paths against a fake server.
-- A fake provider is any object with `complete(messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_)` that returns a list of `Completion`. Give it a `base_url` attribute: breakers are kept per endpoint, named by `base_url`, else by class.
+- A fake provider is any object with `complete(messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_)` that returns a list of `Completion`. Give it a `base_url` attribute: breakers are kept per role and endpoint, and the endpoint is the provider's `base_url` (else its class).
 - `Ratchet(..., seed=7)` fixes the random draws, `clock=` drives the breakers, `timer=` the wall time, and `sidecar=SideCar(0)` keeps checks inline. `Ledger(":memory:")` needs no file.
 - `sim.mock_models`: `MockTeacher`, `MockStudent`, and `MockFleet` (trainer, evaluator and resolver).
 
@@ -407,7 +407,7 @@ Yes. Scout's triage and reader agents call `Ratchet.handle` from a pool of 6 thr
 
 ### Can two processes share one ledger file?
 
-Run one serving process per ledger: one gateway, or one embedded program, never both on the same `RATCHET_DB`. The nightly job, the cron tick and the admin CLI may open the same file from other processes; the ledger's caches see their commits. A second serving process is not guarded yet (the single-writer lease, NFR-60, is planned) and would double every per-process limit and breaker. Inside a process that already runs the gateway, use its `Ratchet` as Scout does instead of opening a second `Ledger` on the file. See [two gateway processes on one ledger](/reference/runbook/#two-gateway-processes-on-one-ledger) and [ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/).
+Run one serving process per ledger: one gateway, or one embedded program, never both on the same `RATCHET_DB`. The nightly job, the cron tick and the admin CLI may open the same file from other processes; the ledger's caches see their commits. A second serving process is not guarded against yet (the single-writer lease, NFR-60, is planned): it would double every in-memory limit, and each process would keep its own breakers. Inside a process that already runs the gateway, use its `Ratchet` as Scout does instead of opening a second `Ledger` on the file. See [two gateway processes on one ledger](/reference/runbook/#two-gateway-processes-on-one-ledger) and [ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/).
 
 ### What do I lose compared with the gateway?
 
@@ -415,7 +415,7 @@ Everything that lives in the HTTP layer of `ratchet/gateway.py`: API keys and pe
 
 ### How do I run Night School from Python?
 
-In live mode, run `python -m ratchet.live night` (see [command line](/api/cli/)): it opens the ledger, installs the tasks, builds the Nebius trainer and the golden evaluator, and calls `run_night`. From your own code, call `ratchet.nightschool.orchestrate.run_night(ledger, trainer, evaluator, gate, base_model, ...)` with any trainer and evaluator, as the mock example does with `MockFleet`. It returns a `NightReport` (`trained`, `version`, `admitted`, `reason`, `eval`). It trains only on teacher answers, keeps the golden set out of training, and skips while a release is in shadow or canary. See [Night School](/guides/night-school/) and [the release gate](/guides/release-gate/).
+In live mode, run `python -m ratchet.live night` (see [command line](/api/cli/)): it opens the ledger, installs the tasks, builds the Nebius trainer and the golden evaluator, and calls `run_night`. From your own code, call `ratchet.nightschool.orchestrate.run_night(ledger, trainer, evaluator, gate, base_model, ...)` with any trainer and evaluator, as the mock example does with `MockFleet`. It returns a `NightReport` (`trained`, `version`, `admitted`, `reason`, `eval`). It never trains on student answers, keeps the golden set out of training, and skips while a release is in shadow or canary. See [Night School](/guides/night-school/) and [the release gate](/guides/release-gate/).
 
 ### Does the embedded path cost anything extra?
 
