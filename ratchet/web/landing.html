@@ -333,12 +333,12 @@ r = client.chat.completions.create(
 
         <div>
           <ol class="steps">
-            <li><h3>Your model answers first</h3><p>A small model you own tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter, served by vLLM on a Nebius Serverless Endpoint.</p></li>
+            <li><h3>Your model answers first</h3><p>A small model tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM on a Nebius Serverless Endpoint.</p></li>
             <li><h3>The teacher answers when it is unsure</h3><p>If the student is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.</p></li>
             <li><h3>Every teacher answer keeps its provenance</h3><p>The ledger records which teacher wrote it and the license that permits training on it.</p></li>
             <li><h3>Night School trains and releases a new student</h3><p>Each night a Nebius Serverless Job fine-tunes a new student and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
           </ol>
-          <p class="after">Your bill only goes down, and at the end you own the model weights.</p>
+          <p class="after">Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.</p>
         </div>
       </div>
     </section>

@@ -8,7 +8,7 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Status | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Done | 0 | 83 | 6 | 0 | 0 | 89 |
+| Done | 0 | 83 | 7 | 0 | 0 | 90 |
 | Done, untested live | 0 | 11 | 1 | 0 | 0 | 12 |
 | Done, more planned | 0 | 1 | 2 | 0 | 0 | 3 |
 | Partial | 0 | 0 | 2 | 0 | 0 | 2 |
@@ -17,14 +17,14 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Not checked | 0 | 0 | 0 | 5 | 0 | 5 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
 | Invariant | 0 | 0 | 0 | 0 | 21 | 21 |
-| **Total** | **11** | **105** | **11** | **5** | **21** | **153** |
+| **Total** | **11** | **105** | **12** | **5** | **21** | **154** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 94 | 11 | 0 | 21 | 137 |
+| Tested | 11 | 94 | 12 | 0 | 21 | 138 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
 | No check needed | 0 | 10 | 0 | 5 | 0 | 15 |
-| **Total** | **11** | **105** | **11** | **5** | **21** | **153** |
+| **Total** | **11** | **105** | **12** | **5** | **21** | **154** |
 
 ## 5. User stories and acceptance criteria
 
@@ -41,7 +41,7 @@ From [PRD §5](PRD.md#5-user-stories-and-acceptance-criteria).
 | US-7 | Provable data provenance. As Anjali, I want to prove where training data came from. | — | — | `tests/test_contract.py::test_bom_endpoint_counts_by_split_and_fingerprint_changes`<br>`tests/test_core.py::test_bill_of_materials_lists_licenses`<br>`tests/test_hardening.py::test_signed_bom_per_adapter_verifies_and_detects_tampering`<br>`tests/test_system.py::test_provenance_only_lists_distillable_teachers` | tested |
 | US-8 | Closed teachers refused. As Anjali, I want Ratchet to refuse unlicensed teachers. | — | — | `tests/test_contract.py::test_o_series_prefixes_refused`<br>`tests/test_core.py::test_closed_teachers_are_refused`<br>`tests/test_core.py::test_open_teacher_allowed_and_unknown_refused` | tested |
 | US-9 | Savings receipts. As Priya, I want to see dollars saved against an all-teacher baseline. | — | — | `tests/test_contract.py::test_stats_contract`<br>`tests/test_system.py::test_loop_learns_and_saves_money` | tested |
-| US-10 | Own the weights. As Leo, I want the trained adapter in storage I control. | — | — | `tests/test_live.py::test_nebius_trainer_writes_syncs_trains_and_hot_loads` | tested; live check: `deploy/train_job.sh` (the adapter reaches the customer's bucket only in live mode) |
+| US-10 | Own the adapter. As Leo, I want the trained adapter in storage I control. | — | — | `tests/test_live.py::test_nebius_trainer_writes_syncs_trains_and_hot_loads` | tested; live check: `deploy/train_job.sh` (the adapter reaches the customer's bucket only in live mode) |
 | US-11 | Demo without keys. As a hackathon judge, I want to see the loop work without credentials. | — | — | `tests/test_system.py::test_gateway_openai_shape_and_demo_flow` | tested |
 
 ## 6.1 Gateway
@@ -275,6 +275,7 @@ From [PRD §7](PRD.md#7-non-functional-requirements).
 | NFR-9 | Licensing: Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License)… | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet | `ratchet.bom:manifest`<br>`LICENSE` | `tests/test_hardening.py::test_signed_bom_per_adapter_verifies_and_detects_tampering` | tested |
 | NFR-10 | Traceability: Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that… | Done (v0.5) | `scripts/reqtrace.py` | `tests/test_traceability.py::test_ids_unique_and_statuses_parse`<br>`tests/test_traceability.py::test_done_requirements_have_tests_or_known_gap`<br>`tests/test_traceability.py::test_known_gaps_and_exemptions_only_shrink`<br>`tests/test_traceability.py::test_markers_cite_known_ids`<br>`tests/test_traceability.py::test_planned_ids_only_in_strict_xfail`<br>`tests/test_traceability.py::test_not_met_metrics_have_strict_xfail`<br>`tests/test_traceability.py::test_code_refs_resolve`<br>`tests/test_traceability.py::test_live_unverified_have_offline_test_and_live_exemption`<br>`tests/test_traceability.py::test_requirements_md_is_current`<br>`tests/test_traceability.py::test_every_route_documented_in_api_md`<br>`tests/test_traceability.py::test_every_env_var_documented`<br>`tests/test_traceability.py::test_doc_test_counts_match`<br>`tests/test_traceability.py::test_ast_count_matches_pytest_collection`<br>`tests/test_traceability.py::test_check_cli_passes_and_writes_the_committed_matrix`<br>`tests/test_traceability.py::test_mini_world_is_clean_and_renders`<br>`tests/test_traceability.py::test_each_mistake_gives_exactly_one_error`<br>`tests/test_traceability.py::test_status_grammar`<br>`tests/test_traceability.py::test_scan_reads_markers_and_counts_cases`<br>`tests/test_traceability.py::test_invariants_keep_their_list_numbers`<br>`tests/test_traceability.py::test_missing_sources_are_findings_not_crashes`<br>`tests/test_traceability.py::test_doc_rules_catch_drift`<br>`tests/test_traceability.py::test_clip_keeps_table_cells_valid` | tested |
 | NFR-11 | Cost honesty: Every savings figure names its cost model. Alongside the per-token view, Ratchet repo… | Partial: the cost report, the `cost` block and `totals.cost_model` in `/ratchet/stats` and the simulator's GPU-hour line name their cost model (v0.5); the `ratchet` block of a chat completion, Scout's run totals and the simulator's main savings line still give per-token figures without saying so | `ratchet.config:Settings.cost_policy`<br>`ratchet.cost:cost_report`<br>`ratchet.gateway:stats` | `tests/test_contract.py::test_story_simulation_numbers_match_reference_run`<br>`tests/test_cost.py::test_report_math_on_a_hand_built_ledger`<br>`tests/test_cost.py::test_explanation_between_break_even_and_the_hosted_crossover`<br>`tests/test_cost.py::test_break_even_uses_the_recorded_rate_and_never_says_pays_at_a_loss`<br>`tests/test_cost.py::test_student_answers_without_recorded_uptime_are_priced_per_token`<br>`tests/test_cost.py::test_mock_demo_with_a_24h_endpoint_does_not_pay`<br>`tests/test_cost.py::test_bad_cost_settings_stop_startup_naming_the_variable`<br>`tests/test_cost.py::test_cost_settings_defaults_and_spellings` | tested |
+| NFR-70 | Claim honesty: Public copy (README, PRD, competitive analysis, business plan, Devpost draft, the li… | Done (v0.5) | `README.md`<br>`docs/COMPETITIVE_ANALYSIS.md`<br>`ratchet/web/landing.html` | `tests/test_docs_claims.py::test_no_overclaims`<br>`tests/test_docs_claims.py::test_unsourced_competitor_claims_are_gone`<br>`tests/test_docs_claims.py::test_readme_names_prior_art_and_limits`<br>`tests/test_docs_claims.py::test_ownership_is_stated_exactly`<br>`tests/test_docs_claims.py::test_competitive_analysis_cites_sources_and_dates` | tested |
 
 ## 8.1 Product metrics
 

@@ -57,13 +57,13 @@ License-clean distillation on open models. Rent intelligence today, own it tomor
 
 Every AI startup we know rents its intelligence. Each request goes to a big model, and the bill grows with every user. Much of that traffic is narrow and repetitive: classifying a ticket, extracting a field, one step inside an agent. A small model could do it, if someone trained it.
 
-Distilling a big model into a small one works, but it is slow manual work. And if the big model is GPT or Claude, their terms forbid using the outputs to train competing models. We wanted a tool that does it automatically, safely, and legally, on open models, so the customer ends up owning the result.
+Distilling a big model into a small one works, but it is slow manual work. And if the big model is GPT or Claude, their terms forbid using the outputs to train competing models. We wanted a tool that does it automatically, safely, and legally, on open models, so the customer ends up owning the trained adapter and its signed lineage.
 
 ## What it does
 
 Ratchet is an OpenAI-compatible gateway. You change one line, your base URL. Then:
 
-1. A small model you own (NVIDIA Nemotron 3 Nano 4B + LoRA) answers each request first.
+1. A small model (NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own) answers each request first.
 2. If it is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.
 3. Every Ultra answer is saved with its provenance: which teacher wrote it and which license allows training on it.
 4. Every night, Night School fine-tunes a new student on a Nebius Serverless Job and tests it on a held-out golden set.
@@ -103,7 +103,7 @@ The Scout page shows each call as it happens, with a badge for who answered it (
 | Teacher | `nvidia/Nemotron-3-Ultra-550b-a55b` on **Nebius Token Factory** | Answers hard requests; its answers become training data (OpenMDW-1.1 allows this) |
 | Judge | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | Reference-based scoring of free-text answers, JSON mode |
 | Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Keeps the app running when our endpoint is stopped |
-| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA | The model the customer owns |
+| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA | The customer owns the adapter; the base stays under the NVIDIA Nemotron Open Model License |
 | Training | **Nebius Serverless Jobs** (L40S) | Nightly LoRA fine-tune |
 | Serving | **Nebius Serverless Endpoints** (vLLM) | Student inference with runtime LoRA loading |
 | Storage | **Nebius Object Storage** | Datasets and adapters |
@@ -122,7 +122,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 767 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 772 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -138,7 +138,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## What's next
 
-Name and address detection (Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
+A name and address detector (candidates: NVIDIA's gliner-PII, Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
 
 ## Built with
 

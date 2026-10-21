@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 767 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 772 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_docs_claims), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -32,7 +32,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 14 |
-| **Total** | **767** |
+| `tests/test_docs_claims.py` | 5 |
+| **Total** | **772** |
 
 There are three layers:
 
@@ -613,6 +614,18 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
 | `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
 | `test_certificate_endpoint_and_stats_check_on_a_signed_bom` | FR-16.3, INV-14: on a mock gateway with a signing key, `GET /ratchet/versions/1/certificate` returns every key, the signed certificate, frontier and per-task block, the BOM's hash, the gate's evidence and three assumptions; 404 before training and for an unknown version; a re-score changes `current` and the status, not `training`; a version from before v0.4 (no BOM) and v0.5 (no certificate) answers `no certificate`; `python -m ratchet.stats check` passes the BOM, fails it after `errors` is edited (hash and numbers), after a re-hash (numbers), without the key's signature, and passes a BOM from before v0.5 |
+
+### `tests/test_docs_claims.py`
+
+The public claims (NFR-70). A judge who knows the field reads the README, the PRD, the competitive analysis and the Devpost draft; these tests keep three overclaims out and the prior art in. They read files only.
+
+| Test | Covers |
+|---|---|
+| `test_no_overclaims` | NFR-70: the README, `docs/README.md`, PRD, competitive analysis, business plan, Devpost draft, glossary, demo script, the lite pages (`ratchet/web/*.html`, `ratchet/dashboard.html`), `web/index.html` and every `web/src` `.ts` and `.tsx` file contain none of "own the model weights", "owns the model weights", "Your bill only goes down" or "No competitor sells license-clean distillation", in any case, split over lines, inside `**` or `<strong>`, with `&nbsp;` or a JSX `{" "}` spacer (the matcher is checked on such samples first); every listed file exists and the glob finds the React pages |
+| `test_unsourced_competitor_claims_are_gone` | NFR-70: Experiential Labs' "at least 50% lower cost with an SLA" and "Orchestra routes per task", for which no source was found, are in none of the README, competitive analysis, business plan or Devpost draft |
+| `test_readme_names_prior_art_and_limits` | NFR-70: the README has "NVIDIA lineage" (the six steps of arXiv 2506.02153 v3 in the paper's words and order, each mapped to Ratchet, the paper's link and the Data Flywheel Blueprint's human promotion), "Prior art and what is new" (the gateways, cascades, online distillation, OpenRouter's `enforce_distillable_text`, NVIDIA's tutorial, Trust or Escalate and Netflix's sequential canary tests, with at least 10 links, and what Ratchet adds) and "Limitations" (break-even, the hosted student without `RATCHET_STUDENT_BASE`, agreement rather than ground truth, the pattern-based redactor, mock models, ToS §5(f)); "Why license-clean" quotes OpenMDW-1.1's outputs clause verbatim with its link |
+| `test_ownership_is_stated_exactly` | NFR-70: one README line says the customer owns the LoRA adapter and its signed training lineage, names the base's license and warns that a GPU can cost more than it saves; the lite landing page's closing line is that sentence; the PRD's overview, G5, P3 and US-10 say "adapter" |
+| `test_competitive_analysis_cites_sources_and_dates` | NFR-70: the competitive analysis has an as-of date; its summary's first paragraph ends with the narrower claim (OpenRouter filters at request time; no gateway found records and signs each example's lineage); the OpenRouter, Data Flywheel, NVIDIA tutorial, TensorZero, Inference.net and Portkey rows each link their source and give a date |
 
 ## Live-path tests
 
