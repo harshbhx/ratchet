@@ -84,7 +84,9 @@
       "student_share": "number",
       "cost_usd": "number",
       "baseline_usd": "number",
-      "savings_pct": "number"
+      "savings_pct": "number",
+      "spent_today_usd": "number",
+      "daily_cap_usd": "number|null"
     },
     "privacy": {
       "redaction": "bool",
@@ -100,7 +102,18 @@
       "admin_keys": "bool",
       "dashboard_keys": "bool",
       "public_dashboard": "bool",
-      "scrubbed": "bool"
+      "scrubbed": "bool",
+      "key_limits": "bool",
+      "ip_rpm": "number|null",
+      "max_inflight": "number|null"
+    },
+    "budget": {
+      "daily_usd": "number|null",
+      "mode": "string",
+      "spent_today_usd": "number",
+      "remaining_usd": "number|null",
+      "exceeded": "bool",
+      "alert_pct": "list"
     },
     "cost": {
       "model": "string",

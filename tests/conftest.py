@@ -54,9 +54,9 @@ def builtin_tasks():
     tasks.reset_builtin()
 
 
-# Who may read what (ADR 0061), and the logs and the metrics token (ADR 0062): cleared before the gateway loads, so a
-# variable in the shell cannot open or close a route, stop startup or make the tests loud. A test that needs one passes
-# it to `gw_env`.
+# Who may read what (ADR 0061), the logs and the metrics token (ADR 0062), and the spend and rate limits (ADR 0063):
+# cleared before the gateway loads, so a variable in the shell cannot open or close a route, stop startup, make the tests
+# loud or refuse requests they expect answered. A test that needs one passes it to `gw_env`.
 ACCESS_ENV = (
     "RATCHET_DASHBOARD_KEYS",
     "RATCHET_PUBLIC_DASHBOARD",
@@ -68,6 +68,16 @@ ACCESS_ENV = (
     "RATCHET_METRICS_TOKEN",
     "RATCHET_LOG_FORMAT",
     "RATCHET_LOG_LEVEL",
+    "RATCHET_KEY_LIMITS",
+    "RATCHET_API_KEY_DAILY_USD",
+    "RATCHET_API_KEY_MONTHLY_USD",
+    "RATCHET_API_KEY_RPM",
+    "RATCHET_API_KEY_CONCURRENCY",
+    "RATCHET_DAILY_BUDGET_USD",
+    "RATCHET_BUDGET_MODE",
+    "RATCHET_BUDGET_ALERT_PCT",
+    "RATCHET_IP_RPM",
+    "RATCHET_MAX_INFLIGHT",
 )
 
 

@@ -31,5 +31,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0060](0060-hot-path-caches-and-throttled-tick.md) | The hot path: a WAL ledger, a version routing snapshot, incremental tallies, a throttled tick and cached stats | Accepted | 2026-10-20 |
 | [0061](0061-endpoint-access-levels.md) | Endpoint access levels: a private dashboard API in live mode, scrubbed public reads and a live auth guard | Accepted | 2026-10-20 |
 | [0062](0062-request-ids-failures-logs-and-metrics.md) | Request ids end to end, a failures table with spent cost, structured logs without content, and Prometheus metrics | Accepted | 2026-10-20 |
+| [0063](0063-spend-and-rate-limits.md) | Spend and rate limits: per-key budgets, a gateway budget with a student-only mode, and limits that refuse instead of queueing | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

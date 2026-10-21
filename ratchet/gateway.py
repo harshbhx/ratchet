@@ -45,7 +45,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from . import __version__, live, metrics, obs, tasks, taskspec
 from . import access as acl
 from . import bom as bomdoc
-from .auth import KeyRing, Token, bearer
+from .auth import KeyLimits, KeyRing, Token, bearer, parse_key_limits
 from .config import Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
@@ -64,6 +64,7 @@ from .openai_compat import (
     validate_chat_request,
 )
 from .providers import GenParams, OpenAICompatProvider
+from .ratelimit import Decision, Limiter, Refused, Slot
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
@@ -72,6 +73,7 @@ from .scout.agents import Call, Scout
 from .scout.guard import Guard
 from .scout.prompts import EXAMPLE_QUESTIONS
 from .scout.search import MockSearch, SearchTool, TavilySearch
+from .spend import BudgetExceeded, Caps, SpendMeter, Usage, money, month_bounds
 
 HERE = Path(__file__).parent
 DASHBOARD = HERE / "dashboard.html"
@@ -157,6 +159,7 @@ class Runtime:
     def reset(self) -> None:
         s = self.settings
         self._set_access(s)  # first, so a live gateway without keys stops before it opens anything (ADR 0061)
+        self._set_limits(s)  # a bad limit, or RATCHET_KEY_LIMITS naming no key, stops startup here (ADR 0063)
         obs.configure(*s.log_settings())  # a bad RATCHET_LOG_FORMAT or RATCHET_LOG_LEVEL stops startup here (ADR 0062)
         self.failure_rows = FailureThrottle(clock=self.clock)
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
@@ -236,6 +239,7 @@ class Runtime:
             skipped = taskspec.install(self.ledger, s.tasks_file, self.known_clients())
         for line in skipped:
             self.ledger.event("task_skipped", line)
+        self.meter = self._spend_meter()  # today's /v1 spend, read once from the ledger (ADR 0063)
         self.signer = bomdoc.Signer(s.bom_signing_key) if s.bom_signing_key else None
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         self.modalities = parse_modalities(s.teacher_modalities)
@@ -292,6 +296,29 @@ class Runtime:
                     f"RATCHET_METRICS_TOKEN is also the key for {name!r} in {ring.env}; give the scraper its own token"
                 )
         metrics.set_clients(self.keys.names)  # a metric's client label is a key name, `none` or `other`
+
+    def _set_limits(self, s: Settings) -> None:
+        """The spend and rate limits (ADR 0063): each API key's `KeyLimits` (RATCHET_KEY_LIMITS over the
+        RATCHET_API_KEY_* defaults) and the limiter. The per-IP rate covers only a gateway without API keys, where it is
+        the one thing that tells callers apart. A bad value raises ValueError, so the gateway stops at startup."""
+        self.limit_policy = lp = s.limit_policy()
+        self.key_limits: dict[str, KeyLimits] = parse_key_limits(lp.key_limits, self.keys.names, lp.key_defaults)
+        self.limiter = Limiter(lp.max_inflight, 0 if self.keys.enabled else lp.ip_rpm, clock=self.clock)
+
+    def _spend_meter(self) -> SpendMeter:
+        """The spend meter, with the US dollar caps its budget alerts measure against."""
+        lp = self.limit_policy
+        caps = Caps(
+            daily_usd={name: k.daily_usd for name, k in self.key_limits.items() if k.daily_usd > 0},
+            monthly_usd={name: k.monthly_usd for name, k in self.key_limits.items() if k.monthly_usd > 0},
+            gateway_daily_usd=lp.daily_budget_usd,
+            alert_pct=lp.alert_pct,
+        )
+        return SpendMeter(self.ledger, caps)
+
+    def limits_for(self, client: str | None) -> KeyLimits | None:
+        """The API key's limits, or None for a request without a key."""
+        return self.key_limits.get(client) if client is not None else None
 
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
@@ -484,6 +511,10 @@ REJECTION_CODES = {
     "unknown_task": "unknown_task",
     "task_not_allowed": "task_not_allowed",
     "daily_quota_exceeded": "quota",
+    "budget_exceeded": "budget",
+    "gateway_budget_exceeded": "budget",
+    "rate_limit_exceeded": "rate",
+    "overloaded": "overloaded",
     "request_too_large": "too_large",
     "client_disconnected": "disconnected",
 }
@@ -607,7 +638,8 @@ async def _after_response(ctx: obs.RequestContext, status: int) -> None:
             if not ctx.counted:
                 metrics.REQUESTS.inc(task_label(ctx.task), "none", "none", str(status))
                 metrics.REQUEST_SECONDS.observe(ctx.elapsed_ms() / 1000, "none")
-                if 400 <= status < 500 and not ctx.failure_handled:  # the cascade's own failure is no refusal
+                refused = 400 <= status < 500 or ctx.code == "overloaded"  # the in-flight cap's 503 is a refusal too
+                if refused and not ctx.failure_handled:  # the cascade's own failure is no refusal
                     metrics.REJECTIONS.inc(_rejection(ctx, status))
             _log_chat(ctx, status)
     except Exception:  # noqa: BLE001 - observability never fails a response that was already sent
@@ -866,28 +898,142 @@ def _duration(seconds: float) -> str:
     return f"{minutes}m{secs}s" if minutes else f"{secs}s"
 
 
-def _quota(client: str | None) -> dict[str, str]:
-    """Rate-limit headers for this client, with when the quota resets (`X-RateLimit-Reset-Requests`); 429
-    `insufficient_quota` when its daily quota is used up. The 429 says when to come back (`Retry-After`, seconds to
-    00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight)."""
-    limit = rt.settings.api_key_daily_requests
+def _set_stage(stage: str) -> None:
+    ctx = obs.current()
+    if ctx is not None:
+        ctx.stage = stage
+
+
+def _quota(client: str | None, limits: KeyLimits | None, use: Usage) -> dict[str, str]:
+    """Rate-limit headers for the key's daily request quota (`KeyLimits.daily_requests`, from RATCHET_API_KEY_DAILY_REQUESTS
+    or RATCHET_KEY_LIMITS), with when it resets (`X-RateLimit-Reset-Requests`); 429 `insufficient_quota` when it is used
+    up. The count is the spend meter's (`use`), so the check runs no query (ADR 0063). The 429 says when to come back
+    (`Retry-After`, seconds to 00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot
+    help before midnight)."""
+    limit = limits.daily_requests if limits is not None else 0
     if client is None or limit <= 0:
         return {}
-    now = time.time()
-    midnight = _utc_midnight(now)
-    reset_in = midnight + 86400 - now
-    used = rt.ledger.client_requests_since(client, midnight)
+    reset_in = _utc_midnight(use.now) + 86400 - use.now
+    used = use.day_requests
     headers = {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Reset-Requests": _duration(reset_in)}
     if used >= limit:
         headers.update(
             {"X-RateLimit-Remaining-Requests": "0", "Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
         )
         message = f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC"
-        ctx = obs.current()
-        if ctx is not None:
-            ctx.stage = "quota"
+        _set_stage("quota")
         raise APIError(429, message, "insufficient_quota", "daily_quota_exceeded", headers=headers)
     return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
+
+
+def _usd(value: float) -> str:
+    """A dollar amount in a header: six decimals, never negative."""
+    return f"{max(0.0, value):.6f}"
+
+
+def _remaining_usd(limits: KeyLimits, use: Usage) -> float:
+    """What the key may still spend before its first cap: the smaller of its daily and monthly room."""
+    room = [cap - spent for cap, spent in ((limits.daily_usd, use.day_usd), (limits.monthly_usd, use.month_usd)) if cap > 0]
+    return max(0.0, min(room)) if room else 0.0
+
+
+def _spend_headers(limits: KeyLimits | None, use: Usage) -> dict[str, str]:
+    """`X-Ratchet-Spend-Today-USD` (the key's dollars since 00:00 UTC) and `X-Ratchet-Budget-Remaining-USD`, when a
+    US dollar cap applies to the key; nothing otherwise."""
+    if limits is None or not limits.usd_capped:
+        return {}
+    return {"X-Ratchet-Spend-Today-USD": _usd(use.day_usd), "X-Ratchet-Budget-Remaining-USD": _usd(_remaining_usd(limits, use))}
+
+
+def _budget(client: str | None, limits: KeyLimits | None, use: Usage) -> bool:
+    """The US dollar budgets (ADR 0063), checked before the cascade. A key whose daily or monthly cap is spent gets 429
+    `insufficient_quota` / `budget_exceeded`, with `X-Ratchet-Budget-Remaining-USD: 0`, `Retry-After` and
+    `X-Ratchet-Budget-Reset` (when the cap that resets last resets) and `X-Should-Retry: false`. When the gateway's own
+    daily budget (RATCHET_DAILY_BUDGET_USD) is spent, RATCHET_BUDGET_MODE=block refuses with 429 `gateway_budget_exceeded`;
+    `student_only` returns True, so the request runs with `RequestMeta.student_only`. A request in flight can overshoot a
+    cap by its own cost: the check reads what was spent before it."""
+    if limits is not None and limits.usd_capped:
+        spent = []
+        if limits.daily_usd > 0 and use.day_usd >= limits.daily_usd:
+            spent.append(("daily", limits.daily_usd, _utc_midnight(use.now) + 86400, "00:00 UTC"))
+        if limits.monthly_usd > 0 and use.month_usd >= limits.monthly_usd:
+            spent.append(("monthly", limits.monthly_usd, month_bounds(use.now)[1], "00:00 UTC on the 1st"))
+        if spent:
+            period, cap, reset_at, when = max(spent, key=lambda x: x[2])
+            reset_in = reset_at - use.now
+            headers = {
+                **_spend_headers(limits, use),
+                "Retry-After": str(max(1, math.ceil(reset_in))),
+                "X-Ratchet-Budget-Reset": _duration(reset_in),
+                "X-Should-Retry": "false",
+            }
+            _set_stage("budget")
+            message = f"the {period} budget of ${money(cap)} is spent for {client!r}; it resets at {when}"
+            raise APIError(429, message, "insufficient_quota", "budget_exceeded", headers=headers)
+    cap = rt.limit_policy.daily_budget_usd
+    if cap <= 0 or use.gateway_day_usd < cap:
+        return False
+    if rt.limit_policy.budget_mode == "student_only":
+        return True
+    raise _gateway_budget_error(use.now)
+
+
+def _gateway_budget_error(now: float, need: str | None = None) -> APIError:
+    """429 `insufficient_quota` / `gateway_budget_exceeded` until 00:00 UTC: in block mode for every chat request, in
+    student_only mode for one that needs the teacher (`need`). The gateway's budget itself is the operator's and is not
+    named."""
+    _set_stage("budget")
+    reset_in = _utc_midnight(now) + 86400 - now
+    headers = {"Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
+    if need is None:
+        message = "this gateway's daily budget is spent; it resets at 00:00 UTC"
+    else:
+        message = (
+            "this gateway's daily budget is spent: until 00:00 UTC it serves only answers the student gives alone, and "
+            "this request needs the teacher"
+        )
+    return APIError(429, message, "insufficient_quota", "gateway_budget_exceeded", headers=headers)
+
+
+def _rate_headers(d: Decision) -> dict[str, str]:
+    """OpenAI's request-rate headers for a token bucket's state (FR-12.3): the limit a minute, the whole requests left
+    and the time until the bucket is full again."""
+    return {
+        "X-RateLimit-Limit-Requests": str(d.limit),
+        "X-RateLimit-Remaining-Requests": str(d.remaining),
+        "X-RateLimit-Reset-Requests": _duration(d.reset_s),
+    }
+
+
+def _admit(request: Request, client: str | None) -> Slot:
+    """The gateway's rate limits for a chat request (FR-12.3, ADR 0063), checked on the event loop before the body is
+    read, so a request over a limit never waits for a worker thread: the in-flight cap (RATCHET_MAX_INFLIGHT: 503
+    `overloaded`, `Retry-After: 1`), the key's requests in flight (`concurrency`: 429 `rate_limit_exceeded`,
+    `Retry-After: 1`), then the key's requests a minute (`rpm`), or the client IP's on a gateway without keys
+    (RATCHET_IP_RPM; `_client_ip`, which honours RATCHET_TRUST_PROXY): 429 `rate_limit_exceeded` with `Retry-After` and
+    the `X-RateLimit-*-Requests` headers. The slot it returns is released when the request is done."""
+    limits = rt.limits_for(client)
+    ip = _client_ip(request) if client is None and rt.limiter.ip_rpm > 0 else None
+    try:
+        return rt.limiter.admit(client, limits.rpm if limits else 0, limits.concurrency if limits else 0, ip)
+    except Refused as e:
+        raise _refusal(e) from None
+
+
+def _refusal(e: Refused) -> APIError:
+    _set_stage("rate")
+    if e.kind == "overloaded":
+        message = f"the gateway has {e.limit} chat requests in flight, its limit; retry in a second"
+        return APIError(503, message, "api_error", "overloaded", headers={"Retry-After": "1"})
+    if e.kind == "concurrency":
+        message = f"{e.who!r} has {e.limit} requests in flight, its limit; retry when one of them ends"
+        return APIError(429, message, "rate_limit_error", "rate_limit_exceeded", headers={"Retry-After": "1"})
+    assert e.decision is not None
+    wait = max(1, math.ceil(e.decision.retry_after_s))
+    who = "this client address" if e.who == "ip" else repr(e.who)
+    message = f"rate limit of {e.limit} requests a minute reached for {who}; retry after {wait} s"
+    headers = {"Retry-After": str(wait), **_rate_headers(e.decision)}
+    return APIError(429, message, "rate_limit_error", "rate_limit_exceeded", headers=headers)
 
 
 NO_RETRY = {"X-Should-Retry": "false"}
@@ -1005,47 +1151,77 @@ async def chat(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
 ) -> JSONResponse | StreamingResponse:
-    """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the body read and
-    counted (413 for a chunked body over the limit), JSON and request validation (400), daily quota (429), then the
-    cascade. A refused request writes no ledger row and uses no quota. Everything after reading the body runs in a
-    worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks the event
-    loop."""
+    """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the gateway's rate
+    limits (`_admit`: 503 at the in-flight cap, 429 over the key's concurrency or requests a minute, or the client IP's
+    on a gateway without keys), the body read and counted (413 for a chunked body over the limit), JSON and request
+    validation (400), the task (400 unknown, 403 not allowed for the key), the daily request quota (429), the US dollar
+    budgets (429), then the cascade. A refused request writes no ledger row and uses no quota or budget; past the rate
+    limits it has taken its key's (or IP's) token. Everything after reading the body runs in a worker thread (the default
+    pool, as for sync routes), so neither a large body nor the ledger lock blocks the event loop."""
     client = _client(authorization, x_api_key)
-    try:
-        raw = await request.body()
-    except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
-        ctx = obs.current()
-        if ctx is not None:
-            ctx.code = "client_disconnected"
-        raise APIError(400, "The client disconnected before the request body was complete.") from e
-    return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client))
+    with _admit(request, client) as slot:  # its in-flight slots are given back when the response is built
+        try:
+            raw = await request.body()
+        except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
+            ctx = obs.current()
+            if ctx is not None:
+                ctx.code = "client_disconnected"
+            raise APIError(400, "The client disconnected before the request body was complete.") from e
+        return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client, slot.decision))
 
 
-def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+def _complete(
+    raw: bytes, header_task: str | None, client: str | None, rate: Decision | None = None
+) -> JSONResponse | StreamingResponse:
     ctx = obs.current()  # the request's context, copied into this worker thread (ADR 0062)
     req = validate_chat_request(parse_body(raw), rt.limits)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
+    limits = rt.limits_for(client)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(header_task or req.task, client)
     except tasks.UnknownTask as e:  # RATCHET_UNKNOWN_TASKS=reject; or teacher/reject and a header that is not a task name
+        if limits is not None and limits.tasks is not None:  # list only the tasks this key's scope allows
+            allowed = [n for n in tasks.names_for(client) if limits.allows_task(n)]
+            e = tasks.UnknownTask(e.name, allowed, invalid=not tasks.valid_name(e.name))
         raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
     if ctx is not None:
         ctx.task = task.name
-    headers = _quota(client)
+    if limits is not None and not limits.allows_task(task.name):  # the key's own scope (RATCHET_KEY_LIMITS tasks=)
+        raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed")
+    use = rt.meter.usage(client)  # memory only: the quota and budget checks run no query (ADR 0063)
+    headers = _quota(client, limits, use)
+    student_only = _budget(client, limits, use)
+    if rate is not None and "X-RateLimit-Limit-Requests" not in headers:  # the daily quota's headers win, as since v0.4
+        headers.update(_rate_headers(rate))
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
-    # The request's ids go into its ledger row (requests.request_id, requests.client_request_id) and failures rows.
-    ids = RequestMeta(request_id=ctx.request_id, client_request_id=ctx.client_request_id) if ctx is not None else None
+    # The request's ids go into its ledger row (requests.request_id, requests.client_request_id) and failures rows; a key
+    # with store=0 keeps its requests out of the training set, and a spent gateway budget in student_only mode keeps them
+    # off the teacher.
+    ids = RequestMeta(
+        request_id=ctx.request_id if ctx is not None else None,
+        client_request_id=ctx.client_request_id if ctx is not None else None,
+        storable=limits.store if limits is not None else True,
+        student_only=student_only,
+    )
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
-        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n, meta=ids)
+        try:
+            r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n, meta=ids)
+        except BaseException:  # what the failed request spent (the student's samples) counts against the budgets
+            if ctx is not None and ctx.spent_usd > 0:
+                rt.meter.add(client, ctx.spent_usd, requests=0)
+            raise
+    except BudgetExceeded as e:  # student_only, and the request needs the teacher
+        raise _gateway_budget_error(time.time(), e.need) from e
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
         raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e  # sim.world.lookup
     except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
         raise _map_upstream(e) from e
+    headers.update(_spend_headers(limits, rt.meter.add(client, r.cost_usd)))
     rt.tick()
     meta = {
         "served_by": r.served_by,
@@ -1147,6 +1323,7 @@ def stats(request: Request) -> dict[str, Any]:
 def _stats_payload() -> dict[str, Any]:
     led = rt.ledger
     boms = led.bom_status()
+    spend = rt.meter.snapshot()
     return {
         "mode": rt.settings.mode,
         "day": led.day,
@@ -1159,7 +1336,7 @@ def _stats_payload() -> dict[str, Any]:
         # Every savings figure above and in `totals` prices the student per token; `cost` has the GPU-hour view (NFR-11).
         "totals": {**led.totals(), "cost_model": "per_token"},
         "bill_of_materials": led.bill_of_materials(),
-        "clients": led.stats_by_client(),
+        "clients": _clients_with_spend(led.stats_by_client(), spend),
         "privacy": {"redaction": rt.settings.redact_pii, **led.privacy_stats()},
         "security": {
             "api_keys": rt.keys.enabled,
@@ -1171,7 +1348,12 @@ def _stats_payload() -> dict[str, Any]:
             "dashboard_keys": rt.dashboard_keys.enabled,
             "public_dashboard": rt.access.public_dashboard,
             "scrubbed": False,
+            # The gateway's own limits (ADR 0063): whether any key has one, the per-IP rate and the in-flight cap.
+            "key_limits": any(k != KeyLimits() for k in rt.key_limits.values()),
+            "ip_rpm": rt.limiter.ip_rpm or None,
+            "max_inflight": rt.limiter.max_inflight or None,
         },
+        "budget": _budget_block(spend),
         "cost": stats_block(cost_report(led, rt.settings)),
         # Failures of the last hour by stage (ADR 0062); what failed requests spent is in totals.failed_cost_usd.
         "errors": {"last_hour": led.failure_counts(time.time() - ERRORS_WINDOW_S)},
@@ -1179,6 +1361,34 @@ def _stats_payload() -> dict[str, Any]:
 
 
 ERRORS_WINDOW_S = 3600.0  # /ratchet/stats' errors.last_hour
+
+
+def _clients_with_spend(rows: list[dict[str, Any]], spend: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """`stats_by_client` with each key's /v1 spend since 00:00 UTC (the spend meter's) and its daily US dollar cap (null
+    without one, or for a name that is no longer a key)."""
+    today = spend["clients"]
+    out = []
+    for row in rows:
+        limits = rt.key_limits.get(row["client"])
+        cap = limits.daily_usd if limits is not None and limits.daily_usd > 0 else None
+        out.append({**row, "spent_today_usd": float(today.get(row["client"], 0.0)), "daily_cap_usd": cap})
+    return out
+
+
+def _budget_block(spend: Mapping[str, Any]) -> dict[str, Any]:
+    """/ratchet/stats' `budget`: the gateway's daily /v1 budget (null when off), its mode, what /v1 requests spent since
+    00:00 UTC, what is left, whether it is spent, and the shares that write a `budget` event."""
+    lp = rt.limit_policy
+    cap = lp.daily_budget_usd
+    spent = float(spend["gateway_usd"])
+    return {
+        "daily_usd": cap or None,
+        "mode": lp.budget_mode,
+        "spent_today_usd": spent,
+        "remaining_usd": max(0.0, cap - spent) if cap > 0 else None,
+        "exceeded": cap > 0 and spent >= cap,
+        "alert_pct": list(lp.alert_pct),
+    }
 
 
 # ----- request lookups and metrics (ADR 0062) -----
@@ -1242,6 +1452,7 @@ def _collect_gauges() -> None:
     metrics.VERSION_TRAFFIC.replace([((f"v{v.id}", v.state), float(v.traffic_pct)) for v in routed])
     spend = led.spend_since(_utc_midnight(time.time()), [*rt.keys.names, None])
     metrics.SPEND_TODAY.replace([((metrics.client_label(c),), usd) for c, usd in spend.items()])
+    metrics.INFLIGHT.replace([((), float(rt.limiter.inflight))])
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

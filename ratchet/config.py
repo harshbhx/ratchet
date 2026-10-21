@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .auth import MAX_RPM, KeyLimits
 from .openai_compat import DEFAULT_MAX_N, Limits
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
@@ -56,6 +57,18 @@ def _float_or_none(name: str) -> float | None:
         return float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number, not {raw!r}") from None
+
+
+def _int_or_none(name: str) -> int | None:
+    """A whole number from the environment, or None when the variable is unset or empty (the setting's default, which
+    may depend on the mode); ValueError names the variable."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a whole number, not {raw!r}") from None
 
 
 def _bool(name: str) -> bool | None:
@@ -135,6 +148,46 @@ UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
 # `per_token`: the hosted Nano price per token, as every savings figure since v0.1; `gpu_hours`: the GPU-hours the student
 # endpoint and the training jobs ran. Each request's `cost_usd` keeps the per-token price in both, so history never moves.
 COST_MODELS = ("per_token", "gpu_hours")
+
+
+# RATCHET_BUDGET_MODE: what /v1 requests get once the gateway's daily budget (RATCHET_DAILY_BUDGET_USD) is spent (ADR 0063).
+# `block`: a 429 for every chat request until 00:00 UTC; `student_only`: answers the student gives alone (confident, no
+# audit, no shadow) are still served, and a request that needs the teacher gets the 429.
+BUDGET_MODES = ("block", "student_only")
+DEFAULT_ALERT_PCT = "50,80,100"
+MAX_INFLIGHT = 100_000
+LIVE_IP_RPM = 120  # RATCHET_IP_RPM in live mode when unset: an open live gateway is limited per client IP
+
+
+@dataclass(frozen=True)
+class LimitPolicy:
+    """The spend and rate limits, checked (`Settings.limit_policy()`, ADR 0063). `key_defaults`: every API key's limits
+    without an override (RATCHET_API_KEY_*); `key_limits`: RATCHET_KEY_LIMITS as given, parsed against the key names by
+    the gateway (`auth.parse_key_limits`); `daily_budget_usd`: the gateway's /v1 spend per UTC day (0: off) and
+    `budget_mode` what happens past it (BUDGET_MODES); `alert_pct`: the shares of a cap that write a `budget` event, in
+    ascending order; `ip_rpm`: requests a minute per client IP on a gateway without API keys (0: off); `max_inflight`:
+    chat requests in flight before a 503 (0: off)."""
+
+    key_defaults: KeyLimits
+    key_limits: str
+    daily_budget_usd: float
+    budget_mode: str
+    alert_pct: tuple[int, ...]
+    ip_rpm: int
+    max_inflight: int
+
+
+def parse_alert_pct(raw: str, env: str = "RATCHET_BUDGET_ALERT_PCT") -> tuple[int, ...]:
+    """`50,80,100` -> (50, 80, 100): whole percentages from 1 to 100, sorted, each once; empty: no alerts. Anything else
+    raises ValueError naming `env`."""
+    out: set[int] = set()
+    for part in (p.strip() for p in raw.split(",")):
+        if not part:
+            continue
+        if not part.isdigit() or not 1 <= int(part) <= 100:
+            raise ValueError(f"{env} must be whole percentages from 1 to 100 separated by commas, not {raw!r}")
+        out.add(int(part))
+    return tuple(sorted(out))
 
 
 @dataclass(frozen=True)
@@ -313,7 +366,23 @@ class Settings:
     # Gateway API keys for /v1/*: "name:key,name:key". Empty = no authentication (v0.3 behaviour).
     api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
     # Requests per key per UTC day on /v1/chat/completions. 0 = unlimited.
-    api_key_daily_requests: int = field(default_factory=lambda: int(_env("RATCHET_API_KEY_DAILY_REQUESTS", "0")))
+    api_key_daily_requests: int = field(default_factory=lambda: _int("RATCHET_API_KEY_DAILY_REQUESTS", "0"))
+    # Spend and rate limits (ADR 0063), checked by `limit_policy()`. Every API key's defaults (0 = off): US dollars per
+    # UTC day and month, requests a minute and requests in flight; RATCHET_KEY_LIMITS overrides them (and the daily
+    # requests, task scopes and storage) per key name: "acme:daily_usd=5,rpm=60,tasks=a|b;globex:store=0". The gateway's
+    # own /v1 budget per UTC day (0 = off), what happens past it (BUDGET_MODES) and the shares of a cap that write a
+    # `budget` event. Requests a minute per client IP on a gateway without API keys (unset: 0 in mock mode, 120 in live
+    # mode) and chat requests in flight before a 503 (0 = off; below the 40 worker threads, so a burst cannot queue).
+    key_limits: str = field(default_factory=lambda: _env("RATCHET_KEY_LIMITS", ""))
+    api_key_daily_usd: float = field(default_factory=lambda: _float("RATCHET_API_KEY_DAILY_USD", "0"))
+    api_key_monthly_usd: float = field(default_factory=lambda: _float("RATCHET_API_KEY_MONTHLY_USD", "0"))
+    api_key_rpm: int = field(default_factory=lambda: _int("RATCHET_API_KEY_RPM", "0"))
+    api_key_concurrency: int = field(default_factory=lambda: _int("RATCHET_API_KEY_CONCURRENCY", "0"))
+    daily_budget_usd: float = field(default_factory=lambda: _float("RATCHET_DAILY_BUDGET_USD", "0"))
+    budget_mode: str = field(default_factory=lambda: _env("RATCHET_BUDGET_MODE", "block"))
+    budget_alert_pct: str = field(default_factory=lambda: _env("RATCHET_BUDGET_ALERT_PCT", DEFAULT_ALERT_PCT))
+    ip_rpm: int | None = field(default_factory=lambda: _int_or_none("RATCHET_IP_RPM"))
+    max_inflight: int = field(default_factory=lambda: _int("RATCHET_MAX_INFLIGHT", "32"))
     # Admin keys for management writes (PUT and DELETE /ratchet/tasks/...): "name:key,name:key", like RATCHET_API_KEYS
     # and never the same keys. Empty: the admin API is off in live mode and open in mock mode (ADR 0022). Not the Caddy
     # edge guard's RATCHET_ADMIN_TOKEN.
@@ -584,6 +653,46 @@ class Settings:
             openapi=mock if openapi is None else openapi,
             csp=csp,
             allow_unauthenticated=bool(switches["allow_unauthenticated"]),
+        )
+
+    def limit_policy(self) -> LimitPolicy:
+        """The spend and rate limits, checked (ADR 0063). A value out of range, an unknown RATCHET_BUDGET_MODE or a bad
+        RATCHET_BUDGET_ALERT_PCT raises ValueError naming the variable, so the gateway stops at startup.
+        RATCHET_KEY_LIMITS itself is parsed by the gateway, which knows the key names."""
+        defaults = KeyLimits(
+            daily_requests=self.api_key_daily_requests,
+            daily_usd=self.api_key_daily_usd,
+            monthly_usd=self.api_key_monthly_usd,
+            rpm=self.api_key_rpm,
+            concurrency=self.api_key_concurrency,
+        ).check("RATCHET_API_KEY_*")
+        budget = self.daily_budget_usd
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget < 0:
+            raise ValueError(f"RATCHET_DAILY_BUDGET_USD must be US dollars, 0 (off) or more, not {budget!r}")
+        raw = self.budget_mode
+        mode = raw.strip().lower() if isinstance(raw, str) else None
+        if mode == "":  # set but empty, as in an .env file: the default
+            mode = "block"
+        if mode not in BUDGET_MODES:
+            raise ValueError(f"RATCHET_BUDGET_MODE must be {' or '.join(BUDGET_MODES)}, not {raw!r}")
+        if not isinstance(self.budget_alert_pct, str):
+            raise ValueError(f"RATCHET_BUDGET_ALERT_PCT must be text such as '50,80,100', not {self.budget_alert_pct!r}")
+        ip_rpm = self.ip_rpm if self.ip_rpm is not None else (0 if self.mode == "mock" else LIVE_IP_RPM)
+        if isinstance(ip_rpm, bool) or not isinstance(ip_rpm, int) or not 0 <= ip_rpm <= MAX_RPM:
+            raise ValueError(f"RATCHET_IP_RPM must be a whole number from 0 (off) to {MAX_RPM}, not {ip_rpm!r}")
+        inflight = self.max_inflight
+        if isinstance(inflight, bool) or not isinstance(inflight, int) or not 0 <= inflight <= MAX_INFLIGHT:
+            raise ValueError(f"RATCHET_MAX_INFLIGHT must be a whole number from 0 (off) to {MAX_INFLIGHT}, not {inflight!r}")
+        if not isinstance(self.key_limits, str):
+            raise ValueError(f"RATCHET_KEY_LIMITS must be text, not {self.key_limits!r}")
+        return LimitPolicy(
+            key_defaults=defaults,
+            key_limits=self.key_limits,
+            daily_budget_usd=float(budget),
+            budget_mode=mode,
+            alert_pct=parse_alert_pct(self.budget_alert_pct),
+            ip_rpm=ip_rpm,
+            max_inflight=inflight,
         )
 
     def check_reserved(self) -> None:

@@ -55,6 +55,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rescored` | `run_night` | A night without enough new data to train re-scored the live version, because a golden task's spec changed since it was scored. The task's student traffic resumes under the new threshold | None |
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
 | `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
+| `budget` | the spend meter (`ratchet/spend.py`) | A key or the gateway reached a share of a US dollar cap for the first time in its UTC day or month (`acme reached 80% of $5.00 daily budget`, `the gateway reached 100% of $20.00 daily budget`; shares from `RATCHET_BUDGET_ALERT_PCT`). Written once per share and cap, also across restarts; a lower cap set at a restart writes the shares it already passed at once | At 80%: check who is spending (`clients[].spent_today_usd` in `/ratchet/stats`). At 100%: the key (or, in `block` mode, every chat request) is refused until the reset; see [Cost spike](#cost-spike) |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -79,10 +80,10 @@ grep req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79 /var/log/ratchet-gateway.log   # its c
 | `student` | `Ratchet` | Its answer (the teacher covered) | A student call failed (`UpstreamError 504 upstream_timeout`, `ConnectError`, `AdapterMissing 404`), or its breaker refused it (`CircuitOpen 503`, one row in 10) | [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
 | `audit` | `Ratchet` | Its answer | A teacher audit failed or was skipped by the teacher's breaker; the request is logged with `audited=0` | As `teacher` if it repeats |
 | `shadow` | `Ratchet` | Its answer | `sampling: ...` (the shadow's own call) or `arbitration: ...` (the teacher's ruling; the disagreement counts against the shadow) | As `shadow_error` in [Event kinds](#event-kinds) |
-| `quota` | the gateway | 429 `daily_quota_exceeded` | A key used up `RATCHET_API_KEY_DAILY_REQUESTS` | Raise the quota or talk to the client |
+| `quota` | the gateway | 429 `daily_quota_exceeded` | A key used up its daily request quota (`RATCHET_API_KEY_DAILY_REQUESTS`, or its `daily_requests` in `RATCHET_KEY_LIMITS`) | Raise the quota or talk to the client |
 | `auth` | the gateway | 401 | A wrong or missing API, admin or dashboard key (`client` is empty: the caller is unknown). Many in a row from one place: someone is guessing keys | Check the caller; rotate keys if one leaked |
-| `budget` | the gateway | 429 on `/scout/run` | The Scout demo's budget guard refused a run | None on a public demo |
-| `rate` | the gateway | 429 | Any other 429 the gateway answered | Check the client |
+| `budget` | the gateway, `Ratchet` | 429 on `/scout/run`; 429 `budget_exceeded` or `gateway_budget_exceeded` on `/v1` | The Scout demo's budget guard refused a run; or a key's US dollar budget, or the gateway's (`RATCHET_DAILY_BUDGET_USD`), is spent. In `student_only` mode a request that needed the teacher after the student was sampled gets a `Ratchet` row with `error` `BudgetExceeded` and what the samples cost | None on a public demo; on `/v1` see [Cost spike](#cost-spike) |
+| `rate` | the gateway | 429 `rate_limit_exceeded`, 503 `overloaded`, or any other 429 | A key's requests a minute or in flight, a client address's requests a minute, or the gateway's in-flight cap (`RATCHET_MAX_INFLIGHT`) | See [Rate limited](#rate-limited) |
 | `upstream` | the gateway | 502, 503 or 504 | A model or search call a route made itself failed (Scout) | As `teacher` |
 | `gateway` | the gateway | 413 or 500 | A body over `RATCHET_MAX_BODY_BYTES`, or an unhandled error (`RuntimeError`): a bug, also one on the teacher path after the student was sampled (`cost_usd` is then what the samples cost); the traceback is in the gateway's log | Fix the bug; see `gateway_error` in [Event kinds](#event-kinds) |
 
@@ -185,14 +186,18 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### Rate limited
 
-**Symptoms:** clients get **429**. Tell the two kinds apart by `error.code`:
+**Symptoms:** clients get **429** (or **503** `overloaded`). Tell the kinds apart by `error.code`:
 
-- `daily_quota_exceeded` (`type` `insufficient_quota`): a gateway API key used up `RATCHET_API_KEY_DAILY_REQUESTS`. `Retry-After` and `X-RateLimit-Reset-Requests` say when it resets (00:00 UTC), and `X-Should-Retry: false` stops OpenAI SDKs from retrying. The dashboard's **Trust and privacy** panel shows requests per key.
+- `daily_quota_exceeded` (`type` `insufficient_quota`): a gateway API key used up its daily request quota (`RATCHET_API_KEY_DAILY_REQUESTS`, or `daily_requests` in `RATCHET_KEY_LIMITS`). `Retry-After` and `X-RateLimit-Reset-Requests` say when it resets (00:00 UTC), and `X-Should-Retry: false` stops OpenAI SDKs from retrying. The dashboard's **Trust and privacy** panel shows requests per key.
+- `budget_exceeded` or `gateway_budget_exceeded` (`type` `insufficient_quota`): a key's US dollar budget, or the gateway's, is spent. See [Cost spike](#cost-spike).
+- `rate_limit_exceeded` (`type` `rate_limit_error`): a key went past its requests a minute (`rpm`) or in flight (`concurrency`), or on a gateway without keys a client address went past `RATCHET_IP_RPM`. SDKs retry after `Retry-After`. A `rate` failures row names the key; many rows from one key mean its client sends faster than its limit.
+- 503 `overloaded` (`type` `api_error`): `RATCHET_MAX_INFLIGHT` chat requests were already in flight, so the gateway answered at once instead of queueing. `ratchet_inflight_requests` in `/metrics` shows how close it runs. Usually slow upstreams (teacher latency, a student near its timeout) hold requests longer, not more traffic: check `ratchet_upstream_seconds` first.
 - `upstream_rate_limited` (`type` `rate_limit_error`): Token Factory rate-limited the teacher. The gateway already waited for Token Factory's `Retry-After` and retried (twice, if each wait was 8 s or less); `Retry-After` on the 429 is Token Factory's wait, clamped to 1 to 60 s, and SDKs honour it. Five such 429s in a row open the teacher's breaker: clients then get a 503 `teacher_circuit_open` with the breaker's wait instead, and the teacher gets no calls until its probe.
 
 **Steps:**
 
-1. Daily quota: raise `RATCHET_API_KEY_DAILY_REQUESTS` and restart, give the client its own key, or wait for midnight UTC. A refused request was not logged and used no quota.
+1. Daily quota: raise `RATCHET_API_KEY_DAILY_REQUESTS` (or the key's `daily_requests` in `RATCHET_KEY_LIMITS`) and restart, give the client its own key, or wait for midnight UTC. A refused request was not logged and used no quota. A restart keeps today's counts: the gateway reads them from the ledger.
+1. Rate or concurrency: raise the key's `rpm` or `concurrency` in `RATCHET_KEY_LIMITS` and restart, or ask the client to spread its requests (SDKs already wait for `Retry-After`). For `overloaded`, raise `RATCHET_MAX_INFLIGHT` only together with the worker thread pool (40 by default): past it, requests queue for a thread instead of getting the 503.
 2. Token Factory rate limit: check the account's limits in the Token Factory console. Fewer escalations mean fewer teacher calls: look at the escalation rate (drift, or a broken student) and the audit rate. Lower `RATCHET_AUDIT_RATE` (not to 0 while a canary is in flight) and avoid running Night School's judge during peak traffic.
 3. Repeated `audit_error` events with `UpstreamError 429` mean audits are being rate-limited: the student's answers are still served, but canary promotion slows down.
 
@@ -269,15 +274,26 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### Cost spike
 
+**Symptoms:** `budget` events at 50 or 80% early in the day, a daily total far above the usual in `/ratchet/stats` (`budget.spent_today_usd`, `clients[].spent_today_usd`) or in `ratchet_cost_usd_total`, clients getting 429 `budget_exceeded` or `gateway_budget_exceeded`, or the Token Factory bill.
+
 **Checks:**
 
-1. Is `escalation_rate` up? That means drift, or a broken student.
-2. Is shadow running? Shadow adds student sampling and arbitration calls to every request.
-3. Is `RATCHET_AUDIT_RATE` too high?
-4. Is the vLLM endpoint left running (GPU-hours)? `python -m ratchet.cost report --days 1` shows today's endpoint hours and whether they paid for themselves.
-5. Are teacher outputs long because of reasoning? Look at token usage on Token Factory.
+1. Who is spending? `clients[].spent_today_usd` in `/ratchet/stats` (or `ratchet_spend_today_usd` in `/metrics`) by key. One key far above the others: a client in a loop, a leaked key, or a new workload. `SELECT client, COUNT(*), SUM(cost_usd) FROM requests WHERE ts > strftime('%s','now','start of day') GROUP BY client ORDER BY 3 DESC;` and the same on `failures` for failed spend.
+2. Is `escalation_rate` up? That means drift, or a broken student. Escalations are what cost: each pays the student's samples and a teacher call.
+3. Is shadow running? Shadow adds student sampling and arbitration calls to every request.
+4. Is `RATCHET_AUDIT_RATE` too high?
+5. Is the vLLM endpoint left running (GPU-hours)? `python -m ratchet.cost report --days 1` shows today's endpoint hours and whether they paid for themselves. Endpoint hours are not part of the spend limits, which count per-token model calls.
+6. Are teacher outputs long because of reasoning? Look at token usage on Token Factory.
+7. Many failed requests? `totals.failed_cost_usd` and `errors.last_hour`: a teacher outage makes every escalation pay its student samples for nothing.
 
-**Mitigations:** lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
+**Mitigations:**
+
+- Cap the spender ([CONFIGURATION.md](CONFIGURATION.md#spend-and-rate-limits)): give the key a `daily_usd` (and `monthly_usd`) in `RATCHET_KEY_LIMITS`, or every key a default with `RATCHET_API_KEY_DAILY_USD`, and restart; a key that runs past it gets 429 `budget_exceeded` until 00:00 UTC (the 1st for a monthly budget), and today's spend so far counts, because the gateway reads it from the ledger at startup. Slow a looping client with `rpm` and `concurrency`. Rotate a leaked key: remove it from `RATCHET_API_KEYS` (and from `RATCHET_KEY_LIMITS`, or startup stops) and restart.
+- Cap the gateway: `RATCHET_DAILY_BUDGET_USD` with `RATCHET_BUDGET_MODE=student_only` keeps serving what the student answers alone and refuses only what needs the teacher; `block` refuses every chat request. Either way requests are refused until 00:00 UTC unless you raise the budget and restart. In `student_only` mode no audits run, so a canary waiting for audits does not promote; rollback still acts on the audits it has. Scout has its own budget (`RATCHET_SCOUT_DAILY_BUDGET_USD`).
+- Spend less per request: lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
+- Watch it: alert on `budget` events in the log (`"event":"ledger_event","kind":"budget"`), or on `increase(ratchet_cost_usd_total[1h])` against your usual hour.
+
+The limits count per-token prices of the calls Ratchet made (list prices, unverified until the day-1 checks pass), so compare them with the Token Factory bill weekly. A request in flight can overshoot a cap by its own cost.
 
 ### Cost and the self-host recommendation
 
