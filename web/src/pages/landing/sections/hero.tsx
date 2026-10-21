@@ -58,8 +58,8 @@ export function Hero() {
         <div className="mt-10 grid grid-cols-1 items-start gap-10 sm:mt-12 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[auto_1fr] lg:gap-x-14 lg:gap-y-0">
           <div className="lg:col-start-1 lg:row-start-1 lg:pt-1">
             <motion.p {...rise(0.12)} className="max-w-[34rem] text-pretty text-[17px] leading-relaxed text-ink-2 sm:text-lg">
-              Ratchet is an OpenAI-compatible gateway. Your own traffic trains a small model that you own, so more of it is answered
-              cheaply every night. It only learns from open teachers whose licenses allow it.
+              Ratchet is an OpenAI-compatible gateway. Your own traffic trains a Nemotron adapter you own (LoRA on NVIDIA's open Nano
+              base), so more of it is answered cheaply every night. It only learns from open teachers whose licenses allow it.
             </motion.p>
             <motion.div {...rise(0.18)} className="mt-8 flex flex-wrap items-center gap-3">
               <ButtonLink to="/scout" size="lg" className="w-full min-[440px]:w-auto">

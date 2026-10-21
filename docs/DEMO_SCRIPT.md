@@ -5,7 +5,7 @@ Path through the product: landing page → Scout run → dashboard. Total runnin
 | Time | On screen | Say |
 |---|---|---|
 | 0:00 | Landing page (`/`), hero | "Every AI startup rents its intelligence. Ratchet lets you own it, legally." |
-| 0:12 | Landing page: the one-line `base_url` change | "One line. Your app now talks to Ratchet instead of the model. A small model you own answers first; Nemotron 3 Ultra on Nebius Token Factory answers when it is unsure." |
+| 0:12 | Landing page: the one-line `base_url` change | "One line. Your app now talks to Ratchet instead of the model. Nemotron 3 Nano 4B with an adapter you own answers first; Nemotron 3 Ultra on Nebius Token Factory answers when it is unsure." |
 | 0:27 | Click **Try the Scout demo**. `/scout`, pick "What is LoRA fine-tuning?" | "This is Scout, a team of five research agents. Every call they make goes through Ratchet." |
 | 0:37 | Planner lane fills ("Pinned to Ultra"); searcher lane shows results ("Simulated search results" in mock mode) | "The planner writes search queries. Open-ended work like this is pinned to Ultra and never trained on. The searcher uses Tavily." |
 | 0:52 | Triage and reader cards fill in parallel, most with the "Nano · yours" badge, one with "Ultra" + "escalated" | "Triage and reading are many short, repetitive calls. Ratchet learned them from Ultra's answers, so our own Nemotron Nano answers them. When it is unsure, like this one, it escalates." |

@@ -176,7 +176,7 @@ export function HeroFlow() {
 
   const day = SIM_DAYS[night - 1];
   const share = day.student;
-  const label = `Animated illustration, simulation: requests flow from your app through the Ratchet gateway to Nano (the model you own) or Ultra (rented). Over ${NIGHTS} nights the share answered by Nano rises from ${fmtPct(SIM_DAYS[0].student)} to ${fmtPct(SIM_DAYS[NIGHTS - 1].student)}, and the cost per 1,000 requests falls from ${fmtUsd(SIM_DAYS[0].costPer1k, 3)} to ${fmtUsd(SIM_DAYS[NIGHTS - 1].costPer1k, 3)}.`;
+  const label = `Animated illustration, simulation: requests flow from your app through the Ratchet gateway to Nano (with the adapter you own) or Ultra (rented). Over ${NIGHTS} nights the share answered by Nano rises from ${fmtPct(SIM_DAYS[0].student)} to ${fmtPct(SIM_DAYS[NIGHTS - 1].student)}, and the cost per 1,000 requests falls from ${fmtUsd(SIM_DAYS[0].costPer1k, 3)} to ${fmtUsd(SIM_DAYS[NIGHTS - 1].costPer1k, 3)}.`;
 
   return (
     <div ref={cardRef} className="relative overflow-hidden rounded-[22px] border border-line bg-surface/90 shadow-card backdrop-blur-sm">
@@ -278,7 +278,7 @@ export function HeroFlow() {
             {/* outputs */}
             {(
               [
-                { k: "nano", n: g.nano, label: "Nano · yours", sub: "weights you keep", above: true },
+                { k: "nano", n: g.nano, label: "Nano · yours", sub: "adapter you keep", above: true },
                 { k: "ultra", n: g.ultra, label: "Ultra · rented", sub: "billed per token", above: false },
               ] as const
             ).map(({ k, n, label: l, sub, above }) => {

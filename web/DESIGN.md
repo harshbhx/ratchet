@@ -4,7 +4,7 @@ The React app in `web/` replaces the hand-written pages. It is built with Vite i
 
 ## The story in one line
 
-A ratchet turns only one way. Every night Ratchet clicks forward: more of your traffic moves from a model you rent (Nemotron 3 Ultra) to a model you own (Nemotron 3 Nano 4B + LoRA). The gates are the pawl that stops it from slipping back: a bad release is rolled back automatically.
+A ratchet turns only one way. Every night Ratchet clicks forward: more of your traffic moves from a model you rent (Nemotron 3 Ultra) to Nemotron 3 Nano 4B with a LoRA adapter you own. The gates are the pawl that stops it from slipping back: a bad release is rolled back automatically.
 
 Use this metaphor with restraint: a few deliberate moments, not on every heading.
 
@@ -18,7 +18,7 @@ Use this metaphor with restraint: a few deliberate moments, not on every heading
 
 | Token | Means | Use |
 |---|---|---|
-| `owned` (blue) | the student, the model **you own** | "Nano · yours" badges, student share, Ratchet cost line |
+| `owned` (blue) | the student: Nano with the adapter **you own** | "Nano · yours" badges, student share, Ratchet cost line |
 | `rented` (orange) | the teacher you **rent** per token | "Ultra · rented" badges, all-teacher baseline, escalations |
 | `good` / `warn` / `bad` | status only | live, holding, rolled back / rejected. Always with an icon or a word, never color alone |
 | `ink`, `ink-2`, `muted` | text | text never wears a series color |

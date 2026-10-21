@@ -7,7 +7,7 @@
 /*
   Ratchet design tokens.
   Two story colors carry meaning everywhere (charts, badges, diagrams):
-    owned  = the student, the model you own (blue)
+    owned  = the student: Nano with the adapter you own (blue)
     rented = the teacher you rent per token (orange)
   Values are the validated categorical slots 1 and 2 (dataviz reference palette),
   stepped separately for light and dark surfaces. Status colors are distinct from both.

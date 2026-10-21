@@ -122,7 +122,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 772 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 777 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -152,16 +152,15 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 
 - One OpenAI-compatible API for every Nemotron size made routing by difficulty very simple.
 - Nemotron 3 Ultra's OpenMDW-1.1 license is clear that outputs are unrestricted, which made a license-clean distillation product possible.
-- Serverless Jobs and Endpoints billed per second, with stopped endpoints costing nothing, suit a nightly training loop.
+- Serverless Jobs and Endpoints billed per second suit a nightly training loop: a stopped endpoint is not billed for compute or its own storage, though a mounted Object Storage bucket still is ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 21, 2026).
 
 **Friction we hit**
 
-1. **No Nemotron fine-tuning on Token Factory.** The post-training model list covers Llama, Qwen, Gemma, gpt-oss and DeepSeek, but no Nemotron. We had to build our own training job.
-2. **Serverless LoRA serving is Llama-only.** Only Llama-3.1-8B and Llama-3.3-70B are accepted as base models for per-token LoRA serving. Supporting Nemotron Nano here would remove the need for a dedicated vLLM endpoint.
-3. **Serverless pricing is hard to find.** We could find on-demand GPU prices but not clear Serverless Jobs/Endpoints rates.
-4. **Terms of Service 5(f).** "Develop a product or service that competes with the Service" is broad. A gateway built entirely on Nebius that reduces token spend could be read either way. A short FAQ for builders would help. (We emailed support on Oct 19, 2026.) [UPDATE WITH REPLY]
-5. **Custom weights on dedicated endpoints** are "beta, on request", with supported architectures undocumented.
-6. [ADD ANY ISSUES FROM THE LIVE RUN: logprobs, JSON mode, CLI flags, cold starts]
+1. **No Nemotron fine-tuning on Token Factory.** The [post-training model list](https://docs.tokenfactory.nebius.com/post-training/models.md) has 49 models from the Qwen, Llama, Gemma, gpt-oss and DeepSeek families and no Nemotron (read Oct 21, 2026). We had to build our own training job.
+2. **Serverless pricing is hard to find.** We could find on-demand GPU prices but not clear Serverless Jobs/Endpoints rates.
+3. **Terms of Service 5(f).** "Develop a product or service that competes with the Service" is broad. A gateway built entirely on Nebius that reduces token spend could be read either way. A short FAQ for builders would help. (We emailed support on Oct 19, 2026.) [UPDATE WITH REPLY]
+4. **Custom weights on dedicated endpoints** are "currently in beta and available on request" ([custom weights](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026), with supported configurations undocumented. Serving a Nemotron Nano adapter there would remove the need for our own vLLM endpoint.
+5. [ADD ANY ISSUES FROM THE LIVE RUN: logprobs, JSON mode, CLI flags, cold starts]
 
 **Requests**
 
