@@ -39,7 +39,8 @@ def _digest(key: str) -> bytes:
 
 class KeyRing:
     """Named keys from one variable (`env`, which error messages name). A bad spec raises ValueError, so a typo stops
-    the gateway at startup."""
+    the gateway at startup. A message names the entry by its position (`entry 3`), never by its name or key: with the name
+    left out, the text before the first ':' is part of the key, so quoting it would print a secret."""
 
     def __init__(self, spec: str = "", env: str = "RATCHET_API_KEYS"):
         self.env = env
@@ -52,11 +53,11 @@ class KeyRing:
                 name, key = f"key{i + 1}", entry
             name, key = name.strip(), key.strip()
             if not _NAME.match(name):
-                raise ValueError(f"{env}: bad name {name!r} (letters, digits, '_', '.', '-')")
+                raise ValueError(f"{env}: entry {i + 1} has a bad name before its ':' (letters, digits, '_', '.', '-')")
             if len(key) < MIN_KEY_CHARS:
-                raise ValueError(f"{env}: the key for {name!r} is shorter than {MIN_KEY_CHARS} characters")
+                raise ValueError(f"{env}: the key in entry {i + 1} is shorter than {MIN_KEY_CHARS} characters")
             if any(n == name for _, n in self._keys):
-                raise ValueError(f"{env}: name {name!r} appears twice")
+                raise ValueError(f"{env}: entry {i + 1} has the same name as an earlier entry")
             self._keys.append((_digest(key), name))
 
     @property

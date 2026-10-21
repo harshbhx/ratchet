@@ -409,6 +409,22 @@ def test_keyring_parses_and_identifies():
     assert bearer(f"Bearer {KEY_A}") == KEY_A and bearer("Basic abc", "k") == "k" and bearer(None) is None
 
 
+@pytest.mark.req("NFR-5", "INV-13")
+def test_keyring_errors_name_the_entry_never_the_name_or_the_key():
+    """With the name left out, the text before the first ':' of an entry is part of the key, so no message may quote it."""
+    secret = "sk-live-0123456789abcdefghij"
+    cases = (
+        (f"{secret}:short", "RATCHET_API_KEYS: the key in entry 1 is shorter than"),  # a pasted key that holds a ':'
+        (f"acme:{KEY_A}, bad name {secret}:{KEY_B}", "RATCHET_API_KEYS: entry 2 has a bad name"),
+        (f"acme:{KEY_A}, acme:{KEY_B}", "RATCHET_API_KEYS: entry 2 has the same name as an earlier entry"),
+    )
+    for spec, message in cases:
+        with pytest.raises(ValueError, match=message) as caught:
+            KeyRing(spec)
+        text = str(caught.value)
+        assert secret not in text and "acme" not in text and KEY_A not in text and KEY_B not in text
+
+
 @pytest.mark.req("FR-1.7", "NFR-5", "INV-13")
 def test_api_keys_protect_v1_and_name_the_client(gw_env):
     from fastapi.testclient import TestClient
