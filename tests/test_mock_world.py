@@ -18,7 +18,7 @@ from sdk_bridge import make_openai_client
 
 from ratchet.config import Settings
 from ratchet.ledger import Ledger, Version
-from ratchet.providers import GenParams
+from ratchet.providers import DEFAULT_STUDENT_PARAMS, GenParams, GenPolicy
 from sim import generic, research, simulate
 from sim.generic import GenericItem, instance_from_schema
 from sim.mock_models import STAGING, MockFleet, MockStudent, MockTeacher
@@ -89,7 +89,8 @@ def _errors(value: Any, schema: Any, root: Any = None, at: str = "$") -> list[st
             out.append(f"{at}: {value} out of bounds")
         if (elo not in (None, True, False) and value <= elo) or (ehi not in (None, True, False) and value >= ehi):
             out.append(f"{at}: {value} out of exclusive bounds")
-        if "multipleOf" in schema and value % schema["multipleOf"]:
+        step = schema.get("multipleOf")  # a float step as jsonschema and ajv test it: the quotient is whole
+        if step is not None and not (float(value / step).is_integer() if isinstance(step, float) else value % step == 0):
             out.append(f"{at}: {value} not a multiple")
     if isinstance(value, str) and not schema.get("minLength", 0) <= len(value) <= schema.get("maxLength", len(value)):
         out.append(f"{at}: length {len(value)}")
@@ -279,6 +280,61 @@ def test_instance_from_schema_ends_and_never_raises_on_hostile_schemas():
                 assert all(any(v != item.labels[k] for v in space) for k, space in item.label_space.items())
 
 
+def _shared(literal: dict[str, Any], refs: int) -> dict[str, Any]:
+    """A schema whose `refs` properties all $ref one literal (an enum or a const), plus one that recurses into the root."""
+    props: dict[str, Any] = {f"p{i}": {"$ref": "#/$defs/lit"} for i in range(refs)}
+    return {"type": "object", "properties": {**props, "r": {"$ref": "#"}}, "$defs": {"lit": literal}}
+
+
+SHARED_ENUM = _shared({"enum": list(range(4000))}, 1500)
+SHARED_CONST = _shared({"const": {f"k{i}": i for i in range(3000)}}, 800)
+
+
+@pytest.mark.req("FR-9.7")
+def test_a_shared_big_enum_or_const_with_recursion_costs_bounded_time_and_size(gw):
+    """A schema under the 64 KB limit that $refs one big enum or const from many places and recurses once took 27.6 s
+    and a 100 MB answer: each copy and each enum scan was free. Now a copied literal is charged by its size, an enum is
+    read once (its first MAX_ENUM values), and past the budget a part gets its simplest value."""
+    start = time.perf_counter()
+    for schema in (SHARED_ENUM, SHARED_CONST):
+        assert len(json.dumps(schema, separators=(",", ":"))) < 64 * 1024
+        rf = {"type": "json_schema", "json_schema": {"name": "big", "schema": schema}}
+        item = generic.item(HELLO, GenParams(response_format=rf))
+        wrong = {k: v[-1] for k, v in item.label_space.items()}
+        for labels in (item.labels, wrong):
+            assert len(item.answer(labels)) < 2 * generic.MAX_BYTES
+        assert all(len(v) <= generic.MAX_ENUM for v in item.label_space.values())
+    assert time.perf_counter() - start < 1.0
+    small = instance_from_schema(_shared({"enum": list(range(4000))}, 3), 1)  # within the budget: valid, enum values drawn
+    assert all(v in range(generic.MAX_ENUM) for k, v in small.items() if k != "r")
+    assert instance_from_schema(_shared({"const": {"a": [1, 2]}}, 3), 1)["p2"] == {"a": [1, 2]}
+    body = {"messages": HELLO, "response_format": {"type": "json_schema", "json_schema": {"name": "e", "schema": SHARED_ENUM}}}
+    start = time.perf_counter()
+    r = TestClient(gw.app).post("/v1/chat/completions", json=body)
+    assert r.status_code == 200 and time.perf_counter() - start < 5.0
+    assert len(r.content) < 4 * generic.MAX_BYTES
+
+
+@pytest.mark.req("FR-9.7")
+def test_number_multiple_of_and_bounds_past_every_float():
+    max_float = 1.7976931348623157e308
+    for step in (0.1, 0.01, 0.05, 0.3, 0.07, 1e-5, 0.25, 5):
+        schema = {"type": "number", "minimum": -3, "maximum": 30, "multipleOf": step}
+        values = {instance_from_schema(schema, seed) for seed in range(200)}
+        assert len(values) > 5 and all(_errors(v, schema) == [] for v in values), step  # drawn, and whole quotients
+    assert all(isinstance(instance_from_schema({"type": "number", "multipleOf": 5}, s), int) for s in range(20))
+    for schema in (
+        {"type": "number", "exclusiveMinimum": max_float},
+        {"type": "number", "exclusiveMaximum": -max_float},
+        {"type": "number", "exclusiveMinimum": 10**309},
+        {"type": "number", "minimum": max_float, "exclusiveMinimum": True},
+        {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.005},
+    ):
+        v = instance_from_schema(schema, 1)
+        json.dumps(v, allow_nan=False)
+        assert _errors(v, schema) == [], (schema, v)
+
+
 @pytest.mark.req("FR-9.7")
 def test_instance_from_schema_agrees_with_jsonschema():
     jsonschema = pytest.importorskip("jsonschema")
@@ -432,10 +488,18 @@ def test_mock_fleet_trains_and_evaluates_on_generic_and_ticket_rows():
         fleet = MockFleet(strict=strict)
         assert fleet.train(rows, "base", "student-v1") == "student-v1"
         known = fleet.knowledge["student-v1"]
-        assert {ticket.template, case.template, tool.template, "generic:text:-"} <= set(known["templates"])
+        # Templates as the student is sent each row (`policy.student`, as the golden eval and the router send it): the
+        # schema reaches it, the stored tools do not by default, so that row trains the free-text template it is served.
+        served = lookup(tool.messages(), fleet.policy.student(tool.params)).template
+        assert served == lookup(tool.messages()).template != tool.template
+        assert {ticket.template, case.template, served, "generic:text:-"} <= set(known["templates"])
+        assert tool.template not in known["templates"]
         assert ticket.text in known["texts"] and "hello" in known["texts"]
         report = fleet.evaluate("student-v1", rows)
         assert report["golden_n"] == len(rows) and 0.5 <= report["threshold"] <= 1.01
+    tooled = MockFleet(policy=GenPolicy(student_allow=DEFAULT_STUDENT_PARAMS | {"tools", "tool_choice"}))
+    tooled.train(rows, "base", "student-v1")  # a student sent the tools learns the tools template
+    assert tool.template in tooled.knowledge["student-v1"]["templates"]
     # The students it serves are strict when it is: a request the demo did not write is the gateway's 400.
     version = Version(1, 1, "base", "student-v1", len(rows), "h", {}, "live", 100)
     fleet = MockFleet(strict=True)
@@ -456,8 +520,10 @@ def test_strict_teacher_and_unreadable_scout_writer_requests():
     from ratchet.scout.prompts import WRITE_SYSTEM
 
     writer = [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "not JSON"}]
-    assert MockTeacher().complete(writer, "t")[0].text.startswith("[mock teacher] ")  # the generic world answers
-    for messages in (writer, HELLO):
+    no_source = [writer[0], {"role": "user", "content": json.dumps({"facts": [{"fact": "LoRA freezes the base weights."}]})}]
+    for messages in (writer, no_source):  # unreadable facts, or a fact without its source number `n`
+        assert MockTeacher().complete(messages, "t")[0].text.startswith("[mock teacher] ")  # the generic world answers
+    for messages in (writer, no_source, HELLO):
         with pytest.raises(KeyError):
             MockTeacher(strict=True).complete(messages, "t")
     assert not Settings().mock_strict
@@ -524,6 +590,21 @@ def test_demo_day_runs_the_schema_and_tools_workloads(gw):
     tasks = {t["task"] for t in c.get("/ratchet/stats").json()["tasks"]}
     assert {c.task for c in generic.SCHEMA_CASES} | {"order-support"} <= tasks
     assert c.post("/ratchet/demo/day?workload=nope").status_code == 400
+
+
+@pytest.mark.req("FR-9.7", "INV-8")
+def test_strict_mock_refuses_the_generic_workloads_before_the_day_moves(gw_env):
+    """RATCHET_MOCK_STRICT=1 answers only the demo's ticket and research requests, so the schema and tools workloads,
+    which the generic world answers, are a 400 before the day starts, not a 500 on their first request with the day
+    already advanced."""
+    gw = gw_env(RATCHET_MOCK_STRICT="1")
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    for workload in gw.GENERIC_WORKLOADS:
+        r = c.post(f"/ratchet/demo/day?requests=100&workload={workload}")
+        assert r.status_code == 400 and "RATCHET_MOCK_STRICT" in r.json()["detail"], r.text
+    assert gw.rt.ledger.day == 0 and gw.rt.gateway_errors == 0 and gw.rt.ledger.examples() == []
+    r = c.post("/ratchet/demo/day?requests=100&workload=tickets")  # the demo's own requests still run
+    assert r.status_code == 200 and r.json()["day"] == 1
 
 
 # ---------- the mock gateway through the OpenAI SDK ----------

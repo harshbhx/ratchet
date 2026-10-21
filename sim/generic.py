@@ -24,11 +24,14 @@ personal data, so redaction never changes them. Simulation for demos and tests: 
 from __future__ import annotations
 
 import copy
+import decimal
 import hashlib
 import json
 import math
 import random
 import re
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,8 +52,17 @@ SNIPPET_WORDS = 12  # a restatement quotes at most this many words of the prompt
 SNIPPET_CHARS = 100  # and at most this many characters
 MAX_LABELS = 32  # labelled fields per schema instance; the rest keep their seeded value
 MAX_DEPTH = 12  # schema nesting followed when building an instance; deeper parts get their simplest value
-MAX_NODES = 2000  # values built per instance, so a schema of nested arrays cannot blow up
+# The budget of one instance, so a schema of nested arrays, or one that $refs a big enum or const from many places and
+# recurses, costs bounded time and memory: values built (a copied const or enum value counts every value in it) and
+# about this many bytes of JSON. Past either, a part gets its simplest value and an object only its required keys.
+MAX_NODES = 2000
+MAX_BYTES = 256 * 1024
+MAX_ENUM = 64  # an enum's first distinct values are the ones drawn; the rest are allowed but never written
+MAX_LABEL_BYTES = 256  # an enum value bigger than this as JSON is never a label, so a wrong answer stays small
+MAX_LITERAL_DEPTH = 32  # a const or enum value nested deeper is never copied (JSON encoding could hit Python's limit)
+TINY_BYTES = 16  # past the budget a const or the enum's first value this small is still written, so the part is valid
 MAX_ITEMS = 50  # an array honours minItems up to this many items
+MULTIPLE_TRIES = 16  # multiples of a float multipleOf tried from the drawn one until one passes a validator's test
 NUMBER_SPAN = 1e12  # the widest range a number is drawn from, so bounds like +-1e308 cannot overflow
 # String formats filled with a value of that format. Formats whose values look like personal data (email, ipv4,
 # phone numbers) stay MOCK_TEXT, so redaction never changes a mock answer. The UUID keeps its digit runs short for the
@@ -131,12 +143,13 @@ def _canonical(value: Any) -> str:
 # ---------- instances of a JSON schema ----------
 def instance_from_schema(schema: Any, seed: int) -> Any:
     """A value that satisfies `schema` (the JSON-schema subset structured outputs use), the same for the same seed: an
-    enum value and a boolean drawn with the seed, an integer or number within its bounds, 'mock text' for a string
-    (a date, time, UUID or URI for those formats; padded or cut to minLength and maxLength), 1 or 2 items for an array
-    (within minItems and maxItems), every property of an object (and any required one it does not describe), local
-    `$ref`s (`#/$defs/...`), `anyOf`, `oneOf` (a non-null option), `allOf` and `const`. Never raises: a part it cannot
-    read accepts anything and gets 'mock text', and past MAX_DEPTH or MAX_NODES a part gets its simplest value, which
-    may break a minItems (a recursive or exploding schema has no small instance anyway)."""
+    enum value (one of its first MAX_ENUM) and a boolean drawn with the seed, an integer or number within its bounds and
+    `multipleOf`, 'mock text' for a string (a date, time, UUID or URI for those formats; padded or cut to minLength and
+    maxLength; a `pattern` is not honoured), 1 or 2 items for an array (within minItems and maxItems), every property
+    of an object (and any required one it does not describe), local `$ref`s (`#/$defs/...`), `anyOf`, `oneOf` (a
+    non-null option), `allOf` and `const`. Never raises: a part it cannot read accepts anything and gets 'mock text',
+    and past MAX_DEPTH or the budget (MAX_NODES values, MAX_BYTES of JSON) a part gets its simplest value, which may
+    break a minItems or a big const (a recursive or exploding schema has no small instance anyway)."""
     return _Builder(schema, random.Random(seed)).value(schema, (), 0)
 
 
@@ -150,22 +163,63 @@ def _number(x: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _exact(x: Any) -> int | float | None:
+    """A JSON number as Python holds it: an int of any size or a finite float; None for anything else."""
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, int):
+        return x
+    return x if isinstance(x, float) and math.isfinite(x) else None
+
+
 def _whole(x: Any, default: int | None) -> int | None:
     return x if isinstance(x, int) and not isinstance(x, bool) and x >= 0 else default
 
 
-def _distinct(values: list[Any]) -> list[Any]:
-    """`values` without repeats (as JSON), in order."""
+def _distinct(values: list[Any], limit: int | None = None) -> list[Any]:
+    """`values` without repeats (as JSON), in order, at most `limit` of them. A value JSON cannot encode (nested past
+    Python's limit) is left out."""
     if all(isinstance(v, str) for v in values):  # the common enum: no JSON needed to tell strings apart
-        return list(dict.fromkeys(values))
+        return list(dict.fromkeys(values))[:limit]
     seen: set[str] = set()
     out = []
     for v in values:
-        key = _canonical(v)
+        try:
+            key = _canonical(v)
+        except (RecursionError, ValueError):
+            continue
         if key not in seen:
             seen.add(key)
             out.append(v)
+            if limit is not None and len(out) >= limit:
+                break
     return out
+
+
+def _measure(value: Any) -> tuple[int, int, int]:
+    """(values, about how many bytes of JSON, nesting depth) of a JSON value, without recursion. Stops counting past
+    MAX_BYTES or MAX_LITERAL_DEPTH, which no budget accepts anyway."""
+    nodes = size = depth = 0
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        v, d = stack.pop()
+        nodes += 1
+        depth = max(depth, d)
+        if size > MAX_BYTES or depth > MAX_LITERAL_DEPTH:
+            break
+        if isinstance(v, dict):
+            size += 2 + sum((len(k) if isinstance(k, str) else 8) + 4 for k in v)
+            stack.extend((sub, d + 1) for sub in v.values())
+        elif isinstance(v, list):
+            size += 2 + len(v)
+            stack.extend((sub, d + 1) for sub in v)
+        elif isinstance(v, str):
+            size += len(v) + 2
+        elif isinstance(v, int) and not isinstance(v, bool):
+            size += v.bit_length() // 3 + 2  # about its decimal digits, without converting a huge int to text
+        else:
+            size += 8
+    return nodes, size, depth
 
 
 def _is_null(schema: Any) -> bool:
@@ -174,16 +228,39 @@ def _is_null(schema: Any) -> bool:
 
 def _merge(base: dict[str, Any], extra: Any) -> dict[str, Any]:
     """`extra`'s keywords over `base`'s; properties are merged and required lists joined (enough for allOf and a $ref's
-    sibling keywords)."""
-    if not isinstance(extra, dict):
-        return base
-    out = {**base, **extra}
-    props_a, props_b = base.get("properties"), extra.get("properties")
-    if isinstance(props_a, dict) and isinstance(props_b, dict):
-        out["properties"] = {**props_a, **props_b}
-    req_a, req_b = base.get("required"), extra.get("required")
-    if isinstance(req_a, list) and isinstance(req_b, list):
-        out["required"] = list(dict.fromkeys([*req_a, *req_b]))
+    sibling keywords). Required entries that are not strings name no property, so they are left out of a join."""
+    return _merge_all(base, [extra])
+
+
+def _merge_all(base: dict[str, Any], parts: list[Any]) -> dict[str, Any]:
+    """`_merge` of each part in turn, in one pass, so an allOf of many parts costs its size, not its size squared."""
+    out = dict(base)
+    props = out.get("properties")
+    props = dict(props) if isinstance(props, dict) else None
+    req = out.get("required")
+    req = dict.fromkeys(k for k in req if isinstance(k, str)) if isinstance(req, list) else None
+    joined = False  # True once properties or required were joined, so `out` needs the joined copies
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        for key, value in part.items():
+            if key == "properties" and isinstance(value, dict) and props is not None:
+                props.update(value)
+                joined = True
+            elif key == "required" and isinstance(value, list) and req is not None:
+                req.update(dict.fromkeys(k for k in value if isinstance(k, str)))
+                joined = True
+            else:
+                out[key] = value
+                if key == "properties":
+                    props = dict(value) if isinstance(value, dict) else None
+                elif key == "required":
+                    req = dict.fromkeys(k for k in value if isinstance(k, str)) if isinstance(value, list) else None
+    if joined:
+        if props is not None:
+            out["properties"] = props
+        if req is not None:
+            out["required"] = list(req)
     return out
 
 
@@ -221,57 +298,152 @@ def _type(schema: dict[str, Any]) -> str:
     return "string"
 
 
+def _tiny(value: Any) -> bool:
+    """A value cheap enough to write past the budget: a scalar of at most TINY_BYTES as JSON, or an empty container."""
+    if value is None or isinstance(value, (bool, float)):
+        return True
+    if isinstance(value, int):
+        return value.bit_length() <= 48
+    if isinstance(value, str):
+        return len(value) <= TINY_BYTES
+    return isinstance(value, (dict, list)) and not value
+
+
+def _empty(value: Any, schema: dict[str, Any]) -> Any:
+    """The empty value of `value`'s kind ({}, [], ''), or of the schema's type for a scalar."""
+    if isinstance(value, dict):
+        return {}
+    if isinstance(value, list):
+        return []
+    return "" if isinstance(value, str) else _SIMPLEST[_type(schema)]
+
+
+def _decimals(step: float | int) -> int:
+    """Decimal places of `step` as written (0.25 -> 2, 1e-05 -> 5, 3 -> 0), so a multiple of it can be rounded to them."""
+    if isinstance(step, int):
+        return 0
+    exponent = decimal.Decimal(repr(step)).as_tuple().exponent
+    return max(0, -exponent) if isinstance(exponent, int) else 0
+
+
+def _above(x: float, eps: float) -> float:
+    """The smallest float this side of an exclusive lower bound: `x + eps`, or the next float when `eps` is lost."""
+    return x + eps if x + eps > x else math.nextafter(x, math.inf)
+
+
+def _below(x: float, eps: float) -> float:
+    return x - eps if x - eps < x else math.nextafter(x, -math.inf)
+
+
+_SIMPLEST: dict[str, Any] = {"object": {}, "array": [], "string": "", "integer": 0, "number": 0, "boolean": False, "null": None}
+_NOTHING = object()
+
+
 class _Builder:
     """Builds one instance, recording each enum, boolean, integer and number value as a leaf the mock student can get
-    wrong: (kind order, path, value, candidates), candidates being the values the schema allows there."""
+    wrong: (kind order, path, value, candidates), candidates being the values the schema allows there. What it works
+    out once per schema part (a resolved `$ref`, an allOf's merge, an anyOf's options, an enum's values, a literal's
+    size) is kept by identity, so a part `$ref`d from many places costs its size once."""
 
     def __init__(self, root: Any, rng: random.Random) -> None:
         self.root = root
         self.rng = rng
         self.nodes = MAX_NODES
+        self.bytes = MAX_BYTES
         self.leaves: list[tuple[int, tuple[Any, ...], Any, list[Any]]] = []
         self.record = True  # False inside an array with uniqueItems: a changed item could repeat another
+        self._memo: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+
+    def _cached(self, kind: str, objs: tuple[Any, ...], make: Callable[[], Any]) -> Any:
+        """`make()`, worked out once per `kind` and identity of `objs` (kept alive here, so an id is never reused)."""
+        key = (kind, *map(id, objs))
+        hit = self._memo.get(key)
+        if hit is not None and all(a is b for a, b in zip(hit[:-1], objs, strict=True)):
+            return hit[-1]
+        out = make()
+        self._memo[key] = (*objs, out)
+        return out
+
+    @property
+    def spent(self) -> bool:
+        return self.nodes <= 0 or self.bytes <= 0
 
     def _resolve(self, schema: Any) -> Any:
+        if not (isinstance(schema, dict) and isinstance(schema.get("$ref"), str)):
+            return schema
+        return self._cached("ref", (schema,), lambda: self._follow(schema))
+
+    def _follow(self, schema: Any) -> Any:
         for _ in range(32):  # a $ref chain that loops ends here
             if not (isinstance(schema, dict) and isinstance(schema.get("$ref"), str)):
                 return schema
             target = _pointer(self.root, schema["$ref"])
             rest = {k: v for k, v in schema.items() if k != "$ref"}
-            schema = _merge(target, rest) if isinstance(target, dict) else (rest or True)
+            if isinstance(target, dict):
+                schema = _merge(target, rest) if rest else target
+            else:
+                schema = rest or True
         return {}
 
     def _leaf(self, kind: int, path: tuple[Any, ...], value: Any, candidates: list[Any]) -> None:
         if self.record and any(c != value for c in candidates):
             self.leaves.append((kind, path, value, candidates))
 
+    def _size(self, value: Any) -> tuple[int, int, int]:
+        if isinstance(value, (dict, list)):
+            return self._cached("size", (value,), lambda: _measure(value))
+        return _measure(value)
+
+    def _fits(self, value: Any) -> bool:
+        """Whether a const or enum value fits what is left of the budget (and nests no deeper than MAX_LITERAL_DEPTH)."""
+        nodes, size, depth = self._size(value)
+        return depth <= MAX_LITERAL_DEPTH and nodes <= self.nodes + 1 and size <= self.bytes  # `value` paid for one node
+
+    def _literal(self, value: Any, schema: dict[str, Any]) -> Any:
+        """A copy of a const or enum value, charged to the budget by its size; the empty value of its kind when it does
+        not fit."""
+        if not self._fits(value):
+            return _empty(value, schema)
+        nodes, size, _ = self._size(value)
+        self.nodes -= nodes - 1
+        self.bytes -= size
+        return copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+
+    def _enum(self, enum: list[Any]) -> tuple[list[Any], list[Any]]:
+        """(the values drawn from: the enum's first MAX_ENUM distinct ones that can be copied, the label candidates: those
+        of them at most MAX_LABEL_BYTES as JSON)."""
+
+        def make() -> tuple[list[Any], list[Any]]:
+            values = [v for v in _distinct(enum, MAX_ENUM) if self._size(v)[2] <= MAX_LITERAL_DEPTH]
+            return values, [v for v in values if self._size(v)[1] <= MAX_LABEL_BYTES]
+
+        return self._cached("enum", (enum,), make)
+
     def value(self, schema: Any, path: tuple[Any, ...], depth: int) -> Any:
         self.nodes -= 1
         schema = self._resolve(schema)
         if not isinstance(schema, dict):
+            self.bytes -= len(MOCK_TEXT) + 2
             return MOCK_TEXT  # `true`, or something that is not a schema: anything is allowed
+        if self.spent or depth > MAX_DEPTH:
+            return self._simplest(schema)
         if "const" in schema:
-            return copy.deepcopy(schema["const"])
+            return self._literal(schema["const"], schema)
         enum = schema.get("enum")
         if isinstance(enum, list) and enum:
-            values = _distinct(enum)
-            v = self.rng.choice(values)
-            self._leaf(0, path, v, values)
-            return copy.deepcopy(v)
-        if self.nodes <= 0 or depth > MAX_DEPTH:
-            return self._simplest(schema)
+            values, candidates = self._enum(enum)
+            if values:
+                v = self.rng.choice(values)
+                if any(v is c for c in candidates) and self._fits(v):  # a label only for a value that is written
+                    self._leaf(0, path, v, candidates)
+                return self._literal(v, schema)
         for key in ("anyOf", "oneOf"):
             options = schema.get(key)
             if isinstance(options, list) and options:
-                real = [o for o in options if not _is_null(self._resolve(o))] or options
-                rest = {k: v for k, v in schema.items() if k != key}
-                return self.value(_merge(rest, self._resolve(self.rng.choice(real))), path, depth + 1)
+                return self.value(self._option(schema, key, options), path, depth + 1)
         parts = schema.get("allOf")
         if isinstance(parts, list) and parts:
-            merged = {k: v for k, v in schema.items() if k != "allOf"}
-            for part in parts:
-                merged = _merge(merged, self._resolve(part))
-            return self.value(merged, path, depth + 1)
+            return self.value(self._cached("allOf", (schema,), lambda: self._all_of(schema, parts)), path, depth + 1)
         kind = _type(schema)
         if kind == "object":
             return self._object(schema, path, depth)
@@ -284,23 +456,50 @@ class _Builder:
         if kind == "boolean":
             v = self.rng.random() < 0.5
             self._leaf(1, path, v, [True, False])
+            self.bytes -= 5
             return v
         if kind == "null":
+            self.bytes -= 4
             return None
         return self._string(schema)
 
+    def _option(self, schema: dict[str, Any], key: str, options: list[Any]) -> dict[str, Any]:
+        """The schema with one of its anyOf or oneOf options drawn (a non-null one when there is one) merged in."""
+        real = self._cached("options", (options,), lambda: [o for o in options if not _is_null(self._resolve(o))] or options)
+        option = self._resolve(self.rng.choice(real))
+        return self._cached(key, (schema, option), lambda: _merge({k: v for k, v in schema.items() if k != key}, option))
+
+    def _all_of(self, schema: dict[str, Any], parts: list[Any]) -> dict[str, Any]:
+        return _merge_all({k: v for k, v in schema.items() if k != "allOf"}, [self._resolve(p) for p in parts])
+
     def _simplest(self, schema: dict[str, Any]) -> Any:
-        return {"object": {}, "array": [], "string": "", "integer": 0, "number": 0, "boolean": False, "null": None}[_type(schema)]
+        """A part past MAX_DEPTH or the budget: its const or its enum's first value when that is tiny (so the part stays
+        valid), else the empty value of its type."""
+        enum = schema.get("enum")
+        literal = schema["const"] if "const" in schema else enum[0] if isinstance(enum, list) and enum else _NOTHING
+        if literal is not _NOTHING:
+            return _empty(literal, schema) if isinstance(literal, (dict, list)) or not _tiny(literal) else literal
+        return copy.copy(_SIMPLEST[_type(schema)])
 
     def _object(self, schema: dict[str, Any], path: tuple[Any, ...], depth: int) -> dict[str, Any]:
         props = schema.get("properties")
-        out: dict[str, Any] = {}
-        for key, sub in (props if isinstance(props, dict) else {}).items():
-            if isinstance(key, str):  # JSON has no other keys; a Python schema might
-                out[key] = self.value(sub, (*path, key), depth + 1)
         required = schema.get("required")
-        for key in required if isinstance(required, list) else []:
+        required = required if isinstance(required, list) else []
+        needed: set[str] | None = None  # the required keys, worked out once the budget is spent
+        out: dict[str, Any] = {}
+        self.bytes -= 2
+        for key, sub in (props if isinstance(props, dict) else {}).items():
+            if not isinstance(key, str):  # JSON has no other keys; a Python schema might
+                continue
+            if self.spent:  # past the budget only required keys are written, at their simplest
+                needed = {k for k in required if isinstance(k, str)} if needed is None else needed
+                if key not in needed:
+                    continue
+            self.bytes -= len(key) + 4
+            out[key] = self.value(sub, (*path, key), depth + 1)
+        for key in required:
             if isinstance(key, str) and key not in out:
+                self.bytes -= len(key) + len(MOCK_TEXT) + 6
                 out[key] = MOCK_TEXT
         return out
 
@@ -319,6 +518,7 @@ class _Builder:
         unique = schema.get("uniqueItems") is True
         record, self.record = self.record, self.record and not unique
         out: list[Any] = []
+        self.bytes -= 2 + n
         for i in range(n):
             sub = prefix[i] if i < len(prefix) else (items if isinstance(items, (dict, bool)) else {})
             out.append(self.value(sub, (*path, i), depth + 1))
@@ -332,23 +532,25 @@ class _Builder:
                 seen.add(key)
         return out
 
-    def _bounds(self, schema: dict[str, Any]) -> tuple[float | None, bool, float | None, bool]:
+    def _bounds(self, schema: dict[str, Any]) -> tuple[int | float | None, bool, int | float | None, bool]:
         """(lower bound, exclusive?, upper bound, exclusive?) from minimum, maximum and the exclusive forms (a number
-        since draft 6, a flag on minimum and maximum in draft 4); the stricter one when both are given."""
-        lo, hi = _number(schema.get("minimum")), _number(schema.get("maximum"))
+        since draft 6, a flag on minimum and maximum in draft 4); the stricter one when both are given. Exact: an int
+        bound stays an int, however big."""
+        lo, hi = _exact(schema.get("minimum")), _exact(schema.get("maximum"))
         lo_x = hi_x = False
         emin, emax = schema.get("exclusiveMinimum"), schema.get("exclusiveMaximum")
         if emin is True:
             lo_x = lo is not None
-        elif (e := _number(emin)) is not None and (lo is None or e >= lo):
+        elif (e := _exact(emin)) is not None and (lo is None or e >= lo):
             lo, lo_x = e, True
         if emax is True:
             hi_x = hi is not None
-        elif (e := _number(emax)) is not None and (hi is None or e <= hi):
+        elif (e := _exact(emax)) is not None and (hi is None or e <= hi):
             hi, hi_x = e, True
         return lo, lo_x, hi, hi_x
 
     def _integer(self, schema: dict[str, Any], path: tuple[Any, ...]) -> int:
+        self.bytes -= 8
         lo_f, lo_x, hi_f, hi_x = self._bounds(schema)
         lo = None if lo_f is None else (math.floor(lo_f) + 1 if lo_x else math.ceil(lo_f))
         hi = None if hi_f is None else (math.ceil(hi_f) - 1 if hi_x else math.floor(hi_f))
@@ -369,10 +571,27 @@ class _Builder:
         self._leaf(2, path, v, [c for c in candidates if first <= c <= last])
         return v
 
-    def _float(self, schema: dict[str, Any], path: tuple[Any, ...]) -> float:
+    def _float(self, schema: dict[str, Any], path: tuple[Any, ...]) -> float | int:
+        self.bytes -= 8
         lo, lo_x, hi, hi_x = self._bounds(schema)
-        lo = None if lo is None else lo + (0.01 if lo_x else 0.0)
-        hi = None if hi is None else hi - (0.01 if hi_x else 0.0)
+        top = sys.float_info.max
+        if lo is not None and lo < -top:  # below every float: no bound in practice
+            lo, lo_x = None, False
+        if hi is not None and hi > top:
+            hi, hi_x = None, False
+        # Nothing a float can hold is allowed (an int bound past every float, or past the largest float exclusively):
+        # the bound itself, or one past it, exactly.
+        if lo is not None and (lo > top or (lo_x and lo >= top)):
+            return int(lo) + 1 if lo_x else lo
+        if hi is not None and (hi < -top or (hi_x and hi <= -top)):
+            return int(hi) - 1 if hi_x else hi
+        lo = None if lo is None else float(lo)
+        hi = None if hi is None else float(hi)
+        eps = 0.01  # how far inside an exclusive bound; less in a narrow range, so the range is not stepped over
+        if lo is not None and hi is not None and hi > lo:
+            eps = min(eps, (hi - lo) / 4)
+        lo = None if lo is None else _above(lo, eps) if lo_x else lo
+        hi = None if hi is None else _below(hi, eps) if hi_x else hi
         if lo is None and hi is None:
             lo, hi = 0.0, 1000.0
         elif lo is None:
@@ -384,8 +603,48 @@ class _Builder:
             return lo
         if not math.isfinite(hi - lo) or hi - lo > NUMBER_SPAN:  # a span like 1e308 would draw infinities
             hi = lo + 1000.0
+        raw = schema.get("multipleOf")
+        step = raw if isinstance(raw, int) and _number(raw) is not None else _number(raw)  # an int step keeps ints
+        if step is not None and step > 0:
+            v = self._multiple(lo, hi, step, path)
+            if v is not None:
+                return v
         v = min(max(round(lo + (hi - lo) * self.rng.random(), 2), lo), hi)
         self._leaf(3, path, v, sorted({lo, hi, v, min(max(round((lo + hi) / 2, 2), lo), hi)}))
+        return v
+
+    def _multiple(self, lo: float, hi: float, step: float | int, path: tuple[Any, ...]) -> float | int | None:
+        """A multiple of `step` within [lo, hi]: k * step for a drawn whole k, the lower bound when no multiple fits, or
+        None when the step is too fine for the bounds to count its multiples. In floats k * step is rarely exact, so a
+        value counts only when a validator's test passes (its quotient by `step` is whole, as jsonschema and ajv check):
+        k * step rounded to step's decimals (0.1 * 3 -> 0.3) or else as computed, and when neither passes for the drawn
+        k the next ones are tried (most do: 0.3 / 0.1 is not whole, 0.5 / 0.1 is)."""
+        a, b = lo / step, hi / step
+        if not (math.isfinite(a) and math.isfinite(b)):
+            return None
+        first, last = math.ceil(a), math.floor(b)
+        if first > last:  # no multiple within the bounds: the lower bound, as good as any
+            return lo
+        places = _decimals(step)
+
+        def at(k: int) -> float | int | None:
+            for v in (round(k * step, places), k * step):
+                if lo <= v <= hi and float(v / step).is_integer():
+                    return v
+            return None
+
+        span = last - first + 1
+        drawn = self.rng.randint(0, span - 1)
+        for i in range(min(span, MULTIPLE_TRIES)):
+            k = first + (drawn + i) % span
+            v = at(k)
+            if v is not None:
+                break
+        else:  # no multiple near the drawn one passes the test: the lower bound
+            return lo
+        ks = {first, last, k, (first + last) // 2, k - 1, k + 1}
+        candidates = {at(x) for x in ks if first <= x <= last} - {None}
+        self._leaf(3, path, v, sorted(candidates))  # type: ignore[type-var]
         return v
 
     def _string(self, schema: dict[str, Any]) -> str:
@@ -393,9 +652,11 @@ class _Builder:
         s = FORMATS.get(fmt, MOCK_TEXT) if isinstance(fmt, str) else MOCK_TEXT
         lo = min(_whole(schema.get("minLength"), 0) or 0, 10_000)
         hi = _whole(schema.get("maxLength"), None)
-        while len(s) < lo:
-            s += " text"
-        return s[:hi] if hi is not None else s
+        if len(s) < lo:  # " text" repeated until minLength is reached
+            s += " text" * -(-(lo - len(s)) // 5)
+        s = s[:hi] if hi is not None else s
+        self.bytes -= len(s) + 2
+        return s
 
 
 def _label_key(path: tuple[Any, ...]) -> str:
