@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 import pytest
 from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, _version
@@ -29,7 +30,7 @@ from ratchet.config import Settings, parse_alert_pct
 from ratchet.ledger import Ledger
 from ratchet.ratelimit import Concurrency, Limiter, RateLimiter, Refused, TokenBucket, burst
 from ratchet.router import Ratchet, RequestMeta
-from ratchet.spend import BudgetExceeded, Caps, SpendMeter, money, month_bounds
+from ratchet.spend import BudgetExceeded, Caps, SpendMeter, money, month_bounds, public_alert
 
 CHAT = "/v1/chat/completions"
 ACME_KEY = "acme-api-key-0123456789abcdef"
@@ -307,6 +308,26 @@ def test_budget_alerts_fire_once_per_share_also_after_a_restart():
 
 
 @pytest.mark.req("FR-12.2")
+def test_alerts_name_a_tiny_cap_exactly_and_read_it_back():
+    """A cap under a millionth of a dollar is written with every digit (never `$0.` or an exponent), and a restart reads
+    the alert back, so it is not written again."""
+    assert (money(1e-07), money(0.0000375), money(2.5)) == ("0.0000001", "0.0000375", "2.50")
+    led = Ledger(":memory:")
+    clock = FakeClock(NOON)
+    caps = Caps(daily_usd={"acme": 0.0000375}, gateway_daily_usd=1e-07, alert_pct=(50, 100))
+    _logged(led, "acme", 0.00002, clock())
+    SpendMeter(led, caps, clock=clock)
+    expected = [
+        "the gateway reached 50% of $0.0000001 daily budget",
+        "the gateway reached 100% of $0.0000001 daily budget",
+        "acme reached 50% of $0.0000375 daily budget",
+    ]
+    assert _budget_events(led) == expected
+    SpendMeter(led, caps, clock=clock)
+    assert _budget_events(led) == expected
+
+
+@pytest.mark.req("FR-12.2")
 def test_an_alert_that_cannot_be_written_is_tried_again(monkeypatch):
     led = Ledger(":memory:")
     meter = SpendMeter(led, Caps(daily_usd={"acme": 1.0}, alert_pct=(50,)), clock=FakeClock(NOON))
@@ -338,7 +359,7 @@ def test_quota_path_issues_no_count_query(gw_env):
     finally:
         gw.rt.ledger.db.set_trace_callback(None)
     assert r.status_code == 200 and r.headers["x-ratelimit-remaining-requests"] == "4"
-    assert statements and not [s for s in statements if re.search(r"COUNT\(\*\) FROM requests WHERE client", s)]
+    assert statements and not [s for s in statements if re.search(r"\bCOUNT\s*\(", s, re.IGNORECASE)]  # no count of any kind
 
 
 # ---------- the gateway's budget ----------
@@ -398,7 +419,8 @@ def test_student_only_serves_a_confident_student_and_refuses_what_needs_the_teac
 
 @pytest.mark.req("FR-12.2")
 def test_block_mode_refuses_every_chat_request_until_midnight(gw_env, tmp_path, monkeypatch):
-    gw, rt = _gateway(gw_env, monkeypatch, _live(tmp_path, daily_budget_usd=1.5 * TEACHER_COST))
+    settings = _live(tmp_path, daily_budget_usd=1.5 * TEACHER_COST, scrub_stats=False)  # a scrubbed read hides the budget
+    gw, rt = _gateway(gw_env, monkeypatch, settings)
     c = TestClient(gw.app)
     assert [_post(c, ACME, tag=i).status_code for i in range(2)] == [200, 200]  # the second overshoots by its own cost
     for headers in (ACME, GLOBEX):
@@ -414,6 +436,47 @@ def test_block_mode_refuses_every_chat_request_until_midnight(gw_env, tmp_path, 
         "exceeded": True,
         "alert_pct": [50, 80, 100],
     }
+
+
+@pytest.mark.req("FR-12.2", "FR-12.7", "INV-13")
+def test_a_scrubbed_public_read_names_no_key_and_no_cap(gw_env, tmp_path, monkeypatch):
+    """An anonymous read of a public live dashboard: budget alerts name the key by its pseudonym and no dollar amount,
+    and neither a key's daily cap nor the gateway's budget (or what is left of it) is shown; a dashboard key still reads
+    the alerts and caps as written."""
+    cap = 1.5 * TEACHER_COST
+    dash_key = "ops-dashboard-key-0123456789"
+    settings = _live(
+        tmp_path, key_limits=f"acme:daily_usd={cap:.10f}", daily_budget_usd=3 * TEACHER_COST, dashboard_keys=f"ops:{dash_key}"
+    )
+    gw, rt = _gateway(gw_env, monkeypatch, settings)
+    c = TestClient(gw.app)
+    assert [_post(c, ACME, tag=i).status_code for i in range(2)] == [200, 200]
+    assert _post(c, GLOBEX, tag=3).status_code == 200
+
+    public = c.get("/ratchet/stats")
+    body = public.json()
+    assert body["security"]["scrubbed"] is True
+    alerts = [e["detail"] for e in body["events"] if e["kind"] == "budget"]
+    assert sorted(alerts) == [
+        "client-1 reached 100% of its daily budget",
+        "client-1 reached 50% of its daily budget",
+        "client-1 reached 80% of its daily budget",
+        "the gateway reached 100% of its daily budget",
+        "the gateway reached 50% of its daily budget",
+        "the gateway reached 80% of its daily budget",
+    ]
+    assert "acme" not in public.text and "globex" not in public.text and "$" not in public.text
+    assert [(x["client"], x["daily_cap_usd"]) for x in body["clients"]] == [("client-1", None), ("client-2", None)]
+    assert (body["budget"]["daily_usd"], body["budget"]["remaining_usd"]) == (None, None)
+    assert body["budget"]["exceeded"] is True and body["budget"]["spent_today_usd"] == pytest.approx(3 * TEACHER_COST)
+
+    full = c.get("/ratchet/stats", headers={"X-API-Key": dash_key}).json()
+    assert full["security"]["scrubbed"] is False
+    assert f"acme reached 100% of ${money(cap)} daily budget" in [e["detail"] for e in full["events"]]
+    assert {x["client"]: x["daily_cap_usd"] for x in full["clients"]} == {"acme": pytest.approx(cap), "globex": None}
+    assert full["budget"]["daily_usd"] == pytest.approx(3 * TEACHER_COST)
+    assert public_alert("not an alert from acme", {"acme": "client-1"}) == "budget alert"
+    assert public_alert("gone reached 50% of $1.00 monthly budget", {}) == "client reached 50% of its monthly budget"
 
 
 @pytest.mark.req("INV-11", "FR-12.2")
@@ -468,6 +531,14 @@ def test_key_limits_override_the_defaults_and_bad_specs_stop_startup(gw_env, tmp
         ("acme:store=yes", "acme.store must be 0 or 1"),
         ("acme:tasks=", "acme.tasks must be task names"),
         ("acme:tasks=a b", "acme.tasks must be task names"),
+        (f"acme:{ACME_KEY}", "must read field=value"),  # RATCHET_API_KEYS' name:key syntax, pasted here by mistake
+        (f"acme:{ACME_KEY}=1", "unknown field <29 characters, hidden"),
+        (f"acme:rpm={ACME_KEY}", "acme.rpm must be a whole number"),
+        (f"acme:daily_usd={ACME_KEY}", "acme.daily_usd must be US dollars"),
+        (f"acme:store={ACME_KEY}", "acme.store must be 0 or 1"),
+        (f"acme:tasks={ACME_KEY}|a b", "acme.tasks must be task names"),
+        ("acme:daily_usd=" + "9" * 400, "acme.daily_usd must be US dollars"),  # float() would read it as inf
+        ("acme:monthly_usd=1000000001", "acme.monthly_usd must be US dollars from 0 (off) to 1000000000"),
     ):
         with pytest.raises(ValueError, match=re.escape(words)) as e:
             parse_key_limits(spec, ["acme", "globex"])
@@ -600,6 +671,90 @@ def test_max_inflight_answers_503_instead_of_queueing(gw_env, tmp_path, monkeypa
     assert _post(c, GLOBEX, tag=3).status_code == 200
 
 
+async def _asgi_post(
+    app: Any, headers: dict[str, str], body: bytes, gate: anyio.Event | None = None, stalled: anyio.Event | None = None
+) -> int:
+    """POST `body` straight into the ASGI app as a chunked chat request: its first 5 bytes, then, with `gate`, a stall
+    (`stalled` is set) until the gate opens, then the rest. Returns the response's status."""
+    parts = [body[:5], body[5:]]
+    status: list[int] = []
+
+    async def receive() -> dict[str, Any]:
+        if not parts:
+            return {"type": "http.disconnect"}
+        if len(parts) == 1 and gate is not None:
+            if stalled is not None:
+                stalled.set()
+            await gate.wait()
+        chunk = parts.pop(0)
+        return {"type": "http.request", "body": chunk, "more_body": bool(parts)}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.start":
+            status.append(message["status"])
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": CHAT,
+        "raw_path": CHAT.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"content-type", b"application/json"),
+            (b"transfer-encoding", b"chunked"),
+            (b"x-ratchet-task", TRIAGE.encode()),
+            *((k.lower().encode(), v.encode()) for k, v in headers.items()),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("testserver", 80),
+    }
+    await app(scope, receive, send)
+    return status[0]
+
+
+@pytest.mark.req("FR-12.3", "NFR-5")
+def test_a_stalled_body_holds_no_in_flight_slot(gw_env, tmp_path, monkeypatch):
+    """The in-flight caps are taken once the body is in, around the worker thread: acme and globex send headers and a
+    few bytes, then stall, and hold no slot of RATCHET_MAX_INFLIGHT=1 or of acme's concurrency=1, so a whole request from
+    each is still answered. When the stalled bodies arrive, one at a time, they are answered too."""
+    gw, rt = _gateway(gw_env, monkeypatch, _live(tmp_path, max_inflight=1, key_limits="acme:concurrency=1"))
+    statuses: dict[str, int] = {}
+
+    def body(tag: object) -> bytes:
+        return json.dumps({"messages": _ask(tag)}).encode()
+
+    async def main() -> None:
+        gates = {name: anyio.Event() for name in ("acme", "globex")}
+        stalled = {name: anyio.Event() for name in ("acme", "globex")}
+        done = {name: anyio.Event() for name in ("acme", "globex")}
+
+        async def slow(name: str, headers: dict[str, str]) -> None:
+            statuses["slow " + name] = await _asgi_post(gw.app, headers, body("slow " + name), gates[name], stalled[name])
+            done[name].set()
+
+        with anyio.fail_after(20):  # the old code refused the second stalled request at once, so it never stalled
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(slow, "acme", ACME)
+                tg.start_soon(slow, "globex", GLOBEX)
+                await stalled["acme"].wait()
+                await stalled["globex"].wait()
+                assert (rt.limiter.inflight, rt.limiter.concurrency.count("key:acme")) == (0, 0)
+                statuses["acme"] = await _asgi_post(gw.app, ACME, body(1))
+                statuses["globex"] = await _asgi_post(gw.app, GLOBEX, body(2))
+                for name in ("acme", "globex"):
+                    gates[name].set()
+                    await done[name].wait()
+
+    anyio.run(main)
+    assert statuses == {"acme": 200, "globex": 200, "slow acme": 200, "slow globex": 200}
+    assert rt.limiter.inflight == 0 and rt.ledger.totals()["requests"] == 4
+
+
 @pytest.mark.req("FR-12.3", "NFR-5")
 def test_per_ip_rate_on_a_gateway_without_keys(gw_env, tmp_path, monkeypatch):
     """Without API keys the client IP is the only thing that tells callers apart (behind the proxy, the first
@@ -647,15 +802,24 @@ def test_token_bucket_concurrency_and_limiter_units():
     assert slots.acquire("k", 1) and slots.count("k") == 1
 
     limiter = Limiter(max_inflight=1, clock=FakeClock(0.0))
-    with limiter.admit("acme", rpm=6, concurrency=1) as slot:
-        assert limiter.inflight == 1 and slot.decision is not None and slot.decision.remaining == 0
+    decision = limiter.rate("acme", rpm=6)  # the rate takes a token and holds no slot
+    assert decision is not None and decision.remaining == 0 and limiter.inflight == 0
+    assert limiter.rate(None) is None and limiter.rate("globex") is None  # no IP rate and no rpm: nothing to take
+    with limiter.hold("acme", concurrency=1):
+        assert limiter.inflight == 1 and limiter.concurrency.count("key:acme") == 1
         with pytest.raises(Refused) as e:
-            limiter.admit("globex")
+            limiter.hold("globex")
         assert e.value.kind == "overloaded"
-    assert limiter.inflight == 0
-    with pytest.raises(Refused) as e:  # the bucket is empty: refused, and it holds no slot afterwards
-        limiter.admit("acme", rpm=6, concurrency=1)
-    assert e.value.kind == "rate" and limiter.inflight == 0 and limiter.concurrency.count("key:acme") == 0
+    assert limiter.inflight == 0 and limiter.concurrency.count("key:acme") == 0
+    with pytest.raises(Refused) as e:  # the bucket is empty: refused
+        limiter.rate("acme", rpm=6)
+    assert e.value.kind == "rate" and e.value.decision is not None and limiter.inflight == 0
+    two = Limiter(max_inflight=2)
+    with two.hold("acme", concurrency=1):
+        with pytest.raises(Refused) as e:  # the key's slot is taken: refused, and the in-flight slot it took is given back
+            two.hold("acme", concurrency=1)
+        assert e.value.kind == "concurrency" and two.inflight == 1
+    assert two.inflight == 0 and two.concurrency.count("key:acme") == 0
 
 
 @pytest.mark.req("FR-12.2", "FR-12.3")
@@ -669,6 +833,8 @@ def test_limit_settings_are_checked_at_startup(monkeypatch):
     for bad, words in (
         ({"api_key_daily_usd": -1.0}, "RATCHET_API_KEY_*: daily_usd"),
         ({"api_key_monthly_usd": math.inf}, "RATCHET_API_KEY_*: monthly_usd"),
+        ({"api_key_daily_usd": 2e9}, "RATCHET_API_KEY_*: daily_usd"),
+        ({"daily_budget_usd": math.nan}, "RATCHET_DAILY_BUDGET_USD"),
         ({"api_key_rpm": -5}, "RATCHET_API_KEY_*: rpm"),
         ({"api_key_concurrency": 10**6}, "RATCHET_API_KEY_*: concurrency"),
         ({"api_key_daily_requests": -1}, "RATCHET_API_KEY_*: daily_requests"),

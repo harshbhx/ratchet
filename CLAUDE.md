@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (791 tests, ~75 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (794 tests, ~75 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -66,7 +66,7 @@ Always run `make lint test reference` before committing.
 | `ratchet/redact.py` | PII redaction (`[EMAIL]`, `[CARD]`, …) applied before examples are stored |
 | `ratchet/auth.py` | `KeyRing`: named gateway API keys from `RATCHET_API_KEYS`, admin keys from `RATCHET_ADMIN_KEYS` and read-only dashboard keys from `RATCHET_DASHBOARD_KEYS`; `Token`, the Prometheus scraper's `RATCHET_METRICS_TOKEN`; `KeyLimits` and `parse_key_limits` (each key's quota, budgets, rates, task scope and storage from `RATCHET_KEY_LIMITS`, ADR 0063) |
 | `ratchet/spend.py` | `SpendMeter`: requests and US dollars per key per UTC day and month and the gateway's per UTC day, in memory, read from the ledger at startup (gateway rows only, INV-11); budget alerts (`budget` events); `BudgetExceeded` ([ADR 0063](docs/adr/0063-spend-and-rate-limits.md)) |
-| `ratchet/ratelimit.py` | The gateway's own rate limits, stdlib only: `TokenBucket`, `RateLimiter` (per key or IP, bounded), `Concurrency`, `Limiter.admit` (in-flight cap, key concurrency, requests a minute; refuses, never queues) |
+| `ratchet/ratelimit.py` | The gateway's own rate limits, stdlib only: `TokenBucket`, `RateLimiter` (per key or IP, bounded), `Concurrency`, `Limiter.rate` (requests a minute, before the body is read) and `Limiter.hold` (in-flight cap, key concurrency, once the body is in); refuses, never queues |
 | `ratchet/obs.py` | Request ids, trace context and logs without content ([ADR 0062](docs/adr/0062-request-ids-failures-logs-and-metrics.md)): `RequestContext` in the `request_ctx` context variable (`new_context`, `current`), W3C `traceparent` parsing and forwarding (`upstream_headers`, read by the provider per attempt), `log` / `upstream_failure` / `mirror_event` on the `ratchet` logger, JSON and text formatters, `configure` (`RATCHET_LOG_FORMAT`, `RATCHET_LOG_LEVEL`) |
 | `ratchet/metrics.py` | Prometheus text format 0.0.4, stdlib only: `Counter`, `Gauge`, `Histogram` (fixed buckets), `Registry.render`, Ratchet's metrics in one process-wide `REGISTRY`, bounded label values (`client_label`; `router.task_label`) |
 | `ratchet/access.py` | Who may call each route: one table of access levels (`route_access`: public, api, dashboard, bom, metrics, admin, mock; an unknown route counts as dashboard), enforced for the dashboard API by the gateway's `_access` dependency; scrubbing for anonymous readers of a public live dashboard (`pseudonyms`, `scrub_stats`, `scrub_task`). See [ADR 0061](docs/adr/0061-endpoint-access-levels.md) |

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from .auth import MAX_RPM, KeyLimits
+from .auth import MAX_RPM, MAX_USD, KeyLimits
 from .openai_compat import DEFAULT_MAX_N, Limits
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
@@ -667,8 +667,8 @@ class Settings:
             concurrency=self.api_key_concurrency,
         ).check("RATCHET_API_KEY_*")
         budget = self.daily_budget_usd
-        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget < 0:
-            raise ValueError(f"RATCHET_DAILY_BUDGET_USD must be US dollars, 0 (off) or more, not {budget!r}")
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 0 <= budget <= MAX_USD:  # also NaN
+            raise ValueError(f"RATCHET_DAILY_BUDGET_USD must be US dollars from 0 (off) to {MAX_USD}, not {budget!r}")
         raw = self.budget_mode
         mode = raw.strip().lower() if isinstance(raw, str) else None
         if mode == "":  # set but empty, as in an .env file: the default

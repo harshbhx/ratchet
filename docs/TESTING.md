@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 791 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_limits), ~80 s
+pytest -q                     # 794 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_limits), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -33,8 +33,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
 | `tests/test_observability.py` | 28 |
-| `tests/test_limits.py` | 24 |
-| **Total** | **791** |
+| `tests/test_limits.py` | 27 |
+| **Total** | **794** |
 
 There are three layers:
 
@@ -648,7 +648,7 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 
 ### `tests/test_limits.py`
 
-Spend and rate limits ([ADR 0063](adr/0063-spend-and-rate-limits.md), FR-12.2, FR-12.3, NFR-3, NFR-5, INV-11, INV-13). Gateways run as live gateways through `Runtime(transports=)` with a `FakeOpenAIServer` teacher whose answers cost a known amount (10 prompt and 5 completion tokens at the teacher's price; cold start, so the teacher answers every request), or in mock mode; the spend meter runs on its own with an injected wall clock (`FakeClock`), the rate limits on the runtime's monotonic `FakeClock`. Concurrency tests block a teacher on a `threading.Event` and send the second request from the main thread while the first waits in a background thread, both through one `TestClient`. Live `Settings` pass every limit explicitly (`_live`), because live mode's per-IP default would refuse a burst from one test address.
+Spend and rate limits ([ADR 0063](adr/0063-spend-and-rate-limits.md), FR-12.2, FR-12.3, NFR-3, NFR-5, INV-11, INV-13). Gateways run as live gateways through `Runtime(transports=)` with a `FakeOpenAIServer` teacher whose answers cost a known amount (10 prompt and 5 completion tokens at the teacher's price; cold start, so the teacher answers every request), or in mock mode; the spend meter runs on its own with an injected wall clock (`FakeClock`), the rate limits on the runtime's monotonic `FakeClock`. Concurrency tests block a teacher on a `threading.Event` and send the second request from the main thread while the first waits in a background thread, both through one `TestClient`; the stalled-body test calls the ASGI app directly under `anyio.run`, with a `receive` that waits on an event between body chunks. Live `Settings` pass every limit explicitly (`_live`), because live mode's per-IP default would refuse a burst from one test address.
 
 | Test | Covers |
 |---|---|
@@ -659,21 +659,24 @@ Spend and rate limits ([ADR 0063](adr/0063-spend-and-rate-limits.md), FR-12.2, F
 | `test_utc_rollover_resets_the_counters_and_a_clock_moved_back_reads_the_ledger` | 23:59 on Oct 31, then 00:01 on Nov 1: day, month and gateway counters start from zero; a new day within the month keeps the month; a clock moved back to Oct 31 reads that day's gateway rows from the ledger, leaving out a row without a gateway request id; `month_bounds` |
 | `test_meter_ignores_bad_costs_and_counts_spend_without_a_request` | Negative, NaN and infinite costs count as 0 (the requests still count); `add(requests=0)` adds dollars only |
 | `test_budget_alerts_fire_once_per_share_also_after_a_restart` | 50, 80 and 100% of a key's $5.00 daily cap and 50% of the gateway's $10.00, each once and in order (two shares at once when one request crosses both); a restarted meter on the same ledger repeats none; one started with a lower gateway budget writes the three shares it already passed; the next UTC day starts over; `money` |
+| `test_alerts_name_a_tiny_cap_exactly_and_read_it_back` | `money` writes caps of $0.0000001 and $0.0000375 with every digit (never `$0.` or an exponent); a restarted meter reads those alerts back and writes none again |
 | `test_an_alert_that_cannot_be_written_is_tried_again` | A failing event write is retried on the next add, never raised |
-| `test_quota_path_issues_no_count_query` | With a sqlite trace callback: `SpendMeter.usage` issues no statement, and a chat request under a daily quota issues no `COUNT(*) FROM requests WHERE client` |
+| `test_quota_path_issues_no_count_query` | With a sqlite trace callback: `SpendMeter.usage` issues no statement, and a chat request under a daily quota and dollar budget issues no `COUNT(` of any kind |
 | `test_student_only_serves_a_confident_student_and_refuses_what_needs_the_teacher` | The first request's audit spends the gateway's budget; then a confident student answer is a 200 with no audit and no shadow (route `student`, `audited` 0, no shadow version, one student call); an escalation is a 429 `gateway_budget_exceeded` that names no amount, with one `budget` failures row carrying the samples' cost; a pinned task and a request with `tools` get the 429 without any model call; a `budget` event at 100% |
 | `test_block_mode_refuses_every_chat_request_until_midnight` | Past the gateway's budget every key's chat request is a 429 `gateway_budget_exceeded`; `/v1/models` still answers; `/ratchet/stats` `budget` block |
+| `test_a_scrubbed_public_read_names_no_key_and_no_cap` | A public live dashboard read anonymously after a key's cap and the gateway's budget were reached: every `budget` event reads `client-1 reached N% of its daily budget` or `the gateway reached ...` with no amount, no key name or `$` anywhere, `daily_cap_usd`, `budget.daily_usd` and `remaining_usd` null; a dashboard key reads the events and caps as written; `public_alert` on a detail that is not an alert and on a name that is no longer a key |
 | `test_scout_spend_stays_under_its_own_guard` | A Scout run spends money that neither the meter nor a fresh one counts; `/v1` spends the budget, the next chat request is refused, Scout still runs |
-| `test_key_limits_override_the_defaults_and_bad_specs_stop_startup` | A per-key `daily_requests` override against the default; `parse_key_limits` with spaces and every field; 14 malformed specs, each naming `RATCHET_KEY_LIMITS` and never echoing a pasted key; a `Runtime` naming an unknown key does not start |
+| `test_key_limits_override_the_defaults_and_bad_specs_stop_startup` | A per-key `daily_requests` override against the default; `parse_key_limits` with spaces and every field; 22 malformed specs, each naming `RATCHET_KEY_LIMITS` and never echoing a pasted key (`acme:<key>` in `RATCHET_API_KEYS`' syntax, a key as a field, a value or a task list), and a 400-digit dollar cap that would read as infinite; a `Runtime` naming an unknown key does not start |
 | `test_task_scope_is_403_and_lists_only_the_scoped_tasks` | A pinned task and `default` outside the scope are 403 `task_not_allowed`; an unknown-task 400 lists only the scope's tasks; the refusals used no quota; another key sends the pinned task |
 | `test_store_zero_keeps_a_keys_requests_out_of_the_training_set` | `store=0`: the key's teacher answer is served with `stored` 0; another key's is stored |
 | `test_rpm_bucket_refuses_past_the_burst_and_refills_on_the_clock` | 60 a minute: ten 200s with the remaining count falling to 0; the 11th a 429 `rate_limit_exceeded` with `Retry-After: 1`, reset `10s`, no `X-Should-Retry`, a `rate` row and rejection; another key unaffected and without rate headers; one more a second later; the burst back a minute later |
 | `test_daily_quota_headers_win_over_the_rate_headers` | A key with both: the 200's `X-RateLimit-*-Requests` describe the daily quota |
 | `test_concurrency_one_refuses_a_second_request_while_the_first_runs` | `concurrency=1`: while the first request waits on the teacher, the key's second is a 429 with `Retry-After: 1`; another key is answered; after the first ends the slot is free again |
 | `test_max_inflight_answers_503_instead_of_queueing` | `RATCHET_MAX_INFLIGHT=1`: a second request is a 503 `overloaded` with `Retry-After: 1`, an `overloaded` rejection and a `rate` row; the in-flight count returns to 0 |
+| `test_a_stalled_body_holds_no_in_flight_slot` | Straight into the ASGI app with `RATCHET_MAX_INFLIGHT=1` and `concurrency=1` for one key: two requests send headers and 5 bytes of chunked body, then stall; the in-flight counts stay 0 and a whole request from each key is a 200; the stalled bodies, released one at a time, are 200s too (the code before the fix refused the second stalled request at once) |
 | `test_per_ip_rate_on_a_gateway_without_keys` | Live default 120, mock 0; an open gateway with 6 a minute: the second request from one address (the first `X-Forwarded-For` hop) is a 429 with `Retry-After: 10` that does not echo the address; another address is answered; ten seconds later the first is again; with API keys the per-IP rate is off |
-| `test_token_bucket_concurrency_and_limiter_units` | `TokenBucket` (burst, refill, a clock moved back), `burst`, `RateLimiter`'s LRU bound and a new bucket for a new rate, `Concurrency`, and `Limiter.admit`'s order: a refusal holds no slot |
-| `test_limit_settings_are_checked_at_startup` | `limit_policy` reads the mode in any case and the shares sorted, once; eleven bad values each name their variable |
+| `test_token_bucket_concurrency_and_limiter_units` | `TokenBucket` (burst, refill, a clock moved back), `burst`, `RateLimiter`'s LRU bound and a new bucket for a new rate, `Concurrency`, `Limiter.rate` (takes a token, holds no slot; refused when empty) and `Limiter.hold` (the in-flight cap, then the key's; a refusal gives back the slot it took) |
+| `test_limit_settings_are_checked_at_startup` | `limit_policy` reads the mode in any case and the shares sorted, once; thirteen bad values (a dollar default past a billion and a NaN gateway budget among them) each name their variable |
 | `test_stats_report_each_keys_spend_and_cap_and_the_security_switches` | `clients[].spent_today_usd` and `daily_cap_usd`, the three `security` keys and the `budget` block; key names only, never keys |
 | `test_router_refuses_teacher_work_under_student_only_without_a_gateway` | `RequestMeta(student_only=True)` on `Ratchet` itself: a pinned task raises `BudgetExceeded` (`pinned`) before any call and writes nothing; an unsure student raises it (`escalation`) after its samples with a `budget` row (429, the samples' cost) |
 

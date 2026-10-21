@@ -1005,17 +1005,28 @@ def _rate_headers(d: Decision) -> dict[str, str]:
     }
 
 
-def _admit(request: Request, client: str | None) -> Slot:
-    """The gateway's rate limits for a chat request (FR-12.3, ADR 0063), checked on the event loop before the body is
-    read, so a request over a limit never waits for a worker thread: the in-flight cap (RATCHET_MAX_INFLIGHT: 503
-    `overloaded`, `Retry-After: 1`), the key's requests in flight (`concurrency`: 429 `rate_limit_exceeded`,
-    `Retry-After: 1`), then the key's requests a minute (`rpm`), or the client IP's on a gateway without keys
-    (RATCHET_IP_RPM; `_client_ip`, which honours RATCHET_TRUST_PROXY): 429 `rate_limit_exceeded` with `Retry-After` and
-    the `X-RateLimit-*-Requests` headers. The slot it returns is released when the request is done."""
+def _rate(request: Request, client: str | None) -> Decision | None:
+    """The request rate for a chat request (FR-12.3, ADR 0063), checked on the event loop before the body is read, so a
+    request over it reads no body and never waits for a worker thread: the key's requests a minute (`rpm`), or the client
+    IP's on a gateway without keys (RATCHET_IP_RPM; `_client_ip`, which honours RATCHET_TRUST_PROXY): 429
+    `rate_limit_exceeded` with `Retry-After` and the `X-RateLimit-*-Requests` headers. Returns the bucket's decision for
+    the response's headers."""
     limits = rt.limits_for(client)
     ip = _client_ip(request) if client is None and rt.limiter.ip_rpm > 0 else None
     try:
-        return rt.limiter.admit(client, limits.rpm if limits else 0, limits.concurrency if limits else 0, ip)
+        return rt.limiter.rate(client, limits.rpm if limits else 0, ip)
+    except Refused as e:
+        raise _refusal(e) from None
+
+
+def _hold(client: str | None) -> Slot:
+    """The in-flight caps for a chat request whose body is in (FR-12.3, ADR 0063), taken just around its worker thread,
+    so a client that sends its body slowly holds no slot: the gateway's (RATCHET_MAX_INFLIGHT: 503 `overloaded`,
+    `Retry-After: 1`), then the key's (`concurrency`: 429 `rate_limit_exceeded`, `Retry-After: 1`). The slot it returns is
+    released when the response is built."""
+    limits = rt.limits_for(client)
+    try:
+        return rt.limiter.hold(client, limits.concurrency if limits else 0)
     except Refused as e:
         raise _refusal(e) from None
 
@@ -1151,23 +1162,25 @@ async def chat(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
 ) -> JSONResponse | StreamingResponse:
-    """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the gateway's rate
-    limits (`_admit`: 503 at the in-flight cap, 429 over the key's concurrency or requests a minute, or the client IP's
-    on a gateway without keys), the body read and counted (413 for a chunked body over the limit), JSON and request
-    validation (400), the task (400 unknown, 403 not allowed for the key), the daily request quota (429), the US dollar
-    budgets (429), then the cascade. A refused request writes no ledger row and uses no quota or budget; past the rate
-    limits it has taken its key's (or IP's) token. Everything after reading the body runs in a worker thread (the default
-    pool, as for sync routes), so neither a large body nor the ledger lock blocks the event loop."""
+    """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the key's or the
+    client IP's requests a minute (`_rate`: 429), the body read and counted (413 for a chunked body over the limit), the
+    in-flight caps (`_hold`: 503 at the gateway's, 429 at the key's), JSON and request validation (400), the task (400
+    unknown, 403 not allowed for the key), the daily request quota (429), the US dollar budgets (429), then the cascade.
+    A refused request writes no ledger row and uses no quota or budget; past the rate it has taken its key's (or IP's)
+    token. The in-flight slots are taken only once the body is in, so a client that trickles its body holds none.
+    Everything after reading the body runs in a worker thread (the default pool, as for sync routes), so neither a large
+    body nor the ledger lock blocks the event loop."""
     client = _client(authorization, x_api_key)
-    with _admit(request, client) as slot:  # its in-flight slots are given back when the response is built
-        try:
-            raw = await request.body()
-        except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
-            ctx = obs.current()
-            if ctx is not None:
-                ctx.code = "client_disconnected"
-            raise APIError(400, "The client disconnected before the request body was complete.") from e
-        return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client, slot.decision))
+    rate = _rate(request, client)
+    try:
+        raw = await request.body()
+    except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.code = "client_disconnected"
+        raise APIError(400, "The client disconnected before the request body was complete.") from e
+    with _hold(client):  # its in-flight slots are given back when the response is built
+        return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client, rate))
 
 
 def _complete(

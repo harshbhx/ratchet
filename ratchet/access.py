@@ -8,9 +8,9 @@ treated as `DASHBOARD`, so a new endpoint is private in live mode until someone 
 tests/test_security.py names it.
 
 Scrubbing (`scrub_stats`, `scrub_tasks`) is for dashboards shown to anyone: client names become pseudonyms (`client-1`
-... by sorted name), event details lose URLs, and an error message after an exception's class is cut, because v0.4
-wrote `ConnectError: <httpx text with the student URL>` into events and old ledgers still hold them. Standard library
-only.
+... by sorted name), also in budget alerts, event details lose URLs, and an error message after an exception's class is
+cut, because v0.4 wrote `ConnectError: <httpx text with the student URL>` into events and old ledgers still hold them.
+Dollar caps (a key's, the gateway's budget) are left out too. Standard library only.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ import re
 from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from typing import Any
+
+from .spend import ALERT_KIND, public_alert
 
 PUBLIC = "public"  # anyone: the pages, health, the BOM public key, Scout (behind its own budget guard)
 DASHBOARD = "dashboard"  # read-only management data: an admin or dashboard key unless RATCHET_PUBLIC_DASHBOARD=1
@@ -104,13 +106,28 @@ def pseudonyms(names: Iterable[str | None]) -> dict[str, str]:
     return {name: f"client-{i}" for i, name in enumerate(sorted({n for n in names if n}), start=1)}
 
 
+def scrub_event(event: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, Any]:
+    """An event for an anonymous reader: its detail scrubbed (`scrub_detail`); a `budget` alert also names its key by
+    pseudonym and no dollar cap (`spend.public_alert`, ADR 0063). A new dict."""
+    detail = str(event.get("detail", ""))
+    if event.get("kind") == ALERT_KIND:
+        detail = public_alert(detail, names)
+    return {**event, "detail": scrub_detail(detail)}
+
+
 def scrub_stats(payload: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, Any]:
     """A /ratchet/stats payload for an anonymous reader: clients under their pseudonyms (`names`, from `pseudonyms`),
-    event details scrubbed (`scrub_detail`) and `security.scrubbed` true. A new dict; `payload` (the cached one) is not
-    changed."""
+    event details scrubbed (`scrub_event`), no dollar caps (each key's `daily_cap_usd`, the gateway's `budget.daily_usd`
+    and `remaining_usd` are null, as the gateway's 429s never name its budget; ADR 0063) and `security.scrubbed` true. A
+    new dict; `payload` (the cached one) is not changed."""
     out = dict(payload)
-    out["clients"] = [{**c, "client": names.get(c.get("client"), "client")} for c in payload.get("clients", [])]
-    out["events"] = [{**e, "detail": scrub_detail(str(e.get("detail", "")))} for e in payload.get("events", [])]
+    out["clients"] = [
+        {**c, "client": names.get(c.get("client"), "client"), **({"daily_cap_usd": None} if "daily_cap_usd" in c else {})}
+        for c in payload.get("clients", [])
+    ]
+    out["events"] = [scrub_event(e, names) for e in payload.get("events", [])]
+    if isinstance(payload.get("budget"), Mapping):
+        out["budget"] = {**payload["budget"], "daily_usd": None, "remaining_usd": None}
     out["security"] = {**payload.get("security", {}), "scrubbed": True}
     return out
 
