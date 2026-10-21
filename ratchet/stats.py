@@ -356,9 +356,10 @@ def _confidence_sequence(s: int, n: int, alpha: float, step: float) -> tuple[flo
 # ---------------------------------------------------------------------------------------------------------------------
 # Estimation
 # ---------------------------------------------------------------------------------------------------------------------
-def wilson(successes: float, n: int, z: float = 1.96) -> tuple[float, float]:
+def wilson(successes: float, n: float, z: float = 1.96) -> tuple[float, float]:
     """95% Wilson score interval for a proportion (two-sided at z = 1.96). (0.0, 1.0) with no trials. A fixed-sample
-    interval: looking at it after every new trial is not covered by its level (ADR 0005, ADR 0024)."""
+    interval: looking at it after every new trial is not covered by its level (ADR 0005, ADR 0024). `n` may be an
+    effective sample size (Kish's, for weighted data: the ledger replay), which makes the interval approximate."""
     if n == 0:
         return 0.0, 1.0
     p = successes / n

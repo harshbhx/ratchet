@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 767 tests
+pytest -q                                                                # 800 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -157,6 +157,29 @@ curl -s localhost:8000/ratchet/versions/2/bom > bom.json
 python -m ratchet.stats check bom.json --public-key <yours>     # recompute every number from the signed counts
 ```
 
+## Proving what an adapter was trained on
+
+Every adapter's signed bill of materials also commits to its exact training and golden sets ([ADR 0027](docs/adr/0027-committed-training-sets.md)): one sparse Merkle root per set, over each example's hash mapped to a hash of its label, teacher, license and redaction count. From the BOM alone, anyone can then check a short proof that one request was, or was not, in an adapter's training set, and a held-out certificate that **no golden example was trained on**: invariants 3 and 6 as something you verify, not something you are told. The proofs show the operator's signed commitment, at training time, to the dataset; they do not show that the weights came from it. With guessable texts the proof endpoint would tell anyone what was trained on, so it needs an admin key.
+
+```bash
+curl -s localhost:8000/ratchet/versions/2/bom > bom.json
+curl -s "localhost:8000/ratchet/demo/sample-example?version=2" > ex.json                    # mock demo: a committed prompt
+curl -s "localhost:8000/ratchet/versions/2/proof?split=train" -H 'content-type: application/json' -d @ex.json > proof.json
+python -m ratchet.proof verify proof.json --bom bom.json --expect included
+curl -s localhost:8000/ratchet/versions/2/heldout > heldout.json
+python -m ratchet.proof heldout heldout.json --bom bom.json   # OK: all N golden examples provably absent from the training set
+```
+
+## Replaying past traffic at another threshold
+
+Ratchet designs its own labelling, so it knows the chance of every teacher label it sees: 1 for a request the student escalated, the audit rate for an answer it served. Each request logs that probability, and the **ledger replay** ([ADR 0028](docs/adr/0028-designed-propensity-replay.md)) uses it to answer "what would last week's precision, coverage and cost have been at threshold t, or at audit rate a?" for one version, including thresholds below the live one, where audits alone see nothing. Coverage is exact; precision is a weighted estimate with an approximate interval (null when nothing labels the answers it would count); the frontier's suggested threshold is advice, never applied: thresholds change only through Night School. The replay also measures how far the baseline's 300-reasoning-token assumption is from what the teacher really costs. It adds no model call and no random draw to the request path.
+
+```bash
+curl -s "localhost:8000/ratchet/replay?threshold=0.4&audit_rate=0.05"     # what happened, and what would have
+curl -s "localhost:8000/ratchet/replay/frontier?target=0.97"               # thresholds 0.30 to 1.00, an advisory suggestion
+python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # the same from a simulated run (simulation)
+```
+
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
@@ -164,7 +187,7 @@ Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md))
 - **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default; names and addresses are not covered yet ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md)).
 - **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, and cost and savings per client: the basis for per-customer receipts.
 - **Streaming** (`stream: true`) in the OpenAI chunk format, so streaming clients work unchanged.
-- **Signed bill of materials per adapter** ([ADR 0010](docs/adr/0010-signed-adapter-bom.md)): teachers, licenses, dataset and golden-set hashes and the evaluation, written at training time.
+- **Signed bill of materials per adapter** ([ADR 0010](docs/adr/0010-signed-adapter-bom.md)): teachers, licenses, dataset and golden-set hashes, the evaluation and, since v0.5, a set commitment per split ([above](#proving-what-an-adapter-was-trained-on)), written at training time; in live mode a copy goes into the adapter's folder in the bucket.
 
 ```bash
 python -m ratchet.bom keygen                       # signing key + public key to publish
@@ -206,6 +229,8 @@ ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/redact.py       PII placeholders before examples are stored
 ratchet/auth.py         gateway API keys (named, per-key quota in gateway.py)
 ratchet/bom.py          per-adapter bill of materials, Ed25519 signing, `python -m ratchet.bom`
+ratchet/proof.py        committed training sets: membership and held-out proofs, `python -m ratchet.proof`
+ratchet/replay.py       ledger replay: past traffic at another threshold or audit rate, `python -m ratchet.replay`
 ratchet/nightschool/    dataset build, LoRA training (Unsloth), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
 ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI

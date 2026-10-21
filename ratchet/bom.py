@@ -10,9 +10,10 @@ check that a given adapter was trained on what its BOM says, and that nobody edi
     python -m ratchet.bom verify bom.json --public-key K  # check a downloaded BOM
 
 Schema `ratchet.bom/v2` (ADR 0024) keeps every v1 field and adds `redactor` (which redaction rules the training text
-went through), `training.origins` (examples by where they came from) and optional sections later items fill: a set
-commitment per split (`training.commitment`, `golden.commitment`) and the `EXTRA_KEYS`. Stored v1 documents are never
-rewritten (invariant 14), and `verify` accepts both.
+went through), `training.origins` (examples by where they came from), a set commitment per split (`training.commitment`,
+`golden.commitment`: the root of a `merkle.KeySet` over the split's example keys, so single examples can be proved in
+or out of the adapter's training set, ADR 0027; `python -m ratchet.proof`) and optional sections later items fill (the
+`EXTRA_KEYS`). Stored v1 documents are never rewritten (invariant 14), and `verify` accepts both.
 """
 
 from __future__ import annotations
@@ -71,6 +72,23 @@ def _commitment(section: str, value: Any, rows: list[dict[str, Any]]) -> dict[st
         raise ValueError(f"commitments[{section!r}] root must be 64 lowercase hex characters, not {root!r}")
     if isinstance(size, bool) or not isinstance(size, int) or size != len(rows):
         raise ValueError(f"commitments[{section!r}] size must be the {len(rows)} rows it commits to, not {size!r}")
+    return {"alg": SMT_ALG, "root": root, "size": size}
+
+
+def commitment(m: Any, split: str) -> dict[str, Any] | None:
+    """The set commitment manifest `m` signs for one split ('train' or 'golden'): `{alg, root, size}`, or None when it
+    has none (a v1 document, or one written before set commitments) or it is malformed. For verifiers, which read
+    untrusted files: never raises."""
+    section = {v: k for k, v in COMMITMENT_SPLITS.items()}.get(split)
+    part = m.get(section) if section is not None and isinstance(m, dict) else None
+    c = part.get("commitment") if isinstance(part, dict) else None
+    if not isinstance(c, dict) or c.get("alg") != SMT_ALG:
+        return None
+    root, size = c.get("root"), c.get("size")
+    if not isinstance(root, str) or len(root) != 64 or any(ch not in "0123456789abcdef" for ch in root):
+        return None
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return None
     return {"alg": SMT_ALG, "root": root, "size": size}
 
 

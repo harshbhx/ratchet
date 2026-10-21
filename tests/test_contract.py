@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import OPEN_TEACHER, FakeClock, RecordingProvider, _version
+from fakes import FALLBACK_TEACHER, OPEN_TEACHER, FakeClock, RecordingProvider, _version
 from fastapi.testclient import TestClient
 
 from ratchet import compare, licenses, tasks, taskspec
@@ -1065,6 +1065,9 @@ def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
     ):
         r = c.post(path)
         assert r.status_code == 403 and "mock mode" in r.json()["detail"], (path, r.status_code, r.text)
+    for path in ("/ratchet/demo/sample-example", "/ratchet/demo/sample-example?split=golden&version=1"):  # a read: mock-only too
+        r = c.get(path)
+        assert r.status_code == 403 and "mock mode" in r.json()["detail"], (path, r.status_code, r.text)
     assert (led.day, led.events(), led.versions(), led.totals()) == before
     assert gw.rt.ledger is led  # reset did not rebuild the live runtime
 
@@ -1235,6 +1238,80 @@ def test_cost_includes_audit_shadow_and_arbitration():
         assert out.cost_usd == pytest.approx(cost, rel=1e-12, abs=0), name
         assert out.baseline_usd == pytest.approx(baseline, rel=1e-12, abs=0), name
         assert teacher_calls == calls, name
+
+
+@pytest.mark.req("FR-16.5", "FR-2.10")
+def test_replay_columns_are_logged_without_extra_calls():
+    """What the ledger replay reads is logged on every path (FR-16.5, ADR 0028) with no extra model call: the threshold
+    the student's answer was held to, `label_p`, `student_agree` (from the primary teacher's valid answer to the
+    escalation or a random audit: never from an arbitration, a stand-in, an invalid answer, a failed student, or an
+    escalation the teacher answered under other conditions than an audit's, such as a client temperature or n choices),
+    and the token formula's baseline whenever the student answered. Teacher and student calls are counted on each path."""
+    s = _settings()
+    est = s.price(OPEN_TEACHER).cost(30, 7 + s.teacher_reasoning_tokens)  # the formula for the student's answer
+    est2 = s.price(OPEN_TEACHER).cost(30, 2 * (7 + s.teacher_reasoning_tokens))  # and for two choices
+    none = (None, None, None, None)
+
+    def run(*, audit=0.0, threshold=0.5, student=A, teacher=A, shadow_says=None, live_down=False, cold=False, **kw):
+        led = Ledger(":memory:")
+        models: dict[int, RecordingProvider] = {}
+        if not cold:
+            vid = _version(led, "live", {"threshold": threshold})
+            down = {f"student-v{vid}"} if live_down else ()
+            models[vid] = RecordingProvider(student, in_tokens=30, out_tokens=7, raise_on=down)
+        if shadow_says is not None:
+            models[_version(led, "shadow", {"threshold": 0.5})] = RecordingProvider(shadow_says, in_tokens=31, out_tokens=9)
+        t = RecordingProvider(teacher, in_tokens=120, out_tokens=45, raise_on={OPEN_TEACHER} if kw.pop("teacher_down", 0) else ())
+        task, params, n = kw.pop("task", TRIAGE), kw.pop("params", None), kw.pop("n", 1)
+        r = Ratchet(_settings(audit_rate=audit, **kw), led, t, lambda v: (models[v.id], v.adapter_uri), seed=1)
+        r.handle(_ask(), task, params=params, n=n)
+        (row,) = _rows(led)
+        logged = (row["threshold"], row["label_p"], row["student_agree"], row["baseline_est_usd"])
+        return row, logged, (len(t.calls), sum(len(m.calls) for m in models.values()))
+
+    stand_in = {"threshold": 0.99, "teacher_down": 1}
+    logprobs, biased = GenParams(logprobs=True, top_logprobs=2), GenParams(logit_bias={"9": 100})
+    cases = [  # (name, run(...) arguments, (threshold, label_p, student_agree, baseline_est_usd), (teacher, student calls))
+        ("served", {}, (0.5, 0.0, None, est), (0, 1)),
+        ("served and audited", {"audit": 1.0}, (0.5, 1.0, 1, est), (1, 1)),
+        ("audit disagrees", {"audit": 1.0, "teacher": B}, (0.5, 1.0, 0, est), (1, 1)),
+        ("audit answer invalid", {"audit": 1.0, "teacher": "not json"}, (0.5, 1.0, None, est), (1, 1)),
+        ("escalated", {"threshold": 0.99}, (0.99, 1.0, 1, est), (1, 1)),
+        ("escalation disagrees", {"threshold": 0.99, "teacher": B}, (0.99, 1.0, 0, est), (1, 1)),
+        ("escalation answer invalid", {"threshold": 0.99, "teacher": "not json"}, (0.99, 1.0, None, est), (1, 1)),
+        ("student answer invalid", {"student": "not json"}, (0.5, 1.0, None, est), (1, 1)),
+        ("student endpoint down", {"live_down": True}, none, (1, 1)),
+        ("cold start", {"cold": True}, none, (1, 0)),
+        ("pinned task", {"task": "research-plan"}, none, (1, 0)),
+        ("shadow agrees", {"shadow_says": A}, (0.5, 0.0, None, est), (0, 2)),
+        ("only an arbitration called the teacher", {"shadow_says": B}, (0.5, 0.0, None, est), (1, 2)),
+        ("audit is the shadow's reference", {"audit": 1.0, "shadow_says": B}, (0.5, 1.0, 1, est), (1, 2)),
+        ("escalation is the shadow's reference", {"threshold": 0.99, "shadow_says": B}, (0.99, 1.0, 1, est), (1, 2)),
+        ("degraded", {**stand_in, "on_teacher_failure": "serve_student"}, (0.99, 1.0, None, est), (1, 1)),
+        ("fallback teacher", {**stand_in, "teacher_fallback_model": FALLBACK_TEACHER}, (0.99, 1.0, None, est), (2, 1)),
+        # An escalation labels the student only when the teacher wrote under the audit's conditions (temperature 0, one
+        # choice, nothing from CHECK_DROPS but logprobs): a sampled or client-steered answer is another teacher.
+        ("escalated at temperature 0", {"threshold": 0.99, "params": GenParams(temperature=0.0)}, (0.99, 1.0, 1, est), (1, 1)),
+        ("escalated with logprobs", {"threshold": 0.99, "params": logprobs}, (0.99, 1.0, 1, est), (1, 1)),
+        ("escalated at temperature 1", {"threshold": 0.99, "params": GenParams(temperature=1.0)}, (0.99, 1.0, None, est), (1, 1)),
+        ("escalated with a seed", {"threshold": 0.99, "params": GenParams(seed=7)}, (0.99, 1.0, None, est), (1, 1)),
+        ("escalated with logit_bias", {"threshold": 0.99, "params": biased}, (0.99, 1.0, None, est), (1, 1)),
+        ("escalated for 2 choices", {"threshold": 0.99, "n": 2}, (0.99, 1.0, None, est2), (1, 1)),
+        ("audited at temperature 1", {"audit": 1.0, "params": GenParams(temperature=1.0)}, (0.5, 1.0, 1, est), (1, 1)),
+    ]
+    for name, kwargs, want, calls in cases:
+        row, logged, made = run(**kwargs)
+        assert logged[:3] == want[:3], name
+        assert (logged[3] is None) == (want[3] is None) and logged[3] == pytest.approx(want[3], rel=1e-12), name
+        assert made == calls, name
+        if row["served_by"] == "student" and row["teacher_cost_usd"] == 0:  # no teacher answer: the formula, to the bit
+            assert row["baseline_est_usd"] == row["baseline_cost_usd"], name
+    # n choices: the formula over the choices served, or the student's answer once per choice when fewer agree.
+    for n, student, route, out_tokens in ((2, A, "student", 2 * 7), (3, [A, A, B], "n_choices", 3 * 7)):
+        led, _, r, _ = _cascade(RecordingProvider(student, in_tokens=30, out_tokens=7), threshold=0.5)
+        assert r.handle(_ask(), TRIAGE, n=n).route == route
+        (row,) = _rows(led)
+        assert row["baseline_est_usd"] == pytest.approx(s.price(OPEN_TEACHER).cost(30, out_tokens + n * 300), rel=1e-12)
 
 
 @pytest.mark.req("FR-1.12", "NFR-3")

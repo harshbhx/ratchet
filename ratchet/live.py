@@ -9,6 +9,8 @@ Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
     RATCHET_SYNC_CMD      command that uploads RATCHET_DATA_DIR to the bucket, e.g.
                           "aws s3 sync ./data s3://my-bucket/ratchet --endpoint-url https://storage.eu-north1.nebius.cloud"
+                          (run before training, and again after a night that trained, to upload the adapter's BOM
+                          into its folder; never with --delete, which would remove the weights the job wrote there)
     RATCHET_TRAIN_CMD     command that runs the training job and waits for it; {version} and {data}
                           are substituted, e.g. "bash deploy/train_job.sh {version}"
     RATCHET_ADAPTER_ROOT  where the endpoint sees adapters (default /data/adapters)
@@ -19,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import shlex
 import subprocess
 import sys
@@ -47,6 +50,7 @@ RunFn = Callable[..., Any]
 ProviderFactory = Callable[..., Provider]
 NO_STUDENT_BASE = "RATCHET_STUDENT_BASE is not set: no student endpoint to load adapters into"
 RELOAD_INTERVAL_S = 60.0  # the gateway reloads one adapter at most this often, however many requests hit its 404
+ADAPTER_NAME = re.compile(r"[A-Za-z0-9._-]{1,128}")  # an adapter name that is one folder under adapters/
 
 
 def adapter_root() -> str:
@@ -98,6 +102,39 @@ class NebiusTrainer:
         _run(self.train_cmd.format(version=name, data=str(self.data)), self.run)
         load_adapter(self.s.student_base, self.s.student_api_key, name, f"{self.adapter_root}/{name}", self.http)
         return name
+
+
+def write_boms(led: Ledger, vid: int, trainer: NebiusTrainer) -> bool:
+    """Write version `vid`'s BOM to `RATCHET_DATA_DIR`: `boms/student-vN.json`, and inside its adapter's folder
+    (`adapters/<name>/ratchet_bom.json`, beside the weights the training job wrote there, so a copy of the adapter
+    carries its provenance), then run RATCHET_SYNC_CMD again to upload them. The sync must add files without deleting
+    (no `--delete`): the bucket's adapter folders hold weights the local folder does not. False when the sync failed
+    (the night itself already succeeded; `main` exits non-zero after reporting it)."""
+    doc = led.version_bom(vid)
+    v = led.version(vid)
+    if doc is None or v is None:
+        return True
+    text = json.dumps(doc, indent=2, ensure_ascii=False)
+    out = trainer.data / "boms" / f"student-v{vid}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    print(f"bill of materials: {out}")
+    name = v.adapter_uri
+    if ADAPTER_NAME.fullmatch(name) and name not in (".", ".."):  # never a path outside the data folder
+        inside = trainer.data / "adapters" / name / "ratchet_bom.json"
+        inside.parent.mkdir(parents=True, exist_ok=True)
+        inside.write_text(text, encoding="utf-8")
+        print(f"bill of materials in the adapter folder: {inside}")
+    else:
+        print(f"adapter name {name!r} is not a folder name: no BOM copy beside its weights", file=sys.stderr)
+    if not trainer.sync_cmd:
+        return True
+    try:
+        _run(trainer.sync_cmd, trainer.run)
+    except Exception as e:  # noqa: BLE001 - the night is done; say what is missing and fail the command at the end
+        print(f"RATCHET_SYNC_CMD failed ({describe_failure(e)}); upload {trainer.data} again by hand", file=sys.stderr)
+        return False
+    return True
 
 
 def build(s: Settings) -> tuple[Ledger, ReleaseGate]:
@@ -231,6 +268,7 @@ def main(
     for line in taskspec.install(led, s.tasks_file):
         print(f"task skipped: {line}", file=sys.stderr)
     cmd = argv[0] if argv else "night"
+    synced = True
     if cmd == "tick":
         gate.tick()
     elif cmd == "reload":
@@ -251,10 +289,11 @@ def main(
             cert_delta=cert.delta,
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        trainer = NebiusTrainer(s, run, http)
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
             led,
-            NebiusTrainer(s, run, http),
+            trainer,
             evaluator,
             gate,
             s.student_base_model,
@@ -262,17 +301,15 @@ def main(
             train_gpu=policy.train,
             redact_pii=s.redact_pii,
         )
-        if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
-            doc = led.version_bom(rep.version)
-            out = Path(os.environ.get("RATCHET_DATA_DIR", "data")) / "boms" / f"student-v{rep.version}.json"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
-            print(f"bill of materials: {out}")
+        # Keep the adapter's BOM next to its training data, and in its folder, in the bucket (FR-16.4).
+        synced = write_boms(led, rep.version, trainer) if rep.version is not None else True
         print(rep)
     else:
         raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick' or 'reload'")
     for e in led.events()[-10:]:
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
+    if not synced:
+        raise SystemExit("RATCHET_SYNC_CMD failed after the night: the BOM copies are local only (see above)")
 
 
 if __name__ == "__main__":  # pragma: no cover
