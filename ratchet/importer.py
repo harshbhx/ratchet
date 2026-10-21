@@ -233,19 +233,21 @@ def _label(last: Any, limits: Limits) -> str:
 def parse_row(obj: Any, task: str, source: Source, limits: Limits) -> tuple[dict[str, Any], str]:
     """(the request body to validate: the prompt messages and their conditions, the label) from one parsed line, or
     RowError. The format is Ratchet's when the row has any of its own keys (`task`, `params`, `seen`, `provenance`), and
-    Night School's training file's when it has `prompt` or `completion`."""
+    Night School's training file's when `prompt` and `completion` are both lists of messages (TRL's conversational
+    prompt-completion rows). OpenAI's legacy `{"prompt": str, "completion": str}` rows are not imported: their keys are
+    unknown keys, as before."""
     if not isinstance(obj, dict):
         raise RowError("not an object", "each line must be one JSON object")
-    training_format = "prompt" in obj or "completion" in obj
+    training_format = isinstance(obj.get("prompt"), list) and isinstance(obj.get("completion"), list)
     ratchet_format = training_format or bool(set(obj) & (RATCHET_KEYS - {"messages"}))
     allowed = TRAINING_KEYS if training_format else RATCHET_KEYS if ratchet_format else OPENAI_KEYS
     unknown = sorted(str(k) for k in obj if k not in allowed)
     if unknown:
         raise RowError("unknown keys", f"unknown keys {unknown[:5]}; use {sorted(allowed)}")
     if training_format:
-        prompt, completion = obj.get("prompt"), obj.get("completion")
-        if not (isinstance(prompt, list) and isinstance(completion, list) and len(completion) == 1):
-            raise RowError("no answer", "'prompt' must hold the request's messages and 'completion' the assistant's answer")
+        prompt, completion = obj["prompt"], obj["completion"]
+        if len(completion) != 1:
+            raise RowError("no answer", "'completion' must hold exactly one message: the assistant's answer")
         messages: Any = prompt + completion
     else:
         messages = obj.get("messages")
