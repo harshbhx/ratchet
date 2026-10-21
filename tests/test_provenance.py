@@ -347,7 +347,8 @@ def test_certificate_endpoint_and_stats_check_on_a_signed_bom(gw_env, tmp_path):
     current = body["current"]
     assert current["certificate"] == first.eval["certificate"] and current["rechecked_day"] == first.eval.get("rechecked_day")
     assert body["status"] == ("certified" if current["certificate"]["certified"] else "not certified")
-    assert body["live"] == gw.rt.gate.evidence(first) and body["drift"] is None
+    assert body["live"] == gw.rt.gate.evidence(first) and body["drift"] == gw.rt.gate.drift_view(1)
+    assert body["drift"]["alarm"] is False  # the drift monitor (FR-16.6): no alarm in two quiet demo days
     assert len(body["assumptions"]) == 3 and all(isinstance(a, str) for a in body["assumptions"])
     assert client.get("/ratchet/versions/999/certificate").status_code == 404
     # A nightly re-score replaces the version's eval: `current` and the status follow it, `training` stays the signed one.

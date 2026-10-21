@@ -236,8 +236,6 @@ def _seconds(env: str, value: object, default: float) -> float:
 # relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
 # checks). docs/CONFIGURATION.md lists them under "Reserved settings".
 RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
-    "teacher_probes": ("RATCHET_TEACHER_PROBES", "20", "the teacher watch (FR-16.7)"),
-    "adjudicate_max": ("RATCHET_ADJUDICATE_MAX", "50", "the teacher watch (FR-16.7)"),
     "batch_api": ("RATCHET_BATCH_API", "operations", "clean-room backfill (FR-16.8)"),
     "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
@@ -273,6 +271,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_IDEMPOTENCY_CACHE",
             "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
+            "RATCHET_ADJUDICATE_MAX",
             "RATCHET_KPI_WINDOW_DAYS",
             "RATCHET_LOG_FORMAT",
             "RATCHET_LOG_LEVEL",
@@ -363,6 +362,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SCOUT_JUDGE_SESSION_S",
             "RATCHET_STORE_EXAMPLES",
             "RATCHET_TAKE_RATE",
+            "RATCHET_TEACHER_PROBES",
             "RATCHET_TAVILY_CYCLE_DAY",
             "RATCHET_TAVILY_JUDGE_CREDITS",
             "RATCHET_TAVILY_MONTHLY_CREDITS",
@@ -592,6 +592,11 @@ def _choice(value: object, env: str, choices: tuple[str, ...]) -> str:
     if mode not in choices:
         raise ValueError(f"{env} must be {' or '.join(choices)}, not {value!r}")
     return mode
+
+
+# The most probes (RATCHET_TEACHER_PROBES) or adjudications (RATCHET_ADJUDICATE_MAX) one night may run: each is paid
+# teacher calls, so a typo cannot turn the nightly job into a relabelling run.
+MAX_TEACHER_WATCH_CALLS = 10_000
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -974,6 +979,12 @@ class Settings:
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
     cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
 
+    # The teacher watch (FR-16.7, ADR 0033): stored labels Night School re-asks the teacher about per night (probes,
+    # FR-5.40) and contested labels it adjudicates per night with two more teacher answers each (FR-5.41); 0 = none.
+    # Read with `teacher_watch_limits()`.
+    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
+    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+
     # Savings receipts (FR-15.5, ADR 0029): the share of the billable lower bound that is the fee, the audits a task needs
     # before its baseline is calibrated (read with `receipt_policy()`), and, in mock mode only, the mock teacher's mean
     # billed reasoning tokens (unset: the fixed RATCHET_TEACHER_REASONING_TOKENS; `checked_mock_reasoning_mean()`).
@@ -984,10 +995,8 @@ class Settings:
     )
 
     # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
-    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: teacher-watch probes and adjudications
-    # per night; the backfill's batch API, discount and output cap; the ledger's sync mode.
-    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
-    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the backfill's batch API, discount and
+    # output cap; the ledger's sync mode.
     batch_api: str = field(default_factory=lambda: _env("RATCHET_BATCH_API", "operations"))
     batch_discount: float = field(default_factory=lambda: _float("RATCHET_BATCH_DISCOUNT", "0.5"))
     backfill_max_tokens: int = field(default_factory=lambda: _int("RATCHET_BACKFILL_MAX_TOKENS", "2048"))
@@ -1532,6 +1541,15 @@ class Settings:
             ip_rpm=ip_rpm,
             max_inflight=inflight,
         )
+
+    def teacher_watch_limits(self) -> tuple[int, int]:
+        """(RATCHET_TEACHER_PROBES, RATCHET_ADJUDICATE_MAX), checked: whole numbers from 0 to MAX_TEACHER_WATCH_CALLS,
+        because each probe is one teacher call and each adjudication two, paid every night. A bad value raises ValueError,
+        so the gateway, the simulator and the nightly job stop at startup."""
+        for env, value in (("RATCHET_TEACHER_PROBES", self.teacher_probes), ("RATCHET_ADJUDICATE_MAX", self.adjudicate_max)):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_TEACHER_WATCH_CALLS:
+                raise ValueError(f"{env} must be a whole number from 0 to {MAX_TEACHER_WATCH_CALLS:,}, not {value!r}")
+        return self.teacher_probes, self.adjudicate_max
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

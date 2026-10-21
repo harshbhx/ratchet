@@ -60,5 +60,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0055](0055-sql-tasks-compared-by-execution.md) | Text-to-SQL tasks compared by what their queries return, in a sandboxed in-memory SQLite fixture | Accepted | 2026-10-21 |
 | [0082](0082-placeholder-styles-detector-plugin-and-indian-identifiers.md) | Placeholder styles for extraction tasks, a detector plugin, and Indian identifiers and amounts | Accepted | 2026-10-21 |
 | [0083](0083-success-metrics-from-the-ledger.md) | Success metrics computed from the ledger, the same way in mock and live mode | Accepted | 2026-10-21 |
+| [0032](0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions | Accepted | 2026-10-21 |
+| [0033](0033-teacher-watch.md) | Teacher watch: free self-consistency checks with a first-re-test rule, quarantine and adjudication, a training freeze by e-process, and the sqrt(A) ceiling | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

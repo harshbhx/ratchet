@@ -61,7 +61,7 @@ def test_tick_runs_each_step_once_in_order_with_the_live_version_it_started_with
     ]
     assert led.live().id == canary and led.version(old_live).state == "retired"
     empty = Ledger(":memory:")
-    ReleaseGate(empty).tick()  # the drift and watcher steps do nothing until their features land
+    ReleaseGate(empty).tick()  # no confidence logged: the drift monitor has nothing to watch; the watchers are not built
     assert empty.events() == []
 
 

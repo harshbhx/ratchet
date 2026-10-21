@@ -45,7 +45,7 @@ from typing import Any
 
 import httpx
 
-from . import bom, licenses, privacy, receipts, taskspec
+from . import bom, licenses, privacy, receipts, taskspec, teacher_watch
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset, notices
@@ -459,6 +459,7 @@ def main(
     retention = s.retention()  # a bad retention window stops here too, before anything is deleted or trained
     s.receipt_policy()  # and a bad RATCHET_TAKE_RATE or RATCHET_RECEIPT_MIN_AUDITS (ADR 0029)
     s.checked_mock_reasoning_mean()  # and RATCHET_MOCK_TEACHER_REASONING_MEAN out of range, as in the gateway
+    probes, adjudicate = s.teacher_watch_limits()  # and a bad RATCHET_TEACHER_PROBES or _ADJUDICATE_MAX (ADR 0033)
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -504,6 +505,17 @@ def main(
         trainer = NebiusTrainer(s, run, http)
         if retention.request_days:  # the night folds request rows first: every day that ended is sealed before that
             seal_receipts(led, s)
+        # The teacher watch's probes and adjudications (FR-5.40, FR-5.41) ask the teacher on Token Factory, with the
+        # judge's client (same endpoint, key, timeouts and retries), as an audit asks: temperature 0, one answer.
+        relabel = teacher_watch.relabel_with(
+            judge,
+            s.teacher_model,
+            s.gen_policy(),
+            probes,
+            adjudicate,
+            redact_pii=s.redact_pii,
+            price=s.price(s.teacher_model),
+        )
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
             led,
@@ -516,6 +528,7 @@ def main(
             redact_pii=s.redact_pii,
             store_examples=s.store_examples,
             retention=retention,  # expired text is purged before the night reads the ledger (FR-13.4)
+            relabel=relabel,
         )
         # Keep the adapter's BOM next to its training data, and in its folder, in the bucket (FR-16.4).
         synced = write_boms(led, rep.version, trainer) if rep.version is not None else True

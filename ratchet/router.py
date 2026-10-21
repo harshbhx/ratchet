@@ -20,7 +20,8 @@ import httpx
 from . import calibration, licenses, metrics, obs, schema_tasks, tasks, taskspec
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
-from .ledger import STORED_PARAM_KEYS, Ledger, RuntimeFlags, Version, example_hash, target_params
+from .drift import boosted_rate
+from .ledger import STORED_PARAM_KEYS, TEACHER_MODEL, Ledger, RuntimeFlags, Version, example_hash, target_params
 from .openai_compat import tool_turns
 from .providers import (
     COMPLETE,
@@ -168,6 +169,14 @@ def _labels_like_audit(plan: GenPlan) -> bool:
     a seed), and the replay would weigh labels from two different teachers in one mean (ADR 0028). Such an escalation
     leaves `student_agree` NULL: a designed label that was not obtained, like a failed teacher call."""
     return plan.n == 1 and replace(plan.serve, **_REPORT_ONLY) == plan.check
+
+
+def comparable_label(gen: GenParams | None) -> bool:
+    """Whether a teacher answer written under `gen` may be compared with another label of the same request by the
+    teacher watch (FR-16.7): drawn at temperature 0 (or unset, which the provider sends as 0) without a client's
+    reasoning effort. A sampled answer may differ from another one by design, so it is stored as
+    `ledger.UNCHECKABLE`."""
+    return gen is None or ((gen.temperature or 0.0) == 0.0 and gen.reasoning_effort is None)
 
 
 # Added to a student call's longest time before its probe is presumed lost: the call starts a moment after allow().
@@ -629,6 +638,10 @@ class Ratchet:
         self.clock = clock
         self.timer = timer
         self.on_adapter_missing = on_adapter_missing
+        # {version id: multiplier} of the audit rate after a drift alarm (FR-6.40). Empty unless RATCHET_DRIFT_AUDIT_BOOST
+        # is above 1; the release gate fills it and the gateway and simulator share its dict here (`ReleaseGate
+        # .audit_boost`). Only read, with `.get`, so the gate may change it from another thread.
+        self.audit_boost: dict[int, float] = {}
         # Failed upstream calls since start (health()). Scout calls handle from several threads, hence the lock.
         self.student_errors = 0  # student calls that raised; the teacher answered instead
         self.audit_errors = 0  # teacher audits that raised; the student's answer was served anyway (INV-15)
@@ -648,6 +661,11 @@ class Ratchet:
         # RATCHET_TEACHER_BREAKER_* value stops startup. Every teacher call goes through one (`_teacher_complete`).
         self.teacher_policy = settings.teacher_breaker()
         self.teacher_breaker = self._teacher_breaker("teacher", teacher)
+        settings.teacher_watch_limits()  # a bad RATCHET_TEACHER_PROBES or RATCHET_ADJUDICATE_MAX stops startup here
+        # The model id the primary teacher's responses last reported (the teacher watch, FR-16.7): a cache of the ledger's
+        # `meta`, so only a change touches the ledger (`_watch_model`).
+        self._teacher_seen: str | None = ledger.meta_value(TEACHER_MODEL)
+        self._watch_lock = threading.Lock()
         self.fallback_breaker = (
             self._teacher_breaker("fallback_teacher", self.fallback_teacher) if self.fallback_teacher is not None else None
         )
@@ -1059,6 +1077,8 @@ class Ratchet:
         compared, stored nor served as the answer to that request. An audit or arbitration counts it as a failed optional
         call. The teacher answered, so its breaker counts the call as a success."""
         cs = self._teacher_complete(messages, gen, fallback, n, upstream, deadline_s)
+        if not fallback:
+            self._watch_model(cs[0].model)
         if not tool_calls and any(c.tool_calls or c.finish_reason == "tool_calls" for c in cs):
             refused = UpstreamError(
                 502, "the teacher answered with a tool call to a request that offers no tools", code=TOOL_CALLS_UNSUPPORTED
@@ -1073,6 +1093,23 @@ class Ratchet:
                 for c in cs
             ]
         return cs
+
+    def _watch_model(self, model: str) -> None:
+        """The teacher watch's model-id check (FR-16.7, ADR 0033): when a primary-teacher response reports another model
+        id than the last one, `Ledger.teacher_model_seen` writes `teacher_model_changed` and starts a new check epoch,
+        once across threads and processes. A string comparison on every teacher call; only a change reaches the ledger.
+        The fallback teacher's responses are not watched: they name another model by design. The watch never fails the
+        call it rides on: when the ledger refuses the write, the id stays unseen and the next response tries again."""
+        if not model or model == self._teacher_seen:
+            return
+        with self._watch_lock:
+            if model == self._teacher_seen:
+                return
+            try:
+                self.ledger.teacher_model_seen(model)
+            except Exception:  # noqa: BLE001 - evidence about the teacher, never a reason to fail its answer
+                return
+            self._teacher_seen = model
 
     def _serve_teacher(
         self,
@@ -1301,6 +1338,7 @@ class Ratchet:
             count_seen=meta is None or meta.retry_count <= 0,
             sender=self._sender(meta),
             canon_hash=canon,
+            comparable=comparable_label(gen),
         )
         if added is None:  # an erasure tombstoned this example (FR-13.3): it is never stored again
             self._skip_example(task, "erased")
@@ -2326,6 +2364,9 @@ class Ratchet:
                 rate = self.audit_rate(task) if flags.audit_rate is None else flags.audit_rate
                 if flags.audit_rate is None and version.state == "canary" and self.s.canary_audit_rate is not None:
                     rate = self.s.canary_audit_rate
+                boost = self.audit_boost.get(version.id)  # an open drift alarm on this version (FR-6.40)
+                if boost:
+                    rate = boosted_rate(rate, boost)
                 label_p = 0.0 if student_only else rate
                 if self.rng.random() < rate and not student_only:  # audit = quality signal + free training data
                     if offpath:  # a reserved place: shadow work alone can never push an audit onto this path

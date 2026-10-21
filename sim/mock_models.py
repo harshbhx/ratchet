@@ -30,6 +30,7 @@ import hashlib
 import json
 import math
 import random
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -134,7 +135,12 @@ class MockTeacher:
     right to the token. With `reasoning_mean` set it bills round(mean * exp(cv * z - cv^2 / 2)) instead, z a standard
     normal drawn from the request alone (`_rng('reasoning', ...)`, no shared random state), so the same request always
     costs the same and the mean is `reasoning_mean`: the gap between the formula and the bills that savings receipts
-    measure and correct (FR-15.5, simulation)."""
+    measure and correct (FR-15.5, simulation).
+
+    `noise` > 0 plays an unstable teacher (the teacher watch's fault injection, `POST /ratchet/demo/teacher-drift`): on
+    each call about a labelled item, with probability `noise`, its first label is another value of its label space. The
+    draw comes from `_rng('teacher-noise', item.text, calls)`, never a shared generator, so a seeded run stays
+    reproducible; with `noise` 0 nothing is drawn and `calls` does not move, so every simulation number is unchanged."""
 
     def __init__(
         self,
@@ -144,6 +150,7 @@ class MockTeacher:
         reasoning_mean: float | None = None,
         reasoning_cv: float = 0.0,
         strict: bool = False,
+        noise: float = 0.0,
     ):
         if reasoning_mean is not None and not (math.isfinite(reasoning_mean) and reasoning_mean > 0):
             raise ValueError(f"reasoning_mean must be a positive number of tokens, not {reasoning_mean!r}")
@@ -154,6 +161,9 @@ class MockTeacher:
         self.reasoning_mean = reasoning_mean
         self.reasoning_cv = reasoning_cv
         self.strict = strict
+        self.noise = noise
+        self.calls = 0  # noisy calls so far (the noise draw's counter)
+        self._lock = threading.Lock()
 
     def reasoning(self, messages: list[dict[str, Any]]) -> int:
         """The reasoning tokens billed for this request."""
@@ -163,12 +173,27 @@ class MockTeacher:
         z = _rng("reasoning", json.dumps(messages, sort_keys=True, ensure_ascii=False)).gauss(0.0, 1.0) if cv else 0.0
         return max(0, round(self.reasoning_mean * math.exp(cv * z - cv * cv / 2)))
 
+    def _labels(self, item: Item) -> dict[str, Any]:
+        """The item's labels, the first one changed with probability `noise`."""
+        labels = dict(item.labels)
+        if self.noise <= 0 or not labels:
+            return labels
+        with self._lock:
+            r = _rng("teacher-noise", item.text, self.calls)
+            self.calls += 1
+        if r.random() < self.noise:
+            key = next(iter(labels))
+            others = [v for v in item.label_space[key] if v != labels[key]]
+            if others:
+                labels[key] = r.choice(others)
+        return labels
+
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         text = _pinned_answer(messages, self.strict)
         calls = None
         if text is None:
             item = lookup(messages, _effective(params, response_format), strict=self.strict)
-            text = item.answer(item.labels)
+            text = item.answer(self._labels(item))
             if isinstance(item, GenericItem):
                 calls = item.calls(item.labels, "teacher")
         if calls is not None:  # a tool call has no content; its arguments are its output
