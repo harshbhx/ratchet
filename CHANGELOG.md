@@ -542,6 +542,9 @@ All notable changes are listed here. Format: [Keep a Changelog](https://keepacha
 - `test_core.py` uses the shared ledger builders from `tests/fakes.py` instead of its own `_version` / `_audit`; the guard tests use `FakeClock`. Assertions are unchanged.
 - Docs: TESTING.md (the new test tables, the pinned reference simulation), tests/CLAUDE.md (fixtures, fakes, the reference-fixture rule), and CLAUDE.md, ratchet/CLAUDE.md, ratchet/nightschool/CLAUDE.md and sim/CLAUDE.md (the `add_example` allowlist and the reference fixture).
 
+### Review fixes (the merge of the hackathon lanes)
+- **The email redaction pattern runs in linear time** (a 120,000-character run of address characters took 20 to 30 s, on the unauthenticated `POST /ratchet/redact` and on every stored example): every repeat is bounded (local part 64, label 63, at most 8 labels, TLD 24 letters), so the same input takes about 0.02 s. Same addresses as v0.4 on fuzzed text; a local part over 64 characters or a TLD over 24 letters is no longer one. The BOM's `redactor` rules digest changes with the rule. `feedback.submit` checks a correction's answer against the spec first and redacts only a correction a policy may keep, so refused corrections cost no redaction CPU. 3 new tests.
+
 ## [0.4.0] - 2026-10-20
 
 The offline items of the hardening milestone (PRD FR-1.6, FR-1.7, FR-3.6, FR-4.7).

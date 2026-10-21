@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1762 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1765 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -39,10 +39,10 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_receipts.py` | 43 (32 functions; one has 8 cases, one has 5) |
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 54 (36 functions; one has 13 cases, one has 4, three have 2) |
-| `tests/test_redaction.py` | 43 (27 functions; one has 9 cases, one has 7, one has 3) |
+| `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
 | `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
-| `tests/test_feedback.py` | 30 |
+| `tests/test_feedback.py` | 31 |
 | `tests/test_docs_claims.py` | 10 |
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1762** |
+| **Total** | **1765** |
 
 There are three layers:
 
@@ -838,6 +838,8 @@ Licenses that travel with the adapter and configured teachers (FR-3.50 to FR-3.5
 | `test_config_teacher_license_allowed_and_closed_prefix_still_refused` | FR-3.53, INV-1, FR-3.1, FR-3.2: configured teachers are licensed with origin `config` and canonical license names; the built-in registry is a read-only copy source; seventeen closed-family ids claimed as Apache-2.0 are refused (`azure-gpt-4o`, `chatgpt-4o-latest`, `anthropic/next-model`, `openai/gpt-oss-120b`, `my_gemini_mirror`, `davinci-002`, `o5-mini`...) and so are router aliases (`openrouter/auto`, `.../auto:floor`), while open ids pass the family check and an unrecognised closed id (`x-ai/grok-4`) is shown to pass it too; five license names outside the allowlist are refused; a built-in teacher cannot be relabelled; a closed id forced into the registry still raises; after a reset the teacher is unknown again |
 | `test_config_teacher_end_to_end` | FR-3.53, INV-1, FR-3.3: a configured teacher is refused without the file and licensed with it; its answer is stored with its license and URL; Night School trains on its rows and the BOM and NOTICE name it as configured; a cascade built without the file publishes the built-in registry, and the rows leave training |
 | `test_bad_teacher_license_file_fails_at_startup` | FR-3.53, INV-1: bad JSON, NaN, not a list, too many entries, and twelve entry errors in one file, each listed with its place; a missing file; the registry left as it was; `Ratchet`, the gateway's `Runtime` in both modes, `python -m ratchet.live` and `python -m ratchet.admin` stop before opening the ledger; the fixed file starts |
+| `test_every_pattern_scans_adversarial_input_in_linear_time` | NFR-5, FR-4.7: every pattern in `PATTERNS`, and `redact` as a whole, finish 27 hostile inputs of 120,000 characters (runs of address, digit and separator characters) within 3 s (9 s for `redact`); the unbounded EMAIL pattern took 20 to 30 s |
+| `test_email_pattern_still_finds_addresses` | FR-4.7: plus-tags, dotted domains and two addresses in a row are found; a 64-character local part is an address, a 100-character one is not |
 
 ### `tests/test_feedback.py`
 
@@ -874,6 +876,7 @@ Ground truth from people: request ids, verdicts and corrections, human labels as
 | `test_import_cli_dry_run_and_apply` | FR-13.31: `python -m ratchet.importer` dry run (refused for a ledger file that does not exist, which it does not create; an older file read without being migrated, byte for byte), apply (rows attributed to `--client`, one event), a missing file, a bad `--client`, a line over the body limit skipped |
 | `test_counts_as_train_reads_human_labels` | a human training row counts toward the new-data count, a golden-only row never |
 | `test_export_carries_label_flags` | the NDJSON export carries `verified`, `golden_only` and the provenance |
+| `test_a_correction_a_policy_keeps_out_is_never_redacted` | FR-13.30, NFR-5: a correction under the request's opt-out or a key's `store=0` records its verdict without `prepare` running; a kept one prepares once; an answer the spec refuses is still a 400 whatever the policy |
 
 ### `tests/test_receipts.py`
 

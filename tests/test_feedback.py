@@ -475,6 +475,38 @@ def test_correction_storage_rules_still_apply(gw_env):
     assert gw.rt.ledger.db.execute("SELECT COUNT(*) FROM feedback WHERE corrected_present=1 AND stored=0").fetchone()[0] == 6
 
 
+@pytest.mark.req("FR-13.30", "NFR-5")
+def test_a_correction_a_policy_keeps_out_is_never_redacted(gw_env, monkeypatch):
+    """Redaction is the expensive string work: a correction that is not kept (the request's own opt-out, a key's `store=0`)
+    gets its verdict recorded without `prepare` ever running, a stored one prepares once, and a correction that is not a
+    valid answer is still a 400 whatever the policy says."""
+    gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{ACME_KEY},globex:{GLOBEX_KEY}", RATCHET_KEY_LIMITS="globex:store=0")
+    c = TestClient(gw.app)
+    _cascade(gw)
+    prepared: list[str] = []
+    real = feedback.prepare
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        prepared.append(args[2])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(feedback, "prepare", spy)
+
+    def send(text: str, key: str, corrected: str, **request: Any) -> Any:
+        rid = _chat(c, text, key, **request)["ratchet"]["request_id"]
+        return _feedback(c, {"request_id": rid, "verdict": "incorrect", "corrected": corrected, "messages": _msgs(text)}, key)
+
+    r = send("opted out", ACME_KEY, A, store=False)
+    assert r.status_code == 200 and r.json()["correction"]["not_stored"] == "request"
+    r = send("key opted out", GLOBEX_KEY, A)
+    assert r.status_code == 200 and r.json()["correction"]["not_stored"] == "key"
+    assert prepared == []  # neither was redacted
+    r = send("kept", ACME_KEY, A)
+    assert r.status_code == 200 and r.json()["correction"]["stored"] is True and prepared == [A]
+    bad = send("opted out again", ACME_KEY, "not a ticket answer", store=False)
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid_correction" and prepared == [A]
+
+
 @pytest.mark.req("FR-13.30", "FR-13.2")
 def test_correction_needs_every_end_user_identifier(gw_env):
     """A request that sent both `user` and `safety_identifier` logs the second identifier's keyed hash too

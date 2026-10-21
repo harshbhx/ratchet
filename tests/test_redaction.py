@@ -39,7 +39,12 @@ ADMIN_KEY = "sk-admin-0123456789abcdef"
 # v0.4's nine rules, unchanged: the SHA-256 the BOM's `redactor` section showed before GSTIN and UPI (ADR 0082 cites e85726…).
 V04_LABELS = ("SECRET", "EMAIL", "IBAN", "CARD", "AADHAAR", "SSN", "PAN", "IP", "PHONE")
 V04_RULES_SHA256 = "e85726e38b1cf2b1878ba4099b7c38c30ea5268a811b270511c54ac3d0d4d27c"
-V04_PATTERNS = [p for p in PATTERNS if p[0] in V04_LABELS]
+# v0.4's EMAIL rule, kept here as it was: unbounded repeats, which backtrack quadratically on a long run of address
+# characters. Today's `PATTERNS` bound every repeat (`test_every_pattern_scans_adversarial_input_in_linear_time`), so the
+# EMAIL rule is the one that is not v0.4's byte for byte; it finds the same addresses (`test_label_style_matches_v04` compares
+# the two on fuzzed text) and refuses only parts RFC 5321 does not allow (`test_email_pattern_still_finds_addresses`).
+V04_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")
+V04_PATTERNS = [(p[0], V04_EMAIL if p[0] == "EMAIL" else p[1], p[2]) for p in PATTERNS if p[0] in V04_LABELS]
 CHECKS = {label: check for label, _, check in PATTERNS}
 # One of each identifier the patterns know, as people write them.
 IDENTIFIERS = {
@@ -916,3 +921,71 @@ def test_gateway_stores_numbered_examples_end_to_end(gw_env):
     (row,) = [e for e in gw.rt.ledger.examples() if e["task"] == "x-extract"]
     assert json.loads(row["messages"])[0]["content"] == "[EMAIL_1] or [EMAIL_2]?"
     assert row["completion"] == json.dumps({"contact": "[EMAIL_2]"})
+
+
+# ---------- linear time (the unauthenticated /ratchet/redact and every stored example run these patterns) ----------
+_REDOS_N = 120_000
+_REDOS_BUDGET_S = 3.0  # a linear scan takes about 0.01 to 0.2 s here; the unbounded EMAIL pattern took 20 to 30 s
+
+
+def _adversarial() -> list[str]:
+    n = _REDOS_N
+    return [
+        "a" * n,
+        "a." * (n // 2),
+        "a@" * (n // 2),
+        "a@a." * (n // 4),
+        "a-" * (n // 2),
+        "1 " * (n // 2),
+        "1-" * (n // 2),
+        "1." * (n // 2),
+        "1" * n,
+        "A" * n,
+        "A1" * (n // 2),
+        "AB12" + " ABCD" * (n // 5),
+        "+1 " + "1 " * (n // 2),
+        "(" + "1" * n,
+        "@" * n,
+        "x" * n + "@",
+        "x@" + "y." * (n // 2),
+        "x@" + "y-" * (n // 2),
+        "x@y" + ".y" * (n // 2),
+        "x@y-y-y-y-" * (n // 10),
+        "12AAAA1234A" * (n // 11),
+        "sk-" + "a" * n,
+        "Bearer " + "a" * n,
+        "a._%+-" * (n // 5),
+        ("a" * 60 + "@") * (n // 61),
+        ("a" * 64 + "@" + "b" * 63 + ".") * (n // 130),
+        ("a" * 255 + " ") * (n // 256),
+    ]
+
+
+@pytest.mark.req("NFR-5", "FR-4.7")
+def test_every_pattern_scans_adversarial_input_in_linear_time():
+    """Each redaction pattern, and `redact` as a whole, finishes 120,000 characters of hostile input (long runs of address,
+    digit and separator characters) within a fixed budget: no pattern backtracks quadratically."""
+    import time
+
+    for label, pattern, _check in PATTERNS:
+        for text in _adversarial():
+            start = time.perf_counter()
+            for _ in pattern.finditer(text):
+                pass
+            took = time.perf_counter() - start
+            assert took < _REDOS_BUDGET_S, (label, text[:16], round(took, 2))
+    for text in _adversarial():
+        start = time.perf_counter()
+        redact(text)
+        took = time.perf_counter() - start
+        assert took < _REDOS_BUDGET_S * 3, ("redact", text[:16], round(took, 2))
+
+
+@pytest.mark.req("FR-4.7")
+def test_email_pattern_still_finds_addresses_and_cuts_a_long_local_part():
+    found = Counter()
+    assert redact("write to bob.smith+tag@mail.example.co.uk now", found) == "write to [EMAIL] now" and found["EMAIL"] == 1
+    assert redact("a@b.io, c@d.org", Counter()) == "[EMAIL], [EMAIL]"
+    # A local part over 64 characters is not an address (RFC 5321), as it never was for a rule that needs a word boundary first.
+    assert redact("x" * 100 + "@host.example", Counter()) == "x" * 100 + "@host.example"
+    assert redact("x" * 64 + "@host.example", Counter()) == "[EMAIL]"

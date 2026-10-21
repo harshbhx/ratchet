@@ -120,7 +120,14 @@ PATTERNS: list[tuple[str, re.Pattern[str], Callable[[str], bool] | None]] = [
         ),
         None,
     ),
-    ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"), None),
+    # Every repeat is bounded (RFC 5321: a local part of at most 64 characters, a label of at most 63, a top-level domain of
+    # at most 24 letters here), so a long run of address characters costs a fixed multiple of its length, never its square
+    # (120,000 characters in about 0.2 s). Otherwise v0.4's rule: a local part over 64 characters is not an address.
+    (
+        "EMAIL",
+        re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}\b"),
+        None,
+    ),
     # A UPI id (Indian payments): `name@okicici`, `9876543210@ybl`: a provider handle of letters after the '@', with no
     # domain after it (an email has already been replaced). Before PHONE, which would otherwise take the digits of a
     # mobile-number id.
