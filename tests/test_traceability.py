@@ -96,8 +96,29 @@ def test_every_route_documented_in_api_md(repo):
 
 def test_every_env_var_documented(repo):
     assert rq.rule_env_documented(repo) == []
+    assert rq.rule_env_known(repo) == []  # config.KNOWN_ENV is exactly what the package reads (ADR 0070)
     found = rq.env_reads()
     assert {"RATCHET_MODE", "RATCHET_DATA_DIR", "RATCHET_API_KEY", "RATCHET_MIN_AUDITS", "RATCHET_LIVE_FLOOR"} <= set(found)
+
+
+@pytest.mark.req("FR-12.30")
+def test_env_known_rule_catches_drift(tmp_path):
+    """A variable read under ratchet/ but missing from config.KNOWN_ENV is a finding (the startup check would call it
+    unknown), and so is a KNOWN_ENV entry nothing reads; ReleasePolicy's RATCHET_<FIELD> need no entry."""
+    (tmp_path / "ratchet").mkdir()
+    (tmp_path / "ratchet" / "new.py").write_text(
+        "import os\nos.environ.get('RATCHET_NEW_THING')\nos.environ.get('RATCHET_MODE')\nos.environ.get('RATCHET_MIN_AUDITS')\n",
+        encoding="utf-8",
+    )
+    ctx = rq.load(tmp_path, code={}, exempt={}, known_gaps=frozenset(), initial_known_gaps=frozenset())
+    errors = rq.rule_env_known(ctx)
+    assert errors[0] == "RATCHET_NEW_THING: read at ratchet/new.py:2 but not in config.KNOWN_ENV; add it there"
+    assert not [e for e in errors if e.startswith(("RATCHET_MODE:", "RATCHET_MIN_AUDITS:"))]
+    assert "RATCHET_DB: in config.KNOWN_ENV but nothing under ratchet/ reads it" in errors
+    assert (
+        rq.rule_env_known(rq.load(tmp_path / "empty", code={}, exempt={}, known_gaps=frozenset(), initial_known_gaps=frozenset()))
+        == []
+    )  # no package: nothing to compare
 
 
 def test_doc_test_counts_match(repo):

@@ -1196,7 +1196,8 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
     cascade, the gateway and the nightly job at startup, naming the variable; its default, spelled any way, is fine."""
     from ratchet.config import KNOWN_ENV, RESERVED_SETTINGS
 
-    assert set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()} == set(KNOWN_ENV)
+    assert set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()}
+    assert set(RESERVED_ENV) <= set(KNOWN_ENV)  # KNOWN_ENV lists every variable the package reads (ADR 0070)
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()

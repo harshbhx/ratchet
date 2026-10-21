@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 764 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability), ~75 s
+pytest -q                     # 810 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -25,7 +25,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
-| `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
+| `tests/test_traceability.py` | 45 (23 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
@@ -33,12 +33,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
 | `tests/test_observability.py` | 25 |
-| **Total** | **764** |
+| `tests/test_readiness.py` | 45 (17 functions; one has 29 cases) |
+| **Total** | **810** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), and request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`, `tests/test_readiness.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)), and the startup configuration check, liveness and readiness ([`tests/test_readiness.py`](#teststest_readinesspy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -450,7 +451,8 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_live_unverified_have_offline_test_and_live_exemption` | Each `untested (live)` row has a `live` exemption and an offline test (or is a known gap) |
 | `test_requirements_md_is_current` | `docs/REQUIREMENTS.md` equals a fresh `render()`, and rendering twice gives the same text |
 | `test_every_route_documented_in_api_md` | Every route in the gateway's OpenAPI schema appears in `docs/API.md` with its method on the same line |
-| `test_every_env_var_documented` | Every variable read under `ratchet/` (`_env`, `os.environ`, `os.getenv`, the `ReleasePolicy` fields) has a row in `docs/CONFIGURATION.md` |
+| `test_every_env_var_documented` | Every variable read under `ratchet/` (`_env`, `os.environ`, `os.getenv`, the `ReleasePolicy` fields) has a row in `docs/CONFIGURATION.md`, and `config.KNOWN_ENV` lists exactly the variables the package reads (`rule_env_known`) |
+| `test_env_known_rule_catches_drift` | FR-12.30: a variable read under `ratchet/` but missing from `config.KNOWN_ENV` is a finding naming the file and line, a `KNOWN_ENV` entry nothing reads is one too, a `ReleasePolicy` variable needs no entry, and a tree without the package gives none |
 | `test_doc_test_counts_match` | Every "N tests" claim and per-file count in the docs equals the parametrize-expanded count |
 | `test_ast_count_matches_pytest_collection` | `pytest --collect-only` in a subprocess collects exactly the AST count per file |
 | `test_check_cli_passes_and_writes_the_committed_matrix` | `--check` exits 0 and prints `OK`; writing to `--out` reproduces the committed matrix |
@@ -641,6 +643,30 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 | `test_scrape_time_gauges` | Version traffic for the live and canary versions, the student breaker open after a demo outage and the teacher's closed, today's spend |
 | `test_metrics_module_format` | Label and help escaping, a counter refusing to go down or take the wrong label count, duplicate names refused, bad buckets refused, `Gauge.replace` dropping old series, NaN observations ignored, cumulative buckets, `number()` formatting, relabelled series added together, `client_label` |
 | `test_old_ledger_gains_request_ids_and_the_failures_table` | An old file gains `request_id`, `client_request_id` and the `failures` table; the lookup uses `requests_request_id`; the stage list; `spend_since` adds answered and failed spend per client since a time |
+
+### `tests/test_readiness.py`
+
+The startup configuration check, the config check CLI, liveness and readiness (FR-12.30, NFR-35, NFR-2, INV-1; [ADR 0070](adr/0070-configuration-checks-and-readiness.md)). Live mode runs offline through `Runtime(transports=)`, `FakeOpenAIServer` and `httpx.MockTransport`; every test clears the shell's `RATCHET_*` variables first.
+
+| Test | Covers |
+|---|---|
+| `test_bad_setting_stops_startup_naming_the_variable` (29 cases) | Each bad value (an unparsable or out-of-range number, a bad mode, a non-http(s) URL, an empty Token Factory key, no API keys, a short admin key, release policy rules across fields, an unwritable or missing `RATCHET_DB`, a bad timeout, an unknown teacher failure mode, a bad 0/1 switch, a closed or unknown teacher, judge or fallback teacher) stops a live `Runtime` with a `ConfigError` (a `ValueError`) naming the variable, before the ledger file exists; with the variable fixed it starts |
+| `test_every_error_is_listed_at_once` | Six bad variables give one error listing all six (the unparsable one first, as `load()` read it); a refused teacher makes it a `LicenseError` too; outside `load()` a bad variable still raises at once with `var`, `value` and `expected`; `load()` keeps the default and collects the issue |
+| `test_misspelled_variable_warns_with_a_suggestion_and_strict_mode_stops` | `RATCHET_AUDIT_RAT` warns with "did you mean RATCHET_AUDIT_RATE?", an unrelated name without a suggestion, the VM's own variables not at all; the warning is kept and logged without the value; `RATCHET_STRICT_CONFIG=1` makes it fatal, a bad strict value is an error, strict and clean starts |
+| `test_warnings_for_settings_that_do_nothing` | A mock-only variable in live mode (not at its default), a 0/1 switch spelled otherwise, a student endpoint without a token, a live audit rate under 1%, an unpriced model, an empty key for a teacher off Nebius, an unpriced hosted fallback student: warnings, never errors, none in mock mode |
+| `test_release_policy_rules_across_fields` | `ReleasePolicy.validate`: the default and the edges are clean; a floor above the bar, 0 audits, 0 shadow answers and a tolerance over 0.2 are errors naming their variable, all four listed together; such policies can still be built |
+| `test_config_check_cli_exit_codes` | `python -m ratchet.config check`: 0 clean, 1 warnings, 2 errors (errors listed first, counts in the last line), 2 for warnings under strict; `--json`; usage errors; in its own process in live mode it reports every error and creates no ledger file |
+| `test_config_check_cli_loads_the_tasks_file` | The CLI reports a bad `RATCHET_TASKS_FILE` (every spec error), accepts a good one, refuses `clients` that name no API key, and reports a missing file |
+| `test_known_env_covers_every_variable_the_deploy_kit_sets` | Every `RATCHET_*` name in the deploy kit, the Dockerfiles, the Makefile, the scripts and the simulator is known, so the VM's `.env` never warns; mock-only and loose switches are in `KNOWN_ENV`; `DEPLOY_ENV` does not overlap it |
+| `test_update_script_checks_the_config_and_waits_for_readyz` | `deploy/vm/update.sh` runs the check before `docker compose up -d` and waits for `/readyz` after it; the Docker health check stays on `/healthz` |
+| `test_healthz_answers_with_every_worker_thread_busy` | `/healthz`, `/livez` and `/readyz` are coroutines and answer while AnyIO's thread limiter is fully borrowed |
+| `test_readyz_in_mock_mode_checks_the_ledger_only` | Mock mode: `ledger` and `config` (with the warning's message) only, the flags, `Cache-Control: no-store` |
+| `test_readyz_503_when_the_ledger_cannot_be_written` | A read-only connection, a lock held past the probe's wait and a closed file ledger are 503 with `read_only`, `lock_timeout` and `closed`; results are cached for 15 s on the runtime's clock; no failures rows |
+| `test_readyz_reports_missing_adapters_and_queues_their_reload` | Teacher `/models` 200 and a student `/models` without the canary's `student-v3`: 200 `degraded`, `missing_adapters=['student-v3']`, the reload sent to the endpoint; each key sent to its own endpoint; no URL or key in the answer; one probe per TTL; `ready` once the adapter is listed |
+| `test_readyz_follows_the_teacher` | An open teacher breaker is 503, unless a fallback teacher or a standing-in student keeps it 200 `degraded`; a 401 model list is 503; a 500, an unreadable list, a list without the teacher model and a connection error are `degraded` (the error named by class, no URL); an open student breaker is `degraded`; without a student endpoint the hosted fallback is reported |
+| `test_hung_endpoints_never_make_the_ledger_look_unwritable` | Teacher and student `/models` that hang hold both HTTP probe threads; the ledger's own thread still answers, 200 `degraded`, also once its result is stale; the hung runs are shared, not started again |
+| `test_probe_cache_shares_runs_times_out_and_names_classes` | `ProbeCache`: one run per name per TTL shared by concurrent callers, a caller's timeout that leaves the run going (and keeps its result), a raising probe named by class only, `clear()` |
+| `test_ledger_error_codes_and_model_lists` | `ledger_error`'s codes; `list_models` reads an OpenAI model list, sends no `Authorization` without a key and calls a `data` that is not a list unreadable |
 
 ## Live-path tests
 
@@ -880,7 +906,7 @@ The check fails when:
 | (f) | An `untested (live)` row has no `live` exemption, or no offline test and is not a known gap |
 | (g) | A `Not met` metric has no strict-xfail test (so the test fails loudly once the target is met) |
 | (h) | `docs/REQUIREMENTS.md` differs from a fresh render |
-| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, `DEPLOYMENT.md` or `HACKATHON_SUBMISSION.md` differs from the parametrize-expanded count |
+| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md) or from `config.KNOWN_ENV` (or `KNOWN_ENV` lists one nothing reads, `rule_env_known`); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, `DEPLOYMENT.md` or `HACKATHON_SUBMISSION.md` differs from the parametrize-expanded count |
 
 To change behaviour:
 

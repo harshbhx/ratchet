@@ -42,11 +42,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, metrics, obs, tasks, taskspec
+from . import __version__, live, metrics, obs, readiness, tasks, taskspec
 from . import access as acl
 from . import bom as bomdoc
+from . import config as cfg
 from .auth import KeyRing, Token, bearer
-from .config import Settings
+from .config import ConfigError, ConfigIssue, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
@@ -135,7 +136,11 @@ class Runtime:
     both. A fallback teacher on another endpoint (RATCHET_TEACHER_FALLBACK_BASE) also goes over the teacher's transport.
     `clock` times the breakers, adapter reloads and demo outages (tests pass a fake one).
 
-    `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None."""
+    `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None.
+
+    The configuration is checked first, before anything is opened (`config.check`, ADR 0070): every error at once in one
+    ConfigError (also a LicenseError when a teacher is refused, INV-1). Warnings are kept in `config_warnings` and logged;
+    RATCHET_STRICT_CONFIG=1 makes them fatal too."""
 
     def __init__(
         self,
@@ -147,17 +152,35 @@ class Runtime:
         unknown = set(transports or {}) - set(TRANSPORT_KEYS)
         if unknown:
             raise ValueError(f"unknown transport keys {sorted(unknown)}; use {list(TRANSPORT_KEYS)}")
-        self.settings = settings or Settings()
+        parsed: list[ConfigIssue] = []
+        if settings is None:
+            settings, parsed = cfg.load()  # variables that do not parse are listed with the rest, not raised one by one
+        self.settings = settings
+        self.config_warnings: list[ConfigIssue] = self._check_config(parsed)
         self.transports = dict(transports or {})
         self.sleep = sleep
         self.clock = clock
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
         self.reset()
+        for w in self.config_warnings:  # once per start, after reset() set up logging; names settings, never values
+            obs.log(logging.WARNING, "config_warning", var=w.var, detail=w.message)
+
+    def _check_config(self, parsed: list[ConfigIssue]) -> list[ConfigIssue]:
+        """Raise one ConfigError listing every configuration error (and every warning under RATCHET_STRICT_CONFIG=1);
+        return the warnings."""
+        issues = [*parsed, *cfg.check(self.settings)]
+        errors = [i for i in issues if i.level == cfg.ERROR]
+        warnings = [i for i in issues if i.level != cfg.ERROR]
+        strict = self.settings.strict_config is True
+        if errors or (strict and warnings):
+            raise ConfigError.of([*errors, *warnings] if strict else errors)
+        return warnings
 
     def reset(self) -> None:
         s = self.settings
         self._set_access(s)  # first, so a live gateway without keys stops before it opens anything (ADR 0061)
         obs.configure(*s.log_settings())  # a bad RATCHET_LOG_FORMAT or RATCHET_LOG_LEVEL stops startup here (ADR 0062)
+        self.readiness = readiness.Readiness(self)  # /readyz's probes and their cache; a demo reset starts it afresh
         self.failure_rows = FailureThrottle(clock=self.clock)
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         # The hot path (ADR 0060); a bad RATCHET_DB_SYNC, RATCHET_TICK_INTERVAL_S or RATCHET_STATS_TTL_S stops startup here.
@@ -963,9 +986,30 @@ def _stream_pieces(choice: Choice, asked: bool) -> list[tuple[str, dict[str, Any
 
 
 @app.get("/healthz")
-def healthz() -> dict[str, Any]:
-    """Liveness for Docker and load balancers. Public, even when API keys protect /v1/*."""
+async def healthz() -> dict[str, Any]:
+    """Liveness for Docker: the process answers. Public, even when API keys protect /v1/*. Async, so it answers while
+    every worker thread is busy (a full thread pool is not a dead process); readiness is /readyz."""
     return {"status": "ok", "version": __version__, "mode": rt.settings.mode}
+
+
+@app.get("/livez")
+async def livez() -> dict[str, Any]:
+    """Liveness under its Kubernetes name: the same answer as /healthz."""
+    return await healthz()
+
+
+@app.get("/readyz")
+async def readyz(request: Request) -> JSONResponse:
+    """Readiness for load balancers and deploy scripts (FR-12.30, ADR 0070): 200 `ready` or `degraded` while requests can
+    be answered, 503 `not_ready` when the ledger cannot be written or no teacher can answer. The probes run on their own
+    two threads, never the request pool, each awaited at most 2 s and reused for 15 s (`readiness.Readiness`). Public;
+    the answer names states, statuses and exception classes, never URLs, keys or messages. A 503 here is an answer, not a
+    failed request: it writes no failures row, however often a load balancer asks."""
+    status, body = await rt.readiness.report()
+    ctx = _context(request)
+    if ctx is not None:
+        ctx.failure_handled = True
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/v1/models")

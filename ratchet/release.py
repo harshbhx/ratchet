@@ -23,6 +23,7 @@ import math
 import os
 from dataclasses import MISSING, dataclass, fields
 
+from .config import ERROR, ConfigIssue
 from .ledger import Ledger, Version
 from .stats import wilson  # defined in stats.py since ADR 0024; `release.wilson` stays importable
 
@@ -135,6 +136,48 @@ class ReleasePolicy:
                 except ValueError:
                     raise ValueError(f"{env} must be {'a whole number' if integer else 'a number'}, not {raw!r}") from None
         return cls(**kw)
+
+    def validate(self) -> list[ConfigIssue]:
+        """Rules across fields, which the checks at construction cannot see (FR-12.30, ADR 0070): 0 < live_floor <=
+        min_precision <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate just admitted),
+        min_audits and min_shadow at least 1 (0 would decide on no evidence), tolerance from 0 to MAX_TOLERANCE (more
+        would admit a large regression against the live version). The gateway's startup and `python -m ratchet.config
+        check` call it; building a policy does not, so tests and simulations may still use any value."""
+        issues: list[ConfigIssue] = []
+        if not 0 < self.live_floor <= self.min_precision <= 1:
+            issues.append(
+                ConfigIssue(
+                    ERROR,
+                    "RATCHET_LIVE_FLOOR",
+                    f"RATCHET_LIVE_FLOOR ({self.live_floor:g}) must be above 0 and at most RATCHET_MIN_PRECISION "
+                    f"({self.min_precision:g}), itself at most 1: a rollback floor above the golden gate's bar rolls back "
+                    "versions the gate admitted",
+                )
+            )
+        for name in ("min_audits", "min_shadow"):
+            if getattr(self, name) < 1:
+                env = f"RATCHET_{name.upper()}"
+                issues.append(
+                    ConfigIssue(ERROR, env, f"{env} must be 1 or more, not {getattr(self, name)!r}: 0 decides on no evidence")
+                )
+        if not 0 <= self.tolerance <= MAX_TOLERANCE:
+            issues.append(
+                ConfigIssue(
+                    ERROR,
+                    "RATCHET_TOLERANCE",
+                    f"RATCHET_TOLERANCE must be from 0 to {MAX_TOLERANCE:g}, not {self.tolerance!r}: more admits a candidate "
+                    "that regresses that far against the live version",
+                )
+            )
+        return issues
+
+
+MAX_TOLERANCE = 0.2  # ReleasePolicy.validate: the largest regression against live the golden gate may tolerate
+
+
+def policy_env() -> frozenset[str]:
+    """The variables `ReleasePolicy.from_env` reads: RATCHET_<FIELD> for every field."""
+    return frozenset(f"RATCHET_{f.name.upper()}" for f in fields(ReleasePolicy))
 
 
 class ReleaseGate:
