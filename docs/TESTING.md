@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 810 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness), ~75 s
+pytest -q                     # 816 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -33,8 +33,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
 | `tests/test_observability.py` | 25 |
-| `tests/test_readiness.py` | 45 (17 functions; one has 29 cases) |
-| **Total** | **810** |
+| `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
+| **Total** | **816** |
 
 There are three layers:
 
@@ -652,6 +652,8 @@ The startup configuration check, the config check CLI, liveness and readiness (F
 |---|---|
 | `test_bad_setting_stops_startup_naming_the_variable` (29 cases) | Each bad value (an unparsable or out-of-range number, a bad mode, a non-http(s) URL, an empty Token Factory key, no API keys, a short admin key, release policy rules across fields, an unwritable or missing `RATCHET_DB`, a bad timeout, an unknown teacher failure mode, a bad 0/1 switch, a closed or unknown teacher, judge or fallback teacher) stops a live `Runtime` with a `ConfigError` (a `ValueError`) naming the variable, before the ledger file exists; with the variable fixed it starts |
 | `test_every_error_is_listed_at_once` | Six bad variables give one error listing all six (the unparsable one first, as `load()` read it); a refused teacher makes it a `LicenseError` too; outside `load()` a bad variable still raises at once with `var`, `value` and `expected`; `load()` keeps the default and collects the issue |
+| `test_readers_that_check_several_variables_report_each_one` | Sixteen bad variables across the release policy, the cost and generation policies, the logs, a breaker and the reserved settings, each reader of which stops at its first problem: one `ConfigError` names all sixteen; `ReleasePolicy.env_issues` alone; `config.defaults()` ignores the environment |
+| `test_config_check_and_startup_agree_on_every_variable` | In mock and live mode, every variable Ratchet reads set to `garbage` and to `-1`: `python -m ratchet.config check` exits 2 exactly when `Runtime` refuses to start, and a refusal is a `ConfigError` before the ledger file exists (a bad `RATCHET_TASKS_FILE` is the loader's `SpecError`) |
 | `test_misspelled_variable_warns_with_a_suggestion_and_strict_mode_stops` | `RATCHET_AUDIT_RAT` warns with "did you mean RATCHET_AUDIT_RATE?", an unrelated name without a suggestion, the VM's own variables not at all; the warning is kept and logged without the value; `RATCHET_STRICT_CONFIG=1` makes it fatal, a bad strict value is an error, strict and clean starts |
 | `test_warnings_for_settings_that_do_nothing` | A mock-only variable in live mode (not at its default), a 0/1 switch spelled otherwise, a student endpoint without a token, a live audit rate under 1%, an unpriced model, an empty key for a teacher off Nebius, an unpriced hosted fallback student: warnings, never errors, none in mock mode |
 | `test_release_policy_rules_across_fields` | `ReleasePolicy.validate`: the default and the edges are clean; a floor above the bar, 0 audits, 0 shadow answers and a tolerance over 0.2 are errors naming their variable, all four listed together; such policies can still be built |
@@ -661,9 +663,10 @@ The startup configuration check, the config check CLI, liveness and readiness (F
 | `test_update_script_checks_the_config_and_waits_for_readyz` | `deploy/vm/update.sh` runs the check before `docker compose up -d` and waits for `/readyz` after it; the Docker health check stays on `/healthz` |
 | `test_healthz_answers_with_every_worker_thread_busy` | `/healthz`, `/livez` and `/readyz` are coroutines and answer while AnyIO's thread limiter is fully borrowed |
 | `test_readyz_in_mock_mode_checks_the_ledger_only` | Mock mode: `ledger` and `config` (with the warning's message) only, the flags, `Cache-Control: no-store` |
-| `test_readyz_503_when_the_ledger_cannot_be_written` | A read-only connection, a lock held past the probe's wait and a closed file ledger are 503 with `read_only`, `lock_timeout` and `closed`; results are cached for 15 s on the runtime's clock; no failures rows |
-| `test_readyz_reports_missing_adapters_and_queues_their_reload` | Teacher `/models` 200 and a student `/models` without the canary's `student-v3`: 200 `degraded`, `missing_adapters=['student-v3']`, the reload sent to the endpoint; each key sent to its own endpoint; no URL or key in the answer; one probe per TTL; `ready` once the adapter is listed |
+| `test_readyz_503_when_the_ledger_cannot_be_written` | A read-only connection and a closed file ledger are 503 with `read_only` and `closed`; a lock held past the probe's wait is 200 `degraded` (`lock_timeout`, `busy_runs` 1) and 503 when the next probe still finds it held, `ready` once released; a probe that outlasts its caller (`timeout`) counts as busy too; results are cached for 15 s on the runtime's clock; no failures rows |
+| `test_readyz_reports_missing_adapters_and_queues_their_reload` | Teacher `/models` 200 and a student `/models` without the canary's `student-v3`: 200 `degraded`, `missing_adapters=['student-v3']`, the reload sent to the endpoint; each key sent to its own endpoint; no URL or key in the answer; one probe per TTL, the student's failed result for 15 s; `ready` once the adapter is listed; an ok student result reused for 5 minutes |
 | `test_readyz_follows_the_teacher` | An open teacher breaker is 503, unless a fallback teacher or a standing-in student keeps it 200 `degraded`; a 401 model list is 503; a 500, an unreadable list, a list without the teacher model and a connection error are `degraded` (the error named by class, no URL); an open student breaker is `degraded`; without a student endpoint the hosted fallback is reported |
+| `test_readyz_recovers_from_an_open_teacher_breaker_without_traffic` | An open teacher breaker is 503 while it waits; past its wait, with no request at all for up to a day, 200 `degraded` with `probe_due` while `/models` answers, 503 while the endpoint is unreachable; half-open is `degraded`; a failed probe is 503 for the doubled wait, a successful one `ready`; a fallback teacher's due probe counts on its own endpoint, and on the teacher's only when the endpoint answers |
 | `test_hung_endpoints_never_make_the_ledger_look_unwritable` | Teacher and student `/models` that hang hold both HTTP probe threads; the ledger's own thread still answers, 200 `degraded`, also once its result is stale; the hung runs are shared, not started again |
 | `test_probe_cache_shares_runs_times_out_and_names_classes` | `ProbeCache`: one run per name per TTL shared by concurrent callers, a caller's timeout that leaves the run going (and keeps its result), a raising probe named by class only, `clear()` |
 | `test_ledger_error_codes_and_model_lists` | `ledger_error`'s codes; `list_models` reads an OpenAI model list, sends no `Authorization` without a key and calls a `data` that is not a list unreadable |

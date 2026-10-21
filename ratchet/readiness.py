@@ -10,8 +10,14 @@ Liveness (`/healthz`, `/livez`) only says the process answers. Readiness (`/read
 The HTTP probes run on a process-wide pool of PROBE_WORKERS threads and the ledger probe on a thread of its own, never
 the request thread pool (so two hung endpoints can never make the ledger look unwritable), each caller waiting at most
 PROBE_TIMEOUT_S, and a result is reused for PROBE_TTL_S, so however often a load balancer asks, the teacher sees one
-`/models` call per TTL. Breaker states are read fresh on every call. Answers name states, statuses and exception classes
-only, never a URL, a key or an exception's message (an httpx message holds the endpoint URL).
+`/models` call per TTL. The student endpoint's result, which never makes the gateway not ready, is reused for
+STUDENT_PROBE_TTL_S while it is ok, so polling `/readyz` sends its endpoint one request per 5 minutes. Breaker states are
+read fresh on every call. Answers name states, statuses and exception classes only, never a URL, a key or an exception's
+message (an httpx message holds the endpoint URL).
+
+A gateway that says not ready is taken out of rotation and gets no traffic, so nothing a request does may be needed to
+make it ready again: a teacher breaker whose wait is over counts as a way through (the next request is its probe), and a
+busy ledger is not ready only when two probes in a row found it busy.
 """
 
 from __future__ import annotations
@@ -27,18 +33,25 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from . import __version__
-from .resilience import CLOSED
+from .resilience import CLOSED, HALF_OPEN
 
 if TYPE_CHECKING:  # the gateway imports this module
     from .gateway import Runtime
 
 PROBE_TIMEOUT_S = 2.0  # what a caller waits for a probe, and each HTTP probe's own timeout
 PROBE_TTL_S = 15.0  # how long a probe's result is reused
+STUDENT_PROBE_TTL_S = 300.0  # how long the student endpoint's ok result is reused: each probe is a request to the endpoint
 PROBE_WORKERS = 2  # threads of the HTTP probe pool, shared by every Runtime in the process
 POOLS = {"upstream": PROBE_WORKERS, "ledger": 1}  # pool name -> threads; the ledger's own thread waits behind no endpoint
 
 READY, DEGRADED, NOT_READY = "ready", "degraded", "not_ready"
 KEY_REFUSED = frozenset({401, 403})  # a teacher that refuses the key cannot answer anything: not ready
+PROBE = "probe"  # a breaker that lets the next call through as its probe (`_way_through`)
+# Ledger probe failures that mean another writer holds the ledger (`ledger_error`, and a probe still running when its
+# caller stopped waiting): requests wait for it rather than fail, so /readyz says degraded, and not_ready only once
+# BUSY_RUNS_NOT_READY probes in a row (one PROBE_TTL_S apart) found it busy.
+BUSY = frozenset({"lock_timeout", "locked", "timeout"})
+BUSY_RUNS_NOT_READY = 2
 
 Probe = Callable[[], Mapping[str, Any]]
 
@@ -56,12 +69,13 @@ def pool(name: str = "upstream") -> ThreadPoolExecutor:
 
 
 class ProbeCache:
-    """Each named probe's last result, reused for `ttl_s` seconds on `clock`. A missing or stale one is computed again
-    on `executors[name]`, else `executor` (default `pool()`), by one run that every caller arriving meanwhile shares. A
-    caller waits at most `timeout_s` and then reports `{"ok": False, "error": "timeout"}`; the run goes on, and its
-    result is kept when it ends. A probe that raises is a failed result naming the exception's class (`describe`), never
-    its message. Safe to share between threads and event loops: callers await a `concurrent.futures.Future` through
-    `asyncio.wrap_future`."""
+    """Each named probe's last result, reused for `ttl_s` seconds on `clock` (`ttls[name]` for an ok result of a probe
+    with a TTL of its own; a failed one is reused for `ttl_s`, so a repair shows soon). A missing or stale one is
+    computed again on `executors[name]`, else `executor` (default `pool()`), by one run that every caller arriving
+    meanwhile shares. A caller waits at most `timeout_s` and then reports `{"ok": False, "error": "timeout"}`; the run
+    goes on, and its result is kept when it ends. A probe that raises is a failed result naming the exception's class
+    (`describe`), never its message. Safe to share between threads and event loops: callers await a
+    `concurrent.futures.Future` through `asyncio.wrap_future`."""
 
     def __init__(
         self,
@@ -71,8 +85,10 @@ class ProbeCache:
         executor: ThreadPoolExecutor | None = None,
         describe: Callable[[BaseException], str] | None = None,
         executors: Mapping[str, ThreadPoolExecutor] | None = None,
+        ttls: Mapping[str, float] | None = None,
     ) -> None:
         self.ttl_s = ttl_s
+        self.ttls = dict(ttls or {})
         self.timeout_s = timeout_s
         self.clock = clock
         self.executor = executor
@@ -85,8 +101,10 @@ class ProbeCache:
     def _lookup(self, name: str, probe: Probe) -> dict[str, Any] | Future[dict[str, Any]]:
         with self._lock:
             hit = self._results.get(name)
-            if hit is not None and 0 <= self.clock() - hit[0] < self.ttl_s:
-                return hit[1]
+            if hit is not None:
+                ttl = self.ttls.get(name, self.ttl_s) if hit[1].get("ok") else self.ttl_s
+                if 0 <= self.clock() - hit[0] < ttl:
+                    return hit[1]
             running = self._running.get(name)
             if running is None or running.cancelled():  # a cancelled run never stores a result: start another
                 executor = self.executors.get(name) or self.executor or pool()
@@ -170,6 +188,21 @@ def _breaker_state(breaker: Any) -> str | None:
     return None if breaker is None else str(breaker.state)
 
 
+def _way_through(breaker: Any) -> str | None:
+    """What a breaker does with the next call: CLOSED (it goes through), PROBE (it goes through as the breaker's probe:
+    the breaker is open with its wait over, or half-open), or None (it is refused, or there is no breaker). Only a call
+    moves an open breaker on, and a gateway out of rotation gets none, so readiness counts a due probe as a way through;
+    else one teacher blip would keep the gateway out for good."""
+    if breaker is None:
+        return None
+    state = breaker.state
+    if state == CLOSED:
+        return CLOSED
+    if state == HALF_OPEN or breaker.retry_in() == 0:
+        return PROBE
+    return None
+
+
 # Operational switches reported under `flags` (they never change the status): name -> how to read it from the runtime.
 # Features that add a switch (a gateway budget, frozen releases, paused training) register it here.
 FLAGS: dict[str, Callable[[Runtime], bool]] = {}
@@ -190,14 +223,20 @@ class Readiness:
 
     def __init__(self, rt: Runtime, cache: ProbeCache | None = None) -> None:
         self.rt = rt
-        self.cache = cache or ProbeCache(clock=rt.clock, executors={"ledger": pool("ledger")})
+        self.cache = cache or ProbeCache(
+            clock=rt.clock, executors={"ledger": pool("ledger")}, ttls={"student": STUDENT_PROBE_TTL_S}
+        )
+        self.busy_runs = 0  # ledger probes in a row that found the ledger busy (BUSY)
 
     # ----- probes (run on the probe pool) -----
     def _ledger(self) -> dict[str, Any]:
         try:
             self.rt.ledger.probe(PROBE_TIMEOUT_S)
         except Exception as e:  # noqa: BLE001 - reported as a code, never the message
-            return {"ok": False, "error": ledger_error(e)}
+            code = ledger_error(e)
+            self.busy_runs = self.busy_runs + 1 if code in BUSY else 0
+            return {"ok": False, "error": code, **({"busy_runs": self.busy_runs} if code in BUSY else {})}
+        self.busy_runs = 0
         return {"ok": True}
 
     def _teacher_models(self) -> dict[str, Any]:
@@ -244,9 +283,11 @@ class Readiness:
         return (503 if status == NOT_READY else 200), body
 
     def _teacher(self, models: Mapping[str, Any]) -> dict[str, Any]:
-        """The teacher's check. `available`: some teacher can answer (the primary's breaker is closed, or a fallback
-        teacher's is) and the key is not refused. `ok`: available, the primary's breaker closed, its model list read
-        and the teacher model on it."""
+        """The teacher's check. `available`: some teacher can answer and the key is not refused. A teacher can answer
+        when its breaker is closed, or when the breaker would let the next call through as its probe (`probe_due`) and
+        its endpoint answers HTTP below 500 (the cached model list; a fallback teacher on an endpoint of its own has no
+        such probe, so its breaker decides). `ok`: available, the primary's breaker closed, its model list read and the
+        teacher model on it."""
         rt = self.rt
         breaker = _breaker_state(rt.ratchet.teacher_breaker)
         fallback = _breaker_state(rt.ratchet.fallback_breaker)
@@ -255,10 +296,18 @@ class Readiness:
             out["fallback_breaker"] = fallback
         out.update({k: v for k, v in models.items() if k != "ids"})
         out.pop("ok", None)
-        refused = models.get("status") in KEY_REFUSED
+        status = models.get("status")
+        refused = status in KEY_REFUSED
+        answers = isinstance(status, int) and status < 500 and not refused
         listed = rt.settings.teacher_model in models["ids"] if "ids" in models else None
         out["model_listed"] = listed
-        available = (breaker == CLOSED or fallback == CLOSED) and not refused
+        primary, backup = _way_through(rt.ratchet.teacher_breaker), _way_through(rt.ratchet.fallback_breaker)
+        if breaker != CLOSED:
+            out["probe_due"] = primary == PROBE
+        own_endpoint = rt.ratchet.fallback_teacher is not rt.ratchet.teacher
+        primary_ok = primary == CLOSED or (primary == PROBE and answers)
+        backup_ok = backup == CLOSED or (backup == PROBE and (answers or own_endpoint))
+        available = (primary_ok or backup_ok) and not refused
         out["available"] = available
         out["ok"] = available and breaker == CLOSED and bool(models.get("ok")) and listed is not False
         return out
@@ -280,11 +329,14 @@ class Readiness:
         return out
 
     def _status(self, checks: Mapping[str, Any]) -> str:
-        """not_ready (503) when the ledger cannot be written, or no teacher can answer (unless the student stands in,
-        RATCHET_ON_TEACHER_FAILURE=serve_student, and is up); degraded (200) when something is down that the gateway
-        works around; else ready."""
-        if not checks["ledger"]["ok"]:
-            return NOT_READY
+        """not_ready (503) when the ledger cannot be written (busy for BUSY_RUNS_NOT_READY probes in a row counts), or no
+        teacher can answer (unless the student stands in, RATCHET_ON_TEACHER_FAILURE=serve_student, and is up); degraded
+        (200) when something is down or busy that the gateway works around; else ready."""
+        ledger = checks["ledger"]
+        if not ledger["ok"]:
+            runs = ledger.get("busy_runs", self.busy_runs + 1)  # a run still going past the wait is one more busy probe
+            busy = ledger.get("error") in BUSY and runs < BUSY_RUNS_NOT_READY
+            return DEGRADED if busy else NOT_READY
         teacher, student = checks.get("teacher"), checks.get("student")
         if teacher is not None and not teacher["available"]:
             stands_in = self.rt.ratchet.serve_student_on_failure and student is not None and student["ok"]

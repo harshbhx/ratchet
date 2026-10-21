@@ -15,7 +15,7 @@ import os
 import re
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import urlsplit
@@ -35,8 +35,13 @@ from .providers import (
 )
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
 
+# While True, every environment read in this module returns its default (`defaults()`).
+_DEFAULTS_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("ratchet_config_defaults_only", default=False)
+
 
 def _env(name: str, default: str) -> str:
+    if _DEFAULTS_ONLY.get():
+        return default
     return os.environ.get(name, default)
 
 
@@ -132,7 +137,7 @@ def _int(name: str, default: str) -> int:
 
 def _float_or_none(name: str) -> float | None:
     """A number from the environment, or None when the variable is unset or empty; ConfigError names the variable."""
-    raw = os.environ.get(name, "").strip()
+    raw = _env(name, "").strip()
     if not raw:
         return None
     try:
@@ -145,7 +150,7 @@ def _bool(name: str) -> bool | None:
     """A 0/1 switch from the environment, or None when the variable is unset or empty (the setting's default, which may
     depend on the mode). Anything else raises ConfigError naming the variable: a typo in a security switch must stop
     startup instead of quietly picking a side."""
-    raw = os.environ.get(name, "").strip()
+    raw = _env(name, "").strip()
     if not raw:
         return None
     if raw not in ("0", "1"):
@@ -886,31 +891,30 @@ class Settings:
             if problem:
                 error(var, f"{var} {problem}")
         # The checks each setting's own reader makes, collected instead of raised at the first. `var` is put in front
-        # of a message that names no variable (the timeouts' own messages do not).
-        readers: tuple[tuple[str, Callable[[], object]], ...] = (
-            ("RATCHET_TEACHER_TIMEOUT_S", self.teacher_timeout),
-            ("RATCHET_STUDENT_TIMEOUT_S", lambda: timeouts(self.student_timeout_s)),
-            ("RATCHET_STUDENT_CONNECT_TIMEOUT_S", lambda: timeouts(1.0, self.student_connect_timeout_s)),
-            ("RATCHET_TEACHER_RETRIES", self.teacher_retry),
-            ("RATCHET_STUDENT_BREAKER_FAILURES", self.student_breaker),
-            ("RATCHET_TEACHER_BREAKER_FAILURES", self.teacher_breaker),
-            ("RATCHET_ON_TEACHER_FAILURE", self.serve_student_on_teacher_failure),
-            ("RATCHET_UNKNOWN_TASKS", self.unknown_task_policy),
-            ("RATCHET_MAX_N", self.limits),
-            ("RATCHET_TEACHER_PARAMS", self.gen_policy),
-            ("RATCHET_STUDENT_COST_MODEL", self.cost_policy),
-            ("RATCHET_DB_SYNC", self.ledger_sync),
-            ("RATCHET_TICK_INTERVAL_S", self.tick_interval),
-            ("RATCHET_STATS_TTL_S", self.stats_ttl),
-            ("RATCHET_LOG_FORMAT", self.log_settings),
-            ("RATCHET_PUBLIC_DASHBOARD", self.access),
-            ("", self.check_reserved),
+        # of a message that names no variable (the timeouts' own messages do not). A reader that checks several
+        # variables stops at its first problem, so `_every_problem` runs it again past each one.
+        readers: tuple[tuple[str, Callable[[Settings], object]], ...] = (
+            ("RATCHET_TEACHER_TIMEOUT_S", Settings.teacher_timeout),
+            ("RATCHET_STUDENT_TIMEOUT_S", lambda s: timeouts(s.student_timeout_s)),
+            ("RATCHET_STUDENT_CONNECT_TIMEOUT_S", lambda s: timeouts(1.0, s.student_connect_timeout_s)),
+            ("RATCHET_TEACHER_RETRIES", Settings.teacher_retry),
+            ("RATCHET_STUDENT_BREAKER_FAILURES", Settings.student_breaker),
+            ("RATCHET_TEACHER_BREAKER_FAILURES", Settings.teacher_breaker),
+            ("RATCHET_ON_TEACHER_FAILURE", Settings.serve_student_on_teacher_failure),
+            ("RATCHET_UNKNOWN_TASKS", Settings.unknown_task_policy),
+            ("RATCHET_MAX_N", Settings.limits),
+            ("RATCHET_TEACHER_PARAMS", Settings.gen_policy),
+            ("RATCHET_STUDENT_COST_MODEL", Settings.cost_policy),
+            ("RATCHET_DB_SYNC", Settings.ledger_sync),
+            ("RATCHET_TICK_INTERVAL_S", Settings.tick_interval),
+            ("RATCHET_STATS_TTL_S", Settings.stats_ttl),
+            ("RATCHET_LOG_FORMAT", Settings.log_settings),
+            ("RATCHET_PUBLIC_DASHBOARD", Settings.access),
+            ("RATCHET_BOM_SIGNING_KEY", _bom_signer),
+            ("", Settings.check_reserved),
         )
         for var, read in readers:
-            try:
-                read()
-            except ValueError as e:
-                issues.extend(issues_from(e, var))
+            issues.extend(_every_problem(self, var, read))
         # INV-1: every model that writes or judges answers must be distillable; a refused one stops startup.
         for var, model in (
             ("RATCHET_TEACHER_MODEL", self.teacher_model),
@@ -1022,6 +1026,55 @@ class Settings:
                     f"{var}={model!r} has no price in config.DEFAULT_PRICES: its calls are costed at ${p.input:g} in and "
                     f"${p.output:g} out per 1M tokens instead; add its price",
                 )
+
+
+_FIELD_NAMES = frozenset(f.name for f in fields(Settings))
+
+
+def defaults() -> Settings:
+    """The settings as if no variable were set."""
+    token = _DEFAULTS_ONLY.set(True)
+    try:
+        return Settings()
+    finally:
+        _DEFAULTS_ONLY.reset(token)
+
+
+MAX_READER_PROBLEMS = 32  # `_every_problem` stops after this many from one reader
+
+
+def _every_problem(settings: Settings, var: str, read: Callable[[Settings], object]) -> list[ConfigIssue]:
+    """Every problem `read` finds in `settings`, though it raises at its first: after each, the setting of the variable
+    the problem names (RATCHET_<FIELD>) goes back to its default and `read` runs again, until it passes, or names a
+    variable that is no setting or already holds its default."""
+    found: list[ConfigIssue] = []
+    base: Settings | None = None
+    while len(found) < MAX_READER_PROBLEMS:
+        try:
+            read(settings)
+            break
+        except ValueError as e:
+            new = issues_from(e, var)
+        found.extend(new)
+        name = new[0].var.removeprefix("RATCHET_").lower()
+        base = base or defaults()
+        if name not in _FIELD_NAMES or getattr(settings, name) == getattr(base, name):
+            break
+        settings = replace(settings, **{name: getattr(base, name)})
+    return found
+
+
+def _bom_signer(settings: Settings) -> object:
+    """RATCHET_BOM_SIGNING_KEY read as the gateway reads it (`bom.Signer`, when the key is set): bad base64, a seed that
+    is not 32 bytes, or a missing `cryptography` package raises ValueError naming the variable."""
+    if not settings.bom_signing_key:
+        return None
+    from . import bom  # imports the ledger, which the settings themselves do not need
+
+    try:
+        return bom.Signer(settings.bom_signing_key)
+    except RuntimeError as e:  # `cryptography` is missing
+        raise ValueError(str(e)) from e
 
 
 def _number_in(value: object, lo: float, hi: float, low_open: bool) -> bool:
@@ -1141,10 +1194,7 @@ def check(settings: Settings | None = None, environ: Mapping[str, str] | None = 
     if settings.mode == "live":
         from .release import ReleasePolicy  # release imports config
 
-        try:
-            issues.extend(ReleasePolicy.from_env().validate())
-        except ValueError as e:  # a value that does not parse or is out of range: the policy cannot be built
-            issues.extend(issues_from(e))
+        issues.extend(ReleasePolicy.env_issues(environ))
     return sorted(issues, key=lambda i: i.level != ERROR)
 
 

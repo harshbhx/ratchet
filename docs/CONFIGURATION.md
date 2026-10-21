@@ -217,7 +217,7 @@ Keep `RATCHET_METRICS_TOKEN` out of git, like the keys.
 
 ## Configuration checks
 
-The gateway checks every setting before it opens the ledger or calls anything ([ADR 0070](adr/0070-configuration-checks-and-readiness.md)): `Runtime` stops with one `ConfigError` (a `ValueError`, also a `LicenseError` when a teacher is refused) that lists **every** problem, each naming its variable, never a key's value. `python -m ratchet.config check` runs the same check without starting anything (plus `RATCHET_TASKS_FILE`, which the gateway checks itself when it builds the registry) and exits **0** when clean, **1** with warnings only, **2** with errors (or with warnings under `RATCHET_STRICT_CONFIG=1`); `--json` prints `{"mode", "strict", "exit", "issues": [{"level", "var", "message"}]}`. `deploy/vm/update.sh` runs it in the new image before it replaces the running container, and CI runs it on the defaults.
+The gateway checks every setting before it opens the ledger or calls anything ([ADR 0070](adr/0070-configuration-checks-and-readiness.md)): `Runtime` stops with one `ConfigError` (a `ValueError`, also a `LicenseError` when a teacher is refused) that lists **every** problem, each naming its variable, never a key's value. `python -m ratchet.config check` runs the same check without starting anything (plus `RATCHET_TASKS_FILE`, which the gateway checks itself when it builds the registry), so it exits 2 exactly when the gateway would not start, and exits **0** when clean, **1** with warnings only, **2** with errors (or with warnings under `RATCHET_STRICT_CONFIG=1`); `--json` prints `{"mode", "strict", "exit", "issues": [{"level", "var", "message"}]}`. `deploy/vm/update.sh` runs it in the new image before it replaces the running container, and CI runs it on the defaults.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -235,11 +235,12 @@ Errors (the gateway does not start):
 | 0 or more | `RATCHET_API_KEY_DAILY_REQUESTS`, `RATCHET_MAX_BODY_BYTES`, `RATCHET_TEACHER_REASONING_TOKENS`, the Scout limits and budget, `RATCHET_MOCK_WARMUP_DAYS`, `RATCHET_MOCK_WARMUP_REQUESTS`, `RATCHET_MOCK_PACE` |
 | An `http://` or `https://` URL with a host (the message never repeats the URL, which may hold a password) | `RATCHET_TEACHER_BASE` (required), `RATCHET_STUDENT_BASE`, `RATCHET_TEACHER_FALLBACK_BASE` (empty is fine) |
 | Distillable under the license registry (INV-1) | `RATCHET_TEACHER_MODEL`, `RATCHET_JUDGE_MODEL`, `RATCHET_TEACHER_FALLBACK_MODEL` |
-| Each setting's own rules, as before, now listed together | timeouts, retries, breakers, `RATCHET_ON_TEACHER_FAILURE`, `RATCHET_UNKNOWN_TASKS`, the request limits, the parameter allowlists and token caps, the cost settings, `RATCHET_DB_SYNC`, the intervals, the log settings, the access switches and `RATCHET_CSP`, the key rings and `RATCHET_METRICS_TOKEN`, the [reserved settings](#reserved-settings) |
+| Each setting's own rules, as before, now listed together (a rule that covers several variables, such as the cost settings, reports each bad one) | timeouts, retries, breakers, `RATCHET_ON_TEACHER_FAILURE`, `RATCHET_UNKNOWN_TASKS`, the request limits, the parameter allowlists and token caps, the cost settings, `RATCHET_DB_SYNC`, the intervals, the log settings, the access switches and `RATCHET_CSP`, the key rings and `RATCHET_METRICS_TOKEN`, the [reserved settings](#reserved-settings) |
+| The base64 of a 32-byte Ed25519 seed, with the `sign` extra installed, when set | `RATCHET_BOM_SIGNING_KEY` |
 | Live mode: a key for a Token Factory teacher (a teacher on another host may run without one: a warning) | `NEBIUS_API_KEY` |
 | Live mode: API keys, unless something in front checks callers | `RATCHET_API_KEYS` (or `RATCHET_ALLOW_UNAUTHENTICATED=1`) |
 | Live mode: a ledger file that can be written (not a directory, its directory exists and is writable) | `RATCHET_DB` |
-| Live mode: 0 < `RATCHET_LIVE_FLOOR` <= `RATCHET_MIN_PRECISION` <= 1; `RATCHET_MIN_AUDITS` and `RATCHET_MIN_SHADOW` at least 1; `RATCHET_TOLERANCE` from 0 to 0.2 (`ReleasePolicy.validate`) | the [release policy](#release-policy-ratchetreleasepy) |
+| Live mode: every `RATCHET_<FIELD>` parses and is in its range, each reported on its own (`ReleasePolicy.env_issues`); then 0 < `RATCHET_LIVE_FLOOR` <= `RATCHET_MIN_PRECISION` <= 1; `RATCHET_MIN_AUDITS` and `RATCHET_MIN_SHADOW` at least 1; `RATCHET_TOLERANCE` from 0 to 0.2 (`ReleasePolicy.validate`) | the [release policy](#release-policy-ratchetreleasepy) |
 
 Warnings (the gateway starts, unless `RATCHET_STRICT_CONFIG=1`):
 

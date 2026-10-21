@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 
 from .config import ERROR, ConfigIssue
@@ -136,6 +137,39 @@ class ReleasePolicy:
                 except ValueError:
                     raise ValueError(f"{env} must be {'a whole number' if integer else 'a number'}, not {raw!r}") from None
         return cls(**kw)
+
+    @classmethod
+    def env_issues(cls, environ: Mapping[str, str] | None = None) -> list[ConfigIssue]:
+        """Every problem with the RATCHET_<FIELD> variables in `environ` (default os.environ), all at once: each one that
+        does not parse, or is out of range on its own (as building the policy would say, one field at a time), then the
+        rules across fields (`validate`) over the ones that are fine. `from_env` stops at the first; the gateway's startup
+        and `python -m ratchet.config check` list them all."""
+        env = os.environ if environ is None else environ
+        issues: list[ConfigIssue] = []
+        kw: dict[str, float] = {}
+        for f in fields(cls):
+            var = f"RATCHET_{f.name.upper()}"
+            raw = env.get(var)
+            if raw is None:
+                continue
+            integer = f.type in (int, "int")
+            try:
+                value = int(raw) if integer else float(raw)
+            except ValueError:
+                expected = "a whole number" if integer else "a number"
+                issues.append(ConfigIssue(ERROR, var, f"{var} must be {expected}, not {raw!r}"))
+                continue
+            try:
+                cls(**{f.name: value})
+            except ValueError as e:  # out of range, or reserved for a feature not built yet
+                issues.append(ConfigIssue(ERROR, var, str(e)))
+                continue
+            kw[f.name] = value
+        try:
+            issues.extend(cls(**kw).validate())
+        except ValueError as e:  # pragma: no cover - __post_init__ checks one field at a time, each passed above
+            issues.append(ConfigIssue(ERROR, "", str(e)))
+        return issues
 
     def validate(self) -> list[ConfigIssue]:
         """Rules across fields, which the checks at construction cannot see (FR-12.30, ADR 0070): 0 < live_floor <=

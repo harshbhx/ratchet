@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 810 tests, ~75 s
+pytest -q                                                          # 816 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -133,7 +133,7 @@ A bad setting stops startup with one error that lists every problem by variable 
 
 Health checks ([API.md](API.md#get-readyz), [ADR 0070](adr/0070-configuration-checks-and-readiness.md)):
 
-- **Load balancers and deploy scripts: `GET /readyz`.** 200 (`ready`, or `degraded` while the teacher answers for a student endpoint that is down) keeps the instance in rotation; 503 `not_ready` (the ledger cannot be written, or no teacher can answer) takes it out. The probes are cached for 15 s and spend no tokens, so poll it as often as you like.
+- **Load balancers and deploy scripts: `GET /readyz`.** 200 (`ready`, or `degraded` while the teacher answers for a student endpoint that is down) keeps the instance in rotation; 503 `not_ready` (the ledger cannot be written, or no teacher can answer) takes it out. An instance taken out comes back by itself: once the teacher's breaker has waited out its cooldown and the teacher's `/models` answers, `/readyz` says 200 `degraded` (`probe_due`) and the next request probes the teacher. The probes are cached for 15 s and spend no tokens, so poll it as often as you like. The student endpoint gets one `GET /models` per 5 minutes from each gateway; if your platform scales an idle endpoint to zero and counts that request as traffic, it keeps the endpoint running.
 - **Restarts (Docker, systemd, a Kubernetes liveness probe): `GET /healthz` or `/livez`.** It only says the process answers, also with every worker thread busy. Never restart on `/readyz`: a teacher outage would turn into a restart loop.
 
 Use **one worker**. The ledger is a single SQLite connection inside the process, and the release gate is not designed for concurrent writers (see [ADR 0006](adr/0006-sqlite-ledger-for-v0.md)). Live mode does not start without `RATCHET_API_KEYS` (or `RATCHET_ALLOW_UNAUTHENTICATED=1` when a proxy checks callers instead), and its dashboard API (`/ratchet/stats`, `/ratchet/bom`, ...) answers only admin and dashboard keys unless `RATCHET_PUBLIC_DASHBOARD=1` ([API.md](API.md#access-levels)). Put TLS in front with a reverse proxy.
