@@ -11,6 +11,12 @@ Every answer is cleaned the same way before it is compared, stored or served (`c
 (`strip_reasoning`), and a JSON task's answer loses a code fence wrapped around the whole of it. A JSON answer that is
 already one JSON object is kept as it is, so a reply that mentions a `<think>` tag keeps its text.
 
+Structured outputs (FR-1.40, ADR 0042): a request's `response_format` (json_object or json_schema) binds the task to a
+`schema_tasks.Contract` for that request (`Task.bound`): the answer must then be JSON (matching the schema), and it is
+cleaned to the JSON it holds (`json_span`). The binding is not part of the task's rules or `spec_hash`. A stored example
+is graded under the conditions it was stored with (`for_row`), so the router, the dataset and the golden eval hold an
+answer to the same contract.
+
 The registry (FR-2.15, ADR 0022): `REGISTRY` holds the tasks a request can name, by name. It starts with `BUILTIN` (the
 tasks defined here); `taskspec.install` adds the tasks of RATCHET_TASKS_FILE (which may replace a built-in one) and the
 ones the admin API stored (which may replace neither), building the whole registry before it publishes it
@@ -21,6 +27,7 @@ can pin a task; nothing in a request can.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -30,11 +37,14 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import vocab
 from .compare import INVALID as NO_KEY
 from .compare import MAX_FIELDS, MAX_RECORDS, FieldSpec, Record, jsonable
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .schema_tasks import Contract
 
 # Answer formats. `json`: the answer is JSON and fields are paths into it. `text`: the answer is plain text and its one
 # field is '$', the text without surrounding whitespace and trailing `.!,;:`. `tool_calls` and `sql` are reserved for
@@ -70,7 +80,11 @@ class Task:
 
     `description`, `clients` (the API key names that may use the task; empty: every key) and `match_rules` (a spec
     file's `match`) say who uses the task and how a request finds it, not how its answers compare, so they are left
-    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration."""
+    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration.
+
+    `contract` is set only on a copy made for one request (`bound`): the request's `response_format`, which its answers
+    must meet as well as the task's fields (FR-1.40). It is not a rule of the task, so it is outside `spec()`,
+    `spec_hash` and equality, and a bound task is never registered."""
 
     name: str
     compare_keys: Sequence[str] = ()
@@ -87,6 +101,7 @@ class Task:
     description: str = ""
     clients: Sequence[str] = ()  # API key names (RATCHET_API_KEYS) allowed to use this task; empty: every key
     match_rules: Mapping[str, Any] = field(default_factory=dict)  # MATCH_KEYS; a spec file's `match`
+    contract: Contract | None = field(default=None, compare=False, repr=False)  # one request's response_format (`bound`)
     spec_hash: str = field(init=False, default="")  # sha256 of `spec()`, 16 hex digits
     _root: bool = field(init=False, repr=False, compare=False, default=False)  # a field at '$'
 
@@ -158,6 +173,8 @@ class Task:
         if not isinstance(self.routing, Mapping) or not all(isinstance(k, str) for k in self.routing):
             fail("routing must be a mapping with string keys")
         put("routing", MappingProxyType(dict(self.routing)))
+        if self.contract is not None and not callable(getattr(self.contract, "problem", None)):
+            fail("contract must be a schema_tasks.Contract")
         try:
             text = json.dumps(self.spec(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         except (TypeError, ValueError, RecursionError):
@@ -191,9 +208,20 @@ class Task:
 
     @property
     def structured(self) -> bool:
-        """Answers are JSON (`format` 'json'): `clean_answer` unwraps a code fence around one, and an answer that does not
-        parse is invalid."""
-        return self.format == "json"
+        """Answers are JSON (`format` 'json', or a request's `response_format` bound to the task): `clean_answer` unwraps
+        a code fence around one, and an answer that does not parse is invalid."""
+        return self.format == "json" or self.contract is not None
+
+    def bound(self, contract: Contract | None) -> Task:
+        """This task held to one request's `response_format` (`schema_tasks.contract_for`): an answer must also meet the
+        contract (JSON, matching its schema), or it is invalid (`check` names why), and it is cleaned to the JSON it holds.
+        A shallow copy with the same rules and `spec_hash`, so thresholds, per-task records and the registry see the same
+        task; the task itself is unchanged. `None`, or the contract it already has, returns the task itself."""
+        if contract is None or contract is self.contract:
+            return self
+        out = copy.copy(self)  # the dataclass is frozen: copy, then set the one field (no rule is checked again)
+        object.__setattr__(out, "contract", contract)
+        return out
 
     # -----------------------------------------------------------------------------------------------------------------
     def _key(self, text: str | None) -> tuple[Any, str | None]:
@@ -201,6 +229,10 @@ class Task:
         clean = clean_answer(self, text)
         if not clean:
             return NO_KEY, "empty answer"
+        if self.contract is not None:  # the request's response_format first: JSON, matching its schema (FR-1.40)
+            problem = self.contract.problem(clean)
+            if problem is not None:
+                return NO_KEY, problem
         if not self.fields:
             return _whole_key(clean, self.format == "json")
         if self.format == "text":
@@ -230,8 +262,9 @@ class Task:
         return self._key(text)[0]
 
     def check(self, text: str | None) -> str | None:
-        """Why an answer is not valid under the task (`empty answer`, `invalid answer`, `invalid field <path>`), or None
-        when it is. The reason names a path of the spec, never the answer's text, so it may go into an event (INV-12)."""
+        """Why an answer is not valid under the task (`empty answer`, `invalid answer`, `invalid field <path>`, and for a
+        bound task `schema mismatch at <path>`), or None when it is. The reason names a path of the spec or the schema,
+        never the answer's text, so it may go into an event (INV-12)."""
         return self._key(text)[1]
 
     def valid(self, text: str | None) -> bool:
@@ -486,8 +519,10 @@ def clean_answer(task: Task, text: str | None) -> str:
     """An answer as Ratchet compares, stores and serves it: `strip_reasoning`, then, for a structured task, the body of a
     single code fence that wraps the whole answer when that body parses as JSON. A structured answer that is one JSON
     object, before or after its reasoning, is returned as that object (`_whole_object`), so tags quoted in its strings
-    survive. Free-text tasks keep their fences, because a code block is part of the content there. Cleaning twice gives
-    the same text."""
+    survive. A task bound to a request's `response_format` (`Task.bound`) is served the JSON its answer holds: when the
+    answer is not JSON as a whole, the JSON inside it (`json_span`: a sentence before it, a fence with text after it),
+    as the model wrote it, never re-serialised. Free-text tasks keep their fences, because a code block is part of the
+    content there. Cleaning twice gives the same text."""
     t = strip_reasoning(text)
     if not task.structured:
         return t
@@ -495,7 +530,36 @@ def clean_answer(task: Task, text: str | None) -> str:
     if found is not None:
         return found[0]
     body = _unfence(t)
-    return t if body is None else body
+    if body is not None:
+        return body
+    contract = getattr(task, "contract", None)  # duck-typed callers pass only `structured`
+    if contract is not None:
+        span = json_span(t, contract.any_value)
+        if span is not None:
+            return span
+    return t
+
+
+def json_span(text: str, allow_any: bool = False) -> str | None:
+    """The JSON in an answer without its reasoning, as the substring the model wrote, or None: the whole text when it is
+    JSON, else the span from the first `{` to the last `}` (with `allow_any` also from the first `[` to the last `]`,
+    whichever starts first) when that span is JSON. An object only, unless `allow_any`, which takes any JSON value as
+    the whole text and an array as a span. The rules `parse_json` and `_parse_any` find a value by, returning the text
+    instead; linear in the answer's length, and it never raises."""
+    t = text.strip()
+    if not t:
+        return None
+    v = _loads(t)
+    if v is not _NOT_JSON:
+        return t if allow_any or isinstance(v, dict) else None
+    pairs = (("[", "]"), ("{", "}")) if allow_any else (("{", "}"),)
+    spans = [(t.find(a), t.rfind(b)) for a, b in pairs]
+    for first, last in sorted(s for s in spans if s[0] != -1 and s[1] > s[0]):
+        candidate = t[first : last + 1]
+        v = _loads(candidate)
+        if isinstance(v, dict) or (allow_any and isinstance(v, list)):
+            return candidate
+    return None
 
 
 def parse_json(text: str, allow_any: bool = False) -> Any:
@@ -639,6 +703,8 @@ def _put(registry: dict[str, Task], task: Task, source: str | None) -> Task | No
     it replaced, if any."""
     if source is not None and source != task.source:
         task = replace(task, source=source)
+    if task.contract is not None:
+        raise ValueError(f"task {task.name!r}: a task bound to one request's response_format cannot be registered")
     allowed = _REPLACES.get(task.source)
     if allowed is None:
         raise ValueError(f"task {task.name!r}: a {task.source} task cannot be registered; use file, api or auto")
@@ -749,6 +815,26 @@ def load_file(path: str | Path, known_clients: Iterable[str] | None = None) -> l
     from .taskspec import load_file as _load_file  # taskspec imports this module
 
     return _load_file(path, known_clients)
+
+
+def for_row(row: Mapping[str, Any], task: Task | None = None) -> Task:
+    """The task a stored example is graded with: `task` (default: its registered task, `get(row["task"])`) held to the
+    `response_format` stored with it (`row["params"]`, a dict or the ledger's JSON text; `Task.bound`). The router binds
+    a request's task the same way, so the dataset and the golden eval check a stored answer, and grade the student's,
+    exactly as production did (INV-6, INV-16). A row without a response_format gets the task as it is."""
+    base = task if task is not None else get(row["task"])
+    params = row["params"] if "params" in row.keys() else None
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except ValueError:
+            params = None
+    rf = params.get("response_format") if isinstance(params, Mapping) else None
+    if rf is None:
+        return base
+    from .schema_tasks import contract_for  # schema_tasks imports this module
+
+    return base.bound(contract_for(rf))
 
 
 def get(name: str | None) -> Task:

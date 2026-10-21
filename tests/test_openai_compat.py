@@ -903,7 +903,7 @@ def test_openai_sdk_auth_and_quota_errors(gw_env):
 # ---------- response parity: usage, system_fingerprint, the full choice, include_usage (FR-1.12) ----------
 FINGERPRINT = re.compile(r"fp_[0-9a-f]{12}")
 BODY_KEYS = {"id", "object", "created", "model", "system_fingerprint", "service_tier", "choices", "usage", "ratchet"}
-NO_CALL = {"audit": None, "shadow": None, "arbitration": None}
+NO_CALL = {"audit": None, "shadow": None, "arbitration": None, "repair": None}
 
 
 def _usage(prompt: int, completion: int, reasoning: int = 0, cached: int = 0) -> dict[str, Any]:

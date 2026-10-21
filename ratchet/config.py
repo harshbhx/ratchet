@@ -22,6 +22,7 @@ from .providers import (
     parse_param_allowlist,
 )
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
+from .tasks import MAX_TASKS
 
 
 def _env(name: str, default: str) -> str:
@@ -276,6 +277,11 @@ class Settings:
     # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
     # any other file on the host.
     fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
+    # Structured outputs (ratchet/schema_tasks.py, ADR 0042). The most auto tasks (derived from a response_format
+    # json_schema) the registry holds; past it a new schema gets the unknown-task path. 0 turns auto tasks off.
+    max_auto_tasks: int = field(default_factory=lambda: _int("RATCHET_MAX_AUTO_TASKS", "200"))
+    # One more teacher call when a teacher answer breaks the request's response_format (0: none).
+    schema_repair: bool = field(default_factory=lambda: _env("RATCHET_SCHEMA_REPAIR", "1") != "0")
 
     # Request limits on the OpenAI-compatible API (ratchet/openai_compat.py), checked before any model call. 0 = no limit.
     # The body limit applies to every POST, PUT and PATCH; the other two to /v1/chat/completions.
@@ -390,6 +396,14 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def auto_task_cap(self) -> int:
+        """RATCHET_MAX_AUTO_TASKS, checked: a whole number from 0 (auto tasks off) to the registry's size. Anything else
+        raises ValueError, so the gateway and the simulator stop at startup."""
+        n = self.max_auto_tasks
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= MAX_TASKS:
+            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number from 0 to {MAX_TASKS}, not {n!r}")
+        return n
 
     def min_task_golden_rows(self) -> int:
         """RATCHET_MIN_TASK_GOLDEN, checked: a whole number, 1 or more. Anything else raises ValueError, so the gateway,

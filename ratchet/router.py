@@ -9,13 +9,13 @@ import random
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, NamedTuple
 
 import httpx
 
-from . import calibration, licenses, tasks
+from . import calibration, licenses, schema_tasks, tasks, taskspec
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
@@ -48,6 +48,10 @@ StudentResolver = Callable[[Version], tuple[Provider, str]]
 
 # A failing upstream call is logged as an event on these occurrences only, so an outage cannot flood the release log.
 EVENT_ON_FAILURE = (1, 10, 100, 1000)
+# Different schemas a teacher endpoint must refuse (`refuses_json_schema`) before every json_schema request to it goes as
+# json_object with the schema in the system message (ADR 0042). One refused schema may be the client's (a keyword the
+# endpoint's grammar engine cannot compile), so until then only that schema is sent the other way.
+JSON_SCHEMA_STRIKES = 3
 
 # How a request was served (`requests.route`): the student; the teacher because the student was unsure (`confidence`),
 # because no version serves yet (`cold_start`), because the task is pinned (`pinned`), because the student call raised
@@ -86,12 +90,23 @@ _FINISH_NAMED = frozenset({"length", "content_filter", "function_call", "abort",
 CLIENT_FINISH = ("stop", "length", "content_filter")
 
 
+def refuses_json_schema(e: BaseException, gen: GenParams | None) -> bool:
+    """Whether a failed call with `response_format` json_schema is the endpoint refusing that format (a 400 whose
+    `param` or message names `response_format` or `json_schema`), so it should be asked again with json_object and the
+    schema in its system message (`schema_tasks.downgrade`, ADR 0042)."""
+    if not isinstance(e, UpstreamError) or e.status != 400 or not schema_tasks.wants_json_schema(gen):
+        return False
+    said = f"{e.param or ''} {e.message or ''}".lower()
+    return "response_format" in said or "json_schema" in said
+
+
 def answer_problem(task: tasks.Task, c: Completion) -> str | None:
     """Why a teacher answer can be neither a training example nor a reference for the student (INV-16), or None when it
     can: it did not end by itself (`finish_reason length`, ...), nothing is left once reasoning is stripped (`empty
-    answer`), a JSON task's answer does not parse (`invalid answer`), or a field of the task's spec is missing or does
-    not normalise, such as a label outside its vocabulary (`invalid field category`; `Task.check`, FR-2.14). String
-    operations only."""
+    answer`), a JSON task's answer does not parse (`invalid answer`), it breaks the request's `response_format`
+    (`schema mismatch at $.priority`, for a task bound to one; FR-1.40), or a field of the task's spec is missing or
+    does not normalise, such as a label outside its vocabulary (`invalid field category`; `Task.check`, FR-2.14). String
+    operations and the schema check only."""
     if c.finish_reason not in COMPLETE:
         return f"finish_reason {c.finish_reason if c.finish_reason in _FINISH_NAMED else 'other'}"
     return task.check(c.text)
@@ -134,9 +149,11 @@ class RequestMeta:
 
 
 # The model calls of one request, as `Result.usage_breakdown` names them: the student's samples (one call, n choices),
-# the served answer (one of those samples, or the teacher's call), the teacher's audit, the shadow's samples and the
-# teacher's arbitration. A call that was not made, or that failed, is None.
-USAGE_PARTS = ("student_samples", "served", "audit", "shadow", "arbitration")
+# the served answer (one of those samples, or the teacher's call), the teacher's audit, the shadow's samples, the
+# teacher's arbitration, and the teacher answers a repair replaced because they broke the request's response_format
+# (`repair`, FR-1.40; the repair call itself is the served, audit or arbitration call). A call that was not made, or
+# that failed, is None.
+USAGE_PARTS = ("student_samples", "served", "audit", "shadow", "arbitration", "repair")
 
 
 @dataclass(frozen=True)
@@ -167,7 +184,11 @@ class Result:
     equals their sum up to float rounding.
 
     `request_id` is the id of the request's row in the ledger (`Ledger.log_request`'s return value): what a receipt
-    or a replay names the request by. It is not `RequestMeta.request_id`, the caller's own id for the request."""
+    or a replay names the request by. It is not `RequestMeta.request_id`, the caller's own id for the request.
+
+    `task` is the name of the task the request was resolved to (a registered task, an auto task from its schema, or
+    an unregistered name). `schema_valid` says whether every choice meets the request's `response_format` (FR-1.40):
+    None without one."""
 
     text: str
     served_by: str
@@ -191,6 +212,8 @@ class Result:
     student_cost_usd: float = 0.0  # cost_usd's student part (FR-15.1)
     teacher_cost_usd: float = 0.0  # cost_usd's teacher part
     request_id: int | None = None  # the ledger row (`requests.id`) of this request; not RequestMeta.request_id
+    task: str = ""  # the resolved task's name
+    schema_valid: bool | None = None  # every choice meets the response_format; None without one (FR-1.40)
 
     def __post_init__(self) -> None:
         if not self.choices:
@@ -263,16 +286,29 @@ def _breakdown(
     audit: Completion | None = None,
     shadow: list[Completion] | None = None,
     arbitration: Completion | None = None,
+    repaired: list[Completion] | None = None,
 ) -> dict[str, dict[str, int] | None]:
     """`Result.usage_breakdown`: every model call of the request by `USAGE_PARTS`. When the student served, `served` is
-    the choices taken from `student_samples`; when the teacher did, it is its own call, every choice of it."""
+    the choices taken from `student_samples`; when the teacher did, it is its own call, every choice of it. `repair`
+    adds up the teacher answers a repair replaced (one call each)."""
     return {
         "student_samples": _sampled(samples),
         "served": _sampled(served),
         "audit": _tokens(audit),
         "shadow": _sampled(shadow),
         "arbitration": _tokens(arbitration),
+        "repair": None
+        if not repaired
+        else {"in": sum(c.in_tokens for c in repaired), "out": sum(c.out_tokens for c in repaired)},
     }
+
+
+def _schema_valid(task: tasks.Task, choices: list[Choice]) -> bool | None:
+    """`Result.schema_valid`: whether every choice, as served, meets the task's bound `response_format`; None without
+    one."""
+    if task.contract is None:
+        return None
+    return all(task.contract.problem(ch.text) is None for ch in choices)
 
 
 def _task(task: str | tasks.Task | None) -> tasks.Task:
@@ -284,13 +320,15 @@ class TeacherAnswer(NamedTuple):
     whether it was stored as a training example, the configured model that wrote it (RATCHET_TEACHER_MODEL, or
     RATCHET_TEACHER_FALLBACK_MODEL), whether that was the fallback teacher, and every choice of the call (one, or the
     client's n when the answer is served). The model is the one Ratchet asked for and licensed at startup, never the
-    response's own `model` string, which an upstream may spell differently."""
+    response's own `model` string, which an upstream may spell differently. `rejected` is the first answer when a repair
+    replaced it (it broke the request's `response_format`, FR-1.40): its call is paid for too."""
 
     completion: Completion
     stored: bool
     model: str
     fallback: bool
     choices: tuple[Completion, ...] = ()
+    rejected: Completion | None = None
 
 
 class Ratchet:
@@ -310,6 +348,7 @@ class Ratchet:
         clock: Callable[[], float] = time.monotonic,
         on_adapter_missing: Callable[[Version], object] | None = None,
         fallback_teacher: Provider | None = None,
+        tasks_lock: threading.Lock | None = None,
     ):
         self.s = settings
         settings.check_reserved()  # a setting reserved for a feature not built yet stops startup here (ADR 0024)
@@ -332,6 +371,12 @@ class Ratchet:
         self.serve_student_on_failure = settings.serve_student_on_teacher_failure()
         # RATCHET_UNKNOWN_TASKS: distill, teacher or reject (ADR 0022); a bad value stops startup here.
         self.unknown_tasks = settings.unknown_task_policy()
+        # Structured outputs (ADR 0042): RATCHET_MAX_AUTO_TASKS (a bad value stops startup here) and the lock that keeps
+        # auto-task writes and the admin API's (the gateway passes its `tasks_lock`) from interleaving.
+        self.max_auto_tasks = settings.auto_task_cap()
+        self.tasks_lock = tasks_lock if tasks_lock is not None else threading.Lock()
+        self._auto_cap_noted = False  # the `auto_task_cap` event was written (once per ledger, `Ledger.event_once`)
+        self._json_schema_refused: dict[str, set[str]] = {}  # teacher endpoint -> digests of the schemas it refused
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
@@ -344,6 +389,7 @@ class Ratchet:
         self.shadow_errors = 0  # shadow samples or arbitrations that raised; the request never noticed
         self.degraded_answers = 0  # escalations answered by the student because the teacher was unavailable
         self.fallback_answers = 0  # answers the fallback teacher wrote because the primary was unavailable
+        self.repair_errors = 0  # repair calls that raised; the first teacher answer was served (FR-1.40)
         self._errors_lock = threading.Lock()
         self._skipped: Counter[str] = Counter()  # teacher answers not stored, by reason (throttles `skip_example`)
         # One breaker per (role, endpoint), made on first use: live and canary on one endpoint share 'student'; shadow
@@ -374,9 +420,9 @@ class Ratchet:
         return breaker
 
     def health(self) -> dict[str, Any]:
-        """Failed upstream calls since start, by kind; answers a stand-in wrote because the teacher was unavailable
-        (`degraded_answers`, `fallback_answers`); and each breaker's `snapshot()` by name, the teachers' included (for
-        /readyz and /metrics)."""
+        """Failed upstream calls since start, by kind (`repair_errors`: schema repairs that raised); answers a stand-in
+        wrote because the teacher was unavailable (`degraded_answers`, `fallback_answers`); and each breaker's
+        `snapshot()` by name, the teachers' included (for /readyz and /metrics)."""
         with self._errors_lock:
             out: dict[str, Any] = {
                 "student_errors": self.student_errors,
@@ -384,6 +430,7 @@ class Ratchet:
                 "shadow_errors": self.shadow_errors,
                 "degraded_answers": self.degraded_answers,
                 "fallback_answers": self.fallback_answers,
+                "repair_errors": self.repair_errors,
             }
         with self._breakers_lock:
             breakers = list(self._breakers.values())
@@ -456,7 +503,13 @@ class Ratchet:
         without calling while the breaker is open, so a request that needs the teacher's answer fails at once instead of
         waiting out the deadline, and an optional call (audit, arbitration) is skipped. The provider's retries come
         first: one failed call is one failure here, counted as `resilience.endpoint_down` says (a timeout, no connection,
-        a 5xx, 408, 429; another 4xx is the teacher answering; a non-HTTP error counts neither way)."""
+        a 5xx, 408, 429; another 4xx is the teacher answering; a non-HTTP error counts neither way).
+
+        A teacher that refuses `response_format` json_schema (a 400 about it, `refuses_json_schema`) is asked once more
+        with json_object and the schema in its system message (`schema_tasks.downgrade`), within the same breaker slot.
+        That schema is then sent that way directly, and once the endpoint refused JSON_SCHEMA_STRIKES different schemas,
+        every schema is (the provider's `supports_json_schema` is set False). Each step writes one `json_schema_fallback`
+        event per ledger. The answer is checked against the schema either way (ADR 0042)."""
         if fallback:
             assert self.fallback_teacher is not None and self.fallback_model is not None and self.fallback_breaker is not None
             provider, model, breaker = self.fallback_teacher, self.fallback_model, self.fallback_breaker
@@ -464,10 +517,22 @@ class Ratchet:
             provider, model, breaker = self.teacher, self.s.teacher_model, self.teacher_breaker
         if not breaker.allow():
             raise CircuitOpen(breaker.name, retry_after=breaker.retry_in(), code=TEACHER_CIRCUIT_OPEN)
+        msgs, call = messages, gen
+        if schema_tasks.wants_json_schema(gen) and not self._takes_json_schema(provider, gen):
+            msgs, call = schema_tasks.downgrade(messages, gen)
         try:
-            out = provider.complete(
-                messages, model, n=n, temperature=gen.temperature or 0.0, logprobs=bool(gen.logprobs), params=gen
-            )
+            try:
+                out = provider.complete(
+                    msgs, model, n=n, temperature=call.temperature or 0.0, logprobs=bool(call.logprobs), params=call
+                )
+            except UpstreamError as e:
+                if call is not gen or not refuses_json_schema(e, gen):
+                    raise
+                self._refused_json_schema(provider, breaker.name, e, gen)
+                msgs, call = schema_tasks.downgrade(messages, gen)
+                out = provider.complete(
+                    msgs, model, n=n, temperature=call.temperature or 0.0, logprobs=bool(call.logprobs), params=call
+                )
             if not out:
                 raise UpstreamError(502, "the teacher returned no choices", code=BAD_RESPONSE)
         except BaseException as e:
@@ -479,6 +544,49 @@ class Ratchet:
             raise
         breaker.record(True)
         return out[:n]
+
+    def _takes_json_schema(self, provider: Provider, gen: GenParams) -> bool:
+        """Whether a teacher provider is sent this call's `response_format` json_schema as it is: not when the provider
+        says it does not take json_schema, when its endpoint refused JSON_SCHEMA_STRIKES schemas, or when it refused
+        this one. Hashes the schema only for an endpoint that refused one."""
+        if getattr(provider, "supports_json_schema", True) is False:
+            return False
+        endpoint = _endpoint(provider)
+        with self._errors_lock:
+            refused = self._json_schema_refused.get(endpoint)
+            if not refused:
+                return True
+            if len(refused) >= JSON_SCHEMA_STRIKES:
+                return False
+        digest = schema_tasks.schema_digest(gen)
+        with self._errors_lock:
+            return digest not in self._json_schema_refused.get(endpoint, ())
+
+    def _refused_json_schema(self, provider: Provider, name: str, e: BaseException, gen: GenParams) -> None:
+        """Remember that a teacher endpoint refused this json_schema, and after JSON_SCHEMA_STRIKES different ones that
+        it refuses json_schema (`supports_json_schema = False` on the provider, as the day-1 check reports it; also
+        kept here, for a provider that cannot take the attribute). One event per ledger for the first refusal and one
+        for turning json_schema off, naming the error's class and status, never its message (INV-12)."""
+        digest = schema_tasks.schema_digest(gen)
+        with self._errors_lock:
+            refused = self._json_schema_refused.setdefault(_endpoint(provider), set())
+            first = not refused
+            refused.add(digest)
+            off = len(refused) >= JSON_SCHEMA_STRIKES
+        why = describe_failure(e)
+        if off:
+            try:
+                provider.supports_json_schema = False  # type: ignore[attr-defined]
+            except (AttributeError, TypeError):
+                pass
+            detail = (
+                f"{name}: json_schema off: {JSON_SCHEMA_STRIKES} schemas refused ({why}); every schema is sent as "
+                "json_object with the schema in the system message"
+            )
+            self.ledger.event_once("json_schema_fallback", f"{name}: json_schema off", detail)
+        elif first:
+            detail = f"{name}: schema refused ({why}); that schema is sent as json_object with the schema in the system message"
+            self.ledger.event_once("json_schema_fallback", f"{name}: schema refused", detail)
 
     def _ask_teacher(
         self,
@@ -558,8 +666,43 @@ class Ratchet:
         else:
             gen, fallback = plan.check, False
             cs = self._ask_teacher(task, messages, gen, plan.visible_max)
+        cs, rejected = self._repair(task, messages, gen, plan.visible_max, fallback, cs)
         stored = self._store_example(task, messages, cs[0], gen, meta, fallback=fallback)
-        return TeacherAnswer(cs[0], stored, self._teacher_model(fallback), fallback, tuple(cs))
+        return TeacherAnswer(cs[0], stored, self._teacher_model(fallback), fallback, tuple(cs), rejected)
+
+    def _repair(
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        gen: GenParams,
+        visible_max: int | None,
+        fallback: bool,
+        cs: list[Completion],
+    ) -> tuple[list[Completion], Completion | None]:
+        """One repair of a teacher answer that breaks the request's `response_format` (FR-1.40, ADR 0042), with
+        RATCHET_SCHEMA_REPAIR on: the same teacher, under the same parameters, is shown its answer and the schema errors
+        (`schema_tasks.repair_messages`) and answers once more. Returns the choices to use (the repair's answer in place
+        of the first) and the answer it replaced, or the choices as they were and None: when there is no contract, the
+        answer meets it, it was cut off (a repair would be cut off too), the request asked for several choices, or the
+        repair call failed (an optional call: counted in `repair_errors` with a throttled `schema_repair_error` event,
+        and the first answer is served). The repair conversation is never stored: an example keeps the request's own
+        messages and the answer that met the contract, which is still the teacher's (INV-2). A repair answer that still
+        breaks the contract is served with `schema_valid` false and not stored (INV-16)."""
+        if task.contract is None or not self.s.schema_repair or len(cs) != 1 or cs[0].finish_reason not in COMPLETE:
+            return cs, None
+        first = tasks.clean_answer(task, cs[0].text)
+        if task.contract.problem(first) is None:  # the check the router has already made (memoised): no second one
+            return cs, None
+        errors = task.contract.errors(first)
+        again = schema_tasks.repair_messages(messages, first, errors)
+        try:
+            repaired = self._ask_teacher(task, again, gen, visible_max, fallback=fallback)
+        except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
+            return cs, None
+        except Exception as e:  # optional call: the first answer is served
+            self._count_failure("repair_errors", "schema_repair_error", f"{task.name}: {describe_failure(e)}")
+            return cs, None
+        return [repaired[0]], cs[0]
 
     def _store_example(
         self,
@@ -618,14 +761,18 @@ class Ratchet:
         )
         return True
 
-    def _skip_example(self, task: tasks.Task, reason: str) -> None:
+    def _skip_example(self, task: tasks.Task, reason: str, kind: str = "skip_example") -> None:
         """Count a teacher answer that was not stored, and write a `skip_example` event on the 1st, 10th, 100th and
-        1000th time for that reason. The detail is the task and the reason, never the answer (INV-12)."""
+        1000th time for that reason. The detail is the task and the reason, never the answer (INV-12). `kind` names
+        another throttled event of the same shape (`auto_task_skipped`). Schema mismatches are counted as one reason
+        whatever the path, because a path comes from a client's schema and the counter must not grow with them; the
+        event still names the path."""
+        key = "schema mismatch" if reason.startswith("schema mismatch") else reason
         with self._errors_lock:
-            self._skipped[reason] += 1
-            n = self._skipped[reason]
+            self._skipped[key] += 1
+            n = self._skipped[key]
         if n in EVENT_ON_FAILURE:
-            self.ledger.event("skip_example", f"{task.name}: {reason}")
+            self.ledger.event(kind, f"{task.name}: {reason}")
 
     def _arbitrate(
         self,
@@ -634,18 +781,18 @@ class Ratchet:
         shadow: Version,
         plan: GenPlan | None = None,
         meta: RequestMeta | None = None,
-    ) -> tuple[Completion, bool] | None:
-        """The teacher settles a disagreement between the shadow and the served answer: its answer and whether it was
-        stored. A failed call returns None and leaves the disagreement unarbitrated; the request it belongs to is
-        already answered (INV-15). An open teacher breaker skips the call, as a failure would, without counting it."""
+    ) -> TeacherAnswer | None:
+        """The teacher settles a disagreement between the shadow and the served answer: its answer, whether it was
+        stored and the answer a repair replaced. A failed call returns None and leaves the disagreement unarbitrated;
+        the request it belongs to is already answered (INV-15). An open teacher breaker skips the call, as a failure
+        would, without counting it."""
         try:
-            ruling = self._call_teacher(task, messages, plan, "arbitrate", meta)
+            return self._call_teacher(task, messages, plan, "arbitrate", meta)
         except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
             return None
         except Exception as e:  # optional call: count it, never fail the request
             self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} arbitration: {describe_failure(e)}")
             return None
-        return ruling.completion, ruling.stored
 
     def _cost(self, model: str, c: Completion, n_out: int = 1) -> float:
         return self.s.price(model).cost(c.in_tokens, c.out_tokens * n_out)
@@ -753,14 +900,19 @@ class Ratchet:
         stored as a training example, so it cannot leak into a student that was never meant to do it (INV-10), and the
         student is never sampled. When the primary teacher is unavailable, the fallback teacher may answer (route
         `fallback_teacher`); the student never does, so this path never degrades. The baseline is the primary teacher's
-        price for the same tokens. `params` are the client's, for the logprobs it asked to get back."""
+        price for the same tokens. `params` are the client's, for the logprobs it asked to get back. An answer that breaks
+        the request's `response_format` is repaired once (`_repair`); the repair's first answer is paid for in
+        `cost_usd`, not in the baseline."""
         plan = plan or self._plain
         served, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n)
+        served, rejected = self._repair(task, messages, plan.serve, plan.visible_max, fallback, served)
         c = served[0]
         model = self._teacher_model(fallback)
         route = "fallback_teacher" if fallback else route
         cost = self._call_cost(model, served)
         baseline = self._call_cost(self.s.teacher_model, served) if fallback else cost
+        if rejected is not None:
+            cost += self._cost(model, rejected)
         request_id = self.ledger.log_request(
             task=task.name,
             served_by="teacher",
@@ -798,10 +950,12 @@ class Ratchet:
             finish_reason=choices[0].finish_reason,
             **_usage(messages, served, choices),
             fingerprint=fingerprint("teacher", model),
-            usage_breakdown=_breakdown(served),
+            usage_breakdown=_breakdown(served, repaired=[rejected] if rejected is not None else None),
             choices=choices,
             teacher_cost_usd=cost,
             request_id=request_id,
+            task=task.name,
+            schema_valid=_schema_valid(task, choices),
         )
 
     def teacher_only(
@@ -817,27 +971,111 @@ class Ratchet:
         (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers (or the fallback teacher, when the primary
         is unavailable), the request is logged, and nothing is stored as a training example. No student, audit or shadow
         call, so it never degrades. `n` choices, as for `handle`. An unregistered task under RATCHET_UNKNOWN_TASKS=reject
-        raises `tasks.UnknownTask`; under `teacher` it is logged with route `unknown_task`, as in `handle`."""
-        task = _task(task)
+        raises `tasks.UnknownTask`; under `teacher` it is logged with route `unknown_task`, as in `handle`. A
+        `response_format` binds the task as in `handle`."""
+        task = self.resolve(task, params)
+        params = schema_tasks.forwardable(params)
         self._admit(task, client)
         route = "unknown_task" if task.source == "adhoc" and self.unknown_tasks == "teacher" else "pinned"
         return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route)
 
-    def task_for(self, task: str | tasks.Task | None, client: str | None = None) -> tasks.Task:
+    def task_for(self, task: str | tasks.Task | None, client: str | None = None, params: GenParams | None = None) -> tasks.Task:
         """The task a request names, as the gateway admits it before any quota or model call: a registered task, or for
         an unregistered name a task without fields made up for it (`tasks.get`), which RATCHET_UNKNOWN_TASKS decides
         about (`reject` raises `tasks.UnknownTask`, listing the tasks this client may use). A name that is not a task
         name (an X-Ratchet-Task header; metadata is checked earlier) means 'default' under `distill`, as in v0.4, and
         raises `tasks.UnknownTask` under `teacher` and `reject`, so it cannot become 'default' training data there. A
-        task with `clients` raises `tasks.TaskForbidden` for any other API key, and for a request without one. Lookups
-        only."""
+        task with `clients` raises `tasks.TaskForbidden` for any other API key, and for a request without one. With
+        `params`, a `response_format` binds the task and may name or register an auto task (`resolve`); otherwise
+        lookups only."""
         if isinstance(task, str) and task and not tasks.valid_name(task) and self.unknown_tasks != "distill":
             raise tasks.UnknownTask(task, tasks.names_for(client), invalid=True)
-        t = _task(task)
+        t = self.resolve(task, params)
         self._admit(t, client)
         if not t.allows(client):
             raise tasks.TaskForbidden(t.name)
         return t
+
+    def resolve(self, task: str | tasks.Task | None, params: GenParams | None = None) -> tasks.Task:
+        """The task of a request with these parameters (FR-1.40, FR-14.2, ADR 0042). Without a `response_format` it is
+        `tasks.get(task)` (a `tasks.Task` is kept), exactly as before. With one, the task is bound to its contract
+        (`schema_tasks.contract_for`, `Task.bound`), and for json_schema:
+
+        - a name (header or metadata) of a registered task wins; the schema is only forwarded and checked;
+        - an unregistered name becomes an auto task of that name under RATCHET_UNKNOWN_TASKS=distill (`teacher` and
+          `reject` keep it unknown: they govern the names clients make up);
+        - no name: the auto task `schema_tasks.auto_name(...)` (`auto-<schema name>-<hash>`), registered on first use.
+
+        An auto task comes from `schema_tasks.auto_task` (fields derived from the schema, source `auto`, never pinned)
+        and is registered and stored (`_auto_task`); a schema with no comparable field, one past RATCHET_MAX_AUTO_TASKS,
+        or one whose derived spec holds personal data gets an unregistered task of that name instead, which
+        RATCHET_UNKNOWN_TASKS decides about. json_object (or a json_schema without a schema) binds the task the request
+        names, or `default` (canonical JSON compared)."""
+        contract = schema_tasks.contract_for(params.response_format if params is not None else None)
+        if isinstance(task, tasks.Task):
+            return task if contract is None or task.contract is not None else task.bound(contract)
+        t = tasks.get(task)
+        if contract is None:
+            return t
+        if contract.kind != "json_schema" or contract.schema is None:
+            return t.bound(contract)
+        named = isinstance(task, str) and bool(task) and tasks.valid_name(task)
+        if named and t.source != "adhoc":
+            return t.bound(contract)  # a registered task wins
+        if named and self.unknown_tasks != "distill":
+            return t.bound(contract)  # an unknown name stays unknown under `teacher` and `reject`
+        rf = params.response_format if params is not None else None
+        spec = rf.get("json_schema") if isinstance(rf, Mapping) else None
+        spec = spec if isinstance(spec, Mapping) else {}
+        name = task if named else schema_tasks.auto_name(spec)
+        assert isinstance(name, str)
+        registered = tasks.lookup(name)
+        if registered is not None:
+            return registered.bound(contract)
+        auto = self._auto_task(name, spec.get("schema"), contract.name)
+        return (auto or tasks.get(name)).bound(contract)
+
+    def _auto_task(self, name: str, schema: Any, schema_name: str | None) -> tasks.Task | None:
+        """Register and store the auto task `name` derived from `schema`, or return the task registered under that name
+        meanwhile (by another request or the admin API, which wins). None when the schema has no comparable field, the
+        registry already holds RATCHET_MAX_AUTO_TASKS auto tasks (an `auto_task_cap` event, once per ledger), the
+        derived spec holds something the redactor would replace (an enum value that looks like an email: the `tasks`
+        table stores rules, never personal data, INV-12; an `auto_task_skipped` event), or the registry refuses it.
+        Under `tasks_lock`, the lock the gateway's admin writes take, so the registry and the `tasks` table never
+        disagree. Runs once per new schema; a known one is a dict lookup in `resolve`."""
+        if self.max_auto_tasks == 0:  # auto tasks off: nothing to derive, nothing to say
+            return None
+        task = schema_tasks.auto_task(name, schema, schema_name)
+        if task is None:
+            return None
+        with self.tasks_lock:
+            current = tasks.lookup(name)
+            if current is not None:
+                return current
+            if sum(1 for t in tasks.registered() if t.source == "auto") >= self.max_auto_tasks:
+                if not self._auto_cap_noted:
+                    self._auto_cap_noted = True
+                    detail = (
+                        f"RATCHET_MAX_AUTO_TASKS ({self.max_auto_tasks}) reached: requests with a new response_format "
+                        "schema get the unknown-task path (RATCHET_UNKNOWN_TASKS) until an auto task is deleted"
+                    )
+                    self.ledger.event_once("auto_task_cap", "RATCHET_MAX_AUTO_TASKS", detail)
+                return None
+            doc = taskspec.document(task)
+            if redact_json(doc) != doc:
+                self._skip_example(task, "auto task not stored: its schema holds personal data", kind="auto_task_skipped")
+                return None
+            try:
+                tasks.register(task)
+            except (tasks.TaskConflict, tasks.RegistryFull, ValueError):
+                return tasks.lookup(name)
+            try:
+                self.ledger.save_task(name, doc, task.spec_hash, "auto", None)
+            except BaseException:
+                tasks.restore(name, None)  # the registry and the table never disagree
+                raise
+        self.ledger.event("task_registered", f"{name} (spec {task.spec_hash}) derived from a response_format schema")
+        return task
 
     def _admit(self, task: tasks.Task, client: str | None = None) -> None:
         """Raise `tasks.UnknownTask` for an unregistered task under RATCHET_UNKNOWN_TASKS=reject."""
@@ -876,8 +1114,14 @@ class Ratchet:
         allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key. A task whose
         record on the serving version lets the student answer nothing (the release gate disabled it, or the version had
         no held-out row of it) is escalated without a student call (route `task_disabled`, FR-14.1), so it costs no
-        student samples and is never answered in degraded mode; it still runs the shadow and can be stored."""
-        task = _task(task)
+        student samples and is never answered in degraded mode; it still runs the shadow and can be stored.
+
+        A `response_format` binds the task to its contract (`resolve`; json_schema may name an auto task): a student
+        sample that breaks it gets no vote, a teacher answer that breaks it is repaired once (`_repair`) and is never
+        stored, served text is the JSON an answer holds, and `Result.schema_valid` says whether every choice meets it.
+        Every model is sent the schema without its `x-ratchet` annotations (`schema_tasks.forwardable`) (FR-1.40)."""
+        task = self.resolve(task, params)
+        params = schema_tasks.forwardable(params)
         plan = self.plan(params, n)
         self._admit(task, client)
         if task.source == "adhoc" and self.unknown_tasks == "teacher":  # not registered: never distilled (ADR 0022)
@@ -909,6 +1153,7 @@ class Ratchet:
         degraded: str | None = None
         picked: list[Completion] | None = None  # the student's n choices, when n of its samples agree
         served_choices: list[Completion] = []  # every choice the client gets; choice 0 is `served`
+        repaired: list[Completion] = []  # teacher answers a repair replaced (FR-1.40), paid for and in the breakdown
 
         sc = None
         if version is not None and self._held_back(version, task):
@@ -955,6 +1200,9 @@ class Ratchet:
                         teacher_c, stored = audit.completion, audit.stored
                         audit_c = teacher_c
                         t = self._cost(self.s.teacher_model, teacher_c)
+                        if audit.rejected is not None:
+                            t += self._cost(self.s.teacher_model, audit.rejected)
+                            repaired.append(audit.rejected)
                         cost += t
                         teacher_cost += t
                         # A cut-off, empty or invalid teacher answer measures nothing: not an audit (INV-16).
@@ -982,6 +1230,9 @@ class Ratchet:
                 teacher_c, stored = answer.completion, answer.stored
                 served_choices = list(answer.choices)
                 t = self._call_cost(answer.model, served_choices)
+                if answer.rejected is not None:
+                    t += self._cost(answer.model, answer.rejected)
+                    repaired.append(answer.rejected)
                 cost += t
                 teacher_cost += t
                 latency += teacher_c.latency_ms
@@ -1036,9 +1287,12 @@ class Ratchet:
                 if ruling is None:
                     arbitrated = False
                 else:
-                    reference, stored = ruling
+                    reference, stored = ruling.completion, ruling.stored
                     arbitration_c = reference
                     t = self._cost(self.s.teacher_model, reference)
+                    if ruling.rejected is not None:
+                        t += self._cost(self.s.teacher_model, ruling.rejected)
+                        repaired.append(ruling.rejected)
                     cost += t
                     teacher_cost += t
             if reference is not None and answer_problem(task, reference) is not None:
@@ -1084,12 +1338,14 @@ class Ratchet:
             finish_reason=choices[0].finish_reason,
             **_usage(messages, served_choices, choices),
             fingerprint=fp,
-            usage_breakdown=_breakdown(served_choices, samples, audit_c, s_samples, arbitration_c),
+            usage_breakdown=_breakdown(served_choices, samples, audit_c, s_samples, arbitration_c, repaired),
             degraded=degraded,
             choices=choices,
             student_cost_usd=student_cost,
             teacher_cost_usd=teacher_cost,
             request_id=request_id,
+            task=task.name,
+            schema_valid=_schema_valid(task, choices),
         )
 
     def _may_degrade(

@@ -9,7 +9,9 @@ precision, then report:
   coverage  = share of golden requests it would serve (= expected savings)
 Structured fields are compared with the task's field comparators against the teacher's answer
 (`Task.agree`, FR-2.14), so there is no judge bias on labels. Free-text tasks can add a
-reference-based judge score.
+reference-based judge score. A row stored with a response_format is graded under it
+(`tasks.for_row`, FR-1.40), as the router graded the request: a sample that breaks the schema
+gets no vote, and a reference that breaks it is skipped as invalid.
 
 A golden row whose reference (the stored teacher answer) is not valid under the task's current
 spec is skipped and counted (`golden_invalid_refs`): the spec may have tightened since the
@@ -135,6 +137,7 @@ def cascade_eval(
             n_pinned += 1
             continue
         _, task_calib, task_test = per_task_points.setdefault(task.name, (task, [], []))
+        task = tasks.for_row(row, task)  # held to the row's stored response_format, as the router held the request
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
         if not task.valid(ref):
             n_invalid += 1

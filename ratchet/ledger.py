@@ -252,6 +252,9 @@ EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spen
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 
 DAY_SECONDS = 86400
+# `stats_by_task`'s `compare_source` by a task's source: where its compared fields come from (FR-14.2). An unregistered
+# name (`adhoc`) compares whole answers: None.
+COMPARE_SOURCES = {"builtin": "registry", "file": "registry", "api": "registry", "auto": "schema"}
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -740,11 +743,11 @@ class Ledger:
     # ---------- tasks (the admin API's and auto tasks; built-in and file tasks are never stored) ----------
     @_locked
     def save_task(
-        self, name: str, spec: Mapping[str, Any], spec_hash: str, source: str, updated_by: str
+        self, name: str, spec: Mapping[str, Any], spec_hash: str, source: str, updated_by: str | None
     ) -> tuple[bool, str | None]:
         """Insert or replace a stored task: `spec` as `taskspec.document` writes it, `updated_by` the admin's key name
-        (never the key, INV-13). Returns (created, the spec_hash it had before). The JSON keeps the order of `spec`,
-        because the order of `fields` is part of the task's spec_hash."""
+        (never the key, INV-13), or None for an auto task, which no admin wrote. Returns (created, the spec_hash it had
+        before). The JSON keeps the order of `spec`, because the order of `fields` is part of the task's spec_hash."""
         now = time.time()
         text = json.dumps(spec, ensure_ascii=False)
         row = self.db.execute("SELECT spec_hash FROM tasks WHERE name=?", (name,)).fetchone()
@@ -954,7 +957,9 @@ class Ledger:
         (`calibration.threshold`: 1.01 when disabled or when its spec changed since), its held-out `precision` and
         `coverage`, whether its threshold is its own (`calibrated`) and why the release gate disabled it (`disabled`).
         They are None without a live version, for a pinned task, and (all but `threshold`) when the live version has no
-        record for the task."""
+        record for the task. `compare_keys` are the paths of the fields its answers are compared on, and
+        `compare_source` where they come from: `schema` for an auto task (derived from a response_format schema,
+        FR-14.2), `registry` for a built-in, file or API task, None for an unregistered name (whole answers compared)."""
         rows = self.db.execute(
             """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms,
@@ -988,6 +993,8 @@ class Ledger:
                     "audits": int(r["audits"] or 0),
                     "audit_agreement": None if r["audit_agree"] is None else float(r["audit_agree"]),
                     **_live_calibration(live, task),
+                    "compare_keys": [f.path for f in task.fields],
+                    "compare_source": COMPARE_SOURCES.get(task.source),
                 }
             )
         return out

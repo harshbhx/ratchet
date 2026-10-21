@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 754 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world), ~85 s
+pytest -q                     # 794 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_structured), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -27,18 +27,19 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| `tests/test_live.py` | 14 |
+| `tests/test_live.py` | 15 |
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 21 |
-| **Total** | **754** |
+| `tests/test_structured.py` | 39 |
+| **Total** | **794** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_calibration.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_mock_world.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_mock_world.py`, `tests/test_structured.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -482,7 +483,8 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation), every event and a line saying the run is a simulation with mock models, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours) |
 | `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
-| `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every model request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; then the teacher gets `max_tokens` 8,192 with a stop, a seed, a temperature and JSON mode, and a 400 there fails the check; all present exits 0 with "All good." |
+| `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every model request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; then the teacher gets `max_tokens` 8,192 with a stop, a seed, a temperature and JSON mode, and a 400 there fails the check; then the json_schema probe (`SCHEMA_FORMAT`), whose fenced answer is checked as the gateway checks it; all present exits 0 with "All good." |
+| `test_day1_check_probes_json_schema` | FR-8.5, FR-1.40: the json_schema probe against a fake teacher: an answer inside the schema is `[ok]` (the body sends `SCHEMA_FORMAT`); a 400 refusing the format, an answer outside the schema (`$.category`) or one that is not JSON is a `[warn]` that still passes; a 500 or a body without an answer is `[FAIL]` |
 | `test_deploy_scripts_parse_and_dry_run` | FR-11.1, FR-11.2: `bash -n` on every `deploy/**/*.sh`; `DRY_RUN=1 bash deploy/vm/create_vm.sh` prints the subnet, disk and instance `nebius` commands with the project id and `<cloud-init.yaml>` in place of the user data, never the private-repo token; a given subnet skips the lookup; a missing project, missing key file, reserved user name or bad preset stops before any command; `backup.sh` exits 0 in mock mode. Skipped where bash is missing |
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
@@ -619,6 +621,52 @@ The generic mock world (FR-9.7, [ADR 0041](adr/0041-generic-mock-world.md)): eve
 | `test_demo_day_runs_the_schema_and_tools_workloads` | FR-9.7, INV-8: `gateway.WORKLOADS` is `sim.world.WORKLOADS`; `/ratchet/demo/day?workload=schema` and `tools` answer 200 with `simulation: true`, their tasks appear in `/ratchet/stats`, and an unknown workload is a 400 |
 | `test_sdk_gets_answers_and_structured_outputs_from_the_mock_gateway` | FR-9.7, FR-1.1, US-1: through the OpenAI SDK, `hello` gets a 200 restating it, and `client.chat.completions.parse(response_format=Claim)` (a Pydantic model with a `Literal`, a bounded integer, a date, a nested list and an optional field) returns a parsed `Claim` whose raw content validates against the schema the SDK sent |
 | `test_a_mock_tool_call_is_refused_until_tool_calls_pass_through` | FR-9.7: with `RATCHET_TEACHER_PARAMS=all` the mock teacher's tool call reaches the router, which refuses it (502 `tool_calls_unsupported`) and stores nothing; with the default the same request gets a prose answer |
+
+### `tests/test_structured.py`
+
+Structured outputs (FR-1.40, FR-14.2, [ADR 0042](adr/0042-auto-tasks-from-response-format-schemas.md)): the JSON Schema check (`ratchet/jsonschema_lite.py`), fields derived from a schema and auto tasks (`ratchet/schema_tasks.py`), the contract a `response_format` binds to a request's task, one repair of a teacher answer that breaks it, the json_object fallback, and what clients see. Models are `RecordingProvider`s or `FakeOpenAIServer`s behind `httpx.MockTransport`.
+
+| Test | Covers |
+|---|---|
+| `test_validator_checks_required_enum_and_additional_properties` | FR-1.40: `required`, `enum` and `additionalProperties: false`, as schema paths that never quote a value or a key from the answer (a secret placed in both is absent); `max_errors`; an `additionalProperties` schema checked under `.*`; a key that is not an identifier written `$["a-b"]` |
+| `test_validator_types_and_nullable` | FR-1.40: type lists with null, JSON's integer (`1.0` is one, `true` is not), NaN and infinity refused, an unknown type name ignored, `anyOf` with null |
+| `test_validator_resolves_refs_and_guards_against_loops` | FR-1.40: a recursive `$defs` tree, a `$ref` loop that reaches no value, an unresolved or remote `$ref` (an error, never valid), `~1` escapes, `#` |
+| `test_validator_combinators_const_items_and_bounds` | FR-1.40: `oneOf` (an integer matches both `integer` and `number`), `allOf`, `const` and `enum` with JSON equality, `items`, `minItems`/`maxItems`, `maxLength`, exclusive and inclusive bounds on a 10^400 integer; `pattern`, `format` and `multipleOf` ignored |
+| `test_validator_tuples_and_pattern_properties` | FR-1.40: `prefixItems` with and without `items` (also `items: false`), the old list form ignored; `additionalProperties: false` not enforced next to `patternProperties` |
+| `test_validator_never_raises_and_is_bounded` | FR-1.40: `MAX_DEPTH` on a recursive schema; an exploding `anyOf` over 200 items stops at `MAX_STEPS` in under 2 s as a mismatch; junk schemas never raise |
+| `test_json_equal_is_json_equality` | FR-1.40: `1 == 1.0`, `true != 1`, nested values |
+| `test_derive_takes_enums_and_ignores_free_text` | FR-14.2, FR-2.14: the spec's example gives `category` and `priority` labels and ignores `reply`; required follows the schema; no object root, or nothing comparable, gives no fields |
+| `test_derive_resolves_refs_nullable_nested_records_and_formats` | FR-14.2, FR-2.14: a Pydantic-shaped schema: `bool`, nullable `date`, `date-time`, exact `text` for `email`, `number` with its relative tolerance, `records` through a `$ref` (free text left out), sets of labels, booleans and dates, a nullable parent's children not required, an integer enum with null; consts, integer lists, bad names and two-way `anyOf` left out; the task accepts what the schema accepts; key order changes nothing |
+| `test_derive_stops_at_four_levels_and_sixty_four_fields` | FR-14.2: four levels deep, 64 fields wide, a records field counted with its sub-fields |
+| `test_x_ratchet_annotations_include_exclude_and_are_stripped` | FR-14.2: `ignore`, `text`, `ordered` (a `ranking`, ordered `records`), `abs_tol`; unknown hints ignored; `strip_annotations` and `forwardable` remove every `x-ratchet` key at any depth but keep a property named that way, and copy nothing when there is none |
+| `test_derived_tasks_round_trip_through_a_spec` | FR-14.2: an auto task (source `auto`, never pinned) reads back from `taskspec.document` unchanged, for the test schemas, every mock-world schema and an annotated one; a pinned auto task is refused |
+| `test_auto_task_name_is_stable_across_key_order` | FR-14.2: `auto-<slug>-<8 hex>`, the same for a reordered schema, another for another schema, 40 slug characters at most, `schema` without a name |
+| `test_contracts_and_bound_tasks` | FR-1.40: `contract_for` (cached per schema), `Task.bound` (same `spec_hash`, equal, not registrable), `check` reasons, `clean_answer` serving the JSON inside reasoning, a sentence and a fence, an array root |
+| `test_for_row_grades_a_stored_row_under_its_stored_format` | FR-1.40, INV-6: `tasks.for_row` from a dict, JSON text, none and bad JSON, and on a ledger row |
+| `test_auto_task_is_registered_persisted_and_never_pinned` | FR-14.2, FR-1.40: the first request registers and stores the auto task (`updated_by` null, the document and hash), one `task_registered` event, the example under its name with the client's format; a second request only looks it up |
+| `test_a_registered_task_beats_the_schema` | FR-1.3, FR-14.2: `ticket-triage` named with a schema stays itself, the schema forwarded and still checked (an answer outside it is served with `schema_valid` false and not stored) |
+| `test_a_name_the_client_makes_up_becomes_an_auto_task_under_distill_only` | FR-14.2, FR-2.15: an unregistered name becomes an auto task under `distill` (later schemas under it only checked), stays unknown under `teacher` (route `unknown_task`, nothing stored); no name gives the auto task under any policy |
+| `test_a_schema_without_comparable_fields_follows_the_unknown_task_policy` | FR-14.2, FR-2.15: a free-text schema is not registered; `distill` stores it, `teacher` routes it `unknown_task`, `reject` raises `UnknownTask` |
+| `test_auto_tasks_stop_at_the_cap_and_say_so_once` | FR-14.2: past `RATCHET_MAX_AUTO_TASKS` new schemas get unregistered tasks; one `auto_task_cap` event, also across two processes on one ledger; 0 turns them off; a bad cap stops startup |
+| `test_an_auto_task_whose_schema_holds_personal_data_is_not_stored` | FR-14.2, INV-12: an enum of email addresses never reaches the `tasks` table; an `auto_task_skipped` event |
+| `test_auto_tasks_come_back_at_startup_and_night_school_grades_under_the_schema` | FR-14.2, INV-6, INV-16: `taskspec.install` registers a stored auto task again; `dataset.rows` and `cascade_eval` hold each row to its stored schema (the student sampled under it), so an answer whose fields agree but which lacks a required free-text key gets no vote and is no training target (`skipped_invalid`) |
+| `test_concurrent_requests_register_one_auto_task` | FR-14.2: 8 threads on a new schema register one task, store one row and write one event |
+| `test_invalid_student_samples_get_no_vote_and_escalate` | FR-1.40, INV-16: confident samples outside the enum have confidence 0 and escalate; matching ones are served; json_object refuses a non-object |
+| `test_json_object_answers_are_served_as_the_json_they_hold` | FR-1.40: json_object serves and stores the object inside reasoning and a sentence, as written; text with no JSON is served as written with `schema_valid` false and not stored |
+| `test_an_answer_is_checked_against_its_schema_once_per_request` | FR-1.40: three samples, an audit and the served choice with one text run one schema check (`Contract.problem`'s memo) |
+| `test_schema_mismatches_share_one_skip_counter` | FR-1.40, INV-12: schema paths from clients count toward one throttle key; the 1st and 10th events each name their path, never the answer |
+| `test_a_repaired_teacher_answer_is_served_and_stored_with_the_original_messages` | FR-1.40, INV-2, INV-16: the repair call carries the request, the first answer without its reasoning and a user turn naming the error; the same parameters; one example with the original messages and the repaired answer; both calls in `cost_usd`, the replaced one in `usage_breakdown.repair`, the baseline one call |
+| `test_a_teacher_answer_invalid_twice_is_served_but_never_stored` | FR-1.40, INV-16: served with `schema_valid` false, not stored, a `skip_example` naming the path; a cut-off answer and `n` = 2 are not repaired |
+| `test_repair_can_be_switched_off_and_a_failed_repair_serves_the_first_answer` | FR-1.40, INV-15: `RATCHET_SCHEMA_REPAIR=0`; a repair call that raises serves the first answer, counts `repair_errors` and writes `schema_repair_error` with the class only |
+| `test_an_audit_answer_is_repaired_too` | FR-1.40: an audit's invalid answer is repaired, counted as an audit and stored |
+| `test_arbitration_and_pinned_answers_are_repaired_and_priced` | FR-1.40, INV-10, FR-15.1: an arbitration's repair settles the shadow disagreement and is priced; a pinned task's answer is repaired and priced (baseline one call) and never stored |
+| `test_a_teacher_that_refuses_json_schema_gets_json_object_and_the_schema` | FR-1.40, FR-1.11: a 400 naming `response_format` is retried once as json_object with the schema in the system message (added when there is none); the example keeps the client's format and messages; the schema goes straight to json_object afterwards, one event; another 400 is not retried |
+| `test_json_schema_is_turned_off_for_an_endpoint_only_after_several_schemas_are_refused` | FR-1.40, FR-1.11: one refused schema leaves the others on json_schema; `JSON_SCHEMA_STRIKES` refused schemas turn it off (`supports_json_schema` False); two events, not repeated by a second process; another endpoint unaffected |
+| `test_annotations_never_reach_a_model_or_the_ledger` | FR-14.2, FR-1.13: the teacher's request body and the stored conditions hold the schema without `x-ratchet` keys; the annotation decided the fields; the name hashes the annotated schema |
+| `test_fenced_teacher_json_is_served_as_bare_json` | FR-1.40, FR-1.12: a live gateway serves bare JSON from a reasoning-and-fence answer (the SDK's `ChatCompletion` validates it), streamed too, with `task` and `schema_valid` in the `ratchet` block |
+| `test_responses_name_the_task_and_stats_name_the_compared_keys` | FR-1.40, FR-14.2, FR-2.15: `ratchet.task` and `schema_valid` for plain, named and schema requests; `compare_keys` and `compare_source` in `/ratchet/stats`; the auto task in `/ratchet/tasks` (`updated_by` null), deletable, a built-in one not; under `reject` a free-text schema is a 400 with `param` `response_format` |
+| `test_the_sdk_parse_helper_works_end_to_end_in_mock_mode` | FR-1.40, FR-9.7: `client.chat.completions.parse(response_format=Claim)` against the mock gateway parses into the Pydantic model; the auto task compares `covered`, `decision` and `parts` |
+| `test_a_cut_off_answer_is_length_so_the_sdk_raises_its_length_error` | FR-1.40: a cut-off teacher answer is `finish_reason: "length"`, so `.parse()` raises `LengthFinishReasonError`; nothing stored |
 
 ## Live-path tests
 

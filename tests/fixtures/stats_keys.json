@@ -49,7 +49,9 @@
       "precision": "number|null",
       "coverage": "number|null",
       "calibrated": "bool|null",
-      "disabled": "string|null"
+      "disabled": "string|null",
+      "compare_keys": "list",
+      "compare_source": "string|null"
     },
     "versions[]": {
       "id": "number",
