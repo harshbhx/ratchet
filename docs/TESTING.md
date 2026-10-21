@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 839 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness, test_idempotency), ~75 s
+pytest -q                     # 841 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness, test_idempotency), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -34,8 +34,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_security.py` | 11 |
 | `tests/test_observability.py` | 25 |
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
-| `tests/test_idempotency.py` | 23 |
-| **Total** | **839** |
+| `tests/test_idempotency.py` | 25 |
+| **Total** | **841** |
 
 There are three layers:
 
@@ -680,6 +680,7 @@ Retry de-duplication (FR-1.70, INV-3, NFR-6; [ADR 0071](adr/0071-idempotency-key
 |---|---|
 | `test_keys_retry_counts_and_fingerprints_parse_strictly` | `check_key` (1 to 255 printable ASCII, trimmed), `retry_count` (a plain count, else 0), `fingerprint` (key order ignored; the task header and the body count) |
 | `test_idem_cache_keeps_expires_evicts_and_releases` | Replays, `KeyReused`, keys per client, a second `finish` ignored, the TTL on the cache's clock, a failure releasing the key, least-recently-used eviction that never drops a running entry, the byte budget (an oversized answer not kept), the sweep, bad arguments, `enabled` |
+| `test_idem_cache_byte_budget_counts_each_entry_not_only_its_body` | Each kept answer counts its body plus `ENTRY_OVERHEAD` (2 KiB), so tiny answers stop at the byte budget whatever `max_entries` allows; an answer whose body fits but whose entry does not is not kept |
 | `test_idem_cache_waiters_share_the_answer_or_take_over_after_a_failure` | A waiter gets the owner's answer even with TTL 0; another body refused while the first runs; after a failure one waiter takes over and the other gets its answer; a wait that runs out is `InFlight` |
 | `test_waiters_per_key_are_bounded` | Past `max_waiters` (default `MAX_WAITERS_PER_KEY`, 4) a duplicate is `InFlight` at once; another key is not affected; the slots are given back |
 | `test_seen_window_counts_once_per_window_per_sender` | `SeenWindow`: once per window per sender, a skipped repeat not restarting it, the oldest pair forgotten first |
@@ -689,6 +690,7 @@ Retry de-duplication (FR-1.70, INV-3, NFR-6; [ADR 0071](adr/0071-idempotency-key
 | `test_same_idempotency_key_replays_without_a_cascade` | One ledger row and one teacher call; the replay's body byte-identical (same completion id), `Idempotent-Replayed: true`, the answer's headers but no rate-limit headers, its own `x-request-id`; served after the daily quota is used up while a new key gets 429; another client's key space; outcome counts |
 | `test_concurrent_duplicates_call_the_teacher_once` | A duplicate that arrives while the teacher is blocked waits and gets the same answer (`joined`); one teacher call, one row |
 | `test_key_reused_with_another_body_or_malformed_is_a_400` | Another body or task header: 400 `idempotency_key_reused` with `X-Should-Retry: false`; malformed keys 400 `invalid_idempotency_key`; bad JSON never claims its key; `ratchet_rejections_total{reason="idempotency"}` |
+| `test_a_body_too_deep_to_fingerprint_is_a_400_and_claims_nothing` | Regression: a fingerprint that hits `RecursionError` is a 400 `invalid_json`, not a 500, with no key claimed, no teacher call and no failures row; around the real nesting limit (found by bisection without a key) every request with a key is a 400 |
 | `test_in_flight_wait_is_bounded_by_the_teacher_deadline` | After `RATCHET_TEACHER_DEADLINE_S` the duplicate gets 409 `idempotency_key_in_use` with `Retry-After: 1`; once the first finished, the key replays |
 | `test_idempotency_ttl_expiry_runs_again` | On a fake clock: a replay at 599 s, a second cascade at 601 s |
 | `test_streamed_answer_is_replayed_as_the_same_events` | A stream with `include_usage` replayed as the same events and headers; the same key without `stream` is reused |
