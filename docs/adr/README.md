@@ -33,5 +33,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0027](0027-committed-training-sets.md) | Committed training sets: sparse Merkle roots in every BOM, with membership, non-membership and held-out proofs checked offline | Accepted | 2026-10-20 |
 | [0028](0028-designed-propensity-replay.md) | Designed-propensity replay: a ledger time machine for thresholds and audit rates, and a calibrated baseline | Accepted | 2026-10-21 |
 | [0029](0029-verified-savings-receipts.md) | Verified savings receipts: an audit-calibrated baseline billed on its lower bound, in signed, chained RFC 9162 receipts | Accepted | 2026-10-21 |
+| [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

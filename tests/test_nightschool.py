@@ -5,7 +5,12 @@ evaluation is held out and compares the champion on the same golden set (INV-1 t
 from __future__ import annotations
 
 import ast
+import hashlib
+import importlib.metadata
 import json
+import platform
+import re
+import shlex
 import textwrap
 from pathlib import Path
 
@@ -25,9 +30,10 @@ from fakes import (
     _version,
 )
 
+from ratchet import bom
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
-from ratchet.nightschool import dataset
+from ratchet.nightschool import dataset, train
 from ratchet.nightschool.dataset import FREQUENT
 from ratchet.nightschool.evaluate import LiveEvaluator, cascade_eval
 from ratchet.nightschool.orchestrate import run_night
@@ -757,3 +763,331 @@ def test_paired_gate_admits_what_the_unpaired_rule_rejects_on_noise():
     assert paired_ok and paired_why.endswith(
         "shadowing live v1; serves -4 of 74 vs live v1 (McNemar p=0.06); 0 negative flips, 0 positive flips"
     )
+
+
+# ---------- FR-8.42: the student trains on the prompt it is served ----------
+TEMPLATE = ROOT / "tests" / "fixtures" / "nano4b_chat_template.jinja"
+# chat_template.jinja of nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 at commit dfaf35d (read Oct 21, 2026); NOTICE says so.
+TEMPLATE_SHA256 = "ab7813c3abdd9cb655905a410728b26c7884eca45ddfab8d9f931553485a7862"
+SERVED_PROMPT_END = "<|im_start|>assistant\n<think></think>"  # the generation prompt with thinking off
+PIN = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9][A-Za-z0-9.+!_-]*)")
+
+
+def _endpoint_template_kwargs() -> dict:
+    """The chat-template arguments the student endpoint serves with unless a request says otherwise: the JSON that
+    deploy/student_endpoint.sh passes to vLLM's --default-chat-template-kwargs."""
+    text = (ROOT / "deploy" / "student_endpoint.sh").read_text(encoding="utf-8")
+    m = re.search(r"^DEFAULT_TEMPLATE_KWARGS='(\{.*\})'$", text, re.M)
+    assert m, "student_endpoint.sh no longer sets DEFAULT_TEMPLATE_KWARGS"
+    return json.loads(m.group(1))
+
+
+def _renderer():
+    """The vendored Nemotron 3 Nano template compiled as transformers' apply_chat_template compiles it (vLLM renders a
+    chat request through the same call): render(messages, add_generation_prompt, chat_template_kwargs) -> text."""
+    pytest.importorskip("jinja2")
+    jinja_ext = pytest.importorskip("jinja2.ext")
+    from jinja2.exceptions import TemplateError
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+    source = TEMPLATE.read_bytes()
+    assert hashlib.sha256(source).hexdigest() == TEMPLATE_SHA256
+
+    def tojson(x, ensure_ascii=False, indent=None, separators=None, sort_keys=False):
+        return json.dumps(x, ensure_ascii=ensure_ascii, indent=indent, separators=separators, sort_keys=sort_keys)
+
+    def raise_exception(message):
+        raise TemplateError(message)
+
+    env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True, extensions=[jinja_ext.loopcontrols])
+    env.filters["tojson"] = tojson
+    env.globals["raise_exception"] = raise_exception
+    template = env.from_string(source.decode("utf-8"))
+
+    def render(messages, add_generation_prompt, kwargs):
+        return template.render(
+            messages=messages, tools=None, documents=None, add_generation_prompt=add_generation_prompt, **kwargs
+        )
+
+    return render
+
+
+def _pins(path: Path) -> dict[str, str]:
+    """`name==version` lines of a requirements or constraints file, names in lower case."""
+    out: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            m = PIN.fullmatch(line)
+            assert m, f"{path.name}: {line!r} is not name==version"
+            out[m.group(1).lower()] = m.group(2)
+    return out
+
+
+def _train_split(led: Ledger, task: str, text: str, answer: str) -> None:
+    """Store `answer` to the first request '<text> <i>' that the ledger's split puts in train."""
+    for i in range(200):
+        msgs = [{"role": "user", "content": f"{text} {i}"}]
+        probe = Ledger(":memory:", golden_fraction=led.golden_fraction)
+        probe.add_example(task, msgs, answer, OPEN_TEACHER, "l", "u")
+        if probe.examples()[-1]["split"] == "train":
+            assert led.add_example(task, msgs, answer, OPEN_TEACHER, "l", "u")
+            return
+    raise AssertionError("no request landed in train")
+
+
+@pytest.mark.req("FR-8.42", "INV-2", "FR-4.1")
+def test_training_rows_carry_reasoning_off(tmp_path):
+    led = Ledger(":memory:", golden_fraction=0.0)  # every example a training row
+    _examples(led, train=5)
+    convo = [
+        {"role": "system", "content": "You triage support tickets."},
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hello. What happened?"},
+        {"role": "user", "content": "I was charged twice."},
+    ]
+    json_mode = {"response_format": {"type": "json_object"}}
+    led.add_example("default", convo, '{"reply": "A refund is on its way."}', OPEN_TEACHER, "l", "u", params=json_mode)
+    # An answer that quotes the tags: the template would render it without the empty think block (see the next test).
+    led.add_example(
+        "default", [{"role": "user", "content": "How do I hide reasoning?"}], "Wrap it in <think>.", OPEN_TEACHER, "l", "u"
+    )
+    led.add_example(
+        "default", [{"role": "user", "content": "And close it?"}], "End it with </think> first.", OPEN_TEACHER, "l", "u"
+    )
+
+    manifest = dataset.build(led, tmp_path)
+    assert (manifest["train_examples"], manifest["skipped_think_tag"]) == (6, 2)
+    lines = (tmp_path / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(line) for line in lines]
+    stored = {r["hash"]: r for r in led.examples()}
+    assert len(rows) == 6
+    for line, row in zip(lines, rows, strict=True):
+        assert "<think>" not in line and "</think>" not in line
+        assert "messages" not in row and row["chat_template_kwargs"] == {"enable_thinking": False}
+        ex = stored[row["provenance"]["hash"]]
+        # INV-2: the target is the teacher's stored answer, the one assistant message of the completion.
+        assert row["prompt"] == json.loads(ex["messages"])
+        assert row["completion"] == [{"role": "assistant", "content": ex["completion"]}]
+    assert next(r for r in rows if len(r["prompt"]) == 4)["params"] == json_mode  # kept, never given to TRL
+    train.check_rows(rows)  # the GPU job accepts what Night School writes
+
+    # The live trainer writes the same file (dataset.write_training), and the three copies of the arguments agree: the
+    # rows, train.py's check and the endpoint's default (vLLM's --default-chat-template-kwargs).
+    written = dataset.write_training(dataset.rows(led, "train"), tmp_path / "night" / "train.jsonl")
+    assert train.load_rows(str(written)) == rows
+    assert dict(dataset.TRAIN_TEMPLATE_KWARGS) == dict(train.TEMPLATE_KWARGS) == _endpoint_template_kwargs()
+    assert dataset.TRAIN_TEMPLATE_KWARGS == {"enable_thinking": False} and dataset.THINK_TAGS == train.THINK_TAGS
+    with pytest.raises(TypeError):
+        dataset.TRAIN_TEMPLATE_KWARGS["enable_thinking"] = True  # type: ignore[index]
+
+    # A row with a tag stays a golden row (the eval compares answers, it renders no template) and the night says how many
+    # it left out of training, because manifest.json is a temporary file.
+    golden = Ledger(":memory:", golden_fraction=1.0)
+    golden.add_example("default", [{"role": "user", "content": "q"}], "Wrap it in <think>.", OPEN_TEACHER, "l", "u")
+    assert [r["messages"][-1]["content"] for r in dataset.rows(golden, "golden")] == ["Wrap it in <think>."]
+    night = Ledger(":memory:", golden_fraction=0.3)
+    _examples(night, train=3, golden=1)
+    _train_split(night, "default", "tagged", "Close it with </think>.")
+    run_night(night, RecordingTrainer(), RecordingEvaluator(), ReleaseGate(night), BASE_MODEL, min_new_examples=50)
+    assert night.events()[-1]["detail"] == (
+        "only 3 new examples (< 50) (1 answers with a literal think tag left out of training); no training tonight"
+    )
+
+
+@pytest.mark.req("FR-8.42", "FR-5.1")
+def test_training_prompt_is_a_prefix_and_matches_serving():
+    render = _renderer()
+    led = Ledger(":memory:", golden_fraction=0.0)
+    _version(led, "live", {"threshold": 0.5})
+    conversations = [
+        [{"role": "user", "content": "Where is my refund for order 7?"}],
+        [{"role": "system", "content": "You triage support tickets."}, {"role": "user", "content": "The app crashes on login."}],
+        [
+            {"role": "system", "content": "Answer in one sentence."},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello. What can I do for you?"},
+            {"role": "user", "content": "Cancel my subscription, please."},
+        ],
+    ]
+    teacher = RecordingProvider(lambda msgs, model: f"Teacher answer: {msgs[-1]['content']}")
+    student = RecordingProvider(["a", "b", "c"], logprob=-3.0)  # three answers that disagree: every request escalates
+    r = Ratchet(Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0), led, teacher, lambda v: (student, v.adapter_uri))
+    for convo in conversations:
+        assert r.handle(convo, "default").served_by == "teacher"
+    rows = [dataset.training_record(row) for row in dataset.rows(led, "train")]
+    assert len(rows) == len(student.calls) == 3
+    train.check_rows(rows)
+    train.check_prefix(rows, render)  # the job's own check, here with the vendored template
+
+    endpoint = _endpoint_template_kwargs()
+    for row in rows:
+        kwargs = row["chat_template_kwargs"]
+        prompt = render(row["prompt"], True, kwargs)
+        full = render(row["prompt"] + row["completion"], False, kwargs)
+        # The prompt is a prefix: TRL's completion is exactly the teacher's answer and its end-of-turn token.
+        assert prompt.endswith(SERVED_PROMPT_END)
+        assert full == prompt + row["completion"][0]["content"] + "<|im_end|>\n"
+        # And it is the prompt vLLM renders for the router's student call: the same messages, the endpoint's default
+        # arguments, merged under any the request carried itself (request values win in vLLM).
+        (call,) = [c for c in student.calls if c.messages == row["prompt"]]
+        own = getattr(call.kwargs.get("params"), "template_kwargs", None) or {}
+        assert prompt == render(call.messages, True, {**endpoint, **own})
+
+    # Without the argument (the template's default: thinking on) the prompt ends in "<think>\n" and is not a prefix of
+    # prompt + answer, which TRL only warns about: the bug this item fixes. The job's check stops on it.
+    for row in rows:
+        assert render(row["prompt"], True, {}).endswith("<|im_start|>assistant\n<think>\n")
+        assert not render(row["prompt"] + row["completion"], False, {}).startswith(render(row["prompt"], True, {}))
+    with pytest.raises(train.TemplateMismatch, match=r"^row 0: .*not a prefix"):
+        train.check_prefix([{**row, "chat_template_kwargs": {}} for row in rows], render)
+    # An answer that holds a tag is rendered without the empty think block, so it breaks the prefix too (dataset.rows and
+    # check_rows leave such rows out).
+    for tagged in ("Wrap it in <think>.", "End it with </think> first."):
+        with pytest.raises(train.TemplateMismatch):
+            train.check_prefix([{**rows[0], "completion": [{"role": "assistant", "content": tagged}]}], render)
+
+    # The datasets library gives every message the keys any message has, as None; the template renders the same text.
+    keys = {"name", "tool_calls", "tool_call_id", "reasoning_content"} | {k for row in rows for m in row["prompt"] for k in m}
+    filled = [
+        {
+            **row,
+            "prompt": [{**dict.fromkeys(keys), **m} for m in row["prompt"]],
+            "completion": [{**dict.fromkeys(keys), **row["completion"][0]}],
+        }
+        for row in rows
+    ]
+    train.check_prefix(filled, render, served=rows)
+    edited = [rows[0], {**rows[1], "prompt": [{"role": "user", "content": "something else"}]}, rows[2]]
+    with pytest.raises(train.TemplateMismatch, match=r"^row 1: .*student endpoint"):
+        train.check_prefix(rows, render, served=edited)
+    with pytest.raises(train.TemplateMismatch, match="3 rows to train against 2 written"):
+        train.check_prefix(rows, render, served=rows[:2])
+
+
+@pytest.mark.req("FR-8.42", "FR-4.5")
+def test_train_args_have_no_assistant_only_loss():
+    source = (ROOT / "ratchet" / "nightschool" / "train.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    def calls(name):
+        return [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == name]
+
+    (config,) = calls("SFTConfig")
+    kw = {k.arg: k.value for k in config.keywords}
+    # The template has no {% generation %} markers, and TRL's loss on prompt-completion rows covers the completion only.
+    off = kw.get("assistant_only_loss", ast.Constant(False))
+    assert isinstance(off, ast.Constant) and off.value is False
+    assert isinstance(kw.get("completion_only_loss"), ast.Constant) and kw["completion_only_loss"].value is True
+    # TRL is given the three columns only (no stored condition reaches the template), after both checks.
+    (main,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    called = [n.func.id for n in ast.walk(main) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+    assert {"check_rows", "check_prefix", "columns", "SFTTrainer"} <= set(called)
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom | ast.Import) and "unsloth" in ast.dump(n)]
+    row = dataset.training_record(
+        {"task": "t", "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}], "params": {"x": 1}}
+    )
+    assert train.columns([row]) == [
+        {
+            "prompt": [{"role": "user", "content": "q"}],
+            "completion": [{"role": "assistant", "content": "a"}],
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    ]
+
+
+@pytest.mark.req("FR-8.42")
+def test_dockerfile_is_pinned():
+    docker = (ROOT / "deploy" / "Dockerfile.train").read_text(encoding="utf-8")
+    pins = _pins(ROOT / "deploy" / "train-versions.txt")
+    assert "|| true" not in docker and "trl==1.16.0" in docker and pins["trl"] == "1.16.0"
+    runs = [line.removeprefix("RUN ").strip() for line in docker.replace("\\\n", " ").splitlines() if line.startswith("RUN ")]
+    installed: dict[str, str] = {}
+    for run in runs:
+        for command in run.split("&&"):
+            argv = shlex.split(command)
+            if argv[:2] != ["pip", "install"]:
+                continue
+            specs, skip = [], False
+            for arg in argv[2:]:
+                if skip:
+                    skip = False
+                elif arg in ("-c", "--constraint", "--index-url", "--extra-index-url", "-f", "--find-links"):
+                    skip = True
+                elif not arg.startswith("-"):
+                    specs.append(arg)
+            assert "-r" not in argv and specs, run
+            for spec in specs:  # every package carries ==, and the version is the list's
+                m = PIN.fullmatch(spec)
+                assert m, f"unpinned: {spec}"
+                installed[m.group(1).lower()] = m.group(2)
+            if "torch" not in specs[0]:  # every step after torch reads the list as constraints
+                assert "-c /tmp/train-versions.txt" in command, run
+    assert installed == pins and "unsloth" not in installed
+    copy = docker.index("COPY deploy/train-versions.txt /tmp/train-versions.txt")
+    assert copy < docker.index("-c /tmp/train-versions.txt")  # on disk before the first step reads it
+    # The kernels' import is checked after they are installed, so a failed build fails the image.
+    mamba = next(i for i, run in enumerate(runs) if "mamba-ssm==" in run)
+    check = next(i for i, run in enumerate(runs) if run.startswith('python -c "import torch, mamba_ssm, causal_conv1d'))
+    assert check > mamba
+    # The job runs `python -m ratchet.nightschool.train`; Ubuntu has no `python` without python-is-python3.
+    assert "python-is-python3" in runs[0]
+    # versions.json records exactly what the image pins, and the `train` extra agrees with the image.
+    assert {name.lower() for name in train.LIBRARIES} == set(pins)
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    extra = re.search(r"^train = \[(.*)\]$", pyproject, re.M)
+    assert extra
+    train_extra = dict(m.groups() for m in map(PIN.fullmatch, re.findall(r'"([^"]+)"', extra.group(1))) if m)
+    assert train_extra and all(pins[name.lower()] == version for name, version in train_extra.items())
+
+
+@pytest.mark.req("FR-8.42", "FR-4.5", "INV-14")
+def test_train_records_library_versions():
+    pins = _pins(ROOT / "deploy" / "train-versions.txt")
+
+    def lookup(name):
+        if name == "mamba-ssm":
+            raise importlib.metadata.PackageNotFoundError(name)
+        return pins[name]
+
+    doc = train.versions(lookup, cuda="12.8", python="3.12.3")
+    assert doc == {"python": "3.12.3", "cuda": "12.8", "libraries": {**pins, "mamba-ssm": None}}
+    assert list(doc["libraries"]) == list(train.LIBRARIES)
+    assert json.loads(json.dumps(doc)) == doc
+    assert train.versions(lambda name: "1.0")["python"] == platform.python_version()
+    # The signed BOM has no section for them, so versions.json stays beside the adapter: a stored BOM is never rewritten.
+    assert not {"versions", "libraries", "training_image"} & set(bom.EXTRA_KEYS)
+    assert train.manifest("base", [])["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+@pytest.mark.req("FR-8.42")
+def test_train_refuses_rows_that_would_train_another_prompt():
+    led = Ledger(":memory:", golden_fraction=0.0)
+    _examples(led, train=2)
+    good = [dataset.training_record(r) for r in dataset.rows(led, "train")]
+    train.check_rows(good)
+    first = good[0]
+    secret = "SECRET-TEXT"
+    answer = [{"role": "assistant", "content": secret}]
+    cases = [
+        ({"messages": first["prompt"] + answer, "provenance": first["provenance"]}, "has `messages` instead"),
+        ({k: v for k, v in first.items() if k != "chat_template_kwargs"}, "`chat_template_kwargs` is not"),
+        ({**first, "chat_template_kwargs": {"enable_thinking": True}}, "`chat_template_kwargs` is not"),
+        ({**first, "chat_template_kwargs": {"enable_thinking": False, "x": 1}}, "`chat_template_kwargs` is not"),
+        ({**first, "completion": answer * 2}, "`completion` is not one message"),
+        ({**first, "completion": secret}, "`completion` is not one message"),
+        ({**first, "completion": [{"role": "user", "content": secret}]}, "not an assistant message with text"),
+        ({**first, "completion": [{"role": "assistant", "content": "   "}]}, "not an assistant message with text"),
+        ({**first, "completion": [{"role": "assistant", "content": f"{secret} </think>"}]}, "literal think tag"),
+        ({**first, "prompt": []}, "`prompt` is not"),
+        ({**first, "prompt": secret}, "`prompt` is not"),
+        ({**first, "prompt": [{"content": secret}]}, "`prompt` is not"),
+        ({**first, "provenance": {"teacher": OPEN_TEACHER}}, "`provenance` lacks"),
+        (secret, "not an object"),
+    ]
+    for bad, reason in cases:
+        with pytest.raises(ValueError, match=rf"^row 1: .*{re.escape(reason)}") as err:
+            train.check_rows([first, bad])
+        assert secret not in str(err.value)  # the job's logs never get the text
+    with pytest.raises(ValueError, match="no training rows"):
+        train.check_rows([])

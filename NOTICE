@@ -11,3 +11,8 @@ governed by their own licenses:
 - NVIDIA Nemotron 3 Ultra: OpenMDW-1.1
   https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
 If you distribute LoRA adapters trained with Ratchet, include the base model's license.
+
+tests/fixtures/nano4b_chat_template.jinja is the chat template of
+nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 (repository commit dfaf35d), included unmodified so an
+offline test can render training and serving prompts; it is under the NVIDIA Nemotron Open
+Model License above.

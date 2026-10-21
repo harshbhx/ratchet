@@ -685,6 +685,15 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold"),
     "FR-8.4": ("ratchet.live:main",),
     "FR-8.5": ("scripts/day1_check.py",),
+    "FR-8.42": (
+        "ratchet.nightschool.dataset:training_record",
+        "ratchet.nightschool.dataset:TRAIN_TEMPLATE_KWARGS",
+        "ratchet.nightschool.train:check_rows",
+        "ratchet.nightschool.train:check_prefix",
+        "ratchet.nightschool.train:versions",
+        "deploy/Dockerfile.train",
+        "deploy/train-versions.txt",
+    ),
     # 6.9 Simulation
     "FR-9.1": ("sim.tickets:TicketStream",),
     "FR-9.2": ("sim.mock_models:MockTeacher", "sim.mock_models:MockStudent"),
@@ -873,6 +882,9 @@ EXEMPT: dict[str, Exempt] = {
     "FR-8.2": Exempt("live", "deploy/student_endpoint.sh", "needs a vLLM Serverless Endpoint with runtime LoRA loading"),
     "FR-8.4": Exempt("live", "docs/RUNBOOK.md", "runs against the live ledger, a Serverless Job and the student endpoint"),
     "FR-8.5": Exempt("live", "docs/DAY1.md", "the script is the live check; it needs NEBIUS_API_KEY"),
+    "FR-8.42": Exempt(
+        "live", "docs/DAY1.md", "the image builds and a 200-row job trains on a GPU (DAY1 row 4); the template is checked offline"
+    ),
     "FR-10.3": Exempt(
         "live", "docs/DEPLOY_NEBIUS_VM.md", "Tavily needs TAVILY_API_KEY; checked when the demo VM switches to live"
     ),

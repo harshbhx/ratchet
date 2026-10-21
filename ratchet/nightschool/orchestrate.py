@@ -107,6 +107,9 @@ def run_night(
     # look, because the manifest itself is a temporary file.
     invalid = manifest.get("skipped_invalid", 0)
     left_out = f" ({invalid} stored answers invalid under the current spec left out)" if invalid else ""
+    tagged = manifest.get("skipped_think_tag", 0)  # FR-8.42: the chat template would render these differently
+    if tagged:
+        left_out += f" ({tagged} answers with a literal think tag left out of training)"
     if new < min_new_examples:
         ledger.event("skip", f"only {new} new examples (< {min_new_examples}){left_out}; no training tonight")
         # A task whose spec changed is on the teacher until the live version is scored under the new spec; without new
