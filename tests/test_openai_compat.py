@@ -1239,7 +1239,9 @@ def test_n_choices_escalated_over_http(gw_env, tmp_path, monkeypatch):
 
     gw = _gateway(gw_env)
     teacher = FakeOpenAIServer(A, out_tokens=6)
-    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_modalities="text,image_url")
+    # Without the seen window (live mode's 300 s would count this client's repeats once, ADR 0071), each request's one
+    # bump shows in `seen`: n choices never bump more than once.
+    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_modalities="text,image_url", seen_dedup_s=0)
     monkeypatch.setattr(gw, "rt", rt)
     _version(rt.ledger, "live", {"threshold": 0.99})  # unsure of everything: the teacher answers
     c = TestClient(gw.app)

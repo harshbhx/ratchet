@@ -26,7 +26,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, metrics, obs, readiness, tasks, taskspec
+from . import __version__, idem, live, metrics, obs, readiness, tasks, taskspec
 from . import access as acl
 from . import bom as bomdoc
 from . import config as cfg
@@ -253,6 +253,11 @@ class Runtime:
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
         self.ledger.add_event_listener(obs.mirror_event)  # every release-log event also as a log line (ADR 0062)
+        # Retries (ADR 0071): answers kept by Idempotency-Key, and the window in which the same client's repeat of a
+        # stored example counts once. Both in memory, both new on a demo reset; a bad setting stops startup here.
+        self.idem = idem.IdemCache(*s.idempotency(), clock=self.clock)
+        window = s.seen_dedup()
+        self.ledger.seen_window = idem.SeenWindow(window, clock=self.clock) if window > 0 else None
         # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
         # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
         with self.tasks_lock:
@@ -509,6 +514,9 @@ REJECTION_CODES = {
     "daily_quota_exceeded": "quota",
     "request_too_large": "too_large",
     "client_disconnected": "disconnected",
+    "invalid_idempotency_key": "idempotency",
+    "idempotency_key_reused": "idempotency",
+    "idempotency_key_in_use": "idempotency",
 }
 REJECTION_STATUSES = {400: "invalid_request", 401: "auth", 403: "forbidden", 413: "too_large", 429: "quota"}
 FAILURE_ROWS_PER_MINUTE = 120  # per stage, from the gateway; the router's rows that spent money are never held back
@@ -573,6 +581,9 @@ def _log_chat(ctx: obs.RequestContext, status: int) -> None:
     if not obs.LOGGER.isEnabledFor(logging.INFO):
         return
     r = ctx.result or {}
+    # A retry's attempt number and a replay by Idempotency-Key with the id of the request it replays (ADR 0071), only
+    # when there is one.
+    retry = {k: r[k] for k in ("retry_count", "idempotent_replay", "replay_of") if r.get(k)}
     obs.log(
         logging.INFO,
         "chat",
@@ -589,6 +600,7 @@ def _log_chat(ctx: obs.RequestContext, status: int) -> None:
         wall_ms=r.get("wall_ms"),
         cost_usd=r.get("cost_usd"),
         status=status,
+        **retry,
     )
 
 
@@ -1028,12 +1040,14 @@ async def chat(
     x_ratchet_task: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
-) -> JSONResponse | StreamingResponse:
+    idempotency_key: str | None = Header(default=None),
+    x_stainless_retry_count: str | None = Header(default=None),
+) -> Response:
     """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the body read and
-    counted (413 for a chunked body over the limit), JSON and request validation (400), daily quota (429), then the
-    cascade. A refused request writes no ledger row and uses no quota. Everything after reading the body runs in a
-    worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks the event
-    loop."""
+    counted (413 for a chunked body over the limit), the Idempotency-Key and JSON (400), a stored answer for that key
+    (sent again at once, ADR 0071), request validation (400), daily quota (429), then the cascade. A refused request
+    writes no ledger row and uses no quota, and neither does a replay. Everything after reading the body runs in a worker
+    thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks the event loop."""
     client = _client(authorization, x_api_key)
     try:
         raw = await request.body()
@@ -1042,12 +1056,134 @@ async def chat(
         if ctx is not None:
             ctx.code = "client_disconnected"
         raise APIError(400, "The client disconnected before the request body was complete.") from e
-    return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client))
+    retries = idem.retry_count(x_stainless_retry_count)  # the SDK's attempt number: a retry is never a repeat (INV-3)
+    if idempotency_key is not None and rt.idem.enabled:
+        work = functools.partial(_complete_idempotent, raw, x_ratchet_task, client, idempotency_key, retries)
+    else:
+        work = functools.partial(_complete, raw, x_ratchet_task, client, retry_count=retries)
+    return await anyio.to_thread.run_sync(work)
 
 
-def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+# ----- retries and idempotency (ADR 0071) -----
+# The headers a replay sends again: what describes the answer, never the quota (a replay uses none) or a retry hint.
+REPLAY_HEADERS = frozenset({"x-ratchet-served-by", "x-ratchet-degraded", "cache-control", "x-accel-buffering"})
+REPLAYED = "Idempotent-Replayed"
+
+
+async def _sent(chunks: Iterable[Any]) -> AsyncIterator[Any]:
+    """Already rendered chunks as the async iterator a StreamingResponse sends without a thread hop per chunk."""
+    for chunk in chunks:
+        yield chunk
+
+
+class BufferedStream(StreamingResponse):
+    """A stream whose Server-Sent Events were all rendered before the first is sent (the cascade decides before
+    streaming, so nothing is lost by it), kept in `events` so the answer can be stored for an Idempotency-Key and sent
+    again event for event. Only a request with a key is rendered this way; a stream that is produced while it is sent
+    is never stored (`_cacheable`), so its key is released."""
+
+    def __init__(self, events: list[str], headers: Mapping[str, str] | None = None) -> None:
+        self.events: tuple[str, ...] = tuple(events)
+        super().__init__(_sent(self.events), media_type="text/event-stream", headers=headers)
+
+
+# The fields of the request's log line a replay's line repeats: what answered, never what it cost or how long it took,
+# so a sum over the chat log lines counts each cascade once.
+REPLAY_LOG_FIELDS = ("served_by", "route", "version")
+
+
+def _cacheable(response: Response, ctx: obs.RequestContext | None) -> idem.Cached | None:
+    """The answer to keep for an Idempotency-Key: a 200 JSON body or a buffered stream, with the headers in
+    REPLAY_HEADERS, the request's task and the log fields a replay repeats (REPLAY_LOG_FIELDS, and `replay_of`: the id of
+    the request that ran); None for anything else, which releases the key."""
+    if response.status_code != 200:
+        return None
+    if isinstance(response, BufferedStream):
+        body, media, stream = tuple(e.encode("utf-8") for e in response.events), "text/event-stream", True
+    elif isinstance(response, JSONResponse):
+        body, media, stream = (bytes(response.body),), "application/json", False
+    else:
+        return None
+    headers = tuple((k, v) for k, v in response.headers.items() if k.lower() in REPLAY_HEADERS)
+    task = ctx.task if ctx is not None else None
+    log: dict[str, Any] = {}
+    if ctx is not None:
+        result = ctx.result or {}
+        log = {k: result.get(k) for k in REPLAY_LOG_FIELDS} | {"replay_of": ctx.request_id}
+    return idem.Cached(body, media, stream, headers, task, log)
+
+
+def _replay(cached: idem.Cached, ctx: obs.RequestContext | None, retry_count: int = 0) -> Response:
+    """A stored answer sent again with `Idempotent-Replayed: true`: the same body (the same completion id, created time
+    and `ratchet` block, whose request_id names the request that ran) as JSON or as the same events. No cascade, ledger
+    row, quota or tick. Its own log line says what it replayed (`replay_of`) at a cost of 0, with this attempt's
+    `retry_count`; it is counted in ratchet_idempotent_requests_total, not in ratchet_requests_total, since no cascade
+    ran."""
+    if ctx is not None:
+        ctx.task = cached.task
+        ctx.result = {**cached.log, "cost_usd": 0.0, "retry_count": retry_count, "idempotent_replay": True}
+        ctx.counted = True
+    headers = {**dict(cached.headers), REPLAYED: "true"}
+    if cached.stream:
+        return StreamingResponse(_sent(cached.body), media_type=cached.media_type, headers=headers)
+    return Response(cached.body[0], media_type=cached.media_type, headers=headers)
+
+
+def _complete_idempotent(raw: bytes, header_task: str | None, client: str | None, key: str, retry_count: int) -> Response:
+    """A chat request with an Idempotency-Key (FR-1.70, ADR 0071), keyed by the API key's name and the client's key. The
+    first runs the cascade (`_complete`) and its answer is kept for RATCHET_IDEMPOTENCY_TTL_S; the same key and body
+    while it runs waits for it (at most RATCHET_TEACHER_DEADLINE_S, and at most idem.MAX_WAITERS_PER_KEY at once; past
+    either, a 409 the SDKs retry) and gets the same answer; once it finished, the answer is sent again at once
+    (`_replay`). Another body with the key is a 400 no retry can fix. A failed first request releases the key, so the
+    client's retry runs again; an error is never kept."""
+    ctx = obs.current()
+    cache = rt.idem  # this runtime's, even if a demo reset replaces it while the cascade runs
+    try:
+        key = idem.check_key(key)
+    except ValueError as e:
+        metrics.IDEMPOTENT.inc("invalid")
+        message = f"Invalid Idempotency-Key header: {e}."
+        raise APIError(400, message, INVALID_REQUEST, "invalid_idempotency_key", headers=NO_RETRY) from e
+    body = parse_body(raw)  # bad JSON is a 400 before the key is claimed
+    try:
+        claim = cache.begin(client or "", key, idem.fingerprint(body, header_task), rt.settings.teacher_deadline_s)
+    except idem.KeyReused as e:
+        metrics.IDEMPOTENT.inc("reused")
+        message = "This Idempotency-Key was already used with a different request; send a new key for a new request."
+        raise APIError(400, message, INVALID_REQUEST, "idempotency_key_reused", headers=NO_RETRY) from e
+    except idem.InFlight as e:
+        metrics.IDEMPOTENT.inc("in_flight")
+        message = "The request with this Idempotency-Key is still being answered; retry shortly to get its answer."
+        raise APIError(409, message, INVALID_REQUEST, "idempotency_key_in_use", headers={"Retry-After": "1"}) from e
+    if claim.cached is not None:
+        metrics.IDEMPOTENT.inc("joined" if claim.joined else "replayed")
+        return _replay(claim.cached, ctx, retry_count)
+    cached: idem.Cached | None = None
+    try:
+        response = _complete(raw, header_task, client, retry_count=retry_count, body=body, idempotency_key=key)
+        cached = _cacheable(response, ctx)
+    except BaseException:
+        metrics.IDEMPOTENT.inc("failed")
+        raise
+    finally:
+        cache.finish(claim, cached)  # wakes every request waiting for it; None releases the key
+    metrics.IDEMPOTENT.inc("first" if cached is not None else "uncached")
+    return response
+
+
+def _complete(
+    raw: bytes,
+    header_task: str | None,
+    client: str | None,
+    retry_count: int = 0,
+    body: Any = None,
+    idempotency_key: str | None = None,
+) -> Response:
+    """The chat request after its key and body were read: validation, task admission, quota, the cascade and the
+    response. `retry_count` is the SDK's attempt number; `body`, when given, is `raw` already parsed (by
+    `_complete_idempotent`)."""
     ctx = obs.current()  # the request's context, copied into this worker thread (ADR 0062)
-    req = validate_chat_request(parse_body(raw), rt.limits)
+    req = validate_chat_request(parse_body(raw) if body is None else body, rt.limits)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(header_task or req.task, client)
@@ -1060,8 +1196,18 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     headers = _quota(client)
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
-    # The request's ids go into its ledger row (requests.request_id, requests.client_request_id) and failures rows.
-    ids = RequestMeta(request_id=ctx.request_id, client_request_id=ctx.client_request_id) if ctx is not None else None
+    # The request's ids go into its ledger row (requests.request_id, requests.client_request_id) and failures rows, with
+    # the SDK's attempt number (requests.retry_count; a retry never bumps an example's seen, ADR 0071).
+    ids = (
+        RequestMeta(
+            request_id=ctx.request_id,
+            client_request_id=ctx.client_request_id,
+            retry_count=retry_count,
+            idempotency_key=idempotency_key,
+        )
+        if ctx is not None
+        else None
+    )
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
         r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n, meta=ids)
     except KeyError as e:
@@ -1094,6 +1240,7 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
             "latency_ms": r.latency_ms,
             "wall_ms": r.wall_ms,
             "cost_usd": r.cost_usd,
+            "retry_count": retry_count,
         }
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
@@ -1153,6 +1300,8 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         yield "data: [DONE]\n\n"
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    if idempotency_key is not None:  # rendered at once, so the answer can be kept for the key and replayed (ADR 0071)
+        return BufferedStream(list(events()), headers=headers)
     return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
 
 

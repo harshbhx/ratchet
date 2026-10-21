@@ -221,6 +221,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_FALLBACK_STUDENT",
             "RATCHET_FIXTURES_DIR",
             "RATCHET_GOLDEN_FRACTION",
+            "RATCHET_IDEMPOTENCY_CACHE",
+            "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
             "RATCHET_LOG_FORMAT",
             "RATCHET_LOG_LEVEL",
@@ -247,6 +249,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SCOUT_MAX_RUNS_PER_DAY",
             "RATCHET_SCOUT_RUNS_PER_HOUR",
             "RATCHET_SCRUB_STATS",
+            "RATCHET_SEEN_DEDUP_S",
             "RATCHET_STATS_TTL_S",
             "RATCHET_STORE_FALLBACK_TEACHER",
             "RATCHET_STRICT_CONFIG",
@@ -338,6 +341,9 @@ MODES = ("mock", "live")
 MAX_SAMPLES = 16  # RATCHET_SAMPLES, as a task's own `policy.samples`
 MAX_GOLDEN_FRACTION = 0.5  # RATCHET_GOLDEN_FRACTION: more would hold most examples out of training
 MIN_USEFUL_AUDIT_RATE = 0.01  # below it a canary may never collect RATCHET_MIN_AUDITS audits (a warning)
+MAX_IDEMPOTENCY_CACHE = 1_000_000  # RATCHET_IDEMPOTENCY_CACHE: answers kept by Idempotency-Key (ADR 0071)
+MAX_RETRY_WINDOW_S = 86_400.0  # RATCHET_IDEMPOTENCY_TTL_S and RATCHET_SEEN_DEDUP_S: a day at most
+DEFAULT_SEEN_DEDUP_S = 300.0  # RATCHET_SEEN_DEDUP_S unset in live mode
 _ENV_NAME = re.compile(r"\b(?:RATCHET|NEBIUS|TAVILY)_[A-Z0-9_]*[A-Z0-9]")
 
 
@@ -584,6 +590,14 @@ class Settings:
     # only and are never stored; any other non-text part is a 400.
     teacher_modalities: str = field(default_factory=lambda: _env("RATCHET_TEACHER_MODALITIES", "text"))
 
+    # Retries (ADR 0071). Answers kept by Idempotency-Key, in memory: how many (0 = the header is ignored) and for how
+    # many seconds after each finished (0 = only a request that arrives while the first runs shares its answer). And the
+    # seconds within which the same API client's repeat of a stored example counts once toward the frequent-request
+    # rule (unset: 300 in live mode, 0 in mock mode, whose repeats are synthetic traffic; 0 = every repeat counts, v0.4).
+    idempotency_cache: int = field(default_factory=lambda: _int("RATCHET_IDEMPOTENCY_CACHE", "10000"))
+    idempotency_ttl_s: float = field(default_factory=lambda: _float("RATCHET_IDEMPOTENCY_TTL_S", "600"))
+    seen_dedup_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_SEEN_DEDUP_S"))
+
     # Ed25519 private key (base64 of the 32-byte seed) that signs each adapter's bill of materials.
     # Generate one with `python -m ratchet.bom keygen`. Empty = manifests are stored unsigned.
     bom_signing_key: str = field(default_factory=lambda: _env("RATCHET_BOM_SIGNING_KEY", ""))
@@ -702,6 +716,28 @@ class Settings:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,
         RATCHET_MAX_N). A bad RATCHET_MAX_N raises ValueError, so the gateway fails at startup."""
         return Limits(max_messages=self.max_messages, max_input_chars=self.max_input_chars, max_n=self.max_n)
+
+    def idempotency(self) -> tuple[int, float]:
+        """(RATCHET_IDEMPOTENCY_CACHE, RATCHET_IDEMPOTENCY_TTL_S), checked: up to MAX_IDEMPOTENCY_CACHE answers and up to
+        MAX_RETRY_WINDOW_S seconds, 0 or more. Anything else raises ValueError naming the variable, so the gateway stops
+        at startup."""
+        n, ttl = self.idempotency_cache, self.idempotency_ttl_s
+        if not _whole_in(n, 0, MAX_IDEMPOTENCY_CACHE):
+            raise ValueError(f"RATCHET_IDEMPOTENCY_CACHE must be a whole number from 0 to {MAX_IDEMPOTENCY_CACHE}, not {n!r}")
+        if not _number_in(ttl, 0.0, MAX_RETRY_WINDOW_S, False):
+            raise ValueError(f"RATCHET_IDEMPOTENCY_TTL_S must be 0 to {MAX_RETRY_WINDOW_S:.0f} seconds, not {ttl!r}")
+        return n, float(ttl)
+
+    def seen_dedup(self) -> float:
+        """RATCHET_SEEN_DEDUP_S, checked: 0 to MAX_RETRY_WINDOW_S seconds (unset: DEFAULT_SEEN_DEDUP_S in live mode, 0 in
+        mock mode, where repeats are the simulator's and the demo's traffic, as RATCHET_TICK_INTERVAL_S is 0 there);
+        ValueError naming the variable otherwise."""
+        window = self.seen_dedup_s
+        if window is None:
+            return 0.0 if self.mode == "mock" else DEFAULT_SEEN_DEDUP_S
+        if not _number_in(window, 0.0, MAX_RETRY_WINDOW_S, False):
+            raise ValueError(f"RATCHET_SEEN_DEDUP_S must be 0 to {MAX_RETRY_WINDOW_S:.0f} seconds, not {window!r}")
+        return float(window)
 
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises
@@ -903,6 +939,8 @@ class Settings:
             ("RATCHET_ON_TEACHER_FAILURE", Settings.serve_student_on_teacher_failure),
             ("RATCHET_UNKNOWN_TASKS", Settings.unknown_task_policy),
             ("RATCHET_MAX_N", Settings.limits),
+            ("RATCHET_IDEMPOTENCY_CACHE", Settings.idempotency),
+            ("RATCHET_SEEN_DEDUP_S", Settings.seen_dedup),
             ("RATCHET_TEACHER_PARAMS", Settings.gen_policy),
             ("RATCHET_STUDENT_COST_MODEL", Settings.cost_policy),
             ("RATCHET_DB_SYNC", Settings.ledger_sync),

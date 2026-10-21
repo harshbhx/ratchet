@@ -299,7 +299,21 @@ EXAMPLES = REGISTRY.counter(
 REJECTIONS = REGISTRY.counter(
     "ratchet_rejections_total",
     "Chat requests refused before the cascade, by reason (auth, invalid_request, unknown_task, task_not_allowed, quota, "
-    "too_large, disconnected, forbidden, other).",
+    "too_large, disconnected, forbidden, idempotency, other).",
+    ("reason",),
+)
+IDEMPOTENT = REGISTRY.counter(
+    "ratchet_idempotent_requests_total",
+    "Chat requests with an Idempotency-Key, by outcome: first (ran the cascade, answer kept), uncached (ran, answer not "
+    "kept), failed (ran and failed: the key is released), replayed (answered from the cache), joined (waited for the "
+    "first and got its answer), reused (400: another body), in_flight (409: the first was still running, or too many "
+    "requests waited for it), invalid (400).",
+    ("outcome",),
+)
+SEEN_SKIPPED = REGISTRY.counter(
+    "ratchet_seen_skipped_total",
+    "Repeats of a stored example not counted in its seen (the frequent-request rule), by reason: retry (the client's SDK "
+    "said it retries) or window (the same sender within RATCHET_SEEN_DEDUP_S).",
     ("reason",),
 )
 CIRCUIT_OPEN = REGISTRY.gauge("ratchet_circuit_open", "1 while a breaker is open or half-open, else 0.", ("breaker",))

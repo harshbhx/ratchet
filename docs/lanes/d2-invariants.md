@@ -21,3 +21,15 @@ Lane D2 (config readiness, idempotency, off-path quality checks, fallback attrib
 **Enforcing code.** `ratchet/gateway.py`: `healthz`, `livez`, `readyz`; `ratchet/readiness.py`: `pool`, `POOLS`, `ProbeCache`, `Readiness`, `_way_through`, `BUSY`, `list_models`; `ratchet/ledger.py`: `Ledger.probe`.
 
 **Proving tests.** `tests/test_readiness.py`: `test_healthz_answers_with_every_worker_thread_busy`, `test_hung_endpoints_never_make_the_ledger_look_unwritable`, `test_probe_cache_shares_runs_times_out_and_names_classes`, `test_readyz_503_when_the_ledger_cannot_be_written`, `test_readyz_reports_missing_adapters_and_queues_their_reload` (one `/models` call per TTL), `test_readyz_follows_the_teacher`, `test_readyz_recovers_from_an_open_teacher_breaker_without_traffic`.
+
+## A client's retry is never a repeat, and a replayed answer never touches disk (OPS-IDEMPOTENCY, ADR 0071)
+
+This one amends INV-3 rather than taking a new number: the integrator can append it to INV-3's text ("Golden examples are never trained on, except requests seen `FREQUENT` (3) or more times ...") and keep `INV-3`'s id.
+
+**Text.** `seen` counts how often traffic asks a request, never how often one client retried it. `Ratchet._store_example` passes `count_seen=False` to `Ledger.add_example` when `RequestMeta.retry_count` (the gateway's reading of `x-stainless-retry-count`) is above 0, and the API key's name of the gateway request it serves as `sender` (None for internal traffic); the ledger bumps a duplicate's `seen` only when `count_seen` is true and its `seen_window` (RATCHET_SEEN_DEDUP_S) has not counted that (example, sender) within the window, deciding and writing under its lock. A response kept for an `Idempotency-Key` (`gateway._complete_idempotent`, `idem.IdemCache`) lives in process memory only, never in the ledger, a log line or a file (INV-12), is keyed by the API key's name, never the key (INV-13), and an error is never kept.
+
+**Why.** Three retries of one escalated request used to reach `FREQUENT` and move a golden example into training, so a client that retries hard could drain the held-out set the release gate measures on. A kept answer holds request-derived text.
+
+**Enforcing code.** `ratchet/ledger.py`: `Ledger.add_example`, `Ledger.seen_window`; `ratchet/idem.py`: `SeenWindow`, `IdemCache`, `retry_count`; `ratchet/router.py`: `Ratchet._store_example`, `Ratchet._sender`; `ratchet/gateway.py`: `chat`, `_complete_idempotent`, `_cacheable`, `_replay`.
+
+**Proving tests.** `tests/test_idempotency.py`, marked `INV-3` already: `test_sdk_retries_do_not_drain_the_golden_set`, `test_the_same_request_minutes_later_still_counts`, `test_openai_sdk_retry_after_a_server_error_is_not_a_repeat`, `test_add_example_skips_retries_and_repeats_within_the_window`, `test_concurrent_retries_count_once`, `test_seen_window_counts_once_per_window_per_sender`; and for the rest: `test_internal_traffic_and_mock_mode_count_every_repeat`, `test_failed_first_request_releases_the_key`, `test_replay_log_line_says_it_replayed` (the client's key is never logged).
