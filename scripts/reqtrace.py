@@ -608,6 +608,16 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.nightschool.evaluate:cascade_eval",
         "ratchet.nightschool.dataset:rows",
     ),
+    "FR-2.55": (
+        "ratchet/similarity.py",
+        "ratchet.compare:FieldSpec",
+        "ratchet.compare:SimilarityText",
+        "ratchet.tasks:samples_problem",
+        "ratchet.tasks:Task.sample_count",
+        "ratchet.taskspec:parse_spec",
+        "ratchet.confidence:score",
+        "ratchet.router:Ratchet.handle",
+    ),
     "FR-2.15": (
         "ratchet/taskspec.py",
         "ratchet.taskspec:parse_document",
@@ -703,6 +713,16 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.release:ReleaseGate.task_failures",
         "ratchet.release:ReleaseGate._tick_tasks",
         "ratchet.nightschool.orchestrate:rescore",
+        "ratchet.ledger:Ledger.stats_by_task",
+    ),
+    "FR-14.40": (
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.nightschool.evaluate:LiveEvaluator.evaluate",
+        "ratchet.tasks:Task.free_text",
+        "ratchet.tasks:Task.precision_kind",
+        "ratchet.release:ReleaseGate.judge_problem",
+        "ratchet.release:ReleaseGate.judge_failures",
+        "sim.mock_models:MockFleet.judge",
         "ratchet.ledger:Ledger.stats_by_task",
     ),
     # 6.15 Cost and economics

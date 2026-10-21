@@ -278,7 +278,15 @@ def _check_ts(ts: float, what: str) -> float:
 
 def _live_calibration(live: Version | None, task: tasks.Task) -> dict[str, Any]:
     """`stats_by_task`'s view of how the live version holds the student to `task` (FR-14.1)."""
-    out: dict[str, Any] = {"threshold": None, "precision": None, "coverage": None, "calibrated": None, "disabled": None}
+    out: dict[str, Any] = {
+        "threshold": None,
+        "precision": None,
+        "coverage": None,
+        "calibrated": None,
+        "disabled": None,
+        "precision_kind": None,
+        "judge_pass_rate": None,
+    }
     if live is None or task.pinned:
         return out
     rec = calibration.entry(live.eval, task.name)
@@ -291,6 +299,10 @@ def _live_calibration(live: Version | None, task: tasks.Task) -> dict[str, Any]:
         out["coverage"] = calibration.number(rec.get("coverage"))
         out["calibrated"] = rec.get("calibrated") if isinstance(rec.get("calibrated"), bool) else None
         out["disabled"] = rec.get("disabled") if isinstance(rec.get("disabled"), str) else None
+        # FR-14.40: what the precision means (a similarity task's is a proxy) and the judge's verdict on its served answers.
+        kind = rec.get("precision_kind")
+        out["precision_kind"] = kind if kind in tasks.PRECISION_KINDS else None
+        out["judge_pass_rate"] = calibration.number(rec.get("judge_pass_rate"))
     return out
 
 
@@ -952,7 +964,9 @@ class Ledger:
         teacher's audits of the task's student answers (`audits`, `audit_agreement`, over every version) and, from the
         live version's eval, how the student is held to it: `threshold` as the router applies it
         (`calibration.threshold`: 1.01 when disabled or when its spec changed since), its held-out `precision` and
-        `coverage`, whether its threshold is its own (`calibrated`) and why the release gate disabled it (`disabled`).
+        `coverage`, whether its threshold is its own (`calibrated`) and why the release gate disabled it (`disabled`);
+        since FR-14.40 also what that precision means (`precision_kind`: `exact`, or `proxy` for a similarity task) and
+        the judge's pass rate on the answers it would serve (`judge_pass_rate`, free-text tasks with a judge only).
         They are None without a live version, for a pinned task, and (all but `threshold`) when the live version has no
         record for the task."""
         rows = self.db.execute(

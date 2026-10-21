@@ -11,13 +11,13 @@ All settings come from environment variables. Defaults live in `ratchet/config.p
 | `RATCHET_TEACHER_BASE` | `https://api.tokenfactory.nebius.com/v1` | OpenAI-compatible base URL for the teacher, judge and fallback student (and the fallback teacher, unless `RATCHET_TEACHER_FALLBACK_BASE` is set) |
 | `NEBIUS_API_KEY` | empty | Token Factory API key (sent as `Authorization: Bearer …`) |
 | `RATCHET_TEACHER_MODEL` | `nvidia/Nemotron-3-Ultra-550b-a55b` | Teacher model. Must be in the license registry and distillable, or startup fails with `LicenseError` |
-| `RATCHET_JUDGE_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Judge for free-text golden evaluation (`LiveEvaluator`) |
+| `RATCHET_JUDGE_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Judge for free-text golden evaluation (`LiveEvaluator`): the answers the student would serve on free-text tasks' held-out golden rows, read by `RATCHET_MIN_JUDGE_PASS` ([free-text tasks](#free-text-tasks)) |
 | `RATCHET_FALLBACK_STUDENT` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Hosted, untuned model used for student calls when `RATCHET_STUDENT_BASE` is empty |
 | `RATCHET_STUDENT_BASE` | empty | Base URL of your vLLM endpoint, e.g. `https://<endpoint>/v1` |
 | `RATCHET_STUDENT_KEY` | empty | Token for the student endpoint |
 | `RATCHET_STUDENT_BASE_MODEL` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model that adapters are trained on (also used by the deploy scripts) |
 | `RATCHET_CONFIDENCE_THRESHOLD` | `0.80` | Fallback threshold, used only when a version has no calibrated `threshold` in its eval (and for the hosted, untuned fallback student) |
-| `RATCHET_SAMPLES` | `3` | Student samples per request (self-consistency) and per golden row. A request for more choices (`n`) draws `n` samples, but its confidence is still scored on the first `RATCHET_SAMPLES` of them |
+| `RATCHET_SAMPLES` | `3` | Student samples per request (self-consistency) and per golden row, for a task whose spec sets no `policy.samples` (a task's own count wins, FR-2.55). A request for more choices (`n`) draws `n` samples, but its confidence is still scored on the first `RATCHET_SAMPLES` (or the task's count) of them |
 | `RATCHET_AUDIT_RATE` | `0.05` | Probability that a student-served answer is also sent to the teacher. Mock mode raises it to at least `0.10` |
 | `RATCHET_GOLDEN_FRACTION` | `0.10` | Share of new examples assigned to the golden (held-out) split |
 | `RATCHET_MIN_TASK_GOLDEN` | `20` | Calibration rows (the even half of a task's golden rows) a task needs before its own threshold may go below the version's global one ([per-task calibration](#per-task-calibration), FR-14.1). With fewer it gets the higher of the two and `calibrated: false`. A whole number, 1 or more; anything else stops startup (gateway, simulator, `python -m ratchet.live`) |
@@ -201,8 +201,9 @@ The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mo
 | `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it. Strictly between 0 and 1 |
 | `min_task_test_n` | `RATCHET_MIN_TASK_TEST_N` | 10 | Held-out (odd-half) golden rows a task needs before the golden gate checks its own numbers ([per-task calibration](#per-task-calibration), FR-14.1). A whole number, 0 or more |
 | `task_mode` | `RATCHET_TASK_MODE` | `disable` | What the golden gate does with a task that fails its own check: `disable` it on the candidate (its threshold becomes 1.01, a `task_disabled` event; the version ships for its other tasks) or `reject` the candidate. Case and surrounding spaces are ignored; empty means the default |
+| `min_judge_pass` | `RATCHET_MIN_JUDGE_PASS` | 0 (off) | Golden gate on free-text tasks ([free-text tasks](#free-text-tasks), FR-14.40): the judge's pass rate the answers a candidate would serve need. Below it overall, the candidate is rejected; below it on a task with `min_task_test_n` held-out rows, that task fails as under `task_mode`. With it on, a free-text task the candidate would answer that no judge graded fails too. From 0 to 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1, `task_mode` `disable` or `reject`.
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance` and `min_judge_pass` from 0 to 1, `live_floor` strictly between 0 and 1, `task_mode` `disable` or `reject`.
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features are in [Reserved settings](#reserved-settings).
 
@@ -306,8 +307,9 @@ The built-in vocabularies are in `ratchet/vocab.py`; the prompts that ask for th
 | `set` | a list, or a string split on `split` | the set of normalised elements, duplicates and `empty_values` removed | Jaccard overlap at least `min_jaccard` (default 1.0: equal); two empty sets agree | `item` (element spec or type name; default a label over the set's `values` and `aliases`), `min_jaccard`, `split`, `empty_values` (`("none", "n/a")`) |
 | `records` | a list of objects | each object's sub-`fields` | same length, and each record matches its partner: paired by the `key` fields, by position (`ordered=True`), or else in any order (a maximum matching, so the listed order never decides; quadratic in the records when sub-fields have a tolerance, so name a `key` when records have one) | `fields` (required), `key`, `ordered` |
 | `ranking` | a list of ids | the normalised ids; an id ranked twice is invalid | `prefix` (default): the first `k` in order; `set`: the first `k` as a set (`k=0`: all) | `k`, `mode`, `item` |
+| `similarity` | a string (free text: a summary, a short translation, a reply) | NFKC, case-folded, whitespace collapsed; an empty string is invalid | the longer is at most `max_len_ratio` times the shorter (in characters) and the `metric`'s score reaches `threshold`; equal texts always agree. A proxy: close to the other answer, not checked correct ([free-text tasks](#free-text-tasks)) | `metric` (`chrf`, the default; `token_f1`; `rouge_l`), `threshold` (default 0.7; more than 0, at most 1), `max_len_ratio` (default 2.0; 1 or more). The task needs `policy.samples` of at least 2. Not inside `records`, not a set element |
 
-`similarity` (free text) and `tool_calls` are reserved type names for later releases, as are the formats `tool_calls` and `sql`; a spec that uses them is refused. A set's elements and a record's `key` fields compare by their normalised value only, so an element type with a tolerance is refused (use `records`).
+`tool_calls` is a reserved type name for a later release, as are the formats `tool_calls` and `sql`; a spec that uses them is refused. A set's elements and a record's `key` fields compare by their normalised value only, so an element type with a tolerance is refused (use `records`).
 
 Limits: 64 fields per task (counting the fields inside records), records nested at most 4 deep, at most 2,000 `values`, `aliases`, `order` entries, suffixes or empty values per field, at most 200 records in one answer (at any depth) and 2,000 elements in one set or ranking. A spec that breaks a rule raises `ValueError` when the task is defined, so a broken spec stops the gateway at startup; that includes an option the field's type does not use (`tolerance` on a `number`), which would otherwise do nothing.
 
@@ -320,7 +322,7 @@ Limits: 64 fields per task (counting the fields inside records), records nested 
 | `format` | `json` with fields, else `text` | `json`: fields are paths into the JSON answer, and a code fence around the whole answer is unwrapped; with a `$` field the answer may be any JSON value (a list, a number). `text`: the answer is plain text and its one field is `$`, the text without trailing `.!,;:` (`Positive.` is the label `positive`) |
 | `pinned` | false | Always the teacher, never training data (below) |
 | `store` | true | False: the task's teacher answers are served but never stored as training examples |
-| `policy` | `{}` | `samples` (1 to 16), `audit_rate`, `target_precision`, `min_precision` (0 to 1): part of the spec and its hash. `target_precision` is the precision the task's own threshold is calibrated to (default 0.97) and `min_precision` its floor in the golden gate (default `RATCHET_MIN_PRECISION`) ([per-task calibration](#per-task-calibration)); `samples` and `audit_rate` are read by a later release |
+| `policy` | `{}` | `samples` (1 to 16), `audit_rate`, `target_precision`, `min_precision` (0 to 1): part of the spec and its hash. `samples` is how many student samples the task's confidence score rests on, in the router (the shadow too) and in the golden eval, instead of `RATCHET_SAMPLES` (FR-2.55); a task with a `similarity` field must set it to 2 or more. `target_precision` is the precision the task's own threshold is calibrated to (default 0.97) and `min_precision` its floor in the golden gate (default `RATCHET_MIN_PRECISION`) ([per-task calibration](#per-task-calibration)); `audit_rate` is read by a later release |
 | `routing` | `{}` | Routing rules for a later release; part of the spec and its hash |
 | `tools` | `teacher` | `teacher` or `distill` (opt-in tool-call distillation, a later release) |
 | `description` | empty | What the task is for, up to 1,000 characters. Shown by `GET /ratchet/tasks` |
@@ -347,6 +349,39 @@ When several tasks share one adapter, each gets its own threshold (FR-14.1, [ADR
 | Live alert, per task | One `alert` per (version, task) when its audited precision's Wilson upper bound is below `RATCHET_LIVE_FLOOR` with at least `RATCHET_MIN_AUDITS` audits, for the live and canary versions; a version whose audits are all one task's has only its own alert |
 
 A version scored before per-task calibration, or with `RATCHET_PER_TASK_CALIBRATION=0`, has no records and keeps its one threshold. `/ratchet/stats` lists each task's threshold, precision and coverage from the live version ([API](API.md#get-ratchetstats)).
+
+### Free-text tasks
+
+Summaries, translations and replies are rarely word for word the same, so the exact types call every pair of good answers a disagreement and the student never earns a confident score (FR-2.55, FR-14.40, [ADR 0054](adr/0054-free-text-similarity-and-a-judge-gate.md)). A `similarity` field compares them by a score instead:
+
+| `metric` | What it compares | Use for |
+|---|---|---|
+| `chrf` (default) | Character n-grams of 1 to 6 of the text without whitespace; precision and recall averaged over the orders, F-beta with beta 2; the lower of the two directions, so it is symmetric | Any language, Chinese, Japanese and Thai included; short summaries and translations |
+| `token_f1` | SQuAD's token F1: punctuation and the English articles dropped, the overlap of the two bags of words | Short English answers where word order does not matter |
+| `rouge_l` | ROUGE-L F1: the longest common subsequence of word tokens, at most 512 tokens of each answer | Answers where word order matters; languages that separate words with spaces |
+
+```json
+{"tasks": [
+  {"name": "short-summary", "format": "text",
+   "fields": {"$": {"type": "similarity", "metric": "chrf", "threshold": 0.7}},
+   "policy": {"samples": 3}},
+  {"name": "ticket-summary",
+   "fields": {"category": {"type": "label", "values": ["billing", "bug", "account"]},
+              "summary":  {"type": "similarity", "metric": "rouge_l", "threshold": 0.6}},
+   "policy": {"samples": 3}},
+  {"name": "long-form-writing", "pinned": true}
+]}
+```
+
+What changes for such a task:
+
+- **Samples.** The confidence score counts how many samples agree, so a task with a similarity field needs `policy.samples` of at least 2 (with one sample it always agrees with itself); the spec is refused otherwise. The router and the golden eval both use the task's `samples`.
+- **The answer served** is the medoid: the sample that agrees with the most others, then the most probable among those. Similarity is not transitive (A close to B and B to C, A far from C), and the medoid is never an answer at the edge.
+- **Precision is a proxy.** On a similarity task, the golden eval's precision is the share of served answers close enough to the teacher's, labelled `precision_kind: proxy` in the task's record (and globally when such a task was scored). Audits and shadow comparisons use the same rule. Similar is not right: "the refund was approved" and "the refund was not approved" score 0.74 under chrF.
+- **The judge.** In live mode `LiveEvaluator` asks `RATCHET_JUDGE_MODEL` (JSON mode) whether each answer the student would serve on the held-out half of a free-text task's golden rows (no fields, or a similarity field) is as good as the teacher's: `judge_pass_rate` and `judge_n` in the eval and in each such task's record. The candidate is the answer chosen from the samples the eval already drew, so the judge grades what production would serve. Labels are never judged. The judge runs at night, never on the request path. The mock fleet's judge knows the stored truth, so the gate works offline.
+- **The judge gate.** `RATCHET_MIN_JUDGE_PASS` (default 0, off): a candidate whose overall `judge_pass_rate` is below it is rejected; a free-text task with at least `RATCHET_MIN_TASK_TEST_N` held-out rows whose own rate is below it fails like a task below its precision floor (`RATCHET_TASK_MODE`: disabled on the candidate, or the candidate rejected). With the gate on, a free-text task the candidate would answer that no judge graded fails it too.
+
+Recommended defaults. Pin long-form work (summaries of long documents, translations of whole pages, chat replies, planning, long writing): there the big model earns its price and a score cannot tell good from bad. Distill short free text (a one-paragraph summary, a short translation) with a similarity field, and turn on `RATCHET_MIN_JUDGE_PASS` (0.9 is a reasonable start). Set `RATCHET_UNKNOWN_TASKS=teacher` so that free text no operator registered is answered by the teacher and never stored, rather than distilled under the whole-answer rule.
 
 **Pinned tasks** (`Task.pinned = True`) skip the student entirely. `Ratchet.handle` sends them to the teacher, logs the request (`served_by=teacher`, cost equal to baseline) and does **not** store the answer as a training example. Use `pinned` for open-ended work (planning, long writing) that a small model should not take over. Every other task is **distillable**: its teacher answers become training data. Only an operator's spec pins a task (built-in, tasks file, admin API): no header, metadata key, `model` value or `response_format` can. Pinning a task that already has stored examples keeps them out of training and out of the golden eval from the next night on (`excluded_pinned` in the dataset manifest); the ledger keeps them, so unpinning brings them back.
 
@@ -399,7 +434,7 @@ Define tasks as data, in a tasks file or through the admin API; both take the sa
    API tasks are stored in the ledger and registered again at every start. The API cannot change a built-in or file task (403): edit the file, or define a task under another name that `extends` it. A file task replaces a built-in one of the same name (`{"name": "ticket-triage", "extends": "ticket-triage", "policy": {"samples": 5}}` adjusts the built-in triage).
 2. Make the system prompt ask for JSON with those keys, and list each label's allowed values.
 3. Send traffic with `X-Ratchet-Task: invoice-extract`. `GET /ratchet/tasks` shows every task with its source, spec hash and traffic, and the unregistered names requests used.
-4. Optional: for free-text tasks (no fields), `LiveEvaluator` adds a judge score (`judge_pass_rate`) using the judge model. The release gate does not use that score yet.
+4. Optional: for free-text tasks (no fields, or a `similarity` field), `LiveEvaluator` asks the judge model about the answers the student would serve (`judge_pass_rate`, `judge_n`), and `RATCHET_MIN_JUDGE_PASS` makes the release gate hold candidates to it ([free-text tasks](#free-text-tasks)).
 
 A built-in task is a `Task` in `tasks.BUILTIN` (`ratchet/tasks.py`), with `FieldSpec`s from `ratchet/compare.py`; put shared vocabularies in `ratchet/vocab.py`. Use that only for tasks the code itself depends on, such as Scout's.
 

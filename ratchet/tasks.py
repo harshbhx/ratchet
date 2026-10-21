@@ -2,10 +2,12 @@
 
 A task tells Ratchet which parts of an answer must match for the student to count as agreeing with the teacher: its
 `fields` (FR-2.14, ADR 0021), each a path and a typed comparator from `compare.py` (a label over a vocabulary, a number
-with a tolerance, a date in any common format, a set, records, ...). Free-text fields that are not listed are ignored
-(the judge can score them separately). A field is required unless it says otherwise, so an answer without it is invalid:
-it gets no vote in the confidence score and is never stored as a training example (INV-16). A task without fields
-compares whole answers: canonical JSON when both are JSON, else the text, lower-cased with whitespace collapsed.
+with a tolerance, a date in any common format, a set, records, ...). Free-text fields that are not listed are ignored;
+a `similarity` field compares free text by a score instead (FR-2.55), and the golden eval's judge grades it (FR-14.40). A
+task with such a field needs `policy.samples` of at least 2 (`samples_problem`). A field is required unless it says
+otherwise, so an answer without it is invalid: it gets no vote in the confidence score and is never stored as a training
+example (INV-16). A task without fields compares whole answers: canonical JSON when both are JSON, else the text,
+lower-cased with whitespace collapsed.
 
 Every answer is cleaned the same way before it is compared, stored or served (`clean_answer`): reasoning is removed
 (`strip_reasoning`), and a JSON task's answer loses a code fence wrapped around the whole of it. A JSON answer that is
@@ -45,8 +47,12 @@ RESERVED_FORMATS = frozenset({"tool_calls", "sql"})
 # task name (`get`, never stored in REGISTRY).
 SOURCES = ("builtin", "file", "api", "auto", "adhoc")
 TOOLS = ("teacher", "distill")  # who answers tool calls for this task (distill: opt-in for a later release)
-# A task's own release policy; later releases read it (samples, audit rate and precision targets per task).
+# A task's own release policy: `samples` (the router and the golden eval, FR-2.55), `target_precision` and
+# `min_precision` (per-task calibration, FR-14.1); `audit_rate` is for a later release.
 POLICY_KEYS = ("samples", "audit_rate", "target_precision", "min_precision")
+# What a task's measured precision means (`Task.precision_kind`): `exact` when its comparators decide agreement, `proxy`
+# when a `similarity` field makes it closeness to the teacher's answer (FR-14.40).
+PRECISION_KINDS = ("exact", "proxy")
 # How a request without a task name may be matched to this task (a later release reads them): its system message starts
 # with `system_prefix`, its `response_format.json_schema.name` is `schema_name`, or its tools are exactly `tools`. Plain
 # comparisons, never a pattern a request could make slow.
@@ -155,6 +161,9 @@ class Task:
                 fail(f"match.{key} {problem}")
         put("match_rules", MappingProxyType({k: tuple(v) if k == "tools" else v for k, v in self.match_rules.items()}))
         put("policy", MappingProxyType(_policy(self.policy, fail)))
+        problem = samples_problem(specs, self.policy)
+        if problem is not None:
+            fail(problem)
         if not isinstance(self.routing, Mapping) or not all(isinstance(k, str) for k in self.routing):
             fail("routing must be a mapping with string keys")
         put("routing", MappingProxyType(dict(self.routing)))
@@ -181,8 +190,29 @@ class Task:
     @property
     def verifiable(self) -> bool:
         """The task names fields that can be checked (labels, numbers, dates, ...). A task without fields compares whole
-        answers, which tells little about free text."""
-        return bool(self.fields)
+        answers, which tells little about free text, and a `similarity` field only says an answer is close to another."""
+        return any(f.type != "similarity" for f in self.fields)
+
+    @property
+    def free_text(self) -> bool:
+        """Agreement with the teacher's answer does not show the answer is right: the task has no fields (whole answers
+        compared) or a `similarity` field (close enough, by a score). The golden eval asks the judge about such a task's
+        answers too (FR-14.40)."""
+        return not self.fields or any(f.type == "similarity" for f in self.fields)
+
+    @property
+    def precision_kind(self) -> str:
+        """What a precision measured on this task means (`PRECISION_KINDS`): `proxy` with a `similarity` field (the
+        share of served answers close enough to the teacher's), else `exact` (the share that agree under comparators
+        that decide it)."""
+        return "proxy" if any(f.type == "similarity" for f in self.fields) else "exact"
+
+    def sample_count(self, default: int) -> int:
+        """How many student samples one confidence score of this task rests on: its policy's `samples`, else `default`
+        (RATCHET_SAMPLES). The router and the golden eval both read it, so a task is calibrated on what it is served
+        with."""
+        n = self.policy.get("samples")
+        return n if isinstance(n, int) and not isinstance(n, bool) else default
 
     def allows(self, client: str | None) -> bool:
         """Whether the API key named `client` may use this task: always without `clients`; with them, only a key they
@@ -263,6 +293,18 @@ class Task:
         if not self.fields:
             return key["$"]
         return json.dumps({p: jsonable(v) for p, v in key.items()}, sort_keys=True)
+
+
+def samples_problem(specs: Sequence[FieldSpec], policy: Mapping[str, Any]) -> str | None:
+    """Why a task with these fields cannot have this policy, or None: a task with a `similarity` field needs
+    `policy.samples` of at least 2 (FR-2.55), because one sample always agrees with itself, so its agreement is 1 and its
+    confidence says nothing; and the task must say so itself, so RATCHET_SAMPLES=1 cannot take that away."""
+    if not any(f.type == "similarity" for f in specs):
+        return None
+    n = policy.get("samples")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 2:
+        return "a task with a similarity field needs policy.samples of at least 2 (one sample always agrees with itself)"
+    return None
 
 
 def policy_problem(key: Any, value: Any) -> str | None:
