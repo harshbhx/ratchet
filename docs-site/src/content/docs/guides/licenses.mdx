@@ -76,9 +76,9 @@ flowchart LR
 
 ### Why closed teachers are refused
 
-The terms of the most used closed models forbid using their outputs to train competing models. OpenAI's [Business Terms §3.3(e)](https://openai.com/policies/business-terms/) forbid using Output "to develop artificial intelligence models that compete with OpenAI" (as quoted in [ADR 0001](/reference/adr/0001-open-teacher-only/), Oct 19, 2026). A distillation tool that learns from GPT traffic would put its users in breach of terms like these. The README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) section lists the other closed vendors' clauses.
+The terms of the most used closed models forbid using their outputs to train competing models. OpenAI's [Business Terms §3.3(e)](https://openai.com/policies/business-terms/) forbid using Output "to develop artificial intelligence models that compete with OpenAI". A distillation tool that learns from GPT traffic would put its users in breach of terms like these. The README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) section lists the other closed vendors' clauses.
 
-So the rule is hard, not a warning ([ADR 0001](/reference/adr/0001-open-teacher-only/), invariant 1): the teacher must be in the registry with `distill_ok=True`, and an override needs a reviewed code change. The cost is real: traffic that runs on closed models today cannot become training data. It has to go through an open teacher first.
+So the rule is hard, not a warning (invariant 1): the teacher must be in the registry with `distill_ok=True`, and an override needs a reviewed code change. The cost is real: traffic that runs on closed models today cannot become training data. It has to go through an open teacher first.
 
 ### The teacher Ratchet uses: Nemotron 3 Ultra under OpenMDW-1.1
 
@@ -100,7 +100,7 @@ The built-in entries in `ratchet/licenses.py`:
 
 ### Adding an open teacher by configuration
 
-An open teacher that Ratchet does not list yet can be added without a code change, but only within strict limits ([ADR 0090](/reference/adr/0090-licenses-travel-with-the-adapter/)). `RATCHET_TEACHER_LICENSES` names a JSON file:
+An open teacher that Ratchet does not list yet can be added without a code change, but only within strict limits. `RATCHET_TEACHER_LICENSES` names a JSON file:
 
 ```json
 [
@@ -119,7 +119,7 @@ An entry is accepted only when:
 Any problem stops startup with every error and its place, for example `[2].license: 'CC-BY-NC-4.0' is not an allowed license; ...`. Configured entries carry `origin` `config`: every BOM records it per source (`license_origin`), and NOTICE.md marks the license "(configured)".
 
 <Aside type="caution" title="What configuration can and cannot do">
-Configuration **cannot relabel a closed model Ratchet knows of**. But `closed_family` only knows the names it lists: a closed model from a vendor it does not list, under a new name, would pass the check and be admitted on the operator's claim alone. The `config` mark in the BOM and NOTICE is the safeguard there: it shows whoever receives the adapter that the license was the operator's claim, not Ratchet's reviewed registry. Widening the allowlist or loosening the check needs a reviewed ADR.
+Configuration **cannot relabel a closed model Ratchet knows of**. But `closed_family` only knows the names it lists: a closed model from a vendor it does not list, under a new name, would pass the check and be admitted on the operator's claim alone. The `config` mark in the BOM and NOTICE is the safeguard there: it shows whoever receives the adapter that the license was the operator's claim, not Ratchet's reviewed registry. Widening the allowlist or loosening the check needs a reviewed code change.
 </Aside>
 
 ### The student's base: the NVIDIA Nemotron Open Model License
@@ -135,7 +135,7 @@ You do **not** own the base model: Nemotron 3 Nano 4B stays under NVIDIA's licen
 
 ### Licenses travel with the adapter
 
-[ADR 0090](/reference/adr/0090-licenses-travel-with-the-adapter/). Every adapter folder gets a `NOTICE.md` next to its weights:
+Every adapter folder gets a `NOTICE.md` next to its weights:
 
 - the base model and its license, with the license URL (or a warning for an unknown base);
 - a table of teachers with their licenses, license URLs and example counts, configured ones marked;
@@ -147,7 +147,7 @@ The BOM carries the exact NOTICE text and its SHA-256 (`notices`), so a recipien
 
 ### Human labels: a provenance source, not a teacher
 
-[ADR 0091](/reference/adr/0091-human-labels-as-a-provenance-source/). Labels a person wrote (a correction sent with `POST /v1/ratchet/feedback`, or a file imported with `python -m ratchet.importer --source human --attest "..."`) are stored with provenance `human`, license "customer-provided labels" and the note "Written or approved by the customer; the customer attests ownership."
+Labels a person wrote (a correction sent with `POST /v1/ratchet/feedback`, or a file imported with `python -m ratchet.importer --source human --attest "..."`) are stored with provenance `human`, license "customer-provided labels" and the note "Written or approved by the customer; the customer attests ownership."
 
 - `human` lives in `licenses.SOURCES`, not in the teacher registry. `require_distillable` refuses it by name, so no teacher can be called `human`, and a `RATCHET_TEACHER_LICENSES` entry may not use it.
 - Readers of stored rows (Night School, the BOM) use `lookup_source`, which knows both.
@@ -241,4 +241,3 @@ No. The registry matches names and records the licenses you configure; it is not
 - [Night School](/guides/night-school/): where the BOM is written
 - [Training on your data](/guides/training-on-your-data/): the export and the bucket folder
 - [Evidence](/guides/evidence/): set commitments and certificates in the BOM
-- [ADR 0001](/reference/adr/0001-open-teacher-only/), [ADR 0090](/reference/adr/0090-licenses-travel-with-the-adapter/), [ADR 0091](/reference/adr/0091-human-labels-as-a-provenance-source/)

@@ -141,11 +141,11 @@ It is the two-sided 95% interval; the rule uses its upper end, so a rollback nee
 | 10 of 20 | 50% | 70.1% | Roll back |
 | 7 of 17 | 41.2% | 64.0% | Roll back (the simulator's and mock mode's `min_audits` is 15) |
 
-The last row is the reference run's corrupted v3: audited precision 41.2% at n = 17, rolled back on day 4 after serving 145 answers (simulation, mock models, seed 7; README and ADR 0025). [ADR 0005](/reference/adr/0005-shadow-canary-rollback-with-wilson-bounds/) explains why a plain point-estimate rule was not used: at 20 audits, a healthy canary at 96% true precision shows a point estimate below 92% about 19% of the time.
+The last row is the reference run's corrupted v3: audited precision 41.2% at n = 17, rolled back on day 4 after serving 145 answers (simulation, mock models, seed 7). A plain point-estimate rule was not used because at 20 audits, a healthy canary at 96% true precision shows a point estimate below 92% about 19% of the time.
 
 ## The anytime-valid rule (opt-in)
 
-The Wilson interval keeps its error rate for **one look** at a fixed sample. The gate looks after every request. When true precision sits exactly on the floor, checking Wilson after every audit falsely rolls back about 22% of such versions within 400 audits, against a nominal 2.5% (simulation, counts only, 2,000 seeded runs, [ADR 0025](/reference/adr/0025-anytime-valid-release-gate/)). And `min_audits` lets a broken deploy keep serving until it has 15 to 20 audits.
+The Wilson interval keeps its error rate for **one look** at a fixed sample. The gate looks after every request. When true precision sits exactly on the floor, checking Wilson after every audit falsely rolls back about 22% of such versions within 400 audits, against a nominal 2.5% (simulation, counts only, 2,000 seeded runs). And `min_audits` lets a broken deploy keep serving until it has 15 to 20 audits.
 
 **Explained simply.** Think of a running bet against "quality is fine". You start with one coin. Before each audit you bet a little that the answer will be wrong. If quality really is fine, this bet cannot grow on average: it is a fair game or worse for you. So if your pile ever reaches 20 coins, that is strong evidence quality is not fine. Because a fair game cannot grow on average, it does not matter how often you look at your pile: checking after every single audit is allowed. That is what "anytime-valid" means.
 
@@ -170,13 +170,13 @@ Every event carries the counts, the e-value and its threshold, and an anytime-va
 | 0.70: median audits to rollback | 18 | 20 |
 | 0.85: median audits to rollback | about 115 | about 35 |
 
-Simulation, counts only, from ADR 0025's operating characteristics. The price is power against small drops: a version at 0.85 to 0.88 is caught later than by the Wilson rule, which catches it sooner only because it also rolls back good versions far more often. On the reference configuration, `python -m sim.simulate --bad-deploy-version 3 --compare-release` rolls the corrupted v3 back after 7 audits and 48 served answers under the sequential rule, against 17 audits and 145 answers under Wilson (simulation, mock models, ADR 0025).
+Simulation, counts only, from the gate's operating characteristics. The price is power against small drops: a version at 0.85 to 0.88 is caught later than by the Wilson rule, which catches it sooner only because it also rolls back good versions far more often. On the reference configuration, `python -m sim.simulate --bad-deploy-version 3 --compare-release` rolls the corrupted v3 back after 7 audits and 48 served answers under the sequential rule, against 17 audits and 145 answers under Wilson (simulation, mock models).
 
 The sequential canary is opt-in so the pinned reference runs do not move. The **live alert** already uses the e-process by default (`RATCHET_ALERT_EPROCESS=1`, threshold 100). The live-run harness's planned gate profile turns the sequential rule on (`RATCHET_SEQUENTIAL=1`, `RATCHET_CANARY_AUDIT_RATE=0.5`).
 
 ## The paired gate (opt-in)
 
-The default regression check compares two point estimates within 0.02, but the candidate and the live version were scored on the same rows, so the comparison can be done row by row. With `RATCHET_PAIRED_GATE=1` ([ADR 0026](/reference/adr/0026-certified-thresholds-and-a-paired-release-gate/)), the gate reads the candidate's `paired` record against the re-scored live version:
+The default regression check compares two point estimates within 0.02, but the candidate and the live version were scored on the same rows, so the comparison can be done row by row. With `RATCHET_PAIRED_GATE=1`, the gate reads the candidate's `paired` record against the re-scored live version:
 
 - **Coverage:** `b` rows only live serves, `c` rows only the candidate serves, and McNemar's exact one-sided p-value `p_cov = P(X at least b)` with `X ~ Binomial(b + c, 1/2)`.
 - **Wrong answers as a client sees them:** negative flips (the candidate serves a wrong answer where live was right, served or escalated) against positive flips, with `p_err`.
@@ -184,11 +184,11 @@ The default regression check compares two point estimates within 0.02, but the c
 
 It rejects only a regression that is both large and significant: more than `tolerance` of the rows lost from coverage with `p_cov` below `RATCHET_REGRESSION_ALPHA` (0.05), more than `tolerance` of the rows newly answered wrong with `p_err` below it, or, with `RATCHET_MAX_NFR` below 1, a flip rate whose lower bound is above it. Without a paired record against the current live version it falls back to the default rule.
 
-In plain words: only rows where the two versions differ count, and four lost rows with none won is like four coin flips all landing heads, which happens one time in 16. In the reference run, v2 was rejected under the default rule for serving 70 of 74 golden rows against live's 74: four discordant rows, p = 0.0625, not significant at 5% (simulation, README). With the paired gate, v2 is admitted and the run takes another path (simulation, one seed, ADR 0026).
+In plain words: only rows where the two versions differ count, and four lost rows with none won is like four coin flips all landing heads, which happens one time in 16. In the reference run, v2 was rejected under the default rule for serving 70 of 74 golden rows against live's 74: four discordant rows, p = 0.0625, not significant at 5% (simulation, README). With the paired gate, v2 is admitted and the run takes another path (simulation, one seed).
 
 ## Per-task checks
 
-When several tasks share one adapter ([ADR 0040](/reference/adr/0040-per-task-calibration/)), the golden gate also checks each task with at least `min_task_test_n` (10) held-out rows. A task fails when its held-out precision is below its floor (its spec's `policy.min_precision`, else 0.95), more than `tolerance` below the live version's precision on that task, or unmeasured because it answers none of its held-out rows.
+When several tasks share one adapter, the golden gate also checks each task with at least `min_task_test_n` (10) held-out rows. A task fails when its held-out precision is below its floor (its spec's `policy.min_precision`, else 0.95), more than `tolerance` below the live version's precision on that task, or unmeasured because it answers none of its held-out rows.
 
 - `task_mode` `disable` (default): the task's threshold becomes 1.01 on that candidate, a `task_disabled` event is written, the teacher answers that task, and the version ships for its other tasks. The task stays disabled for the version's life, through every re-score.
 - `task_mode` `reject`: the candidate is rejected.
@@ -202,7 +202,7 @@ Night School skips the night while any version is in `shadow` or `canary` (invar
 
 ## Operator holds and the admin API
 
-Every manual change goes through `ratchet/admin.py`, shared by the HTTP admin API (`/ratchet/admin/*`, admin key from `RATCHET_ADMIN_KEYS`) and the CLI (`python -m ratchet.admin`), per [ADR 0064](/reference/adr/0064-admin-api-compare-and-set-and-audit-trail/). Each change needs a reason (3 to 500 characters), is checked against an explicit table of allowed moves, and writes the change, an `admin_actions` row (who, what, why, before and after) and an `admin` event in one transaction.
+Every manual change goes through `ratchet/admin.py`, shared by the HTTP admin API (`/ratchet/admin/*`, admin key from `RATCHET_ADMIN_KEYS`) and the CLI (`python -m ratchet.admin`). Each change needs a reason (3 to 500 characters), is checked against an explicit table of allowed moves, and writes the change, an `admin_actions` row (who, what, why, before and after) and an `admin` event in one transaction.
 
 | Switch or action | Effect on the gate |
 |---|---|
@@ -306,11 +306,11 @@ Some do: that is what a canary is. At 10%, roughly one request in ten can reach 
 
 ### Why is the live version never rolled back automatically?
 
-Automatic action on all traffic is a decision [ADR 0005](/reference/adr/0005-shadow-canary-rollback-with-wilson-bounds/) leaves to a person. The live watch raises an alert; an operator can retire the live version, turn the student off with the kill switch, or restore an older version through the admin API, each in one command.
+Automatic action on all traffic is a decision Ratchet leaves to a person. The live watch raises an alert; an operator can retire the live version, turn the student off with the kill switch, or restore an older version through the admin API, each in one command.
 
 ### How long does a release take?
 
-It depends on traffic and the audit rate. ADR 0005's arithmetic: at a 5% audit rate and a 10% canary, 20 audits take about 4,000 or more requests, before the 50% stage needs its own 20. The shadow first needs 100 would-serve answers. Low-traffic deployments should expect slow promotions; audit focusing (`RATCHET_CANARY_AUDIT_RATE`) helps.
+It depends on traffic and the audit rate. The arithmetic: at a 5% audit rate and a 10% canary, 20 audits take about 4,000 or more requests, before the 50% stage needs its own 20. The shadow first needs 100 would-serve answers. Low-traffic deployments should expect slow promotions; audit focusing (`RATCHET_CANARY_AUDIT_RATE`) helps.
 
 ### What does an audit cost?
 

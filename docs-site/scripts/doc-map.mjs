@@ -1,7 +1,7 @@
 // Where each file of the repo's docs/ folder lands in the site, and which sidebar group it belongs to.
 // Shared by scripts/sync-docs.mjs (which copies the files) and astro.config.mjs (which builds the sidebar),
 // so a doc added to docs/ shows up in both without editing this site.
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,17 +22,28 @@ export function skipped(rel) {
   return posix.basename(rel) === 'CLAUDE.md';
 }
 
-/** Every markdown file under docs/, as POSIX paths relative to docs/, sorted. */
-export function docFiles(dir = DOCS_DIR, prefix = '') {
+/**
+ * The only docs published on this site, with their sidebar labels. Everything else in docs/ (planning, business and
+ * team notes, decision records) is private and is never copied, linked or listed.
+ */
+export const PUBLIC_DOCS = [
+  ['API.md', 'HTTP API guide'],
+  ['ARCHITECTURE.md', 'Architecture'],
+  ['CONFIGURATION.md', 'Configuration'],
+  ['DEPLOYMENT.md', 'Deployment'],
+  ['DEPLOY_NEBIUS_VM.md', 'Demo VM on Nebius'],
+  ['RUNBOOK.md', 'Runbook'],
+  ['SCOUT.md', 'Scout reference'],
+  ['TESTING.md', 'Testing'],
+  ['THREAT_MODEL.md', 'Threat model'],
+];
+
+/** The public docs that exist, as POSIX paths relative to docs/, sorted. */
+export function docFiles(dir = DOCS_DIR) {
   if (!existsSync(dir)) return [];
-  const out = [];
-  for (const name of readdirSync(dir).sort()) {
-    const full = join(dir, name);
-    const rel = prefix ? `${prefix}/${name}` : name;
-    if (statSync(full).isDirectory()) out.push(...docFiles(full, rel));
-    else if (name.toLowerCase().endsWith('.md') && !skipped(rel)) out.push(rel);
-  }
-  return out;
+  return PUBLIC_DOCS.map(([rel]) => rel)
+    .filter((rel) => existsSync(join(dir, rel)))
+    .sort();
 }
 
 /** `API.md` -> `api.md`, `adr/README.md` -> `adr/index.md`, `DEPLOY_NEBIUS_VM.md` -> `deploy-nebius-vm.md`. */
@@ -56,48 +67,7 @@ export function routeOf(rel) {
   return `/${slugOf(rel)}/`;
 }
 
-// Sidebar groups for the docs we know. Anything else lands in "More reference", so a new doc is never orphaned.
-// Labels are short on purpose: the page title (from the doc's first heading) can be longer.
-export const GROUPS = {
-  reference: [
-    ['README.md', 'All documents'],
-    ['API.md', 'HTTP API'],
-    ['CONFIGURATION.md', 'Configuration'],
-    ['ARCHITECTURE.md', 'Architecture'],
-    ['SCOUT.md', 'Scout reference'],
-    ['GLOSSARY.md', 'Glossary (full)'],
-    ['REQUIREMENTS.md', 'Requirements matrix'],
-    ['LIVE_RESULTS.md', 'Live results'],
-  ],
-  operations: [
-    ['DEPLOYMENT.md', 'Deployment'],
-    ['DEPLOY_NEBIUS_VM.md', 'Demo VM on Nebius'],
-    ['DAY1.md', 'Day-1 checklist'],
-    ['RUNBOOK.md', 'Runbook'],
-    ['THREAT_MODEL.md', 'Threat model'],
-    ['TESTING.md', 'Testing'],
-  ],
-  product: [
-    ['PRD.md', 'Product requirements'],
-    ['BUSINESS.md', 'Business'],
-    ['COMPETITIVE_ANALYSIS.md', 'Competitive analysis'],
-    ['RESEARCH_SUMMARY.md', 'Research summary'],
-    ['ROADMAP.md', 'Roadmap'],
-    ['HACKATHON_SUBMISSION.md', 'Hackathon submission'],
-    ['DEMO_SCRIPT.md', 'Demo script'],
-  ],
-};
-
-/** Sidebar items for one group: only the docs that exist. */
-export function groupItems(group, files = docFiles()) {
-  const have = new Set(files);
-  return GROUPS[group].filter(([rel]) => have.has(rel)).map(([rel, label]) => ({ label, slug: slugOf(rel) }));
-}
-
-/** Top-level docs no group names, and folders other than adr/ and lanes/ (each gets its own group). */
-export function ungroupedItems(files = docFiles()) {
-  const named = new Set(Object.values(GROUPS).flat().map(([rel]) => rel));
-  return files
-    .filter((rel) => !named.has(rel) && !rel.startsWith('adr/') && !rel.startsWith('lanes/'))
-    .map((rel) => ({ label: rel.replace(/\.md$/i, '').replace(/[_-]/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()), slug: slugOf(rel) }));
+/** Sidebar label of one public doc. */
+export function labelOf(rel) {
+  return PUBLIC_DOCS.find(([r]) => r === rel)?.[1] ?? rel;
 }

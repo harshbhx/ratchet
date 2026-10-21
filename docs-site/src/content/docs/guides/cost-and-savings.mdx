@@ -26,7 +26,7 @@ On a quiet day that never happens. Then it is cheaper to close the station and l
 
 <Steps>
 
-1. **Every request records what it cost, split in two.** Each model call is priced from its token counts at a price per million tokens (`config.DEFAULT_PRICES`). The **student part** (`student_cost_usd`) covers the student's samples, for the live version and for a shadow candidate. The **teacher part** (`teacher_cost_usd`) covers the escalation, the audit, the shadow arbitration and pinned calls. Their sum is the request's `cost_usd`, which the response also returns as `ratchet.cost_usd`. A failed call adds nothing ([ADR 0023](/reference/adr/0023-utilization-aware-cost-accounting/)).
+1. **Every request records what it cost, split in two.** Each model call is priced from its token counts at a price per million tokens (`config.DEFAULT_PRICES`). The **student part** (`student_cost_usd`) covers the student's samples, for the live version and for a shadow candidate. The **teacher part** (`teacher_cost_usd`) covers the escalation, the audit, the shadow arbitration and pinned calls. Their sum is the request's `cost_usd`, which the response also returns as `ratchet.cost_usd`. A failed call adds nothing.
 
 2. **Every request also records an all-teacher baseline.** This is what the request would have cost if Nemotron 3 Ultra had answered alone (`ratchet.all_teacher_cost_usd`). When the teacher was called, the baseline is that call's price. When the student served, it is a formula: the teacher's price for the student's prompt tokens, plus the student's output tokens and an assumed 300 reasoning tokens (`RATCHET_TEACHER_REASONING_TOKENS`). Savings are baseline minus cost.
 
@@ -53,7 +53,7 @@ flowchart LR
   C --> V
 ```
 
-The response's `usage` field is not this bill. It counts only the tokens of the answer the client received, as if that model had answered alone ([ADR 0018](/reference/adr/0018-usage-reports-the-served-answer/)). `ratchet.cost_usd` prices every call Ratchet made, which `ratchet.usage_breakdown` lists.
+The response's `usage` field is not this bill. It counts only the tokens of the answer the client received, as if that model had answered alone. `ratchet.cost_usd` prices every call Ratchet made, which `ratchet.usage_breakdown` lists.
 
 ### Savings per token and savings by GPU-hours
 
@@ -136,7 +136,7 @@ The explanation says two things separately so the words never contradict the fig
 
 The hosted fallback is Nemotron 3 Nano 30B on Token Factory, untuned, paid per token. Answers it gives carry the <Who as="fallback" /> badge. With list prices and the simulation's token counts it costs about $0.00003 per answer, so a $1.55-an-hour endpoint beats it per answer only above roughly **52,000 student answers an hour**.
 
-That gives a middle band. Take a customer sending 10M requests a month, about 14,000 an hour. That is far above break-even: a GPU running all month costs about $1,100 at $1.55 an hour, against about $9,300 of avoided Ultra spend ([BUSINESS.md](/reference/business/), simulation-based estimate). The GPU-hour savings are positive. The report still says `hosted_fallback`, worded "Self-hosting beats the teacher, but the hosted fallback would cost less per answer".
+That gives a middle band. Take a customer sending 10M requests a month, about 14,000 an hour. That is far above break-even: a GPU running all month costs about $1,100 at $1.55 an hour, against about $9,300 of avoided Ultra spend (simulation-based estimate). The GPU-hour savings are positive. The report still says `hosted_fallback`, worded "Self-hosting beats the teacher, but the hosted fallback would cost less per answer".
 
 The caveat is printed with every `hosted_fallback` explanation (`CROSSOVER_CAVEAT`): the crossover assumes the hosted fallback serves as many requests as the tuned student. It is untuned, so more of its requests may go to the teacher, and each of those costs about $0.001 of Ultra. Ratchet does not measure the hosted model's coverage, because the two are never served side by side. Before switching, run a day on each and compare the student's share of requests in `/ratchet/stats`.
 
@@ -200,12 +200,12 @@ The same run's cost report (simulation, the endpoint up 24 hours a day, unverifi
 | Recommendation | `hosted_fallback` ("Self-hosting does not pay at this volume.") |
 
 <Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Every cost figure on this page is either a simulation output or an estimate from list prices. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders in the [hackathon submission](/reference/hackathon-submission/).
+As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Every cost figure on this page is either a simulation output or an estimate from list prices. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
 </Aside>
 
 ### Spend and rate limits
 
-The cost report looks back. Spend limits stop money going out in the first place ([ADR 0063](/reference/adr/0063-spend-and-rate-limits/)). Per API key, `RATCHET_KEY_LIMITS` (over the `RATCHET_API_KEY_*` defaults) sets a daily request quota, daily and monthly US dollar budgets, requests a minute, requests in flight, the tasks the key may send, and whether its traffic may become training data. For the whole gateway, `RATCHET_DAILY_BUDGET_USD` caps `/v1` spend per UTC day; `RATCHET_BUDGET_MODE=block` then refuses every chat request, while `student_only` keeps serving confident student answers and refuses only what needs the teacher. By default a `budget` event fires at 50, 80 and 100% of every cap (`RATCHET_BUDGET_ALERT_PCT`). The counts live in memory and are read from the ledger at startup, so a restart does not reset them. Two limits on this: the dollars are per-token list prices, so endpoint GPU-hours are not part of them; and a request in flight can overshoot a cap by its own cost. Scout has its own budget guard ([Scout](/guides/scout/)).
+The cost report looks back. Spend limits stop money going out in the first place. Per API key, `RATCHET_KEY_LIMITS` (over the `RATCHET_API_KEY_*` defaults) sets a daily request quota, daily and monthly US dollar budgets, requests a minute, requests in flight, the tasks the key may send, and whether its traffic may become training data. For the whole gateway, `RATCHET_DAILY_BUDGET_USD` caps `/v1` spend per UTC day; `RATCHET_BUDGET_MODE=block` then refuses every chat request, while `student_only` keeps serving confident student answers and refuses only what needs the teacher. By default a `budget` event fires at 50, 80 and 100% of every cap (`RATCHET_BUDGET_ALERT_PCT`). The counts live in memory and are read from the ledger at startup, so a restart does not reset them. Two limits on this: the dollars are per-token list prices, so endpoint GPU-hours are not part of them; and a request in flight can overshoot a cap by its own cost. Scout has its own budget guard ([Scout](/guides/scout/)).
 
 ### Savings receipts
 
@@ -293,6 +293,5 @@ It can. The student-served baseline assumes the teacher would have written 300 r
 - [Evidence: certificates, proofs and savings receipts](/guides/evidence/)
 - [Host it on Nebius](/guides/host-on-nebius/)
 - [The request journey](/guides/request-journey/)
-- [ADR 0023: utilization-aware cost accounting](/reference/adr/0023-utilization-aware-cost-accounting/)
 - [Runbook: cost and the self-host recommendation](/reference/runbook/#cost-and-the-self-host-recommendation)
 - [Architecture §7: cost accounting](/reference/architecture/#7-cost-accounting)

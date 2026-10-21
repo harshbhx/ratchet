@@ -50,7 +50,7 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 | Scout | A multi-agent research demo whose calls go through the cascade | Inside the gateway; Tavily for web search in live mode | [`ratchet/scout/`](https://github.com/harshbhx/ratchet/tree/main/ratchet/scout) |
 | Caddy | Automatic HTTPS, security headers, an optional token guard on `/v1/*`, `/ratchet/demo/*` and `/ratchet/admin/*` | Next to the gateway on the demo VM (Docker Compose) | [`deploy/vm/Caddyfile`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/Caddyfile) |
 
-Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (README, Oct 2026), so the student is trained and served on Nebius AI Cloud ([ADR 0002](/reference/adr/0002-student-on-nebius-serverless-not-token-factory/)). The gateway itself does no inference, which is why a 2-vCPU machine is enough.
+Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (README, Oct 2026), so the student is trained and served on Nebius AI Cloud. The gateway itself does no inference, which is why a 2-vCPU machine is enough.
 
 ### How the pieces connect
 
@@ -158,7 +158,7 @@ The loops share only the ledger. The gate reads what requests wrote, and Night S
     - student-v3.json a copy of the same bill of materials
 </FileTree>
 
-The ledger is not in the bucket. With the default WAL journal it must stay on the gateway host's local disk, because WAL needs shared memory between the processes that open the file (the gateway and the cron jobs); `RATCHET_DB_SYNC=FULL` is the setting for a network mount ([ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/), [architecture](/reference/architecture/), section 11). On the demo VM it lives in a Docker volume.
+The ledger is not in the bucket. With the default WAL journal it must stay on the gateway host's local disk, because WAL needs shared memory between the processes that open the file (the gateway and the cron jobs); `RATCHET_DB_SYNC=FULL` is the setting for a network mount ([architecture](/reference/architecture/), section 11). On the demo VM it lives in a Docker volume.
 
 **Commands:**
 
@@ -182,7 +182,7 @@ It never runs a model. It sends the student's samples to the vLLM endpoint and t
 
 ### Why one SQLite file and one process?
 
-At hackathon scale (thousands to tens of thousands of requests a day) one file needs no setup, is easy to back up and inspect, and is fast enough ([ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/)). The price is one gateway process: run one uvicorn worker. A Postgres ledger for several workers is on the [roadmap](/reference/roadmap/).
+At demo scale (thousands to tens of thousands of requests a day) one file needs no setup, is easy to back up and inspect, and is fast enough. The price is one gateway process: run one uvicorn worker. A Postgres ledger for several workers is planned.
 
 ### What happens when the GPU endpoint is stopped?
 
@@ -190,7 +190,7 @@ If `RATCHET_STUDENT_BASE` still points at it, student calls fail, and after 5 fa
 
 ### Why not train and serve the student on Token Factory?
 
-Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (README, Oct 2026). So training runs as a Serverless Job and serving on a Serverless Endpoint, both on Nebius AI Cloud ([ADR 0002](/reference/adr/0002-student-on-nebius-serverless-not-token-factory/)).
+Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (README, Oct 2026). So training runs as a Serverless Job and serving on a Serverless Endpoint, both on Nebius AI Cloud.
 
 ### What does running it cost?
 
@@ -198,7 +198,7 @@ Estimates only, from the repo docs. The demo VM: about $72.50 for Oct 29 to Dec 
 
 ### Has any of this run on Nebius?
 
-Not yet, as of Oct 21, 2026. The live paths are covered by offline tests with fake transports; the first real run follows the [day-1 checks](/reference/day1/).
+Not yet, as of Oct 21, 2026. The live paths are covered by offline tests with fake transports; the first real run follows the day-1 checks.
 
 ## Related
 

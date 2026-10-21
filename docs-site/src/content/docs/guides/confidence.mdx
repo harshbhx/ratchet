@@ -62,7 +62,7 @@ A worked toy example (arithmetic only, not a result): three samples that all agr
 
 ### Why one signal is not enough
 
-Small models are poorly calibrated: a 4B model can put a high probability on a wrong answer. Token probability alone does not separate right from wrong, and agreement alone cannot tell three confident samples from three lucky ones. [ADR 0003](/reference/adr/0003-per-request-cascade-with-calibrated-confidence/) records the choice to combine them, and why a single fixed bar was not enough: in early simulation runs, one global threshold of 0.80 let about 10% wrong answers through (simulation, mock models, ADR 0003).
+Small models are poorly calibrated: a 4B model can put a high probability on a wrong answer. Token probability alone does not separate right from wrong, and agreement alone cannot tell three confident samples from three lucky ones. Ratchet combines them, because a single fixed bar was not enough: in early simulation runs, one global threshold of 0.80 let about 10% wrong answers through (simulation, mock models).
 
 Validity is the third signal. A label outside the task's vocabulary, or a JSON answer missing a field, is not a vote at all, so the student cannot "agree with itself" on an answer the task would refuse.
 
@@ -73,7 +73,7 @@ Two numbers describe any threshold:
 - **Precision**: of the answers the student would serve, the share that agree with the teacher (<Who as="teacher" />) under the task's comparators.
 - **Coverage**: of all requests, the share the student would serve. Coverage is where the savings come from.
 
-Raising the threshold usually serves fewer answers at higher precision. Usually, not always: one confidently wrong answer at the top can make precision fall as the threshold rises ([ADR 0026](/reference/adr/0026-certified-thresholds-and-a-paired-release-gate/) explains why that rules out some textbook methods).
+Raising the threshold usually serves fewer answers at higher precision. Usually, not always: one confidently wrong answer at the top can make precision fall as the threshold rises (which rules out some textbook methods).
 
 <Aside type="note" title="Toy example">
 The numbers below are made up to show the arithmetic. They are not results from Ratchet or from any simulation.
@@ -128,7 +128,7 @@ flowchart TD
   O --> M
 ```
 
-Which requests are golden is decided by a hash of the request (`RATCHET_GOLDEN_FRACTION`, default 0.10), which acts like a coin flip: it does not look at difficulty or at any model's answer. A request seen 3 or more times (`FREQUENT`) moves to training and leaves the golden set, so a frequent question is never held out forever ([ADR 0007](/reference/adr/0007-golden-set-split-and-frequent-requests/)).
+Which requests are golden is decided by a hash of the request (`RATCHET_GOLDEN_FRACTION`, default 0.10), which acts like a coin flip: it does not look at difficulty or at any model's answer. A request seen 3 or more times (`FREQUENT`) moves to training and leaves the golden set, so a frequent question is never held out forever.
 
 Golden rows are teacher answers to escalations, audits and arbitrations, so they lean towards requests the student found hard. Precision measured on them means agreement with Nemotron 3 Ultra, not ground truth.
 
@@ -136,7 +136,7 @@ The router reads the threshold on every request with a dictionary lookup (`Ratch
 
 ## Per-task thresholds
 
-Several tasks can share one adapter: Scout's triage and reader calls next to support tickets, for example. One threshold calibrated over the pooled rows then serves the hardest task below its target (the easy tasks' right answers dilute its wrong ones) and holds the easy tasks back when the hard task pushes the bar up. So since [ADR 0040](/reference/adr/0040-per-task-calibration/) `cascade_eval` also writes one record per task, `eval['tasks'][name]`, split by the same global even/odd positions:
+Several tasks can share one adapter: Scout's triage and reader calls next to support tickets, for example. One threshold calibrated over the pooled rows then serves the hardest task below its target (the easy tasks' right answers dilute its wrong ones) and holds the easy tasks back when the hard task pushes the bar up. So `cascade_eval` also writes one record per task, `eval['tasks'][name]`, split by the same global even/odd positions:
 
 | Situation | The task's threshold |
 |---|---|
@@ -159,7 +159,7 @@ Each per-task record stores the `spec_hash` it was scored under. If an operator 
 
 Every eval also carries a **certificate**: on the held-out half, how many answers the version would serve, how many of those agree with the teacher, and an exact one-sided Clopper–Pearson lower bound on its precision (`RATCHET_CERT_TARGET` 0.95, `RATCHET_CERT_DELTA` 0.05). [Evidence you can check](/guides/evidence/) explains how to read and recompute it.
 
-The default point rule picks the threshold and the certificate checks it afterwards. With `RATCHET_CALIBRATION=ltt` (opt-in, [ADR 0026](/reference/adr/0026-certified-thresholds-and-a-paired-release-gate/)), the threshold itself is chosen so that its precision is certified, by **Learn-then-Test**:
+The default point rule picks the threshold and the certificate checks it afterwards. With `RATCHET_CALIBRATION=ltt` (opt-in), the threshold itself is chosen so that its precision is certified, by **Learn-then-Test**:
 
 <Steps>
 
@@ -175,7 +175,7 @@ The default point rule picks the threshold and the certificate checks it afterwa
 
 Testing a fixed order and stopping at the first failure spends the error budget once, so the chosen threshold has precision above the target with probability at least `1 − delta`. The grid must be fixed in advance: a grid built from the observed confidences would start with a one-row group, which cannot pass, and a grid picked after looking at the data breaks the guarantee.
 
-Learn-then-Test is opt-in because it is conservative early on. Ten calibration rows cannot certify 95%, since `0.95^10 = 0.60`, far above 0.05. In the toy table above only two calibration rows are at 0.95 or more, so Learn-then-Test would serve nothing. In the seed-7 reference configuration it serves nothing from v1 and v3 and saves 55.4% instead of 69.2% (simulation, mock models, one seed, ADR 0026).
+Learn-then-Test is opt-in because it is conservative early on. Ten calibration rows cannot certify 95%, since `0.95^10 = 0.60`, far above 0.05. In the toy table above only two calibration rows are at 0.95 or more, so Learn-then-Test would serve nothing. In the seed-7 reference configuration it serves nothing from v1 and v3 and saves 55.4% instead of 69.2% (simulation, mock models, one seed).
 
 ## The hosted fallback's fixed threshold
 
@@ -239,7 +239,7 @@ It happens: the target is 97% agreement on the calibration half, not 100%. Three
 
 ### Why sample three times? Isn't that three times the cost?
 
-It triples the student's output tokens and adds a little latency. ADR 0003 accepts that as a small cost next to one teacher call. A judge model scoring every request was rejected because it costs a teacher-sized call every time.
+It triples the student's output tokens and adds a little latency. Ratchet accepts that as a small cost next to one teacher call. A judge model scoring every request was rejected because it costs a teacher-sized call every time.
 
 ### Can I set the threshold by hand?
 

@@ -1,6 +1,6 @@
 ---
 title: FAQ
-description: Short, honest answers to the questions people ask most about Ratchet, grouped for everyone, judges, engineers and buyers.
+description: Short, honest answers to the questions people ask most about Ratchet, grouped for everyone, evaluators, engineers and buyers.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
@@ -75,7 +75,7 @@ Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
 ### Does it work on real traffic yet?
 
-Not yet. As of Oct 21, 2026 nothing has run against a real Nebius account, so there are no live numbers: the submission draft keeps `[LIVE NUMBER]` placeholders, and they will be filled only from a published live-run results file. Everything shown so far is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
+Not yet. As of Oct 21, 2026 nothing has run against a real Nebius account, so there are no live numbers: live figures read `[LIVE NUMBER]` placeholders, and they will be filled only from a published live-run results file. Everything shown so far is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
 
 ### What does it cost?
 
@@ -98,9 +98,9 @@ Leave `RATCHET_STUDENT_BASE` empty and the student's calls go to the hosted fall
 
 ### How is this different from a router or a distillation service?
 
-A cascade router saves money on each call but learns nothing: every call stays rented. Distillation services turn traffic into a fine-tune, but by the repo's [competitive analysis](/reference/competitive-analysis/) the student usually stays on the provider's platform, you start each job yourself, and none of the services it found records each example's teacher license when the example is captured. Ratchet does the loop by itself: the license is recorded when each example is captured and signed into the adapter's BOM, a new adapter is trained every night, a statistical gate decides each release, and the cost report says when the small model loses money. The pieces are prior art (FrugalGPT, Cache & Distil, NVIDIA's Data Flywheel Blueprint and others); putting them in one loop is what is new. [What is Ratchet?](/guides/what-is-ratchet/)
+A cascade router saves money on each call but learns nothing: every call stays rented. Distillation services turn traffic into a fine-tune, but the student usually stays on the provider's platform, you start each job yourself, and none of the services we found records each example's teacher license when the example is captured. Ratchet does the loop by itself: the license is recorded when each example is captured and signed into the adapter's BOM, a new adapter is trained every night, a statistical gate decides each release, and the cost report says when the small model loses money. The pieces are prior art (FrugalGPT, Cache & Distil, NVIDIA's Data Flywheel Blueprint and others); putting them in one loop is what is new. [What is Ratchet?](/guides/what-is-ratchet/)
 
-## For judges
+## For evaluators
 
 ### What should I look at first?
 
@@ -108,7 +108,7 @@ The story page at `/`, then `/scout` (ask an example question and watch each cal
 
 ### Is the demo live or simulated?
 
-Mock mode is simulation, and the pages label it so. For judging, the plan is to run the hosted demo in live mode from Oct 29, 2026 until judging ends on Dec 15: the [submission notes](/reference/hackathon-submission/) read Stage One as needing a runtime call to Token Factory, which mock mode never makes. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Mock mode is simulation, and the pages label it so. The hosted demo is meant to run in live mode, because mock mode never calls Token Factory. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 
@@ -143,7 +143,7 @@ The day's public share of Tavily credits ran out, or a search failed. The run st
 
 ### Is anything held back for judges?
 
-Yes, on the server side. `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's Scout runs, spend and Tavily credits back from the public; the code goes only in the submission's testing instructions and opens a session through `POST /scout/judge` and a signed cookie. A field on the Scout page to type the code in is planned, not on this branch yet. [Scout](/guides/scout/)
+Yes, on the server side. `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's Scout runs, spend and Tavily credits back from the public; the code is shared with evaluators directly, never published, and opens a session through `POST /scout/judge` and a signed cookie. A field on the Scout page to type the code in is planned, not on this branch yet. [Scout](/guides/scout/)
 
 ## For engineers
 
@@ -189,11 +189,11 @@ Yes. Stored examples can be erased for good by client, end user, hash or text (`
 
 ### Why SQLite?
 
-Zero setup, easy backups, easy to inspect, and fast enough for one gateway process at hackathon scale ([ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/)). It runs in WAL mode so dashboard reads do not block writes. The price is one gateway process with one worker; a Postgres ledger is planned on the [roadmap](/reference/roadmap/). [The ledger](/guides/ledger/)
+Zero setup, easy backups, easy to inspect, and fast enough for one gateway process at demo scale. It runs in WAL mode so dashboard reads do not block writes. The price is one gateway process with one worker; a Postgres ledger is planned. [The ledger](/guides/ledger/)
 
 ### Why Nemotron?
 
-The teacher's license allows training on its outputs, which is the whole point. Nemotron 3 Nano 4B is an open model that fits a single L40S and that vLLM serves with LoRA adapters ([ADR 0002](/reference/adr/0002-student-on-nebius-serverless-not-token-factory/)). Choosing the base is a manual decision: Ratchet does not compare base models. [Licenses](/guides/licenses/)
+The teacher's license allows training on its outputs, which is the whole point. Nemotron 3 Nano 4B is an open model that fits a single L40S and that vLLM serves with LoRA adapters. Choosing the base is a manual decision: Ratchet does not compare base models. [Licenses](/guides/licenses/)
 
 ### Can I run more than one gateway process?
 
@@ -207,7 +207,7 @@ Not on one ledger. Run one process with one uvicorn worker: the ledger is one SQ
 
 ### How is it priced?
 
-The core is open source under Apache-2.0 and free to self-host. A managed offering is a plan, not a product: the business plan's price idea (as of Oct 19, 2026) is 20 to 30% of verified monthly savings, with no fee when there are no savings. In the code, a receipt's fee is `RATCHET_TAKE_RATE` (25% by default) of the one-sided 95% lower bound of the savings. [Business plan](/reference/business/)
+The core is open source under Apache-2.0 and free to self-host. A managed offering is a plan, not a product: the idea is a share of verified monthly savings (see [the business case](/guides/business/)), with no fee when there are no savings. In the code, a receipt's fee is `RATCHET_TAKE_RATE` (25% by default) of the one-sided 95% lower bound of the savings.
 
 ### Can I check the savings I would be billed for?
 

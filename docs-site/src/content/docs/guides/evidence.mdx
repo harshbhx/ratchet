@@ -50,13 +50,13 @@ The evidence is written at fixed moments, by code that draws no random numbers a
 | Ledger replay | An estimate of precision, coverage and cost at another threshold or audit rate | Anything signed: it reads the ledger as it is, and its interval is approximate | `python -m ratchet.replay` |
 | Savings receipt | The day's leaves were not edited after sealing, and the bill follows from them | That the costs written at request time were right | `python -m ratchet.receipt verify` |
 
-All the arithmetic comes from two standard-library modules, [`ratchet/stats.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/stats.py) and [`ratchet/merkle.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/merkle.py), checked against hand-computed values and seeded Monte Carlo runs in `tests/test_stats.py` and `tests/test_provenance.py` ([ADR 0024](/reference/adr/0024-evidence-foundations/)).
+All the arithmetic comes from two standard-library modules, [`ratchet/stats.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/stats.py) and [`ratchet/merkle.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/merkle.py), checked against hand-computed values and seeded Monte Carlo runs in `tests/test_stats.py` and `tests/test_provenance.py`.
 
 ## Signed bills of materials
 
 **In one sentence for a 10-year-old:** a bill of materials is a list of everything that went into one adapter, signed so that anyone with the public key can tell if a single character was changed after it was written.
 
-**Precisely.** For every adapter it trains, Night School writes one document, schema `ratchet.bom/v2` ([ADR 0010](/reference/adr/0010-signed-adapter-bom/), [ADR 0090](/reference/adr/0090-licenses-travel-with-the-adapter/)), from the exact rows it used:
+**Precisely.** For every adapter it trains, Night School writes one document, schema `ratchet.bom/v2`, from the exact rows it used:
 
 - `adapter`: the version, the adapter's name, its base model (`nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`) and the ledger day.
 - `training`: the number of examples, the dataset hash, examples per task, `targets` (`teacher answers only`, or with customer-attested human labels), how many examples had PII redacted, where the examples came from, and the training set's commitment (`{alg: ratchet.smt/v1, root, size}`).
@@ -108,7 +108,7 @@ Pass the public key you published somewhere you control (a README, a website). W
 
 **In one sentence for a 10-year-old:** a certificate is the exam score with a safety margin: "even if we were unlucky with the exam questions, the real score is at least this".
 
-**Precisely** ([ADR 0026](/reference/adr/0026-certified-thresholds-and-a-paired-release-gate/)). The golden eval picks the threshold on the even half of the golden rows and measures on the odd half (see [Confidence](/guides/confidence/)). The odd half played no part in choosing the threshold, so its count of agreeing answers among the `m` it would serve is one exact binomial experiment. The one-sided Clopper–Pearson lower bound is the precision `p` at which getting `s` or more agreeing answers out of `m` would happen only `delta` of the time:
+**Precisely**. The golden eval picks the threshold on the even half of the golden rows and measures on the odd half (see [Confidence](/guides/confidence/)). The odd half played no part in choosing the threshold, so its count of agreeing answers among the `m` it would serve is one exact binomial experiment. The one-sided Clopper–Pearson lower bound is the precision `p` at which getting `s` or more agreeing answers out of `m` would happen only `delta` of the time:
 
 ```text
 lcb       = cp_lower(s, m, delta)   # the p with P(X >= s) = delta, X ~ Binomial(m, p)
@@ -131,7 +131,7 @@ How many rows a certificate needs, from `stats.required_rows`:
 | 0.95 | 59 | 93 | 124 | 153 |
 | 0.97 | 99 | 157 | 208 | 257 |
 
-Only served held-out rows count, so certifying 95% with one wrong answer takes about `2 × 93 / coverage` golden rows. In the reference run, the training certificates' lower bounds go from 0.875 (46 of 48, v1) to 0.964 (129 of 130, v7) (simulation, mock models, seed 7, ADR 0026).
+Only served held-out rows count, so certifying 95% with one wrong answer takes about `2 × 93 / coverage` golden rows. In the reference run, the training certificates' lower bounds go from 0.875 (46 of 48, v1) to 0.964 (129 of 130, v7) (simulation, mock models, seed 7).
 
 **Check it:**
 
@@ -151,7 +151,7 @@ python -m ratchet.stats check bom.json --public-key <yours>   # recompute every 
 
 **In one sentence for a 10-year-old:** a Merkle root is a fingerprint of a whole list that lets you prove one item is on it, or is not, without showing the list.
 
-**Precisely** ([ADR 0027](/reference/adr/0027-committed-training-sets/)). Every BOM since v0.5 signs one root per split, over exactly the rows Night School handed to the trainer and to the golden eval:
+**Precisely**. Every BOM since v0.5 signs one root per split, over exactly the rows Night School handed to the trainer and to the golden eval:
 
 - **Key:** the example's hash, a SHA-256 over the task, the redacted messages and any stored generation conditions. Anyone holding the request can recompute it.
 - **Value:** the SHA-256 of `{completion, teacher, license, redactions}`: the stored teacher answer the student trained on, who wrote it, its license and the number of PII placeholders. A proof therefore binds what an example was trained on, not only that its key was there.
@@ -194,7 +194,7 @@ python -m ratchet.proof key --task ticket-triage --messages request.json        
 
 Add `--public-key <yours>` to `verify` and `heldout` to trust the signer, not just the document. The proof (`POST /ratchet/versions/{id}/proof`) and held-out (`GET /ratchet/versions/{id}/heldout`) endpoints need an admin key in live mode (`Authorization: Bearer $ADMIN_KEY`); the mock demo without admin keys leaves them open. They are admin-only on purpose: for a text someone can guess, a yes-or-no answer about the training set is a leak. The `sample-example` endpoint exists in mock mode only.
 
-A proof is about log2 of the set's size in siblings. A held-out certificate for 133 golden rows against 1,288 training leaves is about 113 KB of JSON (mock demo after four simulated days, ADR 0027).
+A proof is about log2 of the set's size in siblings. A held-out certificate for 133 golden rows against 1,288 training leaves is about 113 KB of JSON (mock demo after four simulated days).
 
 **What it does not prove.** The proofs show the operator's binding commitment, signed at training time, to the dataset an adapter was trained and graded on. They do not show that the weights came from that dataset: an operator who signs one set and trains on another is not caught by a Merkle proof. A proof of absence also names the neighbouring training example's key and value hashes, so held-out certificates go to auditors, not to the public.
 
@@ -202,7 +202,7 @@ A proof is about log2 of the set's size in siblings. A held-out certificate for 
 
 **In one sentence for a 10-year-old:** because Ratchet decides which plates the inspector tastes by a coin flip with known odds, each tasted plate can stand in for the untasted plates like it, so last week can be replayed with a different bar.
 
-**Precisely** ([ADR 0028](/reference/adr/0028-designed-propensity-replay/)). Ratchet designs its own labelling, so it knows the chance of every teacher label it sees: 1 for a request the student answered and escalated, the audit rate for an answer it served. Each request logs that probability (`label_p`), the threshold it was held to, and whether the student's answer agreed with the teacher's when the teacher answered under an audit's conditions (`student_agree`). For one version, the replay then computes at any threshold `t` or audit rate `a`:
+**Precisely**. Ratchet designs its own labelling, so it knows the chance of every teacher label it sees: 1 for a request the student answered and escalated, the audit rate for an answer it served. Each request logs that probability (`label_p`), the threshold it was held to, and whether the student's answer agreed with the teacher's when the teacher answered under an audit's conditions (`student_agree`). For one version, the replay then computes at any threshold `t` or audit rate `a`:
 
 - **coverage:** exact, from the logged confidences, no label needed;
 - **precision:** a weighted mean of `student_agree` over labelled served requests, each weighted by `1 / label_p` (Hajek), with an approximate interval (Wilson at Kish's effective sample size); null, with a reason, when nothing could label the answers it would count (an audit rate of 0);
@@ -210,7 +210,7 @@ A proof is about log2 of the set's size in siblings. A held-out certificate for 
 - **a frontier** from 0.30 to 1.00 in steps of 0.01, and an advisory suggested threshold, which nothing applies: thresholds change only through Night School;
 - **a calibrated baseline:** the ratio of what the teacher really billed on audited answers to the token formula's estimate (which assumes 300 reasoning tokens, `RATCHET_TEACHER_REASONING_TOKENS`).
 
-In the seed-7 bad-deploy run (6 days of 1,500 requests), the live v1 replays 6,208 requests at 97.7% coverage and 99.2% precision at its threshold 0.5, and 100% coverage at 97.0% precision at 0.30 (simulation, mock models, ADR 0028).
+In the seed-7 bad-deploy run (6 days of 1,500 requests), the live v1 replays 6,208 requests at 97.7% coverage and 99.2% precision at its threshold 0.5, and 100% coverage at 97.0% precision at 0.30 (simulation, mock models).
 
 **Check it:**
 
@@ -226,7 +226,7 @@ python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # t
 
 **In one sentence for a 10-year-old:** a receipt is the day's bill with a fingerprint of every order on it, and each receipt carries yesterday's fingerprint, so changing an old receipt breaks the chain.
 
-**Precisely** ([ADR 0029](/reference/adr/0029-verified-savings-receipts/)). Ratchet is priced on savings, so the savings must be checkable by the customer. For each ledger day there is one receipt for the whole gateway and one per API client:
+**Precisely**. Ratchet is priced on savings, so the savings must be checkable by the customer. For each ledger day there is one receipt for the whole gateway and one per API client:
 
 <Steps>
 
@@ -252,7 +252,7 @@ flowchart LR
 
 Every chat response carries its ledger row id in `X-Ratchet-Request-Id` and `ratchet.row_id`, so a client can later ask for a proof that its request is in that day's receipt. With API keys on, a key reads only its own receipts and proofs and an admin key reads all of them; live mode without any keys serves no receipts, because the leaves list every request's time, task and cost. The gateway-wide receipt also shows the day's savings by GPU-hours paid, which are often negative at low volume. That view is informational (billing uses the per-token view); the [cost report](/guides/cost-and-savings/) is what says when self-hosting does not pay.
 
-When the mock teacher's reasoning varies around 420 tokens instead of the formula's assumed 300, the receipts measure `R` at about 1.3 to 1.4 for `ticket-triage` and correct the baseline (simulation, mock models, ADR 0029).
+When the mock teacher's reasoning varies around 420 tokens instead of the formula's assumed 300, the receipts measure `R` at about 1.3 to 1.4 for `ticket-triage` and correct the baseline (simulation, mock models).
 
 **Check it:**
 
@@ -325,7 +325,7 @@ Because the proof endpoint is a membership oracle: for a text someone can guess 
 
 ### Does any of this cost money or slow requests down?
 
-Not on the request path beyond logging a few values per request: no model call, no extra random draw. The work happens at night (building the trees and signing) and when a day is sealed. Certificates add about 2 KB to each eval at the reference run's golden sizes (ADR 0026).
+Not on the request path beyond logging a few values per request: no model call, no extra random draw. The work happens at night (building the trees and signing) and when a day is sealed. Certificates add about 2 KB to each eval at the reference run's golden sizes.
 
 ### Has any of it run on real traffic?
 

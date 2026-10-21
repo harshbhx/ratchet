@@ -29,7 +29,7 @@ Some agency chefs' contracts say "you may not copy my recipes to train a rival k
 
 ### The problem
 
-- Many apps rent a large model per token for narrow, repetitive work a small model could do: labelling, extraction, ticket triage, steps inside longer pipelines ([PRD](/reference/prd/), section 2).
+- Many apps rent a large model per token for narrow, repetitive work a small model could do: labelling, extraction, ticket triage, steps inside longer pipelines.
 - Distilling that traffic by hand is slow: log, clean, fine-tune, evaluate, deploy, watch for regressions. Most tools cover one step.
 - The obvious shortcut breaks contracts. Closed models such as GPT forbid using their outputs to train competing models ([OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/); the README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) lists more).
 
@@ -61,7 +61,7 @@ From the README's "Why not a router or a distillation API?" table (the distillat
 | Release safety | Nothing ships | Your own evaluation | Held-out certificate, shadow, canary and automatic rollback |
 | Says when it loses money | Per-token savings only | No | Savings by GPU-hours paid, the break-even volume and a recommendation |
 
-Ratchet did not invent the pieces. The README's [prior art](https://github.com/harshbhx/ratchet#prior-art-and-what-is-new) section names them (sources and dates in the [competitive analysis](/reference/competitive-analysis/)):
+Ratchet did not invent the pieces. The README's [prior art](https://github.com/harshbhx/ratchet#prior-art-and-what-is-new) section names them:
 
 - **Gateways and routing:** [LiteLLM](https://github.com/BerriAI/litellm), [Portkey](https://portkey.ai), [OpenRouter](https://openrouter.ai), whose [`enforce_distillable_text`](https://openrouter.ai/docs/guides/evaluate-and-optimize/distillation) already restricts routing to models that allow distillation.
 - **Cascades and distillation:** [FrugalGPT](https://arxiv.org/abs/2305.05176) (2023); cascades that distil as traffic arrives, [Cache & Distil](https://arxiv.org/abs/2310.13561) (2024) and [Online Cascade Learning](https://arxiv.org/abs/2402.04513) (2024); NVIDIA's [Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), where promotion "remains a human decision" (its README, read Oct 21, 2026); and services such as OpenPipe, AWS Bedrock Model Distillation and OpenAI's distillation.
@@ -81,7 +81,7 @@ As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Live mode
 | Every result (student share, savings, precision) on the story page, in the README and in these docs | **Simulation**: mock models. They show how the loop behaves, not real model quality |
 | Live mode, the vLLM student endpoint, the training job, the demo VM kit | Written and tested offline with fake transports; **not yet run on Nebius** |
 | Model IDs and prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
-| Live results | **Pending.** The submission draft holds `[LIVE NUMBER]` placeholders, filled only from a published live run (`python -m ratchet.liverun`) |
+| Live results | **Pending.** Live figures read `[LIVE NUMBER]` until then; filled only from a published live run (`python -m ratchet.liverun`) |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer yet. Not legal advice |
 | Public demo | `[DEMO URL]` (placeholder: the address is not known yet) |
 
@@ -146,6 +146,6 @@ A real run on Nebius and the live numbers that come from it. The rest of the loo
 <CardGrid>
   <LinkCard title="The big picture" href="/guides/big-picture/" description="Every component and how they connect." />
   <LinkCard title="One request's journey" href="/guides/request-journey/" description="What happens to a single API call." />
-  <LinkCard title="For judges" href="/guides/for-judges/" description="The short tour for the hackathon." />
+  <LinkCard title="For judges" href="/guides/for-judges/" description="The short tour: what to try and what is simulation." />
   <LinkCard title="Evidence" href="/guides/evidence/" description="What you can check yourself." />
 </CardGrid>

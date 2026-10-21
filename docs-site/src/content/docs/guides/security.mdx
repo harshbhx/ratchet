@@ -90,7 +90,7 @@ Four kinds of secret, each with one role. A key that appears in two roles stops 
 
 Keys are at least 16 characters, sent as `Authorization: Bearer <key>` or `X-API-Key`, and compared as SHA-256 digests in constant time (`KeyRing.identify`). The ledger, the logs and `/ratchet/stats` see the key's **name** only (`acme`), never the key (invariant 13).
 
-Every route has one access level ([ADR 0061](/reference/adr/0061-endpoint-access-levels/)):
+Every route has one access level:
 
 | Level | Who may call it | Examples |
 |---|---|---|
@@ -121,7 +121,7 @@ The guard is independent of the app's keys. Use either or both.
 
 ### Spend and rate limits
 
-From [ADR 0063](/reference/adr/0063-spend-and-rate-limits/), all off by default except the in-flight cap and the live per-IP rate:
+All off by default except the in-flight cap and the live per-IP rate:
 
 - **Per key** (`RATCHET_KEY_LIMITS` over the `RATCHET_API_KEY_*` defaults): chat requests per UTC day, US dollars per UTC day and month, requests a minute, requests in flight, the tasks it may send, and whether its traffic may be stored as training data.
 - **Per gateway**: `RATCHET_DAILY_BUDGET_USD` for all `/v1` spend; `RATCHET_BUDGET_MODE=block` refuses every chat request past it, `student_only` keeps serving confident student answers and refuses only what needs the teacher. `RATCHET_MAX_INFLIGHT` (32) answers 503 at once instead of queueing.
@@ -131,11 +131,11 @@ The meter lives in memory and reads the ledger at startup, so a restart forgets 
 
 ### The Scout budget guard and the judge code
 
-Scout is public and spends money, so in live mode it has its own guard (invariant 11): a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a reserve for hackathon judges unlocked by an access code. The code is sent once in a POST body, kept only as a digest, limited to 10 attempts per IP per hour, and turned into a signed `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Never put it on the public project page, in the video or in a URL. Full details: [Scout](/guides/scout/).
+Scout is public and spends money, so in live mode it has its own guard (invariant 11): a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a reserve for evaluators unlocked by an access code. The code is sent once in a POST body, kept only as a digest, limited to 10 attempts per IP per hour, and turned into a signed `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Never put it on the public project page, in the video or in a URL. Full details: [Scout](/guides/scout/).
 
 ### Request ids, logs and metrics
 
-From [ADR 0062](/reference/adr/0062-request-ids-failures-logs-and-metrics/):
+The request ID, failure and metrics behaviour:
 
 - **Request ids.** Every response carries `x-request-id` (`req_` and 32 hex digits) and `openai-processing-ms`. The same id names the request's ledger row, its log line and any `failures` rows. A client's own `X-Request-Id` is kept only when it matches `^[A-Za-z0-9._-]{1,128}$`. An API key can look up only its own requests; another key's request id is the same 404 as one that never existed.
 - **Logs without content.** In live mode, one JSON line per chat request (`RATCHET_LOG_FORMAT`, `RATCHET_LOG_LEVEL`), plus a warning per failed model call naming the exception class and status. No message or answer text, no URL (an HTTP client's error message carries one), no key.
@@ -144,7 +144,7 @@ From [ADR 0062](/reference/adr/0062-request-ids-failures-logs-and-metrics/):
 
 ### Retries and idempotency
 
-From [ADR 0071](/reference/adr/0071-idempotency-keys-and-retry-de-duplication/): a chat request with an `Idempotency-Key` header runs once per API key. A retry with the same key and body gets the first answer again with `Idempotent-Replayed: true`, and makes no model call, ledger row or quota use. The same key with a different body is a 400 `idempotency_key_reused`. Answers are kept in memory only, for `RATCHET_IDEMPOTENCY_TTL_S` (600 s); an error is never kept, so a retry after a failure runs again.
+A chat request with an `Idempotency-Key` header runs once per API key. A retry with the same key and body gets the first answer again with `Idempotent-Replayed: true`, and makes no model call, ledger row or quota use. The same key with a different body is a 400 `idempotency_key_reused`. Answers are kept in memory only, for `RATCHET_IDEMPOTENCY_TTL_S` (600 s); an error is never kept, so a retry after a failure runs again.
 
 Separately, a retry never counts as a repeat of the request. A request whose `x-stainless-retry-count` is above 0 (OpenAI's SDKs send it) does not add to an example's repeat count, and the same client's repeat within `RATCHET_SEEN_DEDUP_S` (300 s in live mode) counts once. That matters because a request seen 3 times leaves the sealed golden set for training: retries must not drain it.
 
@@ -208,7 +208,7 @@ The project keeps a numbered list of invariants that tests and code enforce. The
 10. **Pinned tasks never become training data** and never reach the student.
 11. **The demo budget guard stays on in live mode.** Every Scout run goes through the guard before it starts and adds its spend after it ends, also on failure.
 
-The list has grown to 26. Later ones that matter for security include: redact before storing (12); API keys never stored or logged (13); committed training sets and sealed receipts are append-only (17); an admin key typed into the dashboard stays in the page's memory (18); opt-outs only reduce storage (22); end-user identifiers are never stored or logged (23); an erased example is gone for good (24). The full list, each mapped to its code and tests, is in the [requirements matrix](/reference/requirements/#invariants-do-not-break-these).
+The list has grown to 26. Later ones that matter for security include: redact before storing (12); API keys never stored or logged (13); committed training sets and sealed receipts are append-only (17); an admin key typed into the dashboard stays in the page's memory (18); opt-outs only reduce storage (22); end-user identifiers are never stored or logged (23); an erased example is gone for good (24). The full list, each mapped to its code and tests, is in the requirements matrix.
 
 ## For engineers
 

@@ -68,13 +68,13 @@ If the gateway's daily budget is spent under `RATCHET_BUDGET_MODE=student_only`,
 
 1. **It is served.** The client gets the teacher's answer, cleaned: reasoning removed (`<think>` blocks and the like) and, for a structured task, bare JSON. The teacher answers under the serving parameters: the client's temperature, or 0 when it set none (0.7 when the client asked for several choices).
 
-2. **It is checked before it may become training data** (`Ratchet._store_example`, [ADR 0016](/reference/adr/0016-store-only-complete-valid-teacher-answers/), invariant 16). It is stored only when all of these hold: no storage opt-out applies; it is the primary teacher's answer (a fallback teacher's only with `RATCHET_STORE_FALLBACK_TEACHER=1`); it was not written under label-altering client sampling (`logit_bias`, a non-zero penalty, a temperature above 1, a vendor field); its `finish_reason` is `stop` or `tool_calls`; it is not empty once reasoning is stripped; and it is valid under the task's spec (it parses, every required field is present, a label is in its vocabulary). Anything else is still served, but skipped, with a `skip_example` event on the 1st, 10th, 100th and 1000th skip of each reason.
+2. **It is checked before it may become training data** (`Ratchet._store_example`). It is stored only when all of these hold: no storage opt-out applies; it is the primary teacher's answer (a fallback teacher's only with `RATCHET_STORE_FALLBACK_TEACHER=1`); it was not written under label-altering client sampling (`logit_bias`, a non-zero penalty, a temperature above 1, a vendor field); its `finish_reason` is `stop` or `tool_calls`; it is not empty once reasoning is stripped; and it is valid under the task's spec (it parses, every required field is present, a label is in its vocabulary). Anything else is still served, but skipped, with a `skip_example` event on the 1st, 10th, 100th and 1000th skip of each reason.
 
 3. **It is redacted, then checked again.** Emails, phone numbers, Luhn-checked card numbers, IBANs, secrets and similar identifiers are replaced with placeholders such as `[EMAIL]` in the messages, the answer and the stored conditions. The teacher saw the original. If a placeholder breaks a structured answer, it is skipped (`invalid after redaction`).
 
 4. **It is stored with its provenance** (`Ledger.add_example`): the teacher's model id, the license that allows training on it and its URL, the number of placeholders, the conditions it was written under (`response_format`, `tools`, `tool_choice`, `stop`), the API client and the end user's hash. Its split, golden or train, is fixed from a hash of the task and messages: about 10% golden (`RATCHET_GOLDEN_FRACTION`). A repeat of the same request bumps its `seen` count instead (a client's retry does not). For `n` choices only choice 0 is stored.
 
-5. **It labels the student's own answer.** When the student had a valid answer and the teacher wrote its answer under the audit's conditions (one choice, no client sampling), the row records whether they agreed (`student_agree`). The ledger replay uses it ([ADR 0028](/reference/adr/0028-designed-propensity-replay/)).
+5. **It labels the student's own answer.** When the student had a valid answer and the teacher wrote its answer under the audit's conditions (one choice, no client sampling), the row records whether they agreed (`student_agree`). The ledger replay uses it.
 
 6. **It is the shadow's reference.** If a version is in shadow, its answer for this request is compared with the teacher's.
 
@@ -87,7 +87,7 @@ The student's own answers are never stored as training targets (invariant 2), an
 When the student serves, one random draw (`rng.random()`, exactly one per served answer) decides an audit. The probability is:
 
 - `RATCHET_AUDIT_RATE`: 0.05 by default; mock mode raises it to at least 0.10;
-- for answers a **canary** serves, `RATCHET_CANARY_AUDIT_RATE` when set (audit focusing: the canary's evidence arrives sooner; [ADR 0025](/reference/adr/0025-anytime-valid-release-gate/));
+- for answers a **canary** serves, `RATCHET_CANARY_AUDIT_RATE` when set (audit focusing: the canary's evidence arrives sooner);
 - an operator's runtime rate, when set, replaces both (`PUT /ratchet/admin/settings`, or `python -m ratchet.admin flag audit_rate 0.2`).
 
 The rate the answer was drawn at is logged as `requests.label_p` (1.0 for a student answer that escalated). That makes every teacher label's probability known by design, so the ledger replay and the savings receipts can weight audited rows by `1 / label_p`.
@@ -124,7 +124,7 @@ Human feedback is different. Verdicts sent to `POST /v1/ratchet/feedback` are re
 
 ### Audits off the request path
 
-An audit is a whole teacher call, seconds against a few hundred milliseconds for the student. In live mode the client should not wait for it, so the audit runs after the response on a small worker pool, the sidecar ([ADR 0072](/reference/adr/0072-off-path-audits-and-shadow/)):
+An audit is a whole teacher call, seconds against a few hundred milliseconds for the student. In live mode the client should not wait for it, so the audit runs after the response on a small worker pool, the sidecar:
 
 ```mermaid
 sequenceDiagram
@@ -167,7 +167,7 @@ Disagreements are always settled by the teacher, or counted against the shadow w
 
 ### When an audit or arbitration fails
 
-These calls are optional: the client already has an answer ([ADR 0013](/reference/adr/0013-optional-teacher-calls-fail-open/), invariant 15).
+These calls are optional: the client already has an answer (invariant 15).
 
 | Failure | What the client gets | What is recorded |
 |---|---|---|
@@ -219,7 +219,7 @@ Where to look: each row's `audited`, `audit_agree`, `label_p` and `stored` colum
 
 ### Is 5% enough to catch a bad model?
 
-It is enough to catch a badly broken one quickly, because a canary only serves 10% and then 50% of traffic and needs at least 20 audits per stage before it can move. In the seed-7 reference run (**simulation**, mock models), a deliberately corrupted v3 with 41.2% audited precision was rolled back after 17 audits and 145 served answers ([ADR 0025](/reference/adr/0025-anytime-valid-release-gate/)). To get evidence faster, raise `RATCHET_CANARY_AUDIT_RATE` for canaries only, or turn on the sequential rule, which can roll back after a couple of disagreeing audits.
+It is enough to catch a badly broken one quickly, because a canary only serves 10% and then 50% of traffic and needs at least 20 audits per stage before it can move. In the seed-7 reference run (**simulation**, mock models), a deliberately corrupted v3 with 41.2% audited precision was rolled back after 17 audits and 145 served answers. To get evidence faster, raise `RATCHET_CANARY_AUDIT_RATE` for canaries only, or turn on the sequential rule, which can roll back after a couple of disagreeing audits.
 
 ### What if the teacher is wrong?
 

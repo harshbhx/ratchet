@@ -13,6 +13,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix } from 'node:path';
 import GithubSlugger from 'github-slugger';
+import { DROP_SECTIONS, EDITS } from './public-edits.mjs';
 import {
   DOCS_DIR,
   GITHUB_REF,
@@ -21,6 +22,7 @@ import {
   REPO_URL,
   SITE_DIR,
   docFiles,
+  labelOf,
   outRel,
   routeOf,
   skipped,
@@ -142,6 +144,29 @@ function rewriteLinks(text, fn) {
   });
 }
 
+const DROP = '@@DROP@@';
+
+/** Rewrite a line's links; a link whose target is private (the linker returned DROP) keeps its text and loses the link. */
+function relink(line, link) {
+  return rewriteLinks(line, link).replace(/\[((?:[^[\]]|\[[^\]]*\])*)\]\(@@DROP@@\)/g, '$1');
+}
+
+/**
+ * Decision records (ADR numbers) are not published, so drop the pointers to them from the public docs: "(ADR 0061)",
+ * ", ADR 0042" and "(see ADR 0023)". Text inside code fences is left alone.
+ */
+const ADR_LIST = String.raw`ADRs? \d{3,4}(?:(?:,|, and| and|/)\s*(?:ADR )?\d{3,4})*`;
+function scrubAdr(line) {
+  return line
+    .replace(/^ADRs? \d+(?:, (?:N?FR|INV)-[\d.]+(?: to (?:N?FR)-[\d.]+)?)*[.:]\s*/, '')
+    .replace(/\| ADRs? \d+(?:, (?:N?FR|INV)-[\d.]+)*: /g, '| ')
+    .replace(new RegExp(String.raw`\s*\((?:see |per |from )?${ADR_LIST}\)`, 'g'), '')
+    .replace(new RegExp(String.raw`\(([^()]*?)(?:;|,)\s*(?:see )?${ADR_LIST}\)`, 'g'), '($1)')
+    .replace(new RegExp(String.raw`\((?:see )?${ADR_LIST}[;,]\s*`, 'g'), '(')
+    .replace(new RegExp(String.raw`,\s*(?:see )?${ADR_LIST}`, 'g'), '')
+    .replace(new RegExp(String.raw`\s*(?:see |per |from )${ADR_LIST}`, 'g'), '');
+}
+
 function escapeTags(part) {
   return part.replace(/<(\/?)([A-Za-z][\w.-]*)([^<>\n]*)>/g, (all, slash, name, rest) => {
     if (HTML_TAGS.has(name.toLowerCase())) return all;
@@ -241,6 +266,8 @@ function makeLinker(rel, sources, ids, { samePage } = {}) {
       const relPath = posix.relative(fromDir === '.' ? '' : fromDir, repoRel.slice('docs/'.length));
       return relPath.startsWith('.') ? relPath : `./${relPath}`;
     }
+    // Anything else under docs/ (private notes, decision records, folders) is not published: keep the text only.
+    if (repoRel === 'docs' || repoRel.startsWith('docs/')) return DROP;
     return github(repoRel, hash);
   };
 }
@@ -292,7 +319,7 @@ function environmentPage(sources, ids) {
   const reserved = new Set(Object.keys(env.reserved));
   const route = routeOf(rel);
   const link = makeLinker(rel, sources, ids, { samePage: route });
-  const fix = (text) => outsideCode(rewriteLinks(text, link), escapeTags);
+  const fix = (text) => outsideCode(relink(text, link), escapeTags);
 
   const slugger = new GithubSlugger();
   const sections = [];
@@ -421,7 +448,7 @@ const CLI_GROUPS = [
   ['Run it in live mode', ['live', 'live-export', 'live-purge', 'config', 'cost', 'admin', 'importer', 'liverun']],
   ['Check the evidence offline', ['bom', 'stats', 'proof', 'receipt', 'replay']],
   ['Demos and simulation', ['scout', 'simulate']],
-  ['Build, train and check the repo', ['train', 'day1', 'reqtrace', 'reference-check', 'regen-sim']],
+  ['Build, train and check the repo', ['train', 'day1', 'reference-check', 'regen-sim']],
 ];
 
 /** api/cli.md: every command with a "when to use it" line and its help, from generated/cli.json. */
@@ -451,7 +478,7 @@ function cliPage() {
   out.push('## Make targets\n');
   out.push('From the [`Makefile`](' + `${REPO_URL}/blob/${GITHUB_REF}/Makefile` + '). On Windows, run the command in the second column from WSL or Git Bash, or set the variables the PowerShell way (`$env:RATCHET_MODE="mock"`).\n');
   out.push('| Target | Runs | What it is for |\n|---|---|---|');
-  for (const t of data.make) {
+  for (const t of data.make.filter((m) => m.name !== 'trace')) {
     const recipe = t.recipe ? t.recipe.split('\n').map((l) => `\`${l.replace(/\|/g, '\\|')}\``).join('<br>') : '';
     const note = (t.comment || MAKE_NOTES[t.name] || '').replace(/\|/g, '\\|');
     out.push(`| \`make ${t.name}\` | ${recipe} | ${note} |`);
@@ -476,7 +503,7 @@ function cliPage() {
     }
   }
   const known = new Set(CLI_GROUPS.flatMap(([, ids]) => ids));
-  const rest = data.commands.filter((c) => !known.has(c.id));
+  const rest = data.commands.filter((c) => !known.has(c.id) && c.id !== 'reqtrace');
   if (rest.length) {
     out.push('## Other commands\n');
     for (const c of rest) {
@@ -486,10 +513,41 @@ function cliPage() {
   return out.join('\n');
 }
 
+/** Remove each section whose heading matches, up to the next heading of the same or a higher level. */
+function dropSections(text, patterns) {
+  let lines = text.split(/\r?\n/);
+  for (const pattern of patterns) {
+    const tagged = fenced(lines);
+    const at = tagged.findIndex(({ line, code }) => !code && pattern.test(line));
+    if (at === -1) {
+      warn(`public edit: no heading matches ${pattern}`);
+      continue;
+    }
+    const level = lines[at].match(/^#+/)[0].length;
+    let end = at + 1;
+    while (end < lines.length && !(!tagged[end].code && /^#{1,6}\s/.test(lines[end]) && lines[end].match(/^#+/)[0].length <= level)) end++;
+    lines = [...lines.slice(0, at), ...lines.slice(end)];
+  }
+  return lines.join('\n');
+}
+
+/** The private-doc edits for one public doc. */
+function publicText(rel, text) {
+  let out = dropSections(text, DROP_SECTIONS[rel] ?? []);
+  for (const [pattern, replacement] of EDITS[rel] ?? []) {
+    if (!(pattern instanceof RegExp ? pattern.test(out) : out.includes(pattern))) {
+      warn(`public edit for ${rel} no longer matches: ${pattern}`);
+      continue;
+    }
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 function main() {
   if (!existsSync(DOCS_DIR)) throw new Error(`no docs folder at ${DOCS_DIR}`);
   const files = docFiles();
-  const sources = new Map(files.map((rel) => [rel, readFileSync(join(DOCS_DIR, rel), 'utf8').replace(/^﻿/, '')]));
+  const sources = new Map(files.map((rel) => [rel, publicText(rel, readFileSync(join(DOCS_DIR, rel), 'utf8').replace(/^﻿/, ''))]));
   const ids = new Map([...sources].map(([rel, text]) => [rel, headingIds(text)]));
 
   rmSync(OUT_DIR, { recursive: true, force: true });
@@ -510,23 +568,22 @@ function main() {
     const link = makeLinker(rel, sources, ids);
 
     const body = lines
-      .map(({ line, code }) => (code ? line : outsideCode(rewriteLinks(line, link), escapeTags)))
+      .map(({ line, code }) => (code ? line.replace(/ \(ADRs? \d+\)$/, '') : scrubAdr(outsideCode(relink(line, link), escapeTags))))
       .join('\n');
 
     const fields = { title };
     const description = describe(lines);
     if (description) fields.description = description;
-    fields.editUrl = /^REQUIREMENTS\.md$/i.test(rel) ? false : `${REPO_URL}/edit/${GITHUB_REF}/docs/${rel}`;
-    if (rel.startsWith('adr/') && /^ADR\s+\d+/i.test(title)) {
-      fields.sidebar = { label: title.replace(/^ADR\s+/i, '') };
-    } else if (/^adr\/README\.md$/i.test(rel)) {
-      fields.sidebar = { label: 'All decisions', order: 0 };
-    }
+    fields.editUrl = `${REPO_URL}/edit/${GITHUB_REF}/docs/${rel}`;
+    fields.sidebar = { label: labelOf(rel) };
 
     const banner = `<!-- Generated by docs-site/scripts/sync-docs.mjs from docs/${rel}. Edit that file, not this one. -->\n\n`;
+    const note = /^CONFIGURATION\.md$/i.test(rel)
+      ? ':::tip\nEvery variable in one table per area, with where it matters, is on [Environment variables](/api/environment/).\n:::\n\n'
+      : '';
     const out = join(OUT_DIR, outRel(rel));
     mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(out, frontmatter(fields) + banner + body.replace(/^\n+/, ''));
+    writeFileSync(out, frontmatter(fields) + banner + note + body.replace(/^\n+/, ''));
   }
 
   const img = join(DOCS_DIR, 'img');
@@ -539,7 +596,7 @@ function main() {
     ['cli.md', cliPage()],
   ]) {
     const path = join(API_DIR, name);
-    if (text) writeFileSync(path, text);
+    if (text) writeFileSync(path, text.split('\n').map((l) => scrubAdr(l.replace(/ \((?:[A-Z]+-[\d.]+, )*ADRs? \d+\)/g, ''))).join('\n'));
     else {
       rmSync(path, { force: true });
       warn(`api/${name} not generated: run python docs-site/scripts/export-reference.py`);

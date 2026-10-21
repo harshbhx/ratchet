@@ -191,7 +191,7 @@ export NEBIUS_API_KEY=...        # a Token Factory key from its console
 python scripts/day1_check.py     # or: make day1
 ```
 
-The script confirms that the four model IDs exist and that the teacher answers, returns logprobs and supports JSON mode. It also prints each model's `finish_reason` and whether the teacher takes the strict `json_schema` format. If an ID differs, set `RATCHET_TEACHER_MODEL` (and update `ratchet/licenses.py` and `DEFAULT_PRICES`). Model IDs and prices in `ratchet/config.py` stay unverified until this passes (invariant 9). The full checklist, each check with its fallback, is in the [day-1 checklist](/reference/day1/).
+The script confirms that the four model IDs exist and that the teacher answers, returns logprobs and supports JSON mode. It also prints each model's `finish_reason` and whether the teacher takes the strict `json_schema` format. If an ID differs, set `RATCHET_TEACHER_MODEL` (and update `ratchet/licenses.py` and `DEFAULT_PRICES`). Model IDs and prices in `ratchet/config.py` stay unverified until this passes (invariant 9). The full checklist, each check with its fallback, is in the day-1 checklist.
 
 The Nebius Builder Program's terms say $25 of Token Factory credit, expiring after 90 days ([DEPLOYMENT.md](/reference/deployment/)).
 
@@ -266,7 +266,7 @@ RATCHET_PUBLIC_DASHBOARD=1
 
 Simulated models, no keys, no model calls, no usage cost. Four simulated days and nights run at startup, so the dashboard opens on a trained student. The dashboard's demo buttons work, and every visitor shares one simulated state: one visitor's Reset affects everyone. Every number is simulation.
 
-Mock mode makes no Token Factory or Tavily call. The [submission notes](/reference/hackathon-submission/) read the hackathon's Stage One as needing a runtime Token Factory call, and the Tavily prize a runtime Tavily call, so the judged demo has to run in live mode.
+Mock mode makes no Token Factory or Tavily call. So the public demo has to run in live mode.
 
 </TabItem>
 <TabItem label="Live">
@@ -442,7 +442,7 @@ Every figure here is an **estimate** from the repo docs or the Nebius pricing pa
 
 The code still defaults `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR` to 1.55. Set them (or pass `--usd-per-hour`) to the rate on your bill so the cost report prices the hours right, and set `RATCHET_PRICES_VERIFIED=1` only once the bill confirms them.
 
-The repo's whole-hackathon guess, at $1.55 an hour, is about **$40 to $80**: 6 to 8 training runs, the endpoint on a few hours a day, and $20 to $30 of teacher calls (estimate, [DEPLOYMENT.md](/reference/deployment/#4-cost-estimates)). Whether a 24/7 endpoint pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
+A rough estimate for a short evaluation period, at $1.55 an hour, is about **$40 to $80**: 6 to 8 training runs, the endpoint on a few hours a day, and $20 to $30 of teacher calls (estimate, [DEPLOYMENT.md](/reference/deployment/#4-cost-estimates)). Whether a 24/7 endpoint pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
 
 ## For engineers
 
@@ -483,7 +483,7 @@ The repo's whole-hackathon guess, at $1.55 an hour, is about **$40 to $80**: 6 t
 
 **Events to watch**: `adapter_reloaded`, `circuit` (breakers), `endpoint` (uptime recorded), `sync_failed`, `tavily_exhausted`, `search_error`, `budget`.
 
-**Tests**: `tests/test_live.py` runs `bash -n` on every script, `DRY_RUN=1 bash deploy/vm/create_vm.sh`, and both GPU scripts against a fake `nebius` on `PATH`, asserting the exact commands; `tests/test_cost.py` checks that `start` and `stop` record uptime. They check the commands against the CLI reference as read, not against a real account. Related decisions: [ADR 0002](/reference/adr/0002-student-on-nebius-serverless-not-token-factory/) (why the student is on AI Cloud), [ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/) (one SQLite ledger), [ADR 0023](/reference/adr/0023-utilization-aware-cost-accounting/) (GPU-hour accounting), [ADR 0070](/reference/adr/0070-configuration-checks-and-readiness/) (config check and readiness).
+**Tests**: `tests/test_live.py` runs `bash -n` on every script, `DRY_RUN=1 bash deploy/vm/create_vm.sh`, and both GPU scripts against a fake `nebius` on `PATH`, asserting the exact commands; `tests/test_cost.py` checks that `start` and `stop` record uptime. They check the commands against the CLI reference as read, not against a real account.
 
 ## Common questions
 
@@ -509,7 +509,7 @@ For the VM, yes: set `RATCHET_VM_PLATFORM=cpu-d3`, which has the same `2vcpu-8gb
 
 ### Why only one gateway worker?
 
-The ledger is one SQLite file behind one lock, and the release gate is not built for concurrent writers ([ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/)). A Postgres ledger for several workers is on the [roadmap](/reference/roadmap/) as planned.
+The ledger is one SQLite file behind one lock, and the release gate is not built for concurrent writers. A Postgres ledger for several workers is planned.
 
 ### Is the edge guard enough security?
 
@@ -520,4 +520,4 @@ It closes the paid API, the demo controls and the admin API to anyone without th
 - [Quickstart](/guides/quickstart/): the same gateway in mock mode on your laptop.
 - [Cost and savings](/guides/cost-and-savings/): break-even, the cost report and when self-hosting does not pay.
 - [The big picture](/guides/big-picture/): every component and how a request moves between them.
-- Reference: [demo VM guide](/reference/deploy-nebius-vm/), [deployment](/reference/deployment/), [day-1 checklist](/reference/day1/), [runbook](/reference/runbook/).
+- Reference: [demo VM guide](/reference/deploy-nebius-vm/), [deployment](/reference/deployment/), [runbook](/reference/runbook/).

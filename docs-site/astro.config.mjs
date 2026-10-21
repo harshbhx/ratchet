@@ -7,9 +7,8 @@ import mermaid from 'astro-mermaid';
 import lucode from 'lucode-starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightOpenAPI, { createOpenAPISidebarGroup } from 'starlight-openapi';
-import { REPO_URL, SITE_DIR, SITE_URL, docFiles, groupItems, ungroupedItems } from './scripts/doc-map.mjs';
+import { REPO_URL, SITE_DIR, SITE_URL } from './scripts/doc-map.mjs';
 
-const files = docFiles();
 const DOCS = join(SITE_DIR, 'src', 'content', 'docs');
 
 /** A page listed in the sidebar only once its file exists, so a half-written site still builds. */
@@ -102,6 +101,7 @@ export default defineConfig({
           label: 'Start here',
           items: [
             ...guide('what-is-ratchet', 'What is Ratchet'),
+            ...guide('business', 'The business case'),
             ...guide('quickstart', 'Quickstart'),
             ...guide('for-judges', 'For judges'),
           ],
@@ -119,13 +119,25 @@ export default defineConfig({
             ...guide('training-on-your-data', 'Training on your data'),
             ...guide('licenses', 'Licenses'),
             ...guide('cost-and-savings', 'Cost and savings'),
-            ...guide('scout', 'Scout'),
             ...guide('evidence', 'Evidence you can check'),
           ],
         },
         {
+          label: 'Scout',
+          items: [...guide('scout', 'Scout guide'), ...page('reference/scout', 'Scout reference')],
+        },
+        {
           label: 'Run it',
-          items: [...guide('host-on-nebius', 'Host on Nebius'), ...guide('security', 'Security and safety')],
+          items: [
+            ...guide('host-on-nebius', 'Host on Nebius'),
+            ...page('reference/deployment', 'Deployment'),
+            ...page('reference/deploy-nebius-vm', 'Demo VM on Nebius'),
+            ...page('reference/runbook', 'Runbook'),
+          ],
+        },
+        {
+          label: 'Security',
+          items: [...guide('security', 'Security and safety'), ...page('reference/threat-model', 'Threat model')],
         },
         {
           label: 'API & reference',
@@ -135,20 +147,14 @@ export default defineConfig({
             ...page('api/environment', 'Environment variables'),
             ...page('api/cli', 'Command line'),
             ...page('api/python', 'Python API'),
+            ...page('reference/architecture', 'Architecture'),
+            ...page('reference/testing', 'Testing'),
           ],
         },
         {
           label: 'Help',
           items: [...guide('glossary', 'Glossary'), ...guide('faq', 'FAQ')],
         },
-        {
-          label: 'Reference docs',
-          items: [...groupItems('reference', files).filter((i) => i.slug !== 'reference/api'), ...ungroupedItems(files)],
-        },
-        { label: 'Operations', items: groupItems('operations', files) },
-        { label: 'Product', items: groupItems('product', files) },
-        { label: 'Decisions (ADRs)', collapsed: true, items: [{ autogenerate: { directory: 'reference/adr' } }] },
-        { label: 'Lane notes', collapsed: true, items: [{ autogenerate: { directory: 'reference/lanes' } }] },
       ].filter((group) => group.items.length > 0),
     }),
   ],

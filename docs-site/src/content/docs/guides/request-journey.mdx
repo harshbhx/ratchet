@@ -77,7 +77,7 @@ The gateway runs these checks in this order. A request refused here calls no mod
 | 9 | Daily request quota | 429 `daily_quota_exceeded` | `RATCHET_API_KEY_DAILY_REQUESTS` (off) |
 | 10 | US dollar budgets, per key and for the gateway | 429 `budget_exceeded`, `gateway_budget_exceeded` | `RATCHET_API_KEY_DAILY_USD`, `RATCHET_DAILY_BUDGET_USD` (off) |
 
-**Validation** ([`ratchet/openai_compat.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/openai_compat.py), [ADR 0012](/reference/adr/0012-openai-request-validation-and-error-envelope/)) follows OpenAI's rules and answers in OpenAI's error envelope. Normalisation turns a `developer` message into `system` and text content parts into one string, so the cascade and the ledger see plain messages. The request's `model` field is ignored: Ratchet chooses the model.
+**Validation** ([`ratchet/openai_compat.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/openai_compat.py)) follows OpenAI's rules and answers in OpenAI's error envelope. Normalisation turns a `developer` message into `system` and text content parts into one string, so the cascade and the ledger see plain messages. The request's `model` field is ignored: Ratchet chooses the model.
 
 **Task selection.** The `X-Ratchet-Task` header wins over `metadata.ratchet_task`. With neither, a `response_format` json_schema request gets an auto task derived from its schema, and anything else is `default`. A name that is not registered follows `RATCHET_UNKNOWN_TASKS`: `distill` (the default) makes a task without fields that compares whole answers, `teacher` sends the request to the teacher alone, `reject` is a 400. A task whose `clients` list does not name the key is a 403. No header or field can pin a task; only an operator's spec does.
 
@@ -103,7 +103,7 @@ After admission the rest runs in a worker thread, so the ledger's lock never blo
 
 8. **Maybe audit.** When the student serves, one random draw decides an audit: probability `RATCHET_AUDIT_RATE` (0.05; at least 0.10 in mock mode), or `RATCHET_CANARY_AUDIT_RATE` for a canary when set, or an operator's runtime rate. If drawn, the teacher answers the same request at temperature 0 and its answer is compared with the student's. The student's answer is served either way.
 
-9. **Escalate otherwise** (`_call_teacher`). The teacher answers under the serving parameters: the client's temperature or 0, and 0.7 for `n` choices when the client set none, capped at 8,192 output tokens. The answer is cleaned (reasoning removed), served, and stored as a training example only when it is complete and valid ([ADR 0016](/reference/adr/0016-store-only-complete-valid-teacher-answers/)). If the teacher fails, see [When something fails](#when-something-fails) below.
+9. **Escalate otherwise** (`_call_teacher`). The teacher answers under the serving parameters: the client's temperature or 0, and 0.7 for `n` choices when the client set none, capped at 8,192 output tokens. The answer is cleaned (reasoning removed), served, and stored as a training example only when it is complete and valid. If the teacher fails, see [When something fails](#when-something-fails) below.
 
 10. **Run the shadow.** If a version is in shadow, it is sampled and scored the same way, silently. Its verdict (would it serve, and does it agree with the best reference) goes into the row; a disagreement with the live student's answer is settled by the teacher (arbitration). A request answered by a stand-in runs no shadow.
 
@@ -183,7 +183,7 @@ A standard `chat.completion` with every field OpenAI's has, plus a `ratchet` blo
 | `task`, `schema_valid` | The resolved task, and whether every choice meets the `response_format` |
 | `overhead_pending` | Present and `true` only when the audit or shadow runs after the response |
 
-`usage` is the served answer's own tokens, as if its model had answered alone ([ADR 0018](/reference/adr/0018-usage-reports-the-served-answer/)); Ratchet's extra calls are in `usage_breakdown` and priced in `cost_usd`. `model` names who wrote the answer (the adapter `student-vN`, the hosted Nano 30B's id, the teacher's id, or the fallback teacher's), and `system_fingerprint` changes when a promotion or rollback puts another version in front.
+`usage` is the served answer's own tokens, as if its model had answered alone; Ratchet's extra calls are in `usage_breakdown` and priced in `cost_usd`. `model` names who wrote the answer (the adapter `student-vN`, the hosted Nano 30B's id, the teacher's id, or the fallback teacher's), and `system_fingerprint` changes when a promotion or rollback puts another version in front.
 
 Headers: `X-Ratchet-Served-By`, `X-Ratchet-Request-Id` (the ledger row), `X-Ratchet-Degraded` on a degraded answer, and on every response `x-request-id` and `openai-processing-ms`.
 
@@ -193,9 +193,9 @@ With `stream: true` the gateway sends OpenAI `chat.completion.chunk` events, a f
 
 ### When something fails
 
-Only a teacher call whose answer is needed can fail a request ([ADR 0014](/reference/adr/0014-upstream-failure-semantics/), invariant 7). Everything else fails open.
+Only a teacher call whose answer is needed can fail a request (invariant 7). Everything else fails open.
 
-**The student fails: the teacher answers.** A student call on the request path waits 15 s to answer and 2 s to connect (`RATCHET_STUDENT_TIMEOUT_S`, `RATCHET_STUDENT_CONNECT_TIMEOUT_S`) and is never retried: the teacher is its retry. After 5 endpoint failures in a row (timeouts, connection errors, 5xx, 408, 429) the student's circuit breaker opens and requests go straight to the teacher without waiting ([ADR 0015](/reference/adr/0015-student-circuit-breaker-and-adapter-reload/)):
+**The student fails: the teacher answers.** A student call on the request path waits 15 s to answer and 2 s to connect (`RATCHET_STUDENT_TIMEOUT_S`, `RATCHET_STUDENT_CONNECT_TIMEOUT_S`) and is never retried: the teacher is its retry. After 5 endpoint failures in a row (timeouts, connection errors, 5xx, 408, 429) the student's circuit breaker opens and requests go straight to the teacher without waiting:
 
 ```mermaid
 stateDiagram-v2
@@ -208,7 +208,7 @@ stateDiagram-v2
 
 A shadow has its own breaker, so a bad staging adapter cannot open the one live traffic depends on. When vLLM forgets an adapter after a restart, its 404 queues a reload from `RATCHET_ADAPTER_ROOT` (at most once a minute per adapter).
 
-**The teacher fails on an audit or a shadow arbitration: the student's answer is served anyway** ([ADR 0013](/reference/adr/0013-optional-teacher-calls-fail-open/), invariant 15). The failure is counted and the audit simply does not count.
+**The teacher fails on an audit or a shadow arbitration: the student's answer is served anyway** (invariant 15). The failure is counted and the audit simply does not count.
 
 **The teacher fails when its answer is needed** (an escalation, a cold start, a pinned or teacher-only request). The teacher gets up to 2 retries within 180 s (`RATCHET_TEACHER_RETRIES`, `RATCHET_TEACHER_DEADLINE_S`; a 120 s read timeout), on connection failures and 408, 409, 429 and 5xx. If it still fails, no request row is written; a `failures` row records what the student's samples spent, which also counts against the key's budget. The gateway maps the cause (`_map_upstream`):
 
@@ -222,7 +222,7 @@ A shadow has its own breaker, so a bad staging adapter cannot open the one live 
 | 503 | `teacher_circuit_open` | The teacher's breaker is open after 5 failed calls in a row; answered at once with `Retry-After` |
 | 504 | `teacher_timeout` | The teacher did not answer in time |
 
-Two opt-in stand-ins answer instead of an error ([ADR 0019](/reference/adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher/)). A **fallback teacher** (`RATCHET_TEACHER_FALLBACK_MODEL`, licensed at startup like any teacher) answers, when the primary is unavailable, any request whose teacher answer will be served (route `fallback_teacher`); audits and arbitrations never use it. **Degraded mode** (`RATCHET_ON_TEACHER_FAILURE=serve_student`) serves the student's own valid, below-threshold answer to an escalation, marked `ratchet.degraded` and `X-Ratchet-Degraded` (route `degraded`). Neither covers a 400 about the request. A stand-in's answer is never audited or shadowed, and a degraded answer is never stored, so neither can move a release.
+Two opt-in stand-ins answer instead of an error. A **fallback teacher** (`RATCHET_TEACHER_FALLBACK_MODEL`, licensed at startup like any teacher) answers, when the primary is unavailable, any request whose teacher answer will be served (route `fallback_teacher`); audits and arbitrations never use it. **Degraded mode** (`RATCHET_ON_TEACHER_FAILURE=serve_student`) serves the student's own valid, below-threshold answer to an escalation, marked `ratchet.degraded` and `X-Ratchet-Degraded` (route `degraded`). Neither covers a 400 about the request. A stand-in's answer is never audited or shadowed, and a degraded answer is never stored, so neither can move a release.
 
 ## For engineers
 
@@ -273,7 +273,7 @@ No. The student's whole answer must be scored before Ratchet decides who serves,
 
 ### Why three samples, not one?
 
-Small models are poorly calibrated, so one token probability does not tell right from wrong. Agreement across three samples plus token probability is the signal the threshold is calibrated on ([ADR 0003](/reference/adr/0003-per-request-cascade-with-calibrated-confidence/)). The cost is the student's output tokens three times, small next to one teacher call.
+Small models are poorly calibrated, so one token probability does not tell right from wrong. Agreement across three samples plus token probability is the signal the threshold is calibrated on. The cost is the student's output tokens three times, small next to one teacher call.
 
 ### Is my prompt stored?
 
