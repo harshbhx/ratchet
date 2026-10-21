@@ -1,0 +1,414 @@
+/*
+  Diagrams. Mermaid renders in the browser (astro-mermaid, bundled, no CDN) with its default or dark theme picked
+  from data-theme; the rules below repaint it in the site's neutral tokens so diagrams match the page in both modes.
+  Mermaid writes id-scoped styles into each SVG, hence !important. Brand colours (owned blue, rented orange) are kept
+  for the hand-drawn SVG components, where they carry meaning.
+*/
+
+.sl-markdown-content pre.mermaid,
+pre.mermaid {
+  margin: 1.75rem 0 !important;
+  padding: 1.25rem 1rem !important;
+  border: 1px solid var(--rt-line) !important;
+  border-radius: 1rem !important;
+  background: var(--rt-surface) !important;
+  overflow-x: auto;
+  font-family: var(--__sl-font);
+  /* `safe`: a diagram wider than the column starts at its left edge and scrolls, instead of being cut on both sides. */
+  justify-content: safe center !important;
+  -webkit-overflow-scrolling: touch;
+}
+pre.mermaid:not([data-processed]) {
+  color: transparent;
+  min-height: 12rem;
+}
+pre.mermaid svg {
+  font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif !important;
+  max-width: none !important;
+  height: auto;
+  flex: none;
+}
+
+/* Text */
+pre.mermaid svg :is(.nodeLabel, .label, .cluster-label, .label text, .nodeLabel p, .edgeLabel p) {
+  color: var(--rt-ink) !important;
+  fill: var(--rt-ink) !important;
+}
+pre.mermaid svg :is(span.edgeLabel, .edgeLabel p, .labelBkg) {
+  background-color: var(--rt-surface) !important;
+  color: var(--rt-ink-2) !important;
+}
+pre.mermaid svg .edgeLabel rect {
+  fill: var(--rt-surface) !important;
+  opacity: 1 !important;
+}
+
+/* Flowchart and state nodes */
+pre.mermaid svg .node :is(rect, polygon, path.basic, .label-container, ellipse),
+pre.mermaid svg .node circle:not(.state-start):not(.state-end),
+pre.mermaid svg .statediagram-state :is(rect, .basic) {
+  fill: var(--rt-surface-2) !important;
+  stroke: var(--rt-line-strong) !important;
+  stroke-width: 1px !important;
+}
+pre.mermaid svg .cluster rect {
+  fill: transparent !important;
+  stroke: var(--rt-line-strong) !important;
+  stroke-dasharray: 4 3;
+  rx: 12px;
+}
+pre.mermaid svg .cluster :is(.cluster-label, .nodeLabel, span) {
+  color: var(--rt-muted) !important;
+  fill: var(--rt-muted) !important;
+}
+
+/* Edges and arrowheads */
+pre.mermaid svg :is(.flowchart-link, .edgePath .path, .transition, path.relation) {
+  stroke: var(--rt-muted) !important;
+}
+pre.mermaid svg :is(marker path, .marker, .arrowheadPath, #arrowhead path, #crosshead path) {
+  fill: var(--rt-muted) !important;
+  stroke: var(--rt-muted) !important;
+}
+
+/* State diagram start and end dots */
+pre.mermaid svg :is(.state-start, .start-state, circle.state-start) {
+  fill: var(--rt-ink) !important;
+  stroke: var(--rt-ink) !important;
+}
+pre.mermaid svg .state-end {
+  fill: var(--rt-ink) !important;
+  stroke: var(--rt-surface) !important;
+}
+pre.mermaid svg .end-state-outer {
+  fill: var(--rt-surface) !important;
+  stroke: var(--rt-ink) !important;
+}
+pre.mermaid svg .end-state-inner {
+  fill: var(--rt-ink) !important;
+}
+pre.mermaid svg :is(.statediagram-cluster rect, .statediagram-cluster .inner) {
+  fill: var(--rt-surface) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg :is(.stateLabel .box, .statediagram-note rect) {
+  fill: var(--rt-surface-2) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+
+/* Sequence diagrams */
+pre.mermaid svg :is(rect.actor, .actor-box, rect.actor-top, rect.actor-bottom) {
+  fill: var(--rt-surface-2) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg :is(text.actor, text.actor > tspan) {
+  fill: var(--rt-ink) !important;
+  font-weight: 600;
+}
+pre.mermaid svg :is(.actor-line, line.actor-line) {
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg :is(.messageLine0, .messageLine1) {
+  stroke: var(--rt-muted) !important;
+}
+pre.mermaid svg :is(.messageText, .labelText, .labelText > tspan, .loopText, .loopText > tspan, .noteText, .noteText > tspan) {
+  fill: var(--rt-ink-2) !important;
+  stroke: none !important;
+}
+pre.mermaid svg :is(.note, rect.note) {
+  fill: var(--rt-owned-soft) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg :is(.labelBox) {
+  fill: var(--rt-surface-2) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg .loopLine {
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg :is(.activation0, .activation1, .activation2) {
+  fill: var(--rt-surface) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg :is(.sequenceNumber) {
+  fill: var(--rt-bg) !important;
+}
+
+/* ER and class diagrams */
+pre.mermaid svg :is(.er.entityBox, .er.attributeBoxOdd, .er.attributeBoxEven, g.classGroup rect) {
+  fill: var(--rt-surface-2) !important;
+  stroke: var(--rt-line-strong) !important;
+}
+pre.mermaid svg .er.attributeBoxEven {
+  fill: var(--rt-surface) !important;
+}
+pre.mermaid svg :is(.er.relationshipLine) {
+  stroke: var(--rt-muted) !important;
+}
+pre.mermaid svg :is(.er.entityLabel, .er.relationshipLabel) {
+  fill: var(--rt-ink) !important;
+}
+pre.mermaid svg .er.relationshipLabelBox {
+  fill: var(--rt-surface) !important;
+  opacity: 1 !important;
+}
+
+/* Hand-drawn SVG figures (src/components/diagrams/*). */
+.rt-figure {
+  margin: 1.75rem 0;
+  border: 1px solid var(--rt-line);
+  border-radius: 1rem;
+  background: var(--rt-surface);
+  overflow: hidden;
+}
+.rt-figure .rt-figure-scroll {
+  overflow-x: auto;
+  padding: 1rem 0.75rem 0.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+.rt-figure svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+.rt-figure figcaption {
+  border-top: 1px solid var(--rt-line);
+  padding: 0.7rem 1rem 0.8rem;
+  color: var(--rt-muted);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+}
+.rt-figure figcaption strong {
+  color: var(--rt-ink-2);
+  font-weight: 600;
+}
+.rt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin-top: 0.35rem;
+}
+.rt-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.rt-legend i {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 0.2rem;
+  border: 1.5px solid currentColor;
+}
+.rt-legend .owned i {
+  color: var(--rt-owned);
+  background: var(--rt-owned-soft);
+}
+.rt-legend .rented i {
+  color: var(--rt-rented);
+  background: var(--rt-rented-soft);
+}
+.rt-legend .neutral i {
+  color: var(--rt-line-strong);
+  background: var(--rt-surface-2);
+}
+.rt-legend .fallback i {
+  color: var(--rt-muted);
+  border-style: dashed;
+}
+
+/* Shared SVG classes for the figures: every colour is a token, so both themes work without a re-render. */
+.rt-svg {
+  font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+}
+.rt-svg .t {
+  fill: var(--rt-ink);
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.rt-svg .t2 {
+  fill: var(--rt-ink-2);
+  font-size: 13px;
+}
+.rt-svg .tm {
+  fill: var(--rt-muted);
+  font-size: 12.5px;
+}
+.rt-svg .mono {
+  font-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+  font-size: 12px;
+}
+.rt-svg .eyebrow {
+  fill: var(--rt-muted);
+  font-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.rt-svg .lbl {
+  fill: var(--rt-ink-2);
+  font-size: 12.5px;
+}
+.rt-svg .lbl-bg {
+  fill: var(--rt-surface);
+}
+.rt-figure-hint {
+  display: none;
+  margin: 0 0 0.25rem;
+  color: var(--rt-muted);
+  font-size: var(--sl-text-xs);
+}
+@media (max-width: 40rem) {
+  .rt-figure-hint {
+    display: block;
+  }
+}
+.rt-svg .box {
+  fill: var(--rt-surface-2);
+  stroke: var(--rt-line-strong);
+  stroke-width: 1.25;
+}
+.rt-svg .box-plain {
+  fill: var(--rt-surface);
+  stroke: var(--rt-line-strong);
+  stroke-width: 1.25;
+}
+.rt-svg .zone {
+  fill: none;
+  stroke: var(--rt-line-strong);
+  stroke-width: 1.25;
+  stroke-dasharray: 5 4;
+}
+.rt-svg .zone-fill {
+  fill: var(--rt-bg);
+  stroke: var(--rt-line);
+  stroke-width: 1;
+}
+.rt-svg .owned {
+  fill: var(--rt-owned-soft);
+  stroke: var(--rt-owned);
+  stroke-width: 1.5;
+}
+.rt-svg .rented {
+  fill: var(--rt-rented-soft);
+  stroke: var(--rt-rented);
+  stroke-width: 1.5;
+}
+.rt-svg .fallback {
+  fill: var(--rt-surface);
+  stroke: var(--rt-muted);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+}
+.rt-svg .good {
+  fill: var(--rt-good-soft);
+  stroke: var(--rt-good);
+  stroke-width: 1.25;
+}
+.rt-svg .bad {
+  fill: var(--rt-bad-soft);
+  stroke: var(--rt-bad);
+  stroke-width: 1.25;
+}
+.rt-svg .owned-t {
+  fill: var(--rt-owned-ink);
+}
+.rt-svg .rented-t {
+  fill: var(--rt-rented-ink);
+}
+.rt-svg .good-t {
+  fill: var(--rt-good);
+}
+.rt-svg .bad-t {
+  fill: var(--rt-bad);
+}
+.rt-svg .line {
+  fill: none;
+  stroke: var(--rt-muted);
+  stroke-width: 1.5;
+}
+.rt-svg .line-owned {
+  fill: none;
+  stroke: var(--rt-owned);
+  stroke-width: 1.75;
+}
+.rt-svg .line-rented {
+  fill: none;
+  stroke: var(--rt-rented);
+  stroke-width: 1.75;
+}
+.rt-svg .line-dash {
+  fill: none;
+  stroke: var(--rt-muted);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 4;
+}
+.rt-svg .head {
+  fill: var(--rt-muted);
+}
+.rt-svg .head-owned {
+  fill: var(--rt-owned);
+}
+.rt-svg .head-rented {
+  fill: var(--rt-rented);
+}
+.rt-svg .dot {
+  fill: var(--rt-ink);
+}
+/* The home page's hero loop. */
+.rt-hero-loop {
+  width: 100%;
+  max-width: 30rem;
+  height: auto;
+  margin-inline: auto;
+  display: block;
+}
+.rt-svg .rt-hero-ring {
+  fill: none;
+  stroke: var(--rt-line);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+.rt-svg .rt-hero-arc {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.rt-svg .rt-hero-arc.owned {
+  stroke: var(--rt-owned);
+}
+.rt-svg .rt-hero-arc.rented {
+  stroke: var(--rt-rented);
+}
+.rt-svg .rt-hero-arc.neutral {
+  stroke: var(--rt-muted);
+}
+.rt-svg .rt-hero-mark {
+  fill: var(--rt-owned);
+}
+.rt-svg .rt-hero-mark-bg {
+  fill: var(--rt-ink);
+}
+.rt-svg .rt-hero-pawl {
+  fill: none;
+  stroke: var(--rt-rented);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.rt-svg .rt-hero-pawl-dot {
+  fill: var(--rt-rented);
+}
+.rt-svg .rt-hero-node rect {
+  stroke-width: 1.5;
+}
+.rt-svg .rt-hero-node .box-plain {
+  fill: var(--rt-surface);
+}
+
+.rt-svg .pill {
+  fill: var(--rt-bg);
+  stroke: var(--rt-line-strong);
+  stroke-width: 1;
+}

@@ -1,0 +1,193 @@
+/*
+  Ratchet's palette and fonts on top of the Lucode theme (a shadcn/ui-like Starlight theme).
+  Lucode keeps its layout and components in `@layer lucode`; these rules are unlayered, so they win without !important.
+  Tokens come from web/src/styles/globals.css (see web/DESIGN.md):
+    owned  (blue)   = the student: Nano with the adapter you own
+    rented (orange) = the teacher you rent per token
+  Colour carries meaning, so blue and orange appear where the student and the teacher do (diagrams, badges, the logo).
+  The chrome stays neutral, as in the landing page. Starlight's caution asides use the warning amber, never the
+  teacher's orange.
+*/
+
+/* ---------- Dark (default) ---------- */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Ratchet tokens (used by the components and diagrams) */
+  --rt-bg: #0b0b0c;
+  --rt-bg-sunken: #070708;
+  --rt-surface: #141416;
+  --rt-surface-2: #1a1a1d;
+  --rt-ink: #f2f1ec;
+  --rt-ink-2: #d6d5cf;
+  --rt-muted: #a4a39c;
+  --rt-line: #26262a;
+  --rt-line-strong: #34343a;
+  --rt-owned: #3987e5;
+  --rt-owned-ink: #86b6ef;
+  --rt-owned-soft: rgb(57 135 229 / 0.14);
+  --rt-rented: #d95926;
+  --rt-rented-ink: #f29a72;
+  --rt-rented-soft: rgb(217 89 38 / 0.16);
+  --rt-good: #51cf66;
+  --rt-good-soft: rgb(81 207 102 / 0.14);
+  --rt-warn: #f0b13f;
+  --rt-warn-soft: rgb(240 177 63 / 0.14);
+  --rt-bad: #ff6b6b;
+  --rt-bad-soft: rgb(255 107 107 / 0.14);
+  --rt-grid: rgb(242 241 236 / 0.05);
+  --rt-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -16px rgb(0 0 0 / 0.6);
+
+  /* Lucode's neutral scale, warmed to the landing page's neutrals */
+  --foreground: #f2f1ec;
+  --gray-1: #f2f1ec;
+  --gray-2: #d6d5cf;
+  --gray-3: #a4a39c;
+  --gray-4: #7c7b75;
+  --gray-5: #34343a;
+  --gray-6: #26262a;
+  --gray-7: #1a1a1d;
+  --gray-8: #3a3a40;
+  --background: #0b0b0c;
+
+  /* Status colours: note = blue (owned), tip and success = green, caution = amber, danger = red */
+  --blue-low: #10233b;
+  --blue: #3987e5;
+  --blue-high: #86b6ef;
+  --purple-low: #12301b;
+  --purple: #51cf66;
+  --purple-high: #9be3a8;
+  --green-low: #12301b;
+  --green: #51cf66;
+  --green-high: #9be3a8;
+  --orange-low: #3a2a0c;
+  --orange: #f0b13f;
+  --orange-high: #f6cf86;
+  --red-low: #3a1416;
+  --red: #ff6b6b;
+  --red-high: #ffa8a8;
+
+  --ring: #86b6ef;
+}
+
+/* ---------- Light ---------- */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --rt-bg: #fbfaf7;
+  --rt-bg-sunken: #f3f1ec;
+  --rt-surface: #ffffff;
+  --rt-surface-2: #f7f6f2;
+  --rt-ink: #121212;
+  --rt-ink-2: #3d3c39;
+  --rt-muted: #64625d;
+  --rt-line: #e6e3dc;
+  --rt-line-strong: #d3cfc6;
+  --rt-owned: #2a78d6;
+  --rt-owned-ink: #1c5cab;
+  --rt-owned-soft: #e3eefc;
+  --rt-rented: #eb6834;
+  --rt-rented-ink: #b4461a;
+  --rt-rented-soft: #fdeae1;
+  --rt-good: #1f8f3a;
+  --rt-good-soft: #e3f4e7;
+  --rt-warn: #a86400;
+  --rt-warn-soft: #fbf0dc;
+  --rt-bad: #c92a2a;
+  --rt-bad-soft: #fbe4e4;
+  --rt-grid: rgb(18 18 18 / 0.06);
+  --rt-shadow: 0 1px 2px rgb(18 18 18 / 0.04), 0 8px 24px -12px rgb(18 18 18 / 0.12);
+
+  --foreground: #121212;
+  --gray-1: #1f1e1c;
+  --gray-2: #3d3c39;
+  --gray-3: #4f4d49;
+  --gray-4: #64625d;
+  --gray-5: #a19e96;
+  --gray-6: #e6e3dc;
+  --gray-7: #f3f1ec;
+  --gray-8: #d3cfc6;
+  --background: #fbfaf7;
+
+  --blue-low: #e3eefc;
+  --blue: #2a78d6;
+  --blue-high: #1c5cab;
+  --purple-low: #e3f4e7;
+  --purple: #1f8f3a;
+  --purple-high: #186f2d;
+  --green-low: #e3f4e7;
+  --green: #1f8f3a;
+  --green-high: #186f2d;
+  --orange-low: #fbf0dc;
+  --orange: #a86400;
+  --orange-high: #7d4a00;
+  --red-low: #fbe4e4;
+  --red: #c92a2a;
+  --red-high: #9b1f1f;
+
+  --ring: #2a78d6;
+}
+
+/* ---------- Fonts: the landing page's, bundled with @fontsource (no CDN) ---------- */
+:root {
+  --sl-font: 'Inter Variable';
+  --sl-font-mono: 'JetBrains Mono Variable';
+  /* A little wider than Lucode's 40rem, so the diagrams and the wide tables have room. */
+  --content-max-width: 48rem;
+}
+
+body {
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+}
+
+::selection {
+  background: var(--rt-owned-soft);
+  color: var(--rt-ink);
+}
+
+:focus-visible {
+  outline-color: var(--ring);
+}
+
+/* Headings balance their lines; paragraphs avoid orphans. */
+.sl-markdown-content :is(h1, h2, h3, h4),
+[data-page-title] {
+  text-wrap: balance;
+}
+.sl-markdown-content :is(p, li) {
+  text-wrap: pretty;
+}
+
+/* Tables: numbers line up. */
+.sl-markdown-content table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The site title next to the mark. */
+.site-title img {
+  height: 1.6rem;
+  width: auto;
+}
+
+/* Splash hero: the landing page's faint engineering grid behind the title. */
+[data-has-hero] .hero {
+  position: relative;
+  isolation: isolate;
+}
+[data-has-hero] .hero::before {
+  content: '';
+  position: absolute;
+  inset: -3rem -1rem -1rem;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, var(--rt-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rt-grid) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 55% 75% at 30% 45%, #000 35%, transparent 100%);
+  pointer-events: none;
+}
+[data-has-hero] .hero h1 {
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
