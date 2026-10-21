@@ -21,6 +21,7 @@ from .providers import (
     GenPolicy,
     parse_param_allowlist,
 )
+from .redact import STYLES as REDACT_STYLES
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
 from .tasks import valid_name as valid_task_name
 
@@ -291,6 +292,12 @@ class Settings:
     # Privacy: replace emails, phone numbers, card numbers etc. with placeholders before a
     # request and the teacher's answer are stored as a training example (ratchet/redact.py).
     redact_pii: bool = field(default_factory=lambda: _env("RATCHET_REDACT_PII", "1") != "0")
+    # Placeholder style (ADR 0082): `label` ([EMAIL], v0.4), `numbered` ([EMAIL_1], the same value the same number in
+    # the prompt and the answer) or `surrogate` (person1@example.com). A task spec's `privacy.redact_style` overrides it.
+    redact_style: str = field(default_factory=lambda: _env("RATCHET_REDACT_STYLE", "label"))
+    # A detector plugin, 'module:function' (redact.Detector), such as an NER model for names. Imported at startup, which
+    # fails when it is missing. Empty: patterns only.
+    redact_plugin: str = field(default_factory=lambda: _env("RATCHET_REDACT_PLUGIN", ""))
     # Storage opt-outs (FR-13.1, ADR 0080). 0 is zero retention: no teacher answer is stored as a training example and
     # Night School skips every night. The requests table (metadata only) is still written.
     store_examples: bool = field(default_factory=lambda: _bool("RATCHET_STORE_EXAMPLES", "1"))
@@ -436,6 +443,17 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def redaction_style(self) -> str:
+        """RATCHET_REDACT_STYLE: `label` (the default, also when set but empty), `numbered` or `surrogate`. Case and spaces
+        are ignored; anything else raises ValueError, so a typo stops startup instead of storing another style."""
+        raw = self.redact_style
+        style = raw.strip().lower() if isinstance(raw, str) else None
+        if style == "":
+            style = "label"
+        if style not in REDACT_STYLES:
+            raise ValueError(f"RATCHET_REDACT_STYLE must be {', '.join(REDACT_STYLES)}, not {raw!r}")
+        return style
 
     def no_store_task_names(self) -> frozenset[str]:
         """RATCHET_NO_STORE_TASKS as a set of task names (FR-13.1). A name need not be registered (an unregistered name

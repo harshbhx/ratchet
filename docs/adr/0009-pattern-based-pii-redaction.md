@@ -39,3 +39,12 @@ Presidio finds names and addresses with a spaCy NER model. That brings a large d
 - **Presidio in the gateway.** Better recall on names and addresses, but a heavy dependency and slower requests. Kept as the next step, behind the same `redact()` interface.
 - **Redact before calling the teacher.** Protects data from the teacher provider as well, but worse answers for requests that need the details (an order lookup, a reply that addresses the customer). Token Factory's zero-data-retention setting is the better control for that.
 - **Drop examples that contain PII.** Loses the most realistic training data and biases the dataset.
+
+## Amendment (v0.5): placeholder styles, a detector plugin, Indian identifiers
+
+[ADR 0082](0082-placeholder-styles-detector-plugin-and-indian-identifiers.md) extends this decision without changing its default:
+
+- `[LABEL]` stays the default style. `RATCHET_REDACT_STYLE=numbered` (`[EMAIL_1]`) or `surrogate` (`person1@example.com`), or a task spec's `privacy.redact_style`, keeps two identifiers apart for extraction tasks: one `redact.Pseudonymizer` per example gives a value the same placeholder in the prompt, the stored conditions and the answer, and is dropped after the example is stored.
+- Names and addresses can be found by an operator's detector (`RATCHET_REDACT_PLUGIN='module:function'`, such as a Presidio wrapper), imported at startup, which fails when it is missing. The package still adds no NER dependency. When the detector fails at store time, the answer is served and nothing is stored.
+- Two more rules: `UPI` (checked against a stop-list of package tags such as `latest`) and `GSTIN` (format only, like `PAN`). The BOM's `redactor` section shows 11 rules.
+- The checksum rules (`IBAN`, `CARD`, `AADHAAR`) search again in what the first pass left, so a card number followed by its CVV or expiry is no longer stored as typed. Everything the first pass finds is exactly what v0.4 found.

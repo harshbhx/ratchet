@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 784 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure), ~80 s
+pytest -q                     # 854 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_redaction), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -15,7 +15,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | File | Tests |
 |---|---|
 | `tests/test_core.py` | 52 (30 functions; one has 19 cases, one has 5) |
-| `tests/test_tasks.py` | 81 (35 functions; one has 28 cases, one has 20) |
+| `tests/test_tasks.py` | 111 (37 functions; one has 29 cases, one has 28, one has 20) |
 | `tests/test_registry.py` | 29 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 21 (13 functions; one has 8 cases, one has 2) |
@@ -32,12 +32,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 52 (34 functions; one has 13 cases, one has 4, three have 2) |
-| **Total** | **784** |
+| `tests/test_redaction.py` | 40 (24 functions; one has 9 cases, one has 7, one has 3) |
+| **Total** | **854** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`, `tests/test_redaction.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -97,6 +98,8 @@ Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators
 | `test_bool_reads_words_and_json` | `yes`/`no`/`y`/`n`/`1`/`0` and JSON booleans; `maybe` and `2` invalid |
 | `test_number_reads_money_separators_and_tolerances` | `1,234.50` == 1234.5 with `abs_tol` 0.01; `1.234,50 €` with `decimal=","`; `(5)` == -5; relative tolerance; percent as number or fraction |
 | `test_parse_number_cases` (20 cases) | Thousands groupings (also Indian, apostrophe, space), `US$`, ISO codes, exponents, signs; ambiguous `1,5`, lower-case codes, units, NaN, infinities, `1_000`, double signs refused |
+| `test_number_reads_indian_amounts` (29 cases) | FR-13.8: `Rs.`, `Rs`, `Re.` before or after (any case), `rupees`, `/-`, `INR` and `₹` with the Indian grouping, lakh, lakhs, lacs, crore and lakh crore scaled exactly (`1.15 lakh` is 115000), signs and `(...)`; `Rs` or `lakh` alone, `Cr`, `L`, `hrs`, `Rest 5`, a broken grouping and `1,5 lakh` refused; the comparator agrees with the plain number |
+| `test_indian_amounts_under_a_comma_decimal_and_with_tolerance` | FR-13.8: lakh and `Rs.` under `decimal=","` (the Indian grouping only with `.`); `abs_tol` 0.01 across `Rs.`, `INR`, `₹`, lakh and `/-`; lakh is not crore |
 | `test_number_refuses_non_finite_and_non_numbers` | Strings, booleans, lists, `1e999`, NaN and an integer too large for a float are invalid |
 | `test_ordinal_tolerance` | `low` and `medium` agree with tolerance 1, `low` and `high` do not; an unknown label is invalid; `order` is required |
 | `test_text_modes` | `loose` with suffixes (`Acme Corp.` == `ACME corp` == `Acme, Inc.` == `Acme,Inc.`, a two-token suffix), punctuation as a word break (`hello-world`), apostrophes and initials joined (`O'Brien`, `U.S.A.`), a suffix that is the whole name kept, `exact`, `token_set` |
@@ -635,6 +638,37 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_admin_cli_erases_and_exports` | FR-13.3, FR-13.5: `python -m ratchet.admin erase` (a dry run, then `--apply` with the end user from stdin across every scope), its errors, and `export` to a file and to stdout, with a refused filter |
 | `test_admin_cli_erases_end_users_only_with_the_gateways_key_and_never_writes_otherwise` | FR-13.3: `python -m ratchet.admin erase --end-user` in a shell without the gateway's `RATCHET_END_USER_KEY`, with another key or a short one is refused (dry run and `--apply`) and the ledger's meta, events and erasures stay unchanged; with the right key and no `RATCHET_API_KEYS` it finds the end user in every scope the ledger holds (a removed key's too) and logs no key change; a gateway's generated key is used from the ledger; a ledger that never hashed an end user is refused; a free-text `--actor` is refused |
 | `test_a_ledger_from_before_retention_gains_its_columns_and_tables` | FR-13.3, FR-13.4: a file with the old `erasures` table gains the new columns and tables twice without change; `last_seen_ts` is backfilled from `ts`, and retention works on it |
+
+### `tests/test_redaction.py`
+
+Redaction for extraction tasks, the detector plugin and Indian identifiers (FR-13.7, FR-13.8, FR-4.7, NFR-4, INV-12, [ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Detector plugins for the tests are in `tests/redact_plugins.py` (a working one, ones that fail at store time or return bad spans, ones that fail the startup probe); nothing imports Presidio.
+
+| Test | Covers |
+|---|---|
+| `test_two_emails_distinct_placeholders` | FR-13.7: `label` loses which email is which; `numbered` and `surrogate` keep them apart, repeats and case included, every placeholder counted; numbers per label and per example; a phone with and without its country code, and a card with spaces or dashes, is one value; an unknown style refused |
+| `test_numbered_placeholders_consistent_between_prompt_and_answer` | FR-13.7, INV-12: the teacher sees the original; the stored prompt has `[EMAIL_1]`, `[EMAIL_2]`, `[PHONE_1]` and the stored answer names `[EMAIL_2]`; the comparator tells the right placeholder from the wrong one |
+| `test_one_pseudonymizer_covers_messages_answer_and_conditions` | FR-13.7: content parts, `name`, `refusal`, tool-call arguments, the answer and the conditions share one numbering; the caller's messages are untouched |
+| `test_surrogate_values_stable_under_second_pass` | FR-13.7: `redact(redact(x)) == redact(x)` in every style for a text with one of each identifier; surrogates are `example.com`, 555-01xx in E.164, RFC 5737, valid `ZZ` IBANs and card numbers that fail Luhn and hold no Aadhaar; no original left |
+| `test_surrogates_are_reserved_and_distinct_until_they_run_out` | FR-13.7: 300 emails, 79,800 phones, 999 cards, IBANs and 762 IPs distinct and reserved, then the numbered fallback |
+| `test_label_style_matches_v04` | FR-13.7, FR-4.7, NFR-4: the nine v0.4 rules' SHA-256; on 4,500 fuzzed texts the output is v0.4's sequential replacement unless the second pass found a checksum identifier, and then v0.4's spans are a strict subset of today's; numbered placeholders find the same spans; on text without GSTIN or UPI ids, exactly v0.4's output with v0.4's rules |
+| `test_a_refused_match_no_longer_hides_a_card` | FR-4.7, NFR-4, INV-12: a card with its CVV or expiry, after another number, two cards in a row, after an Aadhaar or a phone, and a 16-character IBAN before a year are found where v0.4 left them; a non-Luhn 16-digit run, a long order number and an ISBN stay; a phone and an Aadhaar keep their spans; numbered and surrogate alike |
+| `test_redaction_is_idempotent_on_realistic_text` | FR-13.7, FR-4.7: 3,000 texts of identifiers and words between ordinary separators, redacted twice, are unchanged in every style (the surrogate run without the decoy its docstring names) |
+| `test_default_settings_store_v04_examples` | FR-13.7, FR-4.7: with the default settings the stored example is v0.4's byte for byte |
+| `test_gstin_and_upi_ids_are_redacted` | FR-13.8, FR-4.7, NFR-4: GSTINs (also entity `A` and a company PAN) and UPI ids (`name@okicici`, `9876543210@ybl`, a sentence's full stop) replaced; package tags, `a+b@ybl`, one-letter handles, a space after `@` and a 14-character near-GSTIN kept |
+| `test_redact_plugin_detector_applied` | FR-13.7, NFR-4: a fake NER detector tags names, numbered with the emails; label and surrogate styles; an empty text never reaches the plugin; a dotted path, a lower-case label and offsets of an integer type that is not `int` (numpy's) |
+| `test_detector_spans_merge_with_patterns_earlier_then_longer` | FR-13.7: overlapping spans: the earlier wins, then the longer, then the pattern's, covering all it overlaps; touching spans stay apart |
+| `test_missing_plugin_fails_startup` (9 cases) | FR-13.7, NFR-4: a missing module or attribute, a non-callable, a malformed spec and a detector failing the empty-text probe stop `load_detector`, `Ratchet` and the gateway's `Runtime` |
+| `test_bad_style_fails_startup_and_style_is_read_loosely` | FR-13.7: an unknown style or a non-string plugin stops `Ratchet`; case and spaces are ignored and empty means `label`; both settings read from the environment |
+| `test_a_failing_detector_stores_nothing_and_never_leaks_the_text` (7 cases) | FR-13.7, INV-12, INV-16: a detector that raises, returns an out-of-range, empty or malformed span, bool or float offsets, or a bad label: the answer is served, nothing stored, one `skip_example` `redaction failed`, no table holds the text, and the error carries neither the text nor the plugin's message |
+| `test_original_values_never_stored` (3 cases) | FR-13.7, NFR-4, INV-12: in each style, with the plugin and a stop string, no original value reaches any table; numbered placeholders in the answer match the prompt's |
+| `test_task_spec_privacy_redact_style_overrides_the_default` | FR-13.7, FR-2.15: `privacy.redact_style` parsed, documented and round-tripped, outside `spec_hash`; bad values and keys listed with their paths; `extends` merges it (null removes it); the cascade stores that task numbered and another task labelled |
+| `test_admin_api_sets_a_tasks_style_without_recalibrating` | FR-13.7, FR-2.15: a `PUT` that only sets `privacy.redact_style` changes the task, keeps its `spec_hash` (not recalibrating), shows in `/ratchet/stats` and writes a `task_changed` event saying the hash was kept; a bad style is a 422 with its path |
+| `test_changing_the_style_stores_a_new_example_once` | FR-13.7: the same request under `label` twice and `numbered` twice is two examples seen twice each |
+| `test_the_example_hash_never_depends_on_the_answer` | FR-13.7, INV-3: three different answers to one request with a stop string are one example seen three times; the conditions are numbered before the answer |
+| `test_concurrent_examples_never_share_placeholders` | FR-13.7, INV-12: 16 threads each store an example that starts at `[EMAIL_1]` and names its own `[EMAIL_2]` |
+| `test_redact_preview_shows_the_style_and_takes_style` | FR-13.7: `POST /ratchet/redact` in the gateway's style with the plugin, `?style=` in any case, 400 for an unknown style; `/ratchet/stats` `privacy` style keys, a task's override included |
+| `test_redact_preview_reports_a_failing_plugin_without_the_text` | FR-13.7: a failing plugin is a 500 naming its exception class only; without a plugin, names are left |
+| `test_gateway_stores_numbered_examples_end_to_end` | FR-13.7, INV-12: over HTTP under `RATCHET_REDACT_STYLE=numbered` the stored prompt and answer share placeholders |
 
 ## Live-path tests
 

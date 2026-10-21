@@ -569,7 +569,8 @@ Needs a key when `RATCHET_API_KEYS` is set.
               "no_store_clients": [], "end_user_key": "env", "example_retention_days": 180,
               "request_retention_days": 400, "erasure_shared": "delete", "purged_examples": 61,
               "purged_by_reason": {"retention": 58, "erasure": 3}, "erasures": 2, "erasure_refusals": 1,
-              "rolled_up_requests": 120400},
+              "rolled_up_requests": 120400, "redaction_style": "label",
+              "redaction_task_styles": {"invoice-extract": "numbered"}, "redaction_plugin": false},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
            "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"}
@@ -596,7 +597,7 @@ Needs a key when `RATCHET_API_KEYS` is set.
   Later versions add routes; a client should show an unknown route as it is.
 - `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash; only rows still kept count, since folded rows keep no end user); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5).
-- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
+- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`); how identifiers are written in stored examples (`redaction_style`: `label`, `numbered` or `surrogate`, from `RATCHET_REDACT_STYLE`; `redaction_task_styles`: the tasks whose spec overrides it; `redaction_plugin`: whether a detector plugin runs, never its name; [ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
@@ -638,7 +639,7 @@ The bill of materials of one adapter, written by Night School right after traini
     "sources": [{"teacher": "nvidia/Nemotron-3-Ultra-550b-a55b", "license": "OpenMDW-1.1",
                  "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
                  "distill_ok": true, "examples": 1029}],
-    "redactor": {"sha256": "e85726…", "rules": 9, "redact_pii": true},
+    "redactor": {"sha256": "7100b2…", "rules": 11, "redact_pii": true},
     "eval": {"golden_n": 110, "golden_agreement": 0.89, "threshold": 0.65, "coverage": 0.96, "precision": 0.94, "test_n": 55}
   },
   "sha256": "9b1f…",
@@ -669,9 +670,9 @@ Without `--public-key` the check uses the key embedded in the document, which on
 
 `public_key` and `key_id` are `null` when signing is off. Publish the key somewhere you control as well (README, website): a key served by the same gateway proves nothing if the gateway itself is compromised.
 
-## POST `/ratchet/redact`
+## POST `/ratchet/redact?style=`
 
-Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored. Nothing is logged or stored. Backs the dashboard's **Try the redactor** box.
+Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored: in the gateway's style (`RATCHET_REDACT_STYLE`) or the one `style` names (`label`, `numbered` or `surrogate`, any case), with the detector plugin when one is configured ([ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Nothing is logged or stored. Backs the dashboard's **Try the redactor** box.
 
 ```bash
 curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
@@ -679,10 +680,21 @@ curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
 ```
 
 ```json
-{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true}
+{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true, "style": "label", "plugin": false}
 ```
 
-`enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. **400** when `text` is missing or longer than 5,000 characters.
+```bash
+curl -s 'localhost:8000/ratchet/redact?style=numbered' -H 'content-type: application/json' \
+  -d '{"text": "Sales: ana@x.io. Billing: bo@y.io, cc ana@x.io"}'
+```
+
+```json
+{"text": "Sales: [EMAIL_1]. Billing: [EMAIL_2], cc [EMAIL_1]", "found": {"EMAIL": 3}, "enabled": true, "style": "numbered", "plugin": false}
+```
+
+- `found` counts placeholders by label, every occurrence; `style` is the style used; `plugin` says whether a detector plugin ran.
+- `enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. A task whose spec sets `privacy.redact_style` stores in that style; preview it with `?style=`.
+- **400** when `text` is missing or longer than 5,000 characters, or `style` is not one of the three (`style must be one of label, numbered, surrogate`). **500** when the detector plugin fails, with a message that names the problem or the exception's class and never the text (`the redaction plugin raised RuntimeError`).
 
 ---
 
@@ -776,7 +788,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
   "tasks": [
     {"name": "invoice-extract", "description": "Vendor and total from an invoice", "format": "json",
      "fields": {"vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]}, "total": {"type": "number", "abs_tol": 0.01}},
-     "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
+     "pinned": false, "store": true, "privacy": {}, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
      "source": "api", "spec_hash": "1c7e77bb7041b4d8", "verifiable": true,
      "requests": 420, "student_share": 0.81, "recalibrating": false}
   ],
@@ -784,7 +796,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
 }
 ```
 
-- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
+- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first twelve keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
 - `unknown_tasks`: the `RATCHET_UNKNOWN_TASKS` policy. `max_tasks`: how many tasks the registry holds at most, built-in ones included.
 - `unregistered`: names requests used that are not registered (a typo, or a task to register or pin), with their request counts.
 
@@ -820,7 +832,7 @@ curl -X PUT localhost:8000/ratchet/tasks/invoice-extract -H "Authorization: Bear
 | 409 | The registry holds `max_tasks` tasks, or (mock mode) 50 API tasks already |
 | 422 | The body is not strict JSON (NaN is refused), names another task, or breaks a spec rule; `clients` names a key that is not in `RATCHET_API_KEYS` |
 
-The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients` or `match` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
+The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients`, `match` or `privacy` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
 
 ### DELETE `/ratchet/tasks/{name}`
 

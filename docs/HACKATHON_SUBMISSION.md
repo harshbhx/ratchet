@@ -122,7 +122,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 784 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 854 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -138,7 +138,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## What's next
 
-Name and address detection (Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
+A bundled name and address detector (the plugin hook exists; Presidio is not shipped), a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
 
 ## Built with
 
