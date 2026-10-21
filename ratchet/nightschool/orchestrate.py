@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, calibration, certificate, privacy, tasks, teacher_watch
+from .. import bom, calibration, certificate, privacy, receipts, tasks, teacher_watch
 from ..confidence import SERVE_NOTHING
 from ..config import GpuRate, Retention
 from ..ledger import Ledger, Version
@@ -189,7 +189,7 @@ def run_night(
         ledger.event("skip", "training paused by an admin; no training tonight")
         return NightReport(False, None, False, "training paused")
     if retention is not None and retention.enabled:
-        privacy.apply_retention(ledger, retention)
+        privacy.apply_retention(ledger, retention, fold_before=receipts.fold_floor(ledger))
     if not store_examples:
         ledger.event("skip", "storage disabled (RATCHET_STORE_EXAMPLES=0): no new examples are stored; no training tonight")
         if not ledger.versions(["shadow", "canary"]):

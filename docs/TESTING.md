@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1773 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1774 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -36,7 +36,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
-| `tests/test_receipts.py` | 43 (32 functions; one has 8 cases, one has 5) |
+| `tests/test_receipts.py` | 44 (32 functions; one has 8 cases, one has 5) |
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 57 (36 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1773** |
+| **Total** | **1774** |
 
 There are three layers:
 
@@ -924,6 +924,7 @@ Verified savings receipts (FR-15.5, [ADR 0029](adr/0029-verified-savings-receipt
 | `test_cli_module_entry_point` | The same as a subprocess (`python -m ratchet.receipt`), with an unchecked chain reported |
 | `test_offline_seal_of_a_simulated_ledger` | `python -m ratchet.receipt seal --db` on a `sim.simulate --db` ledger: every logged day sealed and labelled simulation, a day after the run 2, nothing left to seal 0, a missing file and `--client` without `--period` 2 |
 | `test_live_seal_command_seals_every_day_that_ended` | `python -m ratchet.live seal` on a live ledger seals every client's and the gateway's receipts of the days that ended (not today's), then says nothing is left; labelled live traffic |
+| `test_the_gateways_purge_never_folds_a_day_that_has_not_been_sealed` | FR-13.4, FR-15.5, INV-17: `Runtime._purge` with a day that ended 100 s ago (inside the 300 s grace) folds the earlier day and leaves the ended one whole; an hour later it is sealed from both of its rows, no `receipt_skipped` |
 
 ### `tests/test_docs_claims.py`
 

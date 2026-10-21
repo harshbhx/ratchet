@@ -774,7 +774,8 @@ class Runtime:
             # Every day that has ended gets its savings receipts first (FR-15.5), from all of its request rows: a receipt
             # is never sealed from a day retention folded (`receipts._seal_period`).
             receipts.seal_due(self.ledger, self.receipt_config)
-            privacy.apply_retention(self.ledger, self.retention)
+            # Never fold the rows of a day that ended inside the sealing grace: it is sealed from all of them first.
+            privacy.apply_retention(self.ledger, self.retention, fold_before=receipts.fold_floor(self.ledger))
         except Exception as e:  # noqa: BLE001 - a background job: report it and try again next interval
             try:
                 self.ledger.event("purge_failed", f"retention: {describe_failure(e)}")
