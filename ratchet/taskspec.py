@@ -14,8 +14,12 @@ lists every problem with its path (`tasks[2].fields.total.abs_tol: must be a num
 The comparator rules stay in `compare.FieldSpec` and `tasks.Task`, which check the spec again when it is built, so this
 module cannot admit a spec they refuse.
 
-`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `policy`,
-`match` and `routing` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and
+A task with format `sql` takes a `sql` object instead of fields (FR-2.56): `{"fixture": "shop.sql"}` names a SQL script
+inside RATCHET_FIXTURES_DIR (`fixtures_dir`), which is read and loaded when the spec is parsed, so a missing, oversized
+or broken fixture is a spec error with its path like any other; `{"dialect": "postgres"}` runs nothing.
+
+`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `sql`,
+`policy`, `match` and `routing` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and
 `description` are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
 because startup reads the file before it registers the stored API tasks; an API body may extend any registered task.
 The result is what is registered and stored, so later changes to the base do not reach a task that extended it.
@@ -31,7 +35,7 @@ from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import compare, routing, tasks
+from . import compare, routing, similarity, sqlcheck, tasks
 from .compare import FieldSpec
 from .openai_compat import MAYBE_SURROGATE, lone_surrogate
 
@@ -39,11 +43,24 @@ if TYPE_CHECKING:  # pragma: no cover
     from .ledger import Ledger
 
 # The keys of one task spec, in the order `document` writes them (`extends` is resolved away before that).
-SPEC_KEYS = ("name", "description", "format", "fields", "pinned", "store", "match", "routing", "policy", "tools", "clients")
+SPEC_KEYS = (
+    "name",
+    "description",
+    "format",
+    "fields",
+    "sql",
+    "pinned",
+    "store",
+    "match",
+    "routing",
+    "policy",
+    "tools",
+    "clients",
+)
 INPUT_KEYS = frozenset(SPEC_KEYS) | {"extends"}
 # `extends` merges these by key; any other key replaces the base's (a routing block's `escalate_when` and `critical`
 # lists are replaced whole).
-MERGED = frozenset({"fields", "policy", "match", "routing"})
+MERGED = frozenset({"fields", "sql", "policy", "match", "routing"})
 MAX_JSON_DEPTH = 32  # nesting of a `routing` value
 MAX_PATH = 256  # characters of a field path
 _PATH = re.compile(r"\$|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")  # '$' or dot-separated names
@@ -129,6 +146,14 @@ def _split(v: Any, t: str) -> str | None:
     return None if isinstance(v, str) and v else "must be a non-empty string"
 
 
+def _score(v: Any, t: str) -> str | None:
+    return None if _is_number(v) and 0 < v <= 1 else "must be a number more than 0 and at most 1"
+
+
+def _ratio(v: Any, t: str) -> str | None:
+    return None if _is_number(v) and v >= 1 else "must be a number >= 1"
+
+
 # option -> how its value is checked. `item` and `fields` hold field specs and are parsed by `_item` and `_fields`.
 _CHECKS: Mapping[str, Callable[[Any, str], str | None] | None] = {
     "required": _bool,
@@ -153,6 +178,9 @@ _CHECKS: Mapping[str, Callable[[Any, str], str | None] | None] = {
     "key": _strings,
     "ordered": _bool,
     "k": _count,
+    "metric": _one_of(*similarity.METRICS),
+    "threshold": _score,
+    "max_len_ratio": _ratio,
 }
 # option -> (check, the types that take it: `compare.OPTION_TYPES`, the table FieldSpec itself enforces).
 OPTIONS: Mapping[str, tuple[Callable[[Any, str], str | None] | None, frozenset[str]]] = {
@@ -302,8 +330,70 @@ def _json_problem(value: Any) -> str | None:
     return None
 
 
+def _fixtures_root(fixtures_dir: str | Path | None) -> str | Path:
+    """Where fixture files live: `fixtures_dir`, else RATCHET_FIXTURES_DIR as `config.Settings` reads it."""
+    if fixtures_dir is not None:
+        return fixtures_dir
+    from .config import default_fixtures_dir  # imported when a spec needs a fixture: config imports tasks
+
+    return default_fixtures_dir()
+
+
+def _sql(raw: Any, fmt: Any, has_fields: bool, where: str, root: str | Path | None, errs: list[str]) -> Any:
+    """A spec's `sql` object as a `sqlcheck.SqlSpec` (its fixture read and loaded), None for none, or `_BAD` after adding
+    its errors to `errs`. The options are checked before the fixture is read, so a typo costs no load."""
+    at = _at(where, "sql")
+    if raw is None:
+        if fmt == "sql":
+            errs.append(
+                f"{at}: missing; a sql task needs sql.fixture (a SQL script in RATCHET_FIXTURES_DIR) or sql.dialect 'postgres'"
+            )
+            return _BAD
+        return None
+    if fmt is not None and fmt != "sql":
+        errs.append(f"{at}: only a task with format 'sql' takes sql options")
+        return _BAD
+    if has_fields:
+        errs.append(
+            f"{_at(where, 'fields')}: a sql task has no fields: two answers agree when their queries return the same result"
+        )
+        return _BAD
+    if not isinstance(raw, Mapping):
+        errs.append(f"{at}: must be an object with {', '.join(sqlcheck.KEYS)}")
+        return _BAD
+    before = len(errs)
+    for key, value in raw.items():
+        problem = sqlcheck.option_problem(key, value)
+        if problem is not None:
+            errs.append(f"{at}.{key}: {problem}")
+    if len(errs) > before:
+        return _BAD
+    options = {k: v for k, v in raw.items() if k != "fixture"}
+    if raw.get("dialect", "sqlite") == "postgres":
+        extra = [k for k in raw if k != "dialect"]
+        for key in extra:
+            errs.append(f"{at}.{key}: does not apply to dialect 'postgres', which runs no SQL")
+        return _BAD if extra else sqlcheck.SqlSpec(**options)
+    if "fixture" not in raw:
+        errs.append(f"{at}.fixture: missing; a sqlite task runs its answers on a SQL script in RATCHET_FIXTURES_DIR")
+        return _BAD
+    try:
+        return sqlcheck.SqlSpec.load(raw["fixture"], _fixtures_root(root), **options)
+    except ValueError as e:
+        errs.append(f"{at}.fixture: {e}")
+        return _BAD
+
+
+_BAD = object()  # what `_sql` returns after reporting an error
+
+
 def _build(
-    spec: Mapping[str, Any], where: str, source: str, known_clients: frozenset[str] | None, errs: list[str]
+    spec: Mapping[str, Any],
+    where: str,
+    source: str,
+    known_clients: frozenset[str] | None,
+    errs: list[str],
+    fixtures_dir: str | Path | None = None,
 ) -> tasks.Task | None:
     """One task spec (with `extends` already resolved) as a Task, or None after adding its errors to `errs`."""
     before = len(errs)
@@ -327,8 +417,13 @@ def _build(
     elif fmt in tasks.RESERVED_FORMATS:
         errs.append(f"{_at(where, 'format')}: {fmt!r} is reserved for a later release")
     fields_from = len(errs)
-    fields = _fields(spec.get("fields", {}), _at(where, "fields"), 0, errs)
+    raw_fields = spec.get("fields", {})
+    fields = _fields(raw_fields, _at(where, "fields"), 0, errs)
     fields_ok = len(errs) == fields_from
+    sql = None
+    if fmt is None or (isinstance(fmt, str) and fmt in usable):  # a bad format is reported once, above
+        has_fields = isinstance(raw_fields, Mapping) and bool(raw_fields)
+        sql = _sql(spec.get("sql"), fmt, has_fields, where, fixtures_dir, errs)
     for key in ("pinned", "store"):
         if key in spec and not isinstance(spec[key], bool):
             errs.append(f"{_at(where, key)}: must be true or false")
@@ -339,10 +434,16 @@ def _build(
     if not isinstance(policy, Mapping):
         errs.append(f"{_at(where, 'policy')}: must be an object")
     else:
+        bad = False
         for key, value in policy.items():
             problem = tasks.policy_problem(key, value)
             if problem is not None:
+                bad = True
                 errs.append(f"{_at(where, 'policy')}.{key}: {problem}")
+        # A similarity field needs two samples or more (FR-2.55); a samples value that is wrong anyway is reported once.
+        problem = None if bad and "samples" in policy else tasks.samples_problem(fields, policy)
+        if problem is not None:
+            errs.append(f"{_at(where, 'policy')}.samples: {problem}")
     match = spec.get("match", {})
     if not isinstance(match, Mapping):
         errs.append(f"{_at(where, 'match')}: must be an object")
@@ -381,6 +482,7 @@ def _build(
             description=description,
             clients=tuple(clients),
             match_rules=match,
+            sql=sql,
         )
     except ValueError as e:  # a rule between keys: a text task with a field other than '$', a pinned auto task, ...
         errs.append(f"{where or '$'}: {_reason(e, _TASK_PREFIX)}")
@@ -418,10 +520,12 @@ def parse_spec(
     lookup: LookupFn | None = None,
     known_clients: Iterable[str] | None = None,
     where: str = "",
+    fixtures_dir: str | Path | None = None,
 ) -> tasks.Task:
     """One task spec (an admin API body) as a Task with `source`. `extends` names a registered task (`lookup`, default
     `tasks.lookup`), the task's own name included (a new version based on the current one). `known_clients`, when given,
-    are the API key names `clients` may use. Raises SpecError with every problem; paths start at `where` (the body)."""
+    are the API key names `clients` may use. A sql task's fixture is read from `fixtures_dir` (default
+    RATCHET_FIXTURES_DIR). Raises SpecError with every problem; paths start at `where` (the body)."""
     lookup = tasks.lookup if lookup is None else lookup
     errs: list[str] = []
     if not isinstance(obj, Mapping):
@@ -433,7 +537,7 @@ def parse_spec(
         if base is None:
             raise SpecError([f"{_at(where, 'extends')}: no registered task is named {base_name!r}"])
         spec = _merge(document(base), obj)
-    task = _build(spec, where, source, _clients(known_clients), errs)
+    task = _build(spec, where, source, _clients(known_clients), errs, fixtures_dir)
     if task is None:
         raise SpecError(errs)
     return task
@@ -445,14 +549,15 @@ def parse_document(
     *,
     known_clients: Iterable[str] | None = None,
     origin: str = "",
+    fixtures_dir: str | Path | None = None,
 ) -> list[tasks.Task]:
     """A tasks document ({"tasks": [...]}) as Tasks with `source`, in its order, checked as startup reads
     RATCHET_TASKS_FILE (`load_file`, and POST /ratchet/tasks/validate for a document). A task may extend another one of
     the document, before or after it, or a built-in task; a name extending itself extends the built-in task of that
     name (a file adjusting a built-in task). Never an API task: startup registers the file before the stored API tasks,
     so a file that extends one would not start. Names are unique, and the document's tasks with the built-in tasks it
-    does not replace fit in `tasks.MAX_TASKS`. Raises SpecError with every problem of every task; `origin` (the file)
-    heads its message."""
+    does not replace fit in `tasks.MAX_TASKS`. Sql tasks read their fixtures from `fixtures_dir` (default
+    RATCHET_FIXTURES_DIR). Raises SpecError with every problem of every task; `origin` (the file) heads its message."""
     known = _clients(known_clients)
     if not isinstance(doc, Mapping):
         raise SpecError(["$: must be an object with a 'tasks' list"], origin)
@@ -471,7 +576,7 @@ def parse_document(
             continue
         name = item.get("name")
         if not isinstance(name, str) or not tasks.valid_name(name):
-            _build(item, where, source, known, errs)  # reports the name and everything else that is wrong
+            _build(item, where, source, known, errs, fixtures_dir)  # reports the name and everything else that is wrong
             continue
         if name in raw:
             errs.append(f"{where}.name: {name!r} is already defined at {raw[name][0]}")
@@ -516,7 +621,7 @@ def parse_document(
                     spec = None
                 else:
                     spec = _merge(document(builtin), item)
-        task = _build(spec, where, source, known, errs) if spec is not None else None
+        task = _build(spec, where, source, known, errs, fixtures_dir) if spec is not None else None
         built[name] = (spec, task) if spec is not None and task is not None else None
         return built[name]
 
@@ -563,6 +668,7 @@ def document(task: tasks.Task) -> dict[str, Any]:
         "description": task.description,
         "format": task.format,
         "fields": {f.path: _field_document(f) for f in task.fields},
+        "sql": task.sql.document() if task.sql is not None else None,
         "pinned": task.pinned,
         "store": task.store,
         "match": {k: list(v) if isinstance(v, tuple) else v for k, v in task.match_rules.items()},
@@ -633,10 +739,12 @@ def _load_yaml(text: str, origin: str) -> Any:
     return doc
 
 
-def load_file(path: str | Path, known_clients: Iterable[str] | None = None) -> list[tasks.Task]:
+def load_file(
+    path: str | Path, known_clients: Iterable[str] | None = None, fixtures_dir: str | Path | None = None
+) -> list[tasks.Task]:
     """The tasks of a tasks file, with source `file`: YAML for a `.yaml` or `.yml` file (PyYAML must be installed),
-    JSON otherwise (`parse_document`'s rules). Raises SpecError, which names the file and lists every error. Registers
-    nothing."""
+    JSON otherwise (`parse_document`'s rules; sql fixtures from `fixtures_dir`, default RATCHET_FIXTURES_DIR). Raises
+    SpecError, which names the file and lists every error. Registers nothing."""
     p = Path(path)
     origin = f"RATCHET_TASKS_FILE {p}"
     try:
@@ -650,26 +758,34 @@ def load_file(path: str | Path, known_clients: Iterable[str] | None = None) -> l
             doc = loads(text)
         except SpecError as e:
             raise SpecError(e.errors, origin) from None
-    return parse_document(doc, "file", known_clients=known_clients, origin=origin)
+    return parse_document(doc, "file", known_clients=known_clients, origin=origin, fixtures_dir=fixtures_dir)
 
 
-def install(ledger: Ledger, path: str | Path = "", known_clients: Iterable[str] | None = None) -> list[str]:
+def install(
+    ledger: Ledger,
+    path: str | Path = "",
+    known_clients: Iterable[str] | None = None,
+    fixtures_dir: str | Path | None = None,
+) -> list[str]:
     """Set up the registry for a gateway or a Night School run: the built-in tasks, then the tasks file's (`path`, which
     may replace a built-in task), then the API and auto tasks stored in the ledger's `tasks` table. The registry is
     built aside and published in one assignment (`tasks.replace_all`), so a request on another thread (a mock demo
     reset) never sees it without the file's tasks, and a bad file leaves it as it was. A bad file raises SpecError
     (startup stops, every error listed). A stored task that no longer parses, or whose name a built-in or file task now
     has, is skipped: the returned lines say which and why, for the caller to log (stored tasks are data, so one of them
-    must not stop the gateway the admin API would fix it through)."""
+    must not stop the gateway the admin API would fix it through). Sql tasks read their fixtures from `fixtures_dir`
+    (default RATCHET_FIXTURES_DIR) again, so an edited fixture changes their spec_hash; a stored one whose fixture is
+    gone is skipped."""
     path = str(path).strip() if path else ""
     registry = tasks.builtin_registry()
-    for task in load_file(path, known_clients) if path else []:
+    for task in load_file(path, known_clients, fixtures_dir) if path else []:
         tasks.add(registry, task)
     skipped = []
     for row in ledger.saved_tasks():
         name, source = row["name"], row["source"]
         try:
-            task = parse_spec(row["spec"], source if source in ("api", "auto") else "api", lookup=registry.get)
+            source_name = source if source in ("api", "auto") else "api"
+            task = parse_spec(row["spec"], source_name, lookup=registry.get, fixtures_dir=fixtures_dir)
             if task.name != name:
                 raise SpecError([f"name: the stored spec names {task.name!r}"])
             tasks.add(registry, task)
@@ -685,17 +801,9 @@ def install(ledger: Ledger, path: str | Path = "", known_clients: Iterable[str] 
 
 def resolve_fixture(path: Any, root: str | Path) -> Path:
     """The file a task spec names as a fixture, which must sit inside RATCHET_FIXTURES_DIR (`root`) once '..' and
-    symlinks are resolved, so a spec cannot make the gateway read any other file. ValueError otherwise. For task formats
-    that check answers against a fixture (`sql`, reserved for a later release)."""
-    if not isinstance(path, str) or not path or "\x00" in path:
-        raise ValueError("a fixture is a relative path inside RATCHET_FIXTURES_DIR")
-    if Path(path).is_absolute():
-        raise ValueError(f"fixture {path!r}: use a path relative to RATCHET_FIXTURES_DIR")
-    base = Path(root).resolve()
-    full = (base / path).resolve()
-    if not full.is_relative_to(base):
-        raise ValueError(f"fixture {path!r} is outside RATCHET_FIXTURES_DIR")
-    return full
+    symlinks are resolved, so a spec cannot make the gateway read any other file. ValueError otherwise. The sql format
+    reads its fixtures through it (`sqlcheck.read_fixture`)."""
+    return sqlcheck.resolve_fixture(path, root)
 
 
 def option_names() -> frozenset[str]:

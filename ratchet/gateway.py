@@ -429,7 +429,7 @@ class Runtime:
         # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
         # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
         with self.tasks_lock:
-            skipped = taskspec.install(self.ledger, s.tasks_file, self.known_clients())
+            skipped = taskspec.install(self.ledger, s.tasks_file, self.known_clients(), fixtures_dir=s.fixtures_dir)
         for line in skipped:
             self.ledger.event("task_skipped", line)
         self.meter = self._spend_meter()  # today's /v1 spend, read once from the ledger (ADR 0063)
@@ -3354,10 +3354,10 @@ def _validate_tasks(raw: bytes) -> dict[str, Any]:
     try:
         obj = taskspec.loads(raw)
         if isinstance(obj, Mapping) and "tasks" in obj:  # as `taskspec.install` reads it, before any API task exists
-            parsed = taskspec.parse_document(obj, "file", known_clients=rt.known_clients())
+            parsed = taskspec.parse_document(obj, "file", known_clients=rt.known_clients(), fixtures_dir=rt.settings.fixtures_dir)
             errors: list[str] = []
         else:
-            parsed = [taskspec.parse_spec(obj, "api", known_clients=rt.known_clients())]
+            parsed = [taskspec.parse_spec(obj, "api", known_clients=rt.known_clients(), fixtures_dir=rt.settings.fixtures_dir)]
             current = tasks.lookup(parsed[0].name)
             yours = current is None or current.source in ("api", "auto")  # what `_put_task` replaces
             errors = [] if yours else [f"name: {_not_yours(current).detail}"]
@@ -3394,11 +3394,19 @@ def _put_task(name: str, raw: bytes, admin: str) -> dict[str, Any] | JSONRespons
         if current is not None and current.source not in ("api", "auto"):
             raise _not_yours(current)
         try:
-            task = taskspec.parse_spec({**obj, "name": name}, "api", known_clients=rt.known_clients())
+            task = taskspec.parse_spec(
+                {**obj, "name": name}, "api", known_clients=rt.known_clients(), fixtures_dir=rt.settings.fixtures_dir
+            )
         except taskspec.SpecError as e:
             return _spec_errors(e.errors)
         doc = taskspec.document(task)
-        if current is not None and current.source == "api" and taskspec.document(current) == doc:
+        # The same document is no change, unless a sql task's fixture text changed (its spec_hash then differs).
+        if (
+            current is not None
+            and current.source == "api"
+            and taskspec.document(current) == doc
+            and current.spec_hash == task.spec_hash
+        ):
             return _put_result(task, changed=False, created=False)
         if (current is None or current.source != "api") and rt.settings.mode == "mock":
             if sum(1 for t in tasks.registered() if t.source == "api") >= MOCK_MAX_API_TASKS:

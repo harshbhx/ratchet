@@ -56,5 +56,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0048](0048-model-field-routing.md) | The model field names a task, never an upstream model; `/v1/models` lists the tasks; an Azure-style route | Accepted | 2026-10-20 |
 | [0049](0049-risk-aware-routing.md) | Risk-aware routing: eligibility, escalation rules on the student's answer, a critical-class miss-rate gate, and a per-task audit rate | Accepted | 2026-10-21 |
 | [0050](0050-adjacent-openai-endpoints.md) | The other OpenAI endpoints: an embeddings pass-through, completions and stateless responses on the chat path, typed 404s | Accepted | 2026-10-21 |
+| [0054](0054-free-text-similarity-and-a-judge-gate.md) | Free-text tasks: a similarity comparator, per-task sample counts and a judge gate; long-form stays pinned | Accepted | 2026-10-21 |
+| [0055](0055-sql-tasks-compared-by-execution.md) | Text-to-SQL tasks compared by what their queries return, in a sandboxed in-memory SQLite fixture | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

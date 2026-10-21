@@ -344,7 +344,16 @@ class MockFleet:
             cert_delta=self.cert_delta,
             min_task_n=self.min_task_n,
             per_task=self.per_task,
+            judge=self.judge,
         )
+
+    @staticmethod
+    def judge(prompt: list[dict[str, Any]], reference: str, candidate: str, params: dict[str, Any] | None = None) -> bool:
+        """The mock judge (FR-14.40): it knows the truth, which in the mock world is the stored reference (the mock teacher
+        is always right), so a candidate passes exactly when it is that answer. Free text close to it in wording but with
+        another closing sentence fails, as a real judge would fail an answer that says something else, so the judge gate
+        is testable offline."""
+        return candidate.strip() == reference.strip()
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
     def resolve(self, version: Version):
