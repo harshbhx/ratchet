@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import licenses, reasoning
+from . import licenses, reasoning, watch
 from .auth import MAX_RPM, MAX_USD, KeyLimits, KeyRing, Token, parse_key_limits
 from .certificate import CALIBRATIONS
 from .kpis import check_window_days
@@ -243,7 +243,13 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
 }
 # Variables the live-run harness (ratchet/liverun.py) reads outside `Settings`: its gateway key, the code's commit in an
 # image without .git, and an optional Token Factory key for its own arms (docs/CONFIGURATION.md#live-run-harness).
-TOOL_ENV: tuple[str, ...] = ("RATCHET_LIVERUN_KEY", "RATCHET_GIT_SHA", "NEBIUS_API_KEY_LIVERUN")
+TOOL_ENV: tuple[str, ...] = (
+    "RATCHET_LIVERUN_KEY",
+    "RATCHET_GIT_SHA",
+    "NEBIUS_API_KEY_LIVERUN",
+    "RATCHET_DEMO_CHECK_KEY",  # scripts/demo_check.py (FR-11.34)
+    "RATCHET_WATCH_KEY",
+)
 # Every environment variable the package reads, but ReleasePolicy's RATCHET_<FIELD> (`known_env()` adds those). The
 # startup check calls any other RATCHET_* variable unknown (`Settings.validate`), so a variable a change starts reading
 # goes here: `python scripts/reqtrace.py --check` fails until it does, and until docs/CONFIGURATION.md documents it.
@@ -251,6 +257,23 @@ KNOWN_ENV: tuple[str, ...] = tuple(
     sorted(
         {
             "NEBIUS_API_KEY",
+            # The demo watchdog's host-side settings (ratchet/watch.py, FR-11.32), in the .env the gateway also reads.
+            "RATCHET_ALERT_KINDS",
+            "RATCHET_ALERT_WEBHOOK_SECRET",
+            "RATCHET_ALERT_WEBHOOK_URL",
+            "RATCHET_INSTANCE_NAME",
+            "RATCHET_WATCH",
+            "RATCHET_WATCH_CLIENT",
+            "RATCHET_WATCH_CONNECT",
+            "RATCHET_WATCH_FAILURES",
+            "RATCHET_WATCH_FLAG_MAX_AGE_S",
+            "RATCHET_WATCH_HEARTBEAT_URL",
+            "RATCHET_WATCH_MAX_RESTARTS_PER_HOUR",
+            "RATCHET_WATCH_PROBE_TIMEOUT_S",
+            "RATCHET_WATCH_REALERT_S",
+            "RATCHET_WATCH_RESTART_COOLDOWN_S",
+            "RATCHET_WATCH_START_GRACE_S",
+            "RATCHET_WATCH_STATE_DIR",
             "RATCHET_ADAPTER_ROOT",
             "RATCHET_ADMIN_KEYS",
             "RATCHET_ADMIN_TOKEN",
@@ -266,6 +289,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_DASHBOARD_KEYS",
             "RATCHET_DATA_DIR",
             "RATCHET_DB",
+            "RATCHET_DOMAIN",
             "RATCHET_DB_SYNC",
             "RATCHET_CHECK_REASONING",
             "RATCHET_FALLBACK_STUDENT",
@@ -413,9 +437,9 @@ DEPLOY_ENV: frozenset[str] = frozenset(
     {
         "RATCHET_BACKUP_DIR",
         "RATCHET_BACKUP_KEEP",
+        "RATCHET_BACKUP_TAG",
         "RATCHET_BUCKET_ID",
         "RATCHET_BUCKET_S3",
-        "RATCHET_DOMAIN",
         "RATCHET_ENDPOINT_ID",
         "RATCHET_ENDPOINT_NAME",
         "RATCHET_PYTHON",
@@ -834,6 +858,8 @@ class Settings:
     scout_judge_runs_per_day: int = field(default_factory=lambda: _int("RATCHET_SCOUT_JUDGE_RUNS_PER_DAY", "0"))
     scout_judge_budget_usd: float | None = field(default_factory=lambda: _float_or_none("RATCHET_SCOUT_JUDGE_BUDGET_USD"))
     scout_judge_session_s: float = field(default_factory=lambda: _float("RATCHET_SCOUT_JUDGE_SESSION_S", "604800"))
+    # How old the watchdog's last probe may be before the banner flag reads `stale` (FR-11.33); 600 s to 7 days.
+    watch_flag_max_age_s: int = field(default_factory=lambda: _int("RATCHET_WATCH_FLAG_MAX_AGE_S", "10800"))
     # Tavily credits per cycle (0 = counted, not capped), the judges' share (unset = their share of the run cap), the
     # day of the month the cycle starts (00:00 UTC) and the date until which the daily allowance spreads what is left.
     tavily_monthly_credits: int = field(default_factory=lambda: _int("RATCHET_TAVILY_MONTHLY_CREDITS", "0"))
@@ -1739,6 +1765,10 @@ class Settings:
             self._check_live(error, warning)
         self._check_prices(warning)
         _check_environ(env, live, warning)
+        if not 600 <= self.watch_flag_max_age_s <= 604800:
+            error("RATCHET_WATCH_FLAG_MAX_AGE_S", "RATCHET_WATCH_FLAG_MAX_AGE_S must be 600 to 604800 seconds")
+        for problem in watch.config_issues(env):  # the host watchdog's settings (FR-11.32): a warning in mock mode
+            (error if live else warning)("RATCHET_WATCH", problem)
         return issues
 
     def _check_keys(self, error: Callable[[str, str], None]) -> None:

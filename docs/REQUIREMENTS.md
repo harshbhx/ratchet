@@ -8,8 +8,8 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 
 | Status | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Done | 0 | 137 | 13 | 0 | 0 | 150 |
-| Done, untested live | 0 | 16 | 1 | 0 | 0 | 17 |
+| Done | 0 | 137 | 14 | 0 | 0 | 151 |
+| Done, untested live | 0 | 19 | 1 | 0 | 0 | 20 |
 | Done, more planned | 0 | 0 | 1 | 0 | 0 | 1 |
 | Partial | 0 | 0 | 1 | 0 | 0 | 1 |
 | Planned | 0 | 4 | 1 | 0 | 0 | 5 |
@@ -18,14 +18,14 @@ Columns: **Code** is where the requirement is implemented (`module:name` or a fi
 | Not met | 0 | 0 | 0 | 1 | 0 | 1 |
 | User story | 11 | 0 | 0 | 0 | 0 | 11 |
 | Invariant | 0 | 0 | 0 | 0 | 26 | 26 |
-| **Total** | **11** | **158** | **17** | **5** | **26** | **217** |
+| **Total** | **11** | **161** | **18** | **5** | **26** | **221** |
 
 | Verification | US | FR | NFR | SM | INV | Total |
 |---|---|---|---|---|---|---|
-| Tested | 11 | 152 | 16 | 5 | 26 | 210 |
+| Tested | 11 | 155 | 17 | 5 | 26 | 214 |
 | Manual check | 0 | 1 | 0 | 0 | 0 | 1 |
 | No check needed | 0 | 5 | 1 | 0 | 0 | 6 |
-| **Total** | **11** | **158** | **17** | **5** | **26** | **217** |
+| **Total** | **11** | **161** | **18** | **5** | **26** | **221** |
 
 ## 5. User stories and acceptance criteria
 
@@ -241,6 +241,9 @@ From [PRD §6.11](PRD.md#611-demo-hosting).
 |---|---|---|---|---|---|
 | FR-11.1 | One-command Nebius CPU VM setup (cloud-init, Docker Compose, Caddy HTTPS, firewall) | Done (v0.2), untested (on Nebius) | `deploy/vm/create_vm.sh`<br>`deploy/vm/cloud-init.yaml` | `tests/test_live.py::test_caddy_log_drops_the_edge_token`<br>`tests/test_live.py::test_deploy_scripts_parse_and_dry_run`<br>`tests/test_live.py::test_cloud_init_takes_an_ssh_key_with_quotes_and_waits_for_the_apt_lock`<br>`tests/test_live.py::test_update_names_the_settings_the_env_file_lacks_and_the_example_sets_prices_verified` | offline test; live check: `deploy/vm/create_vm.sh` (needs a Nebius project; DRY_RUN=1 prints the commands) |
 | FR-11.2 | Daily ledger backups, update script with health checks (since v0.5 it runs… | Done (v0.2), untested (on Nebius) | `deploy/vm/backup.sh`<br>`deploy/vm/update.sh` | `tests/test_live.py::test_deploy_scripts_parse_and_dry_run`<br>`tests/test_readiness.py::test_update_script_checks_the_config_and_waits_for_readyz` | offline test; live check: `deploy/vm/backup.sh` (runs on the demo VM) |
+| FR-11.32 | Demo watchdog, host side (`python3 -m ratchet.watch tick`, cron every 2 minutes, standard library o… | Done (v0.5), untested (on Nebius) | `ratchet.watch:tick`<br>`ratchet.watch:_maybe_restart`<br>`ratchet.watch:send_alert`<br>`ratchet.watch:alert_body`<br>`ratchet.watch:signature`<br>`deploy/vm/ratchet-watch.cron` | `tests/test_watch.py::test_config_reads_env_file_and_rejects_bad_values`<br>`tests/test_watch.py::test_gateway_flags_a_bad_watch_setting_at_startup`<br>`tests/test_watch.py::test_alert_body_signature_and_retries`<br>`tests/test_watch.py::test_three_failed_liveness_checks_restart_once_and_alert`<br>`tests/test_watch.py::test_a_teacher_outage_never_restarts_the_gateway`<br>`tests/test_watch.py::test_a_broken_ledger_restarts_but_a_busy_one_does_not`<br>`tests/test_watch.py::test_restart_cap_start_grace_pause_and_update_lock`<br>`tests/test_watch.py::test_a_stopped_container_is_never_started_and_a_recovery_is_announced`<br>`tests/test_watch.py::test_cli_status_notify_test_alert_and_off`<br>`tests/test_watch.py::test_cron_file_is_valid_and_cloud_init_installs_the_same_lines` | offline test; live check: `docs/DEPLOY_NEBIUS_VM.md` (the restart rule and the webhook run on the demo VM: step 5 of the watchdog setup) |
+| FR-11.33 | Hourly live probe (`python3 -m ratchet.watch probe`): one 16-token completion through the public UR… | Done (v0.5), untested (on Nebius) | `ratchet.watch:probe`<br>`ratchet.watch:classify`<br>`ratchet.watch:flag_view`<br>`ratchet.gateway:Runtime.live_check`<br>`ratchet.gateway:scout_status`<br>`deploy/vm/config/tasks.json` | `tests/test_watch.py::test_probe_classification_is_by_code_not_http_status`<br>`tests/test_watch.py::test_classification_reads_the_upstream_status_and_caps_retry_after`<br>`tests/test_watch.py::test_probe_sends_one_tiny_request_on_the_pinned_task_and_sets_the_flag_ok`<br>`tests/test_watch.py::test_probe_refuses_to_send_unless_the_task_is_pinned_and_the_key_exists`<br>`tests/test_watch.py::test_mock_mode_probes_nothing`<br>`tests/test_watch.py::test_a_credit_style_failure_alerts_names_the_status_flags_failing_and_never_leaks`<br>`tests/test_watch.py::test_config_side_failures_alert_but_do_not_show_the_banner`<br>`tests/test_watch.py::test_a_transient_failure_is_retried_once_after_the_wait`<br>`tests/test_watch.py::test_probe_flags_a_fallback_teacher_as_ok_but_alerts_on_scout_search`<br>`tests/test_watch.py::test_probe_options_and_heartbeat`<br>`tests/test_watch.py::test_flag_view_is_content_free_and_goes_stale`<br>`tests/test_watch.py::test_scout_status_carries_live_check_and_reads_the_meta_row`<br>`tests/test_watch.py::test_inside_commands_validate_and_write_the_flag`<br>`tests/test_watch.py::test_the_shipped_probe_task_is_pinned_unstored_and_for_one_client` | offline test; live check: `docs/DEPLOY_NEBIUS_VM.md` (the probe calls Token Factory through the VM: `probe --once --force` on day 1) |
+| FR-11.34 | Updates that can be undone and a check from outside: `update.sh` takes a lock, backs up the ledger… | Done (v0.5), untested (on Nebius) | `deploy/vm/update.sh`<br>`deploy/vm/restore.sh`<br>`deploy/vm/backup.sh`<br>`scripts/demo_check.py` | `tests/test_watch.py::test_demo_check_passes_a_healthy_demo_and_never_prints_a_key`<br>`tests/test_watch.py::test_demo_check_fails_on_what_a_judge_would_hit`<br>`tests/test_watch.py::test_demo_check_warns_and_validates_input`<br>`tests/test_watch.py::test_backup_tag_is_validated_and_restore_refuses_a_running_gateway`<br>`tests/test_watch.py::test_update_dry_run_prints_every_change_and_runs_none`<br>`tests/test_watch.py::test_update_backs_up_first_tags_the_image_and_succeeds`<br>`tests/test_watch.py::test_update_rolls_back_the_checkout_and_the_image_when_unhealthy`<br>`tests/test_watch.py::test_update_restores_the_ledger_only_when_the_old_image_cannot_open_it`<br>`tests/test_watch.py::test_update_never_rolls_back_for_a_teacher_outage_or_restores_for_the_wrong_mode`<br>`tests/test_watch.py::test_a_refused_config_check_puts_the_old_image_back_and_changes_nothing_else` | offline test; live check: `scripts/demo_check.py` (`update.sh` needs Docker on the VM; the check runs against the public demo) |
 
 ## 6.12 Operations
 
@@ -338,6 +341,7 @@ From [PRD §7](PRD.md#7-non-functional-requirements).
 | NFR-55 | Monitoring cost: The drift monitor (FR-16.6) stays off the request path: it reads the ledger in the… | Done (v0.5) | `ratchet.release:ReleaseGate._tick_drift`<br>`ratchet.drift:DriftMonitor._update`<br>`ratchet.drift:Stream` | `tests/test_drift.py::test_ten_thousand_observations_take_under_150_ms`<br>`tests/test_drift.py::test_replaying_the_ledger_reproduces_every_capital_exactly`<br>`tests/test_drift.py::test_an_up_to_date_monitor_reads_one_query_per_update`<br>`tests/test_drift.py::test_monitor_draws_nothing_from_the_router_rng` | tested |
 | NFR-56 | Monitoring memory: The drift monitor's memory follows what it has seen and cannot be grown by clien… | Done (v0.5) | `ratchet.drift:Ranks`<br>`ratchet.drift:DriftMonitor._stream`<br>`ratchet.drift:DriftMonitor.counts` | `tests/test_drift.py::test_stream_memory_follows_what_it_has_seen`<br>`tests/test_drift.py::test_client_task_names_cannot_grow_the_monitor`<br>`tests/test_drift.py::test_a_shift_under_invented_task_names_alarms_on_the_shared_stream`<br>`tests/test_drift.py::test_task_headers_sent_to_the_gateway_hold_a_bounded_number_of_streams` | tested |
 | NFR-57 | Teacher watch cost: The teacher watch stays cheap on the request path and moves no number by defaul… | Done (v0.5) | `ratchet.teacher_watch:Watch.refresh`<br>`ratchet.ledger:Ledger.teacher_check_days`<br>`ratchet.router:Ratchet._watch_model` | `tests/test_teacher_watch.py::test_the_gate_freezes_night_school_once_and_an_ack_resumes_it`<br>`tests/test_teacher_watch.py::test_sim_a_stable_teacher_moves_no_number` | tested |
+| NFR-66 | Watchdog cost and safety: The watchdog stays small and content-free: its module imports only the st… | Done (v0.5) | `ratchet.watch:WatchConfig`<br>`ratchet.watch:urllib_fetch`<br>`ratchet.watch:PROBE_BODY` | `tests/test_watch.py::test_watch_imports_only_the_standard_library`<br>`tests/test_watch.py::test_watch_never_touches_demo_controls_or_the_example_store` | tested |
 
 ## 8.1 Product metrics
 

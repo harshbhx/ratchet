@@ -70,6 +70,7 @@ from . import (
     tasks,
     taskspec,
     teacher_watch,
+    watch,
 )
 from . import access as acl
 from . import admin as admin_ops
@@ -423,6 +424,8 @@ class Runtime:
         self.judge = JudgeAccess(scout.judge_code, scout.judge_session_s, clock=self.wall_clock) if scout.judge_enabled else None
         self.judge_attempts = AttemptLimiter(JUDGE_ATTEMPTS_PER_HOUR, clock=self.wall_clock)
         self.search_lock = threading.Lock()
+        self.live_check_lock = threading.Lock()
+        self.live_check_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
         self.search_errors = 0  # failed searches since the last reset (credit refusals are not failures)
         self.search_errors_today: tuple[str, int] = ("", 0)  # (UTC day, failures on it)
         self.search_last_error: str | None = None  # the most recent search's failure, None after a search that worked
@@ -852,6 +855,25 @@ class Runtime:
             "errors_today": today if seen_day == day else 0,
             "credits": credits,
         }
+
+    def live_check(self) -> dict[str, Any]:
+        """The watchdog's banner flag (FR-11.33): `state` is `failing` only after its probe, through the public path, got a
+        teacher-side or gateway-side failure within `watch_flag_max_age_s`; `stale` when the watchdog stopped, `unknown`
+        without a row, `off` in mock mode. Content-free: no code, no text. Read from the ledger at most every 30 s."""
+        if self.settings.mode != "live":
+            return {"state": "off", "since": None, "checked": None, "search": "unknown"}
+        now = time.monotonic()
+        with self.live_check_lock:
+            at, cached = self.live_check_cache
+            if cached is not None and now - at < 30:
+                return cached
+            try:
+                raw = self.ledger.meta_get(watch.META_KEY)
+            except Exception:  # noqa: BLE001 - a status page never fails for the flag
+                raw = None
+            view = watch.flag_view(raw, self.wall_clock(), self.settings.watch_flag_max_age_s)
+            self.live_check_cache = (now, view)
+            return view
 
     def scout_health(self) -> dict[str, Any]:
         """What a readiness probe or the judging watchdog may read about Scout: search, credits and the gateway lease
@@ -4500,6 +4522,7 @@ def scout_status(request: Request) -> dict[str, Any]:
         "search": rt.search_status(),
         "fallback_student": rt.settings.fallback_student_model,
         "student_serving": rt.student_serving(),
+        "live_check": rt.live_check(),
     }
 
 
