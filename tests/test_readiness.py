@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import io
 import json
 import os
 import re
@@ -139,6 +140,8 @@ def _readyz(gw) -> httpx.Response:
         ({"RATCHET_TEACHER_MODEL": "gpt-4o"}, "RATCHET_TEACHER_MODEL"),
         ({"RATCHET_JUDGE_MODEL": "claude-3-5-sonnet"}, "RATCHET_JUDGE_MODEL"),
         ({"RATCHET_TEACHER_FALLBACK_MODEL": "someone/new-model"}, "RATCHET_TEACHER_FALLBACK_MODEL"),
+        ({"RATCHET_BOM_SIGNING_KEY": "c2VjcmV0"}, "RATCHET_BOM_SIGNING_KEY"),  # base64, but of 6 bytes, not a 32-byte seed
+        ({"RATCHET_BOM_SIGNING_KEY": "not base64!"}, "RATCHET_BOM_SIGNING_KEY"),
     ],
 )
 @pytest.mark.req("FR-12.30", "NFR-35")
@@ -192,6 +195,89 @@ def test_every_error_is_listed_at_once(gw, monkeypatch, tmp_path):
     assert settings.audit_rate == 0.05 and [i.var for i in parsed] == ["RATCHET_AUDIT_RATE"]
     with pytest.raises(ValueError, match="at least one issue"):
         ConfigError.of([])
+
+
+@pytest.mark.req("FR-12.30", "NFR-35")
+def test_readers_that_check_several_variables_report_each_one(gw, monkeypatch, tmp_path):
+    """A reader that checks several variables (the release policy, the cost and generation policies, the logs, a
+    breaker, the reserved settings) stops at its first problem; the startup check lists every bad variable anyway."""
+    bad = {
+        "RATCHET_MIN_AUDITS": "many",
+        "RATCHET_TOLERANCE": "abc",
+        "RATCHET_LIVE_FLOOR": "2",
+        "RATCHET_MIN_SHADOW": "0",
+        "RATCHET_STUDENT_COST_MODEL": "bogus",
+        "RATCHET_STUDENT_GPUS": "-1",
+        "RATCHET_MOCK_ENDPOINT_HOURS": "25",
+        "RATCHET_TEACHER_MAX_TOKENS": "-5",
+        "RATCHET_TEACHER_PARAMS": "model",
+        "RATCHET_STUDENT_PARAMS": "stops",
+        "RATCHET_LOG_FORMAT": "xml",
+        "RATCHET_LOG_LEVEL": "loud",
+        "RATCHET_TEACHER_BREAKER_FAILURES": "-1",
+        "RATCHET_TEACHER_BREAKER_COOLDOWN_S": "0",
+        "RATCHET_CANARY_AUDIT_RATE": "0.5",
+        "RATCHET_TAKE_RATE": "0.3",
+    }
+    _live_env(monkeypatch, tmp_path, **bad)
+    with pytest.raises(ConfigError) as caught:
+        gw.Runtime(transports={"teacher": FakeOpenAIServer().transport})
+    found = [i.var for i in caught.value.issues]
+    assert sorted(found) == sorted(bad), found
+    messages = {i.var: i.message for i in caught.value.issues}
+    assert messages["RATCHET_MIN_AUDITS"] == "RATCHET_MIN_AUDITS must be a whole number, not 'many'"
+    assert "RATCHET_LIVE_FLOOR) must be strictly between 0 and 1" in messages["RATCHET_LIVE_FLOOR"]
+    assert "0 decides on no evidence" in messages["RATCHET_MIN_SHADOW"]
+    assert not (tmp_path / "live.db").exists()
+    # The same from the policy alone, and nothing for a clean environment.
+    assert [i.var for i in ReleasePolicy.env_issues({"RATCHET_MIN_AUDITS": "many", "RATCHET_LIVE_FLOOR": "2"})] == [
+        "RATCHET_MIN_AUDITS",
+        "RATCHET_LIVE_FLOOR",
+    ]
+    assert ReleasePolicy.env_issues({}) == [] and ReleasePolicy.env_issues({"RATCHET_MIN_AUDITS": "30"}) == []
+    # Each bad variable's setting goes back to its default, which `defaults()` reads without the environment.
+    monkeypatch.setenv("RATCHET_SAMPLES", "7")
+    assert (config.defaults().samples, Settings().samples, config.defaults().db_path) == (3, 7, "ratchet.db")
+
+
+@pytest.mark.req("FR-12.30", "NFR-35")
+@pytest.mark.parametrize("mode", ["mock", "live"])
+def test_config_check_and_startup_agree_on_every_variable(gw, monkeypatch, tmp_path, mode):
+    """`python -m ratchet.config check` exits 2 exactly when the gateway would not start, so a deploy that passes the
+    check never crash-loops: every variable Ratchet reads, set to a value that does not parse and to -1, in each mode.
+    A refusal is a ConfigError raised before the ledger file exists; only a bad RATCHET_TASKS_FILE stops later, as the
+    task loader's SpecError (the check reports it too)."""
+    from ratchet.taskspec import SpecError
+
+    work = tmp_path / "work"  # a relative RATCHET_DB lands here
+    work.mkdir()
+    monkeypatch.chdir(work)
+    db = tmp_path / "fuzz.db"
+    disagree: list[tuple[str, str, int, str]] = []
+    for name in sorted(config.known_env() - config.DEPLOY_ENV):
+        for value in ("garbage", "-1"):
+            if mode == "live":
+                _live_env(monkeypatch, tmp_path, **{"RATCHET_DB": str(db), name: value})
+            else:
+                _clear_env(monkeypatch, **{"RATCHET_MODE": "mock", name: value})
+            out = io.StringIO()
+            code = config.main(["check"], out=out)
+            try:
+                rt = gw.Runtime(transports={"teacher": FakeOpenAIServer().transport})
+            except ConfigError:
+                started = "refused"
+                assert not db.exists() and not any(work.iterdir()), (name, value)
+            except SpecError:
+                assert name == "RATCHET_TASKS_FILE", (name, value)
+                started = "refused"
+            else:
+                started = "started"
+                rt.ledger.close()
+            if (started == "refused") != (code == config.EXIT_ERRORS):
+                disagree.append((name, value, code, started))
+            for path in [*tmp_path.glob("fuzz.db*"), *work.iterdir()]:
+                path.unlink()
+    assert disagree == []
 
 
 @pytest.mark.req("FR-12.30", "NFR-35")
@@ -455,8 +541,10 @@ def test_readyz_in_mock_mode_checks_the_ledger_only(gw, monkeypatch):
 
 @pytest.mark.req("FR-12.30", "NFR-2")
 def test_readyz_503_when_the_ledger_cannot_be_written(gw, monkeypatch, tmp_path):
-    """A closed ledger, a read-only one and one whose lock is held past the probe's wait are 503 `not_ready`, each with
-    a short code, never the message; a 503 writes no failures row."""
+    """A closed ledger and a read-only one are 503 `not_ready`, each with a short code, never the message; a 503 writes
+    no failures row. A ledger whose lock another writer holds past the probe's wait is busy, not broken (requests wait
+    for it): 200 `degraded`, and 503 only when the next probe, a TTL later, still finds it busy. A probe still waiting
+    when its caller stops waiting (`timeout`) counts as busy too."""
     clock = FakeClock()
     rt = gw.Runtime(Settings(mode="mock", mock_warmup_days=0, strict_config=None), clock=clock)
     monkeypatch.setattr(gw, "rt", rt)
@@ -479,13 +567,46 @@ def test_readyz_503_when_the_ledger_cannot_be_written(gw, monkeypatch, tmp_path)
             held.set()
             release.wait(10)
 
-    t = threading.Thread(target=stuck_writer)
-    t.start()
-    held.wait(5)
+    def hold() -> threading.Thread:
+        held.clear()
+        release.clear()
+        t = threading.Thread(target=stuck_writer)
+        t.start()
+        held.wait(5)
+        return t
+
+    t = hold()
     try:
         clock.advance(readiness.PROBE_TTL_S)
         r = _readyz(gw)
-        assert r.status_code == 503 and r.json()["checks"]["ledger"]["error"] == "lock_timeout"
+        ledger = r.json()["checks"]["ledger"]
+        assert (r.status_code, r.json()["status"], ledger["error"], ledger["busy_runs"]) == (200, "degraded", "lock_timeout", 1)
+        clock.advance(readiness.PROBE_TTL_S)
+        r = _readyz(gw)  # still held a probe later: not ready
+        ledger = r.json()["checks"]["ledger"]
+        assert (r.status_code, r.json()["status"], ledger["error"], ledger["busy_runs"]) == (503, "not_ready", "lock_timeout", 2)
+    finally:
+        release.set()
+        t.join(5)
+    clock.advance(readiness.PROBE_TTL_S)
+    r = _readyz(gw)
+    assert (r.status_code, r.json()["status"], rt.readiness.busy_runs) == (200, "ready", 0)
+
+    # The caller stops waiting before the probe does: `timeout`, counted as one more busy probe.
+    monkeypatch.setattr(readiness, "PROBE_TIMEOUT_S", 0.5)
+    rt.readiness.cache = readiness.ProbeCache(timeout_s=0.05, clock=clock, executors={"ledger": readiness.pool("ledger")})
+    t = hold()
+    try:
+        r = _readyz(gw)
+        assert (r.status_code, r.json()["status"], r.json()["checks"]["ledger"]["error"]) == (200, "degraded", "timeout")
+        for _ in range(200):  # the probe goes on and ends in lock_timeout, the first busy run, and its result is kept
+            if rt.readiness.busy_runs and not rt.readiness.cache._running:
+                break
+            threading.Event().wait(0.02)
+        assert rt.readiness.busy_runs == 1
+        clock.advance(readiness.PROBE_TTL_S)
+        r = _readyz(gw)  # the next probe outlasts its caller too: the second busy probe in a row
+        assert (r.status_code, r.json()["checks"]["ledger"]["error"]) == (503, "timeout")
     finally:
         release.set()
         t.join(5)
@@ -528,12 +649,23 @@ def test_readyz_reports_missing_adapters_and_queues_their_reload(gw, monkeypatch
     _readyz(gw)  # within the TTL: no new probe
     assert len(teacher.calls_to("/models")) == len(student.calls_to("/models")) == 1
     clock.advance(readiness.PROBE_TTL_S)
-    r = _readyz(gw)  # the reload put student-v3 back: ready
-    assert len(teacher.calls_to("/models")) == 2 and r.json()["status"] == "degraded"  # the fake lists what it was given
+    r = _readyz(gw)  # a failed student result is reused for PROBE_TTL_S only: probed again, still missing
+    assert len(teacher.calls_to("/models")) == len(student.calls_to("/models")) == 2
+    assert r.json()["status"] == "degraded"  # the reload reached the endpoint, but this fake lists only what it was given
     student.models.append("student-v3")
     clock.advance(readiness.PROBE_TTL_S)
     r = _readyz(gw)
     assert r.json()["status"] == "ready" and r.json()["checks"]["student"]["missing_adapters"] == []
+
+    # An ok student result is reused for STUDENT_PROBE_TTL_S: polling /readyz sends the endpoint one request per 5 min.
+    assert readiness.STUDENT_PROBE_TTL_S == 300
+    for _ in range(3):
+        clock.advance(readiness.PROBE_TTL_S)
+        assert _readyz(gw).json()["status"] == "ready"
+    assert (len(teacher.calls_to("/models")), len(student.calls_to("/models"))) == (6, 3)
+    clock.advance(readiness.STUDENT_PROBE_TTL_S)
+    _readyz(gw)
+    assert len(student.calls_to("/models")) == 4
 
 
 @pytest.mark.req("FR-12.30", "NFR-2", "FR-2.12")
@@ -595,6 +727,76 @@ def test_readyz_follows_the_teacher(gw, monkeypatch, tmp_path):
     _runtime(gw, monkeypatch, _live(tmp_path, db_path=str(tmp_path / "h.db"), student_base=""), teacher, None)
     st = _readyz(gw).json()["checks"]["student"]
     assert (st["ok"], st["endpoint"], st["model"]) == (True, False, "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
+
+
+@pytest.mark.req("FR-12.30", "NFR-2", "FR-2.12")
+def test_readyz_recovers_from_an_open_teacher_breaker_without_traffic(gw, monkeypatch, tmp_path):
+    """A gateway out of rotation gets no request to move its open teacher breaker on, so readiness must not wait for
+    one: while the breaker waits it is 503; once its wait is over and the teacher's /models answers, 200 `degraded` with
+    `probe_due` (the next request is the breaker's probe), however long no traffic comes. An unreachable teacher keeps it
+    503 until /models answers again. Half-open counts as a way through too; a successful probe makes it `ready`, a failed
+    one 503 for the doubled wait. A fallback teacher on an endpoint of its own has no /models probe: its breaker's due
+    probe is enough."""
+    up = {"teacher": True}
+
+    def teacher(request: httpx.Request) -> httpx.Response:
+        if not up["teacher"]:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, json={"data": [{"id": OPEN_TEACHER}, {"id": JUDGE}]})
+
+    def check() -> tuple[int, str, dict[str, Any]]:
+        r = _readyz(gw)
+        return r.status_code, r.json()["status"], r.json()["checks"]["teacher"]
+
+    clock = FakeClock()
+    rt = _runtime(gw, monkeypatch, _live(tmp_path, student_base=""), httpx.MockTransport(teacher), None, clock)
+    breaker, wait = rt.ratchet.teacher_breaker, rt.ratchet.teacher_policy.open_s
+    for _ in range(rt.ratchet.teacher_policy.failure_threshold):
+        breaker.record(False)  # a short teacher blip opens the breaker
+    code, status, tc = check()
+    assert (code, status, tc["breaker"], tc["probe_due"], tc["available"]) == (503, "not_ready", "open", False, False)
+    clock.advance(wait)
+    for minutes in (0, 1, 10, 60, 24 * 60):  # nobody sends a request: the breaker stays open, its probe due
+        clock.advance(minutes * 60)
+        code, status, tc = check()
+        assert (code, status, tc["breaker"], tc["probe_due"], tc["available"]) == (200, "degraded", "open", True, True)
+        assert (tc["models"], tc["ok"], breaker.retry_in()) == ("ok", False, 0.0)
+
+    up["teacher"] = False  # the teacher's endpoint does not answer: its probe would fail
+    clock.advance(readiness.PROBE_TTL_S)
+    code, status, tc = check()
+    assert (code, tc["error"], tc["probe_due"], tc["available"]) == (503, "ConnectError", True, False)
+    up["teacher"] = True
+    clock.advance(readiness.PROBE_TTL_S)
+    assert check()[:2] == (200, "degraded")
+
+    assert breaker.allow()  # a request arrives: the probe
+    code, status, tc = check()
+    assert (code, status, tc["breaker"], tc["probe_due"]) == (200, "degraded", "half_open", True)
+    breaker.record(False)  # the probe failed: open again, for twice as long
+    assert check()[0] == 503
+    clock.advance(2 * wait)
+    assert check()[:2] == (200, "degraded")
+    assert breaker.allow()
+    breaker.record(True)  # the next probe succeeded
+    code, status, tc = check()
+    assert (code, status, tc["breaker"], tc["ok"]) == (200, "ready", "closed", True) and "probe_due" not in tc
+
+    # A fallback teacher: on the teacher's endpoint its due probe needs the endpoint to answer, on its own it does not.
+    for i, own in enumerate((False, True)):
+        base = {"teacher_fallback_base": "https://fallback.test/v1"} if own else {}
+        settings = _live(tmp_path, db_path=str(tmp_path / f"fb{i}.db"), student_base="", teacher_fallback_model=JUDGE, **base)
+        rt = _runtime(gw, monkeypatch, settings, httpx.MockTransport(teacher), None, clock)
+        assert (rt.ratchet.fallback_teacher is rt.ratchet.teacher) is not own
+        for b in (rt.ratchet.teacher_breaker, rt.ratchet.fallback_breaker):
+            for _ in range(rt.ratchet.teacher_policy.failure_threshold):
+                b.record(False)
+        up["teacher"] = False
+        assert check()[0] == 503
+        clock.advance(wait)
+        code, status, tc = check()
+        assert (code, tc["fallback_breaker"], tc["available"]) == ((200, "open", True) if own else (503, "open", False))
+        up["teacher"] = True
 
 
 @pytest.mark.req("FR-12.30", "NFR-2")
