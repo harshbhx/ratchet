@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1774 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1775 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -23,7 +23,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_core.py` | 67 (44 functions; one has 19 cases, one has 5; 1 slow: skipped without `--runslow`) |
 | `tests/test_tasks.py` | 129 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
-| `tests/test_nightschool.py` | 30 (25 functions; one has 5 cases) |
+| `tests/test_nightschool.py` | 31 (25 functions; one has 5 cases) |
 | `tests/test_release.py` | 41 (32 functions; one has 8 cases, two have 2) |
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1774** |
+| **Total** | **1775** |
 
 There are three layers:
 
@@ -252,6 +252,7 @@ The last six check that the student trains on the prompt it is served (FR-8.42, 
 | `test_train_records_library_versions` | FR-8.42, FR-4.5, INV-14: `train.versions` records Python, CUDA and each pinned package (None when missing, from an injected lookup) in `LIBRARIES` order; `bom.EXTRA_KEYS` has no section for them, so `versions.json` stays beside the adapter; `ratchet_manifest.json` records the template arguments |
 | `test_train_refuses_rows_that_would_train_another_prompt` | FR-8.42: `train.check_rows` refuses, naming the row and never its text, an old `messages` row, missing or other template arguments, a completion that is not one assistant message with text, an answer with a think tag, an empty or malformed prompt, provenance without a license, a row that is not an object, and an empty file |
 | `test_the_version_is_recorded_on_the_rows_the_adapter_was_trained_on` | FR-4.4, INV-14, INV-17: an example stored while the dataset files are written is not trained on: rows, `train_examples`, the BOM's count, commitment size and `dataset_sha256` all describe the same 60 rows; the late one is in the next read |
+| `test_a_prompt_held_out_in_one_task_is_never_trained_on_through_another` | INV-3, INV-6, FR-4.2: the same messages under two tasks (ADR 0131): golden under one, train under the other is golden under both; train under both stays train; golden under both stays golden; two occurrences in one task and one in the other make it frequent, so it trains in both; a prompt only one task has trains as before; `rows(task=)` returns that task's copy |
 
 ### `tests/test_release.py`
 

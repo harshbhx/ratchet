@@ -55,7 +55,7 @@ from types import MappingProxyType
 from typing import Any, NamedTuple
 
 from .. import bom, licenses, tasks
-from ..ledger import Ledger, prompt_key, seen_count
+from ..ledger import Ledger, content_key, prompt_key, seen_count
 from ..merkle import KeySet
 
 FREQUENT = 3
@@ -110,22 +110,39 @@ def rows(
     """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
     gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec),
     `skipped_think_tag` (train rows whose answer holds a literal think tag), `excluded_pinned` (rows left out because
-    their task is pinned now) and `excluded_contested` (rows quarantined by the teacher watch), each only when it happens."""
+    their task is pinned now) and `excluded_contested` (rows quarantined by the teacher watch), each only when it happens.
+
+    A prompt is one group across tasks (`ledger.content_key`: the same messages under any task or conditions; ADR 0131),
+    because one adapter serves every task: its occurrences add up for the frequent rule, a golden-only row holds every
+    copy out, and a prompt whose copy in another task is golden (and not frequent) is golden in this one too, so no
+    task's golden set holds a prompt the adapter trained on through another task. Rows whose text a purge removed and
+    that predate `content_hash` group by their own task's prompt key, as before. With `task`, every task's rows are
+    still read for the grouping."""
     out = []
     specs: dict[str, tasks.Task] = {}
-    examples = ledger.examples(task=task)
-    keys = [prompt_key(r) for r in examples]
+    examples = ledger.examples()
+    keys = [content_key(r) or prompt_key(r) for r in examples]
     seen: Counter[str] = Counter()
     held: set[str] = set()  # prompts with a golden-only row: every variant stays golden (FR-4.50)
+    golden_anywhere: set[str] = set()  # prompts with a row in the golden split under any task (ADR 0131)
     for r, key in zip(examples, keys, strict=True):
         seen[key] += seen_count(r)  # purged rows count too (INV-3); a label that was no occurrence counts 0
         if _golden_only(r):
             held.add(key)
+        elif r["split"] == "golden":
+            golden_anywhere.add(key)
     for r, key in zip(examples, keys, strict=True):
         if r["purged_ts"] is not None or r["messages"] is None:
             continue  # purged (FR-13.3, FR-13.4): no text to train or grade on
+        if task is not None and r["task"] != task:
+            continue
         frequent = seen[key] >= FREQUENT
-        effective = "golden" if key in held else ("train" if (r["split"] == "train" or frequent) else "golden")
+        if key in held:
+            effective = "golden"
+        elif frequent:
+            effective = "train"
+        else:
+            effective = "golden" if (r["split"] == "golden" or key in golden_anywhere) else "train"
         if effective != split:
             continue
         spec = specs.get(r["task"]) or specs.setdefault(r["task"], tasks.get(r["task"]))

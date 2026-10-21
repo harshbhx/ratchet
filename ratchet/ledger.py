@@ -96,7 +96,10 @@ CREATE TABLE IF NOT EXISTS examples (
     -- The example's key under the default redaction (`label` style, no detector plugin; ADR 0082) when it was stored
     -- otherwise and the key differs; NULL when it is `hash`. An erasure tombstones both, so a style or plugin change
     -- never lets an erased example be stored again.
-    canon_hash TEXT
+    canon_hash TEXT,
+    -- SHA-256 of the stored messages (`content_hash`), the same whatever the task or conditions: what groups one prompt across
+    -- tasks for the golden split and the frequent rule (ADR 0131). Kept when a purge removes the text.
+    content_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -318,6 +321,24 @@ def prompt_key(r: Mapping[str, Any]) -> str:
     return str(r["hash"])
 
 
+def content_hash(messages_text: str) -> str:
+    """SHA-256 of an example's stored `messages` text (the JSON `add_example` writes): the same for the same prompt under
+    any task or conditions. It groups one prompt across tasks (`content_key`)."""
+    return hashlib.sha256(messages_text.encode()).hexdigest()
+
+
+def content_key(r: Mapping[str, Any]) -> str | None:
+    """The group of an example's prompt across tasks (ADR 0131): its `content_hash`, else computed from its messages for a
+    row stored before the column existed, else None (a legacy row whose text a purge removed: it has no group beyond
+    its own task's `prompt_key`)."""
+    keys = r.keys() if hasattr(r, "keys") else ()
+    if "content_hash" in keys and r["content_hash"]:
+        return str(r["content_hash"])
+    if "messages" in keys and r["messages"]:
+        return content_hash(str(r["messages"]))
+    return None
+
+
 def seen_count(r: Mapping[str, Any]) -> int:
     """How often an example's exact request occurred (`examples.seen`). A label stored without an occurrence of its
     request (an import, or a correction of a request already counted in another variant) is inserted with 0 and counts
@@ -437,6 +458,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "verified": "INTEGER DEFAULT 0",
         "golden_only": "INTEGER DEFAULT 0",
         "canon_hash": "TEXT",
+        "content_hash": "TEXT",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
     "erasures": {"actor": "TEXT", "reason": "TEXT", "scope": "TEXT", "purged": "INTEGER", "kept": "INTEGER"},
@@ -1721,8 +1743,9 @@ class Ledger:
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
-                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen, canon_hash)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen, canon_hash,"
+                " content_hash)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     now,
                     self.day,
@@ -1744,6 +1767,7 @@ class Ledger:
                     origin,
                     int(bump),  # 1 as the column's default for every router write; 0 for a label that is no occurrence
                     canon,
+                    content_hash(text),
                 ),
             )
             if not comparable:  # a sampled label is no reference for a later one (the teacher watch)
@@ -2002,7 +2026,7 @@ class Ledger:
         final = reason == "erasure"
         for part in _chunks(sorted(rows)):
             found = self.db.execute(
-                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason, canon_hash FROM examples"
+                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason, canon_hash, content_hash FROM examples"
                 f" WHERE hash IN ({','.join('?' * len(part))})",
                 part,
             ).fetchall()
@@ -2013,9 +2037,9 @@ class Ledger:
                     key = prompt_key(r) if r["params"] else None  # without conditions the key is the hash itself
                     self.db.execute(
                         "UPDATE examples SET messages=NULL, completion=NULL, params=NULL, purged_ts=?, purge_reason=?,"
-                        " purged_train=?, prompt_hash=COALESCE(prompt_hash, ?),"
+                        " purged_train=?, prompt_hash=COALESCE(prompt_hash, ?), content_hash=COALESCE(content_hash, ?),"
                         " end_user=CASE WHEN ? THEN NULL ELSE end_user END WHERE hash=?",
-                        (now, reason, int(bool(rows[r["hash"]])), key, int(final), r["hash"]),
+                        (now, reason, int(bool(rows[r["hash"]])), key, content_key(r), int(final), r["hash"]),
                     )
                 else:  # an erasure of a row retention purged: its text is gone already; it now stays gone
                     self.db.execute("UPDATE examples SET purge_reason='erasure', end_user=NULL WHERE hash=?", (r["hash"],))
