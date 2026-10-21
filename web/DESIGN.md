@@ -19,12 +19,27 @@ Use this metaphor with restraint: a few deliberate moments, not on every heading
 | Token | Means | Use |
 |---|---|---|
 | `owned` (blue) | the student: Nano with the adapter **you own** | "Nano · yours" badges, student share, Ratchet cost line |
-| `rented` (orange) | the teacher you **rent** per token | "Ultra · rented" badges, all-teacher baseline, escalations |
+| `rented` (orange) | the teacher you **rent** per token | "Ultra · Token Factory" badges, all-teacher baseline, escalations |
 | `good` / `warn` / `bad` | status only | live, holding, rolled back / rejected. Always with an icon or a word, never color alone |
 | `ink`, `ink-2`, `muted` | text | text never wears a series color |
 | `bg`, `bg-sunken`, `surface`, `surface-2`, `line`, `line-strong` | surfaces | |
 
 These are CSS variables (see `src/styles/globals.css`) exposed as Tailwind colors: `bg-owned`, `text-rented-ink`, `border-line`, `bg-owned-soft`, etc. Use `*-ink` variants for colored text on light backgrounds (contrast). Dark mode is the `.dark` class on `<html>` (toggle in the header); use `dark:` only when a token is not enough.
+
+The hosted fallback (the untuned Nano 30B on Token Factory that answers student calls while the GPU endpoint is off) is neither: its badge is `outline`, never the owned blue.
+
+### Who answered: the label vocabulary
+
+One function, `whoLabel` in `src/lib/who-model.ts`, gives every badge its words (FR-7.40); `WhoBadge` renders it. A student call is ours only when its `model` is not the gateway's `fallback_student`, so pass the call's `model` wherever it is known. A badge that says who answers a kind of call (an agent card, an explainer) passes `serving`, the model student calls go to now, from `WhoProvider` (`whoContext`); a badge that describes a component of the stack, or a labelled simulation, keeps its fixed words. The token names stay `owned` and `rented`; only the visible text below is shown.
+
+| Who | Badge | Tone | Tooltip |
+|---|---|---|---|
+| Our adapter (`student-vN`) | Nano · yours | `owned` | "Nemotron 3 Nano 4B with our LoRA adapter v[N], on a Nebius Serverless Endpoint" |
+| The hosted fallback | Nano 30B · hosted | `outline` | "Untuned Nemotron 3 Nano 30B on Token Factory, held to confidence threshold [T]. Not covered by our adapter's precision certificate." (plus "Our adapter answers during the daily endpoint windows." when the gateway reports windows) |
+| The teacher | Ultra · Token Factory | `rented` | "Nemotron 3 Ultra on Nebius Token Factory" |
+| A tool | Tavily, or Search | `neutral` | the tool's id |
+
+While `student_serving.kind` is `hosted_fallback`: say "the student" or "the hosted Nano (untuned)", never "your model" (`studentCopy`); hide the live version's golden precision and say "not covered by the certificate" instead (`precisionShown`); the dashboard header names the serving student (`servingLine`). Never call the teacher "rented" in a badge; name where it runs.
 
 ## Type and layout
 
@@ -38,7 +53,7 @@ These are CSS variables (see `src/styles/globals.css`) exposed as Tailwind color
 
 - `@/components/ui/button`: `Button`, `ButtonLink` (router), `ButtonA` (external); variants `primary | owned | outline | ghost | subtle | danger`, sizes `sm | md | lg | icon`.
 - `@/components/ui/badge`: `Badge` with `tone` `neutral | owned | rented | good | warn | bad | outline`.
-- `@/components/ui/who`: `WhoBadge servedBy="student|teacher|tool"`: the one vocabulary for who answered.
+- `@/components/ui/who`: `WhoBadge servedBy="student|teacher|tool" model=... fallback=...`: the one vocabulary for who answered (`whoLabel`, above). A page that knows the gateway's fallback id wraps its badges in `WhoProvider`.
 - `@/components/ui/card`, `@/components/ui/section` (`Container`, `Eyebrow`, `H2`, `Lead`), `@/components/ui/code-block` (`CodeBlock`, `tok`), `@/components/ui/stat` (`Stat`, `CountUp`), `@/components/ui/logo`.
 - `@/lib/api`: typed client (`api.stats()`, `api.cost()`, `api.tasks()`, `api.task(name)`, `api.validateTask()`, `api.putTask()`, `api.deleteTask()` (these three take the admin key as an argument), `api.demoDay()`, `api.breakNext()`, `api.studentOutage()`, `api.reset()`, `api.scoutExamples()`, `api.scoutStatus()`, `streamScout()`), and all response types. `ApiError.body` holds a parsed error body (a 422's `errors`).
 - `src/pages/dashboard/drawer.tsx`: `Drawer`, `DrawerBody`, `DrawerFooter`, a side sheet for detail and editing (modal, focus kept inside, Escape and a click outside close it, focus returns to the opener).

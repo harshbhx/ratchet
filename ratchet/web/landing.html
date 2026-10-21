@@ -230,7 +230,7 @@ r = client.chat.completions.create(
       <div class="tiles">
         <div class="tile"><div class="v" id="sSaved">-</div><div class="l">saved vs all-teacher</div></div>
         <div class="tile"><div class="v" id="sPct">-</div><div class="l">cost reduction, all traffic</div></div>
-        <div class="tile"><div class="v" id="sShare">-</div><div class="l">answered by your model (latest day)</div></div>
+        <div class="tile"><div class="v" id="sShare">-</div><div class="l" id="sShareL">answered by your model (latest day)</div></div>
         <div class="tile"><div class="v" id="sLive">-</div><div class="l">live student version</div></div>
         <div class="tile"><div class="v" id="sReq">-</div><div class="l">requests</div></div>
       </div>
@@ -469,6 +469,9 @@ pytest -q</code></pre>
     $("sSaved").textContent = usd(t.saved_usd);
     $("sPct").textContent = pct(t.savings_pct || 0);
     $("sShare").textContent = last ? pct(last.student_share) : "0%";
+    // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
+    const hostedNow = !!s.student_serving && s.student_serving.kind === "hosted_fallback";
+    $("sShareL").textContent = hostedNow ? "answered by the student (hosted Nano 30B while our GPU endpoint is off)" : "answered by your model (latest day)";
     $("sLive").textContent = live ? "v" + live.id : "none yet (cold start)";
     $("sLive").style.fontSize = live ? "" : "18px";
     $("sReq").textContent = (Number(t.requests) || 0).toLocaleString("en-US");

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
+import { hasWindows, hostedThreshold } from "@/lib/who-model";
 import type { Busy, Notice } from "./controls";
 import { eventLabel, eventTone } from "./model";
 import {
@@ -57,7 +58,16 @@ function BreakerChip({ view }: { view: BreakerView }) {
   );
 }
 
-function BreakerCard({ view, nowMs }: { view: BreakerView; nowMs: number }) {
+/** What a breaker's badge needs to name the model behind it (`whoLabel`). */
+interface StudentBadge {
+  model?: string | null;
+  fallback?: string | null;
+  threshold?: number | null;
+  windows?: boolean;
+  simulated?: boolean;
+}
+
+function BreakerCard({ view, nowMs, student }: { view: BreakerView; nowMs: number; student: StudentBadge }) {
   const { meta, state, since } = view;
   const nowS = nowMs / 1000;
   let meaning: string;
@@ -85,7 +95,15 @@ function BreakerCard({ view, nowMs }: { view: BreakerView; nowMs: number }) {
             {meta.label}
             <span className="font-mono text-[11.5px] font-normal text-muted">{view.name}</span>
           </p>
-          <WhoBadge servedBy={meta.who} className="mt-1.5" />
+          <WhoBadge
+            servedBy={meta.who}
+            model={meta.who === "student" ? student.model : undefined}
+            fallback={student.fallback}
+            threshold={student.threshold}
+            windows={student.windows}
+            simulated={student.simulated}
+            className="mt-1.5"
+          />
         </div>
         <BreakerChip view={view} />
       </div>
@@ -337,6 +355,14 @@ function RecentFailures({ stats, nowMs }: { stats: Stats; nowMs: number }) {
  */
 export function ResiliencePanel({ stats, demo }: { stats: Stats; demo?: OutageDemo }) {
   const views = breakerViews(stats.events);
+  // A student-side breaker guards whatever answers student calls now: the hosted fallback while the endpoint is off.
+  const student: StudentBadge = {
+    model: stats.student_serving?.model,
+    fallback: stats.fallback_student,
+    threshold: hostedThreshold(stats.student_serving),
+    windows: hasWindows(stats.student_serving),
+    simulated: stats.mode === "mock",
+  };
   const anyOpen = views.some((v) => v.state === "open" || v.state === "half_open");
   // Relative times move every 5 s while a breaker is open; otherwise each stats poll re-renders them.
   const nowMs = useTick(anyOpen, 5000) + (demo?.skewMs ?? 0);
@@ -360,7 +386,7 @@ export function ResiliencePanel({ stats, demo }: { stats: Stats; demo?: OutageDe
     >
       <div className="grid gap-3 md:grid-cols-2">
         {views.map((v) => (
-          <BreakerCard key={v.name} view={v} nowMs={nowMs} />
+          <BreakerCard key={v.name} view={v} nowMs={nowMs} student={student} />
         ))}
       </div>
 

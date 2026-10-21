@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { studentCopy } from "@/lib/who-model";
 import { AGENTS, AgentDisc, Domain, RouteNote, StepMeta, WebLink, YesNo, stateLabel } from "./bits";
 import { agentState, type AgentRow, type Derived, type RunState } from "./state";
 
@@ -182,7 +183,7 @@ export function TriageLane({ run, derived }: { run: RunState; derived: Derived }
       agent="triage"
       run={run}
       derived={derived}
-      progress={derived.order.length ? `${tri.length} of ${derived.order.length} · ${yours} by your model` : undefined}
+      progress={derived.order.length ? `${tri.length} of ${derived.order.length} · ${yours} ${studentCopy(derived.hosted).byShort}` : undefined}
     >
       {derived.order.length === 0 ? (
         <Empty>{run.status === "idle" ? AGENTS.triage.does : run.status === "running" ? "Waiting for search results." : "Not run."}</Empty>
@@ -233,7 +234,7 @@ export function ReaderLane({ run, derived }: { run: RunState; derived: Derived }
       agent="reader"
       run={run}
       derived={derived}
-      progress={total || rd.length ? `${rd.length} of ${total}${derived.triageDone ? "" : "+"} · ${yours} by your model` : undefined}
+      progress={total || rd.length ? `${rd.length} of ${total}${derived.triageDone ? "" : "+"} · ${yours} ${studentCopy(derived.hosted).byShort}` : undefined}
     >
       {ids.length === 0 ? (
         <Empty>

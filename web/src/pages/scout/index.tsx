@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { FlaskConical, Info, LoaderCircle, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { WhoProvider } from "@/components/ui/who";
 import { Container, Eyebrow } from "@/components/ui/section";
 import { cn, fmtUsd } from "@/lib/utils";
 import { AgentGraph, GraphLegend } from "./agent-graph";
@@ -61,7 +62,16 @@ function TeamStrip() {
 }
 
 export default function ScoutPage() {
-  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples } = useScout();
+  const scout = useScout();
+  return (
+    <WhoProvider value={scout.who}>
+      <ScoutBody scout={scout} />
+    </WhoProvider>
+  );
+}
+
+function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
+  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples } = scout;
   const [hint, setHint] = useState<string | null>(null);
   const graphRef = useRef<HTMLDivElement | null>(null);
   const running = run.status === "running";
@@ -177,7 +187,7 @@ export default function ScoutPage() {
                 <AgentGraph run={run} derived={derived} />
               </div>
               <div className="border-t border-line px-4 py-3.5 sm:px-6">
-                <GraphLegend />
+                <GraphLegend hosted={derived.hosted} />
               </div>
             </section>
           </Card>
@@ -204,7 +214,7 @@ export default function ScoutPage() {
                   What each agent did
                 </h2>
                 <p className="mt-1.5 max-w-[68ch] text-[14.5px] text-muted">
-                  Every model call, who answered it, how sure your model was, and what it cost against Ultra alone.
+                  Every model call, who answered it, how sure {derived.hosted ? "the student" : "your model"} was, and what it cost against Ultra alone.
                 </p>
               </div>
               <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">

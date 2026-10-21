@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Pause, Play } from "lucide-react";
 import { SIM_DAYS } from "@/lib/sim";
 import { cn, fmtPct, fmtUsd } from "@/lib/utils";
+import { WHO_TEXT } from "@/lib/who-model";
 import { EASE, SimBadge, ratchetPath, useElementWidth, useOnScreen } from "../shared";
 
 const NIGHTS = SIM_DAYS.length;
@@ -278,8 +279,8 @@ export function HeroFlow() {
             {/* outputs */}
             {(
               [
-                { k: "nano", n: g.nano, label: "Nano · yours", sub: "adapter you keep", above: true },
-                { k: "ultra", n: g.ultra, label: "Ultra · rented", sub: "billed per token", above: false },
+                { k: "nano", n: g.nano, label: WHO_TEXT.owned, sub: "adapter you keep", above: true },
+                { k: "ultra", n: g.ultra, label: WHO_TEXT.rented, sub: "billed per token", above: false },
               ] as const
             ).map(({ k, n, label: l, sub, above }) => {
               const owned = k === "nano";

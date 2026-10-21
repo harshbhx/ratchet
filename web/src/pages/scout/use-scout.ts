@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { api, streamScout, type ScoutExamples, type ScoutStatus } from "@/lib/api";
+import { hostedServing, whoContext } from "@/lib/who-model";
 import { derive, initialRun, runReducer } from "./state";
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
@@ -61,8 +62,12 @@ export function useScout() {
     void loadStatus();
   }, [loadStatus]);
 
-  const derived = useMemo(() => derive(run), [run]);
+  const fallback = status?.fallback_student ?? null;
+  const servingHosted = hostedServing(status?.student_serving);
+  const derived = useMemo(() => derive(run, fallback, servingHosted), [run, fallback, servingHosted]);
   const mode = run.mode ?? examples?.mode ?? status?.mode ?? null;
+  // Every badge on the page tells our adapter from the hosted fallback by the call's model id (FR-7.40).
+  const who = useMemo(() => ({ ...whoContext(status), simulated: mode === "mock" }), [status, mode]);
 
-  return { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples: loadExamples };
+  return { run, derived, examples, examplesError, status, mode, who, start, stop, reloadExamples: loadExamples };
 }

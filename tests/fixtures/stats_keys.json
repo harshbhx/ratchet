@@ -11,6 +11,14 @@
     "day": "number",
     "teacher": "string",
     "student_base": "string",
+    "fallback_student": "string",
+    "student_serving": {
+      "kind": "string",
+      "model": "string|null",
+      "version": "number|null",
+      "threshold": "number|null",
+      "certified": "bool"
+    },
     "totals": {
       "requests": "number",
       "cost_usd": "number",

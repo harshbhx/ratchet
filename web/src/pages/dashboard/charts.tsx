@@ -18,6 +18,7 @@ import { useReducedMotion } from "motion/react";
 import { AlertTriangle, LineChart as LineIcon, ShieldCheck, Undo2 } from "lucide-react";
 import type { DayStats } from "@/lib/api";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
+import { studentCopy } from "@/lib/who-model";
 import { fmtPer1k, fmtShare, latest, niceTicks, POLICY } from "./model";
 import { DataTable, Empty, LegendKey, Panel, td, tdNum, th, thNum, ViewToggle } from "./ui";
 
@@ -121,7 +122,9 @@ function endLabel(n: number, name: string, show: boolean, offset: number) {
   return EndLabel;
 }
 
-export function CostChart({ days, emptyAction }: { days: DayStats[]; emptyAction?: ReactNode }) {
+/** `hosted`: the hosted fallback serves the student now, so the legend says "the student", not "your model" (FR-7.40). */
+export function CostChart({ days, emptyAction, hosted = false }: { days: DayStats[]; emptyAction?: ReactNode; hosted?: boolean }) {
+  const who = studentCopy(hosted);
   const [table, setTable] = useState(false);
   const reduce = useReducedMotion();
   const last = latest(days);
@@ -176,7 +179,7 @@ export function CostChart({ days, emptyAction }: { days: DayStats[]; emptyAction
         <>
           <Legend>
             <li className="flex items-center gap-1.5">
-              <LegendKey color={OWNED} /> Ratchet <span className="text-muted">(your model + escalations)</span>
+              <LegendKey color={OWNED} /> Ratchet <span className="text-muted">({who.name} + escalations)</span>
             </li>
             <li className="flex items-center gap-1.5">
               <LegendKey color={RENTED} dashed /> All-teacher baseline
@@ -246,17 +249,17 @@ export function CostChart({ days, emptyAction }: { days: DayStats[]; emptyAction
   );
 }
 
-/* ---------------- 2. share answered by your model ---------------- */
+/* ---------------- 2. share answered by the student ---------------- */
 
 type ShareDatum = { day: number; requests: number; student: number; escalated: number; direct: number };
 const SHARE_KEYS = ["student", "escalated", "direct"] as const;
 
-function ShareTip(p: TooltipContentProps) {
+function ShareTip(p: TooltipContentProps & { name: string }) {
   const d = datumOf<ShareDatum>(p);
   if (!d) return null;
   return (
     <TipShell title={dayTick(d.day)} sub={`${fmtInt(d.requests)} req`}>
-      <TipRow keyEl={<LegendKey color={OWNED} />} value={fmtShare(d.student)} name="your model" />
+      <TipRow keyEl={<LegendKey color={OWNED} />} value={fmtShare(d.student)} name={p.name} />
       <TipRow keyEl={<LegendKey color={RENTED} />} value={fmtShare(d.escalated)} name="escalated to teacher" />
       <TipRow keyEl={<LegendKey color="var(--teacher-only)" />} value={fmtShare(d.direct)} name="teacher only" />
     </TipShell>
@@ -287,7 +290,9 @@ function segShape(key: (typeof SHARE_KEYS)[number]) {
   return Seg;
 }
 
-export function ShareChart({ days, emptyAction }: { days: DayStats[]; emptyAction?: ReactNode }) {
+/** `hosted`: the hosted fallback serves the student now, so the chart says "the student", not "your model" (FR-7.40). */
+export function ShareChart({ days, emptyAction, hosted = false }: { days: DayStats[]; emptyAction?: ReactNode; hosted?: boolean }) {
+  const who = studentCopy(hosted);
   const [table, setTable] = useState(false);
   const reduce = useReducedMotion();
   const data: ShareDatum[] = days.map((d) => ({
@@ -302,24 +307,24 @@ export function ShareChart({ days, emptyAction }: { days: DayStats[]; emptyActio
   }));
   const last = latest(data);
   const summary = last
-    ? `Stacked bar chart of who answered each day over ${data.length} day${data.length === 1 ? "" : "s"}. Day ${last.day}: your model ${fmtShare(last.student)}, escalated to the teacher ${fmtShare(last.escalated)}, teacher only ${fmtShare(last.direct)}.`
+    ? `Stacked bar chart of who answered each day over ${data.length} day${data.length === 1 ? "" : "s"}. Day ${last.day}: ${who.name} ${fmtShare(last.student)}, escalated to the teacher ${fmtShare(last.escalated)}, teacher only ${fmtShare(last.direct)}.`
     : "No traffic yet.";
 
   return (
     <Panel
       id="share"
-      title="Share answered by your model"
+      title={`Share answered ${who.byShort}`}
       description="Who answered each day's requests."
-      actions={days.length > 0 && <ViewToggle table={table} onChange={setTable} label="share answered by your model" />}
+      actions={days.length > 0 && <ViewToggle table={table} onChange={setTable} label={`share answered ${who.byShort}`} />}
     >
       {days.length === 0 ? (
         <NoTraffic action={emptyAction} />
       ) : table ? (
-        <DataTable caption="Share of requests answered by your model, by day" minWidth={420}>
+        <DataTable caption={`Share of requests answered ${who.byShort}, by day`} minWidth={420}>
           <thead>
             <tr>
               <th className={th}>Day</th>
-              <th className={thNum}>Your model</th>
+              <th className={thNum}>{who.short}</th>
               <th className={thNum}>Escalated</th>
               <th className={thNum}>Teacher only</th>
             </tr>
@@ -339,7 +344,7 @@ export function ShareChart({ days, emptyAction }: { days: DayStats[]; emptyActio
         <>
           <Legend>
             <li className="flex items-center gap-1.5">
-              <LegendKey color={OWNED} kind="rect" /> Your model
+              <LegendKey color={OWNED} kind="rect" /> {who.short}
             </li>
             <li className="flex items-center gap-1.5">
               <LegendKey color={RENTED} kind="rect" /> Escalated to teacher
@@ -370,7 +375,7 @@ export function ShareChart({ days, emptyAction }: { days: DayStats[]; emptyActio
                 width={44}
               />
               <Tooltip
-                content={ShareTip}
+                content={(tp) => <ShareTip {...tp} name={who.name} />}
                 cursor={{ fill: "var(--grid)" }}
                 isAnimationActive={false}
                 wrapperStyle={{ outline: "none", zIndex: 10 }}

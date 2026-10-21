@@ -15,6 +15,7 @@ import type {
   TriageStep,
   WriterStep,
 } from "@/lib/api";
+import { hostedCalls, studentCopy } from "@/lib/who-model";
 
 /** Server-side cap on reader calls per question (`Scout.max_reads`, docs/SCOUT.md). */
 export const READ_LIMIT = 6;
@@ -176,6 +177,8 @@ export interface QueryGroup {
 export interface LiveTotals {
   llm: number;
   student: number;
+  /** Student calls the hosted fallback answered (their `model` is the gateway's `fallback_student`), not our adapter. */
+  hosted: number;
   teacher: number;
   escalated: number;
   cost: number;
@@ -207,13 +210,23 @@ export interface Derived {
   totals: LiveTotals;
   perAgent: AgentRow[];
   citedByUrl: Record<string, number>;
+  /**
+   * Say "the student", not "your model": a student answer of this run came from the hosted fallback, or none came from
+   * the student and the hosted fallback serves now (it tried them, or will try the next run's).
+   */
+  hosted: boolean;
 }
 
 export function isLlm(servedBy: ServedBy) {
   return servedBy === "student" || servedBy === "teacher";
 }
 
-export function derive(s: RunState): Derived {
+/**
+ * `fallback` is the gateway's hosted fallback id and `servingHosted` whether it serves the student now (`/scout/status`):
+ * student calls it answered are counted apart, and the run's copy stops saying "your model" (`Derived.hosted`). A run's
+ * own answers decide over the serving state, which may have changed since they came back (endpoint windows).
+ */
+export function derive(s: RunState, fallback?: string | null, servingHosted = false): Derived {
   const groups: QueryGroup[] = s.queries.map((query, qi) => {
     const step = s.searches[query] ?? null;
     return {
@@ -263,6 +276,7 @@ export function derive(s: RunState): Derived {
 
   const llm = s.steps.filter((st) => isLlm(st.served_by));
   const student = llm.filter((st) => st.served_by === "student").length;
+  const hosted = hostedCalls(llm, fallback);
   const cost = llm.reduce((a, st) => a + num(st.cost_usd), 0);
   const baseline = llm.reduce((a, st) => a + num(st.baseline_usd), 0);
   const t = s.done?.totals;
@@ -270,6 +284,7 @@ export function derive(s: RunState): Derived {
     ? {
         llm: num(t.llm_calls),
         student: num(t.student_calls),
+        hosted,
         teacher: num(t.teacher_calls),
         escalated: llm.filter((st) => st.escalated).length,
         cost: num(t.cost_usd),
@@ -280,6 +295,7 @@ export function derive(s: RunState): Derived {
     : {
         llm: llm.length,
         student,
+        hosted,
         teacher: llm.length - student,
         escalated: llm.filter((st) => st.escalated).length,
         cost,
@@ -306,7 +322,21 @@ export function derive(s: RunState): Derived {
   const citedByUrl: Record<string, number> = {};
   for (const c of citations) if (c?.url) citedByUrl[c.url] = num(c.n);
 
-  return { phase, groups, order, searchesDone, triageDone, relevant, readQueue, notRead, readerDone, totals, perAgent, citedByUrl };
+  return {
+    phase,
+    groups,
+    order,
+    searchesDone,
+    triageDone,
+    relevant,
+    readQueue,
+    notRead,
+    readerDone,
+    totals,
+    perAgent,
+    citedByUrl,
+    hosted: hosted > 0 || (servingHosted && student === 0),
+  };
 }
 
 /** Per-agent node state for the graph and lane headers. */
@@ -368,7 +398,7 @@ export function phaseText(s: RunState, d: Derived): string {
     case "writing":
       return "Writer is drafting the answer";
     case "done":
-      return `Done. ${d.totals.student} of ${d.totals.llm} model calls answered by your model.`;
+      return `Done. ${d.totals.student} of ${d.totals.llm} model calls answered ${studentCopy(d.hosted).by}.`;
     case "error":
       return "Scout stopped.";
     case "stopped":
@@ -392,7 +422,7 @@ export function announceText(s: RunState, d: Derived): string {
     case "writing":
       return "Writer is drafting the answer.";
     case "done":
-      return `Done. ${d.totals.student} of ${d.totals.llm} model calls answered by your model, ${Math.round(d.totals.saved * 100)}% cheaper than all-Ultra. The answer is below.`;
+      return `Done. ${d.totals.student} of ${d.totals.llm} model calls answered ${studentCopy(d.hosted).by}, ${Math.round(d.totals.saved * 100)}% cheaper than all-Ultra. The answer is below.`;
     case "error":
       return "Scout stopped.";
     case "stopped":

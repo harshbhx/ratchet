@@ -3,6 +3,7 @@ import { ArrowRight, CircleAlert, Clock, RotateCcw, WifiOff, Wallet } from "luci
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn, fmtMs } from "@/lib/utils";
+import { studentCopy } from "@/lib/who-model";
 import { AGENTS, AgentDisc, RouteNote, StepMeta, usd } from "./bits";
 import { AnswerBody, type SourceFact } from "./answer";
 import { agentState, type Derived, type RunState } from "./state";
@@ -65,6 +66,7 @@ export function WriterCard({ run, derived }: { run: RunState; derived: Derived }
 
 export function RunSummary({ run, derived }: { run: RunState; derived: Derived }) {
   const t = derived.totals;
+  const who = studentCopy(derived.hosted);
   const done = run.status === "done";
   const wall = run.done?.totals?.wall_ms ?? (run.endedAt != null && run.startedAt != null ? run.endedAt - run.startedAt : null);
   const rows = derived.perAgent;
@@ -89,7 +91,7 @@ export function RunSummary({ run, derived }: { run: RunState; derived: Derived }
         <span className="text-owned-ink">
           {t.student} of {t.llm}
         </span>{" "}
-        calls answered by your model, <span className="text-ink">{Math.round(t.saved * 100)}% cheaper</span> than all-Ultra
+        calls answered {who.by}, <span className="text-ink">{Math.round(t.saved * 100)}% cheaper</span> than all-Ultra
         {wall ? `, in ${fmtMs(wall)}` : ""}.
       </>
     );
@@ -106,20 +108,29 @@ export function RunSummary({ run, derived }: { run: RunState; derived: Derived }
           <p className="text-balance text-[19px] font-semibold leading-snug tracking-[-0.02em] text-ink-2 sm:text-[21px]">{sentence}</p>
           {done && t.student === 0 && t.llm > 0 && (
             <p className="mt-3 text-[13.5px] leading-relaxed text-muted">
-              Your model has not learned Scout's tasks yet. Ratchet keeps Ultra's triage and reader answers as training data. Once Night School trains
-              a student and it passes the release gates, these calls move to your model.
+              {derived.hosted ? (
+                <>
+                  Our GPU endpoint is off, so the hosted Nano (untuned) tries these calls first and Ultra answers whatever it is unsure of. Our trained
+                  adapter answers them when the endpoint is up.
+                </>
+              ) : (
+                <>
+                  Your model has not learned Scout's tasks yet. Ratchet keeps Ultra's triage and reader answers as training data. Once Night School
+                  trains a student and it passes the release gates, these calls move to your model.
+                </>
+              )}
             </p>
           )}
           {done && t.escalated > 0 && (
             <p className="mt-3 text-[13.5px] text-muted">
-              {t.escalated} {t.escalated === 1 ? "call was" : "calls were"} escalated: your model tried, was not confident enough, and Ultra answered.
+              {t.escalated} {t.escalated === 1 ? "call was" : "calls were"} escalated: {who.tried} tried, was not confident enough, and Ultra answered.
             </p>
           )}
 
           {(done || run.status !== "running") && (
             <div className="mt-6 overflow-x-auto">
               <table className="w-full min-w-[300px] border-collapse text-[13px] tabular">
-                <caption className="sr-only">Calls, share answered by your model, and cost per agent</caption>
+                <caption className="sr-only">Calls, share answered {who.by}, and cost per agent</caption>
                 <thead>
                   <tr className="text-left text-[11.5px] text-muted">
                     <th scope="col" className="pb-2 font-medium">
@@ -129,7 +140,7 @@ export function RunSummary({ run, derived }: { run: RunState; derived: Derived }
                       Calls
                     </th>
                     <th scope="col" className="pb-2 pl-3 font-medium">
-                      Yours
+                      {who.column}
                     </th>
                     <th scope="col" className="pb-2 text-right font-medium">
                       Cost
