@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import type { Stats } from "@/lib/api";
 import { cn, fmtPct, fmtUsd } from "@/lib/utils";
+import { NOT_CERTIFIED, hostedServing, precisionShown, studentCopy } from "@/lib/who-model";
 import { cumulativeSaved, fmtPts, inFlight, latest, liveVersion, prev, stateLabel } from "./model";
 
 /** Tiny trend line. De-emphasis line with the current point in the owned accent. */
@@ -62,6 +63,9 @@ export function Kpis({ stats }: { stats: Stats }) {
   const cum = cumulativeSaved(days);
   const live = liveVersion(versions);
   const flight = inFlight(versions).pop();
+  // While the hosted fallback answers, the share is not "your model", and the live adapter's precision does not
+  // describe the answers being served (FR-7.40).
+  const who = studentCopy(hostedServing(stats.student_serving));
 
   return (
     <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-4">
@@ -86,9 +90,9 @@ export function Kpis({ stats }: { stats: Stats }) {
         foot={last && before ? <Delta delta={last.savings_pct - before.savings_pct} vs={before.day} /> : last ? "First day of traffic" : "No traffic yet"}
       />
       <Tile
-        label={last ? `Answered by your model · day ${last.day}` : "Answered by your model"}
+        label={last ? `${who.label} · day ${last.day}` : who.label}
         value={last ? fmtPct(last.student_share) : "–"}
-        trend={<Sparkline values={days.map((d) => d.student_share)} max={1} label="Share answered by your model by day" />}
+        trend={<Sparkline values={days.map((d) => d.student_share)} max={1} label={`Share answered ${who.byShort} by day`} />}
         foot={
           last ? (
             <span className="flex flex-wrap items-center gap-x-2">
@@ -112,7 +116,9 @@ export function Kpis({ stats }: { stats: Stats }) {
           )
         }
         trend={
-          live?.eval.precision != null ? (
+          live && !precisionShown(stats.student_serving) ? (
+            <div className="max-w-[8.5rem] text-right text-[11px] leading-tight text-muted">hosted Nano answers: {NOT_CERTIFIED}</div>
+          ) : live?.eval.precision != null ? (
             <div className="text-right">
               <div className="text-[18px] font-semibold leading-none text-ink">{fmtPct(live.eval.precision)}</div>
               <div className="mt-1 text-[11px] text-muted">golden precision</div>

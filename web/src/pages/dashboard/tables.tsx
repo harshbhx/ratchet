@@ -3,6 +3,7 @@ import { Boxes, Cpu, FileCheck2, ListTree, Lock, ShieldCheck } from "lucide-reac
 import type { TaskStats, Version } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
+import { studentCopy } from "@/lib/who-model";
 import { isPinned } from "./model";
 import { DataTable, Empty, Panel, StateChip, td, tdNum, th, thNum } from "./ui";
 
@@ -117,7 +118,8 @@ export function ShareBar({ share, esc }: { share: number; esc: number }) {
   );
 }
 
-export function TasksTable({ tasks }: { tasks: TaskStats[] }) {
+/** `hosted`: the hosted fallback serves the student now, so the share column says "the student" (FR-7.40). */
+export function TasksTable({ tasks, hosted = false }: { tasks: TaskStats[]; hosted?: boolean }) {
   const hasPinned = tasks.some(isPinned);
   return (
     <Panel id="tasks" title="By task" description="All days. Each task is distilled into your model unless it is pinned to the teacher.">
@@ -132,7 +134,7 @@ export function TasksTable({ tasks }: { tasks: TaskStats[] }) {
               <tr>
                 <th className={th}>Task</th>
                 <th className={thNum}>Requests</th>
-                <th className={thNum}>Answered by your model</th>
+                <th className={thNum}>{studentCopy(hosted).label}</th>
                 <th className={thNum}>Escalated</th>
                 <th className={thNum}>Cost reduction</th>
                 <th className={th}>Route</th>

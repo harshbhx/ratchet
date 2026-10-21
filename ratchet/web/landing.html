@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ratchet</title>
-<meta name="description" content="Ratchet is an open-source, OpenAI-compatible gateway that turns your own AI traffic into a cheaper model you own, distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.">
+<meta name="description" content="Ratchet is an open-source, OpenAI-compatible gateway that turns your own AI traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base), distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.">
 <meta name="color-scheme" content="light dark">
 <style>
   :root {
@@ -194,7 +194,7 @@
       <div>
         <p class="eyebrow">Open source · Apache-2.0</p>
         <h1 id="hero-title">Rent intelligence today. Own it tomorrow.</h1>
-        <p class="sub">An <strong>OpenAI-compatible gateway</strong> that turns your own AI traffic into a cheaper model <strong>you own</strong>, distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.</p>
+        <p class="sub">An <strong>OpenAI-compatible gateway</strong> that turns your own AI traffic into a Nemotron adapter <strong>you own</strong> (LoRA on NVIDIA's open Nano base), distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.</p>
         <div class="ctas">
           <a class="btn primary" href="/scout">Try the Scout demo</a>
           <a class="btn" href="/dashboard">Open the dashboard</a>
@@ -230,7 +230,7 @@ r = client.chat.completions.create(
       <div class="tiles">
         <div class="tile"><div class="v" id="sSaved">-</div><div class="l">saved vs all-teacher</div></div>
         <div class="tile"><div class="v" id="sPct">-</div><div class="l">cost reduction, all traffic</div></div>
-        <div class="tile"><div class="v" id="sShare">-</div><div class="l">answered by your model (latest day)</div></div>
+        <div class="tile"><div class="v" id="sShare">-</div><div class="l" id="sShareL">answered by your model (latest day)</div></div>
         <div class="tile"><div class="v" id="sLive">-</div><div class="l">live student version</div></div>
         <div class="tile"><div class="v" id="sReq">-</div><div class="l">requests</div></div>
       </div>
@@ -251,7 +251,7 @@ r = client.chat.completions.create(
     <section id="how" aria-labelledby="how-title">
       <p class="eyebrow">How it works</p>
       <h2 id="how-title">Your traffic trains your model</h2>
-      <p class="lead">Ratchet sits between your app and the models. A small model you own answers what it can. A large open model answers the rest, and those answers become tomorrow's training data.</p>
+      <p class="lead">Ratchet sits between your app and the models. A small model, NVIDIA's open Nano base with an adapter you own, answers what it can. A large open model answers the rest, and those answers become tomorrow's training data.</p>
       <div class="how">
         <div class="panel diagram">
           <svg viewBox="0 0 400 612" role="img" aria-labelledby="dg-title dg-desc">
@@ -333,12 +333,12 @@ r = client.chat.completions.create(
 
         <div>
           <ol class="steps">
-            <li><h3>Your model answers first</h3><p>A small model you own tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter, served by vLLM on a Nebius Serverless Endpoint.</p></li>
+            <li><h3>Your model answers first</h3><p>A small model tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM on a Nebius Serverless Endpoint.</p></li>
             <li><h3>The teacher answers when it is unsure</h3><p>If the student is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.</p></li>
             <li><h3>Every teacher answer keeps its provenance</h3><p>The ledger records which teacher wrote it and the license that permits training on it.</p></li>
             <li><h3>Night School trains and releases a new student</h3><p>Each night a Nebius Serverless Job fine-tunes a new student and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
           </ol>
-          <p class="after">Your bill only goes down, and at the end you own the model weights.</p>
+          <p class="after">Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.</p>
         </div>
       </div>
     </section>
@@ -469,6 +469,9 @@ pytest -q</code></pre>
     $("sSaved").textContent = usd(t.saved_usd);
     $("sPct").textContent = pct(t.savings_pct || 0);
     $("sShare").textContent = last ? pct(last.student_share) : "0%";
+    // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
+    const hostedNow = !!s.student_serving && s.student_serving.kind === "hosted_fallback";
+    $("sShareL").textContent = hostedNow ? "answered by the student (hosted Nano 30B while our GPU endpoint is off)" : "answered by your model (latest day)";
     $("sLive").textContent = live ? "v" + live.id : "none yet (cold start)";
     $("sLive").style.fontSize = live ? "" : "18px";
     $("sReq").textContent = (Number(t.requests) || 0).toLocaleString("en-US");

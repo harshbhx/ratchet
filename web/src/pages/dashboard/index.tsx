@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
+import { hostedServing, servingLine } from "@/lib/who-model";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
 import { EconomicsPanel, hasEconomics } from "./economics";
@@ -148,6 +149,8 @@ function Header({
 }) {
   const now = useNow(5000);
   const mock = stats?.mode !== "live";
+  // The student that answers now, not just its base model (FR-7.40); null in mock mode and on an older gateway.
+  const serving = servingLine(stats?.student_serving);
   return (
     <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
       <div className="min-w-0">
@@ -168,14 +171,26 @@ function Header({
           <dl className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-muted">
             <div className="flex min-w-0 items-center gap-2">
               <dt className="sr-only">Teacher</dt>
-              <WhoBadge servedBy="teacher" />
+              <WhoBadge servedBy="teacher" simulated={mock} />
               <dd className="min-w-0 truncate font-mono text-[12px] text-ink-2">{stats.teacher}</dd>
             </div>
-            <div className="flex min-w-0 items-center gap-2">
-              <dt className="sr-only">Student base model</dt>
-              <WhoBadge servedBy="student" />
-              <dd className="min-w-0 truncate font-mono text-[12px] text-ink-2">{stats.student_base}</dd>
-            </div>
+            {serving ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <dt className="sr-only">Student answering now</dt>
+                {/* The hosted line starts with the hosted badge's own words, so only our adapter gets a badge here. */}
+                {serving.kind === "owned" && <WhoBadge servedBy="student" model={stats.student_serving?.model} />}
+                <dd className="min-w-0 text-[12.5px] text-ink-2 [overflow-wrap:anywhere]" title={serving.title}>
+                  {serving.text}
+                  {serving.detail && <span className="text-muted"> · {serving.detail}</span>}
+                </dd>
+              </div>
+            ) : (
+              <div className="flex min-w-0 items-center gap-2">
+                <dt className="sr-only">Student base model</dt>
+                <WhoBadge servedBy="student" simulated={mock} />
+                <dd className="min-w-0 truncate font-mono text-[12px] text-ink-2">{stats.student_base}</dd>
+              </div>
+            )}
             <div className="flex items-center gap-1.5">
               <dt>Day</dt>
               <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
@@ -397,8 +412,8 @@ export default function DashboardPage() {
                 )}
 
                 <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
-                  <CostChart days={stats.days} />
-                  <ShareChart days={stats.days} />
+                  <CostChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
+                  <ShareChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
                 </Reveal>
 
                 <Reveal delay={0.12}>
@@ -406,7 +421,7 @@ export default function DashboardPage() {
                 </Reveal>
 
                 <Reveal delay={0.13}>
-                  <TasksTable tasks={stats.tasks} />
+                  <TasksTable tasks={stats.tasks} hosted={hostedServing(stats.student_serving)} />
                 </Reveal>
 
                 {!registry.missing && (

@@ -3,6 +3,9 @@ import { Container } from "@/components/ui/section";
 import { WhoBadge } from "@/components/ui/who";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 
+/** `RATCHET_FALLBACK_STUDENT`'s default; its badge is the hosted one the pages show for its answers. */
+const FALLBACK_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B";
+
 const ROLES: { role: string; service: string; id?: string; why: string; badge?: ReactNode }[] = [
   {
     role: "Teacher",
@@ -32,8 +35,9 @@ const ROLES: { role: string; service: string; id?: string; why: string; badge?: 
   {
     role: "Fallback student",
     service: "Nemotron 3 Nano 30B on Token Factory",
-    id: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+    id: FALLBACK_ID,
     why: "Answers in the student's place when your endpoint is stopped.",
+    badge: <WhoBadge servedBy="student" model={FALLBACK_ID} fallback={FALLBACK_ID} simulated={false} />,
   },
   {
     role: "Storage",

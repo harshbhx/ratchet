@@ -9,18 +9,18 @@
 
 ## 1. Overview
 
-**One-liner:** Ratchet is an OpenAI-compatible gateway that turns a company's own AI traffic into a cheaper model the company owns, using only teachers whose licenses allow it.
+**One-liner:** Ratchet is an OpenAI-compatible gateway that turns a company's own AI traffic into a cheaper model (a small open model with a LoRA adapter the company owns), using only teachers whose licenses allow it.
 
 **Tagline:** Rent intelligence today. Own it tomorrow.
 
 An app changes one line, its API base URL. From then on:
 
-1. A small model the customer owns (the **student**) tries each request first.
+1. A small open model with the customer's own LoRA adapter (the **student**) tries each request first.
 2. If the student is not confident, the request goes to a large open model (the **teacher**, NVIDIA Nemotron 3 Ultra on Nebius Token Factory).
 3. Every teacher answer is stored with its **provenance**: which teacher wrote it and which license allows training on it.
 4. Every night, **Night School** trains a new student on that data, tests it on a held-out **golden set**, and releases it step by step (shadow, canary 10%, 50%, 100%), with automatic rollback.
 
-The bill goes down over time. At the end, the customer owns the model weights.
+The bill falls as the student takes over, and Ratchet reports when a GPU endpoint would cost more than it saves. The customer owns the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.
 
 ## 2. Problem
 
@@ -54,7 +54,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 | G2 | Make distillation automatic: no manual dataset curation, training runs, or deploys |
 | G3 | Make every release safe: nothing reaches users unless it beats or matches what is live |
 | G4 | Make training data license-clean and provable (provenance ledger, model bill of materials) |
-| G5 | Give the customer ownership of the trained weights |
+| G5 | Give the customer ownership of the trained LoRA adapter and its signed training lineage (the base model stays under its own license) |
 | G6 | Run end to end on open models and Nebius infrastructure (Token Factory + AI Cloud) |
 | G7 | Win or place in the Nebius x NVIDIA Global AI Hackathon (Best Apps and Agents track) |
 
@@ -86,12 +86,12 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 - Works in finance or the public sector in India or the EU.
 - Must know where data and models live and must prove training data is clean.
 - Sovereign cloud spend is forecast at $80.4B in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-02-09-gartner-says-worldwide-sovereign-cloud-iaas-spending-will-total-us-dollars-80-billion-in-2026)).
-- **Needs:** own the weights, a provenance record she can show auditors, region control.
+- **Needs:** own the adapter, a provenance record she can show auditors, region control.
 
 ### P4. Leo, an OpenAI fine-tuning migrant
 
 - Has a fine-tuned GPT model in production. OpenAI stops new fine-tuning jobs on Jan 6, 2027.
-- **Needs:** a path to a model he owns, built from his own traffic, with no license risk.
+- **Needs:** a path to an adapter he owns, built from his own traffic, with no license risk.
 
 ## 5. User stories and acceptance criteria
 
@@ -127,7 +127,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 **US-9. Savings receipts.** As Priya, I want to see dollars saved against an all-teacher baseline.
 - Given traffic, then the dashboard shows total saved, savings % by day, cost per 1,000 requests vs baseline, and the share answered by the student.
 
-**US-10. Own the weights.** As Leo, I want the trained adapter in storage I control.
+**US-10. Own the adapter.** As Leo, I want the trained adapter in storage I control.
 - Given a training run in live mode, then the adapter is written to the customer's Nebius Object Storage bucket under `adapters/<version>`.
 
 **US-11. Demo without keys.** As a hackathon judge, I want to see the loop work without credentials.
@@ -258,6 +258,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-7.22 | **Resilience** panel from `/ratchet/stats`: each circuit breaker's state (closed, open, half-open; with an icon and a word) read from its latest `circuit` event, with when and why it changed, the wait a failed probe set and its recent changes; requests a fallback answered (`student_breaker`, `student_error`, `degraded`, `fallback_teacher`, from `routes`); recent upstream failures and recoveries. In mock mode an outage drill (`POST /ratchet/demo/student-outage`, 30 s to 2 min) with a countdown and a button to send a day of traffic, so the breaker can be watched opening and closing | Done (v0.5) |
 | FR-7.23 | Story page, **The honest bill** chapter: the same traffic priced per token and by the GPU-hours the student endpoint ran, against the all-teacher baseline on one dollar scale (a loss shown as a loss, with a word), where the GPU-hour total comes from, the break-even formula with its numbers, a meter of observed volume against break-even and the hosted-fallback crossover, the recommendation with its explanation and the four answers the report can give, and the prices used, labelled unverified until the operator confirms them. From `GET /ratchet/cost` when this gateway has requests, endpoint hours and a break-even (labelled Simulation in mock mode); otherwise the reference simulation's report, labelled Simulation with the command that reproduces it and pinned to a fresh run by a test; a toggle between the two. Cites the Nebius Serverless AI Builders Challenge finding that self-hosting wins on cost only at high utilization | Done (v0.5) |
 | FR-7.24 | Story page, **Built to be checked** chapter: what can be verified today and how to check it: PII redaction before training (with a link to the dashboard's redactor), the signed per-adapter bill of materials and its offline verifier command, the requirements traceability check in CI, and the release gate's statistical bounds; each with the files, routes and invariants behind it and this gateway's live state where it has one. Work still being built is named only as v0.5, and only where its foundations are in the code. A test holds every claim to the code | Done (v0.5) |
+| FR-7.40 | Pages and the dashboard name the model that answered: the owned adapter, the hosted fallback or the teacher; a hosted fallback answer never shows the adapter's precision or certificate. `/ratchet/stats` reports `fallback_student` and `student_serving` (`mock`, `endpoint`, `hosted_fallback` or `none`, with the served model, the version, the threshold it is held to and `certified`, never true for the hosted fallback); `/scout/status` carries both. One labelling function (`whoLabel`): "Nano · yours" for our adapter, "Nano 30B · hosted" with its threshold for a student call whose model is the fallback id, "Ultra · Token Factory" for the teacher; Scout, the landing strip and the dashboard header stop saying "your model" while the hosted fallback answers | Done (v0.5) |
 
 ### 6.8 Live operations on Nebius
 
@@ -366,6 +367,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter: the teachers' and the base model's licenses in each adapter's signed BOM and in a NOTICE.md next to its weights (FR-3.50, FR-3.51, FR-3.52). | Done (v0.5) |
 | NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
 | NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass (`RATCHET_PRICES_VERIFIED`). | Partial: the cost report, the `cost` block and `totals.cost_model` in `/ratchet/stats`, the simulator's GPU-hour line and the savings receipts (`cost_views`, FR-15.5) name their cost model (v0.5); the `ratchet` block of a chat completion, Scout's run totals and the simulator's main savings line still give per-token figures without saying so |
+| NFR-70 | Claim honesty | Public copy (README, PRD, competitive analysis, business plan, Devpost draft, glossary, demo script, the lite pages, `web/index.html`, every `web/src` page and the package description) claims only what is true: the customer owns a Nemotron adapter (LoRA on NVIDIA's open Nano base) and its signed training lineage, never the base model or its weights, and the base keeps NVIDIA's license; savings are never promised below break-even; the README states which of NVIDIA's six LLM-to-SLM steps run automatically (S1, S2, S5, S6) and which are manual (task clustering, model selection); Nebius product facts are worded as Nebius's docs word them (what a stopped endpoint is billed for); competitors and prior art carry a source and a date, a competitor is described in its source's words, and claims nobody could source are removed; the README names its prior art, its limitations (Scout's unchecked free-text fact included), the NVIDIA lineage it builds on and how the repo was built, quotes the teacher's license exactly, and never calls a feature the PRD marks Done "not built yet". Checked offline by `tests/test_docs_claims.py`. | Done (v0.5) |
 
 ## 8. Success metrics
 
@@ -422,7 +424,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 |---|---|---|
 | Nebius Token Factory | Teacher (Nemotron 3 Ultra), judge (Super), fallback (Nano 30B) | OpenAI-compatible API; Builder Program gives $25 credit |
 | Nebius Serverless Jobs | Nightly LoRA training | GPU billed per second |
-| Nebius Serverless Endpoints | vLLM student serving | A stopped endpoint is not billed for compute or its own storage; a mounted bucket still is |
+| Nebius Serverless Endpoints | vLLM student serving | A stopped endpoint is not billed for compute or its own storage; a mounted Object Storage bucket still is ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 21, 2026) |
 | Nebius Object Storage | Datasets and adapters | S3-compatible |
 | NVIDIA Nemotron 3 Nano 4B | Student base | NVIDIA Nemotron Open Model License |
 | vLLM | Student serving, runtime LoRA | Nemotron-H LoRA support listed |

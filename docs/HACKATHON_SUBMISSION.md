@@ -57,13 +57,13 @@ License-clean distillation on open models. Rent intelligence today, own it tomor
 
 Every AI startup we know rents its intelligence. Each request goes to a big model, and the bill grows with every user. Much of that traffic is narrow and repetitive: classifying a ticket, extracting a field, one step inside an agent. A small model could do it, if someone trained it.
 
-Distilling a big model into a small one works, but it is slow manual work. And if the big model is GPT or Claude, their terms forbid using the outputs to train competing models. We wanted a tool that does it automatically, safely, and legally, on open models, so the customer ends up owning the result.
+Distilling a big model into a small one works, but it is slow manual work. And if the big model is GPT or Claude, their terms forbid using the outputs to train competing models. We wanted a tool that does it automatically, safely, and legally, on open models, so the customer ends up owning the trained adapter and its signed lineage.
 
 ## What it does
 
 Ratchet is an OpenAI-compatible gateway. You change one line, your base URL. Then:
 
-1. A small model you own (NVIDIA Nemotron 3 Nano 4B + LoRA) answers each request first.
+1. A small model (NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own) answers each request first.
 2. If it is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.
 3. Every Ultra answer is saved with its provenance: which teacher wrote it and which license allows training on it.
 4. Every night, Night School fine-tunes a new student on a Nebius Serverless Job and tests it on a held-out golden set.
@@ -103,7 +103,7 @@ The Scout page shows each call as it happens, with a badge for who answered it (
 | Teacher | `nvidia/Nemotron-3-Ultra-550b-a55b` on **Nebius Token Factory** | Answers hard requests; its answers become training data (OpenMDW-1.1 allows this) |
 | Judge | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | Reference-based scoring of free-text answers, JSON mode |
 | Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Keeps the app running when our endpoint is stopped |
-| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA | The model the customer owns |
+| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA | The customer owns the adapter; the base stays under the NVIDIA Nemotron Open Model License |
 | Training | **Nebius Serverless Jobs** (L40S) | Nightly LoRA fine-tune |
 | Serving | **Nebius Serverless Endpoints** (vLLM) | Student inference with runtime LoRA loading |
 | Storage | **Nebius Object Storage** | Datasets and adapters |
@@ -122,7 +122,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 986 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 1002 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -138,7 +138,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## What's next
 
-Name and address detection (Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
+A name and address detector (candidates: NVIDIA's gliner-PII, Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
 
 ## Built with
 
@@ -152,16 +152,15 @@ python, fastapi, httpx, sqlite, vllm, trl, peft, nvidia-nemotron, nemotron-3-ult
 
 - One OpenAI-compatible API for every Nemotron size made routing by difficulty very simple.
 - Nemotron 3 Ultra's OpenMDW-1.1 license is clear that outputs are unrestricted, which made a license-clean distillation product possible.
-- Serverless Jobs and Endpoints billed per second, with stopped endpoints costing nothing, suit a nightly training loop.
+- Serverless Jobs and Endpoints billed per second suit a nightly training loop: a stopped endpoint is not billed for compute or its own storage, though a mounted Object Storage bucket still is ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 21, 2026).
 
 **Friction we hit**
 
-1. **No Nemotron fine-tuning on Token Factory.** The post-training model list covers Llama, Qwen, Gemma, gpt-oss and DeepSeek, but no Nemotron. We had to build our own training job.
-2. **Serverless LoRA serving is Llama-only.** Only Llama-3.1-8B and Llama-3.3-70B are accepted as base models for per-token LoRA serving. Supporting Nemotron Nano here would remove the need for a dedicated vLLM endpoint.
-3. **Serverless pricing is hard to find.** We could find on-demand GPU prices but not clear Serverless Jobs/Endpoints rates.
-4. **Terms of Service 5(f).** "Develop a product or service that competes with the Service" is broad. A gateway built entirely on Nebius that reduces token spend could be read either way. A short FAQ for builders would help. (We emailed support on Oct 19, 2026.) [UPDATE WITH REPLY]
-5. **Custom weights on dedicated endpoints** are "beta, on request", with supported architectures undocumented.
-6. [ADD ANY ISSUES FROM THE LIVE RUN: logprobs, JSON mode, CLI flags, cold starts]
+1. **No Nemotron fine-tuning on Token Factory.** The [post-training model list](https://docs.tokenfactory.nebius.com/post-training/models.md) has 49 models from the Qwen, Llama, Gemma, gpt-oss and DeepSeek families and no Nemotron (read Oct 21, 2026). We had to build our own training job.
+2. **Serverless pricing is hard to find.** We could find on-demand GPU prices but not clear Serverless Jobs/Endpoints rates.
+3. **Terms of Service 5(f).** "Develop a product or service that competes with the Service" is broad. A gateway built entirely on Nebius that reduces token spend could be read either way. A short FAQ for builders would help. (We emailed support on Oct 19, 2026.) [UPDATE WITH REPLY]
+4. **Custom weights on dedicated endpoints** are "currently in beta and available on request" ([custom weights](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026), with supported configurations undocumented. Serving a Nemotron Nano adapter there would remove the need for our own vLLM endpoint.
+5. [ADD ANY ISSUES FROM THE LIVE RUN: logprobs, JSON mode, CLI flags, cold starts]
 
 **Requests**
 
