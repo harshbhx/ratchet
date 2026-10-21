@@ -82,10 +82,10 @@ Read in `ratchet/config.py`; used by `ratchet/router.py`, `ratchet/auth.py`, `ra
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_REDACT_PII` | `1` | Replace emails, phone numbers, card numbers (Luhn-checked), IBANs (mod-97), Aadhaar (Verhoeff), US SSNs, Indian PANs, IPv4 addresses and API secrets with `[LABEL]` placeholders before a request and the teacher's answer are stored as a training example. The teacher still receives the original. `0` stores examples verbatim. Names and street addresses are not detected |
-| `RATCHET_API_KEYS` | empty | `name:key,name:key`. When set, `/v1/*` needs `Authorization: Bearer <key>` or `X-API-Key: <key>`; anything else gets 401. Names: letters, digits, `_`, `.`, `-` (up to 64). Keys: at least 16 characters; generate with `openssl rand -hex 24`. A bare key without `name:` is named `keyN`. The ledger stores the name per request, never the key. A malformed value stops the gateway at startup |
+| `RATCHET_API_KEYS` | empty | `name:key,name:key`. When set, `/v1/*` needs `Authorization: Bearer <key>` or `X-API-Key: <key>`; anything else gets 401. Names: letters, digits, `_`, `.`, `-` (up to 64). Keys: at least 16 characters; generate with `openssl rand -hex 24`. A bare key without `name:` is named `keyN`. The ledger stores the name per request, never the key. A key also reads its own savings receipts and their proofs, never another client's ([API.md](API.md#savings-receipts)). A malformed value stops the gateway at startup |
 | `RATCHET_API_KEY_DAILY_REQUESTS` | `0` | Chat completions per key per UTC day; past it a 429 `insufficient_quota` (code `daily_quota_exceeded`) with `Retry-After` until 00:00 UTC and `X-Should-Retry: false` ([API.md](API.md#authentication)). `0` = unlimited. Counted from the ledger, so it survives restarts in live mode |
-| `RATCHET_ADMIN_KEYS` | empty | Admin keys for management calls (`PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate`, [API.md](API.md#tasks); `POST /ratchet/cost/endpoint`; and the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout`, [API.md](API.md#committed-training-sets), which are a membership oracle for the training data), in the `RATCHET_API_KEYS` syntax: `name:key,name:key`, keys at least 16 characters. Sent as `Authorization: Bearer <key>` or `X-API-Key`; a missing or wrong key gets 401, an API key 403. The ledger and the event log record the name, never the key. A key may not be in both variables (startup error). Empty: the admin API is off in live mode (403 `admin API disabled: set RATCHET_ADMIN_KEYS`) and open in mock mode (the admin is `mock-admin`). Not the Caddy guard's `RATCHET_ADMIN_TOKEN` |
-| `RATCHET_BOM_SIGNING_KEY` | empty | Ed25519 private key as the base64 of its 32-byte seed. Signs each adapter's bill of materials. Generate with `python -m ratchet.bom keygen`, which also prints the public key to publish. Needs the `sign` extra (`pip install "ratchet-distill[sign]"`, included in the gateway image). An invalid value stops the gateway at startup. Empty = BOMs are stored with a SHA-256 but unsigned |
+| `RATCHET_ADMIN_KEYS` | empty | Admin keys for management calls (`PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate`, [API.md](API.md#tasks); `POST /ratchet/cost/endpoint`; and the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout`, [API.md](API.md#committed-training-sets), which are a membership oracle for the training data; and every savings receipt, the gateway's and each client's, [API.md](API.md#savings-receipts)), in the `RATCHET_API_KEYS` syntax: `name:key,name:key`, keys at least 16 characters. Sent as `Authorization: Bearer <key>` or `X-API-Key`; a missing or wrong key gets 401, an API key 403. The ledger and the event log record the name, never the key. A key may not be in both variables (startup error). Empty: the admin API is off in live mode (403 `admin API disabled: set RATCHET_ADMIN_KEYS`) and open in mock mode (the admin is `mock-admin`). Not the Caddy guard's `RATCHET_ADMIN_TOKEN` |
+| `RATCHET_BOM_SIGNING_KEY` | empty | Ed25519 private key as the base64 of its 32-byte seed. Signs each adapter's bill of materials and every savings receipt (same key, same public key). Generate with `python -m ratchet.bom keygen`, which also prints the public key to publish. Needs the `sign` extra (`pip install "ratchet-distill[sign]"`, included in the gateway image). An invalid value stops the gateway at startup. Empty = BOMs and receipts are stored with a SHA-256 but unsigned |
 
 Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
 
@@ -115,6 +115,7 @@ Read in `ratchet/config.py`. Ignored in live mode.
 | `RATCHET_MOCK_WARMUP_REQUESTS` | `1500` | Requests per warm-up day |
 | `RATCHET_MOCK_PACE` | `0.25` | `/scout/stream` waits this share of each call's simulated latency (mock Ultra 2.4 s → 0.6 s), so the page shows agents working. `0` = no waiting. `/scout/run` never waits |
 | `RATCHET_MOCK_ENDPOINT_HOURS` | `24` | Hours a day the simulated student endpoint runs, 0 to 24: each simulated day (the demo, the warm-up, `python -m sim.simulate`) records one endpoint interval of this length from the start of the day, on the synthetic clock, for the cost report ([Cost accounting](#cost-accounting)). `0` = no endpoint (as with the hosted fallback). Anything outside 0 to 24 stops startup. Simulation assumption, not a measurement |
+| `RATCHET_MOCK_TEACHER_REASONING_MEAN` | unset | The mock teacher's mean billed reasoning tokens. Unset, it bills exactly `RATCHET_TEACHER_REASONING_TOKENS` (300), the formula's assumption, so every number is as before. Set (more than 0, at most 100,000; anything else stops startup), each request bills round(mean × exp(0.3 z − 0.045)) reasoning tokens, z a standard normal drawn from the request's text (the same request always costs the same), so the savings receipts have a gap between the formula and the bills to measure: with `420`, `ticket-triage`'s calibrated ratio is about 1.3 to 1.4 (simulation; [Savings receipts](#savings-receipts)). The simulator takes `--teacher-reasoning-mean` instead |
 
 ## Demo VM: Caddy (`deploy/vm/`)
 
@@ -185,6 +186,17 @@ Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py
 
 The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mode demo](#mock-mode-demo)).
 
+## Savings receipts
+
+Read in `ratchet/config.py` (`Settings.receipt_policy()`); used by `ratchet/receipts.py`, the gateway's receipt endpoints and its demo days, `python -m ratchet.live seal`, `python -m ratchet.receipt seal` and `python -m sim.simulate --receipts` ([ADR 0029](adr/0029-verified-savings-receipts.md), [API](API.md#savings-receipts)). A bad value stops startup with `ValueError` naming the variable, because a sealed receipt can never be corrected (invariant 17). Receipts are signed with `RATCHET_BOM_SIGNING_KEY` ([Privacy and security](#privacy-and-security)) when it is set; without it they carry their sha256 only.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_TAKE_RATE` | `0.25` | The fee's share of a receipt's billable lower bound (after spend outside requests), from 0 to 1. Stated in every receipt as a decimal string (`billing.share`). The fee is rounded down to a nano-USD and is 0 when the bound is negative or no task is calibrated |
+| `RATCHET_RECEIPT_MIN_AUDITS` | `30` | Audited answers a task needs, in one receipt, before its baseline is calibrated and its served answers are billed; a whole number from 2 to 1,000,000. Below it the task is `insufficient_audits`: its savings are reported at the formula and not billed. At a 10% audit rate, 30 audits take about 300 student-served answers of the task in a day (per client, for a client's receipt) |
+
+A day is sealed once it is over: on a live ledger 5 minutes after it ended (`receipts.SEAL_GRACE_S`), on a simulated one when the next day starts. The mock teacher's reasoning (`RATCHET_MOCK_TEACHER_REASONING_MEAN`) is under [Mock-mode demo](#mock-mode-demo).
+
 ## Certified precision (`Settings.cert_policy()`)
 
 How Night School's golden eval picks each version's threshold and what its certificate claims (FR-16.3, [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). The gateway (mock mode's golden eval) and `python -m ratchet.live night` read them; a bad value stops startup with a `ValueError` naming the variable. The simulator takes `--calibration`, `--cert-target` and `--cert-delta` instead. The gate's opt-in rules that read certificates are in the [release policy](#release-policy-ratchetreleasepy).
@@ -241,7 +253,7 @@ Other constants:
 
 ## Reserved settings
 
-The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their settings are declared already, with defaults that keep today's behaviour ([ADR 0024](adr/0024-evidence-foundations.md)), so later items only fill in logic. **Until a feature is built, any value but its default stops startup** with a `ValueError` that names the variable and the feature: a setting that does nothing yet must not look like it protects anything. The gateway, the simulator and `python -m ratchet.live` all check (`Settings.check_reserved()` in `Ratchet`, and `ReleasePolicy` when it is built). Unset, empty, or the default spelled another way (`0.250`, ` Operations `) is fine. Each feature's item removes its rows from this section and documents them where they belong.
+The evidence features (PRD §6.16) are built one at a time. Their settings are declared already, with defaults that keep today's behaviour ([ADR 0024](adr/0024-evidence-foundations.md)), so later items only fill in logic. **Until a feature is built, any value but its default stops startup** with a `ValueError` that names the variable and the feature: a setting that does nothing yet must not look like it protects anything. The gateway, the simulator and `python -m ratchet.live` all check (`Settings.check_reserved()` in `Ratchet`, and `ReleasePolicy` when it is built). Unset, empty, or the default spelled another way (`0.50`, ` Operations `) is fine. Each feature's item removes its rows from this section and documents them where they belong.
 
 `Settings` (`config.RESERVED_SETTINGS`):
 
@@ -249,9 +261,6 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 |---|---|---|
 | `RATCHET_TEACHER_PROBES` | `20` | Teacher watch (FR-16.7): stored labels re-asked per night |
 | `RATCHET_ADJUDICATE_MAX` | `50` | Teacher watch (FR-16.7): contested labels adjudicated per night |
-| `RATCHET_TAKE_RATE` | `0.25` | Savings receipts (FR-15.5): the share of the billable lower bound that is the fee |
-| `RATCHET_RECEIPT_MIN_AUDITS` | `30` | Savings receipts (FR-15.5): audits a task needs before its baseline is calibrated |
-| `RATCHET_MOCK_TEACHER_REASONING_MEAN` | unset | Savings receipts (FR-15.5), mock mode only: the mock teacher's mean billed reasoning tokens (unset: the fixed `RATCHET_TEACHER_REASONING_TOKENS`) |
 | `RATCHET_BATCH_API` | `operations` | Clean-room backfill (FR-16.8): the Token Factory batch API (`operations` or `openai`) |
 | `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
 | `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |

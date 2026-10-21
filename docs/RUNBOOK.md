@@ -11,6 +11,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 2. **Night School log** (`/var/log/ratchet-night.log`): exactly one of `trained` or `skip` per night.
 3. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
 4. **Ledger backup** exists for today (see [Backups](#backups)).
+5. **Savings receipts**: yesterday's are sealed (`GET /ratchet/receipts` with an admin key lists them; the cron job below seals them). See [Savings receipts](#savings-receipts).
 
 ## Reading the dashboard
 
@@ -53,7 +54,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rescored` | `run_night` | A night without enough new data to train re-scored the live version, because a golden task's spec changed since it was scored. The task's student traffic resumes under the new threshold | None |
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
 | `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
-| `integrity` | `POST /ratchet/versions/{id}/proof`, `GET /ratchet/versions/{id}/heldout` | A version's stored `version_leaves` (`v3 train leaves do not rebuild the root its BOM signs; the ledger was changed`) no longer rebuild the set commitment its signed BOM carries. SQLite's triggers refuse any edit through its API (INV-17), so someone edited the database file by other means (or dropped the triggers). The endpoints answer 500 for that version and split and serve no proof. Written once per version and split per process | Treat as tampering: stop the gateway, keep the file for forensics, restore the ledger from a backup ([Backups](#backups)) and compare `version_leaves` with the backup's. The signed BOM still holds the true roots |
+| `integrity` | `POST /ratchet/versions/{id}/proof`, `GET /ratchet/versions/{id}/heldout`, `GET /ratchet/receipts/{day}/proof/{id}` and `/leaves` | A sealed receipt's day (`receipt of day 3 (acme): the ledger's rows no longer rebuild its signed root`: a request row of that day was changed, added or removed after sealing; the receipt itself never changes), or a version's stored `version_leaves` (`v3 train leaves do not rebuild the root its BOM signs; the ledger was changed`) no longer rebuild the set commitment its signed BOM carries. SQLite's triggers refuse any edit through its API (INV-17), so someone edited the database file by other means (or dropped the triggers). The endpoints answer 500 for that version and split and serve no proof. Written once per version and split per process | Treat as tampering: stop the gateway, keep the file for forensics, restore the ledger from a backup ([Backups](#backups)) and compare `version_leaves` with the backup's. The signed BOM still holds the true roots |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -88,6 +89,7 @@ for v in led.versions():
 | Stop distilling task names nobody registered | `RATCHET_UNKNOWN_TASKS=teacher` (teacher only, nothing stored) or `reject` (a 400 that lists the registered tasks); `GET /ratchet/tasks` lists the unregistered names requests used |
 | Record the student endpoint going up or down | `python -m ratchet.cost endpoint up` / `down` where the ledger is (`--db`, default `RATCHET_DB`; `--at "2026-10-20T08:00:00Z"` for a time other than now, `--usd-per-hour`, `--gpus`), or `POST /ratchet/cost/endpoint` with an admin key. `deploy/student_endpoint.sh` and `... stop` do it for you when they run next to the ledger. `up` while up and `down` while down change nothing |
 | Close a training job whose end was lost (the night process died) | `python -m ratchet.cost close training_job --at <end time from the Nebius console>`; until then the report counts it up to now and warns |
+| Seal the savings receipts of every day that has ended | `python -m ratchet.live seal` (cron does it daily, below), or `python -m ratchet.receipt seal --db "$RATCHET_DB" --period <day>` to seal through a day and print its receipt. A sealed receipt is never changed or deleted (invariant 17); there is nothing to redo |
 | Rotate the BOM signing key | `python -m ratchet.bom keygen`, set the new `RATCHET_BOM_SIGNING_KEY`, restart, publish the new public key. Old BOMs keep their old key id and still verify against the old public key, so keep it listed |
 
 Never keep two versions in `live`. `Ledger.live()` returns the newest one, and the other would never be retired automatically.
@@ -251,6 +253,23 @@ python -m ratchet.replay --db "$RATCHET_DB" --version 3 --sweep 0.4:0.95:0.05 --
 - `money_left_on_table` (when the suggestion is below the current threshold) is the savings the current threshold gave up on that traffic. When the suggestion is above the current threshold, the replay's interval does not support the target at the current one: compare with the live evidence (`/ratchet/stats` `versions[].evidence`) and the certificate before worrying, since the replay's interval is the least strict of the three.
 - `calibrated_baseline.R` far from 1 means the teacher writes a different number of reasoning tokens than `RATCHET_TEACHER_REASONING_TOKENS` assumes, so every per-token savings figure for student-served answers is off by about that factor. The replay already prices unaudited answers at R times the estimate; to fix the stored figures going forward, change the setting until R is close to 1 on later traffic, and record why.
 - `excluded_by.before_logging` counts rows written before this feature; `no_student_answer` rows the student never answered (endpoint down); `pinned_now` a task pinned since. One version at a time: a request for two versions is a 400, because their confidence scales differ.
+
+### Savings receipts
+
+Each ledger day gets a signed savings receipt for the gateway and one per API client ([ADR 0029](adr/0029-verified-savings-receipts.md), [API.md](API.md#savings-receipts)). They are what the fee is computed from, so seal them every day and keep them.
+
+```cron
+# Seal yesterday's savings receipts (any day that ended at least 5 minutes ago) at 00:20 UTC
+20 0 * * *  cd /opt/ratchet && . ./.env && python -m ratchet.live seal >> /var/log/ratchet-seal.log 2>&1
+```
+
+- `python -m ratchet.live seal` prints `sealed the receipt of day N (acme)` per receipt, or `nothing to seal`. It seals every day that ended and has no receipt yet, oldest first, so a missed run is caught up by the next. The gateway also seals when anyone asks for a receipt, so the two can run at once: each receipt is written once and the second writer keeps the first's.
+- A task shows `insufficient_audits` until it has `RATCHET_RECEIPT_MIN_AUDITS` (30) audits that day (in a client's receipt, that client's). Its savings are reported but not billed. To bill a small task sooner, raise `RATCHET_AUDIT_RATE` for it (more teacher spend), never lower the minimum below what the interval needs.
+- `calibration.tasks.<task>.ratio` far from 1 means the teacher's bills differ from the token formula (`RATCHET_TEACHER_REASONING_TOKENS`). The receipts already correct for it; the dashboard's savings do not. Compare with the replay's `calibrated_baseline` ([Reading the replay frontier](#reading-the-replay-frontier)).
+- `basis: formula` and `fee_nusd: 0` mean no task was calibrated that day. That is the intended outcome for a quiet day, not an error.
+- Every month, reconcile the receipts' summed `totals.teacher_cost_nusd` (nano-USD) with the Token Factory bill for the same API key. Receipts prove the ledger was not changed after sealing; they cannot prove the costs logged at request time.
+- An `integrity` event naming a receipt means a request row of a sealed day was changed outside Ratchet. The receipt still stands (it cannot be edited); proofs and leaves for that day answer 500 until the rows are restored from a backup taken before the change.
+- Changing `RATCHET_TAKE_RATE` or `RATCHET_RECEIPT_MIN_AUDITS` affects days sealed after the change only. Each receipt states the values it used.
 
 ### Teacher answers not stored
 

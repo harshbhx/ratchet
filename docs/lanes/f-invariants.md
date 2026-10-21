@@ -81,3 +81,23 @@ Invariants lane F proposes for the numbered list in [CLAUDE.md](../../CLAUDE.md#
 **Enforcing code.** `ratchet/router.py`: `Ratchet.handle`, `_labels_like_audit`, `Ratchet._formula_baseline`; `ratchet/ledger.py`: `Ledger.replay_rows`; `ratchet/replay.py`: `at`, `sweep`, `_Acc.add`, `suggest`; `ratchet/gateway.py`: `_replay_version`.
 
 **Proving tests.** `tests/test_contract.py::test_replay_columns_are_logged_without_extra_calls` (incl. escalations under a client's temperature, seed or `logit_bias` and for two choices: NULL); `tests/test_system.py::test_label_p_and_student_agree_follow_the_design`, `test_replay_reproduces_each_versions_logged_coverage_and_audits`; `tests/test_core.py::test_replay_precision_is_unbiased_under_the_designed_labelling`, `test_replay_without_positivity_gives_no_precision_above_the_live_threshold`, `test_replay_suggests_the_lowest_passing_grid_threshold_or_none`; `tests/test_hardening.py::test_replay_endpoint_refuses_to_mix_versions`.
+
+## Verified savings receipts (item verified-savings-receipts, FR-15.5, ADR 0029)
+
+The spec proposed the invariant "sealed receipts are append-only". That is already invariant 17 (committed leaves and sealed receipts are append-only, enforced by the `receipts_no_update`, `receipts_no_delete` and `receipts_no_replace` triggers), so no new number is proposed for it; `tests/test_receipts.py::test_seal_is_idempotent_and_never_updates` and `tests/test_hardening.py::test_committed_leaves_and_sealed_receipts_are_append_only` prove it. Two further invariants:
+
+### A receipt bills only on measured bills and calibrated estimates, computed from its leaves alone
+
+**Text.** Every number in a receipt's `totals`, `calibration`, `savings` and `billing` is a function of its leaves (request metadata in whole nano-USD, no request text, the client's key name) and of the take rate, audit minimum and spend it states, so `receipts.recheck` recomputes it. The fee is a share of the one-sided 95% lower bound of the billable savings, never of the token formula: only requests the primary teacher answered (its bill) and the student's answers of tasks with at least the stated minimum of audits (the ratio estimator on audits drawn at the logged `label_p`) are billable; stand-in answers (`degraded`, `fallback_teacher`) and tasks without an interval never are; no calibrated task means a fee of 0. Sealing makes no model call and no random draw. A new leaf key or a new billed quantity needs a new receipt schema and a recomputation in `recheck` in the same change.
+
+**Enforcing code.** `ratchet/receipts.py`: `leaf`, `category`, `calibrate`, `compute`, `recheck`, `UNVERIFIED_ROUTES`; `ratchet/ledger.py`: `Ledger.period_rows`, `RECEIPT_COLUMNS`.
+
+**Proving tests.** `tests/test_receipts.py::test_leaves_hold_only_metadata_and_the_key_name`, `test_insufficient_tasks_are_not_billed_and_the_fee_is_a_share_of_the_lower_bound`, `test_stand_in_answers_are_never_billed`, `test_unlogged_formula_estimates_are_never_calibrated`, `test_recheck_recomputes_everything_from_the_leaves`, `test_sealing_moves_no_simulation_number`.
+
+### A receipt is sealed once, after its day, and proofs are judged against its signed root only
+
+**Text.** A (day, client) receipt is sealed only after the day is over (`receipts.closed_through`), oldest day first so each client's chain names its previous receipt, and is written once: a second sealing returns the stored document without writing, and a concurrent writer that loses keeps the winner's document (`ReceiptExists`). An inclusion proof, the chain and a recomputation are checked against the root, size and hash the receipt signs, never values a proof or file states; the verifiers return failures and never raise. The gateway serves a proof or the leaves only when the ledger's rows rebuild the signed root (and re-checks a proof's row before serving it); otherwise a 500 and one `integrity` event.
+
+**Enforcing code.** `ratchet/receipts.py`: `seal_due`, `seal`, `_seal_one`, `closed_through`, `verify_receipt`, `verify_chain`, `verify_proof`; `ratchet/ledger.py`: `Ledger.add_receipt`, `Ledger.unsealed_days`; `ratchet/gateway.py`: `_receipt`, `_receipt_tree`, `_receipt_leaves`, `receipt_proof`.
+
+**Proving tests.** `tests/test_receipts.py::test_seal_is_idempotent_and_never_updates`, `test_a_day_is_sealed_only_once_it_is_over`, `test_concurrent_sealing_writes_each_receipt_once`, `test_signature_verifies_and_edits_break_it_and_the_chain`, `test_gateway_returns_the_request_id_and_its_proof_verifies`, `test_rows_changed_after_sealing_are_caught`, `test_verifiers_never_raise_on_malformed_input`.

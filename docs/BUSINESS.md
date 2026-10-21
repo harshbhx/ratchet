@@ -14,7 +14,7 @@ Owner: Harsh Bhanushali (DualMind Labs). As of 2026-10-19. All market sizes belo
 | Ratchet Cloud | Managed nightly loop on Nebius, hosted dashboard, canary and rollback, weight export, alerts | 20–30% of verified monthly savings. No savings, no fee |
 | Enterprise | Runs in the customer's cloud or on-prem, data residency (EU, India), audit export of the provenance ledger, SSO, support | Annual contract |
 
-"Verified savings" = all-teacher baseline cost minus actual cost, as recorded by the ledger (the same numbers the dashboard shows).
+"Verified savings" = the **billable lower bound** of a sealed savings receipt ([ADR 0029](adr/0029-verified-savings-receipts.md)): for each day and each client, the all-teacher baseline of the requests the student served, calibrated on audited teacher bills (a ratio estimator with a confidence bound), plus the teacher's own bills, minus actual cost, at the one-sided 95% lower bound, minus spend outside requests. The fee is the take rate (`RATCHET_TAKE_RATE`, 25% by default) of that bound, never of the token formula's estimate, which assumes 300 reasoning tokens nobody measured. A task with too few audits that day (`RATCHET_RECEIPT_MIN_AUDITS`, 30) is reported but not billed. Each receipt is signed, chained to the client's previous one and proves every request id the client saw (`X-Ratchet-Request-Id`), so the client can check it offline (`python -m ratchet.receipt verify`). It cannot prove the costs logged at request time; the client reconciles the receipts' teacher spend with its Token Factory bill for the same key. The dashboard's savings are the formula's, as the ledger records them; they are not what is billed.
 
 ## 3. Market size (estimates)
 
@@ -44,12 +44,12 @@ Headwinds: open-source share of enterprise LLM *spend* fell from 19% to 11% ([Me
 3. **Migration content.** "Move your OpenAI fine-tune to a model you own before Jan 6, 2027."
 4. **Partners.** Apply to NVIDIA Inception. Pitch Ratchet to Nebius as the "continuous optimization" layer on its Token Factory roadmap.
 5. **Design partners.** First 10 from Parul University's PIERC incubation cell and the Indian startup scene, then AI-native startups abroad.
-6. **Proof assets.** Every design partner gets a savings receipt (dashboard export) that doubles as a case study.
+6. **Proof assets.** Every design partner gets its signed daily savings receipts (`GET /ratchet/receipts`), which double as a case study.
 
 ## 6. First customers: what we offer
 
 - Free setup and a 30-day pilot on one task.
-- Weekly savings report from the ledger.
+- Weekly savings report from the ledger, backed by the signed daily receipts.
 - No fee unless savings are verified.
 - They keep the adapter weights either way.
 

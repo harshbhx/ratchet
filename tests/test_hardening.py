@@ -1313,9 +1313,6 @@ def test_committed_leaves_and_sealed_receipts_are_append_only():
 RESERVED_ENV = {
     "RATCHET_TEACHER_PROBES": "5",
     "RATCHET_ADJUDICATE_MAX": "7",
-    "RATCHET_TAKE_RATE": "0.3",
-    "RATCHET_RECEIPT_MIN_AUDITS": "40",
-    "RATCHET_MOCK_TEACHER_REASONING_MEAN": "420",
     "RATCHET_BATCH_API": "openai",
     "RATCHET_BATCH_DISCOUNT": "0.4",
     "RATCHET_BACKFILL_MAX_TOKENS": "1024",
@@ -1332,24 +1329,23 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()
-    for env, value in {"RATCHET_TAKE_RATE": "0.250", "RATCHET_BATCH_API": " Operations ", "RATCHET_DB_SYNC": "full"}.items():
+    for env, value in {"RATCHET_BATCH_DISCOUNT": "0.50", "RATCHET_BATCH_API": " Operations ", "RATCHET_DB_SYNC": "full"}.items():
         monkeypatch.setenv(env, value)
-    monkeypatch.setenv("RATCHET_MOCK_TEACHER_REASONING_MEAN", "")  # empty: unset
     Settings().check_reserved()
     for env, value in RESERVED_ENV.items():
         monkeypatch.setenv(env, value)
         with pytest.raises(ValueError, match=env):
             Settings().check_reserved()
         monkeypatch.delenv(env)
-    monkeypatch.setenv("RATCHET_TAKE_RATE", "0.3")
-    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE.*verified savings receipts"):
+    monkeypatch.setenv("RATCHET_BATCH_API", "openai")
+    with pytest.raises(ValueError, match="RATCHET_BATCH_API.*clean-room backfill"):
         Ratchet(Settings(), Ledger(":memory:"), FakeTeacher(), lambda v: (BrokenStudent(), ""))
     monkeypatch.setenv("RATCHET_DB", str(tmp_path / "never.db"))
-    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE"):
+    with pytest.raises(ValueError, match="RATCHET_BATCH_API"):
         live.main(["tick"])
     assert not (tmp_path / "never.db").exists()  # refused before the ledger was opened
-    monkeypatch.setenv("RATCHET_TAKE_RATE", "lots")
-    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE must be a number"):
+    monkeypatch.setenv("RATCHET_BATCH_DISCOUNT", "lots")
+    with pytest.raises(ValueError, match="RATCHET_BATCH_DISCOUNT must be a number"):
         Settings()
 
 
