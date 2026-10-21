@@ -147,7 +147,10 @@ def test_nebius_trainer_writes_syncs_trains_and_hot_loads(tmp_path, monkeypatch)
     assert run.commands == [sync, "bash deploy/train_job.sh student-v1"]
     assert run.calls[0][0] == shlex.split(sync) and all(kw == {"check": True} for _, kw in run.calls)
     assert order == ["run aws", "run bash", "load"]  # write, sync, train, then hot-load
-    assert seen_at_sync == [rows] and train.load_rows(str(data / "night" / "train.jsonl")) == rows
+    # The job reads prompt-completion rows with the template arguments the student is served with (FR-8.42).
+    written = [dataset.training_record(r) for r in rows]
+    assert seen_at_sync == [written] and train.load_rows(str(data / "night" / "train.jsonl")) == written
+    assert all(r["chat_template_kwargs"] == {"enable_thinking": False} for r in written)
     (load,) = vllm.calls_to("/load_lora_adapter")
     assert (load.method, load.url) == ("POST", "https://student.test/v1/load_lora_adapter")
     assert load.json == {"lora_name": "student-v1", "lora_path": "/data/adapters/student-v1"}
@@ -571,19 +574,26 @@ def test_train_parse_args_defaults_and_row_contract(tmp_path, monkeypatch):
     led = Ledger(":memory:")
     _examples(led, train=4, golden=1)
     rows = dataset.rows(led, "train")
-    path = dataset.write_jsonl(rows, tmp_path / "night" / "train.jsonl")
+    path = dataset.write_training(rows, tmp_path / "night" / "train.jsonl")
     path.write_text(path.read_text(encoding="utf-8") + "\n\n", encoding="utf-8")  # blank lines are skipped
     loaded = train.load_rows(str(path))
-    assert loaded == rows and len(loaded) == 4
+    assert loaded == [dataset.training_record(r) for r in rows] and len(loaded) == 4
+    train.check_rows(loaded)
     stored = {r["hash"]: r["completion"] for r in led.examples(split="train")}
     for r in loaded:
-        # SFT with assistant_only_loss learns the last message: the teacher's stored answer (INV-2).
-        assert r["messages"][-1] == {"role": "assistant", "content": stored[r["provenance"]["hash"]]}
+        # TRL's completion-only loss learns the completion: the teacher's stored answer (INV-2), after the prompt.
+        assert r["completion"] == [{"role": "assistant", "content": stored[r["provenance"]["hash"]]}]
         assert {"teacher", "license"} <= set(r["provenance"])
-    # ratchet_manifest.json, saved next to the adapter, names its base model and the licenses it learned from.
+    # ratchet_manifest.json, saved next to the adapter, names its base model, the licenses it learned from and the
+    # chat-template arguments it was trained under.
     manifest = json.loads(json.dumps(train.manifest("base-model", loaded), default=list))
     lic = licenses.REGISTRY[OPEN_TEACHER].name
-    assert manifest == {"base_model": "base-model", "examples": 4, "provenance": [[OPEN_TEACHER, lic]]}
+    assert manifest == {
+        "base_model": "base-model",
+        "examples": 4,
+        "provenance": [[OPEN_TEACHER, lic]],
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
 
 
 # ---------- operations ----------

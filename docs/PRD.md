@@ -206,7 +206,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-4.2 | Retrain from the base model each night (no adapter stacking) | Done (v0.1) |
 | FR-4.3 | Golden set: ~10% of unique requests by hash, held out; requests seen 3+ times move to training | Done (v0.1) |
 | FR-4.4 | Skip training if fewer than 50 new examples, no golden set, or a release is in flight | Done (v0.1) |
-| FR-4.5 | LoRA fine-tune script with Unsloth (fallback: transformers + peft) for Nemotron 3 Nano 4B | Done (v0.1), untested (on GPU) |
+| FR-4.5 | LoRA fine-tune script (transformers + PEFT + TRL; Unsloth until v0.5) for Nemotron 3 Nano 4B | Done (v0.1), untested (on GPU) |
 | FR-4.6 | Run training as a Nebius Serverless Job; wait for adapter in bucket | Done (v0.1), untested (on Nebius) |
 | FR-4.7 | PII redaction before storing examples (pattern-based with checksums; names and addresses not covered), in message content, `name`, `refusal` and tool and function call arguments | Done (v0.4); NER-based detection planned |
 
@@ -257,6 +257,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-8.3 | Fallback to hosted untuned Nemotron Nano on Token Factory when no student endpoint | Done (v0.1) |
 | FR-8.4 | `python -m ratchet.live night` and `tick` commands for cron | Done (v0.1), untested (on Nebius) |
 | FR-8.5 | `scripts/day1_check.py` verifies model IDs, logprobs, JSON mode | Done (v0.1), untested (live) |
+| FR-8.42 | Training rows carry the chat-template arguments the student is served with (reasoning off), and the training image is pinned and fails its build without the Mamba kernels ([ADR 0145](adr/0145-train-on-the-served-prompt.md)): `train.jsonl` holds TRL's conversational prompt-completion rows with `chat_template_kwargs: {"enable_thinking": false}`, the same arguments as the endpoint's `--default-chat-template-kwargs`; a train row whose answer holds a literal `<think>` or `</think>` is left out of training and counted (`skipped_think_tag` in `manifest.json`); `train.py` trains with completion-only loss (never `assistant_only_loss`), refuses a row that would train another prompt and stops before training when the tokenizer's prompt is not a prefix of prompt + answer or differs from the one vLLM renders, and writes `versions.json` next to the adapter; `deploy/Dockerfile.train` installs exact versions (`deploy/train-versions.txt`, read as constraints, with `trl==1.16.0` and no Unsloth), never ignores a failed kernel build, and imports the Mamba kernels as its last build step | Done (v0.5), untested (on GPU) |
 
 ### 6.9 Simulation
 
@@ -404,7 +405,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | Nebius Object Storage | Datasets and adapters | S3-compatible |
 | NVIDIA Nemotron 3 Nano 4B | Student base | NVIDIA Nemotron Open Model License |
 | vLLM | Student serving, runtime LoRA | Nemotron-H LoRA support listed |
-| Unsloth / TRL / PEFT | Training | Unsloth supports Nemotron 3 |
+| TRL / PEFT / transformers | Training | Exact versions in `deploy/train-versions.txt` (Unsloth dropped in v0.5: its release requires an older TRL, ADR 0145) |
 | FastAPI, httpx, SQLite | Gateway, client, ledger | |
 
 ## 11. Risks and mitigations

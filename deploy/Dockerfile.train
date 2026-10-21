@@ -1,14 +1,25 @@
-# Training image for Night School (Nebius Serverless Job).
-# Nemotron 3 Nano is a hybrid Mamba-Transformer model: the Mamba kernels must build against
-# the image's CUDA + torch. Pin versions once the day-1 test passes.
+# Training image for Night School (Nebius Serverless Job): CUDA 12.8 devel, torch, Transformers, PEFT, TRL and the
+# Mamba kernels Nemotron-H's layers run on. Every package is pinned to an exact version, and deploy/train-versions.txt
+# lists the same pins: the pip steps after torch read it as constraints, so the two files disagreeing, or a dependency
+# that would move a pinned package, fails the build (tests/test_nightschool.py checks the two offline). The versions
+# are candidates read on Oct 21, 2026; the Oct 22 smoke job (docs/DAY1.md row 4) confirms them, or its versions.json
+# replaces them here and in the list together. Unsloth is not installed: its release of Oct 19, 2026 requires
+# trl<=1.15.0 (ADR 0145). Build from the repository root: docker build -f deploy/Dockerfile.train .
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip git && rm -rf /var/lib/apt/lists/*
+# python-is-python3: the job runs `python -m ratchet.nightschool.train`, and Ubuntu has no `python` without it.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python-is-python3 git && rm -rf /var/lib/apt/lists/*
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128
-RUN pip install --no-cache-dir "unsloth" "trl>=0.19" peft datasets transformers accelerate
-# Mamba kernels for Nemotron-H layers (verify they are required for the 4B model).
-RUN pip install --no-cache-dir causal-conv1d mamba-ssm --no-build-isolation || true
+# 2.11.0 is the newest torch on the CUDA 12.8 index (download.pytorch.org/whl/cu128, read Oct 21, 2026).
+RUN pip install --no-cache-dir "torch==2.11.0" --index-url https://download.pytorch.org/whl/cu128
+COPY deploy/train-versions.txt /tmp/train-versions.txt
+# transformers 4.57.6 is the last 4.x (TRL 1.16.0 needs 4.56.2 or later); the model's own code was saved with 4.53.0.
+RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==4.57.6" "peft==0.21.2" "accelerate==1.15.0" "datasets==4.8.5"
+# Build tools for the Mamba kernels, which compile against the torch above when no prebuilt wheel matches it.
+RUN pip install --no-cache-dir -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.2" "setuptools==82.0.1" "wheel==0.47.0"
+# A kernel that fails to build fails the image: without them the model falls back to slow code or fails on the GPU.
+RUN pip install --no-cache-dir --no-build-isolation -c /tmp/train-versions.txt "causal-conv1d==1.6.2.post1" "mamba-ssm==2.3.2.post1"
+RUN python -c "import torch, mamba_ssm, causal_conv1d; assert torch.version.cuda == '12.8', torch.version.cuda"
 
 WORKDIR /app
 COPY ratchet /app/ratchet

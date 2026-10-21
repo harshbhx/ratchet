@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 839 tests, ~75 s
+pytest -q                                                          # 845 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -44,8 +44,8 @@ cron: python -m ratchet.live tick
 Create a bucket in the same region as your GPUs (eu-north1 has L40S and H100). It is mounted at `/data` in both the job and the endpoint, with this layout:
 
 ```
-/data/night/train.jsonl          written by ratchet.live (via RATCHET_SYNC_CMD)
-/data/adapters/student-vN/       written by the training job, read by vLLM
+/data/night/train.jsonl          written by ratchet.live (via RATCHET_SYNC_CMD): prompt-completion rows
+/data/adapters/student-vN/       written by the training job (weights, versions.json, ratchet_manifest.json), read by vLLM
 ```
 
 Set:
@@ -68,7 +68,15 @@ docker push <registry>/ratchet-train:0.1
 export RATCHET_TRAIN_IMAGE=<registry>/ratchet-train:0.1
 ```
 
-The image is CUDA 12.8 devel with torch, Unsloth, TRL, PEFT and datasets. It also tries to install `causal-conv1d` and `mamba-ssm`, which Nemotron-H layers may need; the install is allowed to fail (`|| true`). Before pinning versions, test a 200-row run (DAY1 check 4). If Unsloth fails on the hybrid Mamba model, `train.py` falls back to plain transformers + PEFT (`target_modules="all-linear"`), or you can use the official Nebius Axolotl tutorial image.
+Build from the repository root (the image copies `deploy/train-versions.txt` and `ratchet/`). The image is CUDA 12.8 devel with exact versions of torch, Transformers, PEFT, TRL, Accelerate, datasets and the Mamba kernels (`causal-conv1d`, `mamba-ssm`) that Nemotron-H's layers run on ([ADR 0145](adr/0145-train-on-the-served-prompt.md)):
+
+- `deploy/train-versions.txt` lists every pin, and each pip step after torch reads it as constraints, so a version that differs between the two files, or a dependency that would move a pinned package, fails the build. `tests/test_nightschool.py::test_dockerfile_is_pinned` checks the two files offline.
+- The Mamba kernels build with no `|| true`, and the last build step imports them (and checks torch's CUDA build), so an image without them never reaches a GPU. If no prebuilt wheel matches torch 2.11 and CUDA 12, they compile from source in the devel image, which takes a while. The import needs no GPU (torch's CUDA libraries load without a driver), but that was not checked on a real builder: if it fails with a driver error rather than a missing module, build on a GPU VM.
+- There is no Unsloth: its release of Oct 19, 2026 requires `trl<=1.15.0`, and the image pins TRL 1.16.0. `train.py` uses Transformers + PEFT + TRL.
+- `train.py` checks every row and its rendering with the model's chat template before it trains (FR-8.42): the student must be trained on the prompt the endpoint serves (thinking off). A `TemplateMismatch` or `row N: ...` error in the job's logs means the training file or the tokenizer does not match the endpoint; it stops the job before the GPU trains anything.
+- The job writes `versions.json` (Python, CUDA and every pinned package) next to the adapter before training starts.
+
+The versions are candidates read on Oct 21, 2026. To change one (or to adopt what the day-1 smoke job ran with, from its `versions.json`): edit `deploy/train-versions.txt` and the matching `"name==version"` in `deploy/Dockerfile.train` together (and `train.LIBRARIES` if you add a package), run `pytest -q tests/test_nightschool.py`, rebuild, push under a new tag and set `RATCHET_TRAIN_IMAGE` to it. If the image cannot build at all, the fallbacks in order are an NGC PyTorch base image (`nvcr.io/nvidia/pytorch`, a CUDA 12.8 tag) with the same pip steps, or Nebius's tutorial image `docker.io/axolotlai/axolotl:main-20260309-py3.11-cu128-2.9.1` ([fine-tuning tutorial](https://docs.nebius.com/serverless/tutorials/fine-tuning), read Oct 21, 2026) with `ratchet/` copied in; `versions.json` then records what that image holds.
 
 ### Step 4: Student endpoint (vLLM with runtime LoRA)
 

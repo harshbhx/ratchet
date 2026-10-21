@@ -53,7 +53,7 @@ Ratchet only distills from teachers whose licenses allow it. Nemotron 3 Ultra is
 | Judge (free-text eval) | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | Fast, cheap, JSON mode |
 | Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Used when your endpoint is stopped |
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA on a **Nebius Serverless Endpoint** (vLLM) | Cheap, fast, yours |
-| Night School | **Nebius Serverless Jobs** (L40S) with Unsloth | Pay only while training |
+| Night School | **Nebius Serverless Jobs** (L40S) with TRL + PEFT | Pay only while training |
 | Dataset / adapters | **Nebius Object Storage** bucket mounted in jobs and endpoints | |
 | Public demo host | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 839 tests
+pytest -q                                                                # 845 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -244,7 +244,7 @@ ratchet/bom.py          per-adapter bill of materials, Ed25519 signing, `python 
 ratchet/proof.py        committed training sets: membership and held-out proofs, `python -m ratchet.proof`
 ratchet/replay.py       ledger replay: past traffic at another threshold or audit rate, `python -m ratchet.replay`
 ratchet/receipts.py     verified savings receipts: calibrated baseline, lower-bound billing, `python -m ratchet.receipt`
-ratchet/nightschool/    dataset build, LoRA training (Unsloth), golden eval, nightly orchestration
+ratchet/nightschool/    dataset build, LoRA training (TRL + PEFT), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
 ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI
 web/                    React app: story, Scout, dashboard (Vite, Tailwind, motion, recharts)
