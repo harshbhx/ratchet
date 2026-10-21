@@ -40,6 +40,16 @@ TRIAGE = "ticket-triage"
 A = json.dumps({"category": "billing", "priority": "high", "reply": "I am checking the charge now."})
 TEACHER_COST = Settings(mode="mock").price(OPEN_TEACHER).cost(10, 5)  # FakeOpenAIServer's usage at the teacher's price
 NOON = float(calendar.timegm((2026, 10, 21, 12, 0, 0)))
+LIMIT_ENV = (
+    "RATCHET_API_KEY_DAILY_REQUESTS",
+    "RATCHET_API_KEY_DAILY_USD",
+    "RATCHET_API_KEY_MONTHLY_USD",
+    "RATCHET_API_KEY_RPM",
+    "RATCHET_API_KEY_CONCURRENCY",
+    "RATCHET_DAILY_BUDGET_USD",
+    "RATCHET_IP_RPM",
+    "RATCHET_MAX_INFLIGHT",
+)
 
 
 def _live(tmp_path: Path, **overrides: Any) -> Settings:
@@ -649,7 +659,9 @@ def test_token_bucket_concurrency_and_limiter_units():
 
 
 @pytest.mark.req("FR-12.2", "FR-12.3")
-def test_limit_settings_are_checked_at_startup():
+def test_limit_settings_are_checked_at_startup(monkeypatch):
+    for name in LIMIT_ENV:  # the defaults below are the code's, whatever the shell sets
+        monkeypatch.delenv(name, raising=False)
     policy = Settings(mode="mock", budget_mode=" STUDENT_ONLY ", budget_alert_pct="100, 50,50,").limit_policy()
     assert (policy.budget_mode, policy.alert_pct, policy.max_inflight) == ("student_only", (50, 100), 32)
     assert Settings(budget_mode="").limit_policy().budget_mode == "block"

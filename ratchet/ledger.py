@@ -652,7 +652,8 @@ class Ledger:
 
     @_locked
     def client_requests_since(self, client: str, ts: float) -> int:
-        """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
+        """Requests logged for one API client since `ts`. The per-key daily quota no longer counts rows on the request
+        path: it reads `spend.SpendMeter` (ADR 0063), which reads the ledger at startup through `api_usage_since`."""
         return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
 
     @_reads
