@@ -32,6 +32,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0026](0026-certified-thresholds-and-a-paired-release-gate.md) | Certified thresholds and a paired release gate: Clopper–Pearson certificates and a frontier in every BOM, opt-in Learn-then-Test and an exact paired champion/challenger gate | Accepted | 2026-10-20 |
 | [0027](0027-committed-training-sets.md) | Committed training sets: sparse Merkle roots in every BOM, with membership, non-membership and held-out proofs checked offline | Accepted | 2026-10-20 |
 | [0028](0028-designed-propensity-replay.md) | Designed-propensity replay: a ledger time machine for thresholds and audit rates, and a calibrated baseline | Accepted | 2026-10-21 |
+| [0029](0029-verified-savings-receipts.md) | Verified savings receipts: an audit-calibrated baseline billed on its lower bound, in signed, chained RFC 9162 receipts | Accepted | 2026-10-21 |
 | [0080](0080-storage-opt-outs-and-pseudonymous-end-users.md) | Storage opt-outs at every level, and end users kept only as scoped keyed hashes | Accepted | 2026-10-20 |
 | [0081](0081-retention-tombstones-erasure-and-export.md) | Retention: tombstones, erasure and export | Accepted | 2026-10-20 |
 | [0090](0090-licenses-travel-with-the-adapter.md) | Licenses travel with the adapter (base-model license in the BOM, NOTICE.md, export), and open teachers addable by configuration without weakening invariant 1 | Accepted | 2026-10-20 |

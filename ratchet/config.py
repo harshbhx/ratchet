@@ -76,7 +76,7 @@ def _float_or_none(name: str) -> float | None:
         raise ValueError(f"{name} must be a number, not {raw!r}") from None
 
 
-# Settings declared for the evidence features (FR-15.5, FR-16.x; ADR 0024) before the items that read them are built:
+# Settings declared for the evidence features (FR-16.x; ADR 0024) before the items that read them are built:
 # field name -> (variable, its default as the environment spells it, the feature that will read it). Their defaults keep
 # today's behaviour. Until a feature lands, `Settings.check_reserved()` stops startup on any other value, so nobody
 # relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
@@ -84,9 +84,6 @@ def _float_or_none(name: str) -> float | None:
 RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
     "teacher_probes": ("RATCHET_TEACHER_PROBES", "20", "the teacher watch (FR-16.7)"),
     "adjudicate_max": ("RATCHET_ADJUDICATE_MAX", "50", "the teacher watch (FR-16.7)"),
-    "take_rate": ("RATCHET_TAKE_RATE", "0.25", "verified savings receipts (FR-15.5)"),
-    "receipt_min_audits": ("RATCHET_RECEIPT_MIN_AUDITS", "30", "verified savings receipts (FR-15.5)"),
-    "mock_teacher_reasoning_mean": ("RATCHET_MOCK_TEACHER_REASONING_MEAN", "", "verified savings receipts (FR-15.5)"),
     "batch_api": ("RATCHET_BATCH_API", "operations", "clean-room backfill (FR-16.8)"),
     "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
@@ -123,6 +120,11 @@ COST_MODELS = ("per_token", "gpu_hours")
 # turn the cost report into infinities.
 MAX_USD_PER_GPU_HOUR = 1000.0
 MAX_GPUS = 1024
+# Savings receipts (ratchet/receipts.py, ADR 0029): audits a task needs before its baseline is calibrated are at least 2
+# (a variance needs two), and the mock teacher's mean reasoning tokens are bounded so a typo cannot price a request at
+# thousands of dollars.
+MIN_RECEIPT_AUDITS = 2
+MAX_MOCK_REASONING_TOKENS = 100_000
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -171,6 +173,16 @@ class CostPolicy:
     train: GpuRate
     mock_endpoint_hours: float
     prices_verified: bool
+
+
+@dataclass(frozen=True)
+class ReceiptPolicy:
+    """The savings receipts' settings, checked (`Settings.receipt_policy()`, ADR 0029): the share of the billable lower
+    bound that is the fee (RATCHET_TAKE_RATE) and the audits a task needs before its baseline is calibrated
+    (RATCHET_RECEIPT_MIN_AUDITS)."""
+
+    share: float
+    min_audits: int
 
 
 @dataclass(frozen=True)
@@ -387,18 +399,20 @@ class Settings:
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
     cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
 
-    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
-    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: teacher-watch probes and adjudications
-    # per night; the receipts' take rate, audits needed per task and the mock teacher's mean reasoning tokens (unset =
-    # the fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap; the ledger's sync
-    # mode.
-    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
-    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+    # Savings receipts (FR-15.5, ADR 0029): the share of the billable lower bound that is the fee, the audits a task needs
+    # before its baseline is calibrated (read with `receipt_policy()`), and, in mock mode only, the mock teacher's mean
+    # billed reasoning tokens (unset: the fixed RATCHET_TEACHER_REASONING_TOKENS; `checked_mock_reasoning_mean()`).
     take_rate: float = field(default_factory=lambda: _float("RATCHET_TAKE_RATE", "0.25"))
     receipt_min_audits: int = field(default_factory=lambda: _int("RATCHET_RECEIPT_MIN_AUDITS", "30"))
     mock_teacher_reasoning_mean: float | None = field(
         default_factory=lambda: _float_or_none("RATCHET_MOCK_TEACHER_REASONING_MEAN")
     )
+
+    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: teacher-watch probes and adjudications
+    # per night; the backfill's batch API, discount and output cap; the ledger's sync mode.
+    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
+    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
     batch_api: str = field(default_factory=lambda: _env("RATCHET_BATCH_API", "operations"))
     batch_discount: float = field(default_factory=lambda: _float("RATCHET_BATCH_DISCOUNT", "0.5"))
     backfill_max_tokens: int = field(default_factory=lambda: _int("RATCHET_BACKFILL_MAX_TOKENS", "2048"))
@@ -574,6 +588,33 @@ class Settings:
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
                 raise ValueError(f"{env} must be a number strictly between 0 and 1, not {value!r}")
         return CertPolicy(mode, float(self.cert_target), float(self.cert_delta))
+
+    def receipt_policy(self) -> ReceiptPolicy:
+        """RATCHET_TAKE_RATE (0 to 1) and RATCHET_RECEIPT_MIN_AUDITS (a whole number, at least 2), checked. A bad value
+        raises ValueError naming the variable, so the gateway, the simulator and `python -m ratchet.live` stop at startup
+        instead of sealing receipts that bill the wrong share, which could never be corrected (INV-17)."""
+        share = self.take_rate
+        if isinstance(share, bool) or not isinstance(share, (int, float)) or not 0 <= share <= 1:
+            raise ValueError(f"RATCHET_TAKE_RATE must be a share from 0 to 1, not {share!r}")
+        n = self.receipt_min_audits
+        if isinstance(n, bool) or not isinstance(n, int) or not MIN_RECEIPT_AUDITS <= n <= 1_000_000:
+            raise ValueError(
+                f"RATCHET_RECEIPT_MIN_AUDITS must be a whole number from {MIN_RECEIPT_AUDITS} to 1,000,000, not {n!r}"
+            )
+        return ReceiptPolicy(float(share), n)
+
+    def checked_mock_reasoning_mean(self) -> float | None:
+        """RATCHET_MOCK_TEACHER_REASONING_MEAN, checked: None (unset: the mock teacher bills the fixed
+        RATCHET_TEACHER_REASONING_TOKENS) or more than 0 and at most MAX_MOCK_REASONING_TOKENS. Only the mock teacher
+        reads it, but the gateway and `python -m ratchet.live` check it at startup in every mode, so a value out of range
+        always stops startup as CONFIGURATION.md says."""
+        mean = self.mock_teacher_reasoning_mean
+        if mean is None:
+            return None
+        if isinstance(mean, bool) or not isinstance(mean, (int, float)) or not 0 < mean <= MAX_MOCK_REASONING_TOKENS:
+            limit = f"{MAX_MOCK_REASONING_TOKENS:,}"
+            raise ValueError(f"RATCHET_MOCK_TEACHER_REASONING_MEAN must be more than 0 and at most {limit} tokens, not {mean!r}")
+        return float(mean)
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

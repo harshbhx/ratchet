@@ -7,9 +7,10 @@
 - `FakeOpenAIServer`, `RecordingRun`, `AppTransport`: the live-mode boundary without the network. An OpenAI-compatible
   server (Token Factory, or vLLM with runtime LoRA loading) behind `httpx.MockTransport`; a stand-in for
   `subprocess.run`; and a transport that sends an `httpx.Client`'s requests to the gateway app in-process.
-- `_version`, `_audit`, `_shadow`, `_examples`, `_repeat`: put versions, teacher audits, shadow answers and teacher
-  examples into a ledger through its public writers (`create_version` + `set_version`, `log_request`, `add_example`),
-  the way the router and the release gate write them, so tests exercise the real queries.
+- `_version`, `_audit`, `_shadow`, `_examples`, `_repeat`, `_request`: put versions, teacher audits, shadow answers,
+  teacher examples and single requests into a ledger through its public writers (`create_version` + `set_version`,
+  `log_request`, `add_example`), the way the router and the release gate write them, so tests exercise the real
+  queries.
 
 Import with `from fakes import ...`: pytest puts tests/ on `sys.path` because it holds conftest.py.
 """
@@ -518,3 +519,37 @@ def _repeat(led: Ledger, ex: StoredExample, times: int) -> None:
     """The same request answered again `times` more times: `seen` grows, nothing new is stored."""
     for _ in range(times):
         assert not led.add_example(ex.task, ex.messages, "again", OPEN_TEACHER, "OpenMDW-1.1", "")
+
+
+def _request(led: Ledger, served_by: str = "student", **fields: Any) -> int:
+    """Log one request as the router writes it, with every column a savings receipt reads (FR-15.5), and return its id.
+
+    Defaults: a `ticket-triage` answer from version 1 that the student served on route `student`, not audited, at audit
+    rate 0.1, costing $0.0002 against a formula baseline of $0.001 (`baseline_est_usd` = `baseline_cost_usd`). With
+    `served_by='teacher'` the request escalated (route `confidence`, `label_p` 1.0) and its whole cost is teacher spend.
+    Any column can be overridden (`audited=1, baseline_cost_usd=...` is an audit and its real teacher bill; `day=`,
+    `ts=`, `client=`, `route=` as named)."""
+    student = served_by == "student"
+    cost = fields.pop("cost_usd", 0.0002)
+    baseline = fields.pop("baseline_cost_usd", 0.001)
+    audited = fields.pop("audited", 0)
+    row: dict[str, Any] = {
+        "task": "ticket-triage",
+        "served_by": served_by,
+        "student_version": 1,
+        "confidence": 0.9 if student else 0.4,
+        "escalated": int(not student),
+        "audited": audited,
+        "audit_agree": 1 if audited else None,
+        "latency_ms": 1.0,
+        "cost_usd": cost,
+        "baseline_cost_usd": baseline,
+        "student_cost_usd": cost if student else 0.0,
+        "teacher_cost_usd": 0.0 if student else cost,
+        "route": "student" if student else "confidence",
+        "label_p": 0.1 if student else 1.0,
+        "threshold": 0.8,
+        "baseline_est_usd": baseline,
+    }
+    row.update(fields)
+    return led.log_request(**row)

@@ -467,6 +467,18 @@ UNRECORDED_ROUTE = "unrecorded"
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
 # Rows `Ledger.replay_rows` reads per locked statement, so a long history never holds the lock for long.
 REPLAY_CHUNK = 20_000
+# The request columns a savings receipt's leaves are built from (ratchet/receipts.py, FR-15.5): metadata only, never
+# request text (INV-12); `client` is the API key's name (INV-13).
+RECEIPT_COLUMNS = (
+    "id, ts, day, task, client, served_by, route, student_version, escalated, audited, label_p, cost_usd,"
+    " student_cost_usd, teacher_cost_usd, baseline_cost_usd, baseline_est_usd"
+)
+# Rows `Ledger.period_rows` reads per locked statement, so a busy day never holds the lock for long.
+RECEIPT_CHUNK = 20_000
+
+
+class ReceiptExists(ValueError):
+    """A receipt for this (period, client) is already sealed: receipts are written once (INV-17)."""
 
 
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
@@ -2030,6 +2042,114 @@ class Ledger:
         except ValueError:
             out["spec"] = None
         return out
+
+    # ---------- savings receipts (FR-15.5, ADR 0029) ----------
+    def period_rows(self, period: int, client: str | None = None) -> list[dict[str, Any]]:
+        """The requests of ledger day `period` (only `client`'s when given), in id order, with `RECEIPT_COLUMNS`: what a
+        receipt's leaves are built from, on the `requests_day` index. A busy day is read in chunks of RECEIPT_CHUNK rows,
+        each under the lock (`_period_chunk`), so `log_request` waits for one chunk at most; a day that has ended gains
+        no rows, so the chunks add up to the day. Not `_locked` itself, like `replay_rows`."""
+        rows: list[dict[str, Any]] = []
+        after = 0
+        while True:
+            chunk = self._period_chunk(int(period), client, after)
+            rows.extend(chunk)
+            if len(chunk) < RECEIPT_CHUNK:
+                return rows
+            after = chunk[-1]["id"]
+
+    @_locked
+    def _period_chunk(self, period: int, client: str | None, after: int) -> list[dict[str, Any]]:
+        """Up to RECEIPT_CHUNK of `period_rows`' rows with ids above `after`, in id order."""
+        q, args = f"SELECT {RECEIPT_COLUMNS} FROM requests WHERE day=? AND id>?", [period, after]
+        if client is not None:
+            q += " AND client=?"
+            args.append(client)
+        return [dict(r) for r in self.db.execute(q + " ORDER BY id LIMIT ?", [*args, RECEIPT_CHUNK])]
+
+    @_locked
+    def receipt_row(self, request_id: int) -> dict[str, Any] | None:
+        """One request's `RECEIPT_COLUMNS` (the leaf a receipt proof shows), or None for an unknown id."""
+        r = self.db.execute(f"SELECT {RECEIPT_COLUMNS} FROM requests WHERE id=?", (int(request_id),)).fetchone()
+        return dict(r) if r else None
+
+    @_locked
+    def period_counts(self, period: int) -> dict[str | None, int]:
+        """{client name (None: no key): requests} on ledger day `period`. A name that is empty is counted under None,
+        because '' names the gateway-wide receipt."""
+        out: dict[str | None, int] = {}
+        for r in self.db.execute("SELECT client, COUNT(*) n FROM requests WHERE day=? GROUP BY client", (int(period),)):
+            name = r["client"] or None
+            out[name] = out.get(name, 0) + int(r["n"])
+        return out
+
+    @_locked
+    def period_folded(self, period: int, client: str | None = None) -> bool:
+        """Whether request retention folded any of ledger day `period`'s rows (only `client`'s when given) into
+        `daily_rollup` (FR-13.4): the day's rows no longer rebuild a receipt, so it is never sealed from them, and a
+        sealed receipt's per-request proofs and leaves are gone (its signature and totals still verify)."""
+        q, args = "SELECT 1 FROM daily_rollup WHERE day=?", [int(period)]
+        if client is not None:
+            q += " AND client=?"
+            args.append(client)
+        return self.db.execute(q + " LIMIT 1", args).fetchone() is not None
+
+    @_locked
+    def period_spend(self, period: int) -> list[float]:
+        """The amounts (USD) spent outside requests on ledger day `period` (the `spend` table: backfill labelling,
+        FR-16.8), which a receipt nets from its billable savings."""
+        return [r["usd"] for r in self.db.execute("SELECT usd FROM spend WHERE day=? ORDER BY id", (int(period),))]
+
+    @_locked
+    def unsealed_days(self, through: int) -> list[int]:
+        """Ledger days up to `through` that have requests and come after the last day whose gateway-wide receipt is
+        sealed, oldest first. A day's client receipts are sealed before its gateway-wide one (`receipts.seal_due`), so
+        that receipt marks the whole day done."""
+        last = self.db.execute("SELECT MAX(period) FROM receipts WHERE client=''").fetchone()[0]
+        q, args = "SELECT DISTINCT day FROM requests WHERE day IS NOT NULL AND day<=?", [int(through)]
+        if last is not None:
+            q += " AND day>?"
+            args.append(int(last))
+        return [int(r["day"]) for r in self.db.execute(q + " ORDER BY day", args)]
+
+    @_locked
+    def receipt(self, period: int, client: str | None = None) -> dict[str, Any] | None:
+        """The sealed receipt of ledger day `period` for `client` (None: the whole gateway), or None."""
+        r = self.db.execute("SELECT doc FROM receipts WHERE period=? AND client=?", (int(period), client or "")).fetchone()
+        return json.loads(r["doc"]) if r else None
+
+    @_locked
+    def last_receipt(self, client: str | None, before: int) -> dict[str, Any] | None:
+        """`client`'s (None: the gateway's) latest sealed receipt for a day before `before`: the one a new receipt
+        chains to."""
+        r = self.db.execute(
+            "SELECT doc FROM receipts WHERE client=? AND period<? ORDER BY period DESC LIMIT 1", (client or "", int(before))
+        ).fetchone()
+        return json.loads(r["doc"]) if r else None
+
+    @_locked
+    def add_receipt(self, period: int, client: str | None, doc: Mapping[str, Any]) -> None:
+        """Store a sealed receipt. Receipts are written once (INV-17): `ReceiptExists` when (period, client) already has
+        one, also when another process sealed it first (the check and the insert are one transaction, `_begin`)."""
+        text = json.dumps(doc, ensure_ascii=False, allow_nan=False)
+        self._begin()
+        try:
+            if self.db.execute("SELECT 1 FROM receipts WHERE period=? AND client=?", (int(period), client or "")).fetchone():
+                raise ReceiptExists(f"the receipt of day {period} for {client or 'the gateway'} is sealed already")
+            self.db.execute(
+                "INSERT INTO receipts (period, client, created_ts, doc) VALUES (?,?,?,?)",
+                (int(period), client or "", time.time(), text),
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    @_locked
+    def receipt_periods(self) -> list[tuple[int, str | None]]:
+        """Every sealed receipt as (period, client), client None for the gateway's, by period then client."""
+        rows = self.db.execute("SELECT period, client FROM receipts ORDER BY period, client")
+        return [(int(r["period"]), r["client"] or None) for r in rows]
 
     # ---------- events + stats ----------
     @_locked

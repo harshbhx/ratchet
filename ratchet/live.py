@@ -9,6 +9,9 @@
     python -m ratchet.live export --version N --out DIR
                                         # an adapter with its licenses: the adapter folder (when synced locally), its
                                         # BOM and NOTICE.md in DIR; prints the BOM's sha256 (NFR-9)
+    python -m ratchet.live seal         # seal the savings receipts of every day that has ended (run hourly via cron:
+                                        # a ledger day starts at the first request's time of day, not 00:00 UTC; the
+                                        # gateway also seals when a receipt is asked for)
 
 Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
@@ -42,7 +45,7 @@ from typing import Any
 
 import httpx
 
-from . import bom, licenses, privacy, taskspec
+from . import bom, licenses, privacy, receipts, taskspec
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset, notices
@@ -405,13 +408,24 @@ def purge_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def seal_receipts(led: Ledger, s: Settings) -> list[tuple[int, str | None]]:
+    """Seal the savings receipts of every day that has ended (FR-15.5, ADR 0029), each client's and the gateway's,
+    signed with the BOM key; a day already sealed is left as it is (INV-17). Also run before retention folds request
+    rows, so every receipt is sealed from all of its day's rows (`receipts._seal_period` never seals a folded day)."""
+    signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
+    return receipts.seal_due(led, receipts.SealConfig.from_settings(s, signer, "live traffic"))
+
+
 def purge(led: Ledger, s: Settings, argv: list[str]) -> dict[str, Any]:
-    """`python -m ratchet.live purge`: the retention windows applied once, as the gateway does hourly. With
-    `--older-than-days N`, N days for both windows; with neither that nor a setting, nothing to do (the summary says so)."""
+    """`python -m ratchet.live purge`: the retention windows applied once, as the gateway does hourly (and, like it,
+    after sealing the receipts of every day that has ended). With `--older-than-days N`, N days for both windows; with
+    neither that nor a setting, nothing to do (the summary says so)."""
     args = purge_parser().parse_args(argv)
     days = args.older_than_days
     if days is not None and days < 1:
         raise SystemExit("--older-than-days must be 1 or more")
+    if not args.dry_run:
+        seal_receipts(led, s)
     try:
         out = privacy.apply_retention(
             led, s.retention(), client=args.client, example_days=days, request_days=days, dry_run=args.dry_run
@@ -443,6 +457,8 @@ def main(
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     cert = s.cert_policy()  # so does a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA (ADR 0026)
     retention = s.retention()  # a bad retention window stops here too, before anything is deleted or trained
+    s.receipt_policy()  # and a bad RATCHET_TAKE_RATE or RATCHET_RECEIPT_MIN_AUDITS (ADR 0029)
+    s.checked_mock_reasoning_mean()  # and RATCHET_MOCK_TEACHER_REASONING_MEAN out of range, as in the gateway
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -459,6 +475,14 @@ def main(
         purge(led, s, argv[1:])
     elif cmd == "reload":
         print("reloaded:", reload_adapters(s, led, http))
+    elif cmd == "seal":
+        # Every day that ended (SEAL_GRACE_S ago) gets its receipts, each client's and the gateway's, signed with the BOM
+        # key; a day already sealed is left as it is (INV-17).
+        sealed = seal_receipts(led, s)
+        for period, client in sealed:
+            print(f"sealed the receipt of day {period} ({client or 'gateway'})")
+        if not sealed:
+            print("nothing to seal: every day that has ended is sealed")
     elif cmd == "night":
         # The student keeps its own timeouts but is retried like the teacher: in the golden eval no teacher stands
         # behind it, and one failed call would end the night (ADR 0014). The judge is a teacher call.
@@ -476,6 +500,8 @@ def main(
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         trainer = NebiusTrainer(s, run, http)
+        if retention.request_days:  # the night folds request rows first: every day that ended is sealed before that
+            seal_receipts(led, s)
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
             led,
@@ -493,7 +519,7 @@ def main(
         synced = write_boms(led, rep.version, trainer) if rep.version is not None else True
         print(rep)
     else:
-        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick', 'reload', 'purge' or 'export'")
+        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick', 'reload', 'purge', 'export' or 'seal'")
     for e in led.events()[-10:]:
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
     if not synced:  # after the report, so the night's outcome is on screen; a non-zero exit for cron

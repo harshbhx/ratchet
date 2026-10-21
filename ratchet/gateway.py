@@ -25,7 +25,7 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import anyio
 import httpx
@@ -38,13 +38,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, certificate, feedback, licenses, live, merkle, privacy, proof, replay, tasks, taskspec
+from . import __version__, certificate, feedback, licenses, live, merkle, privacy, proof, receipts, replay, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, NoTrainFull, Version
-from .merkle import KeySet
+from .merkle import KeySet, LogTree
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
@@ -101,6 +101,16 @@ TRANSPORT_KEYS = ("teacher", "student")
 RETENTION_INTERVAL_S = 3600.0  # live mode applies the retention windows at most this often (FR-13.4)
 
 
+class ReceiptTree(NamedTuple):
+    """A sealed receipt's request ids (tree order) and tree, rebuilt from the ledger and checked against the root it
+    signs (`_receipt_tree`). The leaves themselves are not kept: a proof reads its one row again (`Ledger.receipt_row`)."""
+
+    ledger: Ledger
+    sha256: str
+    ids: list[int]
+    tree: LogTree
+
+
 class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
@@ -129,6 +139,7 @@ class Runtime:
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
         self.keysets_lock = threading.Lock()  # the committed-set cache (`_keyset`)
         self.replay_lock = threading.Lock()  # one ledger replay at a time (`_replaying`)
+        self.receipts_lock = threading.Lock()  # the receipt-tree cache (`_receipt_tree`)
         # Retention runs on its own thread, at most every RETENTION_INTERVAL_S on `clock` (`maybe_purge`, FR-13.4).
         self.purge_lock = threading.Lock()
         self.purge_thread: threading.Thread | None = None
@@ -143,8 +154,11 @@ class Runtime:
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         cert = s.cert_policy()  # a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA stops startup here (ADR 0026)
         self.retention = s.retention()  # a bad retention window or RATCHET_ERASURE_SHARED stops startup here (ADR 0081)
+        # RATCHET_MOCK_TEACHER_REASONING_MEAN out of range stops startup in either mode, as documented; only the mock
+        # teacher reads it.
+        mean = s.checked_mock_reasoning_mean()
         if s.mode == "mock":
-            from sim.mock_models import MockFleet, MockTeacher
+            from sim.mock_models import DEFAULT_REASONING_CV, MockFleet, MockTeacher
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
@@ -158,7 +172,10 @@ class Runtime:
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
-            teacher = MockTeacher(s.teacher_reasoning_tokens)
+            # RATCHET_MOCK_TEACHER_REASONING_MEAN (checked above): the mock teacher's reasoning varies around that mean, so
+            # the savings receipts measure and correct the formula's 300-token assumption (FR-15.5, simulation).
+            cv = DEFAULT_REASONING_CV if mean is not None else 0.0
+            teacher = MockTeacher(s.teacher_reasoning_tokens, reasoning_mean=mean, reasoning_cv=cv)
             resolver = self.fleet.resolve
             s.audit_rate = max(s.audit_rate, 0.10)
             # RATCHET_<FIELD> works here too (RATCHET_SEQUENTIAL=1 shows the anytime-valid gate); min_audits is 15 unless set.
@@ -233,6 +250,10 @@ class Runtime:
         for line in skipped:
             self.ledger.event("task_skipped", line)
         self.signer = bomdoc.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        # Savings receipts (FR-15.5, ADR 0029), signed with the BOM key; a bad RATCHET_TAKE_RATE or
+        # RATCHET_RECEIPT_MIN_AUDITS stops startup here, because a sealed receipt can never be corrected (INV-17).
+        label = replay.SIMULATION if s.mode == "mock" else "live traffic"
+        self.receipt_config = receipts.SealConfig.from_settings(s, self.signer, label)
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
@@ -240,6 +261,9 @@ class Runtime:
         # makes a new ledger whose version ids start again, so the cache starts again too.
         self.keysets: OrderedDict[tuple[int, str], tuple[Ledger, KeySet]] = OrderedDict()
         self.integrity_reported: set[tuple[int, str]] = set()
+        # Receipt trees the proof and leaves endpoints read (`_receipt_tree`), by (period, client), as for the key sets.
+        self.receipt_trees: OrderedDict[tuple[int, str], ReceiptTree] = OrderedDict()
+        self.receipt_integrity_reported: set[tuple[int, str]] = set()
         reload = self.reloader.request if self.reloader is not None else None
         self.ratchet = Ratchet(
             s,
@@ -287,6 +311,9 @@ class Runtime:
         )
         trained = self.ledger.version(rep.version) if rep.trained and rep.version is not None else None
         record_simulated_day(self.ledger, self.cost_policy, self.ledger.day, trained)
+        # Every earlier day is over now (requests log on the current day), so its receipts are sealed (FR-15.5). Reads
+        # the ledger and writes receipts only: no random draw, so no other number moves.
+        receipts.seal_due(self.ledger, self.receipt_config)
         return rep
 
     def warm_up(self, days: int, requests: int) -> None:
@@ -320,6 +347,9 @@ class Runtime:
 
     def _purge(self) -> None:
         try:
+            # Every day that has ended gets its savings receipts first (FR-15.5), from all of its request rows: a receipt
+            # is never sealed from a day retention folded (`receipts._seal_period`).
+            receipts.seal_due(self.ledger, self.receipt_config)
             privacy.apply_retention(self.ledger, self.retention)
         except Exception as e:  # noqa: BLE001 - a background job: report it and try again next interval
             try:
@@ -756,6 +786,8 @@ def _complete(
         "stored": r.stored,  # a teacher answer of this request became (or bumped) a training example
         "store_opt_out": r.store_opt_out,  # why it could not be stored (privacy.OPT_OUTS), or null (FR-13.1)
         "request_id": meta_in.request_id,  # what POST /v1/ratchet/feedback names this request by (FR-13.30)
+        # The request's ledger row, also X-Ratchet-Request-Id: what GET /ratchet/receipts/{day}/proof/{id} proves (FR-15.5)
+        "row_id": r.request_id,
     }
     # OpenAI echoes `metadata`; never stored (FR-13.1).
     echo = {"metadata": req.metadata} if req.metadata is not None else {}
@@ -764,6 +796,8 @@ def _complete(
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
     created = int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
+    if r.request_id is not None:  # the ledger row: what this request's savings receipt proves it by (FR-15.5)
+        headers["X-Ratchet-Request-Id"] = str(r.request_id)
     if r.degraded:
         headers["X-Ratchet-Degraded"] = r.degraded
     asked = req.logprobs is True  # token logprobs in each choice (FR-1.14)
@@ -1758,6 +1792,197 @@ def version_heldout(vid: int, admin: str = Depends(_admin)) -> dict[str, Any]:
         "held_out": not any(k in training for k in keys),
         "bom_sha256": doc.get("sha256"),
     }
+
+
+# ----- verified savings receipts (FR-15.5, ADR 0029) -----
+RECEIPT_TREE_CACHE = 8  # receipt trees kept in memory; a sealed day's rows never change
+MAX_PERIOD = 10_000_000  # a ledger day far beyond any real one: larger values are refused, not passed to SQLite
+
+
+def _receipt_reader(authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)) -> str | None:
+    """Whose receipts a caller may read: None for every receipt (an admin key, or the open mock demo), else an API
+    client's name (its own receipts and proofs only). With keys on (API or admin), a missing or unknown key is a 401; in
+    live mode with no keys at all receipts are off (403): their leaves list every request's time, task and cost."""
+    if not rt.keys.enabled and not rt.admin_keys.enabled:
+        if rt.settings.mode == "mock":
+            return None
+        raise HTTPException(403, "receipts need RATCHET_API_KEYS or RATCHET_ADMIN_KEYS in live mode")
+    key = bearer(authorization, x_api_key)
+    if rt.admin_keys.enabled and rt.admin_keys.identify(key) is not None:
+        return None
+    name = rt.keys.identify(key) if rt.keys.enabled else None
+    if name is None:
+        raise HTTPException(401, "invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
+    return name
+
+
+def _receipt_scope(reader: str | None, client: str | None) -> str | None:
+    """The receipt a caller reads: for an admin (or the open demo), `client`'s (none: the gateway's); an API client
+    reads its own, so `client` may only name it."""
+    if reader is None:
+        return client or None
+    if client not in (None, "", reader):
+        raise HTTPException(403, "an API key reads its own receipts only")
+    return reader
+
+
+def _period(period: int) -> int:
+    if not 0 <= period <= MAX_PERIOD:
+        raise HTTPException(400, f"period must be a ledger day from 0 to {MAX_PERIOD:,}")
+    return period
+
+
+def _receipt(period: int, scope: str | None) -> dict[str, Any]:
+    """The sealed receipt of (`period`, `scope`), sealed now if its day has ended (every unsealed day up to it, in
+    order); 409 for a day that has not ended, 404 when nobody in scope sent a request that day."""
+    led = rt.ledger
+    doc = led.receipt(period, scope)
+    if doc is None:
+        closed = receipts.closed_through(led)
+        if period > closed:
+            raise HTTPException(409, f"day {period} has not ended yet; its receipt is sealed once it is over")
+        receipts.seal_due(led, rt.receipt_config, through=period)
+        doc = led.receipt(period, scope)
+    if doc is None:
+        if led.period_folded(period):  # retention folded the day before anyone sealed it (`receipts._seal_period`)
+            raise HTTPException(410, f"the request rows of day {period} were folded by request retention before it was sealed")
+        who = f" from {scope}" if scope else ""
+        raise HTTPException(404, f"no requests{who} on day {period}, so no receipt")
+    return doc
+
+
+def _receipt_integrity(period: int, scope: str | None) -> HTTPException:
+    """The ledger's rows of a sealed day no longer match its receipt: one `integrity` event per (day, client) per
+    runtime, and a 500 for the caller, never a proof or leaves that would fail against the signed root."""
+    key = (period, scope or "")
+    with rt.receipts_lock:
+        first = key not in rt.receipt_integrity_reported
+        rt.receipt_integrity_reported.add(key)
+    if first:
+        who = scope or "the gateway"
+        rt.ledger.event("integrity", f"receipt of day {period} ({who}): the ledger's rows no longer rebuild its signed root")
+    return HTTPException(500, f"the ledger's rows of day {period} no longer match the root its receipt signs")
+
+
+def _receipt_folded(period: int, scope: str | None) -> HTTPException:
+    """A sealed day whose request rows retention has since folded (FR-13.4): its per-request proofs and leaves are gone
+    for good, which is no integrity failure; the receipt itself still verifies (its signature, chain and totals)."""
+    return HTTPException(
+        410,
+        f"the request rows of day {period} were folded by request retention (RATCHET_REQUEST_RETENTION_DAYS); "
+        "the receipt still verifies, but its leaves and per-request proofs are gone",
+    )
+
+
+def _receipt_leaves(period: int, scope: str | None, doc: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The receipt's leaves rebuilt from the ledger's rows, in tree order, checked against the root and size the
+    receipt signs (`_receipt_integrity` when they do not, or `_receipt_folded` when retention folded the day's rows)."""
+    leaves = [receipts.leaf(r) for r in rt.ledger.period_rows(period, scope)]
+    tree = receipts.tree(leaves)
+    signed = doc["manifest"]["merkle"]
+    if (tree.root.hex(), tree.size) != (signed["root"], signed["size"]):
+        if rt.ledger.period_folded(period, scope):
+            raise _receipt_folded(period, scope)
+        raise _receipt_integrity(period, scope)
+    return leaves
+
+
+def _receipt_tree(period: int, scope: str | None, doc: Mapping[str, Any]) -> ReceiptTree:
+    """The receipt's ids and tree, kept (`RECEIPT_TREE_CACHE`, least recently used out) only when they rebuild the
+    root and size the receipt signs. An entry remembers its ledger and receipt, because a demo reset makes a new ledger
+    whose days start again."""
+    led, key, cache = rt.ledger, (period, scope or ""), rt.receipt_trees
+    with rt.receipts_lock:
+        hit = cache.get(key)
+        if hit is not None and hit.ledger is led and hit.sha256 == doc.get("sha256"):
+            cache.move_to_end(key)
+            return hit
+    leaves = _receipt_leaves(period, scope, doc)
+    entry = ReceiptTree(led, str(doc.get("sha256")), [lf["id"] for lf in leaves], receipts.tree(leaves))
+    with rt.receipts_lock:
+        cache[key] = entry
+        cache.move_to_end(key)
+        while len(cache) > RECEIPT_TREE_CACHE:
+            cache.popitem(last=False)
+    return entry
+
+
+@app.get("/ratchet/receipts")
+def list_receipts(reader: str | None = Depends(_receipt_reader)) -> dict[str, Any]:
+    """The sealed savings receipts a caller may read, by day (FR-15.5, ADR 0029), after sealing every day that has
+    ended: an admin sees the gateway's (`global`) and every client's, an API client its own only."""
+    led = rt.ledger
+    receipts.seal_due(led, rt.receipt_config)
+    by_day: dict[int, dict[str, Any]] = {}
+    for period, client in led.receipt_periods():
+        if reader is not None and client != reader:
+            continue
+        entry = by_day.setdefault(period, {"period": period, "global": False, "clients": []})
+        if client is None:
+            entry["global"] = True
+        else:
+            entry["clients"].append(client)
+    signer = rt.signer
+    return {
+        "receipts": [by_day[p] for p in sorted(by_day)],
+        "sealed_through": receipts.closed_through(led),
+        "public_key": signer.public_key if signer else None,
+        "key_id": signer.key_id if signer else None,
+        "label": rt.receipt_config.label,
+    }
+
+
+@app.get("/ratchet/receipts/{period}")
+def get_receipt(period: int, client: str | None = None, reader: str | None = Depends(_receipt_reader)) -> dict[str, Any]:
+    """One day's signed savings receipt: the gateway's, or `client`'s (an API client gets its own). Check it offline
+    with `python -m ratchet.receipt verify` and the key from `/ratchet/bom/public-key`."""
+    return _receipt(_period(period), _receipt_scope(reader, client))
+
+
+@app.get("/ratchet/receipts/{period}/proof/{request_id}")
+def receipt_proof(
+    period: int, request_id: int, client: str | None = None, reader: str | None = Depends(_receipt_reader)
+) -> dict[str, Any]:
+    """That request `request_id` (`X-Ratchet-Request-Id`) is in the day's receipt: its leaf and RFC 9162 audit path
+    against the root the receipt signs. `python -m ratchet.receipt verify r.json --proof p.json` checks it offline."""
+    scope = _receipt_scope(reader, client)
+    doc = _receipt(_period(period), scope)
+    entry = _receipt_tree(period, scope, doc)
+    found = receipts.proof_for(entry.ids, entry.tree, request_id)
+    if found is None:
+        raise HTTPException(404, f"request {request_id} is not in this receipt (another day or client)")
+    index, path = found
+    signed = doc["manifest"]["merkle"]
+    row = rt.ledger.receipt_row(request_id)
+    lf = receipts.leaf(row) if row is not None else None
+    # The row is read again, so check it against the signed root before serving: a row edited since the tree was cached
+    # gets the integrity error, never a proof that fails.
+    if lf is None or not merkle.verify_inclusion(receipts.leaf_bytes(lf), index, signed["size"], path, signed["root"]):
+        if lf is None and rt.ledger.period_folded(period, scope):
+            raise _receipt_folded(period, scope)
+        raise _receipt_integrity(period, scope)
+    return {
+        "period": period,
+        "client": scope,
+        "request_id": request_id,
+        "leaf": lf,
+        "index": index,
+        "size": signed["size"],
+        "path": path,
+        "root": signed["root"],
+        "alg": signed["alg"],
+        "receipt_sha256": doc.get("sha256"),
+    }
+
+
+@app.get("/ratchet/receipts/{period}/leaves")
+def receipt_leaves(period: int, client: str | None = None, reader: str | None = Depends(_receipt_reader)) -> Response:
+    """The receipt's leaves as JSON lines, in tree order: `python -m ratchet.receipt verify r.json --rows leaves.jsonl`
+    rebuilds the root and recomputes every total, estimate and the fee from them."""
+    scope = _receipt_scope(reader, client)
+    doc = _receipt(_period(period), scope)
+    body = "".join(receipts.leaf_bytes(lf).decode() + "\n" for lf in _receipt_leaves(period, scope, doc))
+    return PlainTextResponse(body, media_type="application/x-ndjson")
 
 
 # ----- demo controls (mock mode only) -----
