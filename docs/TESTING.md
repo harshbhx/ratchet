@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 778 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_model_routing), ~85 s
+pytest -q                     # 830 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_model_routing, test_routing), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -34,7 +34,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 18 |
 | `tests/test_model_routing.py` | 26 |
-| **Total** | **778** |
+| `tests/test_routing.py` | 52 (20 functions; one has 33 cases) |
+| **Total** | **830** |
 
 There are three layers:
 
@@ -412,7 +413,7 @@ OpenAI compatibility of `/v1/chat/completions` (FR-1.5, FR-1.10, FR-1.12, US-1; 
 | `test_developer_role_reaches_the_teacher_as_system` | A `developer` message reaches the teacher, and the stored example, as `system`; `RATCHET_MERGE_SYSTEM=1` merges the leading system messages with a blank line |
 | `test_dropped_keys_and_redacted_tool_calls_end_to_end` | Keys a message's role does not use (a vendor field, `annotations`, a tool call's `index`) reach neither the teacher nor the stored example; a tool call's arguments reach the teacher as sent and are stored with `[EMAIL]` (INV-12) |
 | `test_text_parts_ticket_matches_the_string_form` | A demo ticket sent as text parts gets the same message back as the string form, and one stored example, seen twice, under the string form's hash |
-| `test_multimodal_parts_go_to_the_teacher_only` | With `RATCHET_TEACHER_MODALITIES=text,image_url` and a live student, an image request reaches the teacher with its parts as sent, never the student, stores nothing and logs one teacher row; a text request on the same gateway is still served by the student; audio stays refused; the mock teacher answers the image request from its text part, and nothing is stored |
+| `test_multimodal_parts_go_to_the_teacher_only` | With `RATCHET_TEACHER_MODALITIES=text,image_url` and a live student, an image request reaches the teacher with its parts as sent (route `ineligible:content_type`, FR-2.50), never the student, stores nothing and logs one teacher row; a text request on the same gateway is still served by the student; audio stays refused; the mock teacher answers the image request from its text part, and nothing is stored |
 | `test_generation_parameters_reach_teacher_student_and_audit` | FR-1.13, FR-2.1, FR-2.5, INV-1: a live gateway, both models behind `MockTransport`: for `max_completion_tokens` 50, a stop, seed 7, temperature 0.9, `model: gpt-4o` and a vendor `top_k`, the escalated teacher's body has `max_tokens` 50, the stop, the seed and 0.9 under the configured model, the student's has 0.7, `n` 3, logprobs, the stop, the seed and 50, and a forced audit's has 0 with the same stop and limit and no seed; `top_k` reaches the teacher only with `RATCHET_TEACHER_PARAMS=all,top_k` |
 | `test_allowlists_and_token_caps_through_the_gateway` | FR-1.13, NFR-3: `max_tokens` 10⁶ is sent as 8,192 to the teacher and 1,024 to the student; without `logit_bias` in `RATCHET_TEACHER_PARAMS` it is not forwarded; `RATCHET_STUDENT_PARAMS=none` leaves the student its cap; `RATCHET_TEACHER_MAX_TOKENS=0` sends the client's value; a request without parameters still carries both caps; a forbidden allowlist entry or a negative cap stops `Runtime` |
 | `test_a_cut_off_teacher_answer_reaches_the_client_as_length` | FR-1.13, FR-2.13, FR-1.6: a teacher answer with `finish_reason` `length` is returned with `length` (and only the stream's last chunk carries it), and is not stored; an upstream value clients do not know is returned as `stop` |
@@ -621,6 +622,33 @@ The generic mock world (FR-9.7, [ADR 0041](adr/0041-generic-mock-world.md)): eve
 | `test_demo_day_runs_the_schema_and_tools_workloads` | FR-9.7, INV-8: `gateway.WORKLOADS` is `sim.world.WORKLOADS`; `/ratchet/demo/day?workload=schema` and `tools` answer 200 with `simulation: true`, their tasks appear in `/ratchet/stats`, and an unknown workload is a 400 |
 | `test_sdk_gets_answers_and_structured_outputs_from_the_mock_gateway` | FR-9.7, FR-1.1, US-1: through the OpenAI SDK, `hello` gets a 200 restating it, and `client.chat.completions.parse(response_format=Claim)` (a Pydantic model with a `Literal`, a bounded integer, a date, a nested list and an optional field) returns a parsed `Claim` whose raw content validates against the schema the SDK sent |
 | `test_a_mock_tool_call_is_refused_until_tool_calls_pass_through` | FR-9.7: with `RATCHET_TEACHER_PARAMS=all` the mock teacher's tool call reaches the router, which refuses it (502 `tool_calls_unsupported`) and stores nothing; with the default the same request gets a prose answer |
+
+### `tests/test_routing.py`
+
+Risk-aware routing (FR-2.50, [ADR 0049](adr/0049-risk-aware-routing.md)): a task's `routing` block. Most tests build a `Ratchet` with `RecordingProvider`s and a `moderation` task (`flagged` bool, `severity` label); the critical-class tests script the golden eval's student answers in each row's prompt.
+
+| Test | Covers |
+|---|---|
+| `test_escalate_when_flagged_forces_teacher` | FR-2.50, FR-2.4: a confident `flagged: true` answer goes to the teacher with route `rule:0`, confidence logged, both costs counted, the teacher's answer stored (`stored` 1); an unflagged one is served by the student; below the threshold the route is `confidence` |
+| `test_min_confidence_rule` | FR-2.50: `min_confidence` 0.99 escalates at 0.98 and serves at 0.9996; rules run in order and the first that holds names the route; the label comparator applies (`HIGH` is `high`) |
+| `test_rule_answer_never_stands_in_for_the_teacher` | FR-2.50, FR-2.12: with `serve_student` and the teacher down, a flagged answer raises the teacher's error on the rule route and after a low confidence; an unflagged one degrades as before; nothing stored |
+| `test_shadow_runs_the_rules_too` | FR-2.50, FR-6.3: a shadow whose answer a rule holds for logs `shadow_serve` 0; with an unflagged answer it serves and agrees |
+| `test_long_input_skips_student_and_is_not_stored` | FR-2.50, INV-12: a 101-token prompt over a 50-token limit: route `ineligible:input_tokens`, no student or shadow call, not an escalation, nothing stored and no `skip_example` event; 50 tokens exactly is eligible; with `store_ineligible` the answer is stored (an invalid one is not); `n` 2 gets two choices; a failing teacher raises |
+| `test_eligibility_runs_after_pinned_and_before_the_version` | FR-2.50, FR-2.9, FR-14.1: a pinned task's route is `pinned`; an over-length request on a task disabled on the version is `ineligible:input_tokens`, a short one `task_disabled`; with a canary in flight an ineligible request takes no draw from the canary split |
+| `test_image_part_skips_student` | FR-2.50, FR-1.10, INV-12: through the gateway with `RATCHET_TEACHER_MODALITIES=text,image_url`, an image request reaches the teacher as sent, never the student, stores nothing even with `store_ineligible`, and logs route `ineligible:content_type`; a text request is served by the student; `/ratchet/stats` shows both routes |
+| `test_ineligible_reads_every_message_shape` | FR-2.50: `input_chars` counts content strings, text parts, names, refusals, tool call ids, names and arguments and skips anything else; text parts and an assistant's refusal are text, a user's refusal part or an unknown part is not; the content check comes before the length check; `stores` only for an over-length request with `store_ineligible` |
+| `test_task_audit_rate_override` | FR-2.50, FR-2.5: `policy.audit_rate` 1.0 audits every served answer of its task and 0 none, under a global 0.5; another task is audited on exactly the same requests whatever rate a neighbour task sets (one draw either way) |
+| `test_route_logged_and_in_stats_by_task` | FR-2.50, FR-2.11: `stats_by_task` counts `rule:0`, `ineligible:input_tokens` and `student`; an ineligible request is not an escalation; `known_route` accepts the fixed routes and the two families and refuses `rule:`, `rule:x`, `rule:-1`, a non-ASCII digit and unknown reasons |
+| `test_cascade_eval_measures_critical_misses` | FR-2.50, FR-5.2, INV-6: 2 of 40 flagged held-out rows answered unflagged at the threshold are misses (and right for a second class on `severity`); answered below the threshold, sent to the teacher by a `min_confidence` rule, or refused by the endpoint, they are not; an invalid answer is never served; no rows in the class give an upper bound of 1.0 |
+| `test_critical_miss_rate_disables_task_at_admit` | FR-2.50, FR-6.1, FR-14.1: a candidate whose pooled numbers pass but which misses 2 of 40 flagged rows (upper bound 16.5% > 10%) has the task disabled with the reason, a `task_disabled` event, and ships for its other task; the router then sends the task to the teacher without a student call; `RATCHET_TASK_MODE=reject` rejects the version |
+| `test_critical_gate_needs_enough_rows_in_the_class` | FR-2.50, FR-6.1: with no misses 35 rows pass a 10% limit and 34 fail; 9 rows fail a 50% limit for want of 10 rows and 10 pass; `RATCHET_MIN_TASK_TEST_N` sets the minimum; the limit is the spec's; a record without measurements, with an empty or broken list, under another spec, or with a malformed class entry fails |
+| `test_critical_task_without_measurements_stays_on_teacher` | FR-2.50, FR-14.1: without a record, or with one that lacks `critical`, the task is held back (route `task_disabled`, threshold 1.01) while other tasks keep the global threshold; a measured record serves; the hosted untuned model never serves the task; a shadow without a measured record does not serve it |
+| `test_per_task_off_still_records_critical_tasks` | FR-2.50, FR-14.1: with `per_task=False` only the task with critical classes gets a record, with its measurements; without such a task there is no `tasks` |
+| `test_rescore_disables_failing_critical_task` | FR-2.50, FR-2.15, INV-4: a training night's re-check of the live version that finds 3 misses in 40 disables the task in the same eval write with a `task_disabled` event ("re-scored"); `rescore` without a gate leaves it; passing, missing and pinned records give no holds |
+| `test_cascade_eval_skips_ineligible_rows` | FR-2.50, FR-5.2: an over-length golden row is not sampled and is counted in `excluded_ineligible`; the task keeps its record; without such rows the key is absent |
+| `test_rule_must_reference_declared_field` | FR-2.50, FR-2.15: a rule naming `flaged` is one `SpecError` listing the task's fields; a field-less task's critical class says `its fields: none`; a `Task` built in code raises `ValueError`; a field with its own error is reported once |
+| `test_routing_spec_errors_name_their_path` | FR-2.50, FR-2.15: 33 bad blocks (unknown keys, `audit_rate` with a hint, limits, content types, `store_ineligible`, list sizes, condition shapes, values outside a vocabulary, `action`, `min_confidence`, `max_miss_rate`, keys of the other list) each give their error with its path, from the spec parser and from `Task` |
+| `test_routing_block_round_trips_and_extends_merges_it` | FR-2.50, FR-2.15: a block keeps its spelling and hash through `document`, its values normalised for the router; `extends` merges routing by key (null removes); a child dropping the field an inherited class names is refused; a `set` field cannot be a condition; the parser refuses NaN, ignores an empty block, and checks nothing against fields that are themselves in error |
 
 ## Live-path tests
 

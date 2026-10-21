@@ -42,6 +42,7 @@ from .resilience import (
     names_model,
     teacher_unavailable,
 )
+from .routing import INELIGIBLE_REASONS
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
 StudentResolver = Callable[[Version], tuple[Provider, str]]
@@ -58,7 +59,10 @@ EVENT_ON_FAILURE = (1, 10, 100, 1000)
 # not fill n choices (`n_choices`, FR-1.14, ADR 0020); or the teacher alone because the task is not registered and
 # RATCHET_UNKNOWN_TASKS is `teacher` (`unknown_task`, FR-2.15, ADR 0022); or the teacher without a student call because
 # the serving version's per-task record lets the student answer nothing (`task_disabled`: the release gate disabled the
-# task on that version, or its eval had no held-out row of it; FR-14.1, ADR 0040).
+# task on that version, or its eval had no held-out row of it; FR-14.1, ADR 0040). The task's routing block adds two
+# families of routes (FR-2.50, ADR 0049; `known_route`): `rule:<i>`, the teacher because rule i of `escalate_when`
+# held for the confident student's answer, and `ineligible:<reason>`, the teacher without a student call because the
+# request is one the student must not see (`routing.INELIGIBLE_REASONS`: `input_tokens`, `content_type`).
 ROUTES = (
     "student",
     "confidence",
@@ -72,6 +76,20 @@ ROUTES = (
     "unknown_task",
     "task_disabled",
 )
+RULE_ROUTE = "rule:"  # + the index of the escalate_when rule (FR-2.50)
+INELIGIBLE_ROUTE = "ineligible:"  # + one of routing.INELIGIBLE_REASONS (FR-2.50)
+
+
+def known_route(route: str) -> bool:
+    """Whether `route` is one the router writes: one of ROUTES, `rule:<i>` or `ineligible:<reason>`."""
+    if route in ROUTES:
+        return True
+    if route.startswith(RULE_ROUTE):
+        index = route[len(RULE_ROUTE) :]
+        return index.isascii() and index.isdigit()
+    return route.startswith(INELIGIBLE_ROUTE) and route[len(INELIGIBLE_ROUTE) :] in INELIGIBLE_REASONS
+
+
 # Routes whose answer is not the primary teacher's or a confident student's: such a request runs no shadow, so release
 # statistics never rest on a stand-in's answer (ADR 0019).
 STAND_IN_ROUTES = frozenset({"degraded", "fallback_teacher"})
@@ -661,9 +679,11 @@ class Ratchet:
         rows), SERVE_NOTHING when the version was scored under another spec of the task (the teacher answers until a
         night re-scores it, FR-2.15), else the version's global threshold. A version scored before per-task calibration
         has only the global one, and one that is not a number serves nothing. The hosted untuned fallback model was never
-        calibrated, so it uses the global default. Dict lookups only."""
+        calibrated, so it uses the global default, except on a task with critical classes, which it never answers: nothing
+        measured how often it misses them (FR-2.50). Dict lookups only."""
         if model is not None and model == self.s.fallback_student_model:
-            return self.s.confidence_threshold
+            critical = task is not None and bool(_task(task).routing_rules.critical)
+            return SERVE_NOTHING if critical else self.s.confidence_threshold
         raw = version.eval.get("threshold")
         default = self.s.confidence_threshold if raw is None else calibration.number(raw)
         if default is None:  # a hand-edited threshold that is not a number: never guess, never fail the request (INV-7)
@@ -675,11 +695,12 @@ class Ratchet:
     def _held_back(self, version: Version, task: tasks.Task) -> bool:
         """Whether `version` holds `task` at SERVE_NOTHING by its own per-task record (`calibration.held_back`), so the
         student need not be called. A version served by the hosted untuned fallback model ignores its records
-        (`threshold`), so it is never held back; the resolver is asked only when the record holds the task back, and a
-        resolver that fails here leaves the task held back (the student is not called either way)."""
+        (`threshold`), so it is never held back, except on a task with critical classes, which that model never answers
+        (FR-2.50); the resolver is asked only when the record holds the task back, and a resolver that fails here leaves
+        the task held back (the student is not called either way)."""
         if not calibration.held_back(version.eval, task):
             return False
-        if not self.s.fallback_student_model:
+        if not self.s.fallback_student_model or task.routing_rules.critical:
             return True
         try:
             return self.resolve_student(version)[1] != self.s.fallback_student_model
@@ -823,6 +844,93 @@ class Ratchet:
         route = "unknown_task" if task.source == "adhoc" and self.unknown_tasks == "teacher" else "pinned"
         return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route)
 
+    def audit_rate(self, task: tasks.Task) -> float:
+        """The share of the task's served student answers the teacher audits: its spec's `policy.audit_rate` when it
+        sets one (FR-2.50), else RATCHET_AUDIT_RATE. One draw of the router's random generator either way, so a task
+        without its own rate is audited exactly as before."""
+        rate = calibration.number(task.policy.get("audit_rate"))
+        return self.s.audit_rate if rate is None else rate
+
+    @staticmethod
+    def _rule(task: tasks.Task, sc: Scored) -> int | None:
+        """The index of the task's first `escalate_when` rule that holds for the scored answer (`routing.Routing.
+        escalation`), or None. A task without rules returns at once; one with rules compares the answer's key, which
+        `confidence.score` computed already."""
+        rules = task.routing_rules
+        if not rules.rules:
+            return None
+        key = sc.key if sc.key is not None else task.key(sc.answer.text)
+        return rules.escalation(key, sc.confidence)
+
+    def _ineligible(
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        reason: str,
+        client: str | None = None,
+        plan: GenPlan | None = None,
+        params: GenParams | None = None,
+        meta: RequestMeta | None = None,
+    ) -> Result:
+        """A request the task's routing block keeps from the student (FR-2.50, route `ineligible:<reason>`): more input
+        than `student_max_input_tokens`, or a content part the student does not read. The teacher answers it (or the
+        fallback teacher, route `fallback_teacher`, when the primary is unavailable); no version is picked, the student
+        is not called, and there is no audit or shadow, since a candidate student could not take it either. The answer
+        is stored only when `routing.Routing.stores` allows (an over-length request with `store_ineligible`), through
+        `_store_example` and its rules (INV-2, INV-12, INV-16); otherwise the request is not storable, so nothing of it
+        reaches the training set, image bytes included."""
+        plan = plan or self._plain
+        if not task.routing_rules.stores(reason):
+            meta = replace(meta, storable=False) if meta is not None else RequestMeta(storable=False)
+        answer = self._call_teacher(task, messages, plan, "serve", meta)
+        served = list(answer.choices)
+        c = answer.completion
+        route = "fallback_teacher" if answer.fallback else f"{INELIGIBLE_ROUTE}{reason}"
+        cost = self._call_cost(answer.model, served)
+        baseline = self._call_cost(self.s.teacher_model, served) if answer.fallback else cost
+        request_id = self.ledger.log_request(
+            task=task.name,
+            served_by="teacher",
+            student_version=None,
+            confidence=None,
+            escalated=0,  # the student never had the request: not an escalation, as for a pinned task
+            audited=0,
+            audit_agree=None,
+            shadow_version=None,
+            shadow_serve=None,
+            shadow_agree=None,
+            latency_ms=c.latency_ms,
+            cost_usd=cost,
+            baseline_cost_usd=baseline,
+            student_cost_usd=0.0,
+            teacher_cost_usd=cost,
+            student_in_tokens=0,
+            student_out_tokens=0,
+            client=client,
+            route=route,
+            stored=int(answer.stored),
+        )
+        choices = _choices(task, served, params)
+        return Result(
+            text=choices[0].text,
+            served_by="teacher",
+            version=None,
+            confidence=None,
+            escalated=False,
+            cost_usd=cost,
+            baseline_usd=baseline,
+            latency_ms=c.latency_ms,
+            model=c.model,
+            route=route,
+            finish_reason=choices[0].finish_reason,
+            **_usage(messages, served, choices),
+            fingerprint=fingerprint("teacher", answer.model),
+            usage_breakdown=_breakdown(served),
+            choices=choices,
+            teacher_cost_usd=cost,
+            request_id=request_id,
+        )
+
     def task_for(self, task: str | tasks.Task | None, client: str | None = None) -> tasks.Task:
         """The task a request names, as the gateway admits it before any quota or model call: a registered task, or for
         an unregistered name a task without fields made up for it (`tasks.get`), which RATCHET_UNKNOWN_TASKS decides
@@ -876,7 +984,14 @@ class Ratchet:
         allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key. A task whose
         record on the serving version lets the student answer nothing (the release gate disabled it, or the version had
         no held-out row of it) is escalated without a student call (route `task_disabled`, FR-14.1), so it costs no
-        student samples and is never answered in degraded mode; it still runs the shadow and can be stored."""
+        student samples and is never answered in degraded mode; it still runs the shadow and can be stored.
+
+        The task's routing block (FR-2.50, ADR 0049; `routing.Routing`) runs in two places. Before a version is picked,
+        a request the student must not see (more input than `student_max_input_tokens`, or a content part it does not
+        read) goes to the teacher alone (`_ineligible`, route `ineligible:<reason>`). After the threshold, the first
+        `escalate_when` rule that holds for a confident student's answer sends it to the teacher (route `rule:<i>`); the
+        teacher's answer is stored as for any escalation, and such an answer never stands in for a teacher that is down.
+        A task's `policy.audit_rate` replaces RATCHET_AUDIT_RATE for its served answers (`audit_rate`)."""
         task = _task(task)
         plan = self.plan(params, n)
         self._admit(task, client)
@@ -884,6 +999,9 @@ class Ratchet:
             return self._teacher_only(task, messages, client, plan, params, route="unknown_task")
         if task.pinned:
             return self._teacher_only(task, messages, client, plan, params)
+        reason = task.routing_rules.ineligible(messages)  # FR-2.50: before a version is picked or the student called
+        if reason is not None:
+            return self._ineligible(task, messages, reason, client, plan, params, meta)
         version = self._pick_version()
         cost = 0.0
         # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
@@ -940,10 +1058,15 @@ class Ratchet:
         if version is not None and sc is not None:
             threshold = self.threshold(version, model_used, task)
             # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid).
-            if sc.valid and sc.confidence >= threshold and picked is not None:
+            confident = sc.valid and sc.confidence >= threshold
+            # The task's escalate_when rules, on the confident answer's key (FR-2.50): a costly positive goes to the teacher.
+            rule = self._rule(task, sc) if confident else None
+            if rule is not None:
+                escalated, route = True, f"{RULE_ROUTE}{rule}"
+            elif confident and picked is not None:
                 served, served_by, route, served_choices = sc.answer, "student", "student", picked
                 fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
-                if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
+                if self.rng.random() < self.audit_rate(task):  # audit = quality signal + free training data
                     try:
                         audit = self._call_teacher(task, messages, plan, "audit", meta)
                     except CircuitOpen:  # the teacher failed too often lately: not called, not counted again
@@ -960,7 +1083,7 @@ class Ratchet:
                         # A cut-off, empty or invalid teacher answer measures nothing: not an audit (INV-16).
                         if answer_problem(task, teacher_c) is None:
                             audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
-            elif sc.valid and sc.confidence >= threshold:  # confident, but fewer than n samples agree
+            elif confident:  # confident, but fewer than n samples agree
                 escalated, route = True, "n_choices"
             else:
                 escalated, route = True, "confidence"
@@ -968,7 +1091,9 @@ class Ratchet:
             try:
                 answer = self._call_teacher(task, messages, plan, "serve", meta)
             except Exception as e:  # no teacher answer: degraded if allowed, else the gateway maps the error (INV-7)
-                if not self._may_degrade(sc, params, e, picked):
+                # An answer an escalate_when rule holds for never stands in, whatever the route: the rule says such an
+                # answer must come from the teacher (FR-2.50).
+                if not self._may_degrade(sc, params, e, picked) or (sc is not None and self._rule(task, sc) is not None):
                     raise
                 # The student's own valid answer stands in. Not audited, so it never counts toward release statistics.
                 assert version is not None and sc is not None and picked is not None
@@ -1028,7 +1153,10 @@ class Ratchet:
             student_out += sum(s.out_tokens for s in s_samples)
             s_sc = score(task, s_samples)
             shadow_vid = shadow.id
-            shadow_serve = int(s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model, task))
+            # The candidate runs the same cascade: an answer a rule sends to the teacher is not one it would serve.
+            shadow_serve = int(
+                s_sc.valid and s_sc.confidence >= self.threshold(shadow, s_model, task) and self._rule(task, s_sc) is None
+            )
             reference: Completion | None = teacher_c if served_by == "teacher" or audited else None
             arbitrated = True
             if reference is None and shadow_serve and not task.agree(s_sc.answer.text, served.text):

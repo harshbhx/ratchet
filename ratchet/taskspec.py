@@ -14,9 +14,9 @@ lists every problem with its path (`tasks[2].fields.total.abs_tol: must be a num
 The comparator rules stay in `compare.FieldSpec` and `tasks.Task`, which check the spec again when it is built, so this
 module cannot admit a spec they refuse.
 
-`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `policy` and
-`match` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and `description`
-are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
+`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `policy`,
+`match` and `routing` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and
+`description` are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
 because startup reads the file before it registers the stored API tasks; an API body may extend any registered task.
 The result is what is registered and stored, so later changes to the base do not reach a task that extended it.
 """
@@ -31,7 +31,7 @@ from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import compare, tasks
+from . import compare, routing, tasks
 from .compare import FieldSpec
 from .openai_compat import MAYBE_SURROGATE, lone_surrogate
 
@@ -41,7 +41,9 @@ if TYPE_CHECKING:  # pragma: no cover
 # The keys of one task spec, in the order `document` writes them (`extends` is resolved away before that).
 SPEC_KEYS = ("name", "description", "format", "fields", "pinned", "store", "match", "routing", "policy", "tools", "clients")
 INPUT_KEYS = frozenset(SPEC_KEYS) | {"extends"}
-MERGED = frozenset({"fields", "policy", "match"})  # `extends` merges these by key; any other key replaces the base's
+# `extends` merges these by key; any other key replaces the base's (a routing block's `escalate_when` and `critical`
+# lists are replaced whole).
+MERGED = frozenset({"fields", "policy", "match", "routing"})
 MAX_JSON_DEPTH = 32  # nesting of a `routing` value
 MAX_PATH = 256  # characters of a field path
 _PATH = re.compile(r"\$|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")  # '$' or dot-separated names
@@ -322,7 +324,9 @@ def _build(
         errs.append(f"{_at(where, 'format')}: must be one of {', '.join(usable)}")
     elif fmt in tasks.RESERVED_FORMATS:
         errs.append(f"{_at(where, 'format')}: {fmt!r} is reserved for a later release")
+    fields_from = len(errs)
     fields = _fields(spec.get("fields", {}), _at(where, "fields"), 0, errs)
+    fields_ok = len(errs) == fields_from
     for key in ("pinned", "store"):
         if key in spec and not isinstance(spec[key], bool):
             errs.append(f"{_at(where, key)}: must be true or false")
@@ -345,10 +349,12 @@ def _build(
             problem = tasks.match_problem(key, value)
             if problem is not None:
                 errs.append(f"{_at(where, 'match')}.{key}: {problem}")
-    routing = spec.get("routing", {})
-    problem = "must be an object" if not isinstance(routing, Mapping) else _json_problem(routing)
+    routing_block = spec.get("routing", {})
+    problem = "must be an object" if not isinstance(routing_block, Mapping) else _json_problem(routing_block)
     if problem is not None:
         errs.append(f"{_at(where, 'routing')}: {problem}")
+    else:  # FR-2.50: each key checked, and conditions against the fields (only when the fields themselves are valid)
+        errs.extend(f"{_at(where, 'routing')}.{p}" for p in routing.parse(routing_block, fields, fields_ok)[1])
     clients = spec.get("clients", [])
     problem = tasks.clients_problem(clients)
     if problem is not None:
@@ -366,7 +372,7 @@ def _build(
             format=fmt,
             fields=fields,
             policy=policy,
-            routing=routing,
+            routing=routing_block,
             store=spec.get("store", True),
             tools=tools,
             source=source,
