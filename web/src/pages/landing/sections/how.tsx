@@ -56,8 +56,8 @@ function Step({ i, active, onActive }: { i: number; active: boolean; onActive: (
   }, [inView, i, onActive]);
   const s = STEPS[i];
   return (
-    <li ref={ref} className="flex flex-col justify-center py-8 lg:min-h-[72vh] lg:py-0">
-      <div className={cn("transition-opacity duration-500 lg:opacity-35", active && "lg:opacity-100")}>
+    <li ref={ref} className="flex flex-col justify-center py-8 lg:min-h-[60vh] lg:py-0">
+      <div className={cn("transition-opacity duration-500 lg:opacity-45", active && "lg:opacity-100")}>
         <div className="flex items-center gap-3">
           <span
             className={cn(
