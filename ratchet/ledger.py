@@ -240,6 +240,8 @@ INDEXES = [
     # A version's audits (version_live_quality, the release gate's counts), its shadow rows (shadow_quality) and a day's
     # rows (stats and receipts by day) without a full scan as the ledger grows (ADR 0024).
     "CREATE INDEX IF NOT EXISTS requests_version_audited ON requests (student_version, audited, id)",
+    # One version's rows in id order, a chunk at a time (`replay_rows`), without sorting the version's whole history.
+    "CREATE INDEX IF NOT EXISTS requests_version_id ON requests (student_version, id)",
     "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
@@ -251,6 +253,16 @@ _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\
 # each of them.
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
+LEAF_SPLITS = ("train", "golden")  # the splits a version commits to (version_leaves.split)
+_HEX32 = re.compile(r"[0-9a-f]{64}")
+
+
+def _hex32(value: object, what: str) -> str:
+    """A leaf's key or value: 64 lowercase hex characters (32 bytes), as `merkle.KeySet` and the BOM write them."""
+    if not isinstance(value, str) or _HEX32.fullmatch(value) is None:
+        raise ValueError(f"a leaf {what} must be 64 lowercase hex characters, not {value!r}")
+    return value
+
 
 DAY_SECONDS = 86400
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
@@ -258,6 +270,8 @@ UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
 # (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
+# Rows `Ledger.replay_rows` reads per locked statement, so a long history never holds the lock for long.
+REPLAY_CHUNK = 20_000
 
 
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
@@ -709,6 +723,57 @@ class Ledger:
         self.db.execute("UPDATE versions SET bom=? WHERE id=?", (json.dumps(doc, ensure_ascii=False), vid))
         self.db.commit()
 
+    # ---------- committed training sets (FR-16.4, ADR 0027) ----------
+    @_locked
+    def set_version_leaves(self, vid: int, split: str, pairs: Iterable[tuple[str, str]]) -> int:
+        """Write version `vid`'s committed leaves for one split ('train' or 'golden'): (key hex, value hex) pairs, each
+        64 lowercase hex characters, keys unique. Leaves are written once (INV-17): ValueError when the split already
+        has leaves, the version does not exist or a pair is malformed, and nothing is written then. One transaction, so a
+        reader sees all of a split's leaves or none. Returns how many were written (an empty split writes nothing; its
+        BOM commitment says size 0)."""
+        if split not in LEAF_SPLITS:
+            raise ValueError(f"split must be one of {', '.join(LEAF_SPLITS)}, not {split!r}")
+        rows = [(vid, split, _hex32(k, "key"), _hex32(v, "value")) for k, v in pairs]
+        keys = [r[2] for r in rows]
+        if len(set(keys)) != len(keys):
+            raise ValueError(f"duplicate keys in the {split} leaves of version {vid}")
+        self._begin()
+        try:
+            if self.db.execute("SELECT 1 FROM versions WHERE id=?", (vid,)).fetchone() is None:
+                raise ValueError(f"no version {vid}")
+            if self.db.execute("SELECT 1 FROM version_leaves WHERE version_id=? AND split=? LIMIT 1", (vid, split)).fetchone():
+                raise ValueError(f"version {vid} already has {split} leaves; committed leaves are written once (INV-17)")
+            self.db.executemany("INSERT INTO version_leaves (version_id, split, key, value) VALUES (?,?,?,?)", rows)
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return len(rows)
+
+    @_locked
+    def version_leaves(self, vid: int, split: str) -> list[tuple[str, str]]:
+        """Version `vid`'s committed (key hex, value hex) leaves of one split, in key order; empty when it has none (an
+        empty split, or a version trained before v0.5: its BOM says which)."""
+        q = "SELECT key, value FROM version_leaves WHERE version_id=? AND split=? ORDER BY key"
+        return [(r["key"], r["value"]) for r in self.db.execute(q, (vid, split))]
+
+    @_locked
+    def versions_containing(self, key: str, split: str = "train") -> list[int]:
+        """The ids of the versions whose committed `split` set holds the example `key` (hex), oldest first: the adapters
+        trained on it (split 'train'), on the `version_leaves_key` index."""
+        q = "SELECT version_id FROM version_leaves WHERE key=? AND split=? ORDER BY version_id"
+        return [int(r["version_id"]) for r in self.db.execute(q, (key.lower(), split))]
+
+    @_locked
+    def leaf_example(self, vid: int, split: str) -> sqlite3.Row | None:
+        """The stored example behind the first of version `vid`'s `split` leaves (in key order) that is still in the
+        examples table, or None: the mock demo's sample of a committed example (prompt only goes out)."""
+        q = (
+            "SELECT e.task, e.messages, e.params, e.hash FROM version_leaves l JOIN examples e ON e.hash = l.key"
+            " WHERE l.version_id=? AND l.split=? ORDER BY l.key LIMIT 1"
+        )
+        return self.db.execute(q, (vid, split)).fetchone()
+
     @_locked
     def version_bom(self, vid: int) -> dict[str, Any] | None:
         r = self.db.execute("SELECT bom FROM versions WHERE id=?", (vid,)).fetchone()
@@ -859,6 +924,66 @@ class Ledger:
             " GROUP BY student_version"
         )
         return {int(r["v"]): int(r["n"]) for r in rows}
+
+    def replay_rows(
+        self, vid: int, since_day: int | None = None, until_day: int | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """What the ledger replay reads for version `vid` (FR-16.5, ADR 0028), on ledger days `since_day` to `until_day`
+        (both included; None: no bound): every request its student answered with the replay's columns written
+        (confidence, label_p and threshold not NULL), in id order, and how many of its other rows were left out:
+        `before_logging` (the student answered, but the row predates those columns) and `no_student_answer` (the call
+        failed or its breaker was open: no confidence to replay). `teacher_usd` is what the teacher alone cost when it
+        was called for the request (`baseline_cost_usd` of an escalation the teacher answered, or of an audit), else
+        NULL; `estimate_usd` is the token formula's estimate (`baseline_est_usd`). One version only: confidence scales
+        differ between versions, so the replay never pools them.
+
+        A version's history can be long, so it is read in chunks of REPLAY_CHUNK rows, each under the lock, up to the
+        last request id when the read began (rows logged meanwhile are not read): the request path's `log_request` waits
+        for one chunk at most, never the whole history. That is why this method is not `_locked` itself; every statement
+        runs in a locked helper."""
+        where, args = "student_version=?", [vid]
+        if since_day is not None:
+            where += " AND day>=?"
+            args.append(since_day)
+        if until_day is not None:
+            where += " AND day<=?"
+            args.append(until_day)
+        last, excluded = self._replay_bounds(where, args)
+        rows: list[dict[str, Any]] = []
+        after = 0
+        while True:
+            chunk = self._replay_chunk(where, args, after, last)
+            rows.extend(chunk)
+            if len(chunk) < REPLAY_CHUNK:
+                return rows, excluded
+            after = chunk[-1]["id"]
+
+    @_locked
+    def _replay_bounds(self, where: str, args: list[Any]) -> tuple[int, dict[str, int]]:
+        """`replay_rows`' last request id and its left-out counts up to that id, in one locked read."""
+        last = int(self.db.execute("SELECT COALESCE(MAX(id), 0) FROM requests").fetchone()[0])
+        left = self.db.execute(
+            f"""SELECT COALESCE(SUM(confidence IS NOT NULL AND (label_p IS NULL OR threshold IS NULL)), 0) before_logging,
+                       COALESCE(SUM(confidence IS NULL), 0) no_student_answer
+                FROM requests WHERE {where} AND id<=?""",
+            [*args, last],
+        ).fetchone()
+        return last, {"before_logging": int(left["before_logging"]), "no_student_answer": int(left["no_student_answer"])}
+
+    @_locked
+    def _replay_chunk(self, where: str, args: list[Any], after: int, last: int) -> list[dict[str, Any]]:
+        """Up to REPLAY_CHUNK of `replay_rows`' rows with ids in (after, last], in id order."""
+        rows = self.db.execute(
+            f"""SELECT id, day, task, confidence, threshold, label_p, student_agree, route, audited,
+                       COALESCE(student_cost_usd, 0.0) student_usd,
+                       CASE WHEN audited=1 OR (escalated=1 AND served_by='teacher') THEN baseline_cost_usd END teacher_usd,
+                       COALESCE(baseline_est_usd, baseline_cost_usd, 0.0) estimate_usd
+                FROM requests WHERE {where} AND id>? AND id<=?
+                  AND confidence IS NOT NULL AND label_p IS NOT NULL AND threshold IS NOT NULL
+                ORDER BY id LIMIT ?""",
+            [*args, after, last, REPLAY_CHUNK],
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:

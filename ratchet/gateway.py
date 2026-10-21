@@ -21,8 +21,9 @@ import re
 import threading
 import time
 import uuid
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +38,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, certificate, live, tasks, taskspec
+from . import __version__, certificate, live, merkle, proof, replay, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, Version
+from .merkle import KeySet
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
@@ -112,6 +114,8 @@ class Runtime:
         self.sleep = sleep
         self.clock = clock
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
+        self.keysets_lock = threading.Lock()  # the committed-set cache (`_keyset`)
+        self.replay_lock = threading.Lock()  # one ledger replay at a time (`_replaying`)
         self.reset()
 
     def reset(self) -> None:
@@ -205,6 +209,10 @@ class Runtime:
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
+        # Committed sets the proof endpoints read (`_keyset`), by (version, split), least recently used last. A reset
+        # makes a new ledger whose version ids start again, so the cache starts again too.
+        self.keysets: OrderedDict[tuple[int, str], tuple[Ledger, KeySet]] = OrderedDict()
+        self.integrity_reported: set[tuple[int, str]] = set()
         reload = self.reloader.request if self.reloader is not None else None
         self.ratchet = Ratchet(
             s,
@@ -1048,6 +1056,227 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
     return {"state": state, "changed": changed, "interval": interval, "summary": summary}
 
 
+# ----- ledger replay (FR-16.5, ADR 0028) -----
+MAX_REPLAY_DAY = 10_000_000  # a ledger day far beyond any real one: larger values are refused, not passed to SQLite
+
+
+def _replay_version(request: Request) -> Version:
+    """The one version a replay reads: `?version=` (default: the live version). 400 for no version and no live one, and
+    for a value that names several versions or none (`1,2`, `all`, `version` twice): confidence scales differ between
+    versions, so a replay never pools them. 404 for a version that does not exist."""
+    values = request.query_params.getlist("version")
+    if len(values) > 1:
+        raise HTTPException(400, "one version at a time: confidence scales differ between versions, so a replay never pools them")
+    if not values or values[0] == "":
+        v = rt.ledger.live()
+        if v is None:
+            raise HTTPException(400, "no live version: name one with ?version=")
+        return v
+    raw = values[0].strip()
+    # ASCII digits only: str.isdigit() also accepts superscript and circled digits ('²', '①'), which int() refuses.
+    if not (raw.isascii() and raw.isdigit()) or len(raw) > 18:
+        raise HTTPException(400, f"version must be one version id (a whole number), not {values[0]!r}; versions are never pooled")
+    v = rt.ledger.version(int(raw))
+    if v is None:
+        raise HTTPException(404, f"no version {int(raw)}")
+    return v
+
+
+def _replay_days(since_day: int | None, until_day: int | None) -> None:
+    for name, day in (("since_day", since_day), ("until_day", until_day)):
+        if day is not None and not 0 <= day <= MAX_REPLAY_DAY:
+            raise HTTPException(400, f"{name} must be a ledger day from 0 to {MAX_REPLAY_DAY:,}")
+    if since_day is not None and until_day is not None and since_day > until_day:
+        raise HTTPException(400, "since_day must not be after until_day")
+
+
+def _replay_label() -> str:
+    return replay.SIMULATION if rt.settings.mode == "mock" else "live traffic"
+
+
+def _replay_current(v: Version) -> float:
+    """The version's threshold now, as the router holds its answers to it: in live mode without a student endpoint the
+    hosted fallback student answers (`Runtime.reset`'s resolver), whose threshold is the configured default."""
+    s = rt.settings
+    model = s.fallback_student_model if s.mode == "live" and not s.student_base else v.adapter_uri
+    return rt.ratchet.threshold(v, model)
+
+
+@contextmanager
+def _replaying() -> Iterator[None]:
+    """One replay at a time per gateway. A replay reads a version's whole history into memory, so concurrent ones
+    would multiply that; a second request meanwhile gets a 429 with `Retry-After` rather than waiting on the worker
+    threads that chat completions share."""
+    if not rt.replay_lock.acquire(blocking=False):
+        raise HTTPException(429, "another replay is running; try again in a moment", headers={"Retry-After": "1"})
+    try:
+        yield
+    finally:
+        rt.replay_lock.release()
+
+
+@app.get("/ratchet/replay")
+def replay_version(
+    request: Request,
+    threshold: float | None = None,
+    audit_rate: float | None = None,
+    since_day: int | None = None,
+    until_day: int | None = None,
+) -> dict[str, Any]:
+    """Replay one version's logged traffic (FR-16.5, ADR 0028): what happened (`actual`), what would have happened at
+    `threshold` (default: the version's threshold now) and `audit_rate` (default: as logged), and the calibrated
+    baseline. Read-only and public, like /ratchet/stats: aggregates only, never request text."""
+    v = _replay_version(request)
+    _replay_days(since_day, until_day)
+    try:
+        t = None if threshold is None else replay.check_threshold(threshold)
+        a = None if audit_rate is None else replay.check_rate(audit_rate)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    with _replaying():
+        history = replay.load(rt.ledger, v.id, since_day, until_day)
+        out = replay.report(history, t, a, current=_replay_current(v), fallback_rate=rt.settings.audit_rate)
+    return {**out, "state": v.state, "label": _replay_label()}
+
+
+@app.get("/ratchet/replay/frontier")
+def replay_frontier(
+    request: Request,
+    target: float = replay.DEFAULT_TARGET,
+    audit_rate: float | None = None,
+    since_day: int | None = None,
+    until_day: int | None = None,
+) -> dict[str, Any]:
+    """The cost-precision frontier of one version's logged traffic over thresholds 0.30 to 1.00, the suggested threshold
+    for `target` (advisory: an approximate interval, never applied by itself) and the money the current threshold leaves
+    on the table (FR-16.5, ADR 0028)."""
+    v = _replay_version(request)
+    _replay_days(since_day, until_day)
+    try:
+        target = replay.check_target(target)
+        a = None if audit_rate is None else replay.check_rate(audit_rate)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    with _replaying():
+        history = replay.load(rt.ledger, v.id, since_day, until_day)
+        out = replay.frontier_report(history, _replay_current(v), target, audit_rate=a, fallback_rate=rt.settings.audit_rate)
+    return {**out, "state": v.state, "label": _replay_label()}
+
+
+# ----- committed training sets (FR-16.4, ADR 0027) -----
+KEYSET_CACHE = 8  # committed (version, split) trees kept in memory; their leaves never change (INV-17)
+
+
+def _committed(vid: int, split: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(the version's BOM document, the commitment it signs for `split`); 404 for an unknown version or one without a
+    commitment (trained before v0.5)."""
+    if rt.ledger.version(vid) is None:
+        raise HTTPException(404, f"no version {vid}")
+    doc = rt.ledger.version_bom(vid)
+    committed = bomdoc.commitment(doc.get("manifest") if isinstance(doc, dict) else None, split)
+    if doc is None or committed is None:
+        raise HTTPException(404, f"commitment not available: version {vid} was trained before set commitments (v0.5)")
+    return doc, committed
+
+
+def _keyset(vid: int, split: str) -> tuple[KeySet, dict[str, Any], dict[str, Any]]:
+    """(the `merkle.KeySet` of version `vid`'s committed `split` leaves, the commitment its BOM signs, the BOM). Built
+    from `version_leaves` once and kept (`KEYSET_CACHE`, least recently used out), but only when it rebuilds the root and
+    size the BOM signs: leaves edited outside Ratchet (the triggers stop any edit through SQLite's API, INV-17) are a 500
+    and one `integrity` event, never a proof that would fail against the signed root."""
+    doc, committed = _committed(vid, split)
+    led, cache = rt.ledger, rt.keysets
+    with rt.keysets_lock:
+        hit = cache.get((vid, split))
+        if hit is not None and hit[0] is led:  # a demo reset makes a new ledger with the same version ids
+            cache.move_to_end((vid, split))
+            return hit[1], committed, doc
+    try:
+        keyset = KeySet(led.version_leaves(vid, split))
+    except ValueError:  # a malformed or duplicate leaf: only possible in a file edited outside Ratchet
+        keyset = None
+    if keyset is None or (keyset.root_hex, keyset.size) != (committed["root"], committed["size"]):
+        with rt.keysets_lock:
+            first = (vid, split) not in rt.integrity_reported
+            rt.integrity_reported.add((vid, split))
+        if first:
+            led.event("integrity", f"v{vid} {split} leaves do not rebuild the root its BOM signs; the ledger was changed")
+        raise HTTPException(500, f"the stored {split} leaves of version {vid} do not match the commitment its BOM signs")
+    with rt.keysets_lock:
+        cache[(vid, split)] = (led, keyset)
+        cache.move_to_end((vid, split))
+        while len(cache) > KEYSET_CACHE:
+            cache.popitem(last=False)
+    return keyset, committed, doc
+
+
+def _split(split: str) -> str:
+    if split not in proof.SPLITS:
+        raise HTTPException(400, f"split must be one of {list(proof.SPLITS)}")
+    return split
+
+
+@app.post("/ratchet/versions/{vid}/proof")
+def version_proof(vid: int, split: str = "train", body: Any = Body(...), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Whether an example is in version `vid`'s committed training (or golden) set, with an O(log n) membership or
+    non-membership proof against the root its signed BOM carries (FR-16.4, ADR 0027). The body names the example by
+    `key` (its hash) or as the chat request it came from (`task`, `messages`, and any other `/v1/chat/completions`
+    field), which is validated, normalised and redacted as the gateway stores it. An admin call: with guessable texts
+    the endpoint is a membership oracle for the training data. Check the answer offline with `python -m ratchet.proof
+    verify`."""
+    _split(split)
+    if rt.ledger.version(vid) is None:
+        raise HTTPException(404, f"no version {vid}")
+    try:
+        key = proof.resolve_key(
+            body,
+            redact_pii=rt.settings.redact_pii,
+            policy=rt.ratchet.gen,
+            limits=rt.limits,
+            modalities=rt.modalities,
+            merge_system=rt.settings.merge_system,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    keyset, committed, doc = _keyset(vid, split)
+    p = keyset.prove(key)
+    out: dict[str, Any] = {
+        "version": vid,
+        "split": split,
+        "key": key,
+        "alg": committed["alg"],
+        "root": committed["root"],
+        "size": committed["size"],
+        "result": merkle.verify(keyset.root, key, p),
+        "proof": p,
+        "bom_sha256": doc.get("sha256"),
+    }
+    value = keyset.value(key)
+    if value is not None:
+        out["value"] = value.hex()
+    return out
+
+
+@app.get("/ratchet/versions/{vid}/heldout")
+def version_heldout(vid: int, admin: str = Depends(_admin)) -> dict[str, Any]:
+    """The held-out certificate of version `vid` (FR-16.4, INV-3, INV-6): its golden set's leaves and, for each golden
+    key, a non-membership proof against the training root its signed BOM carries. `python -m ratchet.proof heldout`
+    rebuilds the golden root from the leaves and checks every proof, so nobody has to trust that the golden rows were
+    never trained on. An admin call, like the proofs."""
+    training, train_c, doc = _keyset(vid, "train")
+    golden, golden_c, _ = _keyset(vid, "golden")
+    keys = golden.keys()
+    return {
+        "version": vid,
+        "alg": train_c["alg"],
+        "training": {"root": train_c["root"], "size": train_c["size"]},
+        "golden": {"root": golden_c["root"], "size": golden_c["size"], "leaves": [[k.hex(), v.hex()] for k, v in golden.items()]},
+        "proofs": {k.hex(): training.prove(k) for k in keys},
+        "held_out": not any(k in training for k in keys),
+        "bom_sha256": doc.get("sha256"),
+    }
+
+
 # ----- demo controls (mock mode only) -----
 # The public demo is shared by every visitor, so controls run one at a time and reset has a cooldown.
 _demo_lock = threading.Lock()
@@ -1099,6 +1328,23 @@ def demo_student_outage(seconds: int = 60) -> dict[str, Any]:
     rt.fleet.student_outage(seconds)
     rt.ledger.event("fault", f"student endpoint down for {seconds} s (demo fault injection)")
     return {"seconds": seconds, "until": time.time() + seconds}
+
+
+@app.get("/ratchet/demo/sample-example")
+def demo_sample_example(split: str = "train", version: int | None = None) -> dict[str, Any]:
+    """A committed example of `version` (default: the live version) from its `split` set, as a body for
+    `POST /ratchet/versions/{id}/proof`: its task, its stored (redacted) messages and the conditions it was stored under,
+    never its answer. The first leaf, in key order, whose example is still stored."""
+    _mock_only()
+    _split(split)
+    v = rt.ledger.version(version) if version is not None else rt.ledger.live()
+    if v is None:
+        raise HTTPException(404, f"no version {version}" if version is not None else "no live version yet")
+    row = rt.ledger.leaf_example(v.id, split)
+    if row is None:
+        raise HTTPException(404, f"version {v.id} has no committed {split} example still stored")
+    params = json.loads(row["params"]) if row["params"] else {}
+    return {"version": v.id, "split": split, "task": row["task"], "messages": json.loads(row["messages"]), **params}
 
 
 @app.post("/ratchet/demo/reset")

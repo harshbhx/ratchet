@@ -1398,3 +1398,204 @@ def test_policy_from_env_names_a_bad_value(monkeypatch, env, value, says):
     monkeypatch.setenv(env, value)
     with pytest.raises(ValueError, match=f"{env}.*{says}"):
         ReleasePolicy.from_env()
+
+
+# ---------- ledger replay (FR-16.5, ADR 0028) ----------
+def _replay_cascade(led: Ledger, audit_rate: float = 0.5) -> Ratchet:
+    student = RecordingProvider('{"category": "billing", "priority": "high"}')
+    return Ratchet(
+        Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=audit_rate),
+        led,
+        RecordingProvider('{"category": "billing", "priority": "high"}'),
+        lambda v: (student, v.adapter_uri),
+        seed=3,
+    )
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_migrates_an_old_file_and_counts_the_rows_it_cannot_replay(tmp_path):
+    """A v0.4.0 file migrates on open. Its rows have a confidence but no designed labelling probability, so the replay
+    leaves them out and says how many (`before_logging`); rows the gateway writes afterwards are replayed."""
+    from ratchet import replay
+
+    db = tmp_path / "v04.db"
+    con = sqlite3.connect(db)
+    con.executescript(V040_SCHEMA)
+    con.executemany(
+        "INSERT INTO requests (ts, day, task, served_by, student_version, confidence, escalated, audited, cost_usd,"
+        " baseline_cost_usd) VALUES (1800000000, 1, 'ticket-triage', ?, 1, ?, ?, 0, 0.001, 0.01)",
+        [("student", 0.95, 0), ("teacher", 0.40, 1), ("teacher", None, 1)],
+    )
+    con.commit()
+    con.close()
+    led = Ledger(str(db))
+    old = replay.load(led, 1)
+    # V040_SCHEMA's own row has no confidence either: two rows without a student answer.
+    assert old.rows == () and old.excluded == {"before_logging": 2, "no_student_answer": 2, "pinned_now": 0, "malformed": 0}
+    assert replay.at(old.rows)["coverage"] is None and replay.at(old.rows)["savings"] is None  # nothing to replay
+    led.update_eval(1, {"threshold": 0.5})
+    r = _replay_cascade(led)
+    for i in range(6):
+        r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage")
+    new = replay.load(led, 1)
+    assert len(new.rows) == 6 and new.excluded["before_logging"] == 2 and new.n_excluded == 4
+    assert all(row.threshold == 0.5 and row.label_p == 0.5 for row in new.rows)
+    assert replay.load(led, 1, since_day=2).excluded["before_logging"] == 0  # the old rows are on day 1
+    # A row edited outside Ratchet (a probability above 1, a negative cost) is left out, never a NaN or a crash.
+    led.log_request(task="ticket-triage", student_version=1, confidence=0.9, threshold=0.5, label_p=1.5, route="student")
+    led.log_request(task="ticket-triage", student_version=1, confidence=0.9, threshold=0.5, label_p=0.5, student_cost_usd=-1)
+    edited = replay.load(led, 1)
+    assert len(edited.rows) == 6 and edited.excluded["malformed"] == 2
+    assert json.dumps(replay.frontier_report(edited, 0.5), allow_nan=False)
+    led.db.close()
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_endpoint_refuses_to_mix_versions(gw_env):
+    """Confidence scales differ between versions, so a replay reads one: a second `version`, a list or a word is a 400,
+    a version that does not exist a 404, and without one the live version is read."""
+    from fastapi.testclient import TestClient
+
+    gw = gw_env()
+    c = TestClient(gw.app)
+    led = gw.rt.ledger
+    first = _version(led, "retired", {"threshold": 0.5})
+    live = _version(led, "live", {"threshold": 0.5})
+    r = _replay_cascade(led)
+    for i in range(5):
+        r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage")
+    # Superscript and circled digits pass str.isdigit() but not int(): a 400 too, never a 500.
+    queries = (f"version={first}&version={live}", f"version={first},{live}", "version=all", "version=-1", "version=1.5")
+    for query in (*queries, "version=²", "version=①", "version=1²"):
+        for path in ("/ratchet/replay", "/ratchet/replay/frontier"):
+            resp = c.get(f"{path}?{query}")
+            assert resp.status_code == 400, (path, query)
+            assert "version" in resp.json()["detail"] and "pool" in resp.json()["detail"], (path, query)
+    assert c.get("/ratchet/replay?version=999").status_code == 404
+    assert c.get("/ratchet/replay").json()["version"] == live and c.get("/ratchet/replay").json()["n"] == 5
+    assert c.get(f"/ratchet/replay?version={first}").json()["n"] == 0
+
+
+@pytest.mark.req("FR-16.5", "INV-10")
+def test_pinned_tasks_never_appear_in_replay_rows():
+    """A pinned task never reaches the student, so it has no replay row; and the rows of a task pinned after they were
+    logged are left out too (counted as `pinned_now`): the student will never answer it again."""
+    from ratchet import replay
+
+    led = Ledger(":memory:")
+    vid = _version(led, "live", {"threshold": 0.5})
+    r = _replay_cascade(led)
+    for i in range(4):
+        r.handle([{"role": "user", "content": f"plan {i}"}], "research-plan")  # pinned (built in)
+        r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage")
+    assert {row.task for row in replay.load(led, vid).rows} == {"ticket-triage"}
+    assert len(replay.load(led, vid).rows) == 4
+    tasks.register(tasks.Task("ticket-triage", pinned=True, source="file"))  # pinned now, after the traffic
+    h = replay.load(led, vid)
+    assert h.rows == () and h.excluded["pinned_now"] == 4
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_reads_a_long_history_in_chunks_up_to_the_id_it_started_at(monkeypatch):
+    """A version's history is read in chunks, each under the ledger lock, so the request path's `log_request` (another
+    thread) never waits for the whole read; a request logged meanwhile is not part of the replay."""
+    import ratchet.ledger as ledger_module
+
+    led = Ledger(":memory:")
+    vid = _version(led, "live", {"threshold": 0.5})
+    r = _replay_cascade(led)
+    for i in range(7):
+        r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage")
+    whole, excluded = led.replay_rows(vid)
+    monkeypatch.setattr(ledger_module, "REPLAY_CHUNK", 2)
+    original = Ledger._replay_chunk
+    between: list[bool] = []
+
+    def chunk_then_log(self, *args, **kwargs):
+        rows = original(self, *args, **kwargs)
+        writer = threading.Thread(target=r.handle, args=([{"role": "user", "content": "ticket 0"}], "ticket-triage"))
+        writer.start()
+        writer.join(timeout=5)
+        between.append(not writer.is_alive())  # the other thread logged a request between two chunks
+        return rows
+
+    monkeypatch.setattr(Ledger, "_replay_chunk", chunk_then_log)
+    chunked, chunked_excluded = led.replay_rows(vid)
+    assert chunked == whole and chunked_excluded == excluded and len(chunked) == 7
+    assert between == [True] * 4  # 2 + 2 + 2 + 1 rows: four reads, the lock free after each
+    assert len(led.replay_rows(vid)[0]) == 11  # the requests logged during the read are there for the next one
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_endpoints_run_one_at_a_time(gw_env):
+    """A replay holds a version's history in memory, so the gateway runs one at a time: another request meanwhile is a
+    429 with Retry-After instead of a second copy (or a wait on the threads chat completions share)."""
+    from fastapi.testclient import TestClient
+
+    gw = gw_env()
+    c = TestClient(gw.app)
+    _version(gw.rt.ledger, "live", {"threshold": 0.5})
+    with gw.rt.replay_lock:
+        for path in ("/ratchet/replay", "/ratchet/replay/frontier"):
+            resp = c.get(path)
+            assert resp.status_code == 429 and resp.headers["Retry-After"] == "1", path
+            assert "replay" in resp.json()["detail"], path
+    assert c.get("/ratchet/replay").status_code == 200 and c.get("/ratchet/replay/frontier").status_code == 200
+
+
+@pytest.mark.req("FR-16.5", "FR-2.15")
+def test_replay_leaves_rows_held_by_a_changed_spec_unservable():
+    """While a task's spec is changed for a version, the router holds its answers to SERVE_NOTHING whatever the
+    threshold, so the replay never serves the rows logged that way; rows logged before the change replay as usual, and
+    once a night re-scores the version under the new spec, the held rows are servable again."""
+    from ratchet import replay
+    from ratchet.confidence import SERVE_NOTHING
+
+    led = Ledger(":memory:")
+    vid = _version(led, "live", {"threshold": 0.5})
+    r = _replay_cascade(led)
+    ask = [{"role": "user", "content": "ticket 0"}]
+    for _ in range(3):
+        r.handle(ask, "ticket-triage")
+    current = tasks.get("ticket-triage").spec_hash
+    led.update_eval(vid, {"threshold": 0.5, "spec_hashes": {"ticket-triage": "scored-under-another-spec"}})
+    for _ in range(2):
+        assert r.handle(ask, "ticket-triage").route == "confidence"
+    rows = replay.load(led, vid).rows
+    assert [row.threshold for row in rows] == [0.5] * 3 + [SERVE_NOTHING] * 2
+    assert [row.spec_changed for row in rows] == [False] * 3 + [True] * 2
+    assert replay.at(rows, 0.3)["served"] == 3 and replay.at(rows)["served"] == 3
+    led.update_eval(vid, {"threshold": 0.5, "spec_hashes": {"ticket-triage": current}})  # re-scored by a night
+    assert replay.at(replay.load(led, vid).rows, 0.3)["served"] == 5
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_current_threshold_is_the_one_the_router_uses(gw_env, tmp_path, monkeypatch):
+    """The replay's current threshold is the one the router holds answers to: the version's own in mock mode, the
+    configured default for the hosted fallback student in live mode without a student endpoint (never calibrated)."""
+    from fastapi.testclient import TestClient
+
+    gw = gw_env()
+    _version(gw.rt.ledger, "live", {"threshold": 0.9})
+    assert TestClient(gw.app).get("/ratchet/replay").json()["current_threshold"] == 0.9
+    settings = Settings(
+        mode="live",
+        db_path=str(tmp_path / "live.db"),
+        teacher_base="https://tokenfactory.test/v1",
+        teacher_api_key="tf-key",
+        teacher_model=OPEN_TEACHER,
+        student_base="",
+        confidence_threshold=0.7,
+        admin_keys="",
+        api_keys="",
+        tasks_file="",
+        bom_signing_key="",
+        tavily_api_key="",
+        mock_warmup_days=0,
+    )
+    rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("ok").transport})
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.9})
+    c = TestClient(gw.app)
+    assert c.get("/ratchet/replay").json()["current_threshold"] == 0.7
+    assert c.get("/ratchet/replay/frontier").json()["current_threshold"] == 0.7

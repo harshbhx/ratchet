@@ -1,11 +1,12 @@
 import json
 import math
+import random
 from collections import Counter
 
 import pytest
 from fakes import _audit, _version, token_entries
 
-from ratchet import licenses, tasks
+from ratchet import licenses, replay, stats, tasks
 from ratchet.confidence import calibrate_threshold, majority, score
 from ratchet.ledger import STORED_PARAM_KEYS, Ledger, example_hash, target_params
 from ratchet.openai_compat import validate_chat_request
@@ -922,3 +923,193 @@ def test_versions_filter_by_state_in_order():
     assert [v.id for v in led.versions(iter(["rejected"]))] == [ids[2]] and led.versions([]) == []
     assert led.version(ids[1]).eval["certificate"] == {"served": 1} and led.version(999) is None
     assert led.live().id == ids[3] and led.by_state("canary").id == ids[1]
+
+
+# ---------- ledger replay (FR-16.5, ADR 0028) ----------
+def _rrow(
+    i, c, p, agree=None, *, threshold=0.6, route=None, student=0.001, teacher=None, estimate=0.008, audited=False
+) -> replay.Row:
+    """A replay row: request `i` at confidence `c`, labelled with probability `p` (`agree` when it was labelled)."""
+    if route is None:
+        route = "student" if c >= threshold else "confidence"
+    return replay.Row(i, 1, "ticket-triage", c, threshold, p, agree, route, audited, student, teacher, estimate)
+
+
+def _toy_rows() -> list[replay.Row]:
+    """Three served answers (audit rates 0.5, 0.5, 0.25; two audited), two escalations (labelled with probability 1),
+    and one escalation with no valid answer (confidence 0)."""
+    return [
+        _rrow(1, 0.9, 0.5, 1, teacher=0.01, audited=True),
+        _rrow(2, 0.9, 0.5),
+        _rrow(3, 0.7, 0.25, 0, teacher=0.02, audited=True),
+        _rrow(4, 0.4, 1.0, 1, teacher=0.03),
+        _rrow(5, 0.3, 1.0, 0, teacher=0.04),
+        _rrow(6, 0.0, 1.0, None, teacher=0.05),
+    ]
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_hajek_estimate_and_cost_on_a_hand_computed_example():
+    """Precision at a threshold is Hajek's mean of the labels weighted by 1 / label_p, with Kish's n_eff and Wilson's
+    interval at it; cost is the student spend, the all-teacher cost of what is not served and the audit rate times
+    that of what is served. Every number below is worked out by hand."""
+    rows = _toy_rows()
+    live = replay.at(rows, 0.6)
+    assert (live["served"], live["labelled"], live["coverage"]) == (3, 2, 0.5)
+    assert live["precision"] == pytest.approx(2 / 6)  # (1/0.5 * 1 + 1/0.25 * 0) / (1/0.5 + 1/0.25); row 2 has no label
+    assert live["n_eff"] == pytest.approx(36 / 20)  # (2 + 4)^2 / (2^2 + 4^2)
+    assert live["precision"] == pytest.approx(stats.hajek_mean([1, 0], [2, 4]))
+    assert live["n_eff"] == pytest.approx(stats.kish_n_eff([2, 4]))
+    assert live["interval"] == pytest.approx(list(stats.wilson(2 / 6 * 1.8, 1.8)))
+    assert live["interval_method"] == "approximate (Wilson at Kish n_eff)"
+    # Below the live threshold the escalations' labels (probability 1) count too.
+    assert replay.at(rows, 0.35)["precision"] == pytest.approx(3 / 7)
+    assert replay.at(rows, 0.35)["n_eff"] == pytest.approx(49 / 21)
+    assert replay.at(rows, 0.3)["precision"] == pytest.approx(3 / 8)
+    # Cost. Two audited answers are fewer than the ratio needs, so R = 1: T = [.01, .008, .02, .03, .04, .05].
+    assert replay.ratio(rows)["status"] == "insufficient" and replay.ratio(rows)["R"] == 1.0
+    assert live["baseline_usd"] == pytest.approx(0.158)
+    assert live["cost_usd"] == pytest.approx(0.006 + 0.12 + (0.5 * 0.01 + 0.5 * 0.008 + 0.25 * 0.02))  # 0.14
+    assert live["savings"] == pytest.approx(1 - 0.14 / 0.158) and live["saved_usd"] == pytest.approx(0.018)
+    assert replay.at(rows, 0.6, audit_rate=0.0)["cost_usd"] == pytest.approx(0.126)
+    assert replay.at(rows, 0.6, audit_rate=0.0)["precision"] == live["precision"]  # labels come from the logs
+    # Request 4 escalated in fact; served at 0.35 it is audited at the version's logged rate, mean(0.5, 0.5, 0.25).
+    assert replay.at(rows, 0.35)["cost_usd"] == pytest.approx(0.006 + 0.09 + 0.014 + 5 / 12 * 0.03)
+    assert replay.logged_rate(rows) == pytest.approx(5 / 12)
+    assert live["served_errors_per_1k"] == pytest.approx(1000 * 0.5 * (1 - 2 / 6))
+    # What happened: each request at its logged threshold (all 0.6 here).
+    assert replay.at(rows) == {**live, "threshold": None}
+    assert json.loads(json.dumps(live, allow_nan=False)) == live
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_coverage_is_exact_and_the_frontier_never_gains_coverage():
+    """Coverage needs no label: the share of requests at or above t. A request with no valid answer (confidence 0) or
+    one that could not fill its n choices is never served. Each frontier row is `at` for its threshold, exactly."""
+    rng = random.Random(3)
+    rows = [_rrow(i, round(rng.random(), 3), 0.1 if i % 3 else 1.0, rng.choice([0, 1, None])) for i in range(400)]
+    rows += [_rrow(400, 0.99, 1.0, 1, route="n_choices"), _rrow(401, 0.0, 1.0, None)]
+    for t in (0.01, 0.25, 0.5, 0.6, 0.73, 0.99, 1.0, 1.01):
+        want = sum(1 for r in rows if r.route != "n_choices" and r.confidence > 0 and r.confidence >= t)
+        assert replay.at(rows, t)["served"] == want and replay.at(rows, t)["coverage"] == want / len(rows), t
+    front = replay.frontier(rows)
+    assert len(front) == 71 and front[0]["threshold"] == 0.3 and front[-1]["threshold"] == 1.0
+    assert all(a["coverage"] >= b["coverage"] for a, b in zip(front, front[1:], strict=False))
+    assert all(a["served"] >= b["served"] for a, b in zip(front, front[1:], strict=False))
+    assert front[25] == replay.at(rows, 0.55)  # the sweep and a single replay agree to the bit
+    assert replay.grid(0.3, 0.95, 0.05)[-1] == 0.95 and replay.grid(0.3, 0.7, 0.1) == [0.3, 0.4, 0.5, 0.6, 0.7]
+    for bad in ((0.0, 1.0, 0.1), (0.5, 0.4, 0.1), (0.3, 1.0, 0.0), (0.3, 1.0, 1e-6), (0.3, 2.0, 0.1)):
+        with pytest.raises(ValueError):
+            replay.grid(*bad)
+    for t in (0, -0.1, 1.02, float("nan"), True):
+        with pytest.raises(ValueError, match="threshold"):
+            replay.at(rows, t)
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_without_positivity_gives_no_precision_above_the_live_threshold():
+    """With an audit rate of 0 no served answer is ever labelled, so precision at any threshold that serves one cannot be
+    identified: null, with the reason. Coverage and cost are still known."""
+    rows = [_rrow(i, 0.6 + 0.004 * i, 0.0) for i in range(100)]  # served at the live threshold 0.6, never audited
+    rows += [_rrow(100 + i, 0.2 + 0.004 * i, 1.0, i % 2, teacher=0.03) for i in range(100)]  # escalated, labelled
+    for t in (0.3, 0.6, 0.8):
+        res = replay.at(rows, t)
+        assert res["precision"] is None and res["interval"] is None and res["served_errors_per_1k"] is None, t
+        assert res["precision_reason"] == "audit rate was 0: precision above the live threshold cannot be identified"
+        assert res["coverage"] > 0 and res["cost_usd"] > 0
+    assert replay.at(rows, 1.01)["precision_reason"] == "nothing would be served at this threshold"
+    unlabelled = [_rrow(1, 0.9, 0.5), _rrow(2, 0.8, 0.5)]  # served, drawn at 0.5, neither audited
+    assert replay.at(unlabelled, 0.6)["precision_reason"] == "no labelled answer at this threshold"
+
+
+def _hajek_population(rng: random.Random) -> tuple[list[float], list[int]]:
+    """2,000 requests with known correctness, more often right at higher confidence."""
+    cs = [rng.random() for _ in range(2000)]
+    return cs, [int(rng.random() < 0.5 + 0.5 * c) for c in cs]
+
+
+def _hajek_monte_carlo(replicates: int) -> None:
+    """Logging threshold 0.6: below it every request is labelled (escalated), above it 10% (audited). Over seeded
+    replicates of the labelling draw, the mean replayed precision at 0.4 and 0.8 is within 3 standard errors and 0.01
+    of the truth, while the unweighted mean of the labels is far off at 0.4."""
+    rng = random.Random(11)
+    cs, ys = _hajek_population(rng)
+    truth = {t: sum(y for c, y in zip(cs, ys, strict=True) if c >= t) / sum(1 for c in cs if c >= t) for t in (0.4, 0.8)}
+    est: dict[float, list[float]] = {0.4: [], 0.8: []}
+    naive = []
+    for _ in range(replicates):
+        rows = []
+        for i, (c, y) in enumerate(zip(cs, ys, strict=True)):
+            p = 1.0 if c < 0.6 else 0.1
+            seen = p == 1.0 or rng.random() < p
+            rows.append(_rrow(i, c, p, y if seen else None, audited=seen and p < 1))
+        low, high = replay.sweep(rows, [0.4, 0.8])
+        est[0.4].append(low["precision"])
+        est[0.8].append(high["precision"])
+        labels = [r.agree for r in rows if r.agree is not None and r.confidence >= 0.4]
+        naive.append(sum(labels) / len(labels))
+    for t, values in est.items():
+        mean = sum(values) / len(values)
+        se = math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1) / len(values))
+        assert abs(mean - truth[t]) <= 3 * se and abs(mean - truth[t]) <= 0.01, (t, mean, truth[t], se)
+    assert truth[0.4] - sum(naive) / len(naive) > 0.04  # ignoring the design is badly biased
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_precision_is_unbiased_under_the_designed_labelling():
+    _hajek_monte_carlo(120)
+
+
+@pytest.mark.slow
+def test_replay_precision_is_unbiased_under_the_designed_labelling_full_size():
+    _hajek_monte_carlo(500)
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_suggests_the_lowest_passing_grid_threshold_or_none():
+    """`suggest` scans CERT_GRID from 0.95 down and stops at the first threshold whose interval's lower bound is below
+    the target: the last one that passed is advice, never a certificate. None when 0.95 already fails, even if a lower
+    threshold would pass (fixed sequence)."""
+    rows = [_rrow(i, 0.97, 1.0, 1, threshold=0.9) for i in range(500)]
+    rows += [_rrow(500 + i, 0.87, 1.0, 1, threshold=0.9) for i in range(500)]
+    rows += [_rrow(1000 + i, 0.77, 1.0, i % 2, threshold=0.9) for i in range(500)]
+    sug = replay.suggest(rows, 0.97)
+    assert sug is not None and sug["threshold"] == 0.80 and sug["lower"] >= 0.97
+    assert sug["advisory"] == "approximate interval, not a certificate; thresholds change only through Night School"
+    assert replay.at(rows, 0.75)["interval"][0] < 0.97  # where the scan stopped
+    # Every row here was labelled (audit rate 1 as logged), so serving more saves nothing; at a 10% audit rate it does.
+    assert replay.money_left_on_table(rows, 0.9, sug)["usd"] == pytest.approx(0.0)
+    money = replay.money_left_on_table(rows, 0.9, sug, audit_rate=0.1)
+    assert money is not None and money["threshold"] == 0.80 and money["current_threshold"] == 0.9
+    at8, at9 = replay.at(rows, 0.8, 0.1), replay.at(rows, 0.9, 0.1)
+    assert money["savings"] == pytest.approx(at8["savings"] - at9["savings"])
+    assert money["usd"] == pytest.approx(at9["cost_usd"] - at8["cost_usd"]) and money["savings"] > 0 and money["usd"] > 0
+    assert replay.money_left_on_table(rows, 0.75, sug) is None  # the current threshold is already lower
+    few = [_rrow(i, 0.97, 1.0, 1) for i in range(5)] + rows[500:1000]  # 5 rows at 0.95 cannot pass 0.97
+    assert replay.at(few, 0.85)["interval"][0] >= 0.97 and replay.suggest(few, 0.97) is None
+    with pytest.raises(ValueError, match="target"):
+        replay.suggest(rows, 1.0)
+
+
+@pytest.mark.req("FR-16.5")
+def test_ratio_estimate_recovers_the_cost_ratio():
+    """The calibrated baseline: on audited served answers, what the teacher really cost is 1.3 times the formula's
+    estimate (noise around it); the ratio estimator recovers 1.3 within 3 standard errors, also weighted by 1 / label_p
+    from mixed audit rates, and stays at 1.0 ('insufficient') below 30 audited answers."""
+    rng = random.Random(5)
+    pairs = []
+    for _ in range(400):
+        x = rng.uniform(0.001, 0.01)
+        pairs.append((x, 1.3 * x * rng.uniform(0.9, 1.1)))
+    est = stats.ratio_estimate(pairs)
+    assert est["status"] == "ok" and abs(est["ratio"] - 1.3) <= 3 * est["se"] and abs(est["ratio"] - 1.3) < 0.01
+    rows = [_rrow(i, 0.9, 0.05 if i % 2 else 0.5, 1, teacher=y, estimate=x, audited=True) for i, (x, y) in enumerate(pairs)]
+    rows += [_rrow(400 + i, 0.4, 1.0, 1, teacher=1.0, estimate=0.001) for i in range(50)]  # escalations: not in R
+    cal = replay.ratio(rows)
+    assert cal["status"] == "ok" and cal["n"] == 400 and abs(cal["R"] - 1.3) <= 3 * cal["se"]
+    assert cal["interval"][0] < 1.3 < cal["interval"][1]
+    # A served answer nobody audited is priced at R times its estimate.
+    lone = [*rows, _rrow(999, 0.9, 0.05, estimate=0.002)]
+    assert replay.at(lone, 1.01)["baseline_usd"] == pytest.approx(replay.at(rows, 1.01)["baseline_usd"] + 0.002 * cal["R"])
+    small = replay.ratio(rows[:29])
+    assert (small["status"], small["R"], small["se"], small["interval"]) == ("insufficient", 1.0, None, None)

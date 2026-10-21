@@ -17,6 +17,24 @@ def sim(*argv):
     return run(args)
 
 
+def sim_kept(*argv):
+    """`sim`, and the run's ledger (its BOMs and committed leaves are read back)."""
+    import sim.simulate as simulate
+    from ratchet.ledger import Ledger
+
+    made: list[Ledger] = []
+
+    class Kept(Ledger):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(simulate, "Ledger", Kept)
+        res = sim(*argv)
+    return res, made[0]
+
+
 @pytest.mark.req("US-2", "US-3", "US-4", "US-9", "FR-2.4", "FR-2.5", "FR-9.2")
 def test_loop_learns_and_saves_money():
     res = sim("--days", "6", "--requests", "1500", "--drift-day", "0")
@@ -35,9 +53,15 @@ BAD_DEPLOY = ("--days", "6", "--requests", "1500", "--drift-day", "0", "--bad-de
 
 
 @pytest.fixture(scope="module")
-def bad_deploy() -> dict:
-    """The corrupted-v3 run under each canary rule (the same seed), shared by the tests below: about 4 s each."""
-    return {rule: sim(*BAD_DEPLOY, "--release", rule) for rule in ("wilson", "sequential")}
+def bad_deploy_runs() -> dict:
+    """The corrupted-v3 run under each canary rule (the same seed) and its ledger, shared by the tests below: about 4 s
+    each."""
+    return {rule: sim_kept(*BAD_DEPLOY, "--release", rule) for rule in ("wilson", "sequential")}
+
+
+@pytest.fixture(scope="module")
+def bad_deploy(bad_deploy_runs) -> dict:
+    return {rule: res for rule, (res, _) in bad_deploy_runs.items()}
 
 
 @pytest.mark.req("FR-9.3", "US-6")
@@ -68,6 +92,83 @@ def test_sequential_gate_reduces_bad_deploy_exposure(bad_deploy):
     (detail,) = [e["detail"] for e in sequential["events"] if e["kind"] == "rollback"]
     assert detail.startswith("v3 rolled back: ") and "e-value" in detail and "95% CS [" in detail
     assert not any(e["kind"] == "inconclusive" for e in wilson["events"])
+
+
+@pytest.mark.req("INV-3", "INV-6", "FR-16.4")
+def test_every_version_proves_its_golden_rows_were_never_trained_on(bad_deploy_runs):
+    """INV-3 machine-checked over six simulated days with a corrupted deploy: for every version, the committed leaves
+    rebuild the roots its BOM signs, and every golden key has a proof of absence from that version's signed training
+    root (simulation, mock models)."""
+    from ratchet import bom, merkle, proof
+
+    res, led = bad_deploy_runs["wilson"]
+    versions = led.versions()
+    assert len(versions) == len(res["versions"]) >= 3 and {v.state for v in versions} & {"rolled_back", "live"}
+    for v in versions:
+        doc = led.version_bom(v.id)
+        train = merkle.KeySet(led.version_leaves(v.id, "train"))
+        golden = merkle.KeySet(led.version_leaves(v.id, "golden"))
+        assert (train.root_hex, train.size) == tuple(bom.commitment(doc["manifest"], "train")[k] for k in ("root", "size"))
+        assert (golden.root_hex, golden.size) == tuple(bom.commitment(doc["manifest"], "golden")[k] for k in ("root", "size"))
+        assert golden.size == doc["manifest"]["golden"]["examples"] > 0 and train.size == v.train_examples
+        assert not set(train.keys()) & set(golden.keys())  # brute force
+        cert = {
+            "golden": {"leaves": [[k.hex(), val.hex()] for k, val in golden.items()]},
+            "proofs": {k.hex(): train.prove(k) for k in golden.keys()},
+        }
+        ok, lines = proof.verify_heldout(cert, doc)  # from the signed roots alone
+        assert ok, (v.id, lines)
+
+
+@pytest.mark.req("FR-16.5", "FR-6.5")
+def test_replay_reproduces_each_versions_logged_coverage_and_audits(bad_deploy_runs):
+    """The ledger replay over six simulated days with a corrupted deploy (simulation, mock models): for every version,
+    replaying each request at the threshold it was logged with serves exactly the requests the student served, every
+    group of requests logged at one threshold reproduces its coverage at that threshold, and the replayed precision is
+    the audited precision the release gate counted, inside its interval. Nothing was left out."""
+    from ratchet import replay
+
+    _, led = bad_deploy_runs["wilson"]
+    checked = 0
+    for v in led.versions():
+        h = replay.load(led, v.id)
+        assert h.excluded == {"before_logging": 0, "no_student_answer": 0, "pinned_now": 0, "malformed": 0}
+        if not h.rows:
+            continue
+        served = [r for r in h.rows if r.route == "student"]
+        actual = replay.at(h.rows)
+        assert actual["served"] == len(served) and actual["coverage"] == len(served) / len(h.rows)
+        for t in {r.threshold for r in h.rows}:
+            group = [r for r in h.rows if r.threshold == t]
+            assert replay.at(group, t)["served"] == sum(1 for r in group if r.route == "student"), (v.id, t)
+        n, s = led.audit_counts(v.id)
+        assert actual["labelled"] == n > 0 and actual["precision"] == pytest.approx(s / n, abs=1e-12)
+        assert actual["interval"][0] <= s / n <= actual["interval"][1]
+        checked += 1
+    assert checked >= 2  # the live version and the rolled-back v3
+
+
+@pytest.mark.req("FR-16.5", "FR-6.4", "INV-15")
+def test_label_p_and_student_agree_follow_the_design(bad_deploy_runs):
+    """Over the same run: `label_p` is the audit rate on every answer the student served and 1.0 on every escalation
+    with a valid student answer; `student_agree` equals `audit_agree` on audited rows, is set on escalations the teacher
+    answered, and never on a served row where only a shadow arbitration called the teacher (not a random draw)."""
+    _, led = bad_deploy_runs["wilson"]
+    rows = [dict(r) for r in led.db.execute("SELECT * FROM requests WHERE student_version IS NOT NULL")]
+    arbitrated = 0
+    for r in rows:
+        if r["route"] == "student":
+            assert r["label_p"] == 0.10 and r["threshold"] is not None and r["confidence"] >= r["threshold"]
+            if r["audited"]:
+                assert r["student_agree"] == r["audit_agree"] is not None
+            else:
+                assert r["student_agree"] is None
+                arbitrated += r["teacher_cost_usd"] > 0  # the teacher ran for the shadow's disagreement only
+        else:
+            assert r["route"] == "confidence" and r["label_p"] == 1.0 and r["confidence"] < r["threshold"]
+            assert (r["student_agree"] is not None) == (r["confidence"] > 0)  # the mock teacher's answers are valid
+        assert r["baseline_est_usd"] > 0
+    assert arbitrated > 0 and sum(r["route"] == "confidence" for r in rows) > 0
 
 
 @pytest.mark.req("FR-9.1")
@@ -151,20 +252,7 @@ CERT_RUN = ("--days", "3", "--requests", "700", "--drift-day", "0")
 @pytest.fixture(scope="module")
 def cert_run():
     """A short run and its ledger (its BOMs are read back), shared by the tests below: about 1 s."""
-    import sim.simulate as simulate
-    from ratchet.ledger import Ledger
-
-    made: list[Ledger] = []
-
-    class Kept(Ledger):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            made.append(self)
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(simulate, "Ledger", Kept)
-        res = sim(*CERT_RUN)
-    return res, made[0]
+    return sim_kept(*CERT_RUN)
 
 
 @pytest.mark.req("FR-16.3", "INV-14")
@@ -263,6 +351,48 @@ def test_gateway_openai_shape_and_demo_flow(client):
     assert stats["totals"]["requests"] == 401
     assert c.post("/ratchet/demo/break-next").json()["corrupt"].startswith("student-v")
     assert c.post("/ratchet/demo/reset").json() == {"status": "reset"}
+
+
+@pytest.mark.req("FR-16.5", "NFR-11")
+def test_replay_endpoints_on_the_mock_gateway(gw_env):
+    """GET /ratchet/replay and /ratchet/replay/frontier on the mock gateway after two simulated days: one version at a
+    time (the live one by default, else named), what happened next to the counterfactual, the calibrated baseline, the
+    frontier with its advisory suggestion, labelled as simulation, finite JSON. Bad parameters are 400s."""
+    gw = gw_env()
+    c = TestClient(gw.app)
+    assert c.get("/ratchet/replay").status_code == 400  # cold start: no live version
+    for _ in range(2):
+        assert c.post("/ratchet/demo/day?requests=300").status_code == 200
+    (canary,) = gw.rt.ledger.versions(["canary"])  # the first student is in its canary stage, so there is no live one
+    assert gw.rt.ledger.live() is None and c.get("/ratchet/replay").json()["detail"].startswith("no live version")
+    live = canary
+    r = c.get(f"/ratchet/replay?version={live.id}")
+    assert r.status_code == 200
+    body = json.loads(r.text, parse_constant=lambda x: pytest.fail(f"non-finite JSON number {x}"))
+    assert body["version"] == live.id and body["state"] == "canary" and body["label"] == "simulation (mock models)"
+    assert body["n"] > 0 and body["excluded"] == 0 and body["cost_model"] == "per_token"
+    assert body["current_threshold"] == gw.rt.ratchet.threshold(live) == body["counterfactual"]["threshold"]
+    assert body["actual"]["threshold"] is None and 0 < body["actual"]["coverage"] <= 1
+    assert body["calibrated_baseline"]["method"].startswith("ratio estimator")
+    low = c.get(f"/ratchet/replay?version={live.id}&threshold=0.4&audit_rate=0&since_day=1&until_day=9").json()
+    assert low["counterfactual"]["threshold"] == 0.4 and low["counterfactual"]["audit_rate"] == 0.0
+    assert low["counterfactual"]["coverage"] >= body["counterfactual"]["coverage"]
+    f = c.get(f"/ratchet/replay/frontier?version={live.id}&target=0.9").json()
+    assert f["version"] == live.id and f["target"] == 0.9 and len(f["rows"]) == 71
+    assert [row["threshold"] for row in f["rows"]][:3] == [0.3, 0.31, 0.32] and f["label"] == "simulation (mock models)"
+    assert f["suggested"] is None or f["suggested"]["advisory"].startswith("approximate interval, not a certificate")
+    v = f"version={live.id}"
+    for query, status in (
+        (f"{v}&threshold=0", 400),
+        (f"{v}&threshold=1.5", 400),
+        (f"{v}&audit_rate=2", 400),
+        (f"{v}&since_day=3&until_day=2", 400),
+        (f"{v}&since_day=-1", 400),
+        ("version=all", 400),
+        ("version=99999", 404),
+    ):
+        assert c.get(f"/ratchet/replay?{query}").status_code == status, query
+    assert c.get(f"/ratchet/replay/frontier?version={live.id}&target=1").status_code == 400
 
 
 @pytest.mark.req("FR-1.5", "FR-1.6")

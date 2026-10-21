@@ -4,6 +4,7 @@
     python -m sim.simulate --workload research   # Scout's triage + read calls
     python -m sim.simulate --bad-deploy-version 3 --compare-release   # Wilson vs the anytime-valid gate, same seed
     python -m sim.simulate --calibration ltt --paired-gate   # certified thresholds and the paired gate (ADR 0026)
+    python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # replay the run's ledger (ADR 0028)
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -256,6 +257,11 @@ def parser() -> argparse.ArgumentParser:
         help="run twice with the same seed, once per --release rule, and compare the rolled-back versions",
     )
     ap.add_argument("--out", default="sim_results.json")
+    ap.add_argument(
+        "--db",
+        default=None,
+        help="write the run's ledger to this SQLite file (it must not exist yet), e.g. for python -m ratchet.replay",
+    )
     return ap
 
 
@@ -273,16 +279,25 @@ def main(argv: list[str] | None = None) -> None:
             ap.error(f"{flag} must be strictly between 0 and 1, not {value}")
     if not 0 <= args.min_certified <= 1:
         ap.error(f"--min-certified must be from 0 to 1, not {args.min_certified}")
+    if args.db is not None:
+        if args.compare_release:
+            ap.error("--db holds one run's ledger; it cannot be used with --compare-release (two runs)")
+        if args.db == ":memory:":
+            ap.error("--db names a file; without --db the run's ledger stays in memory")
+        if Path(args.db).exists():
+            ap.error(f"--db {args.db} exists already; name a new file so two runs never share a ledger")
     if args.compare_release:
         results = compare_release(args)
         print(compare_table(results))
         Path(args.out).write_text(json.dumps(results, indent=2, default=str))
         print(f"\nwrote {args.out}")
         return
-    res = run(args)
+    res = run(args, db=args.db or ":memory:")
     print(table(res))
     Path(args.out).write_text(json.dumps(res, indent=2, default=str))
     print(f"\nwrote {args.out}")
+    if args.db is not None:
+        print(f"wrote the ledger to {args.db} (simulation, mock models); replay it: python -m ratchet.replay --db {args.db}")
 
 
 if __name__ == "__main__":

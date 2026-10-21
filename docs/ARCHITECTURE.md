@@ -53,6 +53,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/nightschool/dataset.py` | Builds train and golden sets from the ledger |
 | `ratchet/nightschool/train.py` | LoRA fine-tune script, run inside the Serverless Job |
 | `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold (point rule or Learn-then-Test), and the certificate |
+| `ratchet/replay.py` | The ledger time machine ([§7](#calibrated-baseline-and-the-ledger-replay-replaypy), [ADR 0028](adr/0028-designed-propensity-replay.md)): one version's logged traffic replayed at another threshold or audit rate (`load`, `at`, `sweep`, `frontier`), Hajek precision weighted by 1 / `label_p`, the calibrated baseline (`ratio`), the advisory `suggest`, CLI |
 | `ratchet/certificate.py` | Certified precision ([§6](#certified-precision-ratchetcertificatepy), [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)): the Clopper–Pearson certificate, the frontier, per-task bounds, the per-row outcomes, the paired comparison and `recheck()` (what `python -m ratchet.stats check` runs); standard library and `stats` only |
 | `ratchet/nightschool/orchestrate.py` | `run_night()`: one night of training and release; `paired_evidence()` (the candidate against the re-scored live version) |
 | `ratchet/live.py` | Live Night School on Nebius (`NebiusTrainer`, `load_adapter`, CLI) and the gateway's `AdapterReloader` |
@@ -125,7 +126,7 @@ Details that matter:
 4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data. A teacher answer that cannot be stored ([below](#storage-rules)) is not an audit: `audited=0`.
 5. **Teacher calls** (`_call_teacher` → `_ask_teacher`, then `_store_example`): the teacher answer is cleaned (`tasks.clean_answer`), checked against the [storage rules](#storage-rules), the messages, the answer and the stored conditions are redacted ([PII redaction](#pii-redaction)), and they are stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url, redactions, params)`. The license comes from `Ratchet.licenses`, built when `Ratchet` is constructed with `licenses.require_distillable` for the teacher and the fallback teacher (if set), and looked up by the configured model that wrote the answer. A closed teacher raises `LicenseError` at startup.
 6. **Shadow**: see [state machine](#5-version-state-machine). The shadow candidate never serves.
-7. **Logging**: one row in `requests` per call (columns below), with the API client's name when keys are on.
+7. **Logging**: one row in `requests` per call (columns below), with the API client's name when keys are on, and what the ledger replay reads ([ADR 0028](adr/0028-designed-propensity-replay.md)): the threshold the student's answer was held to, `label_p` (the audit rate it was drawn at when served, 1.0 when it escalated), `student_agree` (from the escalation's or a random audit's primary-teacher answer, never from an arbitration, and from an escalation only when the teacher answered it under an audit's conditions: one choice at temperature 0, without the client's sampling parameters) and `baseline_est_usd` (the formula's all-teacher cost). Logging only: no extra model call and no random draw.
 8. **Gate tick**: the gateway calls `rt.tick()` (which runs `gate.tick()` under a lock) after every `/v1/chat/completions` request and after every Scout run. In live mode, `python -m ratchet.live tick` can also be run from cron.
 
 **Generation parameters** ([ADR 0017](adr/0017-generation-parameters-by-role.md)). `Settings.gen_policy()` (`providers.GenPolicy`) turns the client's parameters into a `GenPlan` once per request (a request without any, from Scout or the simulator, reuses one built at startup): the student's (`RATCHET_STUDENT_PARAMS`: `max_tokens`, `stop`, `seed`, `response_format`, `logit_bias`, `top_logprobs`; never its temperature, logprobs or `n`), the serving teacher's (`RATCHET_TEACHER_PARAMS`: every standard field but the tool-call fields, which the gateway cannot return yet, at the client's temperature or 0, or 0.7 for `n` > 1 choices; `logprobs` and `top_logprobs` only when the client sends them) and the audit's and arbitration's (the same at temperature 0, without `top_p`, `seed`, the penalties, `logit_bias` and logprobs). Every call has an output cap: `RATCHET_STUDENT_MAX_TOKENS` (1,024) and `RATCHET_TEACHER_MAX_TOKENS` (8,192), and the teacher gets `RATCHET_TEACHER_REASONING_HEADROOM` (0) tokens above the client's `max_tokens` for reasoning; when it does, a visible answer longer than the client's limit is marked `length` (served whole, not stored). The model is never the client's: always `Settings.teacher_model` or the version's adapter. The golden eval builds its student calls with the same policy from the conditions stored with each example (FR-5.1). `Result.finish_reason` is the served answer's, and the gateway returns it (never `tool_calls`: a teacher answer that is a tool call is a 502 `tool_calls_unsupported` until tool calls are passed through).
@@ -225,18 +226,21 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
  │                                       version first when a golden task's spec changed: "rescored"), stop
  │     no golden rows ────────────────────────────────────────────▶ event "skip", stop
  ├─ champion re-check: evaluate the LIVE version on today's golden set, overwrite its eval (+ spec_hashes)
+ ├─ dataset.commitment(train_rows), dataset.commitment(golden_rows): root, size and sorted leaves of each
+ │     split's set commitment (a duplicate key stops the night here, before any GPU time)
  ├─ trainer.train(train_rows, base_model, name="student-v{N+1}") → adapter_uri
  ├─ ledger.create_version(state="candidate")
+ ├─ ledger.set_version_leaves(): the train and golden leaves, written once (append-only, INV-17)
  ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, certificate, ...} + spec_hashes
  ├─ live version? paired_evidence(): the candidate's test vector vs the re-check's → eval["paired"]
  ├─ ledger.update_eval(), then ledger.set_bom(): bill of materials from the exact train and golden rows,
- │     with the eval (certificate, frontier, paired counts), signed if a key is set
+ │     with the eval (certificate, frontier, paired counts) and both set commitments, signed if a key is set
  ├─ event "trained"
  └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow
 ```
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
-- **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it.
+- **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it. After a night that trained, `python -m ratchet.live night` writes the BOM to `boms/student-vN.json` and into the adapter's folder (`adapters/<name>/ratchet_bom.json`) and runs `RATCHET_SYNC_CMD` again (`live.write_boms`), so the bucket's copy of the adapter carries its provenance.
 
 ### Datasets (`nightschool/dataset.py`)
 
@@ -277,8 +281,10 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `client` | TEXT | API key name that sent the request; NULL when keys are off and for internal calls (Scout, demo). Indexed with `ts` for the daily quota |
 | `route` | TEXT | How the request was served (`router.ROUTES`): `student`, `confidence`, `cold_start`, `pinned`, `student_error`, `student_breaker`, `degraded`, `fallback_teacher` ([API.md](API.md#get-ratchetstats)). NULL in rows written before v0.5; `stats_by_task` reports those as `unrecorded` |
 | `stored` | INTEGER | 1 if a teacher answer from this request was stored as an example (inserted, or a duplicate's `seen` bumped); 0 if none was (student-served without audit, pinned, or a skipped answer, see [Storage rules](#storage-rules)); NULL in rows written before v0.5 |
-| `label_p` | REAL | The designed probability that a teacher label of the student's answer is observed: the audit rate this request was drawn at when the student served (`RATCHET_CANARY_AUDIT_RATE` for a canary when set, else `RATCHET_AUDIT_RATE`), 1.0 when the student answered and the request escalated, NULL without a student answer (cold start, a failed or skipped student call, pinned) and in rows written before v0.5 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)); the ledger replay (FR-16.5) weights by it |
-| `threshold`, `student_agree`, `baseline_est_usd` | REAL, INTEGER, REAL | For the ledger replay (FR-16.5): the threshold the student was held to, whether its answer agreed with the escalation's or a random audit's teacher answer, and the all-teacher cost by the token formula. NULL until that feature writes them ([ADR 0024](adr/0024-evidence-foundations.md)) |
+| `label_p` | REAL | The designed probability that a teacher label of the student's answer is observed: the audit rate this request was drawn at when the student served (`RATCHET_CANARY_AUDIT_RATE` for a canary when set, else `RATCHET_AUDIT_RATE`), 1.0 when the student answered and the request escalated, NULL without a student answer (cold start, a failed or skipped student call, pinned) and in rows written before v0.5 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)); the ledger replay weights by 1 / `label_p` ([ADR 0028](adr/0028-designed-propensity-replay.md)) |
+| `threshold` | REAL | The threshold the student's answer was compared with (`Ratchet.threshold`: the version's, the global one for the hosted fallback model, 1.01 for a task whose spec changed). NULL when the student did not answer (no version, a failed call, an open breaker, pinned) and in older rows (FR-16.5) |
+| `student_agree` | INTEGER | 1/0: whether the student's answer agreed with the primary teacher's valid answer from this request's escalation or random audit (equal to `audit_agree` on audited rows). NULL when no such label exists: a served answer nobody audited, an arbitration (not a random draw), a fallback-teacher or degraded answer, an invalid student or teacher answer, an escalation the teacher answered under the client's sampling parameters or for n > 1 choices (not the audit's deterministic answer), no student answer, older rows (FR-16.5) |
+| `baseline_est_usd` | REAL | The all-teacher cost by the token formula (the student's prompt tokens, each choice's output tokens plus `RATCHET_TEACHER_REASONING_TOKENS`, at the teacher's price) for every student answer, also when the teacher was called; equal to `baseline_cost_usd` when the student served without a teacher call. The replay calibrates it on audited rows ([§7](#calibrated-baseline-and-the-ledger-replay-replaypy)). NULL without a student answer and in older rows |
 | `optional_failed` | INTEGER | 1 when an optional teacher call of the request (audit, arbitration) failed; NULL until live readiness writes it |
 
 ### `examples`: teacher-written training data with provenance
@@ -325,7 +331,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### Evidence tables
 
-Created by `SCHEMA` for the evidence features, so later items change no migration; nothing writes them yet ([ADR 0024](adr/0024-evidence-foundations.md)).
+Created by `SCHEMA` for the evidence features, so later items change no migration ([ADR 0024](adr/0024-evidence-foundations.md)). `version_leaves` is written by committed training sets (FR-16.4, [ADR 0027](adr/0027-committed-training-sets.md)): `run_night` writes each new version's leaves once, right after `create_version`; nothing writes the other tables yet.
 
 | Table | Columns | Feature |
 |---|---|---|
@@ -344,7 +350,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `integrity`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -541,10 +547,40 @@ The recommendation (`_recommend`): `self_host` when observed ≥ break-even and 
 
 Worked example with unverified list prices: an L40S at $1.55 per hour and about $0.001 of Ultra spend avoided per ticket-triage answer (the simulation) give a break-even of about 1,500 student answers per endpoint hour, roughly 36,000 a day. A 24/7 endpoint at the demo's 1,500 requests a day loses money; the report says `hosted_fallback`. At about 14,000 student answers an hour (10M requests a month) the endpoint beats the teacher by a wide margin, and the report still says `hosted_fallback`, because per answer the hosted Nano (about $0.00003 with the simulation's token counts) is cheaper below roughly 52,000 an hour, if it serves as many requests.
 
+### Calibrated baseline and the ledger replay (`replay.py`)
+
+The baseline of a request the student served is an estimate: it assumes the teacher would have written `RATCHET_TEACHER_REASONING_TOKENS` (300) reasoning tokens. Audits measure it. On audited answers the student served, `requests.baseline_cost_usd` is what the teacher's audit really cost and `baseline_est_usd` the formula's estimate for the same request; the ratio estimator ([ADR 0028](adr/0028-designed-propensity-replay.md)) gives
+
+```
+R  = Σ w·y / Σ w·x        x = baseline_est_usd, y = baseline_cost_usd, w = 1 / label_p (audited served answers)
+se = sqrt(s² / n_eff) / x̄  s² = Σ w (y − R x)² / Σ w · n / (n − 1)  (equal weights: sqrt(Σ (y − R x)² / (n (n − 1))) / x̄)
+```
+
+with R = 1 (`insufficient`) below 30 audited answers. `GET /ratchet/replay` reports it as `calibrated_baseline`. It does not change any stored baseline or `/ratchet/stats` figure; the replay prices unaudited served answers at R × `baseline_est_usd`, and the savings receipts (FR-15.5) use the same estimator.
+
+The replay prices a version's logged traffic at threshold t and audit rate a as Σ s_i + Σ over c < t of T_i + a × Σ over c ≥ t of T_i, with s_i the logged `student_cost_usd` and T_i the request's all-teacher cost (`baseline_cost_usd` when the teacher answered the escalation or an audit, else R × `baseline_est_usd`); the baseline is Σ T_i. Precision at t is Hajek's weighted mean of `student_agree` with weights 1 / `label_p`, null without positivity (a served row with `label_p` 0); its interval is approximate (Wilson at Kish's n_eff). Coverage is exact. A request that escalated in fact is priced at the version's mean logged audit rate when it would be served. One version at a time: confidence scales differ between versions. Like every figure here it is the per-token view.
+
 ## 8. Provenance
 
 - `GET /ratchet/bom` returns `Ledger.bill_of_materials()`: counts grouped by teacher, license, license URL and split, plus `examples_sha256` (a SHA-256 over all example hashes in sorted order).
-- **Per adapter** ([ADR 0010](adr/0010-signed-adapter-bom.md)): after training and evaluation, `run_night` builds a `ratchet.bom/v2` manifest ([ADR 0024](adr/0024-evidence-foundations.md)) from the exact rows used: sources (teacher, license, URL, count, `distill_ok`), tasks, `dataset_sha256`, a hash of the golden rows, the evaluation, the number of redacted examples, `training.origins` (rows by where they came from) and `redactor` (a SHA-256 over the redaction rules and whether redaction was on). Optional v2 sections come with later features: a set commitment per split (`training.commitment`, `golden.commitment`: `{alg: ratchet.smt/v1, root, size}`, a `merkle.KeySet` root) and `teacher`, `backfill_jobs`, `erasures_honored`. Stored v1 documents stay as they are and still verify. `bom.document()` adds the SHA-256 of the canonical JSON and, when `RATCHET_BOM_SIGNING_KEY` is set, an Ed25519 signature with the public key and key id. It is stored in `versions.bom`, served at `/ratchet/versions/{id}/bom`, and in live mode written to `data/boms/student-vN.json`. `python -m ratchet.bom verify` checks it offline.
+- **Per adapter** ([ADR 0010](adr/0010-signed-adapter-bom.md)): after training and evaluation, `run_night` builds a `ratchet.bom/v2` manifest ([ADR 0024](adr/0024-evidence-foundations.md)) from the exact rows used: sources (teacher, license, URL, count, `distill_ok`), tasks, `dataset_sha256`, a hash of the golden rows, the evaluation, the number of redacted examples, `training.origins` (rows by where they came from), `redactor` (a SHA-256 over the redaction rules and whether redaction was on) and a set commitment per split (below). Optional v2 sections come with later features: `teacher`, `backfill_jobs`, `erasures_honored`. Stored v1 documents stay as they are and still verify. `bom.document()` adds the SHA-256 of the canonical JSON and, when `RATCHET_BOM_SIGNING_KEY` is set, an Ed25519 signature with the public key and key id. It is stored in `versions.bom`, served at `/ratchet/versions/{id}/bom`, and in live mode written to `data/boms/student-vN.json` and into the adapter's folder (`data/adapters/<name>/ratchet_bom.json`), both uploaded by `RATCHET_SYNC_CMD`. `python -m ratchet.bom verify` checks it offline.
+
+  The v2 manifest, abridged (every v1 field is still there):
+
+  ```
+  schema: ratchet.bom/v2
+  adapter: {version, name, base_model, day}
+  training: {examples, dataset_sha256, tasks, targets, examples_with_pii_redacted, origins,
+             commitment: {alg: ratchet.smt/v1, root, size}}
+  golden: {examples, sha256, held_out, commitment: {alg: ratchet.smt/v1, root, size}}
+  sources: [{teacher, license, license_url, distill_ok, examples}]
+  redactor: {sha256, rules, redact_pii}
+  eval: {..., certificate, frontier, per_task, test_vector, paired}
+  teacher | backfill_jobs | erasures_honored: later features, optional
+  ```
+- **Committed training sets** (FR-16.4, [ADR 0027](adr/0027-committed-training-sets.md)). Each split's `commitment` is the root of a `merkle.KeySet` (a collapsed sparse Merkle tree) over the rows the trainer and the golden eval were handed: key = the example hash (`examples.hash`), value = `dataset.leaf_value(row)`, the SHA-256 of the canonical JSON of `{completion, teacher, license, redactions}`. `dataset.commitment(rows)` builds it before training; `Ledger.set_version_leaves` writes the sorted leaves once, right after `create_version` (append-only, INV-17; `version_leaves(vid, split)` reads them back, `versions_containing(key)` lists the versions trained on an example, on the `version_leaves_key` index); `bom.manifest(commitments=)` signs root and size, and refuses a size that is not the split's row count.
+  - `POST /ratchet/versions/{id}/proof` (admin key) resolves the example key from `{"key"}` or from the chat request itself, validated, normalised and redacted as the gateway stores it (`proof.resolve_key`), and returns a membership or non-membership proof from a cached `KeySet` (`gateway._keyset`: per runtime, the last 8 trees, each cached only when it rebuilds the root and size the BOM signs, else a 500 and one `integrity` event). `GET /ratchet/versions/{id}/heldout` (admin key) returns the golden leaves and every golden key's proof of absence from the training root. Mock mode adds `GET /ratchet/demo/sample-example`, a committed example's prompt.
+  - `python -m ratchet.proof verify|heldout|key` checks a proof or certificate against the root the BOM signs (never the file's own claims), with the BOM's signature, from the files alone (exit 0, 1 on a failed check, 2 on bad input). Non-membership is sound even against the operator who built the tree; a sorted-list tree would not be (ADR 0027). A proof shows the operator's signed commitment to the dataset at training time, not that the weights came from it.
 - `train.py` writes `ratchet_manifest.json` next to each adapter, listing the base model, example count and the (teacher, license) pairs.
 - `licenses.require_distillable()` refuses unknown teachers and any model whose ID (after the last `/`) starts with `gpt`, `o1`, `o3`, `o4`, `claude` or `gemini`.
 
