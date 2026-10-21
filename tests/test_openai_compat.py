@@ -18,7 +18,7 @@ from typing import Any
 import anyio
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, ToolCallingServer, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
@@ -558,10 +558,11 @@ def test_developer_role_reaches_the_teacher_as_system(gw_env):
     assert teacher.calls[0].messages == [{"role": "system", "content": "Reply with JSON.\n\nBe brief."}, *HI]
 
 
-@pytest.mark.req("FR-1.10", "INV-12")
-def test_dropped_keys_and_redacted_tool_calls_end_to_end(gw_env):
-    """Keys a message's role does not use reach neither the teacher nor the ledger. A tool call's arguments reach the
-    teacher as sent and are stored redacted, like content."""
+@pytest.mark.req("FR-1.10", "INV-12", "FR-1.41")
+def test_dropped_keys_reach_neither_the_teacher_nor_the_ledger(gw_env):
+    """Keys a message's role does not use reach neither the teacher nor the ledger. A conversation that carries tool
+    calls and results is a tool request (FR-1.41): its tool call's arguments reach the teacher as sent, and nothing of
+    it is stored (redact_messages covers stored tool calls: tests/test_tools.py)."""
     gw = _gateway(gw_env)
     teacher = gw.rt.ratchet.teacher = RecordingProvider(A)
     call = {"id": "c1", "type": "function", "function": {"name": "lookup", "arguments": '{"email": "bob@example.com"}'}}
@@ -570,13 +571,13 @@ def test_dropped_keys_and_redacted_tool_calls_end_to_end(gw_env):
         {"role": "assistant", "content": None, "tool_calls": [{**call, "index": 0}], "annotations": []},
         {"role": "tool", "tool_call_id": "c1", "content": "Order 7 ships today."},
     ]
-    assert TestClient(gw.app).post(CHAT, json={"messages": msgs}).status_code == 200
+    r = TestClient(gw.app).post(CHAT, json={"messages": msgs})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
     sent = [{"role": "user", "content": "Find my order."}, {"role": "assistant", "content": None, "tool_calls": [call]}, msgs[2]]
     assert teacher.calls[0].messages == sent
-    (example,) = gw.rt.ledger.examples()
-    stored = json.loads(example["messages"])
-    assert stored[1]["tool_calls"][0]["function"]["arguments"] == '{"email": "[EMAIL]"}'
-    assert "vendor_note" not in example["messages"] and "7946" not in example["messages"] and example["redactions"] == 1
+    assert gw.rt.ledger.examples() == []
+    (row,) = [dict(x) for x in gw.rt.ledger.db.execute("SELECT route, stored, uses_tools FROM requests")]
+    assert row == {"route": "tools", "stored": 0, "uses_tools": 1}
 
 
 @pytest.mark.req("FR-1.1", "FR-1.10", "US-1")
@@ -781,13 +782,13 @@ def test_a_cut_off_teacher_answer_reaches_the_client_as_length(gw_env, tmp_path,
 WEATHER = [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}]
 
 
-@pytest.mark.req("FR-1.13", "FR-1.1", "FR-1.6")
-def test_finish_reason_is_never_tool_calls_without_tool_calls(gw_env, tmp_path, monkeypatch):
-    """Ratchet does not return `message.tool_calls` yet, so no response may say `finish_reason: "tool_calls"`: the OpenAI
-    SDK reads that as "the calls are in the message", and the usual agent loop over `message.tool_calls` (None) raises.
-    By default `tools` reach neither model, as in v0.4. A teacher that calls a tool anyway (an operator allowed `tools`)
-    is a 502 `tool_calls_unsupported` with nothing stored; a student sample that ended in a tool call is reported as
-    `stop`."""
+@pytest.mark.req("FR-1.13", "FR-1.1", "FR-1.6", "FR-1.41")
+def test_finish_reason_is_tool_calls_only_with_tool_calls(gw_env, tmp_path, monkeypatch):
+    """A response says `finish_reason: "tool_calls"` only when its message has `tool_calls`: the OpenAI SDK reads that
+    finish as "the calls are in the message", and the usual agent loop over `message.tool_calls` (None) raises. A
+    request with tools goes to the teacher alone, tools included (FR-1.41); a teacher that answers it in prose, or says
+    `tool_calls` but sends none, is reported as `stop`, streamed or not. A request without tools whose teacher answers
+    with a tool call anyway is a 502 `tool_calls_unsupported`, with nothing stored."""
     gw = _gateway(gw_env)
     c = TestClient(gw.app)
     ask = {"messages": [{"role": "user", "content": "Weather in Paris?"}], "tools": WEATHER, "tool_choice": "auto"}
@@ -798,30 +799,33 @@ def test_finish_reason_is_never_tool_calls_without_tool_calls(gw_env, tmp_path, 
     teacher = FakeOpenAIServer("I cannot look up the weather.")
     rt, student = _gen_runtime(gw, tmp_path, teacher)
     monkeypatch.setattr(gw, "rt", rt)
-    _version(rt.ledger, "live", {"threshold": 0.99})
+    _version(rt.ledger, "live", {"threshold": 0.0})  # the student would serve anything it is asked
     r = c.post(CHAT, json=ask)
     assert r.status_code == 200 and r.json()["choices"][0]["finish_reason"] == "stop" and not claims_calls_it_lacks(r.json())
-    assert not [b for b in _bodies(teacher) + _bodies(student) if "tools" in b or "tool_choice" in b]
+    assert r.json()["ratchet"]["served_by"] == "teacher" and _bodies(student) == [] and rt.ledger.examples() == []
+    assert (_bodies(teacher)[0]["tools"], _bodies(teacher)[0]["tool_choice"]) == (WEATHER, "auto")
 
-    for teacher_params in ("", "all"):  # the default, and an operator who allows tools
-        teacher = FakeOpenAIServer("", finish_reason="tool_calls")
+    teacher = FakeOpenAIServer("", finish_reason="tool_calls")  # says tool_calls, sends none
+    rt, _ = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    r = c.post(CHAT, json=ask)
+    assert r.status_code == 200 and r.json()["choices"][0]["finish_reason"] == "stop" and not claims_calls_it_lacks(r.json())
+    finishes = [ch["finish_reason"] for e in _stream(c, ask) for ch in e["choices"] if ch["finish_reason"]]
+    assert finishes == ["stop"]
+
+    call = {"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+    for teacher_params in ("", "all"):
+        teacher = ToolCallingServer([call])
         rt, _ = _gen_runtime(gw, tmp_path, teacher, teacher_params=teacher_params)
         monkeypatch.setattr(gw, "rt", rt)
-        r = c.post(CHAT, json=ask)
+        r = c.post(CHAT, json={"messages": [{"role": "user", "content": "Weather in Paris?"}]})  # no tools: the cascade
         assert r.status_code == 502 and _error(r)["code"] == "tool_calls_unsupported"
         assert r.headers["x-should-retry"] == "false" and rt.ledger.examples() == []
-        with c.stream("POST", CHAT, json={**ask, "stream": True}) as resp:
+        with c.stream("POST", CHAT, json={"messages": HI, "stream": True}) as resp:
             assert resp.status_code == 502
-    assert _bodies(teacher)[0]["tools"] == WEATHER
-
-    teacher = FakeOpenAIServer(A)
-    rt, student = _gen_runtime(gw, tmp_path, teacher, student_params="all")
-    monkeypatch.setattr(gw, "rt", rt)
-    _version(rt.ledger, "live", {"threshold": 0.5})
-    student.finish_reason = "tool_calls"
-    r = c.post(CHAT, json=ask)
-    assert r.json()["ratchet"]["served_by"] == "student" and r.json()["choices"][0]["finish_reason"] == "stop"
-    assert not claims_calls_it_lacks(r.json()) and _bodies(student)[0]["tools"] == WEATHER
+        r = c.post(CHAT, json=ask)  # the same answer to a request with tools is the answer
+        assert r.json()["choices"][0]["message"]["tool_calls"] == [call]
+        assert r.json()["choices"][0]["finish_reason"] == "tool_calls"
 
 
 @pytest.mark.req("FR-1.13", "FR-2.13", "FR-9.2")

@@ -1663,7 +1663,7 @@ def test_demo_student_outage_opens_and_closes_the_breaker(gw_env, monkeypatch):
     assert any(e["kind"] == "circuit" for e in stats["events"])
 
 
-@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12", "FR-2.15")
+@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12", "FR-2.15", "FR-1.41")
 def test_every_request_row_has_a_route():
     clock = FakeClock()
     led = Ledger(":memory:")
@@ -1705,6 +1705,10 @@ def test_every_request_row_has_a_route():
     teacher.raise_on.clear()
     student.raise_on.add("student-v1")
     seen += [r.handle(_ask(f"down {i}"), TRIAGE).route for i in range(3)]
+    # A tool request and a part only the teacher reads go to the teacher alone, each with its own route (FR-1.41).
+    weather = [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}]
+    seen.append(r.handle(_ask("weather?"), TRIAGE, params=GenParams(tools=weather)).route)
+    seen.append(r.teacher_only(_ask("image"), TRIAGE, route="multimodal").route)
     assert seen == [
         "cold_start",
         "pinned",
@@ -1719,6 +1723,8 @@ def test_every_request_row_has_a_route():
         "student_error",
         "student_error",
         "student_breaker",
+        "tools",
+        "multimodal",
     ]
     assert set(seen) == set(ROUTES)
     assert led.db.execute("SELECT COUNT(*) FROM requests WHERE route IS NULL").fetchone()[0] == 0
@@ -1735,6 +1741,8 @@ def test_every_request_row_has_a_route():
             "student_breaker": 1,
             "n_choices": 1,
             "task_disabled": 1,
+            "tools": 1,
+            "multimodal": 1,
         },
         "research-plan": {"pinned": 1},
         "unregistered-task": {"unknown_task": 1},
@@ -2090,7 +2098,7 @@ def test_degraded_mode_never_hides_a_client_error_or_serves_an_invalid_answer():
     assert r.handle(_ask("down"), TRIAGE).route == "degraded"  # the baseline: an unavailable teacher degrades
     assert r.handle(_ask("down"), TRIAGE, params=GenParams(max_tokens=50)).route == "degraded"
     with pytest.raises(httpx.ConnectError):
-        r.handle(_ask("tools"), TRIAGE, params=GenParams(tools=TOOLS))  # the student never saw the tools
+        r.handle(_ask("tools"), TRIAGE, params=GenParams(tools=TOOLS))  # a tool request is teacher-only (FR-1.41)
     with pytest.raises(httpx.ConnectError):
         r.teacher_only(_ask("image"), TRIAGE)
 
