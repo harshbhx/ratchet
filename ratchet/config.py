@@ -177,6 +177,15 @@ DEFAULT_PRICES: dict[str, Price] = {
     # this per-token proxy uses the hosted Nano price, which is conservative.
     "student": Price(0.06, 0.24),
 }
+# Embeddings models the /v1/embeddings pass-through prices (FR-1.51): input tokens only. Kept apart from DEFAULT_PRICES,
+# whose models are teachers, judges and students with a license each; an embeddings model writes no training data.
+# Unverified until scripts/day1_check.py passes (INV-9), like every price here. A model with no price here is priced as
+# the teacher (`Settings.price`), which overstates its cost.
+EMBEDDING_PRICES: dict[str, Price] = {
+    "Qwen/Qwen3-Embedding-8B": Price(0.01, 0.0),
+}
+DEFAULT_EMBEDDINGS_MODEL = "Qwen/Qwen3-Embedding-8B"  # RATCHET_EMBEDDINGS_MODEL
+EMBEDDINGS_OFF = "off"  # RATCHET_EMBEDDINGS_BASE=off: /v1/embeddings answers 404 unsupported_endpoint
 
 
 @dataclass
@@ -311,6 +320,13 @@ class Settings:
     # Content part types besides text that the teacher accepts ("text,image_url"). Such requests go to the teacher
     # only and are never stored; any other non-text part is a 400.
     teacher_modalities: str = field(default_factory=lambda: _env("RATCHET_TEACHER_MODALITIES", "text"))
+    # The /v1/embeddings pass-through (FR-1.51, ADR 0050): the OpenAI-compatible base URL that embeds (empty = the
+    # teacher's, RATCHET_TEACHER_BASE; 'off' turns the endpoint off), the one model it always asks for, whatever a client
+    # names, and its API key (empty = NEBIUS_API_KEY). Nothing of an embeddings request is stored; mock mode embeds
+    # locally.
+    embeddings_base: str = field(default_factory=lambda: _env("RATCHET_EMBEDDINGS_BASE", ""))
+    embeddings_model: str = field(default_factory=lambda: _env("RATCHET_EMBEDDINGS_MODEL", DEFAULT_EMBEDDINGS_MODEL))
+    embeddings_api_key: str = field(default_factory=lambda: _env("RATCHET_EMBEDDINGS_KEY", ""))
 
     # Ed25519 private key (base64 of the 32-byte seed) that signs each adapter's bill of materials.
     # Generate one with `python -m ratchet.bom keygen`. Empty = manifests are stored unsigned.
@@ -362,7 +378,7 @@ class Settings:
     # the generic mock world (sim/generic.py) answered every request.
     mock_strict: bool = field(default_factory=lambda: _env("RATCHET_MOCK_STRICT", "0") == "1")
 
-    prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
+    prices: dict[str, Price] = field(default_factory=lambda: {**DEFAULT_PRICES, **EMBEDDING_PRICES})
 
     def teacher_timeout(self) -> httpx.Timeout:
         """Timeouts for Token Factory calls (teacher, judge). A bad value raises ValueError, so live mode fails at startup."""
@@ -443,6 +459,26 @@ class Settings:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,
         RATCHET_MAX_N). A bad RATCHET_MAX_N raises ValueError, so the gateway fails at startup."""
         return Limits(max_messages=self.max_messages, max_input_chars=self.max_input_chars, max_n=self.max_n)
+
+    def embeddings_endpoint(self) -> str | None:
+        """The base URL the /v1/embeddings pass-through calls (FR-1.51): RATCHET_EMBEDDINGS_BASE, the teacher's base when
+        it is empty, or None for 'off' (in any case; the endpoint then answers 404). A base that is not an http(s) URL,
+        or an empty or Ratchet-named RATCHET_EMBEDDINGS_MODEL while the endpoint is on, raises ValueError, so the
+        gateway stops at startup instead of failing every embeddings request."""
+        raw = self.embeddings_base.strip() if isinstance(self.embeddings_base, str) else None
+        if raw is None:
+            raise ValueError(f"RATCHET_EMBEDDINGS_BASE must be a URL or 'off', not {self.embeddings_base!r}")
+        if raw.lower() == EMBEDDINGS_OFF:
+            return None
+        base = raw or self.teacher_base
+        if not base.lower().startswith(("http://", "https://")):
+            raise ValueError(f"RATCHET_EMBEDDINGS_BASE must be an http(s) URL or 'off', not {base!r}")
+        model = self.embeddings_model.strip() if isinstance(self.embeddings_model, str) else ""
+        if not model or model != self.embeddings_model or not model.isprintable():
+            raise ValueError(f"RATCHET_EMBEDDINGS_MODEL must be a model id (no spaces around it), not {self.embeddings_model!r}")
+        if model == "ratchet" or model.startswith(("ratchet/", "ratchet:")):
+            raise ValueError(f"RATCHET_EMBEDDINGS_MODEL must name the upstream model, not a Ratchet model id ({model!r})")
+        return base
 
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises

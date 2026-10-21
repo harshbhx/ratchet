@@ -571,6 +571,12 @@ def valid_name(name: str) -> bool:
     return _NAME.fullmatch(name) is not None
 
 
+# Task names no spec, chat request or model alias may use (FR-1.51, ADR 0050): `embeddings` is the name the /v1/embeddings
+# pass-through logs its requests under, so that task's row in the stats is only ever those requests.
+EMBEDDINGS_TASK = "embeddings"
+RESERVED_NAMES = frozenset({EMBEDDINGS_TASK})
+
+
 # The tasks defined in code. `reset_builtin` puts REGISTRY back to exactly these.
 BUILTIN: Mapping[str, Task] = MappingProxyType(
     {

@@ -315,6 +315,8 @@ def _build(
         errs.append(f"{_at(where, 'name')}: missing")
     elif not isinstance(name, str) or not tasks.valid_name(name):
         errs.append(f"{_at(where, 'name')}: {name!r} is not a task name (1 to 64 letters, digits, '_', '.', '-')")
+    elif name in tasks.RESERVED_NAMES:
+        errs.append(f"{_at(where, 'name')}: {name!r} is reserved (/v1/embeddings logs its requests under it)")
     description = spec.get("description", "")
     if not isinstance(description, str) or len(description) > tasks.MAX_DESCRIPTION:
         errs.append(f"{_at(where, 'description')}: must be a string of at most {tasks.MAX_DESCRIPTION} characters")

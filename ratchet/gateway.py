@@ -14,19 +14,21 @@ Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
 
 from __future__ import annotations
 
+import base64
 import calendar
 import functools
 import json
 import math
 import queue
 import re
+import struct
 import threading
 import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Container, Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import anyio
 import httpx
@@ -47,31 +49,43 @@ from .cost import cost_report, record_endpoint, record_simulated_day, stats_bloc
 from .ledger import DAY_SECONDS, Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
+    EMBEDDINGS_TASK,
     INVALID_REQUEST,
     MODEL_TASK,
     RATCHET_MODEL,
     SERVICE_TIER,
     TASK_PARAMS,
     APIError,
+    ChatRequest,
+    CompletionRequest,
     Limits,
     ModelRouting,
+    check_embeddings_model,
     check_model,
     from_validation_errors,
     header_value,
     http_error,
+    legacy_logprobs,
     model_not_found,
     normalize_messages,
     parse_body,
     parse_modalities,
     resolve_task,
+    response_object,
+    response_output,
+    responses_usage,
+    unsupported_endpoint,
     usage_object,
     validate_chat_request,
+    validate_completion_request,
+    validate_embeddings_request,
+    validate_responses_request,
 )
-from .providers import GenParams, OpenAICompatProvider
+from .providers import Embedder, GenParams, OpenAICompatProvider, approx_tokens
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
-from .router import Choice, Ratchet
+from .router import PASSTHROUGH_ROUTE, Choice, Ratchet, Result
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
 from .scout.prompts import EXAMPLE_QUESTIONS
@@ -90,7 +104,7 @@ MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
 
 
-TRANSPORT_KEYS = ("teacher", "student")
+TRANSPORT_KEYS = ("teacher", "student", "embeddings")
 
 
 class Runtime:
@@ -99,7 +113,8 @@ class Runtime:
     `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ...}, each an
     `httpx.BaseTransport` such as `httpx.MockTransport`; the student's also carries adapter reloads), so live mode can
     run offline in tests, and `sleep` the teacher's waits between retries; mock mode has no HTTP providers and ignores
-    both. A fallback teacher on another endpoint (RATCHET_TEACHER_FALLBACK_BASE) also goes over the teacher's transport.
+    both. A fallback teacher on another endpoint (RATCHET_TEACHER_FALLBACK_BASE) also goes over the teacher's transport,
+    and so does the /v1/embeddings pass-through unless an "embeddings" transport is given.
     `clock` times the breakers, adapter reloads and demo outages (tests pass a fake one).
 
     `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None."""
@@ -212,6 +227,8 @@ class Runtime:
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         # How the model field and the system prompt pick a task (ADR 0048); a bad setting stops startup here.
         self.routing: ModelRouting = s.model_routing()
+        # The /v1/embeddings pass-through (FR-1.51, ADR 0050): None when RATCHET_EMBEDDINGS_BASE is off.
+        self.embedder: Embedder | None = self._embedder()
         cap = s.auto_task_cap()  # the shared mock demo holds fewer, as it does API tasks; a reset clears them
         self.max_auto_tasks = min(cap, MOCK_MAX_AUTO_TASKS) if s.mode == "mock" else cap
         self._auto_cap_logged = False
@@ -232,6 +249,33 @@ class Runtime:
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
+
+    def _embedder(self) -> Embedder | None:
+        """The model /v1/embeddings passes requests to, or None when RATCHET_EMBEDDINGS_BASE is off: the mock embedder
+        in mock mode, else an OpenAI-compatible client with the teacher's timeouts and retries (an embeddings call is
+        safe to repeat). Its key is RATCHET_EMBEDDINGS_KEY, else NEBIUS_API_KEY only on the teacher's own endpoint: another
+        provider never gets the Token Factory key. A bad setting, or a model alias spelled like the embeddings model (one
+        id, two meanings in /v1/models), stops startup."""
+        s = self.settings
+        base = s.embeddings_endpoint()
+        if base is None:
+            return None
+        if s.embeddings_model in self.routing.aliases:
+            model = s.embeddings_model
+            raise ValueError(f"RATCHET_MODEL_ALIASES: {model!r} is RATCHET_EMBEDDINGS_MODEL; give the alias another id")
+        if s.mode == "mock":
+            from sim.mock_models import MockEmbedder
+
+            return MockEmbedder()
+        teachers = base.rstrip("/") == s.teacher_base.rstrip("/")
+        return OpenAICompatProvider(
+            base,
+            s.embeddings_api_key or (s.teacher_api_key if teachers else ""),
+            timeout=s.teacher_timeout(),
+            retry=s.teacher_retry(),
+            transport=self.transports.get("embeddings", self.transports.get("teacher")),
+            sleep=self.sleep,
+        )
 
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
@@ -546,10 +590,12 @@ def _duration(seconds: float) -> str:
     return f"{minutes}m{secs}s" if minutes else f"{secs}s"
 
 
-def _quota(client: str | None) -> dict[str, str]:
+def _quota(client: str | None, need: int = 1) -> dict[str, str]:
     """Rate-limit headers for this client, with when the quota resets (`X-RateLimit-Reset-Requests`); 429
     `insufficient_quota` when its daily quota is used up. The 429 says when to come back (`Retry-After`, seconds to
-    00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight)."""
+    00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight).
+    `need` is how many requests of the quota the call will log: more than 1 for a batch of prompts (/v1/completions),
+    refused whole when the quota cannot take it all, so it never stops halfway."""
     limit = rt.settings.api_key_daily_requests
     if client is None or limit <= 0:
         return {}
@@ -558,13 +604,21 @@ def _quota(client: str | None) -> dict[str, str]:
     reset_in = midnight + 86400 - now
     used = rt.ledger.client_requests_since(client, midnight)
     headers = {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Reset-Requests": _duration(reset_in)}
-    if used >= limit:
+    if used + need > limit:
+        left = max(0, limit - used)
         headers.update(
-            {"X-RateLimit-Remaining-Requests": "0", "Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
+            {
+                "X-RateLimit-Remaining-Requests": str(left),
+                "Retry-After": str(max(1, math.ceil(reset_in))),
+                "X-Should-Retry": "false",
+            }
         )
         message = f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC"
+        if left:  # a batch larger than what is left
+            message = f"daily request quota of {limit} for {client!r} has {left} left, but this request needs {need}"
+            message += "; resets at 00:00 UTC"
         raise APIError(429, message, "insufficient_quota", "daily_quota_exceeded", headers=headers)
-    return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
+    return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - need)}
 
 
 NO_RETRY = {"X-Should-Retry": "false"}
@@ -694,6 +748,8 @@ def _offered(name: str, task: tasks.Task | None, client: str | None, recent: Con
     30 days. A registered task its `clients` allow, but an auto task (named after a digest of some client's system
     prompt, threat model T12) only to a key whose own recent requests used it; with keys off, to everyone. An
     unregistered task name unless RATCHET_UNKNOWN_TASKS is `reject`, as chat completions admit it."""
+    if name in tasks.RESERVED_NAMES:  # `embeddings` (FR-1.51): its rows are /v1/embeddings', never a chat task's
+        return None
     if task is not None:
         hidden = task.source == "auto" and client is not None and name not in recent
         return None if hidden or not task.allows(client) else task
@@ -704,9 +760,10 @@ def _offered(name: str, task: tasks.Task | None, client: str | None, recent: Con
 
 def _models(client: str | None) -> list[dict[str, Any]]:
     """Every model id this client may send: `ratchet`; `ratchet/<task>` for each registered task it may use (`_offered`)
-    and, unless RATCHET_UNKNOWN_TASKS is `reject`, each unregistered task its requests named in the last 30 days; and each
-    model alias whose task it may use. `created` is when a request (this client's, with keys on) first named the task,
-    for a task used in the last 30 days, else when the process started."""
+    and, unless RATCHET_UNKNOWN_TASKS is `reject`, each unregistered task its requests named in the last 30 days; each
+    model alias whose task it may use; and the embeddings model, when /v1/embeddings is on. `created` is when a request
+    (this client's, with keys on) first named the task, for a task used in the last 30 days, else when the process
+    started."""
     live = rt.ledger.live()
     live_id = live.id if live is not None else None
     recent = rt.ledger.recent_tasks(RECENT_TASK_DAYS, client=client, limit=MAX_RECENT_MODELS)
@@ -727,7 +784,15 @@ def _models(client: str | None) -> list[dict[str, Any]]:
         t = _offered(target, registry.get(target), client, first)
         if t is not None:
             out.append(_model_object(alias, t, first.get(target, PROCESS_START), live_id, alias_of=f"ratchet/{target}"))
+    if rt.embedder is not None:
+        out.append(_embeddings_model())
     return out
+
+
+def _embeddings_model() -> dict[str, Any]:
+    """The model /v1/embeddings always asks for (RATCHET_EMBEDDINGS_MODEL, FR-1.51), so a client can find the id that
+    RATCHET_MODEL_POLICY=strict accepts there: no task, served by the upstream (`ratchet.endpoint`)."""
+    return _model_object(rt.settings.embeddings_model, None, PROCESS_START, None, endpoint="embeddings")
 
 
 def _model(model_id: str, client: str | None) -> dict[str, Any] | None:
@@ -739,6 +804,8 @@ def _model(model_id: str, client: str | None) -> dict[str, Any] | None:
     live_id = live.id if live is not None else None
     if model_id == RATCHET_MODEL:
         return _model_object(RATCHET_MODEL, None, PROCESS_START, live_id)
+    if rt.embedder is not None and model_id == rt.settings.embeddings_model:
+        return _embeddings_model()
     m = MODEL_TASK.fullmatch(model_id)
     name = m.group(1) if m else rt.routing.aliases.get(model_id)
     if name is None:
@@ -830,10 +897,33 @@ def _complete(
     raw: bytes, header_task: str | None, client: str | None, deployment: str | None = None
 ) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
+    return _chat_response(req, _serve(req, header_task, client, deployment))
+
+
+class Served(NamedTuple):
+    """One request answered by the chat path (`_serve`): the cascade's result, the task it was answered as, the response
+    headers (quota, `X-Ratchet-*`), the `ratchet` block and the served answer's `usage` in the chat shape."""
+
+    result: Result
+    task: tasks.Task
+    headers: dict[str, str]
+    meta: dict[str, Any]
+    usage: dict[str, Any]
+
+
+def _serve(
+    req: ChatRequest, header_task: str | None, client: str | None, deployment: str | None = None, *, need: int = 1
+) -> Served:
+    """The chat path after validation, the same for /v1/chat/completions, /v1/completions and /v1/responses (FR-1.51):
+    normalisation, the model check, task resolution and admission, the daily quota (`need` requests of it, for a batch
+    of prompts), the cascade and the response's metadata. Each endpoint only builds its own body from the result."""
     messages, _flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     # The model field names a task (or, under the strict policy, is refused); it never picks an upstream model (ADR 0048).
     model_alias = check_model(req.model, rt.routing) if deployment is None else None
     name, source = resolve_task(req, header_task, rt.routing, client=client, deployment=deployment)
+    if name in tasks.RESERVED_NAMES:  # `embeddings`: where /v1/embeddings logs its requests, never a chat task (FR-1.51)
+        message = f"The task name '{name}' is reserved: /v1/embeddings logs its requests under it. Name another task."
+        raise APIError(400, message, INVALID_REQUEST, "reserved_task", TASK_PARAMS.get(source))
     auto = rt.auto_task(name) if source == "auto_system" else None
     no_room = source == "auto_system" and auto is None
     if no_room:  # RATCHET_MAX_AUTO_TASKS reached: `default`, as without auto tasks
@@ -844,7 +934,7 @@ def _complete(
         raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", TASK_PARAMS.get(source)) from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
-    headers = _quota(client)
+    headers = _quota(client, need)
     if no_room:
         rt.auto_cap_reached()  # reported only now, so a refused request leaves no trace
     if auto is not None and task.source == "auto" and tasks.lookup(task.name) is not task:
@@ -880,13 +970,19 @@ def _complete(
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
-    cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
     headers["X-Ratchet-Task"] = task.name
     if model_alias is not None:  # RATCHET_MODEL_POLICY=lenient served a model id Ratchet does not know as `ratchet`
         headers["X-Ratchet-Model-Alias"] = header_value(model_alias)
     if r.degraded:
         headers["X-Ratchet-Degraded"] = r.degraded
+    return Served(r, task, headers, meta, usage)
+
+
+def _chat_response(req: ChatRequest, served: Served) -> JSONResponse | StreamingResponse:
+    """A `chat.completion` (or its stream of chunks) for a request the chat path answered."""
+    r, headers, meta, usage = served.result, served.headers, served.meta, served.usage
+    cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
     asked = req.logprobs is True  # token logprobs in each choice (FR-1.14)
     if not req.stream:
         choices = [
@@ -937,6 +1033,289 @@ def _complete(
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
+
+
+# ----- the other OpenAI endpoints (FR-1.51, ADR 0050) -----
+async def _read_then(request: Request, fn: Callable[..., Any], *args: Any) -> Any:
+    """Read the body (a client that leaves first is a 400, as on /v1/chat/completions), then run `fn(raw, *args)` in a
+    worker thread, so neither the body nor the ledger lock blocks the event loop."""
+    try:
+        raw = await request.body()
+    except ClientDisconnect as e:
+        raise APIError(400, "The client disconnected before the request body was complete.") from e
+    return await anyio.to_thread.run_sync(functools.partial(fn, raw, *args))
+
+
+@app.post("/v1/embeddings", response_model=None, openapi_extra=CHAT_BODY)
+async def embeddings(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    """Embeddings, passed through to RATCHET_EMBEDDINGS_MODEL: no cascade, no student, nothing stored (`_embed`). Checks
+    run in this order: API key (401), the endpoint on (404 `unsupported_endpoint` under RATCHET_EMBEDDINGS_BASE=off), the
+    body read, JSON and validation (400), the model (404 under RATCHET_MODEL_POLICY=strict), the daily quota (429)."""
+    client = _client(authorization, x_api_key, api_key)
+    if rt.embedder is None:
+        raise unsupported_endpoint("POST", "/v1/embeddings", "embeddings are turned off here (RATCHET_EMBEDDINGS_BASE=off)")
+    return await _read_then(request, _embed, client)
+
+
+def _embed(raw: bytes, client: str | None) -> JSONResponse:
+    """One embeddings call to the configured model, whatever `model` the client names (that id never selects an upstream
+    model), logged with task `embeddings`, served_by `upstream` and route `passthrough` at the configured model's price
+    for its prompt tokens (the upstream's count, else about 4 characters a token). The row counts against the key's
+    quota like any request; its all-teacher baseline is its own cost, so it moves no savings figure. A failed call logs
+    nothing, as a failed chat request does."""
+    req = validate_embeddings_request(parse_body(raw), rt.limits)
+    embedder = rt.embedder
+    if embedder is None:  # checked again: the runtime may have been rebuilt while the body was read
+        raise unsupported_endpoint("POST", "/v1/embeddings", "embeddings are turned off here (RATCHET_EMBEDDINGS_BASE=off)")
+    cap = getattr(embedder, "max_values", None)  # the mock embedder's, so one request cannot tie up the shared demo
+    if cap is not None and len(req.inputs) * (req.dimensions or getattr(embedder, "default_dims", 1)) > cap:
+        message = f"The mock demo returns at most {cap} embedding values (inputs x dimensions) per request."
+        raise APIError(400, message, INVALID_REQUEST, "unsupported_value", "input")
+    served = rt.settings.embeddings_model
+    alias = check_embeddings_model(req.model, served, rt.routing)
+    headers = _quota(client)
+    try:
+        out = embedder.embed(req.inputs, served, req.dimensions)
+    except httpx.HTTPError as e:
+        raise _map_passthrough(e) from e
+    tokens = out.prompt_tokens or sum(approx_tokens(i) if isinstance(i, str) else len(i) for i in req.inputs)
+    cost = rt.settings.price(served).cost(tokens, 0)
+    rt.ledger.log_request(
+        task=EMBEDDINGS_TASK,
+        served_by="upstream",
+        student_version=None,
+        confidence=None,
+        escalated=0,
+        audited=0,
+        audit_agree=None,
+        shadow_version=None,
+        shadow_serve=None,
+        shadow_agree=None,
+        latency_ms=out.latency_ms,
+        cost_usd=cost,
+        baseline_cost_usd=cost,  # no cheaper path was taken, so nothing was saved
+        student_cost_usd=0.0,
+        teacher_cost_usd=cost,  # hosted per-token spend, the column the cost report reads it from (FR-15.1)
+        student_in_tokens=0,
+        student_out_tokens=0,
+        client=client,
+        route=PASSTHROUGH_ROUTE,
+        stored=0,
+    )
+    headers["X-Ratchet-Served-By"] = "upstream"
+    headers["X-Ratchet-Task"] = EMBEDDINGS_TASK
+    if alias is not None:  # RATCHET_MODEL_POLICY=lenient: another model id, answered by the configured model
+        headers["X-Ratchet-Model-Alias"] = header_value(alias)
+    meta = {
+        "served_by": "upstream",
+        "route": PASSTHROUGH_ROUTE,
+        "task": EMBEDDINGS_TASK,
+        "cost_usd": cost,
+        "all_teacher_cost_usd": cost,
+        "latency_ms": out.latency_ms,
+        "requested_model": req.model,
+    }
+    data = [{"object": "embedding", "index": i, "embedding": _encoded(v, req.encoding_format)} for i, v in enumerate(out.vectors)]
+    body = {
+        "object": "list",
+        "data": data,
+        "model": out.model,
+        "usage": {"prompt_tokens": tokens, "total_tokens": tokens},
+        "ratchet": meta,
+    }
+    return JSONResponse(body, headers=headers)
+
+
+def _encoded(vector: list[float], encoding_format: str) -> list[float] | str:
+    """A vector as the client asked: floats, or OpenAI's base64 of little-endian float32 values (what the OpenAI SDKs ask
+    for by default, and decode back to floats)."""
+    if encoding_format == "base64":
+        return base64.b64encode(struct.pack(f"<{len(vector)}f", *vector)).decode("ascii")
+    return vector
+
+
+def _map_passthrough(e: httpx.HTTPError) -> APIError:
+    """The client's error for a failed embeddings call, after the provider's retries, mapped by cause as `_map_upstream`
+    maps a teacher's (ADR 0014) but with `upstream_*` codes, since no teacher was involved: a cause the client can fix
+    (an input over the model's length) is a 400 with the upstream's message, a rate limit a 429 with its wait, a timeout
+    a 504, a wrong key or model a 502 `X-Should-Retry: false` names, anything else a 502."""
+    u = as_upstream(e)
+    if u.status in CLIENT_CAUSED:
+        code = u.code or ("request_too_large" if u.status == 413 else None)
+        message = u.message or f"The embeddings model rejected the request ({u.label})."
+        return APIError(400, message, INVALID_REQUEST, code, u.param, headers=NO_RETRY)
+    if u.status in (401, 403):
+        message = f"embeddings model authentication failed: {u.label}"
+        return APIError(502, message, "api_error", "upstream_auth_error", headers=NO_RETRY)
+    if u.status == 404:
+        message = f"embeddings model not found: {u.label}; check RATCHET_EMBEDDINGS_MODEL"
+        return APIError(502, message, "api_error", "upstream_not_found", headers=NO_RETRY)
+    if u.status == 429:
+        wait = _client_wait(u.retry_after)
+        message = f"embeddings model rate limited: {u.label}; retry after {wait} s"
+        return APIError(429, message, "rate_limit_error", "upstream_rate_limited", headers={"Retry-After": str(wait)})
+    final = 300 <= u.status < 500 and u.status not in RETRY_STATUSES
+    headers: dict[str, str] | None = NO_RETRY if final else None
+    if not final and u.retry_after is not None:
+        headers = {"Retry-After": str(_client_wait(u.retry_after))}
+    if u.status == 504:
+        return APIError(504, f"embeddings model timeout: {u.label}", "api_error", "upstream_timeout", headers=headers)
+    return APIError(502, f"embeddings model unavailable: {u.label}", "api_error", "upstream_unavailable", headers=headers)
+
+
+@app.post("/v1/completions", response_model=None, openapi_extra=CHAT_BODY)
+async def completions(
+    request: Request,
+    x_ratchet_task: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Header(default=None),
+) -> JSONResponse | StreamingResponse:
+    """The legacy completions API: each prompt runs the chat path as one user message (`_serve`), with the same checks,
+    task resolution, cascade, quota and storage as /v1/chat/completions; `n`, `stream`, `stop`, `max_tokens` and the rest
+    are the chat fields of the same name. A batch of prompts needs that many requests of the daily quota, checked before
+    the first runs. A `suffix`, `echo` or `best_of` that would change the answer, and token-array prompts, are a 400."""
+    return await _read_then(request, _legacy_complete, x_ratchet_task, _client(authorization, x_api_key, api_key))
+
+
+def _legacy_complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+    creq = validate_completion_request(parse_body(raw), rt.limits)
+    reqs = creq.requests()
+    served = [_serve(req, header_task, client, need=len(reqs) if i == 0 else 1) for i, req in enumerate(reqs)]
+    return _completion_response(creq, served)
+
+
+def _completion_response(creq: CompletionRequest, served: list[Served]) -> JSONResponse | StreamingResponse:
+    """A `text_completion` (or its stream) for the prompts the chat path answered: choice `p * n + j` is prompt p's
+    choice j, as OpenAI numbers them; `usage` adds up every prompt's; `ratchet` is the chat path's block for one prompt
+    and `{"prompts": [...]}` for several. The headers are the last prompt's (its quota count is the latest), with
+    `X-Ratchet-Served-By` `mixed` when the prompts were not all served by the same model."""
+    first = served[0].result
+    n = creq.chat.n
+    headers = dict(served[-1].headers)
+    by = {s.result.served_by for s in served}
+    headers["X-Ratchet-Served-By"] = by.pop() if len(by) == 1 else "mixed"
+    degraded = next((s.result.degraded for s in served if s.result.degraded), None)
+    headers.pop("X-Ratchet-Degraded", None)
+    if degraded:
+        headers["X-Ratchet-Degraded"] = degraded
+    usage = usage_object(
+        sum(s.result.prompt_tokens for s in served),
+        sum(s.result.completion_tokens for s in served),
+        sum(s.result.reasoning_tokens for s in served),
+        sum(s.result.cached_tokens for s in served),
+    )
+    meta = served[0].meta if len(served) == 1 else {"prompts": [s.meta for s in served]}
+    envelope = {
+        "id": f"cmpl-{uuid.uuid4().hex[:24]}",
+        "object": "text_completion",
+        "created": int(time.time()),
+        "model": first.model,
+        "system_fingerprint": first.fingerprint,
+    }
+    asked = creq.logprobs is not None
+    # (choice index, choice, the prompt's length: where the completion's text offsets start)
+    entries = [(p * n + j, ch, len(creq.prompts[p])) for p, s in enumerate(served) for j, ch in enumerate(s.result.choices)]
+    if not creq.chat.stream:
+        choices = [
+            {
+                "text": ch.text,
+                "index": index,
+                "logprobs": legacy_logprobs(ch.logprobs, offset) if asked else None,
+                "finish_reason": ch.finish_reason,
+            }
+            for index, ch, offset in entries
+        ]
+        return JSONResponse({**envelope, "choices": choices, "usage": usage, "ratchet": meta}, headers=headers)
+
+    include_usage = creq.chat.include_usage
+
+    def sse(ev: dict[str, Any]) -> str:
+        return f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    def chunk(index: int, text: str, finish: str | None = None, logprobs: Any = None, **extra: Any) -> str:
+        ev = {**envelope, "choices": [{"text": text, "index": index, "logprobs": logprobs, "finish_reason": finish}]}
+        if include_usage:
+            ev["usage"] = None
+        return sse({**ev, **extra})
+
+    def events() -> Iterator[str]:
+        last = len(entries) - 1
+        for k, (index, ch, offset) in enumerate(entries):
+            pos = offset
+            for piece, lp in _stream_pieces(ch, asked):
+                yield chunk(index, piece, logprobs=legacy_logprobs(lp["content"], pos) if lp is not None else None)
+                pos += len(piece)
+            if include_usage or k < last:
+                yield chunk(index, "", ch.finish_reason)
+            else:  # the ratchet block rides on the last finish chunk, as in a chat stream
+                yield chunk(index, "", ch.finish_reason, ratchet=meta)
+        if include_usage:
+            yield sse({**envelope, "choices": [], "usage": usage, "ratchet": meta})
+        yield "data: [DONE]\n\n"
+
+    headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
+
+
+@app.post("/v1/responses", response_model=None, openapi_extra=CHAT_BODY)
+async def responses(
+    request: Request,
+    x_ratchet_task: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    """The stateless subset of the Responses API: the body becomes a chat request (`validate_responses_request`) and
+    runs the chat path (`_serve`) with the same checks, task resolution, cascade, quota and storage; the answer comes
+    back as a `response` object. Ratchet keeps no response state, so what needs it (`previous_response_id`,
+    `conversation`, `background`) and `stream` are a 400 `unsupported_parameter`."""
+    return await _read_then(request, _respond, x_ratchet_task, _client(authorization, x_api_key, api_key))
+
+
+def _respond(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse:
+    rreq = validate_responses_request(parse_body(raw), rt.limits)
+    s = _serve(rreq.chat, header_task, client)
+    r = s.result
+    ch = r.choices[0]
+    # A choice's tool calls ({id, type, function}) become function_call items once the gateway returns them.
+    output = response_output(ch.text, ch.finish_reason, getattr(ch, "tool_calls", None))
+    usage = responses_usage(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
+    created = int(time.time())
+    body = response_object(rreq, created=created, model=r.model, output=output, finish_reason=ch.finish_reason, usage=usage)
+    return JSONResponse({**body, "ratchet": s.meta}, headers=s.headers)
+
+
+@app.post("/v1/moderations", response_model=None)
+def moderations(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    """Not served: a 404 `unsupported_endpoint` that says so and links the endpoint table, so a library that screens
+    every request through the base URL fails with a clear reason (after the key check, as every /v1 route)."""
+    _client(authorization, x_api_key, api_key)
+    raise unsupported_endpoint("POST", "/v1/moderations", "this gateway has no moderation model; screen content before it")
+
+
+@app.api_route("/v1/responses/{response_id:path}", methods=["GET", "POST", "DELETE"], response_model=None)
+def response_state(
+    request: Request,
+    response_id: str,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Header(default=None),
+) -> JSONResponse:
+    """Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because
+    Ratchet keeps no response state (each response is built for its request and forgotten)."""
+    _client(authorization, x_api_key, api_key)
+    why = "Ratchet keeps no response state, so a response cannot be retrieved, deleted, cancelled or listed"
+    raise unsupported_endpoint(request.method, "/v1/responses/{response_id}", why)
 
 
 @app.get("/ratchet/stats")
@@ -1069,7 +1448,11 @@ def list_tasks() -> dict[str, Any]:
         "unknown_tasks": rt.ratchet.unknown_tasks,
         "max_tasks": tasks.MAX_TASKS,
         "tasks": [_task_entry(t, stats.get(t.name), live_version) for t in registered],
-        "unregistered": [{"name": n, "requests": int(r["requests"])} for n, r in stats.items() if n not in names],
+        "unregistered": [
+            {"name": n, "requests": int(r["requests"])}
+            for n, r in stats.items()
+            if n not in names and n not in tasks.RESERVED_NAMES  # /v1/embeddings logs its requests there (FR-1.51)
+        ],
     }
 
 

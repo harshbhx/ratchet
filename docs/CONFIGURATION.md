@@ -37,6 +37,18 @@ Read in `ratchet/config.py`; used by `ratchet/gateway.py` and `ratchet/openai_co
 | `RATCHET_MERGE_SYSTEM` | `0` | `1`: merge consecutive leading `system` messages (after `developer` becomes `system`) into one, joined by a blank line, for models whose chat template takes a single system message. It changes the stored form of such requests, so set it before collecting training data, not halfway |
 | `RATCHET_TEACHER_MODALITIES` | `text` | Content part types the teacher accepts besides text, comma-separated, e.g. `text,image_url` (also `input_audio`, `file`). A request with such a part goes to the teacher only (route `ineligible:content_type`, [risk-aware routing](#risk-aware-routing)): no student call, no audit, nothing stored as a training example. Any other non-text part is a 400 `unsupported_content_type`. Set it only when the teacher model reads those parts; otherwise the teacher's refusal comes back as a 400 with its own message ([API.md](API.md#errors)) |
 
+### Other OpenAI endpoints
+
+`/v1/completions` and `/v1/responses` run the chat path, so every setting above and below applies to them as to `/v1/chat/completions` (a completion's prompt counts against `RATCHET_MAX_INPUT_CHARS` on its own). `/v1/embeddings` is a pass-through to one model ([API.md](API.md#post-v1embeddings), [ADR 0050](adr/0050-adjacent-openai-endpoints.md)):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_EMBEDDINGS_BASE` | (empty) | OpenAI-compatible base URL that `/v1/embeddings` calls. Empty: `RATCHET_TEACHER_BASE` (Token Factory). `off` (any case): the route answers 404 `unsupported_endpoint` and `/v1/models` does not list the embeddings model. Anything that is not an `http(s)` URL stops startup. Mock mode embeds locally unless it is `off` |
+| `RATCHET_EMBEDDINGS_MODEL` | `Qwen/Qwen3-Embedding-8B` | The one model `/v1/embeddings` asks for, whatever `model` a client sends; listed in `/v1/models`, and the id `RATCHET_MODEL_POLICY=strict` accepts there besides `ratchet`. **Unverified until `scripts/day1_check.py` passes** (INV-9), which checks it. Priced from `EMBEDDING_PRICES` ([Prices](#prices-default_prices)); a model without a price there is priced as the teacher. An empty id, one with spaces around it, a Ratchet model id or one that is also a model alias stops startup |
+| `RATCHET_EMBEDDINGS_KEY` | (empty) | API key for `RATCHET_EMBEDDINGS_BASE`. Empty: `NEBIUS_API_KEY` when the base is the teacher's (`RATCHET_TEACHER_BASE`), and no key at all for any other base, so the Token Factory key is never sent to another provider. Set it for a provider that needs one; a local server without auth needs none |
+
+Each answered embeddings call is one request row (task `embeddings`, served_by `upstream`, route `passthrough`, nothing stored) and counts against `RATCHET_API_KEY_DAILY_REQUESTS`. The task name `embeddings` is reserved for these rows: a task spec (tasks file, admin API) or a `RATCHET_MODEL_ALIASES` entry that names it is refused, and a chat request that names it is a 400 `reserved_task`. Its calls get the teacher's timeouts and retries (`RATCHET_TEACHER_TIMEOUT_S`, `RATCHET_TEACHER_RETRIES`, `RATCHET_TEACHER_DEADLINE_S`) and go through no breaker. `/v1/embeddings` also takes `RATCHET_MAX_INPUT_CHARS` (a token id counts as 4 characters) and at most 2,048 inputs.
+
 ## Generation parameters and token caps
 
 Read in `ratchet/config.py` (`Settings.gen_policy()`); used by `ratchet/router.py`, the golden eval (`ratchet/nightschool/evaluate.py`, `sim/mock_models.py`) and `ratchet/providers.py` ([API.md](API.md#generation-parameters), [ADR 0017](adr/0017-generation-parameters-by-role.md)). A bad value (a field that cannot be forwarded, a name that is not an identifier, a negative number) stops the gateway, `python -m ratchet.live night` and the simulator at startup with `ValueError`.
@@ -84,7 +96,7 @@ Read in `ratchet/config.py`; used by `ratchet/router.py`, `ratchet/auth.py`, `ra
 |---|---|---|
 | `RATCHET_REDACT_PII` | `1` | Replace emails, phone numbers, card numbers (Luhn-checked), IBANs (mod-97), Aadhaar (Verhoeff), US SSNs, Indian PANs, IPv4 addresses and API secrets with `[LABEL]` placeholders before a request and the teacher's answer are stored as a training example. The teacher still receives the original. `0` stores examples verbatim. Names and street addresses are not detected |
 | `RATCHET_API_KEYS` | empty | `name:key,name:key`. When set, `/v1/*` and `/openai/*` need `Authorization: Bearer <key>`, `X-API-Key: <key>` or `api-key: <key>`; anything else gets 401. Names: letters, digits, `_`, `.`, `-` (up to 64). Keys: at least 16 characters; generate with `openssl rand -hex 24`. A bare key without `name:` is named `keyN`. The ledger stores the name per request, never the key. A malformed value stops the gateway at startup |
-| `RATCHET_API_KEY_DAILY_REQUESTS` | `0` | Chat completions per key per UTC day; past it a 429 `insufficient_quota` (code `daily_quota_exceeded`) with `Retry-After` until 00:00 UTC and `X-Should-Retry: false` ([API.md](API.md#authentication)). `0` = unlimited. Counted from the ledger, so it survives restarts in live mode |
+| `RATCHET_API_KEY_DAILY_REQUESTS` | `0` | Requests per key per UTC day (chat completions, responses, embeddings, and completions at one per prompt); past it a 429 `insufficient_quota` (code `daily_quota_exceeded`) with `Retry-After` until 00:00 UTC and `X-Should-Retry: false` ([API.md](API.md#authentication)). `0` = unlimited. Counted from the ledger, so it survives restarts in live mode |
 | `RATCHET_ADMIN_KEYS` | empty | Admin keys for management writes (`PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate`; [API.md](API.md#tasks)), in the `RATCHET_API_KEYS` syntax: `name:key,name:key`, keys at least 16 characters. Sent as `Authorization: Bearer <key>` or `X-API-Key`; a missing or wrong key gets 401, an API key 403. The ledger and the event log record the name, never the key. A key may not be in both variables (startup error). Empty: the admin API is off in live mode (403 `admin API disabled: set RATCHET_ADMIN_KEYS`) and open in mock mode (the admin is `mock-admin`). Not the Caddy guard's `RATCHET_ADMIN_TOKEN` |
 | `RATCHET_BOM_SIGNING_KEY` | empty | Ed25519 private key as the base64 of its 32-byte seed. Signs each adapter's bill of materials. Generate with `python -m ratchet.bom keygen`, which also prints the public key to publish. Needs the `sign` extra (`pip install "ratchet-distill[sign]"`, included in the gateway image). An invalid value stops the gateway at startup. Empty = BOMs are stored with a SHA-256 but unsigned |
 
@@ -169,6 +181,12 @@ USD per 1M tokens (input / output). These are Token Factory list prices as of Oc
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | 0.06 | 0.24 | Fallback student |
 | `nvidia/Nemotron-3_5-Lightning` | 0.06 | 0.24 | |
 | `student` | 0.06 | 0.24 | Per-token **proxy** for the self-hosted student; real cost is GPU-hours ([Cost accounting](#cost-accounting)) |
+
+Embeddings models (`EMBEDDING_PRICES`, kept apart because they are never teachers and write no training data; merged into `Settings.prices`):
+
+| Key | Input | Output | Note |
+|---|---|---|---|
+| `Qwen/Qwen3-Embedding-8B` | 0.01 | 0 | `RATCHET_EMBEDDINGS_MODEL`'s default ([Other OpenAI endpoints](#other-openai-endpoints)) |
 
 `Settings.price(model)` checks for an exact key first, then uses `student` for any name starting with `student`. Anything else gets the teacher's price (or 1.00 / 3.00). To change prices, pass `Settings(prices={...})` in code; there are no price environment variables. A fallback teacher's answers (`RATCHET_TEACHER_FALLBACK_MODEL`) are priced with its own entry (the teacher's price when it has none); the all-teacher baseline of such a request is the teacher's price for the same tokens.
 
@@ -266,7 +284,7 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 
 A task tells Ratchet when two answers "agree" and which answers are valid (`ratchet/tasks.py`, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Its `fields` list the parts of the answer that must match, each a path and a typed comparator (`ratchet/compare.py`); anything else in the answer, such as a free-text `reply`, is ignored.
 
-Tasks come from three places ([ADR 0022](adr/0022-task-registry.md)): the built-in ones below (`ratchet/tasks.py`), a tasks file, and the admin API ([API.md](API.md#tasks)). Read in `ratchet/config.py`; used by `ratchet/taskspec.py`, `ratchet/router.py` and `ratchet/gateway.py`:
+Tasks come from three places ([ADR 0022](adr/0022-task-registry.md)): the built-in ones below (`ratchet/tasks.py`), a tasks file, and the admin API ([API.md](API.md#tasks)). The name `embeddings` is reserved for the `/v1/embeddings` pass-through's request rows and cannot be a task's ([Other OpenAI endpoints](#other-openai-endpoints)). Read in `ratchet/config.py`; used by `ratchet/taskspec.py`, `ratchet/router.py` and `ratchet/gateway.py`:
 
 | Variable | Default | Meaning |
 |---|---|---|

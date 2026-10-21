@@ -639,10 +639,16 @@ def test_trust_proxy_uses_forwarded_ip_only_when_enabled(gw_env):
     assert c.post("/scout/run", json=q, headers={"X-Forwarded-For": "198.51.100.7, 10.0.0.2"}).status_code == 429
 
 
-@pytest.mark.req("FR-8.5", "INV-9")
+@pytest.mark.req("FR-8.5", "INV-9", "FR-1.51")
 def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch, capsys):
     want = list(day1_check.WANT)
     assert len(want) >= 4
+    embed = day1_check.WANT_EMBEDDINGS[0]
+    monkeypatch.setattr(day1_check, "EMBEDDINGS", embed)
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "")
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "")
+    vectors = {"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}], "usage": {"prompt_tokens": 6}}
+    embed_reply: list[httpx.Response] = [httpx.Response(200, json=vectors)]
     good = {
         "choices": [
             {
@@ -665,6 +671,8 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
                 ids = present + ["nvidia/Some-Other-Nemotron", "meta/llama-3.3-70b"]
                 return httpx.Response(200, json={"data": [{"id": m} for m in ids]})
             body = json.loads(request.content)
+            if request.url.path == "/v1/embeddings":
+                return embed_reply[0]
             if "seed" in body and gen is not None:  # the generation-parameter check
                 return gen
             return special.get(body["model"]) or httpx.Response(200, json=good)
@@ -683,7 +691,7 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     client, seen = serve(want[:-1], {want[1]: no_logprobs, want[2]: httpx.Response(500, text="upstream error")})
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
-    assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out
+    assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out and f"[MISSING] model {embed}" in out
     assert "'nvidia/Some-Other-Nemotron'" in out and "llama" not in out  # lists the NVIDIA models it does have
     assert f"[ok] {want[0]}: json ok, logprobs=yes, finish_reason=stop" in out  # INV-16 stores only these
     assert f"[ok] {want[1]}: json NOT parseable, logprobs=NO" in out  # reported; confidence falls back to agreement
@@ -698,12 +706,44 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     assert gen == {"model": want[0], "messages": day1_check.PROMPT, "max_tokens": 8192, **day1_check.GEN_PARAMS}
     assert f"[ok] {want[0]} accepts max_tokens=8192, stop, seed, temperature" in out
 
-    client, _ = serve(want, {})
-    assert day1_check.main(client) == 0 and capsys.readouterr().out.rstrip().endswith("All good.")
+    client, seen = serve(want + [embed], {})
+    assert day1_check.main(client) == 0
+    out = capsys.readouterr().out
+    assert out.rstrip().endswith("All good.") and f"[ok] embeddings {embed}: 2 dimensions" in out
+    (sent,) = [json.loads(r.content) for r in seen if r.url.path == "/v1/embeddings"]
+    assert sent == {"model": embed, "input": ["Ratchet day-1 check", "refund"]}
+
+    # The embeddings model answering with an error, or with vectors of different lengths, fails the check; `off` skips it.
+    for reply in (
+        httpx.Response(500, text="down"),
+        httpx.Response(200, json={"data": [{"embedding": [1.0]}, {"embedding": []}]}),
+    ):
+        embed_reply[0] = reply
+        client, _ = serve(want + [embed], {})
+        assert day1_check.main(client) == 1 and f"[FAIL] embeddings {embed}" in capsys.readouterr().out
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "off")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0 and "[skip] embeddings" in capsys.readouterr().out
+    assert not any(r.url.path == "/v1/embeddings" for r in seen)
+    # Another provider's base: not looked up in Token Factory's list, and never sent the Token Factory key.
+    embed_reply[0] = httpx.Response(200, json=vectors)
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "https://tei.test/v1")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0
+    (call,) = [r for r in seen if r.url.path == "/v1/embeddings"]
+    assert call.url.host == "tei.test" and "authorization" not in call.headers
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "tei-key")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0
+    (call,) = [r for r in seen if r.url.path == "/v1/embeddings"]
+    assert call.headers["authorization"] == "Bearer tei-key"
+    capsys.readouterr()
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "")
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "")
 
     # A teacher that refuses the cap (above the model's output limit) fails the check: every escalation would get a 4xx.
     over = httpx.Response(400, json={"error": {"message": "max_tokens must be at most 4096"}})
-    client, _ = serve(want, {}, gen=over)
+    client, _ = serve(want + [embed], {}, gen=over)
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
     assert f"[FAIL] {want[0]} with max_tokens=8192, stop, seed: HTTP 400" in out and "RATCHET_TEACHER_MAX_TOKENS" in out

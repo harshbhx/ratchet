@@ -2,10 +2,11 @@
 
     NEBIUS_API_KEY=... python scripts/day1_check.py
 
-Checks: the model IDs exist, the teacher answers, logprobs come back, JSON mode works, and the
+Checks: the model IDs exist, the teacher answers, logprobs come back, JSON mode works, the
 teacher accepts the generation parameters the gateway sends it (`max_tokens` at
-RATCHET_TEACHER_MAX_TOKENS, `stop`, `seed`, `temperature`, `response_format`; ADR 0017).
-Costs a few cents.
+RATCHET_TEACHER_MAX_TOKENS, `stop`, `seed`, `temperature`, `response_format`; ADR 0017), and the
+embeddings model behind `/v1/embeddings` answers (RATCHET_EMBEDDINGS_MODEL at RATCHET_EMBEDDINGS_BASE,
+skipped when that is `off`; FR-1.51). Costs a few cents.
 """
 
 from __future__ import annotations
@@ -25,6 +26,12 @@ WANT = [
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
     "nvidia/Nemotron-3_5-Lightning",
 ]
+# Every embeddings model in ratchet/config.py (EMBEDDING_PRICES) must be here: test_adjacent_endpoints.py checks it.
+WANT_EMBEDDINGS = ["Qwen/Qwen3-Embedding-8B"]
+# The embeddings model and base the gateway's /v1/embeddings uses (empty base: the teacher's; `off`: no check).
+EMBEDDINGS = os.environ.get("RATCHET_EMBEDDINGS_MODEL", "") or WANT_EMBEDDINGS[0]
+EMBEDDINGS_BASE = os.environ.get("RATCHET_EMBEDDINGS_BASE", "").strip().rstrip("/")
+EMBEDDINGS_KEY = os.environ.get("RATCHET_EMBEDDINGS_KEY", "")
 # The teacher the gateway uses, and the output cap every teacher call carries (ratchet/config.py).
 TEACHER = os.environ.get("RATCHET_TEACHER_MODEL", "") or WANT[0]
 TEACHER_MAX_TOKENS = int(os.environ.get("RATCHET_TEACHER_MAX_TOKENS", "") or 8192)
@@ -94,8 +101,38 @@ def main(client: httpx.Client | None = None) -> int:
         else:
             finish = r.json()["choices"][0].get("finish_reason")
             print(f"[ok] {TEACHER} accepts max_tokens={TEACHER_MAX_TOKENS}, stop, seed, temperature: finish_reason={finish}")
+    ok &= check_embeddings(c, ids, auth)
     print("\nAll good." if ok else "\nSome checks failed: update ratchet/config.py before building on them.")
     return 0 if ok else 1
+
+
+def check_embeddings(c: httpx.Client, ids: set[str], auth: dict[str, str]) -> bool:
+    """The /v1/embeddings pass-through's model: listed (on the teacher's endpoint) and answering with one vector of
+    floats per input. Skipped, as passed, when RATCHET_EMBEDDINGS_BASE is `off`."""
+    if EMBEDDINGS_BASE.lower() == "off":
+        print("[skip] embeddings: RATCHET_EMBEDDINGS_BASE=off")
+        return True
+    base = EMBEDDINGS_BASE or BASE
+    if base == BASE:
+        listed = EMBEDDINGS in ids
+        print(f"[{'ok' if listed else 'MISSING'}] model {EMBEDDINGS}")
+        if not listed:
+            print("  Embedding models available:", sorted(i for i in ids if "embed" in i.lower()))
+            return False
+    # NEBIUS_API_KEY goes only to Token Factory, as in the gateway: another base gets RATCHET_EMBEDDINGS_KEY or no key.
+    headers = {"Authorization": f"Bearer {EMBEDDINGS_KEY}"} if EMBEDDINGS_KEY else (auth if base == BASE else {})
+    r = c.post(f"{base}/embeddings", headers=headers, json={"model": EMBEDDINGS, "input": ["Ratchet day-1 check", "refund"]})
+    if r.status_code != 200:
+        print(f"[FAIL] embeddings {EMBEDDINGS}: HTTP {r.status_code} {r.text[:200]}")
+        return False
+    data = r.json().get("data") or []
+    vectors = [d.get("embedding") for d in data if isinstance(d, dict)]
+    good = len(vectors) == 2 and all(isinstance(v, list) and v and len(v) == len(vectors[0]) for v in vectors)
+    if not good:
+        print(f"[FAIL] embeddings {EMBEDDINGS}: expected two float vectors of one length, got {str(data)[:200]}")
+        return False
+    print(f"[ok] embeddings {EMBEDDINGS}: {len(vectors[0])} dimensions, usage={r.json().get('usage')}")
+    return True
 
 
 if __name__ == "__main__":

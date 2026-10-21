@@ -20,7 +20,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, day INTEGER, task TEXT,
-    served_by TEXT,            -- 'student' | 'teacher'
+    served_by TEXT,            -- 'student' | 'teacher' | 'upstream' (an embeddings pass-through, route 'passthrough')
     student_version INTEGER,   -- version id that answered or tried first (NULL on cold start)
     confidence REAL,
     escalated INTEGER,
