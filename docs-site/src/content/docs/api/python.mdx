@@ -307,7 +307,7 @@ Storage rules apply to every caller whether or not you pass a `RequestMeta`: `RA
 | `spend.BudgetExceeded` | With `RequestMeta(student_only=True)`, a request that needs the teacher |
 | `ValueError`, `licenses.LicenseError` | From the constructor: a bad setting, or a teacher that is not distillable |
 
-A student failure never raises: it is counted, and the teacher answers instead (routes `student_error` or `student_breaker`, invariant 7). A failed audit, shadow sample or arbitration never fails the request either. The gateway maps `UpstreamError` to its HTTP error codes; see [errors](/reference/api/#errors) in the HTTP guide and [ADR 0014](/reference/adr/0014-upstream-failure-semantics/).
+A student failure never raises: it is counted, and the teacher answers instead (routes `student_error` or `student_breaker`, invariant 7). A failed audit, shadow sample or arbitration never fails the request either. The gateway maps `UpstreamError` to its HTTP error codes; see [errors](/reference/api/#errors) in the HTTP guide.
 
 ### Tasks
 
@@ -317,7 +317,7 @@ The registry is module state in [`ratchet/tasks.py`](https://github.com/harshbhx
 - `tasks.register(taskspec.parse_spec(spec, "api"))` adds one task in memory, for example `{"name": "invoice-fields", "format": "json", "fields": {"currency": {"type": "exact"}, "total": {"type": "number", "abs_tol": 0.01}}}`. It is not saved: put tasks that Night School (another process) must grade in `RATCHET_TASKS_FILE`, or create them through the [admin API](/reference/api/#put-ratchettasksname), which stores them in the ledger.
 - Tests that register tasks should call `tasks.reset_builtin()` afterwards, as `tests/conftest.py` does.
 
-See [training on your data](/guides/training-on-your-data/) for task specs and [ADR 0022](/reference/adr/0022-task-registry/) for the rules.
+See [training on your data](/guides/training-on-your-data/) for task specs for the rules.
 
 ### Off-path checks and `close`
 
@@ -329,7 +329,7 @@ A request's audit and shadow run **after** `handle` returns only when you pass a
 | `RATCHET_SIDECAR_QUEUE` | 1000 | Jobs that may wait. When full, a drawn audit runs inline (an audit is never dropped) and a shadow is skipped |
 | `RATCHET_SIDECAR_DRAIN_S` | 10 | How long the gateway's shutdown waits; pass the same to `close` |
 
-`r.close(drain_s)` waits at most `drain_s` seconds, gives up on the rest and returns `r.sidecar_report()`: the queue's counts (`workers`, `queued`, `running`, `done`, `failed`, `full`, `abandoned`, ...) and, per version, `audits_inline`, `shadows_dropped`, `audits_abandoned` and `shadows_abandoned`. Rows of abandoned jobs stay pending, and the release gate ignores them. See [ADR 0072](/reference/adr/0072-off-path-audits-and-shadow/).
+`r.close(drain_s)` waits at most `drain_s` seconds, gives up on the rest and returns `r.sidecar_report()`: the queue's counts (`workers`, `queued`, `running`, `done`, `failed`, `full`, `abandoned`, ...) and, per version, `audits_inline`, `shadows_dropped`, `audits_abandoned` and `shadows_abandoned`. Rows of abandoned jobs stay pending, and the release gate ignores them.
 
 `r.health()` returns the failure counters (`student_errors`, `audit_errors`, `shadow_errors`, `repair_errors`), the stand-in counts (`degraded_answers`, `fallback_answers`) and `breakers`: each breaker's `state` (`closed`, `open` or `half_open`), `failures`, `open_until` and `open_s`, by name (`teacher`, `fallback_teacher`, and `student` and `shadow` once used). The gateway does not serve this over HTTP.
 
@@ -407,7 +407,7 @@ Yes. Scout's triage and reader agents call `Ratchet.handle` from a pool of 6 thr
 
 ### Can two processes share one ledger file?
 
-Run one serving process per ledger: one gateway, or one embedded program, never both on the same `RATCHET_DB`. The nightly job, the cron tick and the admin CLI may open the same file from other processes; the ledger's caches see their commits. A second serving process is not guarded against yet (the single-writer lease, NFR-60, is planned): it would double every in-memory limit, and each process would keep its own breakers. Inside a process that already runs the gateway, use its `Ratchet` as Scout does instead of opening a second `Ledger` on the file. See [two gateway processes on one ledger](/reference/runbook/#two-gateway-processes-on-one-ledger) and [ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/).
+Run one serving process per ledger: one gateway, or one embedded program, never both on the same `RATCHET_DB`. The nightly job, the cron tick and the admin CLI may open the same file from other processes; the ledger's caches see their commits. A second serving process is not guarded against yet (the single-writer lease, NFR-60, is planned): it would double every in-memory limit, and each process would keep its own breakers. Inside a process that already runs the gateway, use its `Ratchet` as Scout does instead of opening a second `Ledger` on the file. See [two gateway processes on one ledger](/reference/runbook/#two-gateway-processes-on-one-ledger).
 
 ### What do I lose compared with the gateway?
 

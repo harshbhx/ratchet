@@ -9,7 +9,7 @@ import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
 import BigPicture from '../../../components/diagrams/BigPicture.astro';
 
-<Summary>This page is a guide for the judges of the Nebius x NVIDIA Global AI Hackathon: where the demo is, what to look at, which numbers are simulation and which are live, and what is not done yet.</Summary>
+<Summary>A practical tour for anyone evaluating Ratchet: where the demo is, what to try, which numbers are simulation and which are live, and what is not done yet.</Summary>
 
 <Eli10>
 
@@ -33,7 +33,7 @@ The whole system, as it runs on Nebius:
 
 1. **One small Nebius CPU VM hosts the demo.** It runs the Ratchet gateway and Caddy (automatic HTTPS) with Docker Compose. The gateway does no inference; it routes requests, keeps the ledger and serves the pages.
 
-2. **During judging the demo runs in live mode.** The hackathon's pass/fail Stage One needs a runtime call to Token Factory (or running on Nebius AI Cloud), and mock mode makes none, so the VM guide switches the demo to live mode before submission and keeps it there until judging ends on Dec 15, 2026 ([VM guide](/reference/deploy-nebius-vm/#switching-from-mock-to-live), [Stage One readiness](/reference/hackathon-submission/#stage-one-passfail-readiness)).
+2. **The public demo is meant to run in live mode.** Mock mode makes no Token Factory call, so the VM guide switches the demo to live mode before it is shown ([VM guide](/reference/deploy-nebius-vm/#switching-from-mock-to-live)).
 
 3. **The teacher is real.** In live mode NVIDIA Nemotron 3 Ultra answers on Nebius Token Factory, and Scout searches the web with Tavily.
 
@@ -59,11 +59,11 @@ flowchart TD
 ### Where the demo is
 
 <Aside type="note" title="Placeholders">
-The demo address and the video link are not known yet. They will replace the placeholders below before submission.
+The demo address and the video link are not final yet. They will replace the placeholders below.
 </Aside>
 
-- **Demo**: `[DEMO URL]` (placeholder), hosted on a Nebius CPU VM from Oct 29 to Dec 15, 2026.
-- **Video**: `[VIDEO URL]` (placeholder), under 3 minutes: the story page, a Scout run, then the dashboard ([demo script](/reference/demo-script/)).
+- **Demo**: `[DEMO URL]` (placeholder), hosted on a Nebius CPU VM.
+- **Video**: `[VIDEO URL]` (placeholder), under 3 minutes: the story page, a Scout run, then the dashboard.
 - **Code**: [github.com/harshbhx/ratchet](https://github.com/harshbhx/ratchet), Apache-2.0.
 
 ### What each page shows
@@ -79,7 +79,7 @@ The demo address and the video link are not known yet. They will replace the pla
 - **Mock mode numbers are simulation.** Mock models play the teacher and the student so the whole loop runs with no keys. They show how the loop behaves (cold start, drift, rollback), not real model quality. Every such number is labelled "Simulation", and Scout shows "Simulated search results".
 - **The story page always shows the reference simulation** for "Watch it learn", labelled with its source (seed 7, 2,000 support tickets a day, a product launch on day 5, a corrupted deploy of v3). The honest-bill chapter uses the live gateway's cost report once that gateway has requests, endpoint hours and a break-even, and the simulation otherwise, with a toggle between them.
 - **In live mode the dashboard reads the live ledger.** It starts empty and grows with real traffic. Anonymous readers of the public dashboard see client pseudonyms (`client-1`, ...), not names.
-- **No live run has happened yet.** As of Oct 21, 2026 Ratchet has not run on Nebius. Measured results will come from one published live run; until then the submission's live figures read `[LIVE NUMBER]`.
+- **No live run has happened yet.** As of Oct 21, 2026 Ratchet has not run on Nebius. Measured results will come from one published live run; until then live figures read `[LIVE NUMBER]`.
 
 ### Who answered: the badges
 
@@ -100,10 +100,10 @@ While the hosted fallback serves, the pages say so: the dashboard header reads "
 2. Watch the lanes. The planner and the writer are pinned to <Who as="teacher" /> and never become training data. Triage and reader calls are the many short, repetitive ones the student learns to take over.
 3. Read the totals: calls answered by the student, the run's cost, and what Ultra alone would have cost.
 
-The public demo has a daily run cap. If today's public runs are used up, you get a polite refusal. Judges have a reserve: the access code comes in the submission's **testing instructions only**, never on the public page or in the video. The Scout page has no field for the code yet, so open the browser console on the demo's `/scout` page and send it once:
+The public demo has a daily run cap. If today's public runs are used up, you get a polite refusal. Judges have a reserve: the access code is shared with evaluators directly, never on the public page or in the video. The Scout page has no field for the code yet, so open the browser console on the demo's `/scout` page and send it once:
 
 ```js
-fetch('/scout/judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'THE CODE FROM THE TESTING INSTRUCTIONS' }) })
+fetch('/scout/judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'THE ACCESS CODE' }) })
 ```
 
 That sets a signed cookie (it lasts 7 days by default). `GET /scout/status` then shows `"session": true` under `judge`. Without the code you still get the public pool, and a run whose search is unavailable still finishes, labelled "search unavailable", after a real Token Factory call. More in [Scout](/guides/scout/).
@@ -142,10 +142,10 @@ Then on `/dashboard`: click **Run 1 day + night** a few times to watch new versi
 | The cost report says when self-hosting does not pay | [`ratchet/cost.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/cost.py) `cost_report`, `_recommend` |
 | Scout's planner and writer are pinned | [`ratchet/tasks.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/tasks.py), [`ratchet/scout/agents.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/scout/agents.py) |
 | The whole loop runs without GPUs | [`sim/simulate.py`](https://github.com/harshbhx/ratchet/blob/main/sim/simulate.py), [`tests/`](https://github.com/harshbhx/ratchet/tree/main/tests) (1412 tests) |
-| Every requirement and invariant maps to code and tests | [Requirements matrix](/reference/requirements/) |
+| Every invariant maps to code and tests | [Testing](/reference/testing/) |
 
 <Aside type="caution" title="Honest status, as of Oct 21, 2026">
-Ratchet has **not run on Nebius yet**. Live mode, the student endpoint, the training job and the demo VM kit are written and tested offline against fake endpoints, but not against a real account. The day-1 checks (model ids, logprobs, JSON mode on Token Factory) come first, then a live run whose results fill the `[LIVE NUMBER]` placeholders in the [submission](/reference/hackathon-submission/). Model ids and prices stay unverified until then. A question about Token Factory's Terms of Service §5(f) ("competing service") was sent to Nebius support on Oct 19, 2026 and is still open; not legal advice.
+Ratchet has **not run on Nebius yet**. Live mode, the student endpoint, the training job and the demo VM kit are written and tested offline against fake endpoints, but not against a real account. The first-run checks (model ids, logprobs, JSON mode on Token Factory) come first, then a live run whose results replace the `[LIVE NUMBER]` placeholders. Model ids and prices stay unverified until then. A question about Token Factory's Terms of Service §5(f) ("competing service") was sent to Nebius support on Oct 19, 2026 and is still open; not legal advice.
 </Aside>
 
 ## For engineers
@@ -166,9 +166,8 @@ curl -s https://[DEMO URL]/ratchet/cost | jq '{recommendation, explanation}'
 **Reference**:
 
 - [API reference](/reference/api/): every endpoint, with its access level.
-- [Hackathon submission](/reference/hackathon-submission/): the Devpost text, the Stage One checklist and the live-number placeholders.
 - [Demo VM on Nebius](/reference/deploy-nebius-vm/): how the demo is hosted, its costs (estimates) and its security notes.
-- [Deployment](/reference/deployment/): mock mode, live mode on Nebius, and keeping the demo alive for judging.
+- [Deployment](/reference/deployment/): mock mode, live mode on Nebius, and keeping the demo alive.
 
 ## Common questions
 
@@ -184,7 +183,7 @@ The GPU endpoint that runs the trained adapter costs money every hour it is up, 
 
 When the student is unsure, Ultra answers instead. When it is sure but wrong, random audits by Ultra catch a share of those answers. A version in canary is rolled back automatically when its audited precision falls too far; a live version that slips raises an alert for an operator to roll it back. The certificate and the precision figures measure agreement with Ultra, not ground truth.
 
-### Do I need the judge code?
+### Do I need the access code?
 
 No. Without it you get the public pool, which has a daily cap. The code holds runs back for judges so that public visitors cannot use them up first.
 
@@ -206,4 +205,5 @@ Ratchet has not run on Nebius (as of Oct 21, 2026), so there are no measured res
 - [Scout](/guides/scout/)
 - [Cost and savings](/guides/cost-and-savings/)
 - [Security and safety](/guides/security/)
+- [The business case](/guides/business/)
 - [FAQ](/guides/faq/)

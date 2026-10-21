@@ -93,7 +93,7 @@ The live commands, file paths and polling are on [Training on your data](/guides
 
 ### The golden set: the sealed exam
 
-- **Split by hash.** When an example is first stored, its split is fixed: `golden` if the first 8 hex digits of its hash, divided by `0xFFFFFFFF`, are below `RATCHET_GOLDEN_FRACTION` (default 0.10), else `train`. The hash is over the task and the redacted messages, so the split never changes and nothing leaks from re-splitting ([ADR 0007](/reference/adr/0007-golden-set-split-and-frequent-requests/)).
+- **Split by hash.** When an example is first stored, its split is fixed: `golden` if the first 8 hex digits of its hash, divided by `0xFFFFFFFF`, are below `RATCHET_GOLDEN_FRACTION` (default 0.10), else `train`. The hash is over the task and the redacted messages, so the split never changes and nothing leaks from re-splitting.
 - **Variants share a split.** The same prompt stored under other conditions (a `stop`, a JSON schema) is another example, but it lands in the same split. The trainer only sees the messages, so a golden prompt stored again in train would be trained on.
 - **Never trained on**, with one exception, the FREQUENT rule below. Golden rows are only ever used to calibrate and grade.
 - **Half calibrates, half grades.** `cascade_eval` picks the lowest threshold whose served answers reach the target precision on the even-indexed golden rows, and reports precision and coverage on the odd-indexed rows. Each task also gets its own threshold; with fewer than `RATCHET_MIN_TASK_GOLDEN` (20) calibration rows it is never below the global one. Thresholds are clamped between 0.5 and 1.01, and 1.01 means "serve nothing".
@@ -130,7 +130,7 @@ Nemotron-H mixes attention, Mamba and MLP layers. The default targets include th
 
 ### Retrain from the base every night
 
-[ADR 0004](/reference/adr/0004-retrain-from-base-cumulative/). Each night trains a **new** adapter from the **base model** on **all** training rows so far. Adapters are never stacked or continued.
+Each night trains a **new** adapter from the **base model** on **all** training rows so far. Adapters are never stacked or continued.
 
 - No drift compounds from one adapter to the next, and each version is one dataset snapshot, named by its `dataset_hash`.
 - Replay of old data is built in, which limits forgetting.
@@ -141,7 +141,7 @@ Training targets are teacher answers (and customer-attested human labels), never
 
 ### Train on the prompt the student is served
 
-[ADR 0145](/reference/adr/0145-train-on-the-served-prompt/). Nemotron 3 Nano's chat template turns "thinking" on unless told otherwise. The student endpoint serves with thinking off, so its prompt ends in an empty think block. If training rendered the prompt with thinking on, the student would learn answers after a prompt it never sees, and TRL would only log a warning.
+Nemotron 3 Nano's chat template turns "thinking" on unless told otherwise. The student endpoint serves with thinking off, so its prompt ends in an empty think block. If training rendered the prompt with thinking on, the student would learn answers after a prompt it never sees, and TRL would only log a warning.
 
 So `train.jsonl` uses TRL's conversational **prompt-completion** format:
 
@@ -181,7 +181,7 @@ Both implement the same two interfaces, `Trainer.train(rows, base_model, name)` 
 Simulation numbers come from the mock fleet. In the README's reference run (simulation, mock models, seed 7, 2,000 tickets a day) the first student is live on day 3, and a deliberately corrupted v3 is rolled back automatically on day 4.
 
 <Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter on a real Nebius account. The checks to run first are in [DAY1.md](/reference/day1/).
+As of Oct 21, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter on a real Nebius account. The checks to run first are in DAY1.md.
 </Aside>
 
 ## For engineers

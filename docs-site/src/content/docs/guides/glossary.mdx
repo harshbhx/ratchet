@@ -22,7 +22,7 @@ Every page in these docs uses the same restaurant. If you remember the cast, mos
 </Eli10>
 
 <Aside type="note" title="The longer glossary">
-The repository keeps its own glossary with longer definitions, synced into these docs at [Reference: Glossary](/reference/glossary/).
+The repository keeps its own glossary with longer definitions, synced into these docs at [Reference: Glossary](/guides/glossary/).
 </Aside>
 
 ## Terms
@@ -112,12 +112,12 @@ flowchart LR
 
 - **Idempotency key**: an `Idempotency-Key` header that makes a retried request get the first answer back without running the cascade again. ([The request journey](/guides/request-journey/))
 - **Inconclusive**: under the sequential rule, a canary stage that reached 400 audits without enough evidence either way; the version is retired, not rolled back. ([Release gate](/guides/release-gate/))
-- **Invariant**: one of the numbered rules the code must never break, such as "never train on student outputs"; each one is mapped to code and tests. ([Requirements matrix](/reference/requirements/))
+- **Invariant**: one of the numbered rules the code must never break, such as "never train on student outputs"; each one is mapped to code and tests. (Requirements matrix)
 
 ### J
 
 - **Judge**: Nemotron 3 Super on Token Factory, which scores free-text answers in the golden eval; tasks with typed fields are compared field by field instead, with no judge. ([Night School](/guides/night-school/))
-- **Judges' reserve**: Scout runs, spend and Tavily credits held back each day for hackathon judges, unlocked by a code sent once to `POST /scout/judge`. ([Scout](/guides/scout/))
+- **Judges' reserve**: Scout runs, spend and Tavily credits held back each day for evaluators, unlocked by a code sent once to `POST /scout/judge`. ([Scout](/guides/scout/))
 
 ### L
 
@@ -225,7 +225,7 @@ Where the names live in the code (links go to GitHub):
 | Readiness and liveness | [`ratchet/readiness.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/readiness.py), `/healthz` in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) |
 | Scout, budget guard, judges' reserve | [`ratchet/scout/`](https://github.com/harshbhx/ratchet/tree/main/ratchet/scout): `guard.py`, `judge.py`, `credits.py` |
 | Settings and list prices | [`ratchet/config.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/config.py): `Settings`, `DEFAULT_PRICES` |
-| Invariants | Listed as `INV-1` to `INV-26`, each with the code and tests that hold it, in the generated [requirements matrix](/reference/requirements/) |
+| Invariants | Listed as `INV-1` to `INV-26`, each with the code and tests that hold it |
 
 Environment variables are listed in [CONFIGURATION.md](/reference/configuration/) and endpoints in [API.md](/reference/api/).
 
@@ -245,4 +245,4 @@ Because Ratchet makes release decisions by itself, and each decision rests on co
 
 ### A term is missing. Where else can I look?
 
-The repository's own glossary at [Reference: Glossary](/reference/glossary/), the [FAQ](/guides/faq/), and the [architecture](/reference/architecture/) reference.
+The repository's own glossary at [Reference: Glossary](/guides/glossary/), the [FAQ](/guides/faq/), and the [architecture](/reference/architecture/) reference.

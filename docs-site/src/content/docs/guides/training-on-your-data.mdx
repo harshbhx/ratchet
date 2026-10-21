@@ -14,7 +14,7 @@ import NebiusDeployment from '../../../components/diagrams/NebiusDeployment.astr
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains a new LoRA adapter from them, which the endpoint then loads from your bucket.</Summary>
 
 <Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, everything on this page is written and tested offline, but **none of it has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and work through the checks in [DAY1.md](/reference/day1/) before relying on any of it. There are no live results yet.
+As of Oct 21, 2026, everything on this page is written and tested offline, but **none of it has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. There are no live results yet.
 </Aside>
 
 <Eli10>
@@ -137,7 +137,7 @@ Only teacher answers (and labels a person attested, from [feedback corrections o
 
 ### The training file
 
-`dataset.write_training` writes TRL's conversational prompt-completion format ([ADR 0145](/reference/adr/0145-train-on-the-served-prompt/)). One row, shown on several lines (the content is illustrative):
+`dataset.write_training` writes TRL's conversational prompt-completion format. One row, shown on several lines (the content is illustrative):
 
 ```json
 {
@@ -217,7 +217,7 @@ Training defaults in `train.py`: 2 epochs, learning rate 2e-4, LoRA rank 16 with
 | mamba-ssm | 2.3.2.post1 |
 | ninja, packaging, setuptools, wheel | 1.13.0, 26.2, 82.0.1, 0.47.0 |
 
-These are candidates read on Oct 21, 2026. The day-1 smoke job (DAY1 row 4: about 200 rows through `deploy/train_job.sh test`) confirms them, or its `versions.json` replaces them in both files. The last build step imports the Mamba kernels, so an image without them fails to build instead of failing on the GPU. There is no Unsloth: its Oct 19, 2026 release needs an older TRL. Build from the repository root:
+These are candidates read on Oct 21, 2026. The first-run smoke job (about 200 rows through `deploy/train_job.sh test`) confirms them, or its `versions.json` replaces them in both files. The last build step imports the Mamba kernels, so an image without them fails to build instead of failing on the GPU. There is no Unsloth: its Oct 19, 2026 release needs an older TRL. Build from the repository root:
 
 ```bash
 docker build -f deploy/Dockerfile.train -t <registry>/ratchet-train:0.1 .
@@ -231,7 +231,7 @@ If the image cannot build at all, the documented fallbacks are an NGC PyTorch ba
 
 `ratchet.live.load_adapter` posts to `{root}/v1/load_lora_adapter`, where `root` is `RATCHET_STUDENT_BASE` without its `/v1`, with the endpoint token and a 300-second timeout. The endpoint must have been started with `--enable-lora` and `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`.
 
-vLLM **forgets runtime-loaded adapters when the endpoint restarts**, and answers 404 for them. The gateway handles that by itself ([ADR 0015](/reference/adr/0015-student-circuit-breaker-and-adapter-reload/)): a 404 naming a version's adapter queues a reload on a background thread, at most once per adapter per minute, and writes `adapter_reloaded` or `adapter_reload_failed`. The request that hit the 404 is answered by the teacher, so it still succeeds, at teacher cost. If reloads keep failing, `python -m ratchet.live reload` loads every `live`, `canary` and `shadow` adapter by hand. The [runbook](/reference/runbook/#student-endpoint-down-or-adapters-lost) has the steps.
+vLLM **forgets runtime-loaded adapters when the endpoint restarts**, and answers 404 for them. The gateway handles that by itself: a 404 naming a version's adapter queues a reload on a background thread, at most once per adapter per minute, and writes `adapter_reloaded` or `adapter_reload_failed`. The request that hit the 404 is answered by the teacher, so it still succeeds, at teacher cost. If reloads keep failing, `python -m ratchet.live reload` loads every `live`, `canary` and `shadow` adapter by hand. The [runbook](/reference/runbook/#student-endpoint-down-or-adapters-lost) has the steps.
 
 ### When the endpoint is off: the hosted fallback
 
@@ -257,7 +257,7 @@ Whether running the endpoint pays at all depends on volume. With unverified list
 
 ### Exporting the adapter you own
 
-You own the LoRA adapter and its signed training lineage. The base model stays under the NVIDIA Nemotron Open Model License. To hand the adapter over in one folder, with its licenses ([ADR 0090](/reference/adr/0090-licenses-travel-with-the-adapter/)):
+You own the LoRA adapter and its signed training lineage. The base model stays under the NVIDIA Nemotron Open Model License. To hand the adapter over in one folder, with its licenses:
 
 ```bash
 aws s3 sync s3://<bucket>/adapters/student-v3 ./data/adapters/student-v3 --endpoint-url $RATCHET_S3_ENDPOINT   # weights, if not local
@@ -274,10 +274,10 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 | `ratchet.live` commands, `NebiusTrainer`, `LiveEvaluator`, the reloader, the export | Tested offline in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints |
 | `train_job.sh`, `student_endpoint.sh` | Run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read, not a real account |
 | `train.py`'s arguments, row checks, loss setting and chat-template prefix check | Tested offline with the vendored Nano 4B chat template; `main` needs a GPU and is not run in tests |
-| The training image | Not built yet; pins are candidates (DAY1 row 4) |
-| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run yet (DAY1 rows 4, 5, 6) |
-| The endpoint's arguments as the container splits them, thinking off | Not checked yet (DAY1 row 12) |
-| Serverless pricing, the S3 endpoint URL | Unverified (DAY1 row 7; the S3 URL format in the docs is an assumption) |
+| The training image | Not built yet; pins are candidates  |
+| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run yet  |
+| The endpoint's arguments as the container splits them, thinking off | Not checked yet  |
+| Serverless pricing, the S3 endpoint URL | Unverified (the S3 URL format in the docs is an assumption) |
 | Live numbers | None yet; `[LIVE NUMBER]` placeholders stay empty until a real run |
 
 ## For engineers
@@ -392,7 +392,7 @@ Yes. `python -m ratchet.live export` gives you the weights with the signed BOM a
 
 ### What if the training job breaks on the first real run?
 
-That is what the day-1 checks are for. The script dry runs, the image's build-time kernel check, `check_rows` and `check_prefix` are all there to fail fast and cheaply. The fallbacks (another base image, LoRA on the attention and MLP layers only, merging the adapter into the base weights if runtime LoRA fails) are listed in [DAY1.md](/reference/day1/) and `train.py`.
+That is what the day-1 checks are for. The script dry runs, the image's build-time kernel check, `check_rows` and `check_prefix` are all there to fail fast and cheaply. The fallbacks (another base image, LoRA on the attention and MLP layers only, merging the adapter into the base weights if runtime LoRA fails) are listed in `train.py`.
 
 ### Has this run on Nebius?
 
@@ -405,4 +405,4 @@ No, not as of Oct 21, 2026. It is written and tested offline only. Treat every c
 - [The ledger](/guides/ledger/): what is stored, redaction and opt-outs
 - [Licenses](/guides/licenses/): what you own and what travels with the adapter
 - [Cost and savings](/guides/cost-and-savings/): when self-hosting pays
-- [Deployment](/reference/deployment/), [DAY1 checklist](/reference/day1/), [ADR 0002](/reference/adr/0002-student-on-nebius-serverless-not-token-factory/)
+- [Deployment](/reference/deployment/)

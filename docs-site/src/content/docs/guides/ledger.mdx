@@ -112,11 +112,11 @@ The `origin` of an example says where it came from. Teacher answers from the gat
 
 | Never stored | Why | Where it is enforced |
 |---|---|---|
-| The student's answers, as training targets or at all | Training on a model's own outputs causes collapse ([ADR 0004](/reference/adr/0004-retrain-from-base-cumulative/)) | Invariant 2: only `_store_example` (teacher answers) and `feedback.store_label` (attested human labels) may call `add_example`; a test fails on any other caller |
+| The student's answers, as training targets or at all | Training on a model's own outputs causes collapse | Invariant 2: only `_store_example` (teacher answers) and `feedback.store_label` (attested human labels) may call `add_example`; a test fails on any other caller |
 | Pinned tasks' answers | Open-ended tasks (Scout's planner and writer) stay on the teacher for good | Invariant 10: `_teacher_only` never calls `add_example`, and Night School leaves out rows of a task that is pinned now |
-| Tool requests, multimodal requests | A tool request is answered by the teacher alone (route `tools`) until tool-call distillation exists | [ADR 0043](/reference/adr/0043-tool-calls-teacher-only-by-default/) |
+| Tool requests, multimodal requests | A tool request is answered by the teacher alone (route `tools`) until tool-call distillation exists | |
 | Opted-out requests | The client, its key, the task, the end user or the operator said so | Invariant 22: opt-outs only reduce storage |
-| Incomplete or invalid teacher answers | A cut-off or malformed answer would teach the wrong thing | Invariant 16, [ADR 0016](/reference/adr/0016-store-only-complete-valid-teacher-answers/) |
+| Incomplete or invalid teacher answers | A cut-off or malformed answer would teach the wrong thing | Invariant 16 |
 | Answers written under label-altering client sampling | A client may choose its own answer, not the label everyone's student learns | `GenParams.unstorable`, threat model T2 |
 | Raw end-user identifiers, API keys | Privacy and key safety | Invariants 13 and 23: key names and keyed hashes only |
 | Request text in `requests`, `failures`, logs or `/metrics` | Metadata is enough to run the system | Invariant 12 |
@@ -125,7 +125,7 @@ A fallback teacher's answers are stored only with `RATCHET_STORE_FALLBACK_TEACHE
 
 ### PII redaction
 
-`ratchet/redact.py` ([ADR 0009](/reference/adr/0009-pattern-based-pii-redaction/)) replaces identifiers with placeholders before anything is stored. It runs in a fixed order, so the specific formats with checksums win over the broad phone pattern:
+`ratchet/redact.py` replaces identifiers with placeholders before anything is stored. It runs in a fixed order, so the specific formats with checksums win over the broad phone pattern:
 
 | Placeholder | Matches | Extra check |
 |---|---|---|
@@ -157,7 +157,7 @@ Two consequences worth knowing. The example hash, the golden split and the frequ
 
 ### Storage opt-outs and no-train end users
 
-[ADR 0080](/reference/adr/0080-storage-opt-outs-and-pseudonymous-end-users/). Five opt-outs, broadest first. The first one that applies is logged in `requests.store_opt_out` and returned in the response as `ratchet.store_opt_out`:
+Five opt-outs, broadest first. The first one that applies is logged in `requests.store_opt_out` and returned in the response as `ratchet.store_opt_out`:
 
 | Reason | Set by |
 |---|---|
@@ -173,7 +173,7 @@ A no-train registration keeps only the hash, scoped to the caller's API key name
 
 ### Retention, tombstones, erasure and export
 
-[ADR 0081](/reference/adr/0081-retention-tombstones-erasure-and-export/). Opt-outs keep new data out; these remove or hand over what is there.
+Opt-outs keep new data out; these remove or hand over what is there.
 
 - **Tombstones, not deletes.** A purge sets an example's `messages`, `completion` and `params` to NULL and keeps the row: hash, task, split, `seen`, teacher, license and client stay. That matters because Night School's rules read more than text: the frequent-request count adds `seen` over every variant of a prompt, and the new-data count compares with past versions. A purged row is in neither training set, but its `seen` still counts, so a purge never moves another variant of a frequent request back to golden.
 - **Retention windows.** `RATCHET_EXAMPLE_RETENTION_DAYS` purges examples not seen again for that many days (reason `retention`; a later storable duplicate brings the text back). `RATCHET_REQUEST_RETENTION_DAYS` folds old request rows into `daily_rollup` sums and deletes them; every statistic adds the sums back, so figures stay the same except the count of distinct end users. Rows that a release in flight still needs as evidence are never folded. Both default to 0 (keep forever). Retention runs at most hourly in the live gateway on a background thread, at the start of every live night, and on demand with `python -m ratchet.live purge`.
@@ -183,12 +183,12 @@ A no-train registration keeps only the hash, scoped to the caller's API key name
 
 ### SQLite, WAL and one process
 
-The ledger is a single SQLite file (`RATCHET_DB`, default `ratchet.db`; mock mode uses an in-memory ledger) behind the `Ledger` class ([ADR 0006](/reference/adr/0006-sqlite-ledger-for-v0/)). Every write commits at once. One re-entrant lock serialises writes, because Scout's agents call the router from several threads over one connection.
+The ledger is a single SQLite file (`RATCHET_DB`, default `ratchet.db`; mock mode uses an in-memory ledger) behind the `Ledger` class. Every write commits at once. One re-entrant lock serialises writes, because Scout's agents call the router from several threads over one connection.
 
-Since [ADR 0060](/reference/adr/0060-hot-path-caches-and-throttled-tick/) a file ledger runs in SQLite's WAL journal with `synchronous=NORMAL` (`RATCHET_DB_SYNC=NORMAL`, the default). Readers no longer block the writer, dashboard reads use a second, read-only connection, and the gateway and a `python -m ratchet.live` cron job on the same file only contend writer against writer for one commit. The price: a power cut or OS crash can lose the last commits (the file is not corrupted). WAL needs every process on the same host with the file on a local disk; never put `RATCHET_DB` on the bucket mount or another network filesystem (if you must, set `RATCHET_DB_SYNC=FULL` for every process).
+A file ledger runs in SQLite's WAL journal with `synchronous=NORMAL` (`RATCHET_DB_SYNC=NORMAL`, the default). Readers no longer block the writer, dashboard reads use a second, read-only connection, and the gateway and a `python -m ratchet.live` cron job on the same file only contend writer against writer for one commit. The price: a power cut or OS crash can lose the last commits (the file is not corrupted). WAL needs every process on the same host with the file on a local disk; never put `RATCHET_DB` on the bucket mount or another network filesystem (if you must, set `RATCHET_DB_SYNC=FULL` for every process).
 
 <Aside type="caution" title="One gateway process">
-Run the gateway with **one uvicorn worker**. The ledger's caches and the release gate are per process, and SQLite is not designed here for several writers. A Postgres ledger is planned in the [roadmap](/reference/roadmap/).
+Run the gateway with **one uvicorn worker**. The ledger's caches and the release gate are per process, and SQLite is not designed here for several writers. A Postgres ledger is planned.
 </Aside>
 
 ### Backups
