@@ -143,7 +143,7 @@ from .scout.guard import Guard
 from .scout.judge import COOKIE, COOKIE_PATH, JUDGE_ATTEMPTS_PER_HOUR, AttemptLimiter, JudgeAccess
 from .scout.prompts import EXAMPLE_QUESTIONS
 from .scout.search import UNAVAILABLE_REASONS, MockSearch, SearchTool, TavilySearch
-from .spend import BudgetExceeded, Caps, SpendMeter, Usage, money, month_bounds
+from .spend import BudgetExceeded, Caps, Hold, SpendMeter, Usage, money, month_bounds
 
 HERE = Path(__file__).parent
 DASHBOARD = HERE / "dashboard.html"
@@ -1390,23 +1390,28 @@ def _set_stage(stage: str) -> None:
         ctx.stage = stage
 
 
-def _quota(client: str | None, limits: KeyLimits | None, use: Usage, need: int = 1) -> dict[str, str]:
+def _quota(
+    client: str | None, limits: KeyLimits | None, use: Usage, need: int = 1, holds: list[Hold] | None = None
+) -> dict[str, str]:
     """Rate-limit headers for the key's daily request quota (`KeyLimits.daily_requests`, from RATCHET_API_KEY_DAILY_REQUESTS
     or RATCHET_KEY_LIMITS), with when it resets (`X-RateLimit-Reset-Requests`); 429 `insufficient_quota` when it is used
     up. The count is the spend meter's (`use`), so the check runs no query (ADR 0063). The 429 says when to come back
     (`Retry-After`, seconds to 00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot
     help before midnight). `need` is how many requests of the quota the call will use: more than 1 for a batch of
-    prompts (/v1/completions), refused whole when the quota cannot take it all. That check holds only against this
-    key's requests counted so far: a concurrent request can still use up the quota before a batch's later prompt runs,
-    which then stops the batch (`_batch_stopped`)."""
+    prompts (/v1/completions), refused whole when the quota cannot take it all. The room is held for the request
+    (`SpendMeter.hold`, appended to `holds`; the caller releases it when the request is counted or ends), so concurrent
+    requests cannot all pass the same count: with the quota almost used up, exactly the requests that fit are admitted.
+    A batch's later prompts hold their own room once the first is counted, so a concurrent request can still use up the
+    quota before one of them runs, which then stops the batch (`_batch_stopped`)."""
     limit = limits.daily_requests if limits is not None else 0
     if client is None or limit <= 0:
         return {}
     reset_in = _utc_midnight(use.now) + 86400 - use.now
     used = use.day_requests
     headers = {"X-RateLimit-Limit-Requests": str(limit), "X-RateLimit-Reset-Requests": _duration(reset_in)}
-    if used + need > limit:
-        left = max(0, limit - used)
+    hold = rt.meter.hold(client, need, limit)  # the check and the reservation in one step (a concurrent request sees both)
+    if hold is None:
+        left = max(0, limit - used - rt.meter.held(client))
         headers.update(
             {
                 "X-RateLimit-Remaining-Requests": str(left),
@@ -1420,7 +1425,11 @@ def _quota(client: str | None, limits: KeyLimits | None, use: Usage, need: int =
             message = f"daily request quota of {limit} for {client!r} has {left} left, but this request needs {need}"
             message += "; resets at 00:00 UTC"
         raise APIError(429, message, "insufficient_quota", "daily_quota_exceeded", headers=headers)
-    return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - need)}
+    if holds is not None:
+        holds.append(hold)
+    else:  # a caller that only wants the headers
+        hold.release()
+    return {**headers, "X-RateLimit-Remaining-Requests": str(max(0, limit - used - need))}
 
 
 def _usd(value: float) -> str:
@@ -2126,7 +2135,17 @@ def _schema_auto(params: GenParams) -> bool:
     )
 
 
-def _serve(
+def _serve(*args: Any, **kwargs: Any) -> Served:
+    """`_serve_held` with the daily-quota room it holds given back when the request ends, counted or not."""
+    holds: list[Hold] = []
+    try:
+        return _serve_held(*args, holds=holds, **kwargs)
+    finally:
+        for hold in holds:
+            hold.release()
+
+
+def _serve_held(
     req: ChatRequest,
     header_task: str | None,
     client: str | None,
@@ -2138,6 +2157,7 @@ def _serve(
     idempotency_key: str | None = None,
     rate: Decision | None = None,
     own_id: bool = False,
+    holds: list[Hold] | None = None,
 ) -> Served:
     """The chat path after validation, the same for /v1/chat/completions, /v1/completions and /v1/responses (FR-1.51):
     the storage opt-outs and end user, normalisation, the model check, task resolution and admission (and the key's own
@@ -2192,7 +2212,7 @@ def _serve(
     if limits is not None and not limits.allows_task(task.name):  # the key's own scope (RATCHET_KEY_LIMITS tasks=)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed")
     use = rt.meter.usage(client)  # memory only: the quota and budget checks run no query (ADR 0063)
-    headers = _quota(client, limits, use, need)
+    headers = _quota(client, limits, use, need, holds)
     student_only = _budget(client, limits, use)
     if rate is not None and "X-RateLimit-Limit-Requests" not in headers:  # the daily quota's headers win, as since v0.4
         headers.update(_rate_headers(rate))
@@ -2227,7 +2247,7 @@ def _serve(
         raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e
     except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
         raise _map_upstream(e) from e
-    headers.update(_spend_headers(limits, rt.meter.add(client, r.cost_usd)))
+    headers.update(_spend_headers(limits, rt.meter.add(client, r.cost_usd, hold=holds[0] if holds else None)))
     rt.tick()
     meta = {
         "served_by": r.served_by,
@@ -2683,6 +2703,16 @@ async def embeddings(
 
 
 def _embed(raw: bytes, client: str | None, rate: Decision | None = None) -> JSONResponse:
+    """`_embed_held` with the daily-quota room it holds given back when the request ends, counted or not."""
+    holds: list[Hold] = []
+    try:
+        return _embed_held(raw, client, rate, holds)
+    finally:
+        for hold in holds:
+            hold.release()
+
+
+def _embed_held(raw: bytes, client: str | None, rate: Decision | None, holds: list[Hold]) -> JSONResponse:
     """One embeddings call to the configured model, whatever `model` the client names (that id never selects an upstream
     model), logged with task `embeddings`, served_by `upstream` and route `passthrough` at the configured model's price
     for its prompt tokens (the upstream's count, else about 4 characters a token). The row counts against the key's
@@ -2704,7 +2734,7 @@ def _embed(raw: bytes, client: str | None, rate: Decision | None = None) -> JSON
         ctx.task = EMBEDDINGS_TASK
     limits = rt.limits_for(client)
     use = rt.meter.usage(client)  # memory only, as for chat (ADR 0063)
-    headers = _quota(client, limits, use)
+    headers = _quota(client, limits, use, 1, holds)
     if _budget(client, limits, use):  # student_only: no student answers embeddings
         raise _gateway_budget_error(use.now, EMBEDDINGS_TASK)
     if rate is not None and "X-RateLimit-Limit-Requests" not in headers:
@@ -2745,7 +2775,7 @@ def _embed(raw: bytes, client: str | None, rate: Decision | None = None) -> JSON
         wall_ms=(time.perf_counter() - t0) * 1000,
         client_request_id=client_request_id,
     )
-    headers.update(_spend_headers(limits, rt.meter.add(client, cost)))
+    headers.update(_spend_headers(limits, rt.meter.add(client, cost, hold=holds[0] if holds else None)))
     if ctx is not None:  # the fields of the request's log line (`_log_chat`); no cascade ran, so no request metric
         ctx.result = {"served_by": "upstream", "route": PASSTHROUGH_ROUTE, "cost_usd": cost, "latency_ms": out.latency_ms}
         ctx.counted = True
