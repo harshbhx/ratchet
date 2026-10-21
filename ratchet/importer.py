@@ -27,8 +27,13 @@ trained on, even past FREQUENT (FR-4.50): a human-verified golden set. A row who
 on (a variant in the train split, or seen FREQUENT times) is refused, because it would not be held-out evidence.
 
 `--dry-run` runs the same import against an in-memory copy of the ledger and prints what would happen; the ledger file
-is not written. Like `python -m ratchet.admin`, this opens the gateway's ledger file (RATCHET_DB) and may run while the
-gateway serves.
+is opened read-only, so it is never written, created (a mistyped `--db` is refused) or migrated. Like
+`python -m ratchet.admin`, this opens the gateway's ledger file (RATCHET_DB) and may run while the gateway serves.
+
+An imported label is no occurrence of its request: a new example starts at `seen` 0 and a stored one keeps its count,
+so an import never pushes a golden prompt past FREQUENT (invariant 3). A label that replaces a teacher's on an existing
+training row adds no row, so it does not count toward Night School's new-data gate (`run_night`'s `min_new_examples`);
+see the runbook.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sqlite3
 import sys
 from collections import Counter
 from collections.abc import Iterator
@@ -46,7 +52,7 @@ from typing import Any, BinaryIO, TextIO
 from . import feedback, licenses, privacy, tasks, taskspec
 from .auth import valid_name
 from .config import Settings
-from .ledger import STORED_PARAM_KEYS, Ledger
+from .ledger import SCHEMA, STORED_PARAM_KEYS, Ledger
 from .openai_compat import TEXT_MODALITY, APIError, Limits, normalize_messages, parse_body, validate_chat_request
 from .providers import GenParams, GenPolicy
 from .redact import redact
@@ -304,7 +310,6 @@ def run_import(
     policy: GenPolicy = settings.gen_policy()
     report = Report(t.name, src.name, src.license.name, golden_only, dry_run, file_name)
     digest = hashlib.sha256()
-    prompts = ledger.prompt_index(t.name) if golden_only else None
     in_file: dict[str, str] = {}  # example hash -> label, for this file
     for number, raw in _lines(_Hashing(stream, digest), settings.max_body_bytes):
         report.rows += 1
@@ -356,7 +361,6 @@ def run_import(
             golden_only=golden_only,
             bump=False,  # an import is not an occurrence of the request
             replace_same_rank=True,  # an operator's later import wins over an earlier one
-            prompts=prompts,
         )
         if outcome.inserted:
             report.inserted += 1
@@ -413,11 +417,30 @@ def parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _copy(led: Ledger, settings: Settings) -> Ledger:
-    """An in-memory copy of the ledger for a dry run: the same rows, so every rule decides as it would."""
+def _snapshot(path: str, settings: Settings) -> Ledger:
+    """An in-memory copy of the ledger file for a dry run: the same rows, so every rule decides as it would. The file is
+    opened read-only, so a dry run never creates a file at a mistyped path (ImportRefused) or migrates an older one; the
+    copy is brought to the current schema instead, as opening the file would."""
+    file = Path(path)
+    if not file.is_file():
+        raise ImportRefused(f"no ledger file at {path}: a dry run reads an existing ledger and writes nothing")
     copy = Ledger(":memory:", settings.golden_fraction)
-    led.db.backup(copy.db)
-    copy.day = led.day
+    try:
+        source = sqlite3.connect(f"{file.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            source.backup(copy.db)
+        finally:
+            source.close()
+    except sqlite3.Error as e:
+        copy.db.close()
+        raise ImportRefused(f"cannot read {path}: {e}") from None
+    copy.db.executescript(SCHEMA)
+    copy._migrate()
+    copy.day = int(
+        copy.db.execute(
+            "SELECT MAX(COALESCE((SELECT MAX(day) FROM requests), 0), COALESCE((SELECT MAX(day) FROM daily_rollup), 0))"
+        ).fetchone()[0]
+    )
     return copy
 
 
@@ -426,25 +449,29 @@ def main(argv: list[str] | None = None, stdin: BinaryIO | None = None, stdout: T
     out = stdout if stdout is not None else sys.stdout
     s = Settings(mode="live")
     licenses.install(s.teacher_licenses_file)  # the gateway's teachers, RATCHET_TEACHER_LICENSES included
-    led = Ledger(args.db or s.db_path, s.golden_fraction, auto_day=True)
-    target = led
+    path = args.db or s.db_path
+    if args.dry_run:
+        try:
+            led = _snapshot(path, s)
+        except ImportRefused as e:
+            raise SystemExit(f"import: {e}") from None
+    else:
+        led = Ledger(path, s.golden_fraction, auto_day=True)
     try:
         for line in taskspec.install(led, s.tasks_file):
             print(f"task skipped: {line}", file=sys.stderr)
-        if args.dry_run:
-            target = _copy(led, s)
         try:
             if args.file == "-":
                 stream = stdin if stdin is not None else sys.stdin.buffer
-                report = run_import(target, s, stream, **_options(args), file_name="-")
+                report = run_import(led, s, stream, **_options(args), file_name="-")
             else:
-                path = Path(args.file)
+                data = Path(args.file)
                 try:
-                    handle = path.open("rb")
+                    handle = data.open("rb")
                 except OSError as e:
-                    raise ImportRefused(f"cannot read {path}: {e.strerror or e}") from None
+                    raise ImportRefused(f"cannot read {data}: {e.strerror or e}") from None
                 with handle:
-                    report = run_import(target, s, handle, **_options(args), file_name=str(path))
+                    report = run_import(led, s, handle, **_options(args), file_name=str(data))
         except (ImportRefused, ValueError) as e:  # a bad RATCHET_* value is a ValueError too
             raise SystemExit(f"import: {e}") from None
         out.write(json.dumps(report.as_dict(), indent=2, ensure_ascii=False) + "\n")
@@ -452,8 +479,6 @@ def main(argv: list[str] | None = None, stdin: BinaryIO | None = None, stdout: T
             out.write("dry run: nothing was written\n")
         return 0
     finally:
-        if target is not led:
-            target.db.close()
         led.db.close()
 
 

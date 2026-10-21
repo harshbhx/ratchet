@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -34,6 +35,7 @@ from ratchet.nightschool.orchestrate import run_night
 from ratchet.redact import redact, redact_messages
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
+from ratchet.stats import log_e_bernoulli, wilson
 from ratchet.tasks import Task
 
 CHAT = "/v1/chat/completions"
@@ -469,6 +471,60 @@ def test_correction_storage_rules_still_apply(gw_env):
     assert gw.rt.ledger.db.execute("SELECT COUNT(*) FROM feedback WHERE corrected_present=1 AND stored=0").fetchone()[0] == 6
 
 
+@pytest.mark.req("FR-13.30", "FR-13.2")
+def test_correction_needs_every_end_user_identifier(gw_env):
+    """A request that sent both `user` and `safety_identifier` logs the second identifier's keyed hash too
+    (`requests.end_user_secondary`), and a correction must send both: with only one, a no-train registration made with
+    the other (the client's, or an admin's for every client) could not be found and the prompt would be stored."""
+    admin_key = "ops-feedback-admin-key-0123456789ab"
+    gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{ACME_KEY}", RATCHET_ADMIN_KEYS=f"ops:{admin_key}")
+    c = TestClient(gw.app)
+    _cascade(gw)
+    led, hasher = gw.rt.ledger, gw.rt.end_users
+
+    def ask(text: str, **ids: str) -> tuple[str, dict[str, Any]]:
+        rid = _chat(c, text, ACME_KEY, **ids)["ratchet"]["request_id"]
+        return rid, {"request_id": rid, "verdict": "incorrect", "corrected": A, "messages": _msgs(text)}
+
+    rid, base = ask("both ids", user="u-1", safety_identifier="s-1")
+    row = led.feedback_request(rid)
+    assert (row["end_user"], row["end_user_secondary"]) == (hasher.hash("s-1", "acme"), hasher.hash("u-1", "acme"))
+    assert c.post(NO_TRAIN, json={"end_user": "u-1"}, headers=_auth(ACME_KEY)).status_code == 200  # by `user`
+    for ids in ({"safety_identifier": "s-1"}, {}):  # the documented pattern: only the identifier the request is under
+        r = _feedback(c, {**base, **ids}, ACME_KEY)
+        assert r.status_code == 400 and r.json()["error"]["code"] == "end_user_required", r.text
+        assert "both" in r.json()["error"]["message"]
+    wrong = _feedback(c, {**base, "safety_identifier": "s-1", "user": "u-2"}, ACME_KEY)
+    assert wrong.status_code == 400 and wrong.json()["error"]["code"] == "end_user_mismatch"
+    assert _feedback(c, {**base, "safety_identifier": "s-1", "user": "u-1"}, ACME_KEY).json()["correction"] == {
+        "stored": False,
+        "not_stored": "end_user",
+        "split": None,
+        "replaced": None,
+    }
+    # An admin's registration for every client, made with `user` after the request: the same.
+    rid2, base2 = ask("admin scope", user="u-3", safety_identifier="s-3")
+    assert c.post(NO_TRAIN, json={"end_user": "u-3"}, headers=_auth(admin_key)).status_code == 200
+    assert _feedback(c, {**base2, "safety_identifier": "s-3"}, ACME_KEY).json()["error"]["code"] == "end_user_required"
+    both = _feedback(c, {**base2, "safety_identifier": "s-3", "user": "u-3"}, ACME_KEY).json()
+    assert both["correction"]["not_stored"] == "end_user"
+    assert _examples(led) == []
+    # One identifier on the request: one is enough. Two, and nobody opted out: both are needed and the correction stored.
+    _, single = ask("one id", safety_identifier="s-4")
+    assert led.feedback_request(single["request_id"])["end_user_secondary"] is None
+    assert _feedback(c, {**single, "safety_identifier": "s-4"}, ACME_KEY).json()["correction"]["stored"] is True
+    _, pair = ask("two ids", user="u-5", safety_identifier="s-5")
+    assert _feedback(c, {**pair, "user": "u-5"}, ACME_KEY).json()["error"]["code"] == "end_user_required"
+    assert _feedback(c, {**pair, "user": "u-5", "safety_identifier": "s-5"}, ACME_KEY).json()["correction"]["stored"] is True
+    # The second hash is identifying data like the first: never exported, and an erasure by either identifier clears both.
+    lines = [json.loads(line) for line in privacy.export_lines(led, "requests")]
+    assert lines and all("end_user" not in r and "end_user_secondary" not in r for r in lines)
+    out = privacy.erase(led, client="acme", end_user_raw="u-1", hasher=hasher, actor="ops", reason="test", dry_run=False)
+    assert out["requests_unlinked"] == 1
+    cleared = led.feedback_request(rid)
+    assert (cleared["end_user"], cleared["end_user_secondary"]) == (None, None)
+
+
 @pytest.mark.req("FR-13.30")
 def test_correction_conflicts_and_fixes(gw_env):
     gw = _gateway(gw_env)
@@ -547,10 +603,11 @@ def test_store_label_is_atomic_across_processes(tmp_path):
     importer_side.example = example  # type: ignore[method-assign]
     rep = _import(importer_side, _ft("shared prompt", A))
     assert blocked and "locked" in blocked[0] and rep.inserted == 1
-    # The gateway's answer arrives after the import committed: it bumps `seen`, and the human label stands.
+    # The gateway's answer arrives after the import committed: it bumps `seen` (the import was no occurrence of the
+    # request, so this is its first), and the human label stands.
     assert gateway_side.add_example(TRIAGE, _msgs("shared prompt"), B, OPEN_TEACHER, "OpenMDW-1.1", "") is False
     row = gateway_side.example(example_hash(TRIAGE, _msgs("shared prompt")))
-    assert (row["teacher_model"], row["completion"], row["seen"]) == ("human", A, 2)
+    assert (row["teacher_model"], row["completion"], row["seen"]) == ("human", A, 1)
     # A refused golden-only row (its prompt is a training row) commits nothing and holds no lock afterwards.
     led_settings = _settings()
     trained = _prompt_in("train", "atomic")
@@ -597,6 +654,30 @@ def test_human_precision_alerts_and_never_moves_a_release(gw_env):
     assert gw.rt.ledger.meta_get(feedback.ALERT_META.format(live.id)) is not None  # a restart does not alert again
     policy = ReleasePolicy(min_audits=need)
     assert feedback.check_human_alert(gw.rt.ledger, live.id, policy) is False
+
+
+@pytest.mark.req("FR-13.30")
+def test_human_alert_is_anytime_valid():
+    """The alert is checked after every verdict, so its rule is the mixture e-value against 'precision >= live_floor'
+    reaching 1 / ALERT_ALPHA, never a fixed-sample Wilson bound looked at again and again: 14 correct of 20 puts the
+    Wilson upper bound under a 0.92 floor, but is not yet strong evidence."""
+    led = Ledger(":memory:")
+    policy = ReleasePolicy(min_audits=20, live_floor=0.92)
+    request = {"task": TRIAGE, "student_version": 1, "served_by": "student", "route": "student"}
+    verdicts = ["correct"] * 14 + ["incorrect"] * 6
+    for i, verdict in enumerate(verdicts):
+        led.record_feedback(f"req_{i:032x}", "acme", verdict, request)
+    assert wilson(14, 20)[1] < policy.live_floor
+    assert feedback.check_human_alert(led, 1, policy) is False
+    n, ok, fired = 20, 14, False
+    while not fired:
+        led.record_feedback(f"req_{n:032x}", "acme", "incorrect", request)
+        n += 1
+        expected = log_e_bernoulli(ok, n, policy.live_floor, "below") >= math.log(1 / feedback.ALERT_ALPHA)
+        fired = feedback.check_human_alert(led, 1, policy)
+        assert fired == expected, n
+    (event,) = [e for e in led.events() if e["kind"] == feedback.HUMAN_ALERT]
+    assert "anytime-valid" in event["detail"] and f"n={n}" in event["detail"]
 
 
 @pytest.mark.req("FR-13.30", "FR-13.4")
@@ -654,11 +735,11 @@ def test_old_ledger_file_gains_feedback_schema(tmp_path):
     db.close()
     led = Ledger(str(path))
     cols = {t: {r["name"] for r in led.db.execute(f"PRAGMA table_info({t})")} for t in ("requests", "examples")}
-    assert "request_id" in cols["requests"] and {"verified", "golden_only"} <= cols["examples"]
+    assert {"request_id", "end_user_secondary"} <= cols["requests"] and {"verified", "golden_only"} <= cols["examples"]
     assert all(led.db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (t,)).fetchone() for t in FEEDBACK_TABLES)
     assert dict(led.db.execute("SELECT verified, golden_only FROM examples").fetchone()) == {"verified": 0, "golden_only": 0}
     names = {r["name"] for r in led.db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
-    assert {"requests_request_id", "feedback_version"} <= names
+    assert {"requests_request_id", "feedback_version", "requests_end_user_secondary"} <= names
 
 
 # ---------- import ----------
@@ -708,8 +789,9 @@ def test_import_openai_finetune_jsonl():
     }
     assert {p["line"] for p in rep.problems} >= {5, 6, 7, 8, 9, 10}
     stored = _examples(led)
+    # An import is no occurrence of the request: `seen` 0, so it never counts toward FREQUENT (invariant 3).
     assert {(r["teacher_model"], r["license"], r["verified"], r["origin"], r["seen"]) for r in stored} == {
-        ("human", "customer-provided labels", 1, "import", 1)
+        ("human", "customer-provided labels", 1, "import", 0)
     }
     # The multi-turn row keeps its earlier turns as context, its label is the last answer, and its address is redacted.
     mt = next(r for r in stored if "Charged twice" in r["messages"])
@@ -726,7 +808,7 @@ def test_import_openai_finetune_jsonl():
     assert "Card charged twice" not in event["detail"]
     # Importing the same file again stores nothing new and counts nothing twice.
     again = _import(led, *rows)
-    assert again.inserted == 0 and again.replaced_human == 3 and [r["seen"] for r in _examples(led)] == [1, 1, 1]
+    assert again.inserted == 0 and again.replaced_human == 3 and [r["seen"] for r in _examples(led)] == [0, 0, 0]
 
 
 @pytest.mark.req("FR-13.31", "INV-1")
@@ -847,6 +929,66 @@ def test_golden_only_rows_never_trained():
     assert feedback.store_human_example(led, tasks.get(TRIAGE), _msgs(train_prompt), C, "acme", s).reason == "human_label_exists"
 
 
+@pytest.mark.req("FR-13.31", "FR-13.30", "INV-3")
+def test_labels_that_are_no_occurrence_never_reach_frequent():
+    """An import, and a correction of a request already counted, are no occurrence of the request: a new example starts
+    at `seen` 0, so a twice-seen golden prompt does not reach FREQUENT through a label (only real requests move a prompt
+    to training), and an imported prompt needs FREQUENT real requests like any other."""
+    led = Ledger(":memory:")
+    s, t = _settings(), tasks.get(TRIAGE)
+    json_mode = {"response_format": {"type": "json_object"}}
+    p = _prompt_in("golden", "occ")
+    for _ in range(2):  # two real requests
+        led.add_example(TRIAGE, _msgs(p), A, OPEN_TEACHER, "OpenMDW-1.1", "")
+    rep = _import(led, {"task": TRIAGE, "messages": _ft(p, B)["messages"], "params": json_mode})  # a variant
+    assert rep.inserted == 1 and led.example(example_hash(TRIAGE, _msgs(p), json_mode))["seen"] == 0
+    assert (len(dataset.rows(led, "golden")), len(dataset.rows(led, "train"))) == (2, 0)
+    assert led.prompt_counts(TRIAGE)[example_hash(TRIAGE, _msgs(p))] == 2
+    # A correction of a request whose teacher answer was stored in another variant: no occurrence either.
+    out = feedback.store_human_example(led, t, _msgs(p), D, "acme", s, params={"stop": ["END"]}, bump=False)
+    assert out.inserted and led.example(out.hash)["seen"] == 0 and dataset.rows(led, "train") == []
+    # The third real request is what makes the prompt frequent: every variant moves to training (INV-3).
+    led.add_example(TRIAGE, _msgs(p), A, OPEN_TEACHER, "OpenMDW-1.1", "", params=json_mode)
+    assert dataset.rows(led, "golden") == [] and len(dataset.rows(led, "train")) == 2  # the stop variant stays out
+    # An imported new prompt counts no request; FREQUENT real requests of it are needed, as for any prompt.
+    q = _prompt_in("golden", "fresh")
+    _import(led, _ft(q, B))
+    for n in range(dataset.FREQUENT):
+        assert any(json.dumps(_msgs(q))[:-1] in json.dumps(r["messages"]) for r in dataset.rows(led, "golden")), n
+        led.add_example(TRIAGE, _msgs(q), A, OPEN_TEACHER, "OpenMDW-1.1", "")
+    assert led.example(example_hash(TRIAGE, _msgs(q)))["seen"] == dataset.FREQUENT
+    assert any(r["provenance"]["hash"] == example_hash(TRIAGE, _msgs(q)) for r in dataset.rows(led, "train"))
+    # The export reports the real count (0 for an imported row nobody asked yet).
+    _import(led, _ft(_prompt_in("golden", "unasked"), A))
+    assert 0 in {json.loads(line)["seen"] for line in privacy.export_lines(led, "examples")}
+
+
+@pytest.mark.req("FR-4.50", "FR-13.31", "INV-3")
+def test_golden_only_check_reads_the_ledger_at_each_row():
+    """The golden-only check runs per row inside the transaction that stores it, against the ledger as it is then: a
+    variant the gateway stores in the train split while a long import runs keeps that row out."""
+    led = Ledger(":memory:")
+    first, second = _prompt_in("golden", "live"), _prompt_in("train", "live")
+
+    class Gateway(io.BytesIO):
+        """The file being read while the gateway stores the teacher's answer to the second row's prompt."""
+
+        calls = 0
+
+        def readline(self, size: int | None = -1) -> bytes:
+            self.calls += 1
+            if self.calls == 2:
+                led.add_example(TRIAGE, _msgs(second), B, OPEN_TEACHER, "OpenMDW-1.1", "")
+            return super().readline(-1 if size is None else size)
+
+    stream = Gateway(_jsonl(_ft(first, A), _ft(second, A)).getvalue())
+    options = {"task": TRIAGE, "source": "human", "attest": "ours", "golden_only": True}
+    rep = importer.run_import(led, _settings(), stream, file_name="golden.jsonl", **options)
+    assert (rep.inserted, dict(rep.refused)) == (1, {"trained": 1})
+    row = led.example(example_hash(TRIAGE, _msgs(second)))
+    assert (row["teacher_model"], row["golden_only"], row["split"]) == (OPEN_TEACHER, 0, "train")
+
+
 @pytest.mark.req("FR-3.54", "FR-13.31", "INV-14")
 def test_bom_lists_human_source():
     led = Ledger(":memory:")
@@ -922,7 +1064,23 @@ def test_import_cli_dry_run_and_apply(tmp_path, monkeypatch, capsys):
     data = tmp_path / "labels.jsonl"
     data.write_bytes(_jsonl(_ft("cli one", A), _ft("cli two", B), b"", b"   ", _ft("bad", "no json")).getvalue())
     args = [str(data), "--task", TRIAGE, "--source", "human", "--attest", "ours", "--client", "acme"]
+    # A dry run against a ledger file that does not exist (a mistyped path) is refused and creates nothing.
+    with pytest.raises(SystemExit, match="no ledger file"):
+        importer.main([*args, "--dry-run"])
+    assert not db.exists()
+    # A ledger file written before `requests.end_user_secondary` existed: the dry run opens it read-only and migrates
+    # its in-memory copy, never the file.
+    Ledger(str(db)).db.close()
+    old = sqlite3.connect(db)
+    cols = ", ".join(r[1] for r in old.execute("PRAGMA table_info(requests)") if r[1] != "end_user_secondary")
+    old.execute(f"CREATE TABLE requests_old AS SELECT {cols} FROM requests")
+    old.execute("DROP TABLE requests")
+    old.execute("ALTER TABLE requests_old RENAME TO requests")
+    old.commit()
+    old.close()
+    before = db.read_bytes()
     assert importer.main([*args, "--dry-run"]) == 0
+    assert db.read_bytes() == before
     out = capsys.readouterr().out
     report = json.loads(out[: out.rindex("}") + 1])
     assert (report["dry_run"], report["rows"], report["inserted"], report["invalid"]) == (True, 3, 2, 1)

@@ -674,7 +674,8 @@ def _request_meta(req: Any, client: str | None, header_store: str | None) -> Req
     """What the cascade needs to know about storage and the end user (FR-13.1, FR-13.2): whether the API key
     (RATCHET_KEY_LIMITS `store=0`) or the request (`store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`)
     opts out, broadest first, and the end user's hash scoped to the key, with the other hashes a no-train registration
-    of that end user may use (`user` beside `safety_identifier`, the every-client scope). A bad `X-Ratchet-Store` is a
+    of that end user may use (`user` beside `safety_identifier`, the every-client scope) and the second identifier's
+    hash, logged so a correction must name it (`RequestMeta.end_user_secondary`). A bad `X-Ratchet-Store` is a
     400. The raw `user` / `safety_identifier` goes no further than this function. Zero retention, no-store tasks and
     no-train end users are the cascade's own checks (`Ratchet.store_opt_out`), so they hold for every caller."""
     try:
@@ -685,6 +686,8 @@ def _request_meta(req: Any, client: str | None, header_store: str | None) -> Req
     who: dict[str, Any] = {}
     if ids:
         who = {"end_user": rt.end_users.hash(ids[0], client), "end_user_aliases": rt.end_users.aliases(ids, client)}
+        if len(ids) > 1:
+            who["end_user_secondary"] = rt.end_users.hash(ids[1], client)
     limits = rt.key_limits.get(client) if client is not None else None
     if limits is not None and not limits.store:
         return RequestMeta(storable=False, store_opt_out="key", **who)

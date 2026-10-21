@@ -50,7 +50,10 @@ CREATE TABLE IF NOT EXISTS requests (
     store_opt_out TEXT,        -- why its teacher answers could not be stored (privacy.OPT_OUTS); NULL: no opt-out
     -- The gateway's request id ('req_' + 32 hex; the completion id is 'chatcmpl-' + the same digits), which feedback
     -- names the request by (FR-13.30); NULL for internal calls (Scout, the simulator) and older rows.
-    request_id TEXT
+    request_id TEXT,
+    -- HMAC of the second end-user identifier the request carried ('user' beside 'safety_identifier'), in the same scope as
+    -- end_user, never the value: a correction must name it too, so a no-train registration made with it applies (FR-13.30)
+    end_user_secondary TEXT
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +66,8 @@ CREATE TABLE IF NOT EXISTS examples (
     redactions INTEGER DEFAULT 0, -- PII placeholders inserted before storing (ratchet/redact.py)
     params TEXT,               -- JSON: the conditions the teacher answered under (STORED_PARAM_KEYS); NULL when none
     -- Evidence columns (ADR 0024):
-    origin TEXT,               -- 'escalation' | 'audit' | 'arbitration' | 'backfill'; NULL: not recorded (FR-16.8)
+    origin TEXT,               -- 'escalation' | 'audit' | 'arbitration' | 'backfill'; NULL: not recorded (FR-16.8);
+                               -- 'feedback' | 'import' for a human or imported label (LABEL_ORIGINS, ADR 0091)
     job TEXT,                  -- the backfill job that wrote it; NULL otherwise (FR-16.8)
     contested INTEGER DEFAULT 0,      -- 1: a later teacher label of the same request disagreed (FR-16.7)
     checked_epoch INTEGER DEFAULT 0,  -- the teacher-watch epoch of its last self-consistency check (FR-16.7)
@@ -269,13 +273,20 @@ def prompt_key(r: Mapping[str, Any]) -> str:
     return str(r["hash"])
 
 
+def seen_count(r: Mapping[str, Any]) -> int:
+    """How often an example's exact request occurred (`examples.seen`). A label stored without an occurrence of its
+    request (an import, or a correction of a request already counted in another variant) is inserted with 0 and counts
+    0 (ADR 0091); NULL, in a row read before the column existed, counts once."""
+    return 1 if r["seen"] is None else int(r["seen"])
+
+
 def count_prompts(rows: Iterable[Mapping[str, Any]]) -> Counter[str]:
     """How often each request was seen (`prompt_key`), over every stored variant, purged rows included: a purge removes
     text, not the fact that the request repeated, so it never moves a frequent request's other variants back to the
-    golden set (INV-3)."""
+    golden set (INV-3). A label that was not an occurrence of its request adds nothing (`seen_count`)."""
     seen: Counter[str] = Counter()
     for r in rows:
-        seen[prompt_key(r)] += int(r["seen"] or 1)
+        seen[prompt_key(r)] += seen_count(r)
     return seen
 
 
@@ -312,6 +323,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "end_user": "TEXT",
         "store_opt_out": "TEXT",
         "request_id": "TEXT",
+        "end_user_secondary": "TEXT",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -353,6 +365,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
     # One end user's requests over time (FR-13.2): what erasure, export and per-user limits look up.
     "CREATE INDEX IF NOT EXISTS requests_end_user_ts ON requests (end_user, ts)",
+    "CREATE INDEX IF NOT EXISTS requests_end_user_secondary ON requests (end_user_secondary)",
     # Retention and erasure (FR-13.3, FR-13.4): old requests and examples, a client's or an end user's examples.
     "CREATE INDEX IF NOT EXISTS requests_ts ON requests (ts)",
     "CREATE INDEX IF NOT EXISTS examples_last_seen ON examples (last_seen_ts)",
@@ -823,7 +836,9 @@ class Ledger:
         held out even past FREQUENT; sticky on a duplicate) and `origin` (`LABEL_ORIGINS`). With `replace`, a duplicate's
         label (completion, teacher, license, redactions, verified, origin) becomes this one: how a human label beats a
         teacher's on the same hash. Without it a duplicate keeps its label, so a teacher answer never overwrites a human
-        one. `bump` False leaves `seen` alone on a duplicate, for a label that is not a new occurrence of the request.
+        one. `bump` False is for a label that is not a new occurrence of the request (an import, a correction of a request
+        already counted): a duplicate's `seen` stays as it is and a new example starts at `seen` 0, so the label never
+        counts toward FREQUENT (INV-3).
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
         under other conditions are another example, in the same split (`_split`). `client` (the API key name) and
@@ -844,8 +859,8 @@ class Ledger:
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
-                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     now,
                     self.day,
@@ -865,6 +880,7 @@ class Ledger:
                     int(verified),
                     int(golden_only),
                     origin,
+                    int(bump),  # 1 as the column's default for every router write; 0 for a label that is no occurrence
                 ),
             )
             self.db.commit()
@@ -948,17 +964,20 @@ class Ledger:
         return self.db.execute("SELECT * FROM examples WHERE hash=?", (h,)).fetchone()
 
     @_locked
-    def prompt_index(self, task: str) -> tuple[Counter[str], set[str]]:
-        """For one task's stored examples, purged ones included: how often each prompt was seen (`count_prompts`, over
-        every variant) and the prompt keys (`prompt_key`) that have a row in the train split. What a golden-only import
-        checks before it holds a prompt out for good: a prompt that may already have been trained on cannot be held-out
-        evidence (ADR 0091). Messages are read only for rows with stored conditions."""
+    def prompt_status(self, task: str, prompt: str) -> tuple[int, bool]:
+        """For one prompt of one task (`prompt`, its `prompt_key`), over every stored variant, purged ones included: how
+        often it was seen (`count_prompts`) and whether a variant is in the train split. What a golden-only label checks
+        before it holds a prompt out for good, inside the write transaction that stores it (`feedback.store_label`): a
+        prompt that may already have been trained on cannot be held-out evidence (ADR 0091). The candidates are the rows
+        whose hash or recorded prompt key is `prompt` and the kept rows with stored conditions, whose key needs their
+        messages."""
         rows = self.db.execute(
             "SELECT hash, task, CASE WHEN params IS NOT NULL THEN messages END messages, params, prompt_hash, seen, split"
-            " FROM examples WHERE task=?",
-            (task,),
+            " FROM examples WHERE task=? AND (hash=? OR prompt_hash=? OR (params IS NOT NULL AND prompt_hash IS NULL))",
+            (task, prompt, prompt),
         ).fetchall()
-        return count_prompts(rows), {prompt_key(r) for r in rows if r["split"] == "train"}
+        mine = [r for r in rows if prompt_key(r) == prompt]
+        return count_prompts(mine)[prompt], any(r["split"] == "train" for r in mine)
 
     @_locked
     def example_count(self, task: str) -> int:
@@ -1187,9 +1206,13 @@ class Ledger:
             )
             kept = self._unlink(unlink)
             unlinked = 0
-            for part in _chunks(sorted(set(unlink_end_users))):
+            for part in _chunks(sorted(set(unlink_end_users)), SQL_CHUNK // 2):  # each value is bound twice
+                marks = ",".join("?" * len(part))
+                # A row that named the end user under either identifier it carried loses both hashes.
                 unlinked += self.db.execute(
-                    f"UPDATE requests SET end_user=NULL WHERE end_user IN ({','.join('?' * len(part))})", part
+                    "UPDATE requests SET end_user=NULL, end_user_secondary=NULL"
+                    f" WHERE end_user IN ({marks}) OR end_user_secondary IN ({marks})",
+                    part + part,
                 ).rowcount
             self.db.execute("UPDATE erasures SET purged=?, kept=? WHERE id=?", (len(done), kept, eid))
             self.db.commit()
@@ -1225,11 +1248,13 @@ class Ledger:
 
     @_locked
     def requests_of_end_users(self, hashes: Collection[str]) -> int:
-        """Request rows that name one of these end-user hashes (what erasing those end users unlinks)."""
+        """Request rows that name one of these end-user hashes, as the attributed end user or the second identifier (what
+        erasing those end users unlinks)."""
         n = 0
-        for part in _chunks(sorted(set(hashes))):
-            q = f"SELECT COUNT(*) FROM requests WHERE end_user IN ({','.join('?' * len(part))})"
-            n += int(self.db.execute(q, part).fetchone()[0])
+        for part in _chunks(sorted(set(hashes)), SQL_CHUNK // 2):  # each value is bound twice
+            marks = ",".join("?" * len(part))
+            q = f"SELECT COUNT(*) FROM requests WHERE end_user IN ({marks}) OR end_user_secondary IN ({marks})"
+            n += int(self.db.execute(q, part + part).fetchone()[0])
         return n
 
     @_locked
@@ -1425,7 +1450,7 @@ class Ledger:
                     "task": r["task"],
                     "hash": r["hash"],
                     "split": r["split"],
-                    "seen": int(r["seen"] or 1),
+                    "seen": seen_count(r),
                     "messages": json.loads(r["messages"]),
                     "completion": r["completion"],
                     "params": json.loads(r["params"]) if r["params"] else None,
@@ -1447,7 +1472,7 @@ class Ledger:
         return out
 
     def _export_requests(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
-        return [{k: r[k] for k in r.keys() if k != "end_user"} for r in rows]
+        return [{k: r[k] for k in r.keys() if k not in ("end_user", "end_user_secondary")} for r in rows]
 
     def _export_versions(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         out = []
@@ -1621,11 +1646,11 @@ class Ledger:
     @_locked
     def feedback_request(self, request_id: str) -> sqlite3.Row | None:
         """The metadata a verdict needs of the request the gateway logged under `request_id`: who sent it, its task,
-        version, how it was served, its storage opt-out, end user and whether a teacher answer of it was stored. None
-        when no row has that id (never logged, or folded by request retention)."""
+        version, how it was served, its storage opt-out, end user (both identifiers' hashes) and whether a teacher answer
+        of it was stored. None when no row has that id (never logged, or folded by request retention)."""
         return self.db.execute(
-            "SELECT id, client, task, served_by, route, student_version, store_opt_out, end_user, stored FROM requests"
-            " WHERE request_id=? ORDER BY id LIMIT 1",
+            "SELECT id, client, task, served_by, route, student_version, store_opt_out, end_user, end_user_secondary, stored"
+            " FROM requests WHERE request_id=? ORDER BY id LIMIT 1",
             (request_id,),
         ).fetchone()
 

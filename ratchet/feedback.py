@@ -22,6 +22,7 @@ client's correction; otherwise the first label stands (`store_label`).
 
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from collections import Counter
@@ -36,7 +37,7 @@ from .nightschool.dataset import FREQUENT
 from .providers import GenParams, GenPolicy
 from .redact import redact, redact_json, redact_messages
 from .router import Ratchet, RequestMeta
-from .stats import wilson
+from .stats import log_e_bernoulli
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .release import ReleasePolicy
@@ -49,6 +50,10 @@ _REQUEST_ID = re.compile(r"(?:req_|chatcmpl-)([0-9a-f]{32})")
 FEEDBACK_ORIGIN, IMPORT_ORIGIN = "feedback", "import"  # examples.origin (ledger.LABEL_ORIGINS)
 HUMAN_ALERT = "human_alert"  # the event kind `check_human_alert` writes
 ALERT_META = "human_alert:v{}"  # meta row: the version was alerted on, once
+# The human alert's level: the mixture e-value against 'human precision >= live_floor' must reach 1 / ALERT_ALPHA. The
+# check runs after every verdict, so it needs an anytime-valid rule (ADR 0025); 0.025 matches the one-sided level of
+# the 95% Wilson bound reported beside it.
+ALERT_ALPHA = 0.025
 # Why a correction or an imported row was not stored. The storage opt-outs (`privacy.OPT_OUTS`) come first, then:
 # corrections switched off (RATCHET_FEEDBACK_CORRECTIONS=0), a pinned task (invariant 10), a request the student was never
 # meant to learn (`unknown_task`, `teacher_only`), a label redaction broke, an equal or stronger human label already
@@ -162,12 +167,13 @@ def _rank(row: Any) -> int:
     return 2 if row["origin"] == IMPORT_ORIGIN else 1
 
 
-def held_out_ok(prepared: Prepared, prompts: tuple[Counter[str], set[str]]) -> bool:
+def held_out_ok(ledger: Ledger, prepared: Prepared) -> bool:
     """Whether a golden-only label may hold its prompt out for good: no stored variant of the prompt is in the train
-    split and the prompt was not seen FREQUENT times (when it was, its variants are training rows already). `prompts` is
-    `Ledger.prompt_index(task)`. A prompt that may already have been trained on is no held-out evidence (invariant 6)."""
-    seen, train = prompts
-    return prepared.prompt not in train and seen[prepared.prompt] < FREQUENT
+    split and the prompt was not seen FREQUENT times (when it was, its variants are training rows already), as the
+    ledger holds it now (`Ledger.prompt_status`; `store_label` asks inside the transaction that writes the label). A
+    prompt that may already have been trained on is no held-out evidence (invariant 6)."""
+    seen, in_train = ledger.prompt_status(prepared.task.name, prepared.prompt)
+    return not in_train and seen < FREQUENT
 
 
 def store_label(
@@ -182,21 +188,21 @@ def store_label(
     golden_only: bool = False,
     bump: bool = True,
     replace_same_rank: bool = False,
-    prompts: tuple[Counter[str], set[str]] | None = None,
 ) -> Stored:
     """Store one human or imported label: the only caller of `Ledger.add_example` besides the router (invariant 2).
 
     `source` is `licenses.HUMAN` (a label a person wrote: `verified` = 1) or an open teacher's model id, which must
     pass `licenses.require_distillable` (LicenseError otherwise; invariant 1). Refused, with a reason: a pinned task
     (invariant 10), zero retention and a no-store task (FR-13.1; the caller checks the request's own opt-outs), an erased
-    example (FR-13.3), and for `golden_only` a prompt that may already have been trained on (`held_out_ok`, over
-    `prompts` or, when None, `Ledger.prompt_index`). The split is the hash's (invariant 3) unless `golden_only`.
+    example (FR-13.3), and for `golden_only` a prompt that may already have been trained on (`held_out_ok`, read in the
+    same transaction as the write). The split is the hash's (invariant 3) unless `golden_only`.
 
     On an existing example a human label replaces the label when it is stronger (`_rank`: teacher < correction < import),
     or as strong and `replace_same_rank` (the same request's correction again, an operator's later import). Anything else
     keeps the stored label: a teacher answer never replaces a human one, and one client's correction never replaces
-    another's. `bump` False leaves the example's `seen` alone (an import, or a correction of a request already
-    counted)."""
+    another's. `bump` False is for a label that is no occurrence of its request (an import, or a correction of a request
+    already counted): it leaves a stored example's `seen` alone and inserts a new one with `seen` 0, so it never counts
+    toward FREQUENT (invariant 3)."""
     task = prepared.task
     if task.pinned:  # invariant 10: never a training example, whatever writes it
         return Stored(False, "pinned")
@@ -207,7 +213,7 @@ def store_label(
     lic = licenses.SOURCES[source] if human else licenses.require_distillable(source)
     new_rank = (2 if origin == IMPORT_ORIGIN else 1) if human else 0
     with ledger.atomic():  # the decision and the write see the same row, also against another process's writes
-        if golden_only and not held_out_ok(prepared, prompts if prompts is not None else ledger.prompt_index(task.name)):
+        if golden_only and not held_out_ok(ledger, prepared):
             return Stored(False, "trained", prepared.hash)
         existing = ledger.example(prepared.hash)
         alive = existing is not None and existing["purged_ts"] is None
@@ -305,7 +311,7 @@ class FeedbackError(ValueError):
 class Correction:
     """The right answer to a request, with what the request was: its messages, validated and normalised as the chat
     route does it, the conditions it carried (`conditions`), and the end-user identifiers it named (`user`,
-    `safety_identifier`; `privacy.end_user_ids`), only ever hashed."""
+    `safety_identifier`; `privacy.end_user_ids`, the attributed one first), only ever hashed."""
 
     messages: list[dict[str, Any]]
     text: str
@@ -313,25 +319,31 @@ class Correction:
     end_user_ids: Sequence[str] = ()
 
 
+END_USER_REQUIRED = (
+    "This request named an end user: send every end-user identifier it sent ('user', 'safety_identifier', or both when "
+    "it sent both) with the correction, so that end user's storage opt-outs apply."
+)
+
+
 def _end_user_check(row: Any, ids: Sequence[str], client: str | None, end_users: privacy.EndUsers | None) -> tuple[str, ...]:
     """The hashes a correction's no-train lookup uses beyond the request's own end user. A request that named an end
-    user needs the same identifier again (FeedbackError otherwise): its hash must match the row's, and only with the
-    value can an admin's registration for every client (the every-client scope) be found, so an opted-out end user's
-    prompt is never stored through a correction. Identifiers on a request that named none only add lookups."""
-    recorded = row["end_user"]
-    if not ids:
+    user needs every identifier it carried again (FeedbackError otherwise): the attributed one's hash must match the
+    row's `end_user`, and a second one (`user` beside `safety_identifier`) the row's `end_user_secondary`. Only with the
+    values can a registration made with either identifier, or an admin's registration for every client (the
+    every-client scope), be found, so an opted-out end user's prompt is never stored through a correction. Identifiers
+    on a request that named none only add lookups. A row logged before `end_user_secondary` existed recorded only the
+    attributed identifier, so only that one is required there."""
+    recorded, secondary = row["end_user"], row["end_user_secondary"]
+    if not ids or (secondary is not None and len(ids) < 2):
         if recorded is not None:
-            raise FeedbackError(
-                "end_user_required",
-                "This request named an end user: send the same 'user' or 'safety_identifier' with the correction, so that "
-                "end user's storage opt-outs apply.",
-                "user",
-            )
+            raise FeedbackError("end_user_required", END_USER_REQUIRED, "user")
         return ()
     if end_users is None:
         raise FeedbackError("end_user_unsupported", "End-user identifiers cannot be checked here.", "user")
     attributed = end_users.hash(ids[0], client)
-    if recorded is not None and attributed != recorded:
+    if (recorded is not None and attributed != recorded) or (
+        secondary is not None and end_users.hash(ids[1], client) != secondary
+    ):
         raise FeedbackError(
             "end_user_mismatch", "'user' or 'safety_identifier' does not match the end user this request named.", "user"
         )
@@ -461,22 +473,26 @@ def submit(
 
 def check_human_alert(ledger: Ledger, version: int, policy: ReleasePolicy) -> bool:
     """Write one `human_alert` event for `version` when its human precision on the answers it served itself has at least
-    `policy.min_audits` verdicts and a 95% Wilson upper bound below `policy.live_floor`: strong evidence the people using
-    it find it worse than the floor. Once per version (a meta row, so a restart does not repeat it). Returns True when
-    this call wrote it. Human precision never promotes or rolls back a version: clients report what they notice, so the
-    sample is biased; the audited precision stays the release signal (ADR 0091)."""
+    `policy.min_audits` verdicts and anytime-valid evidence that it is below `policy.live_floor`: the mixture e-value
+    against 'precision >= live_floor' (`stats.log_e_bernoulli`, side 'below') reaches 1 / ALERT_ALPHA. The check runs
+    after every verdict, and a fixed-sample bound (Wilson) checked that often would alarm far more often than its level;
+    the e-value keeps the false-alarm rate under ALERT_ALPHA however often it is looked at (Ville's inequality, ADR
+    0025). Once per version (a meta row, so a restart does not repeat it). Returns True when this call wrote it. Human
+    precision never promotes or rolls back a version: clients report what they notice, so the sample is biased; the
+    audited precision stays the release signal (ADR 0091)."""
     n, ok = ledger.human_precision(version)
-    if n < policy.min_audits:
+    if n < policy.min_audits or not 0 < policy.live_floor < 1:
         return False
-    _, upper = wilson(ok, n)
-    if upper >= policy.live_floor:
+    log_e = log_e_bernoulli(ok, n, policy.live_floor, "below")
+    if log_e < math.log(1 / ALERT_ALPHA):
         return False
     token = uuid.uuid4().hex
     if ledger.meta_setdefault(ALERT_META.format(version), token) != token:
         return False  # alerted before, here or in another process
     ledger.event(
         HUMAN_ALERT,
-        f"v{version} human precision {ok / n:.1%} (n={n}, upper bound {upper:.1%} < {policy.live_floor:.0%}) on answers it "
-        "served; feedback is never used to promote or roll back: check audits and the runbook",
+        f"v{version} human precision {ok / n:.1%} (n={n}) on answers it served is below {policy.live_floor:.0%} (e-value "
+        f"{math.exp(min(log_e, 50.0)):.3g} >= {1 / ALERT_ALPHA:.0f}, anytime-valid); feedback is never used to promote or "
+        "roll back: check audits and the runbook",
     )
     return True

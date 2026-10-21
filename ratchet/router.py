@@ -125,7 +125,8 @@ class RequestMeta:
     logged with the request and the example, and an end user registered as no-train stores nothing (FR-13.2).
     `end_user_aliases` are the other hashes that end user may be registered as no-train under (`privacy.EndUsers.aliases`:
     the request's `user` when `safety_identifier` names the end user, and the every-client scope): looked up, never
-    logged or stored."""
+    logged or stored. `end_user_secondary` is the hash of that second identifier in the same scope, logged with the
+    request (never stored with an example) so a correction of it must name both identifiers (FR-13.30)."""
 
     request_id: str | None = None
     client_request_id: str | None = None
@@ -135,6 +136,7 @@ class RequestMeta:
     idempotency_key: str | None = None
     store_opt_out: str | None = None
     end_user_aliases: tuple[str, ...] = ()
+    end_user_secondary: str | None = None
 
 
 # The model calls of one request, as `Result.usage_breakdown` names them: the student's samples (one call, n choices),
@@ -833,6 +835,7 @@ class Ratchet:
             end_user=meta.end_user if meta is not None else None,
             store_opt_out=opt_out,
             request_id=meta.request_id if meta is not None else None,
+            end_user_secondary=meta.end_user_secondary if meta is not None else None,
         )
         choices = _choices(task, served, params)
         return Result(
@@ -1126,6 +1129,7 @@ class Ratchet:
             end_user=meta.end_user,
             store_opt_out=opt_out,
             request_id=meta.request_id if meta is not None else None,
+            end_user_secondary=meta.end_user_secondary,
         )
         choices = _choices(task, served_choices, params)
         return Result(
