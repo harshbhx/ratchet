@@ -41,5 +41,11 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
 | [0120](0120-judge-access-and-a-persistent-scout-guard.md) | Judge access and a persistent Scout guard: spend rows restored at startup, a judges' reserve behind a POST-once code and a signed cookie, paced Tavily credits and a labelled search-unavailable path | Accepted | 2026-10-21 |
 | [0121](0121-live-measurement-method.md) | Live measurement method: synthetic traffic through the public API in rounds, a measured all-Ultra control arm and one results file behind every live number | Accepted | 2026-10-21 |
+| [0060](0060-hot-path-caches-and-throttled-tick.md) | The hot path: a WAL ledger, a version routing snapshot, incremental tallies, a throttled tick and cached stats | Accepted | 2026-10-20 |
+| [0061](0061-endpoint-access-levels.md) | Endpoint access levels: a private dashboard API in live mode, scrubbed public reads and a live auth guard | Accepted | 2026-10-20 |
+| [0062](0062-request-ids-failures-logs-and-metrics.md) | Request ids end to end, a failures table with spent cost, structured logs without content, and Prometheus metrics | Accepted | 2026-10-20 |
+| [0070](0070-configuration-checks-and-readiness.md) | Configuration checks that list every bad variable, a config check CLI, liveness apart from readiness, and `/readyz` with bounded dependency probes | Accepted | 2026-10-21 |
+| [0071](0071-idempotency-keys-and-retry-de-duplication.md) | Idempotency keys, and retries that never count as repeats | Accepted | 2026-10-21 |
+| [0072](0072-off-path-audits-and-shadow.md) | Off-path audits and shadow: a bounded sidecar, the same draws and calls, pending rows the gate ignores, and audits that are never dropped | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

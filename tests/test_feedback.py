@@ -202,7 +202,10 @@ def test_feedback_only_on_own_requests(gw_env):
     other = _feedback(c, verdict, GLOBEX_KEY)
     unknown = _feedback(c, {**verdict, "request_id": "req_" + "0" * 32}, GLOBEX_KEY)
     assert other.status_code == unknown.status_code == 404
-    assert other.json() == unknown.json()  # another key's request is answered exactly like one that does not exist
+    def same(r: Any) -> dict[str, Any]:  # each answer carries its own request's id (ADR 0062); the rest must match
+        return {k: v for k, v in r.json().items() if k != "request_id"}
+
+    assert same(other) == same(unknown)  # another key's request is answered exactly like one that does not exist
     assert other.json()["error"]["code"] == "request_not_found" and rid not in other.text
     assert _feedback(c, verdict).status_code == 401  # keys are on: no key, no feedback
     assert gw.rt.ledger.db.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0

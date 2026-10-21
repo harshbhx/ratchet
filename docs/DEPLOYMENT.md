@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 1058 tests, ~120 s
+pytest -q                                                          # 1224 tests, ~120 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -158,14 +158,23 @@ Any small VM or container with Python 3.10+ works:
 ```bash
 pip install -e .
 export RATCHET_MODE=live RATCHET_DB=/var/lib/ratchet/ratchet.db
+export RATCHET_API_KEYS="app:$(openssl rand -hex 24)" RATCHET_DASHBOARD_KEYS="me:$(openssl rand -hex 24)"
+python -m ratchet.config check     # exit 0 clean, 1 warnings, 2 errors: the gateway would not start
 uvicorn ratchet.gateway:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-Use **one worker**. The ledger is a single SQLite connection inside the process, and the release gate is not designed for concurrent writers (see [ADR 0006](adr/0006-sqlite-ledger-for-v0.md)). Put TLS and authentication in front with a reverse proxy, since the gateway has no auth of its own.
+A bad setting stops startup with one error that lists every problem by variable ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks)); `python -m ratchet.config check` gives the same verdict without starting anything, so run it after each change to the environment. Set `RATCHET_STRICT_CONFIG=1` to make warnings (an unknown or misspelled variable, an unpriced model) fatal too.
+
+Health checks ([API.md](API.md#get-readyz), [ADR 0070](adr/0070-configuration-checks-and-readiness.md)):
+
+- **Load balancers and deploy scripts: `GET /readyz`.** 200 (`ready`, or `degraded` while the teacher answers for a student endpoint that is down) keeps the instance in rotation; 503 `not_ready` (the ledger cannot be written, or no teacher can answer) takes it out. An instance taken out comes back by itself: once the teacher's breaker has waited out its cooldown and the teacher's `/models` answers, `/readyz` says 200 `degraded` (`probe_due`) and the next request probes the teacher. The probes are cached for 15 s and spend no tokens, so poll it as often as you like. The student endpoint gets one `GET /models` per 5 minutes from each gateway; if your platform scales an idle endpoint to zero and counts that request as traffic, it keeps the endpoint running.
+- **Restarts (Docker, systemd, a Kubernetes liveness probe): `GET /healthz` or `/livez`.** It only says the process answers, also with every worker thread busy. Never restart on `/readyz`: a teacher outage would turn into a restart loop.
+
+Use **one worker**. The ledger is a single SQLite connection inside the process, and the release gate is not designed for concurrent writers (see [ADR 0006](adr/0006-sqlite-ledger-for-v0.md)). Live mode does not start without `RATCHET_API_KEYS` (or `RATCHET_ALLOW_UNAUTHENTICATED=1` when a proxy checks callers instead), and its dashboard API (`/ratchet/stats`, `/ratchet/bom`, ...) answers only admin and dashboard keys unless `RATCHET_PUBLIC_DASHBOARD=1` ([API.md](API.md#access-levels)). Put TLS in front with a reverse proxy.
 
 ### Step 7: Cron
 
-`python -m ratchet.live` must run on a machine that has the `nebius` CLI, the `aws` CLI (for sync and polling), the same `RATCHET_DB` file, and network access to the student endpoint. In v0.1 that means the same host as the gateway.
+`python -m ratchet.live` must run on a machine that has the `nebius` CLI, the `aws` CLI (for sync and polling), the same `RATCHET_DB` file, and network access to the student endpoint. In v0.1 that means the same host as the gateway. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), which needs every process that opens it on that one host with the file on a local disk: never put `RATCHET_DB` on the bucket mount or another network filesystem (if you must, set `RATCHET_DB_SYNC=FULL` for every process).
 
 ```cron
 # Night School at 02:30 local time
@@ -232,8 +241,8 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 
 ## 5. Verification after deploy
 
-1. `curl $GATEWAY/healthz` returns `{"status":"ok",...}`, and `curl -H "Authorization: Bearer $KEY" $GATEWAY/v1/models` returns `ratchet` (drop the header if `RATCHET_API_KEYS` is not set).
-2. Send 20 real requests. `GET /ratchet/stats` shows them with `served_by=teacher` (cold start), and `GET /ratchet/bom` shows the teacher with license `OpenMDW-1.1`.
+1. `curl $GATEWAY/healthz` returns `{"status":"ok",...}`, `curl $GATEWAY/readyz` returns 200 with `"status": "ready"` (or `degraded`, with the reason under `checks`; a routed adapter the endpoint no longer lists is in `checks.student.missing_adapters` and queued for reload), and `curl -H "Authorization: Bearer $KEY" $GATEWAY/v1/models` returns `ratchet` (drop the header if `RATCHET_API_KEYS` is not set).
+2. Send 20 real requests. `GET /ratchet/stats` (with `-H "Authorization: Bearer $DASHBOARD_KEY"` unless the dashboard is public) shows them with `served_by=teacher` (cold start), and `GET /ratchet/bom` shows the teacher with license `OpenMDW-1.1`.
 3. Run `python -m ratchet.live night` once you have at least 50 new examples. Expect a `trained` event and either `canary` or `rejected`, and a bill of materials at `data/boms/student-v1.json` (also at `GET /ratchet/versions/1/bom`), with `ratchet_bom.json` and `NOTICE.md` in the bucket's `adapters/student-v1/` next to the weights. With `RATCHET_BOM_SIGNING_KEY` set, `python -m ratchet.bom verify data/boms/student-v1.json --public-key <yours>` prints `OK`.
 4. Check that `curl $RATCHET_STUDENT_BASE/models` lists `student-v1` after the night.
 5. Watch the `canary` → `live` events over the next requests. Audits need traffic: at a 5% audit rate and 10% canary, reaching 20 audits takes roughly 4,000+ requests, so for a demo raise `RATCHET_AUDIT_RATE`, or lower `ReleasePolicy.min_audits` in code (there is no environment variable for it).

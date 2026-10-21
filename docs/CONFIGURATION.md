@@ -36,6 +36,16 @@ Read in `ratchet/config.py`; used by `ratchet/gateway.py` and `ratchet/openai_co
 | `RATCHET_MERGE_SYSTEM` | `0` | `1`: merge consecutive leading `system` messages (after `developer` becomes `system`) into one, joined by a blank line, for models whose chat template takes a single system message. It changes the stored form of such requests, so set it before collecting training data, not halfway |
 | `RATCHET_TEACHER_MODALITIES` | `text` | Content part types the teacher accepts besides text, comma-separated, e.g. `text,image_url` (also `input_audio`, `file`). A request with such a part goes to the teacher only: no student call, no audit, nothing stored as a training example. Any other non-text part is a 400 `unsupported_content_type`. Set it only when the teacher model reads those parts; otherwise the teacher's refusal comes back as a 400 with its own message ([API.md](API.md#errors)) |
 
+## Retries and idempotency
+
+A client's retry neither pays for a second cascade nor counts as a second occurrence of its request ([ADR 0071](adr/0071-idempotency-keys-and-retry-de-duplication.md), [API.md](API.md#idempotency-and-retries)). Read in `ratchet/config.py` (`Settings.idempotency()`, `Settings.seen_dedup()`); used by `ratchet/idem.py`, `ratchet/gateway.py` and `ratchet/ledger.py`. Both structures live in memory, in each gateway process (with several workers, a retry that reaches another process runs again), and a mock demo reset clears them. A value out of range stops startup, naming the variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_IDEMPOTENCY_CACHE` | `10000` | Most answers kept by `Idempotency-Key`, 0 to 1,000,000; the least recently used goes first, and the answers kept never exceed 64 MiB together, each counted as its body plus 2 KiB for the entry that holds it (so at most about 32,000 small answers, whatever this says). `0` turns idempotency off: the header is ignored (not even checked) and every request runs |
+| `RATCHET_IDEMPOTENCY_TTL_S` | `600` | Seconds an answer is kept after it finished, 0 to 86,400; a request with the same key after that runs again. `0` keeps none: only a request that arrives while the first is still running shares its answer. Answers hold request-derived text, so they are never written to disk (INV-12) |
+| `RATCHET_SEEN_DEDUP_S` | unset: `300` in live mode, `0` in mock mode | Seconds within which the same API client's repeat of a stored example counts once toward the frequent-request rule (`seen`, `FREQUENT` = 3, INV-3), 0 to 86,400; a repeat after the window counts again. Without API keys every caller is one client. Up to 10,000 (example, client) pairs are remembered, the least recently counted forgotten first. A request whose `x-stainless-retry-count` is above 0 never counts, whatever this says. `0`: every repeat counts, as in v0.4; mock mode's default, because the simulator's and the demo's repeats are traffic, not retries (internal calls, such as Scout's, the simulator's and the warm-up's, count every repeat in any mode). The demo VM's [`.env.vm.example`](../deploy/vm/.env.vm.example) sets `300`, so the public mock demo counts a visitor's quick repeats once, as live mode does |
+
 ## Generation parameters and token caps
 
 Read in `ratchet/config.py` (`Settings.gen_policy()`); used by `ratchet/router.py`, the golden eval (`ratchet/nightschool/evaluate.py`, `sim/mock_models.py`) and `ratchet/providers.py` ([API.md](API.md#generation-parameters), [ADR 0017](adr/0017-generation-parameters-by-role.md)). A bad value (a field that cannot be forwarded, a name that is not an identifier, a negative number) stops the gateway, `python -m ratchet.live night` and the simulator at startup with `ValueError`.
@@ -93,9 +103,18 @@ Read in `ratchet/config.py`; used by `ratchet/router.py`, `ratchet/auth.py`, `ra
 | `RATCHET_API_KEYS` | empty | `name:key,name:key`. When set, `/v1/*` needs `Authorization: Bearer <key>` or `X-API-Key: <key>`; anything else gets 401. Names: letters, digits, `_`, `.`, `-` (up to 64). Keys: at least 16 characters; generate with `openssl rand -hex 24`. A bare key without `name:` is named `keyN`. The ledger stores the name per request, never the key. End-user hashes and no-train registrations are scoped to the name ([API.md](API.md#end-users-and-storage)): rotate a key under the same name; renaming one unlinks its end users' earlier hashes, and its clients' no-train registrations match nothing until the name is back (a `no_train_unmatched` event at startup; an admin's registration for every client is not affected). A key also reads its own savings receipts and their proofs, never another client's ([API.md](API.md#savings-receipts)). A malformed value stops the gateway at startup |
 | `RATCHET_API_KEY_DAILY_REQUESTS` | `0` | Chat completions per key per UTC day; past it a 429 `insufficient_quota` (code `daily_quota_exceeded`) with `Retry-After` until 00:00 UTC and `X-Should-Retry: false` ([API.md](API.md#authentication)). `0` = unlimited. Counted from the ledger, so it survives restarts in live mode |
 | `RATCHET_ADMIN_KEYS` | empty | Admin keys for management calls (`PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate`, [API.md](API.md#tasks); `POST /ratchet/cost/endpoint`; and the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout`, [API.md](API.md#committed-training-sets), which are a membership oracle for the training data; and every savings receipt, the gateway's and each client's, [API.md](API.md#savings-receipts)), in the `RATCHET_API_KEYS` syntax: `name:key,name:key`, keys at least 16 characters. Sent as `Authorization: Bearer <key>` or `X-API-Key`; a missing or wrong key gets 401, an API key 403. The ledger and the event log record the name, never the key. A key may not be in both variables (startup error). Empty: the admin API is off in live mode (403 `admin API disabled: set RATCHET_ADMIN_KEYS`) and open in mock mode (the admin is `mock-admin`). Not the Caddy guard's `RATCHET_ADMIN_TOKEN` |
+| `RATCHET_DASHBOARD_KEYS` | empty | Read-only keys for the dashboard API ([API.md](API.md#access-levels)), in the `RATCHET_API_KEYS` syntax. A dashboard key reads everything an admin key reads and writes nothing. A key may not also be an API key or an admin key (startup error), so each key has one role. Give one to whoever watches a live gateway's dashboard |
+| `RATCHET_PUBLIC_DASHBOARD` | `1` in mock mode, `0` in live mode | `1`: the dashboard API (`GET /ratchet/stats`, `GET /ratchet/cost`, `POST /ratchet/redact`, `GET /ratchet/tasks` and `/ratchet/tasks/{name}`, the BOM endpoints and the other reads [API.md](API.md#access-levels) lists) needs no key. `0`: it needs an admin or dashboard key, as `Authorization: Bearer <key>` or `X-API-Key`; without one it is 401, with an API key 403, and with neither `RATCHET_ADMIN_KEYS` nor `RATCHET_DASHBOARD_KEYS` set every read is 403. The pages, `/healthz`, `/ratchet/bom/public-key` and Scout are always public. The dashboard page sends no key yet, so with `0` it shows no data: read the API with a key, or set `1` (the demo VM does) |
+| `RATCHET_PUBLIC_BOM` | `0` | `1`: `GET /ratchet/bom` and `GET /ratchet/versions/{id}/bom` stay public while the dashboard API is private, so auditors can check an adapter's provenance without a key |
+| `RATCHET_SCRUB_STATS` | unset | What a reader of the dashboard API sees. Unset: an anonymous read of a public dashboard in live mode is scrubbed: client names in `/ratchet/stats` and in task allow-lists (`GET /ratchet/tasks`) become `client-1`, `client-2`, ... (by sorted name, the same in both), event details lose every `http(s)://` URL (`<url>`), and an error message after an exception's class is cut (`ConnectError: ...` becomes `ConnectError`; v0.4 ledgers hold such events). A reader with an admin or dashboard key sees everything. `1`: every read is scrubbed, with a key or without, in either mode. `0`: none is. `security.scrubbed` in `/ratchet/stats` says which a reader got |
+| `RATCHET_OPENAPI` | `1` in mock mode, `0` in live mode | `1`: FastAPI serves `/docs`, `/redoc` and `/openapi.json`. `0`: they do not exist (404), so a live gateway does not hand anyone a map of its routes |
+| `RATCHET_ALLOW_UNAUTHENTICATED` | `0` | Live mode refuses to start without `RATCHET_API_KEYS`, because `/v1/*` would answer anyone, on your teacher credits. `1` lets it start, for a gateway something else guards: the demo VM's Caddy guard (`RATCHET_API_GUARD=guarded`) or a private network. Mock mode ignores it |
+| `RATCHET_CSP` | empty | A `Content-Security-Policy` for every response. Empty sends none, so no page can break by default. Printable ASCII only (anything else stops startup). Recommended, which the React build and the lite pages work with: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'` (the pages load nothing from other origins; `'unsafe-inline'` is for the theme script in the React page and the lite pages' inline scripts). It also blocks `/docs`, whose Swagger UI comes from a CDN |
 | `RATCHET_BOM_SIGNING_KEY` | empty | Ed25519 private key as the base64 of its 32-byte seed. Signs each adapter's bill of materials and every savings receipt (same key, same public key). Generate with `python -m ratchet.bom keygen`, which also prints the public key to publish. Needs the `sign` extra (`pip install "ratchet-distill[sign]"`, included in the gateway image). An invalid value stops the gateway at startup. Empty = BOMs and receipts are stored with a SHA-256 but unsigned |
 
-Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS`, `RATCHET_END_USER_KEY` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
+The switches above take `0` or `1`; any other value stops startup, and unset or empty takes the default. Every response also carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` ([ADR 0061](adr/0061-endpoint-access-levels.md)).
+
+Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS`, `RATCHET_END_USER_KEY`, `RATCHET_DASHBOARD_KEYS`, `RATCHET_METRICS_TOKEN` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
 
 ## Scout, the multi-agent demo
 
@@ -149,10 +168,21 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_DOMAIN` | required | Site name Caddy serves and gets a certificate for, e.g. `ratchet.dualmindlab.tech` or `<public-ip>.sslip.io`. First boot fills in the sslip.io name if it is still the placeholder |
-| `RATCHET_API_GUARD` | `open` | `open`: every path is public. `guarded`: `/v1/*` and `/ratchet/demo/*` return 403 unless the request has a matching `X-Ratchet-Admin-Token` header. Pages, `/scout*`, `/ratchet/stats` and `/ratchet/bom` stay public. In mock mode, `guarded` also disables the dashboard's demo buttons |
+| `RATCHET_API_GUARD` | `open` | `open`: every path is public. `guarded`: `/v1/*` and `/ratchet/demo/*` return 403 unless the request has a matching `X-Ratchet-Admin-Token` header. Pages, `/scout*`, `/ratchet/stats` and `/ratchet/bom` stay public at the edge; whether the gateway serves the dashboard API without a key is `RATCHET_PUBLIC_DASHBOARD`. In mock mode, `guarded` also disables the dashboard's demo buttons. In live mode without `RATCHET_API_KEYS`, the gateway starts only with `RATCHET_ALLOW_UNAUTHENTICATED=1` |
 | `RATCHET_ADMIN_TOKEN` | empty | Token for `guarded`. Hex, at least 32 characters (`openssl rand -hex 32`). Shorter or empty blocks the guarded paths for everyone. Caddy strips the header before it reaches the gateway |
 
-`deploy/vm/create_vm.sh` and `deploy/vm/backup.sh` have their own settings (VM name, platform, preset, disk size, SSH user, repo URL, backup folder and retention). They are listed at the top of each script and in [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md).
+`deploy/vm/create_vm.sh` and `deploy/vm/backup.sh` have their own settings, listed at the top of each script and in [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md). Like the variables above they are in `config.DEPLOY_ENV`, so the gateway's startup check does not call them unknown:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_VM_NAME` | `ratchet-demo` | The VM's name (`create_vm.sh` refuses a name that exists) |
+| `RATCHET_VM_PLATFORM` | `cpu-e2` | Nebius platform; `cpu-e2` exists only in `eu-north1`, elsewhere use `cpu-d3` |
+| `RATCHET_VM_PRESET` | `2vcpu-8gb` | Nebius preset, for example `4vcpu-16gb` |
+| `RATCHET_VM_DISK_GB` | `30` | Boot disk size in GB |
+| `RATCHET_SSH_USER` | `ubuntu` | The login user cloud-init creates (Nebius reserves `root` and `admin`) |
+| `RATCHET_REPO_URL` | `https://github.com/harshbhx/ratchet.git` | What the VM clones into `/opt/ratchet` |
+| `RATCHET_BACKUP_DIR` | `/var/backups/ratchet` | `backup.sh`: the host folder for ledger backups |
+| `RATCHET_BACKUP_KEEP` | `14` | `backup.sh`: local copies to keep |
 
 ## Live Night School (`ratchet/live.py`)
 
@@ -257,6 +287,82 @@ How Night School's golden eval picks each version's threshold and what its certi
 
 Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served held-out rows; `python -m ratchet.stats plan --target T --delta D`): 95% at delta 0.05 needs 59, 93, 124 or 153 served rows; 97% needs 99, 157, 208 or 257; 90% needs 29, 46, 61 or 76. Only the held-out half counts, so the golden set must be about twice that, divided by the coverage.
 
+## Ledger and hot path
+
+How the ledger file is written and how often the request path does periodic work ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), [ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). A bad value stops startup with a `ValueError` naming the variable (the gateway, `python -m ratchet.live` and `python -m ratchet.cost`).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_DB_SYNC` | `NORMAL` | How a ledger file is journaled, `NORMAL` or `FULL` (any case; empty means `NORMAL`). `NORMAL`: the WAL journal with `synchronous=NORMAL`. Readers never wait for the writer, the dashboard reads on a second, read-only connection, and a commit does not wait for the disk: a power cut or an operating-system crash (not a crash of the gateway process) can lose the last commits, never corrupt the file. `FULL`: the rollback journal with `synchronous=FULL`, v0.4's behaviour, for a ledger on a filesystem without shared memory (a network or bucket mount, where WAL does not work) or when every commit must reach the disk before the client gets its answer. Give the gateway, the cron jobs and the cost CLI the same value: `FULL` cannot take a file out of WAL while another process has it open, and stops startup instead. Mock mode's in-memory ledger has no journal to set (a bad value still stops startup) |
+| `RATCHET_TICK_INTERVAL_S` | unset: `5` in live mode, `0` in mock mode | Seconds between two release-gate ticks run from the request path (0 to 3600). A tick less than this after the previous one, or while another thread is ticking, is skipped, so requests pay for a tick at most once per interval and never wait for one. A rollback can wait this long; the cron `python -m ratchet.live tick` runs regardless. `0` ticks after every request (mock mode, so simulations and tests behave as before); the mock demo's simulated days always tick |
+| `RATCHET_STATS_TTL_S` | unset: `2` in live mode, `0` in mock mode | Seconds `/ratchet/stats` serves one computed payload (0 to 3600). However many dashboards poll, it is computed at most once per TTL, by one caller at a time; the others get the previous payload. `0` computes it on every read |
+
+## Off-path quality checks
+
+Where a request's teacher audit, shadow samples and arbitration run ([ADR 0072](adr/0072-off-path-audits-and-shadow.md), [ARCHITECTURE §15](ARCHITECTURE.md#15-off-path-quality-checks)). With workers, a request the gateway serves returns as soon as its answer is ready, and a bounded sidecar finishes its ledger row afterwards; Scout's agents, the simulator and the mock warm-up keep every check on the request path in any case. Read in `ratchet/config.py` (`Settings.sidecar`); a bad value stops startup naming the variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_SIDECAR_WORKERS` | unset: `4` in live mode, `0` in mock mode | Threads that run requests' audits and shadows after the answer is sent, 0 to 64. `0`: every check stays on the request path, as before (mock mode's default, so simulations, the reference runs and the demo are unchanged). Each worker holds at most one teacher call at a time (an audit, or an arbitration bounded to 60 s), so more workers spend the teacher's rate limit faster, never more in total |
+| `RATCHET_SIDECAR_QUEUE` | `1000` | Jobs that may wait for a worker, 1 to 100,000. A tenth of the places (at least one, once there are two) is kept for jobs that carry an audit. Each job holds its request's messages until it ends, so the request text queued and running jobs hold is bounded too, at 64 MiB (`sidecar.MAX_BYTES`, a tenth of it also kept for audits; at `RATCHET_MAX_INPUT_CHARS`' default a job holds at most about 0.5 MB): past it the queue counts as full. A drawn audit is never dropped: with every place taken it runs on the request path instead (`audits_inline`). A shadow without a place does not run for that request (`shadows_dropped`), counted per version in `/ratchet/stats` `sidecar` and in `ratchet_sidecar_full_total` |
+| `RATCHET_SIDECAR_DRAIN_S` | `10` | Seconds the gateway's shutdown waits for queued jobs, 0 to 3600, after the server stopped taking requests. Jobs still queued then never run: their rows stay pending (`audited` 1 with `audit_agree` NULL, `shadow_version` with `shadow_serve` NULL), which the release gate ignores, and one `sidecar_dropped` event counts them per version. Keep it under the process manager's stop timeout: Docker sends SIGKILL 10 s after SIGTERM by default; the demo VM's Compose file gives the gateway 20 s (`stop_grace_period`), so raise both together |
+
+While a request's checks are pending, its row holds what serving cost (`cost_usd` and its split), the token formula's baseline and `audited` 1 with `audit_agree` NULL; the job adds the audit's, the shadow's and the arbitration's cost call by call, writes the verdicts and, after a teacher audit, the baseline the audit prices, so the finished row is the one an inline run writes. The response says so with `ratchet.overhead_pending: true` ([API.md](API.md#off-path-checks)).
+
+## Observability
+
+Logs, metrics and request ids ([ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md), [API.md](API.md#request-ids), [RUNBOOK.md](RUNBOOK.md#failures-and-request-ids)). Read in `ratchet/config.py`; used by `ratchet/obs.py` and `ratchet/gateway.py`. A bad value stops startup with a `ValueError` naming the variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_LOG_FORMAT` | unset: `text` in mock mode, `json` in live mode | How the `ratchet` logger writes to stderr: `json` (one object per line: `ts`, `level`, `logger`, `event`, then the fields) or `text` (`<ts> <LEVEL> <event> key=value ...`), any case. Lines carry ids, names, numbers and statuses, never prompt or answer text, URLs or keys |
+| `RATCHET_LOG_LEVEL` | unset: `WARNING` in mock mode, `INFO` in live mode | `DEBUG`, `INFO`, `WARNING` or `ERROR`, any case. `INFO` writes one `chat` line per chat request (request id, client request id, trace id, client name, task, served_by, route, version, confidence, escalated, audited, latency_ms, wall_ms, cost_usd, status; `retry_count` on a retry, `idempotent_replay` and `replay_of` on an answer sent again for an `Idempotency-Key`, whose `cost_usd` is 0, and `overhead_pending` when its checks run after the answer), one `offpath` line when those checks end (row, audited, audit_agree, shadow_version, shadow_serve, shadow_agree, stored, the `cost_usd` they added, `pending_ms`; the same request id, so the two lines' costs add up to the row's) and every release-log event (`ledger_event`, scrubbed of URLs and error messages); `WARNING` keeps the `upstream_error` lines (role, exception class, status), so mock mode and the tests stay quiet |
+| `RATCHET_METRICS_TOKEN` | empty | A bearer token that reads `GET /metrics` (and nothing else), for a Prometheus scraper, besides the admin and dashboard keys. At least 16 characters; it may not also be an API, admin or dashboard key (startup error). Compared as a constant-time digest, never stored or logged. Empty: only admin and dashboard keys read a private `/metrics`. A public dashboard (`RATCHET_PUBLIC_DASHBOARD=1`) makes `/metrics` public too |
+
+Keep `RATCHET_METRICS_TOKEN` out of git, like the keys.
+
+## Configuration checks
+
+The gateway checks every setting before it opens the ledger or calls anything ([ADR 0070](adr/0070-configuration-checks-and-readiness.md)): `Runtime` stops with one `ConfigError` (a `ValueError`, also a `LicenseError` when a teacher is refused) that lists **every** problem, each naming its variable, never a key's value. `python -m ratchet.config check` runs the same check without starting anything (plus `RATCHET_TASKS_FILE`, which the gateway checks itself when it builds the registry), so it exits 2 exactly when the gateway would not start, and exits **0** when clean, **1** with warnings only, **2** with errors (or with warnings under `RATCHET_STRICT_CONFIG=1`); `--json` prints `{"mode", "strict", "exit", "issues": [{"level", "var", "message"}]}`. `deploy/vm/update.sh` runs it in the new image before it replaces the running container, and CI runs it on the defaults.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_STRICT_CONFIG` | unset (off) | `1`: a warning stops startup like an error, and `python -m ratchet.config check` exits 2 on it. `0` or unset: warnings start the gateway; each is kept in `Runtime.config_warnings`, logged once as a `config_warning` line (the variable and the message, never the value) and counted under `checks.config` in `/readyz`. Anything but 0 or 1 is an error |
+
+Errors (the gateway does not start):
+
+| Rule | Variables |
+|---|---|
+| A number, whole number or 0/1 switch that does not parse (`5%`, `three`, `yes`) | every numeric setting and `RATCHET_PUBLIC_DASHBOARD`, `RATCHET_PUBLIC_BOM`, `RATCHET_SCRUB_STATS`, `RATCHET_OPENAPI`, `RATCHET_ALLOW_UNAUTHENTICATED`, `RATCHET_STRICT_CONFIG` |
+| `mock` or `live` (an empty or misspelled mode used to start live mode) | `RATCHET_MODE` |
+| From 0 to 1 | `RATCHET_AUDIT_RATE`, `RATCHET_CONFIDENCE_THRESHOLD` |
+| A whole number from 1 to 16 | `RATCHET_SAMPLES` |
+| More than 0 and at most 0.5 (more would hold most examples out of training) | `RATCHET_GOLDEN_FRACTION` |
+| 0 or more | `RATCHET_API_KEY_DAILY_REQUESTS`, `RATCHET_MAX_BODY_BYTES`, `RATCHET_TEACHER_REASONING_TOKENS`, the Scout limits and budget, `RATCHET_MOCK_WARMUP_DAYS`, `RATCHET_MOCK_WARMUP_REQUESTS`, `RATCHET_MOCK_PACE` |
+| A whole number from 0 to 1,000,000; seconds from 0 to 86,400 ([Retries and idempotency](#retries-and-idempotency)) | `RATCHET_IDEMPOTENCY_CACHE`; `RATCHET_IDEMPOTENCY_TTL_S`, `RATCHET_SEEN_DEDUP_S` |
+| A whole number from 0 to 64; from 1 to 100,000; seconds from 0 to 3600 ([Off-path quality checks](#off-path-quality-checks)) | `RATCHET_SIDECAR_WORKERS`; `RATCHET_SIDECAR_QUEUE`; `RATCHET_SIDECAR_DRAIN_S` |
+| An `http://` or `https://` URL with a host (the message never repeats the URL, which may hold a password) | `RATCHET_TEACHER_BASE` (required), `RATCHET_STUDENT_BASE`, `RATCHET_TEACHER_FALLBACK_BASE` (empty is fine) |
+| Distillable under the license registry (INV-1) | `RATCHET_TEACHER_MODEL`, `RATCHET_JUDGE_MODEL`, `RATCHET_TEACHER_FALLBACK_MODEL` |
+| Each setting's own rules, as before, now listed together (a rule that covers several variables, such as the cost settings, reports each bad one) | timeouts, retries, breakers, `RATCHET_ON_TEACHER_FAILURE`, `RATCHET_UNKNOWN_TASKS`, the request limits, the parameter allowlists and token caps, the cost settings, `RATCHET_DB_SYNC`, the intervals, the log settings, the access switches and `RATCHET_CSP`, the key rings and `RATCHET_METRICS_TOKEN`, the [reserved settings](#reserved-settings) |
+| The base64 of a 32-byte Ed25519 seed, with the `sign` extra installed, when set | `RATCHET_BOM_SIGNING_KEY` |
+| Live mode: a key for a Token Factory teacher (a teacher on another host may run without one: a warning) | `NEBIUS_API_KEY` |
+| Live mode: API keys, unless something in front checks callers | `RATCHET_API_KEYS` (or `RATCHET_ALLOW_UNAUTHENTICATED=1`) |
+| Live mode: a ledger file that can be written (not a directory, its directory exists and is writable) | `RATCHET_DB` |
+| Live mode: every `RATCHET_<FIELD>` parses and is in its range, each reported on its own (`ReleasePolicy.env_issues`); then 0 < `RATCHET_LIVE_FLOOR` <= `RATCHET_MIN_PRECISION` <= 1; `RATCHET_MIN_AUDITS` and `RATCHET_MIN_SHADOW` at least 1; `RATCHET_TOLERANCE` from 0 to 0.2 (`ReleasePolicy.validate`) | the [release policy](#release-policy-ratchetreleasepy) |
+
+Warnings (the gateway starts, unless `RATCHET_STRICT_CONFIG=1`):
+
+| Rule | Variables |
+|---|---|
+| A `RATCHET_*` variable Ratchet does not read, with the closest known name (`RATCHET_AUDIT_RAT`: did you mean `RATCHET_AUDIT_RATE`?). The deploy scripts' and the demo VM's own variables (`RATCHET_DOMAIN`, `RATCHET_API_GUARD`, `RATCHET_ADMIN_TOKEN`, ...) are known, because Docker Compose hands the VM's whole `.env` to the gateway | any |
+| A model without a price in `DEFAULT_PRICES`: its calls are costed as another model's | `RATCHET_TEACHER_MODEL`, `RATCHET_JUDGE_MODEL`, `RATCHET_TEACHER_FALLBACK_MODEL`, and `RATCHET_FALLBACK_STUDENT` in live mode without a student endpoint |
+| Live mode: a student endpoint without a token | `RATCHET_STUDENT_KEY` |
+| Live mode: an audit rate under 1%, at which a canary may never collect `RATCHET_MIN_AUDITS` audits | `RATCHET_AUDIT_RATE` |
+| Live mode: a variable only mock mode reads, set to anything but its default | `RATCHET_MOCK_WARMUP_DAYS`, `RATCHET_MOCK_WARMUP_REQUESTS`, `RATCHET_MOCK_PACE`, `RATCHET_MOCK_ENDPOINT_HOURS`, `RATCHET_MOCK_TEACHER_REASONING_MEAN` |
+| A 0/1 switch spelled otherwise (`true` reads as off, `false` as on for redaction) | `RATCHET_TRUST_PROXY`, `RATCHET_MERGE_SYSTEM`, `RATCHET_STORE_FALLBACK_TEACHER`, `RATCHET_PRICES_VERIFIED`, `RATCHET_REDACT_PII` |
+
+`config.KNOWN_ENV` lists every variable the package reads; `python scripts/reqtrace.py --check` fails when code reads one that is not listed (or lists one nothing reads), so a new variable goes in `KNOWN_ENV` and in this file. Variables the deploy scripts read go in `config.DEPLOY_ENV`.
+
 ## Release policy (`ratchet/release.py`)
 
 `ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`).
@@ -281,7 +387,7 @@ Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served hel
 | `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | The paired gate's error rate for each McNemar test: a candidate no worse than live is rejected with probability at most this. Strictly between 0 and 1 |
 | `max_nfr` | `RATCHET_MAX_NFR` | 1.0 | The paired gate: reject when the 95% Wilson lower bound of the negative flip rate (answers live served right that the candidate serves wrong) is above this. 1: off. More than 0 and at most 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed).
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed). The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and simulations may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features not built yet are in [Reserved settings](#reserved-settings).
 
@@ -312,7 +418,8 @@ The evidence features (PRD §6.16) are built one at a time. Their settings are d
 | `RATCHET_BATCH_API` | `operations` | Clean-room backfill (FR-16.8): the Token Factory batch API (`operations` or `openai`) |
 | `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
 | `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |
-| `RATCHET_DB_SYNC` | `FULL` | Live readiness: `NORMAL` will switch a file ledger to the WAL journal. `FULL` is today's rollback journal |
+
+`RATCHET_DB_SYNC` was reserved here for the WAL journal; it is built now ([Ledger and hot path](#ledger-and-hot-path)).
 | `RATCHET_GATEWAY_LEASE` | `warn` | One gateway process per live ledger (NFR-60, waiting for the leases table): `warn` will write a `gateway_lease` event when a second process serves the same ledger and keep serving, `exclusive` will refuse to start, `off` will do nothing. Any other value stops startup now, also through `Settings.scout_policy()` |
 
 `ReleasePolicy` (`release.RESERVED_POLICY`, read by `from_env` as `RATCHET_<FIELD>` in live mode like the fields above):

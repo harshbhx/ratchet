@@ -284,6 +284,9 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "api_key_daily_requests": 0,
         "bom_signing_key": "",
         "mock_warmup_days": 0,
+        # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
+        "allow_unauthenticated": True,
+        "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
 
@@ -311,22 +314,25 @@ def test_optional_teacher_failures_through_the_gateway(gw_env, tmp_path, monkeyp
     cand = _version(rt.ledger, "shadow", {"threshold": 0.5})
     c = TestClient(gw.app)
 
-    # Audited, and the shadow disagrees: the audit fails, and arbitration is not tried against the same outage.
+    # Audited, and the shadow disagrees: the audit fails, and arbitration is not tried against the same outage. Live
+    # mode runs both after the response (ADR 0072), so each check waits for the sidecar first.
     r = c.post(CHAT, json={"messages": _ask(1)})
     assert r.status_code == 200, r.text
     assert (r.json()["ratchet"]["served_by"], r.json()["choices"][0]["message"]["content"]) == ("student", A)
+    assert r.json()["ratchet"]["overhead_pending"] and rt.ratchet.sidecar.drain(10)
     assert len(teacher_calls) == 2 and len(waits) == 1
     row = _last_request(rt.ledger)
     assert (row["audited"], row["shadow_version"], row["shadow_serve"], row["shadow_agree"]) == (0, cand, 1, None)
 
     r = c.post(CHAT, json={"messages": _ask(2), "stream": True})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
-    assert r.text.rstrip().endswith("data: [DONE]") and len(teacher_calls) == 4
+    assert r.text.rstrip().endswith("data: [DONE]") and rt.ratchet.sidecar.drain(10) and len(teacher_calls) == 4
 
     # Not audited: the shadow's disagreement goes to the teacher, which fails, and the request is still a 200.
     rt.settings.audit_rate = 0.0
     r = c.post(CHAT, json={"messages": _ask(3)})
-    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "student" and len(teacher_calls) == 6
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "student"
+    assert rt.ratchet.sidecar.drain(10) and len(teacher_calls) == 6
     assert _counters(rt.ratchet) == {**NO_ERRORS, "audit_errors": 2, "shadow_errors": 1}
     events = [(e["kind"], e["detail"]) for e in rt.ledger.events()]
     assert events == [

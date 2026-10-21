@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from .obs import upstream_headers
 from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_upstream, retry_call
 
 __all__ = [
@@ -457,9 +458,14 @@ class OpenAICompatProvider:
         attempts = self.retry.max_attempts
         return sum(phases) * attempts + self.retry.cap_s * (attempts - 1)
 
-    def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
+    def complete(
+        self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, deadline_s=None, **_
+    ):
         """One chat completion, `n` choices. `params` (a `GenParams`) adds the request's other fields; the explicit
-        arguments win: `logprobs=False` also drops `top_logprobs`, and a `response_format` replaces the params' one."""
+        arguments win: `logprobs=False` also drops `top_logprobs`, and a `response_format` replaces the params' one. Inside
+        a request that came with a W3C `traceparent`, each attempt forwards it with a new span id (`obs.upstream_headers`).
+        `deadline_s` shortens this call's retry deadline (never lengthens it): an off-path arbitration gives up sooner
+        than a served answer would (ADR 0072)."""
         body: dict[str, Any] = params.to_body(self.allow) if params is not None else {}
         body.update(model=model, messages=messages, n=n, temperature=temperature)
         if logprobs:
@@ -472,14 +478,18 @@ class OpenAICompatProvider:
         url = f"{self.base_url}/chat/completions"
 
         def attempt(remaining: float) -> httpx.Response:
-            resp = self.client.post(url, json=body, timeout=self._within(remaining))
+            # The request's W3C trace context with a new span id per attempt (ADR 0062); nothing outside a traced request.
+            resp = self.client.post(url, json=body, timeout=self._within(remaining), headers=upstream_headers() or None)
             if not resp.is_success:
                 raise UpstreamError.from_response(resp)
             return resp
 
         t0 = time.perf_counter()
+        retry = self.retry
+        if deadline_s is not None and deadline_s < retry.deadline_s:
+            retry = replace(retry, deadline_s=deadline_s)
         try:
-            resp = retry_call(attempt, self.retry, sleep=self.sleep, clock=self.clock, rng=self.rng)
+            resp = retry_call(attempt, retry, sleep=self.sleep, clock=self.clock, rng=self.rng)
         except httpx.HTTPError as e:
             if isinstance(e, UpstreamError):
                 raise

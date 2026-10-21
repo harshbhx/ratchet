@@ -35,6 +35,7 @@ from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
 from . import certificate
+from .config import ERROR, ConfigIssue
 from .ledger import Ledger, Version
 from .stats import LOG_E_CAP, confidence_sequence, cp_lower, e_bernoulli, log_e_bernoulli, wilson  # `release.wilson` too
 
@@ -183,6 +184,81 @@ class ReleasePolicy:
                 except ValueError:
                     raise ValueError(f"{env} must be {'a whole number' if integer else 'a number'}, not {raw!r}") from None
         return cls(**kw)
+
+    @classmethod
+    def env_issues(cls, environ: Mapping[str, str] | None = None) -> list[ConfigIssue]:
+        """Every problem with the RATCHET_<FIELD> variables in `environ` (default os.environ), all at once: each one that
+        does not parse, or is out of range on its own (as building the policy would say, one field at a time), then the
+        rules across fields (`validate`) over the ones that are fine. `from_env` stops at the first; the gateway's startup
+        and `python -m ratchet.config check` list them all."""
+        env = os.environ if environ is None else environ
+        issues: list[ConfigIssue] = []
+        kw: dict[str, float] = {}
+        for f in fields(cls):
+            var = f"RATCHET_{f.name.upper()}"
+            raw = env.get(var)
+            if raw is None:
+                continue
+            integer = f.type in (int, "int")
+            try:
+                value = int(raw) if integer else float(raw)
+            except ValueError:
+                expected = "a whole number" if integer else "a number"
+                issues.append(ConfigIssue(ERROR, var, f"{var} must be {expected}, not {raw!r}"))
+                continue
+            try:
+                cls(**{f.name: value})
+            except ValueError as e:  # out of range, or reserved for a feature not built yet
+                issues.append(ConfigIssue(ERROR, var, str(e)))
+                continue
+            kw[f.name] = value
+        try:
+            issues.extend(cls(**kw).validate())
+        except ValueError as e:  # pragma: no cover - __post_init__ checks one field at a time, each passed above
+            issues.append(ConfigIssue(ERROR, "", str(e)))
+        return issues
+
+    def validate(self) -> list[ConfigIssue]:
+        """Rules across fields, which the checks at construction cannot see (FR-12.30, ADR 0070): 0 < live_floor <=
+        min_precision <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate just admitted),
+        min_audits and min_shadow at least 1 (0 would decide on no evidence), tolerance from 0 to MAX_TOLERANCE (more
+        would admit a large regression against the live version). The gateway's startup and `python -m ratchet.config
+        check` call it; building a policy does not, so tests and simulations may still use any value."""
+        issues: list[ConfigIssue] = []
+        if not 0 < self.live_floor <= self.min_precision <= 1:
+            issues.append(
+                ConfigIssue(
+                    ERROR,
+                    "RATCHET_LIVE_FLOOR",
+                    f"RATCHET_LIVE_FLOOR ({self.live_floor:g}) must be above 0 and at most RATCHET_MIN_PRECISION "
+                    f"({self.min_precision:g}), itself at most 1: a rollback floor above the golden gate's bar rolls back "
+                    "versions the gate admitted",
+                )
+            )
+        for name in ("min_audits", "min_shadow"):
+            if getattr(self, name) < 1:
+                env = f"RATCHET_{name.upper()}"
+                issues.append(
+                    ConfigIssue(ERROR, env, f"{env} must be 1 or more, not {getattr(self, name)!r}: 0 decides on no evidence")
+                )
+        if not 0 <= self.tolerance <= MAX_TOLERANCE:
+            issues.append(
+                ConfigIssue(
+                    ERROR,
+                    "RATCHET_TOLERANCE",
+                    f"RATCHET_TOLERANCE must be from 0 to {MAX_TOLERANCE:g}, not {self.tolerance!r}: more admits a candidate "
+                    "that regresses that far against the live version",
+                )
+            )
+        return issues
+
+
+MAX_TOLERANCE = 0.2  # ReleasePolicy.validate: the largest regression against live the golden gate may tolerate
+
+
+def policy_env() -> frozenset[str]:
+    """The variables `ReleasePolicy.from_env` reads: RATCHET_<FIELD> for every field."""
+    return frozenset(f"RATCHET_{f.name.upper()}" for f in fields(ReleasePolicy))
 
 
 class ReleaseGate:
@@ -355,8 +431,9 @@ class ReleaseGate:
 
     def _tick_canary(self, live: Version | None) -> None:
         """Roll the canary back when the Wilson upper bound of its audited precision in this stage is below the floor;
-        hold while the point estimate is below it; otherwise advance a stage, or promote it to live over `live`. With
-        `sequential=1` the anytime-valid rule decides instead (`_sequential_canary`)."""
+        hold while the point estimate is below it; otherwise advance a stage, or promote it to live over `live`, which
+        is retired with a `live_retired` event. With `sequential=1` the anytime-valid rule decides instead
+        (`_sequential_canary`)."""
         p = self.policy
         canary = self.ledger.by_state("canary")
         if not canary:
@@ -385,6 +462,9 @@ class ReleaseGate:
             else:
                 if live:
                     self.ledger.set_version(live.id, "retired", 0)
+                    # Its own event (ADR 0062), so every version transition is in the log. A kind of its own too: the
+                    # v0.4 kind `retired` names candidates replaced at admission, which the pinned reference runs count.
+                    self.ledger.event("live_retired", f"v{live.id} retired: v{canary.id} replaces it as live")
                 self.ledger.set_version(canary.id, "live", 100)
                 self.ledger.event("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n})")
 

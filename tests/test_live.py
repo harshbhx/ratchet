@@ -101,6 +101,9 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "api_key_daily_requests": 0,
         "bom_signing_key": "",
         "mock_warmup_days": 0,
+        # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
+        "allow_unauthenticated": True,
+        "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
 
@@ -1635,17 +1638,21 @@ def test_deploy_scripts_never_say_cost_nothing():
 @pytest.mark.req("NFR-10")
 def test_deploy_variables_are_listed_and_documented():
     """Every RATCHET_* variable the two Nebius scripts read is either read by the package (config.py) or listed in
-    `config.DEPLOY_ENV`, which the traceability check holds to a row in docs/CONFIGURATION.md; no name is stale."""
+    `config.DEPLOY_ENV`, which the traceability check holds to a row in docs/CONFIGURATION.md; no name is stale: each
+    one is set or read somewhere under deploy/ (the Nebius scripts, or the demo VM's files, which share the list)."""
     from ratchet.config import DEPLOY_ENV, KNOWN_ENV
 
     read: set[str] = set()
     for script in ("student_endpoint.sh", "train_job.sh"):
         read |= set(re.findall(r"\$\{(RATCHET_[A-Z0-9_]+)", (ROOT / "deploy" / script).read_text(encoding="utf-8")))
-    head, rest = (ROOT / "ratchet" / "config.py").read_text(encoding="utf-8").split("DEPLOY_ENV: tuple[str, ...] = (", 1)
+    head, rest = (ROOT / "ratchet" / "config.py").read_text(encoding="utf-8").split("DEPLOY_ENV: frozenset[str] = frozenset(", 1)
     config = head + rest.split("\n)\n", 1)[1]  # config.py without the DEPLOY_ENV list itself
     by_package = {name for name in read if f'"{name}"' in config}
-    assert read - by_package == set(DEPLOY_ENV), "add the deploy script's new variable to config.DEPLOY_ENV"
-    assert len(DEPLOY_ENV) == len(set(DEPLOY_ENV)) and set(DEPLOY_ENV) <= set(KNOWN_ENV)
+    assert read - by_package <= set(DEPLOY_ENV), "add the deploy script's new variable to config.DEPLOY_ENV"
+    files = sorted(f for f in (ROOT / "deploy").rglob("*") if f.is_file())
+    deploy = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in files)
+    assert [name for name in sorted(DEPLOY_ENV) if name not in deploy] == []
+    assert not set(DEPLOY_ENV) & set(KNOWN_ENV)  # one list per reader (ADR 0070)
     documented = set(re.findall(r"`([A-Z][A-Z0-9_]*)`", (ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")))
     assert read | {"DRY_RUN"} <= documented
 
