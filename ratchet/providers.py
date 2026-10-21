@@ -158,7 +158,10 @@ NEVER_FORWARDED = frozenset(
 # (length, stops, format), not the client's sampling (its own is fixed, confidence.STUDENT_SAMPLING), and no tools: its
 # vLLM runs without a tool parser, and a tool request never reaches it.
 DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS)
-DEFAULT_STUDENT_PARAMS = frozenset({"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"})
+# `logit_bias` is not in it: a client's bias would steer the student's answer, and so the audited agreement the release gate
+# and the dashboard read, while the teacher's check at temperature 0 runs without it (CHECK_DROPS); token ids are also
+# tokenizer-specific. An operator can still name it in RATCHET_STUDENT_PARAMS.
+DEFAULT_STUDENT_PARAMS = frozenset({"max_tokens", "stop", "seed", "response_format", "top_logprobs"})
 DEFAULT_TEACHER_MAX_TOKENS = 8192  # RATCHET_TEACHER_MAX_TOKENS
 DEFAULT_STUDENT_MAX_TOKENS = 1024  # RATCHET_STUDENT_MAX_TOKENS
 _PARAM_NAME = re.compile(r"[a-z_][a-z0-9_]{0,63}")

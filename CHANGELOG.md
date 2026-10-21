@@ -544,6 +544,7 @@ All notable changes are listed here. Format: [Keep a Changelog](https://keepacha
 
 ### Review fixes (the merge of the hackathon lanes)
 - **The email redaction pattern runs in linear time** (a 120,000-character run of address characters took 20 to 30 s, on the unauthenticated `POST /ratchet/redact` and on every stored example): every repeat is bounded (local part 64, label 63, at most 8 labels, TLD 24 letters), so the same input takes about 0.02 s. Same addresses as v0.4 on fuzzed text; a local part over 64 characters or a TLD over 24 letters is no longer one. The BOM's `redactor` rules digest changes with the rule. `feedback.submit` checks a correction's answer against the spec first and redacts only a correction a policy may keep, so refused corrections cost no redaction CPU. 3 new tests.
+- **A client's `logit_bias` no longer reaches the student by default** (`providers.DEFAULT_STUDENT_PARAMS`): the audit's teacher runs at temperature 0 without it, so a bias sent to the student moved the audited agreement the release gate and the dashboard read. The serving teacher still gets it (that answer is never stored), and `RATCHET_STUDENT_PARAMS` can still name it. 1 new test.
 
 ## [0.4.0] - 2026-10-20
 
