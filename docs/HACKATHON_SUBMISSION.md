@@ -35,6 +35,13 @@ A submission that misses any of these is out of scope regardless of quality:
 - **A demo video under 3 minutes**, public on YouTube, with no copyrighted music. Judges need not watch past 3 minutes, so lead with the strongest moment.
 - **English materials, a description of features, and the feedback section.**
 
+**Judges reaching a live Scout run (unverified where marked).** What the rules say comes only from web-search snippets of the rules page (it returns 403 to fetches), Oct 20, 2026, so treat it as **unverified**: judges are not required to test the project and may judge on the text, images and video alone; a private site must give login credentials in its testing instructions. So:
+
+- The video must show a live run too, because a judge may never open the demo.
+- Judge access ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)) holds runs back for judges (`RATCHET_SCOUT_JUDGE_RUNS_PER_DAY`) behind an access code (`RATCHET_SCOUT_JUDGE_CODE`). Put the code in the submission's **testing instructions**. The rules require that field for private sites; whether only managers and judges see it here is **unverified** (a Devpost manager said so for another hackathon). The fallback is email to the hackathon managers.
+- Never put the code on the public project page or in the video. Without it, judges still get the public pool, and a run without search still makes a Token Factory call: the planner calls the teacher before any search.
+- The guard's counters survive restarts, Tavily credits are paced until `RATCHET_TAVILY_PACE_UNTIL`, and a failed search no longer ends a run, so the public cannot lock a judge out by using up the day or the month early.
+
 ### What past winners had in common
 
 - **Nebius's [Serverless AI Builders Challenge](https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners)** (35 qualifying projects; criteria: technical implementation, reproducibility, educational content quality, product usage depth, real-world usefulness, originality). First place LoRA-fine-tuned 7–8B models on Serverless Jobs, served the winner on a Serverless Endpoint and reported its full bill ($320, failed jobs included). Second place compared Token Factory against self-hosted vLLM on quality, latency and cost, and found self-hosting wins only at high utilization. Third place injected faults into multi-agent systems and measured robustness, with a $3.64 bill.
@@ -122,7 +129,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 788 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 821 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -176,6 +183,9 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 - [ ] Working project uses NVIDIA Nemotron on Token Factory and Nebius AI Cloud
 - [ ] Hosted demo runs in **live mode** (Stage One needs a runtime Token Factory call; the Tavily prize needs a runtime Tavily call)
 - [ ] Token Factory and Tavily credits last until Dec 15, 2026 (or are topped up); budget guard set accordingly
+- [ ] Judge access set and delivered: `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` in `deploy/vm/.env`, the code in the testing instructions only (unverified who sees them; fallback: email the managers), never on the project page or in the video
+- [ ] Tavily credit cycle set: `RATCHET_TAVILY_MONTHLY_CREDITS`, `RATCHET_TAVILY_CYCLE_DAY` (the dashboard's reset day) and `RATCHET_TAVILY_PACE_UNTIL=2026-12-15`
+- [ ] `curl -s https://<domain>/scout/status | jq .search` shows `"available": true`, and a judge session works from the Scout page (`"session": true`)
 - [ ] Track selected: Best Apps and Agents
 - [ ] Project description (this file, sections above)
 - [ ] Working demo URL, tested logged-out, stays live through Dec 15, 2026

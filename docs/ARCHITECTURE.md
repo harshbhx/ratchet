@@ -60,8 +60,10 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/gateway.py` | FastAPI app: OpenAI-compatible API (with API keys, quotas, request validation, body limit, OpenAI error envelope and streaming), stats, BOM and redaction endpoints, pages (`/`, `/scout`, `/dashboard`), mock-only demo controls, Scout endpoints |
 | `ratchet/scout/agents.py` | `Scout`: planner → searcher → triage (parallel) → reader (parallel) → writer; `Call`, `http_caller` |
 | `ratchet/scout/prompts.py` | System prompts, message builders and example questions, shared with the simulator |
-| `ratchet/scout/search.py` | `TavilySearch` (live) and `MockSearch` (simulated results from `sim/research.py`) |
-| `ratchet/scout/guard.py` | `Guard`: daily spend cap, daily run cap, per-IP hourly limit for the public demo |
+| `ratchet/scout/search.py` | `TavilySearch` (live) and `MockSearch` (simulated results from `sim/research.py`), `SearchUnavailable` |
+| `ratchet/scout/guard.py` | `Guard`: daily spend cap, daily run cap, per-IP hourly limit and the judges' reserve for the public demo; live mode keeps its counters in `spend` rows and restores them at startup |
+| `ratchet/scout/judge.py` | `JudgeAccess` (the judge code's digest and a derived cookie key) and `AttemptLimiter` |
+| `ratchet/scout/credits.py` | `CreditMeter` (monthly Tavily credits paced per UTC day, a judge share) and `MeteredSearch` |
 | `ratchet/scout/__main__.py` | CLI: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` |
 | `ratchet/web/` | `landing.html` and `scout.html`: static pages, no build step |
 | `sim/` | Synthetic tickets, the mock research world (`research.py`), workloads (`world.py`), mock teacher/student for the offline simulation and tests |
@@ -339,7 +341,7 @@ Created by `SCHEMA` for the evidence features, so later items change no migratio
 | `teacher_checks` | `id`, `ts`, `day`, `epoch`, `task`, `source` (`duplicate` or `probe`), `agree`, `model`; indexed by `epoch` | Teacher watch (FR-16.7) |
 | `meta` | `key`, `value` | Small ledger-wide state (the teacher epoch, a training freeze) |
 | `receipts` | `period` (ledger day), `client` (`''` for the whole gateway), `created_ts`, `doc` (the signed JSON); primary key (period, client) | Savings receipts (FR-15.5) |
-| `spend` | `id`, `ts`, `day`, `kind`, `ref`, `usd`, `realtime_usd`, `in_tokens`, `out_tokens`, `detail` | Money spent outside requests, e.g. backfill labelling (FR-16.8) |
+| `spend` | `id`, `ts`, `day`, `kind`, `ref`, `usd`, `realtime_usd`, `in_tokens`, `out_tokens`, `detail` | Money spent outside requests, e.g. backfill labelling (FR-16.8). Scout's rows (`scout_run`: one per run, `{"judge", "llm_usd", "status"}`; `tavily`: one per search, `{"judge", "credits", "depth", "http", "counted"}`) keep `usd` 0, because their model calls are already in `requests`; indexed on `(kind, ts)` ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)) |
 | `backfill_jobs` | `job`, `ts`, `backend`, `teacher`, `license`, `prompts`, `unique_prompts`, `outputs_discarded`, `source_models` (JSON), `status`, `usd`, `realtime_usd` | Clean-room backfill (FR-16.8) |
 | `tombstones` | `key`, `erasure_id`, `ts`, `suppressed` | Provable erasure (FR-16.9): keys never stored again |
 | `erasures` | `id` (never reused), `ts`, `day`, `key`, `tainted` (JSON version ids), `status` (`pending`, `complete`), `replacement`, `certificate` (JSON); indexed by `status` | Provable erasure (FR-16.9) |
@@ -626,6 +628,7 @@ question ─▶ Planner (research-plan, pinned) ─▶ 3 queries
 
 - Every agent call is `call(messages, task)`. In the gateway it is `Ratchet.handle` in-process (`Runtime.scout()`). From outside it is `http_caller`, a plain HTTP client for `/v1/chat/completions` with an `X-Ratchet-Task` header.
 - Scout emits events (`start`, `step`, `done`, or `error`) through a callback. `/scout/stream` runs it in a worker thread and forwards events as Server-Sent Events; `/scout/run` collects them.
-- Before a run, `Guard.admit(ip)` applies the daily budget, the daily run cap and the per-IP hourly limit. After it, `Guard.add_spend` adds the summed `cost_usd` of the steps that finished, even if the run failed.
+- Before a run, `Guard.admit(ip, judge=, run_id=)` applies the daily budget, the daily run cap, the judges' reserve and the per-IP hourly limit. After it, `Guard.add_spend` adds the summed `cost_usd` of the steps that finished, even if the run failed. In live mode each run's `scout_run` spend row is written at admission, updated after each model call (`Guard.progress`) and closed with the outcome, and `Runtime.reset` restores today's counters from those rows ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)). A valid `ratchet_judge` cookie (`POST /scout/judge`) makes a run a judge run.
+- In live mode with Tavily, each run's searches go through `MeteredSearch`, which reserves credits from the `CreditMeter` before a call and settles them after it. A refused or failed search ends the searching, not the run: the writer answers from what was found, or without sources, and `done.search` says so. The planner has called Token Factory before any search.
 - In mock mode, `MockSearch` returns simulated results from `sim/research.py`, and `MockTeacher` answers the planner and writer prompts by recognising their system prompts. The triage and reader requests are built with the same `prompts.py` functions the simulator uses, so the mock models can look each one up by its text.
 - The demo controls (`/ratchet/demo/day?workload=tickets|research|mixed`) let the dashboard train the student on Scout's calls without running Scout itself.

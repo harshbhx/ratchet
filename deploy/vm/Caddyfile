@@ -59,8 +59,14 @@
 		}
 	}
 
+	# Caddy logs request headers and redacts only Cookie, Set-Cookie, Authorization and Proxy-Authorization, so drop
+	# the edge token (guarded mode) from the access log. Scout's judge session travels in a cookie, which stays
+	# redacted; the judge code itself is only ever sent in a POST body, which Caddy does not log.
 	log {
 		output stdout
-		format console
+		format filter {
+			request>headers>X-Ratchet-Admin-Token delete
+			wrap console
+		}
 	}
 }

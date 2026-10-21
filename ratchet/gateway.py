@@ -23,6 +23,7 @@ import time
 import uuid
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,11 +63,13 @@ from .providers import GenParams, OpenAICompatProvider
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
-from .router import Choice, Ratchet
+from .router import EVENT_ON_FAILURE, Choice, Ratchet
 from .scout.agents import Call, Scout
+from .scout.credits import CreditMeter, MeteredSearch
 from .scout.guard import Guard
+from .scout.judge import COOKIE, COOKIE_PATH, JUDGE_ATTEMPTS_PER_HOUR, AttemptLimiter, JudgeAccess
 from .scout.prompts import EXAMPLE_QUESTIONS
-from .scout.search import MockSearch, SearchTool, TavilySearch
+from .scout.search import UNAVAILABLE_REASONS, MockSearch, SearchTool, TavilySearch
 
 HERE = Path(__file__).parent
 DASHBOARD = HERE / "dashboard.html"
@@ -84,17 +87,18 @@ EVIDENCE_STATES = ("canary", "live")  # versions whose `/ratchet/stats` entry ca
 SERVED_STATES = ("canary", "live", "rolled_back", "retired")
 
 
-TRANSPORT_KEYS = ("teacher", "student")
+TRANSPORT_KEYS = ("teacher", "student", "tavily")
 
 
 class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
-    `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ...}, each an
-    `httpx.BaseTransport` such as `httpx.MockTransport`; the student's also carries adapter reloads), so live mode can
-    run offline in tests, and `sleep` the teacher's waits between retries; mock mode has no HTTP providers and ignores
-    both. A fallback teacher on another endpoint (RATCHET_TEACHER_FALLBACK_BASE) also goes over the teacher's transport.
-    `clock` times the breakers, adapter reloads and demo outages (tests pass a fake one).
+    `transports` replaces the network under the live-mode providers ({"teacher": ..., "student": ..., "tavily": ...},
+    each an `httpx.BaseTransport` such as `httpx.MockTransport`; the student's also carries adapter reloads), so live
+    mode can run offline in tests, and `sleep` the teacher's waits between retries; mock mode has no HTTP providers and
+    ignores both. A fallback teacher on another endpoint (RATCHET_TEACHER_FALLBACK_BASE) also goes over the teacher's
+    transport. `clock` times the breakers, adapter reloads and demo outages (tests pass a fake one); `wall_clock` is the
+    time of day Scout's guard, credit meter and judge sessions count UTC days by (tests only).
 
     `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None."""
 
@@ -104,6 +108,7 @@ class Runtime:
         transports: dict[str, httpx.BaseTransport] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
     ):
         unknown = set(transports or {}) - set(TRANSPORT_KEYS)
         if unknown:
@@ -112,6 +117,7 @@ class Runtime:
         self.transports = dict(transports or {})
         self.sleep = sleep
         self.clock = clock
+        self.wall_clock = wall_clock
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
         self.keysets_lock = threading.Lock()  # the committed-set cache (`_keyset`)
         self.reset()
@@ -120,6 +126,8 @@ class Runtime:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         cert = s.cert_policy()  # a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA stops startup here (ADR 0026)
+        scout = s.scout_policy()  # a bad judge or Tavily credit setting stops startup here, never echoing the code (ADR 0120)
+        self.credits: CreditMeter | None = None
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
@@ -141,7 +149,10 @@ class Runtime:
             # RATCHET_<FIELD> works here too (RATCHET_SEQUENTIAL=1 shows the anytime-valid gate); min_audits is 15 unless set.
             policy = ReleasePolicy.from_env(defaults={"min_audits": 15})
             self.search: SearchTool | None = MockSearch()
-            self.guard = Guard(None, 10 * s.scout_runs_per_hour)
+            # No budget, no run cap and no ledger rows: the judge reserve holds nothing, but the code and cookie work.
+            self.guard = Guard(
+                None, 10 * s.scout_runs_per_hour, clock=self.wall_clock, judge_runs_per_day=scout.judge_runs_per_day
+            )
             fallback_teacher: OpenAICompatProvider | None = None  # the mock teacher plays any fallback model too
         else:
             self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True)
@@ -189,8 +200,39 @@ class Runtime:
                     return fallback, s.fallback_student_model
 
             policy = ReleasePolicy.from_env()
-            self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
-            self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
+            self.search = None
+            if s.tavily_api_key:
+                tavily = self.transports.get("tavily")
+                client = httpx.Client(timeout=30.0, transport=tavily) if tavily is not None else None
+                self.search = TavilySearch(s.tavily_api_key, client=client)
+                self.credits = CreditMeter(
+                    scout.monthly_credits,
+                    scout.judge_credits,
+                    scout.cycle_day,
+                    scout.pace_until,
+                    clock=self.wall_clock,
+                    ledger=self.ledger,
+                )
+            # The daily caps (INV-11) and the judges' share, counted in the ledger and restored here, so a restart or an
+            # update never resets them (ADR 0120). Restoring writes no event.
+            self.guard = Guard(
+                s.scout_daily_budget_usd,
+                s.scout_runs_per_hour,
+                s.scout_max_runs_per_day,
+                clock=self.wall_clock,
+                judge_runs_per_day=scout.judge_runs_per_day,
+                judge_budget_usd=scout.judge_budget_usd,
+                ledger=self.ledger,
+            )
+            self.guard.restore()
+            if self.credits is not None:
+                self.credits.restore()
+        self.judge = JudgeAccess(scout.judge_code, scout.judge_session_s, clock=self.wall_clock) if scout.judge_enabled else None
+        self.judge_attempts = AttemptLimiter(JUDGE_ATTEMPTS_PER_HOUR, clock=self.wall_clock)
+        self.search_lock = threading.Lock()
+        self.search_errors = 0  # failed searches since the last reset (credit refusals are not failures)
+        self.search_errors_today: tuple[str, int] = ("", 0)  # (UTC day, failures on it)
+        self.search_last_error: str | None = None  # the most recent search's failure, None after a search that worked
         self.keys = KeyRing(s.api_keys)
         # Admin keys for management writes (ADR 0022); never the same keys as an API client's.
         self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
@@ -268,8 +310,9 @@ class Runtime:
         with self.gate_lock:
             self.gate.tick()
 
-    def scout(self, pace: float = 0.0) -> Scout:
-        """`pace` > 0 (mock streams only) sleeps for that share of each call's simulated latency."""
+    def scout(self, pace: float = 0.0, judge: bool = False, run_id: str = "") -> Scout:
+        """`pace` > 0 (mock streams only) sleeps for that share of each call's simulated latency. With a credit meter
+        (live mode with Tavily), the run's searches are metered against the judge or the public pool."""
         assert self.search is not None
 
         def call(messages: list[dict[str, Any]], task: str) -> Call:
@@ -278,7 +321,52 @@ class Runtime:
                 time.sleep(pace * c.latency_ms / 1000)
             return c
 
-        return Scout(call, self.search, max_results=self.settings.scout_max_results)
+        search: SearchTool = self.search
+        if self.credits is not None:
+            search = MeteredSearch(self.search, self.credits, judge, run_id)
+        return Scout(call, search, max_results=self.settings.scout_max_results)
+
+    def note_search(self, reason: str | None) -> None:
+        """Record one search's outcome from a Scout run: None when it worked, else why it did not. A failure (not a
+        credit refusal) is counted, and written as a `search_error` event on the 1st, 10th, 100th and 1000th since the
+        last reset, as the router reports failed optional calls; the reason is a class and a status, never a message."""
+        if reason in UNAVAILABLE_REASONS:
+            return
+        with self.search_lock:
+            self.search_last_error = reason
+            if reason is None:
+                return
+            self.search_errors += 1
+            n = self.search_errors
+            day = datetime.fromtimestamp(self.wall_clock(), timezone.utc).strftime("%Y-%m-%d")
+            seen_day, today = self.search_errors_today
+            self.search_errors_today = (day, today + 1 if seen_day == day else 1)
+        if n in EVENT_ON_FAILURE:
+            self.ledger.event("search_error", f"scout search: {reason}")
+
+    def search_status(self) -> dict[str, Any]:
+        """Scout's search for `/scout/status` and the judging watchdog: provider, whether it works now (configured, not
+        paused after a 432 or 433, and the last search did not fail), the last failure, failures today and the credit
+        meter (None without one)."""
+        credits = self.credits.status() if self.credits is not None else None
+        day = datetime.fromtimestamp(self.wall_clock(), timezone.utc).strftime("%Y-%m-%d")
+        with self.search_lock:
+            last = self.search_last_error
+            seen_day, today = self.search_errors_today
+        paused = credits is not None and credits["exhausted_until"] is not None
+        return {
+            "provider": self.search.name if self.search is not None else None,
+            "available": self.search is not None and not paused and last is None,
+            "last_error": last,
+            "errors_today": today if seen_day == day else 0,
+            "credits": credits,
+        }
+
+    def scout_health(self) -> dict[str, Any]:
+        """What a readiness probe or the judging watchdog may read about Scout: search, credits and the gateway lease
+        (None until the single-writer lease, NFR-60, is built)."""
+        search = self.search_status()
+        return {"search": {k: v for k, v in search.items() if k != "credits"}, "credits": search["credits"], "lease": None}
 
 
 # ----- errors and limits -----
@@ -1345,8 +1433,9 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _scout_precheck(question: str, ip: str) -> tuple[int, str] | None:
-    """(HTTP status, message) when a run cannot start, else None. Records the run in the guard."""
+def _scout_precheck(question: str, ip: str, judge: bool = False, run_id: str | None = None) -> tuple[int, str] | None:
+    """(HTTP status, message) when a run cannot start, else None. Records the run in the guard (as a judge run when the
+    request carries a valid judge cookie), which writes its spend row in live mode."""
     q = (question or "").strip()
     if not q:
         return 400, "Ask a question."
@@ -1356,24 +1445,33 @@ def _scout_precheck(question: str, ip: str) -> tuple[int, str] | None:
         return 400, "This demo runs in mock mode with simulated search results, so it answers the example questions only."
     if rt.search is None:
         return 503, "Live search is not configured (TAVILY_API_KEY is not set)."
-    refused = rt.guard.admit(ip)
+    refused = rt.guard.admit(ip, judge=judge, run_id=run_id)
     if refused:
         return 429, refused
     return None
 
 
-def _run_scout(question: str, emit, pace: float = 0.0) -> dict[str, Any] | None:
+def _run_scout(question: str, emit, pace: float = 0.0, judge: bool = False, run_id: str | None = None) -> dict[str, Any] | None:
     """Run Scout, turning failures into an `error` event. Returns the `done` event or None.
-    Spend is counted per step, so a run that fails halfway still counts against the budget."""
+    Spend is counted per step, so a run that fails halfway still counts against the budget; in live mode the guard also
+    persists the cost so far after each model call. A run whose search failed or was refused still finishes, labelled
+    (`done.search`), and counts as a search failure only when the search itself failed."""
+    run_id = run_id or uuid.uuid4().hex[:8]
     spent = [0.0]
+    outcome = ["error"]
 
     def counting_emit(ev: dict[str, Any]) -> None:
         if ev.get("type") == "step":
             spent[0] += float(ev.get("cost_usd") or 0.0)
+            if ev.get("served_by") != "tool":
+                rt.guard.progress(run_id, spent[0])
+            elif ev.get("agent") == "searcher":
+                rt.note_search((ev.get("detail") or {}).get("unavailable"))
         emit(ev)
 
     try:
-        done = rt.scout(pace).run(question.strip(), counting_emit, mode=rt.settings.mode)
+        done = rt.scout(pace, judge, run_id).run(question.strip(), counting_emit, mode=rt.settings.mode, run_id=run_id)
+        outcome[0] = "done" if done.get("search", {}).get("available", True) else "search_unavailable"
     except httpx.HTTPError as e:  # the status and code only: an httpx message carries the URL
         emit({"type": "error", "message": f"a model or search call failed: {as_upstream(e).label}"})
         return None
@@ -1381,9 +1479,20 @@ def _run_scout(question: str, emit, pace: float = 0.0) -> dict[str, Any] | None:
         emit({"type": "error", "message": f"run failed: {type(e).__name__}: {e}"[:300]})
         return None
     finally:
-        rt.guard.add_spend(spent[0])
+        rt.guard.add_spend(spent[0], judge=judge, run_id=run_id, outcome=outcome[0])
         rt.tick()
     return done
+
+
+def _judge_session(request: Request) -> bool:
+    """Whether the request carries a valid judge cookie. Only the cookie counts: a code in the query or the body is
+    ignored, so it never needs to appear in a URL (ADR 0120)."""
+    return rt.judge is not None and rt.judge.verify(request.cookies.get(COOKIE))
+
+
+def _judge_status(request: Request) -> dict[str, Any]:
+    """`/scout/status`'s `judge` block: whether judge access is on, whether this request has a session, and the reserve."""
+    return {"enabled": rt.judge is not None, "session": _judge_session(request), **rt.guard.judge_status()}
 
 
 @app.get("/scout/examples")
@@ -1392,14 +1501,72 @@ def scout_examples() -> dict[str, Any]:
 
 
 @app.get("/scout/status")
-def scout_status() -> dict[str, Any]:
-    return {"mode": rt.settings.mode, **rt.guard.status(), "tavily": isinstance(rt.search, TavilySearch)}
+def scout_status(request: Request) -> dict[str, Any]:
+    return {
+        "mode": rt.settings.mode,
+        **rt.guard.status(),
+        "tavily": isinstance(rt.search, TavilySearch),
+        "judge": _judge_status(request),
+        "search": rt.search_status(),
+    }
+
+
+@app.post("/scout/judge")
+async def scout_judge(request: Request) -> JSONResponse:
+    """Open a judge session: `{"code": "..."}` in the body (never in a URL or a header, which access logs record).
+    The body is parsed by hand, so no validation error can echo it. 400 for another shape, 404 when judge access is
+    off, 429 past 10 attempts per IP per rolling hour, 401 for a wrong code (no cookie); 200 sets a signed HttpOnly,
+    SameSite=Strict cookie scoped to /scout (Secure in live mode) and writes a `judge` event without the IP or the code."""
+    raw = await request.body()
+    try:
+        body = json.loads(raw)
+    except (ValueError, RecursionError):  # not JSON, not UTF-8, or nested too deeply to parse
+        body = None
+    code = body.get("code") if isinstance(body, dict) else None
+    if not isinstance(code, str) or not code:
+        raise HTTPException(400, 'Send {"code": "..."}.')
+    judge = rt.judge
+    if judge is None:
+        raise HTTPException(404, "Judge access is not enabled on this demo.")
+    if not rt.judge_attempts.allow(_client_ip(request)):
+        raise HTTPException(429, "Too many attempts from this address. Try again in an hour.")
+    if not judge.check(code):
+        raise HTTPException(401, "That code is not valid.")
+    value, expires = judge.issue()
+    await anyio.to_thread.run_sync(rt.ledger.event, "judge", "judge session opened")
+    resp = JSONResponse(
+        {
+            "judge": True,
+            "expires": datetime.fromtimestamp(expires, timezone.utc).isoformat(timespec="seconds"),
+            "runs_left_today": await anyio.to_thread.run_sync(rt.guard.judge_runs_left),
+        }
+    )
+    resp.set_cookie(
+        COOKIE,
+        value,
+        max_age=int(judge.session_s),
+        path=COOKIE_PATH,
+        httponly=True,
+        samesite="strict",
+        secure=rt.settings.mode == "live",
+    )
+    return resp
+
+
+@app.delete("/scout/judge", status_code=204)
+def scout_judge_end() -> Response:
+    """End a judge session on this browser: clears the cookie. Idempotent."""
+    resp = Response(status_code=204)
+    resp.delete_cookie(COOKIE, path=COOKIE_PATH, httponly=True, samesite="strict", secure=rt.settings.mode == "live")
+    return resp
 
 
 @app.get("/scout/stream")
 def scout_stream(request: Request, q: str = "") -> StreamingResponse:
     """Server-Sent Events. Always HTTP 200: problems arrive as an `error` event (EventSource cannot read status codes)."""
-    problem = _scout_precheck(q, _client_ip(request))
+    judge = _judge_session(request)
+    run_id = uuid.uuid4().hex[:8]
+    problem = _scout_precheck(q, _client_ip(request), judge, run_id)
 
     def sse(ev: dict[str, Any]) -> str:
         return f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
@@ -1410,7 +1577,7 @@ def scout_stream(request: Request, q: str = "") -> StreamingResponse:
             return
         box: queue.Queue[dict[str, Any] | None] = queue.Queue()
         pace = rt.settings.mock_pace if rt.settings.mode == "mock" else 0.0
-        worker = threading.Thread(target=lambda: (_run_scout(q, box.put, pace), box.put(None)), daemon=True)
+        worker = threading.Thread(target=lambda: (_run_scout(q, box.put, pace, judge, run_id), box.put(None)), daemon=True)
         worker.start()
         while True:
             try:
@@ -1428,12 +1595,16 @@ def scout_stream(request: Request, q: str = "") -> StreamingResponse:
 
 @app.post("/scout/run")
 def scout_run(request: Request, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """One run, answered when it finishes: 200 also when search was unavailable (`done.search`), 502 only when a
+    model call failed."""
     question = str(body.get("question", ""))
-    problem = _scout_precheck(question, _client_ip(request))
+    judge = _judge_session(request)
+    run_id = uuid.uuid4().hex[:8]
+    problem = _scout_precheck(question, _client_ip(request), judge, run_id)
     if problem is not None:
         raise HTTPException(*problem)
     events: list[dict[str, Any]] = []
-    done = _run_scout(question, events.append)
+    done = _run_scout(question, events.append, 0.0, judge, run_id)
     if done is None:
         raise HTTPException(502, events[-1]["message"] if events else "run failed")
     return {"events": events}

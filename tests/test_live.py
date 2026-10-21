@@ -808,9 +808,9 @@ def test_trust_proxy_uses_forwarded_ip_only_when_enabled(gw_env):
             super().__init__(None, runs_per_hour, clock=FakeClock())
             self.ips: list[str] = []
 
-        def admit(self, ip: str) -> str | None:
+        def admit(self, ip: str, **kw: Any) -> str | None:
             self.ips.append(ip)
-            return super().admit(ip)
+            return super().admit(ip, **kw)
 
     q = {"question": EXAMPLE_QUESTIONS[0]}
     forwarded = {"X-Forwarded-For": "198.51.100.7 , 10.0.0.2"}  # client, then the proxies it passed through
@@ -834,6 +834,147 @@ def test_trust_proxy_uses_forwarded_ip_only_when_enabled(gw_env):
     assert c.post("/scout/run", json=q, headers={"X-Forwarded-For": "198.51.100.7"}).status_code == 200
     assert c.post("/scout/run", json=q, headers={"X-Forwarded-For": "198.51.100.8"}).status_code == 200
     assert c.post("/scout/run", json=q, headers={"X-Forwarded-For": "198.51.100.7, 10.0.0.2"}).status_code == 429
+
+
+# ---------- Scout on the demo VM: a guard that survives restarts, judge access (FR-10.20, FR-10.21, ADR 0120) ----------
+SCOUT_ANSWER = json.dumps(
+    {
+        "queries": ["lora basics"],
+        "relevant": True,
+        "source_type": "docs",
+        "reason": "on topic",
+        "answers_question": True,
+        "fact_type": "definition",
+        "key_fact": "LoRA trains small low-rank matrices.",
+        "answer": "LoRA trains small low-rank matrices [1].",
+        "used": [1],
+    }
+)
+JUDGE_CODE = "fedcba9876543210fedcba98"
+
+
+def _tavily(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200, json={"results": [{"title": "LoRA", "url": "https://a.example.org/lora", "content": "c"}], "usage": {"credits": 1}}
+    )
+
+
+def _scout_runtime(gw: Any, settings: Settings, clock: FakeClock) -> Any:
+    teacher = FakeOpenAIServer(SCOUT_ANSWER)
+    return gw.Runtime(
+        settings, transports={"teacher": teacher.transport, "tavily": httpx.MockTransport(_tavily)}, wall_clock=clock
+    )
+
+
+@pytest.mark.req("FR-10.20", "INV-11")
+def test_live_runtime_restart_keeps_the_scout_budget(gw_env, tmp_path, monkeypatch):
+    gw = gw_env()
+    clock = FakeClock()
+    settings = _live_settings(
+        tmp_path, student_base="", tavily_api_key="tvly-test", scout_daily_budget_usd=1e-6, scout_max_runs_per_day=30
+    )
+    q = {"question": "What is LoRA?"}
+    a = _scout_runtime(gw, settings, clock)
+    assert a.guard.status()["persistent"] is True and a.ledger.events() == []
+    monkeypatch.setattr(gw, "rt", a)
+    c = TestClient(gw.app)
+    assert c.post("/scout/run", json=q).status_code == 200  # admitted under the budget; it costs more than the budget
+    r = c.post("/scout/run", json=q)
+    assert r.status_code == 429 and "budget" in r.json()["detail"]
+    spent = a.guard.status()["spent_today_usd"]
+
+    events = len(a.ledger.events())
+    b = _scout_runtime(gw, settings, clock)  # `docker compose up -d --build`: a new process on the same ledger file
+    assert len(b.ledger.events()) == events  # restoring writes no event
+    monkeypatch.setattr(gw, "rt", b)
+    r = c.post("/scout/run", json=q)
+    assert r.status_code == 429 and "budget" in r.json()["detail"]
+    st = c.get("/scout/status").json()
+    assert (st["runs_today"], st["spent_today_usd"], st["persistent"]) == (1, spent, True) and spent > 1e-6
+    clock.advance(86400)  # the next UTC day starts clean
+    assert c.post("/scout/run", json=q).status_code == 200
+
+
+@pytest.mark.req("FR-10.21")
+def test_live_judge_cookie_is_secure(gw_env, tmp_path, monkeypatch):
+    gw = gw_env()
+    settings = _live_settings(
+        tmp_path,
+        student_base="",
+        tavily_api_key="tvly-test",
+        scout_judge_code=JUDGE_CODE,
+        scout_judge_runs_per_day=1,
+        scout_max_runs_per_day=1,
+        scout_judge_budget_usd=None,
+        tavily_monthly_credits=0,
+        tavily_judge_credits=None,
+    )
+    rt = _scout_runtime(gw, settings, FakeClock())
+    monkeypatch.setattr(gw, "rt", rt)
+    c = TestClient(gw.app, base_url="https://testserver")  # httpx sends a Secure cookie over https only
+    r = c.post("/scout/judge", json={"code": JUDGE_CODE})
+    assert r.status_code == 200 and "secure" in r.headers["set-cookie"].lower()
+    assert c.get("/scout/status").json()["judge"]["session"] is True
+    assert c.post("/scout/run", json={"question": "What is LoRA?"}).status_code == 200  # the judges-only run
+    public = TestClient(gw.app, base_url="https://testserver")
+    r = public.post("/scout/run", json={"question": "What is LoRA?"})
+    assert r.status_code == 429 and "judge" not in r.json()["detail"].lower()  # a judges-only day: the public gets 429
+    assert c.delete("/scout/judge").status_code == 204
+    assert c.get("/scout/status").json()["judge"]["session"] is False
+
+
+@pytest.mark.req("FR-11.1")
+def test_caddy_log_drops_the_edge_token():
+    """Caddy logs request headers and redacts only Cookie, Set-Cookie, Authorization and Proxy-Authorization, so the
+    guarded mode's edge token must be filtered out of its access log (ADR 0120). `caddy validate` checks it on the VM."""
+    caddyfile = (ROOT / "deploy" / "vm" / "Caddyfile").read_text(encoding="utf-8")
+    log = caddyfile[caddyfile.index("\tlog {") :]
+    assert "format filter {" in log and "request>headers>X-Ratchet-Admin-Token delete" in log and "wrap console" in log
+
+
+_LEASES = "NFR-60 waits for lane D's leases table and Ledger.acquire_lease (OPS-NIGHT-LEASES-ALERTS); ratchet/lease.py"
+
+
+@pytest.mark.req("NFR-60")
+@pytest.mark.xfail(strict=True, reason=_LEASES)
+def test_second_gateway_on_a_live_ledger_warns_by_default(tmp_path):
+    from ratchet.lease import GatewayLease  # type: ignore[import-not-found]
+
+    led, clock = Ledger(str(tmp_path / "lease.db"), auto_day=True), FakeClock()
+    first = GatewayLease(led, "warn", "host:1:a", clock=clock, start_thread=False)
+    second = GatewayLease(Ledger(str(tmp_path / "lease.db"), auto_day=True), "warn", "host:2:b", clock=clock, start_thread=False)
+    first.beat()
+    second.beat()
+    assert [e["kind"] for e in led.events()].count("gateway_lease") == 1
+    clock.advance(31)  # the first stopped beating: its lease expires and the second takes it over
+    second.beat()
+    assert led.lease_holder("gateway")[0] == "host:2:b"
+
+
+@pytest.mark.req("NFR-60")
+@pytest.mark.xfail(strict=True, reason=_LEASES)
+def test_exclusive_gateway_refuses_a_held_lease_and_takes_an_expired_one(tmp_path):
+    from ratchet.lease import GatewayLease  # type: ignore[import-not-found]
+
+    clock, waits = FakeClock(), []
+    holder = GatewayLease(Ledger(str(tmp_path / "lease.db")), "exclusive", "host:1:a", clock=clock, start_thread=False)
+    holder.beat()
+    with pytest.raises(RuntimeError, match="RATCHET_GATEWAY_LEASE"):
+        GatewayLease(Ledger(str(tmp_path / "lease.db")), "exclusive", "host:2:b", clock=clock, sleep=waits.append).acquire()
+    clock.advance(31)
+    GatewayLease(Ledger(str(tmp_path / "lease.db")), "exclusive", "host:3:c", clock=clock, sleep=waits.append).acquire()
+
+
+@pytest.mark.req("NFR-60")
+@pytest.mark.xfail(strict=True, reason=_LEASES)
+def test_lease_is_taken_in_the_lifespan_only(gw_env, tmp_path, monkeypatch):
+    gw = gw_env()
+    rt = _scout_runtime(gw, _live_settings(tmp_path), FakeClock())
+    assert rt.ledger.lease_holder("gateway") is None  # building a Runtime takes no lease
+    monkeypatch.setattr(gw, "rt", rt)
+    with TestClient(gw.app):
+        assert rt.ledger.lease_holder("gateway") is not None
+    assert rt.ledger.lease_holder("gateway") is None
 
 
 @pytest.mark.req("FR-8.5", "INV-9")

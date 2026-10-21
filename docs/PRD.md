@@ -279,6 +279,9 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-10.4 | Streaming run events to the page (Server-Sent Events) and a JSON endpoint (`/scout/run`) | Done (v0.2) |
 | FR-10.5 | Budget guard: daily spend cap, daily run cap, per-IP hourly limit; spend counted per step | Done (v0.2) |
 | FR-10.6 | CLI client: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` | Done (v0.2) |
+| FR-10.20 | In live mode the budget guard's runs and spend per UTC day are kept in the ledger's spend table (`scout_run` rows, `usd` 0, amounts in detail) and restored at startup, so a restart or update never resets the daily cap; per-IP windows stay in memory and no IP is stored ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)) | Done (v0.5) |
+| FR-10.21 | Reserved judge allowance: `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` (with USD and Tavily-credit shares) hold back runs the public cannot use, total spend still at or under the daily cap; the code is sent once by POST (`POST /scout/judge`), compared in constant time, never stored, logged or echoed, and a signed HttpOnly, SameSite=Strict cookie carries the session | Done (v0.5), untested (live) |
+| FR-10.22 | Monthly Tavily credit budget counted per search (`usage.credits` when Tavily reports it, else basic 1, advanced 2), paced per day until a configurable date with a judge share and a configurable cycle day; when search fails or credits run out, the run continues labelled 'search unavailable': the planner's Token Factory call happens before search, and the pinned writer answers without sources | Done (v0.5), untested (live) |
 
 ### 6.11 Demo hosting
 
@@ -344,6 +347,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter. | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet |
 | NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
 | NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass (`RATCHET_PRICES_VERIFIED`). | Partial: the cost report, the `cost` block and `totals.cost_model` in `/ratchet/stats` and the simulator's GPU-hour line name their cost model (v0.5); the `ratchet` block of a chat completion, Scout's run totals and the simulator's main savings line still give per-token figures without saying so |
+| NFR-60 | Single writer | In live mode one gateway process serves a ledger: a `gateway` lease with a heartbeat, taken at app startup; a second process warns and writes an event (default) or refuses to start (`RATCHET_GATEWAY_LEASE=exclusive`) | Planned |
 
 ## 8. Success metrics
 

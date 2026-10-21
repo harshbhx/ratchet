@@ -116,6 +116,8 @@ CREATE TABLE IF NOT EXISTS receipts (        -- sealed, signed savings receipts 
 CREATE TABLE IF NOT EXISTS spend (           -- money spent outside requests, e.g. backfill labelling (FR-16.8)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, day INTEGER, kind TEXT, ref TEXT,
+    -- usd: billable spend outside requests (backfill). Scout's rows (kinds 'scout_run' and 'tavily', ADR 0120) keep 0
+    -- here and their amounts in detail (JSON): their model calls are already in requests.cost_usd.
     usd REAL, realtime_usd REAL, in_tokens INTEGER, out_tokens INTEGER, detail TEXT
 );
 CREATE TABLE IF NOT EXISTS backfill_jobs (   -- historical prompts relabelled by the teacher (FR-16.8)
@@ -245,6 +247,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
+    # Scout's guard and credit meter restore today's and this cycle's rows at startup (ADR 0120).
+    "CREATE INDEX IF NOT EXISTS spend_kind_ts ON spend (kind, ts)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -252,6 +256,9 @@ _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 LEAF_SPLITS = ("train", "golden")  # the splits a version commits to (version_leaves.split)
+# Spend rows whose `detail` may be rewritten after they are written: a Scout run's row, updated with its cost so far while
+# it runs (ADR 0120). Every other kind (a backfill's bill, a Tavily search) is written once and never edited.
+MUTABLE_SPEND_KINDS = ("scout_run",)
 _HEX32 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -876,6 +883,80 @@ class Ledger:
             out["spec"] = json.loads(r["spec"]) if r["spec"] else None
         except ValueError:
             out["spec"] = None
+        return out
+
+    # ---------- spend outside requests ----------
+    @_locked
+    def add_spend(
+        self,
+        kind: str,
+        ref: str,
+        usd: float = 0.0,
+        realtime_usd: float | None = None,
+        in_tokens: int | None = None,
+        out_tokens: int | None = None,
+        detail: Mapping[str, Any] | None = None,
+        ts: float | None = None,
+    ) -> int:
+        """Write one `spend` row and return its id. `usd` is billable spend that no request row holds (a backfill's bill);
+        Scout's rows keep it 0 and put their amounts in `detail`, written as sorted JSON (ADR 0120)."""
+        if not isinstance(kind, str) or not kind:
+            raise ValueError(f"a spend kind must be a non-empty string, not {kind!r}")
+        for what, value in (("usd", usd), ("realtime_usd", realtime_usd)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value < math.inf
+            ):
+                raise ValueError(f"{what} must be a finite amount, 0 or more, not {value!r}")
+        when = time.time() if ts is None else _check_ts(ts, "ts")
+        cur = self.db.execute(
+            "INSERT INTO spend (ts, day, kind, ref, usd, realtime_usd, in_tokens, out_tokens, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                when,
+                self.day,
+                kind,
+                ref,
+                float(usd),
+                None if realtime_usd is None else float(realtime_usd),
+                in_tokens,
+                out_tokens,
+                None if detail is None else json.dumps(dict(detail), sort_keys=True),
+            ),
+        )
+        self.db.commit()
+        return int(cur.lastrowid)
+
+    @_locked
+    def update_spend_detail(self, row_id: int, detail: Mapping[str, Any]) -> None:
+        """Rewrite the `detail` of a spend row of a kind in MUTABLE_SPEND_KINDS (a Scout run's cost so far). Any other
+        kind, or a missing row, raises ValueError: a bill or a search is written once. `usd` is never touched."""
+        row = self.db.execute("SELECT kind FROM spend WHERE id=?", (row_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no spend row {row_id!r}")
+        if row["kind"] not in MUTABLE_SPEND_KINDS:
+            raise ValueError(f"spend rows of kind {row['kind']!r} are written once; only {list(MUTABLE_SPEND_KINDS)} rows change")
+        self.db.execute("UPDATE spend SET detail=? WHERE id=?", (json.dumps(dict(detail), sort_keys=True), row_id))
+        self.db.commit()
+
+    @_locked
+    def spend_rows(self, kinds: Iterable[str], since_ts: float) -> list[dict[str, Any]]:
+        """Spend rows of `kinds` written at or after `since_ts`, oldest first: id, ts, kind, ref and `detail` parsed (in
+        Python, so no JSON1 dependency). A row whose detail is not a JSON object is skipped: restoring counters from it
+        could only guess."""
+        kinds = list(kinds)
+        if not kinds:
+            return []
+        marks = ",".join("?" for _ in kinds)
+        out = []
+        for r in self.db.execute(
+            f"SELECT id, ts, kind, ref, detail FROM spend WHERE kind IN ({marks}) AND ts >= ? ORDER BY id",
+            (*kinds, since_ts),
+        ):
+            try:
+                detail = json.loads(r["detail"]) if r["detail"] else None
+            except ValueError:
+                detail = None
+            if isinstance(detail, dict):
+                out.append({"id": r["id"], "ts": r["ts"], "kind": r["kind"], "ref": r["ref"], "detail": detail})
         return out
 
     # ---------- events + stats ----------
