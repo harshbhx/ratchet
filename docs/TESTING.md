@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 759 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 799 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_drift), ~90 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -10,6 +10,7 @@ python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 python -m sim.simulate --bad-deploy-version 3 --compare-release      # Wilson vs the anytime-valid gate, same seed
 python -m sim.simulate --calibration ltt --paired-gate              # certified thresholds and the paired gate (ADR 0026)
+python -m sim.simulate --drift-boost 3 --drift-early-night           # the drift alarm's opt-in actions (ADR 0032)
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
 python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
 ```
@@ -32,11 +33,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 14 |
-| **Total** | **759** |
+| `tests/test_drift.py` | 40 (34 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
+| **Total** | **799** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, most of `tests/test_drift.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
@@ -209,7 +211,7 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 | `test_rollback_without_live_returns_traffic_to_teacher` | A cold-start canary at 50% audited precision is rolled back with "traffic back to the teacher"; afterwards 50 requests are all answered by the teacher and the student is never called |
 | `test_shadow_arbitration_calls_teacher_once_and_stores_example` | A shadow that would serve a different answer than the live student triggers exactly one teacher call, whose answer is stored as the example, while the user keeps the live answer; agreeing or unsure shadows trigger none; with an audit, the audit is the reference and no second call is made; a shadow whose endpoint is down (`raise_on`) leaves the request untouched, with no shadow record and no extra cost (INV-7). Reported cost includes the shadow's samples, the arbitration and the audit (NFR-3) |
 | `test_canary_traffic_split` | `Ratchet._pick_version` with a seeded RNG: over 4,000 picks at 10% and at 50%, the canary's share is inside the 99% Wilson interval; 0% never picks it, 100% always does, and at cold start the rest of the traffic gets `None` (the teacher) |
-| `test_tick_runs_each_step_once_in_order_with_the_live_version_it_started_with` | ADR 0024: `tick` calls `_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary` and `_tick_watchers` once each, in that order, the middle three with the live version read before any step (a canary promoted in the tick retires that one); the drift and watcher steps write nothing yet |
+| `test_tick_runs_each_step_once_in_order_with_the_live_version_it_started_with` | ADR 0024: `tick` calls `_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary` and `_tick_watchers` once each, in that order, the middle three with the live version read before any step (a canary promoted in the tick retires that one); with no confidence logged the drift step writes nothing, and the watcher step is not built |
 | `test_policy_refuses_values_out_of_range` (8 cases) | ADR 0024: `ReleasePolicy` refuses a `live_floor` of 1 or 0, a precision above 1, a negative coverage or audit count, a fractional or boolean count and an infinite tolerance, naming the variable |
 | `test_sequential_canary_rolls_back_after_two_failures` | FR-16.1, US-6, [ADR 0025](adr/0025-anytime-valid-release-gate.md): with `sequential=1` and `min_audits=15`, no audit is no decision, 0 of 1 agreeing (e-value 4.22) holds, 0 of 2 (29.8 >= 20) rolls back to live with the exact event text (counts, e-value, threshold, alpha, `95% CS [0.001, 0.931]`); the Wilson rule holds on the same two audits |
 | `test_sequential_rollback_at_cold_start_returns_traffic_to_the_teacher` | FR-16.1: a cold-start canary rolled back by the e-process sends traffic to the teacher |
@@ -510,7 +512,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_production_and_both_evaluators_share_student_sampling` | FR-5.1, FR-2.1: `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate` send the same sampling arguments, `{"n": 3, **STUDENT_SAMPLING, "params": GenParams(max_tokens=1024)}` |
 | `test_train_parse_args_defaults_and_row_contract` | FR-4.5: `train.py` defaults (epochs, learning rate, rank, sequence length, batch, Mamba projections in the targets), required `--data` and `--out`, the same base model in `config.py`, `train_job.sh` and `student_endpoint.sh`; rows written by Night School load back unchanged (blank lines skipped), end with the teacher's stored answer and carry teacher and license; `train.manifest` (saved as `ratchet_manifest.json`) names the base model and the licenses |
 | `test_scout_cli_over_http` | FR-10.6, FR-1.7: `python -m ratchet.scout` against the mock gateway in-process, with an API key: every agent prints a line, `--max-results` reaches search, citations and the cost summary print, every call is logged under the key's name with its task header (one planner and one writer request); the key also comes from `RATCHET_API_KEY`; a wrong key exits 1 with the 401 on stderr |
-| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation) and every event, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours), and `exposure`, `rollbacks` and `served` |
+| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation) and every event, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours), and `exposure`, `rollbacks`, `served` and `drift` |
 | `test_sim_cli_compares_release_rules` | FR-9.4, FR-16.1: `--compare-release` (with `--promote-evidence` for the sequential run and `--canary-audit-rate`) writes both rules' results with the same requests and prints the comparison header; `compare_table` gives one row per rule for each version either rule rolled back ("-" for audits and day where that rule did not); `--promote-evidence` without `--release sequential`, a canary audit rate of 0 or 1.5 and an unknown rule are usage errors (exit 2) |
 | `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
@@ -604,7 +606,48 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_rows_report_their_origin` | `dataset.rows` reports `examples.origin`, or `live` when it is not recorded |
 | `test_night_writes_a_v2_bom_with_its_redaction_setting` | `run_night(redact_pii=False)` writes a verifiable v2 BOM with `redactor.redact_pii` false and the origins of its 60 rows |
 | `test_mock_gateway_bom_records_the_redaction_setting` | A mock `Runtime` with `redact_pii=False` writes it into its first adapter's BOM |
-| `test_certificate_endpoint_and_stats_check_on_a_signed_bom` | FR-16.3, INV-14: on a mock gateway with a signing key, `GET /ratchet/versions/1/certificate` returns every key, the signed certificate, frontier and per-task block, the BOM's hash, the gate's evidence and three assumptions; 404 before training and for an unknown version; a re-score changes `current` and the status, not `training`; a version from before v0.4 (no BOM) and v0.5 (no certificate) answers `no certificate`; `python -m ratchet.stats check` passes the BOM, fails it after `errors` is edited (hash and numbers), after a re-hash (numbers), without the key's signature, and passes a BOM from before v0.5 |
+| `test_certificate_endpoint_and_stats_check_on_a_signed_bom` | FR-16.3, INV-14: on a mock gateway with a signing key, `GET /ratchet/versions/1/certificate` returns every key, the signed certificate, frontier and per-task block, the BOM's hash, the gate's evidence and three assumptions; 404 before training and for an unknown version; `drift` is the monitor's view of the version, with no alarm; a re-score changes `current` and the status, not `training`; a version from before v0.4 (no BOM) and v0.5 (no certificate) answers `no certificate`; `python -m ratchet.stats check` passes the BOM, fails it after `errors` is edited (hash and numbers), after a re-hash (numbers), without the key's signature, and passes a BOM from before v0.5 |
+
+### `tests/test_drift.py`
+
+The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, [ADR 0032](adr/0032-label-free-drift-alarm.md)). Simulation numbers are from mock models.
+
+| Test | Covers |
+|---|---|
+| `test_fenwick_ranks_match_a_sorted_list_with_ties` | `Fenwick.prefix` equals `bisect` on a sorted list over 3,000 inserts with many values per bin (the quantised ties) and at both ends of the range; a bin outside the tree and an empty tree raise |
+| `test_bins_and_usable_confidences` | Confidence 0 maps to bin 0 and 1 to bin 10,000, out-of-range values clamp; NaN, infinities, booleans and strings are not usable and `observe` refuses them without counting; a threshold of 1 or less is refused |
+| `test_p_values_are_uniform_under_the_null` (2 cases) | 5,000 i.i.d. confidences give smoothed conformal p-values flat over [0, 1] (each decile within 4 binomial standard deviations of 500), also when the scores take only 9 values |
+| `test_rarely_alarms_under_the_null` | Ville's bound, quickly: 100 seeded i.i.d. streams of 300 points at threshold 10 alarm at most 10% of the time |
+| `test_rarely_alarms_under_the_null_full_size` | Slow: 200 seeded i.i.d. streams of 2,000 points at threshold 100: at most 3% ever alarm (the bound is 1%) |
+| `test_alarms_soon_after_confidence_drops` | A stream whose confidence drops at n = 1,000 (30% of requests new to the student) alarms within 500 points and never before the drop; the same stream without the drop never alarms |
+| `test_rising_confidence_makes_the_capital_fall` | One-sided: confidence that rises after n = 1,000 never alarms and the capital ends below where it was |
+| `test_a_late_change_is_caught_as_fast_as_an_early_one` | The switching rate falls as 1/n after 100 points: before a drop at 20,000 the capital stays above 10^-6, and the drop alarms within 1,000 points |
+| `test_alarm_latches_and_the_trajectory_stays_small` | Only the first crossing reports, with its request id and day; the trajectory keeps under 200 evenly spaced points by stride doubling; the summary's fields |
+| `test_ten_thousand_observations_take_under_150_ms` | NFR-55: 10,000 `observe` calls in under 150 ms (best of three) |
+| `test_boosted_rate_is_capped_and_never_lowers_a_rate` | `boosted_rate`: the rate times the boost, at most 0.5, never below the rate itself |
+| `test_confidence_stream_reads_only_student_confidences_in_id_order` | `Ledger.confidence_stream` returns rows with a confidence and a student version only (no cold start, no failed student call, no pinned task), in id order, after an id, up to a limit, and narrowed by version, task and an id bound; `version_states` |
+| `test_events_once_and_the_last_event_id` | `Ledger.event_once` writes an event under a key once, also from a second connection to the same file, and records its id in `meta`; `last_event_id` is 0 without one |
+| `test_replaying_the_ledger_reproduces_every_capital_exactly` | A monitor fed tick by tick, one that replays the whole ledger at once and one that reads it in batches of 50 hold the same numbers to the last bit, alarms included; `rebuild` reproduces them; another seed gives other numbers |
+| `test_compaction_keeps_serving_versions_and_replays_a_restored_one` | Counts are kept for canary, live and the most recently retired version; an older retired or rolled-back one keeps only its final numbers and refuses to observe; restored to live by hand, its stream is replayed first and matches a fresh replay |
+| `test_compaction_keeps_the_most_recently_retired_version_not_the_newest` | A canary retired early has a higher id than the live version retired later; the later one (the one an operator would restore) keeps its counts |
+| `test_rows_without_a_finite_confidence_are_skipped` | Infinite confidences are counted as skipped and never observed |
+| `test_tick_writes_one_drift_event_per_alarm_across_restarts` | An alarm writes one `drift` event naming the version, the task, the evidence and both false-alarm bounds; later ticks and a second gate replaying the same file write no other; `drift_status` and `open_alarm` |
+| `test_policy_turns_the_monitor_off_and_refuses_actions_without_it` | `RATCHET_DRIFT_ALARM=0` turns the monitor off (no events, no streams, the off status); thresholds of 1 or less, a boost below 1, an action with the monitor off and a switch other than 0 or 1 are refused; the three variables are read by `from_env` |
+| `test_certificate_is_suspended_while_a_drift_alarm_is_open` | FR-16.3: `GET /ratchet/versions/{id}/certificate` is `certified` with a quiet stream (its `drift` lists the streams without trajectories), `suspended` while an alarm is open (the certificate still shown), and `drift` is `null` for a version that never served |
+| `test_drift_endpoint_and_stats_block` | `GET /ratchet/drift` with every key, a stream's fields, `?version=` filtering and a 422 for a bad value; the `drift` block of `/ratchet/stats`; both with the monitor off |
+| `test_a_restarted_gateway_replays_the_ledger_at_startup` | A live `Runtime` on an existing ledger file replays it when it starts, writes no second event for an alarm already recorded, and shares its audit boosts with the router |
+| `test_sqlite_stores_no_nan` | A NaN confidence is stored as NULL, which `confidence_stream` leaves out |
+| `test_an_up_to_date_monitor_reads_one_query_per_update` | NFR-55: after its replay an update is one range query; the versions' states are read again only every 1,000 rows |
+| `test_concurrent_checks_write_each_alarm_once` | Six threads checking drift at once observe each row once, write the alarm once and leave the capital of a plain replay and the boost in place |
+| `test_audit_boost_raises_only_the_alarmed_versions_rate_with_one_draw_per_answer` | FR-6.40: a boosted canary is audited at 0.3 (0.1 × 3) and at 0.5 with a boost of 10 (the cap), the live version at 0.1, with the same 800 draws and the same requests reaching each version as without a boost; `label_p` records each rate |
+| `test_gate_boosts_an_alarmed_serving_version_until_a_newer_one_goes_live` | FR-6.40: off by default; with a boost of 3 the alarmed live version is boosted in the dict the router holds, and cleared (in place) once a newer version is live |
+| `test_early_night_halves_the_new_examples_needed_only_after_an_alarm` | FR-6.41, INV-5: 30 new examples do not train without an alarm, nor with the action off after one; with it on they train (the `trained` event says it was an early night); once a night has trained, 30 more need the usual 50 again |
+| `test_early_night_never_trains_while_a_release_is_in_flight` | FR-6.41, INV-5: an alarm on a canary does not let Night School train |
+| `test_sim_alarms_on_the_launch_day` | FR-9.4: the ticket launch on day 5 alarms on day 5 or 6, never before (the seed-7 reference run at 2,000 a day, whose corrupted v3 raises no alarm, and seed 11 at 1,000 a day) |
+| `test_sim_never_alarms_without_drift` (2 cases) | Seeds 7 and 11, 6 days × 1,000 requests without drift: no `drift` event |
+| `test_monitor_draws_nothing_from_the_router_rng` | NFR-55: the same seeded run with the monitor on and off gives the same days, versions, totals and events, apart from the `drift` event |
+| `test_sim_alarm_sweep` (5 cases) | Slow: seeds 1, 2, 3, 7 and 11 at 2,000 a day alarm on day 5 or 6 after the launch and never in 6 days without one |
+| `test_sim_flags_reach_the_policy_and_the_router` | `--drift-alarm`, `--drift-boost` and `--drift-early-night` set the gate's policy and the router shares the gate's boosts; settings that would do nothing are refused; the table prints the drift line and the event |
 
 ## Live-path tests
 
@@ -726,6 +769,21 @@ total saved 69%
 | 11 | 98% | 85% | 66% | 92% | rolled back |
 
 "Total" includes the cold-start days, when all traffic goes to the teacher.
+
+### The drift alarm (10 days, 2,000/day, ticket workload, no fault injection)
+
+Simulation, mock models ([ADR 0032](adr/0032-label-free-drift-alarm.md)). With the product launch on day 5, the drift monitor's first alarm, on the live version's `ticket-triage` stream; without it, none:
+
+| Seed | Launch on day 5: first alarm | Requests into the launch day | Without the launch |
+|---|---|---|---|
+| 1 | day 5 (v1) | 137 | no alarm |
+| 2 | day 5 (v2) | 246 | no alarm |
+| 3 | day 5 (v1) | 70 | no alarm |
+| 7 | day 5 (v1) | 379 | no alarm |
+| 11 | day 5 (v1) | 437 | no alarm |
+| 23 | day 5 (v1) | 190 | no alarm |
+
+The reference run (seed 7, with the corrupted v3) alarms on v1 on day 5 as well; the corrupted v3 is no traffic change and raises none (its rollback is the audits' job). At 600 requests a day seeds 7 and 11 do not alarm within two days of the launch, and the mixed and research workloads (seed 7, 1,500 a day) raise none in 8 days: power depends on the volume per stream and on how far confidence falls.
 
 The ticket numbers above are the same as in v0.1. Adding the research world did not change the random draws for tickets ([sim/CLAUDE.md](../sim/CLAUDE.md)).
 

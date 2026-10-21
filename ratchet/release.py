@@ -24,17 +24,23 @@ request does not), with no minimum audit count; it is promoted a stage on the po
 `promote_evidence=1` on an e-value that precision is above the floor; and it is retired when a stage reaches
 `max_stage_audits` audits without a decision. The live alert uses the same e-process by default (`alert_eprocess`).
 Every decision is computed from two integers per version (audits, agreements), so anyone can re-check it.
+
+Each tick starts with the label-free drift monitor (FR-16.6, ADR 0032): a conformal test martingale on every version's
+own confidence stream, read from the ledger. It decides no release; an alarm writes a `drift` event and suspends the
+version's certificate, and opt-in it boosts that version's audits and lets Night School train sooner.
 """
 
 from __future__ import annotations
 
 import math
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
 from . import certificate
+from .drift import Alarm, DriftMonitor
 from .ledger import Ledger, Version
 from .stats import LOG_E_CAP, confidence_sequence, cp_lower, e_bernoulli, log_e_bernoulli, wilson  # `release.wilson` too
 
@@ -49,9 +55,6 @@ _PROMOTION_SEARCH = 100_000
 # `ReleasePolicy.__post_init__`), so nobody relies on a rule that does nothing yet. The item that builds a feature
 # removes its fields here.
 RESERVED_POLICY: dict[str, str] = {
-    "drift_alarm": "the drift alarm (FR-16.6)",
-    "drift_audit_boost": "the drift alarm (FR-16.6)",
-    "drift_early_night": "the drift alarm (FR-16.6)",
     "teacher_noise_max": "the teacher watch (FR-16.7)",
     "alpha_teacher": "the teacher watch (FR-16.7)",
 }
@@ -87,7 +90,10 @@ class ReleasePolicy:
     paired_gate: int = 0
     regression_alpha: float = 0.05
     max_nfr: float = 1.0
-    # The drift alarm (FR-16.6): the martingale's threshold and the opt-in actions on an alarm.
+    # The drift alarm (FR-16.6, ADR 0032): the test martingale's threshold (a false alarm has probability at most
+    # 1/drift_alarm per stream; 0 = the monitor is off), and the opt-in actions on an alarm: the alarmed version's audit
+    # rate multiplied by drift_audit_boost (1 = off, FR-6.40), and Night School needing half the new examples
+    # (drift_early_night=1, FR-6.41).
     drift_alarm: float = 100.0
     drift_audit_boost: float = 1.0
     drift_early_night: int = 0
@@ -117,10 +123,13 @@ class ReleasePolicy:
                 raise bad(name, getattr(self, name), "0 or 1")
         if not 0 < self.max_nfr <= 1:
             raise bad("max_nfr", self.max_nfr, "more than 0 and at most 1")
-        if not self.drift_alarm > 1:
-            raise bad("drift_alarm", self.drift_alarm, "more than 1")
+        if not (self.drift_alarm == 0 or self.drift_alarm > 1):
+            raise bad("drift_alarm", self.drift_alarm, "more than 1, or 0 (off)")
         if not self.drift_audit_boost >= 1:
             raise bad("drift_audit_boost", self.drift_audit_boost, "1 or more")
+        if self.drift_alarm == 0 and (self.drift_audit_boost > 1 or self.drift_early_night):
+            on = "RATCHET_DRIFT_AUDIT_BOOST" if self.drift_audit_boost > 1 else "RATCHET_DRIFT_EARLY_NIGHT"
+            raise ValueError(f"{on} acts on drift alarms, but RATCHET_DRIFT_ALARM=0 turns the monitor off")
         defaults = {f.name: f.default for f in fields(self) if f.default is not MISSING}
         for name, feature in RESERVED_POLICY.items():
             if getattr(self, name) != defaults[name]:
@@ -190,6 +199,15 @@ class ReleaseGate:
         self.ledger = ledger
         self.policy = policy or ReleasePolicy()
         self._alerted: set[int] = set()  # live versions already alerted on (one alert per version)
+        # The label-free drift monitor (FR-16.6, ADR 0032), fed from the ledger by `_tick_drift`; None when
+        # RATCHET_DRIFT_ALARM=0. A fresh gate replays the ledger on its first tick.
+        self.drift: DriftMonitor | None = DriftMonitor(self.policy.drift_alarm) if self.policy.drift_alarm else None
+        # {version id: audit-rate multiplier} for serving versions with an open drift alarm, when drift_audit_boost > 1
+        # (FR-6.40). The router reads this very dict (`Ratchet.audit_boost`); the gateway and the simulator share it.
+        self.audit_boost: dict[int, float] = {}
+        # A mock night (`early_night`) and the gateway's ticks may check drift at once; one at a time keeps the boosts
+        # consistent. The monitor has its own lock for its streams.
+        self._drift_lock = threading.Lock()
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
@@ -295,7 +313,60 @@ class ReleaseGate:
         self._tick_watchers()
 
     def _tick_drift(self) -> None:
-        """The label-free drift monitor (FR-16.6) will update here, first, from the ledger. Nothing yet."""
+        """The label-free drift monitor (FR-16.6, ADR 0032), first: one primary-key range query for the confidences
+        logged since the last tick, each fed to its (version, task) stream (`check_drift`). It decides nothing about a
+        release; an alarm writes a `drift` event, suspends the version's certificate, and with the opt-in actions boosts
+        its audits and lets Night School train sooner."""
+        self.check_drift()
+
+    def check_drift(self) -> list[Alarm]:
+        """Bring the drift monitor up to date with the ledger and act on the alarms raised: a `drift` event for each,
+        written once per (version, task) across processes and restarts (`Ledger.event_once`), and the audit boosts
+        (`audit_boost`) refreshed. Returns the new alarms (none while RATCHET_DRIFT_ALARM=0)."""
+        if self.drift is None:
+            return []
+        with self._drift_lock:
+            alarms = self.drift.update(self.ledger)
+            for alarm in alarms:
+                self.ledger.event_once(alarm.key, "drift", alarm.detail())
+            if self.policy.drift_audit_boost > 1:
+                self._refresh_audit_boost()
+        return alarms
+
+    def _refresh_audit_boost(self) -> None:
+        """Boost the audits of every version that has an open drift alarm and still serves (canary or live); drop the
+        boost of one that no longer does, which is how a newer version going live clears it. In place, so the router's
+        reference to the dict stays valid; it only ever reads it with `.get`. Reads the ledger only while some version
+        has an alarm or a boost."""
+        assert self.drift is not None
+        alarmed = self.drift.alarmed_versions()
+        if not alarmed and not self.audit_boost:
+            return
+        states = self.ledger.version_states()
+        want = {vid: self.policy.drift_audit_boost for vid in alarmed if states.get(vid) in ("canary", "live")}
+        for vid in [v for v in self.audit_boost if v not in want]:
+            del self.audit_boost[vid]
+        self.audit_boost.update(want)
+
+    def drift_status(self, version: int | None = None, trajectory: bool = True) -> dict[str, Any]:
+        """`GET /ratchet/drift`: whether the monitor is on, its threshold and false-alarm bounds, and every stream (or
+        `version`'s) with its capital and trajectory (`DriftMonitor.status`)."""
+        if self.drift is None:
+            return {
+                "enabled": False,
+                "threshold": None,
+                "false_alarm_bound": None,
+                "family_bound": None,
+                "monitored": 0,
+                "alarms": 0,
+                "streams": [],
+            }
+        return {"enabled": True, **self.drift.status(version, trajectory)}
+
+    def drift_view(self, version: int) -> dict[str, Any] | None:
+        """The certificate endpoint's `drift` for `version`: `alarm` (open or not), the threshold and its streams; None
+        when the monitor is off or the version never logged a confidence."""
+        return self.drift.version_view(version) if self.drift is not None else None
 
     def _tick_live(self, live: Version | None) -> None:
         """Alert once per live version when its audited precision since it went live is strongly below the floor (it is

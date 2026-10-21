@@ -25,6 +25,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
 | GET | `/ratchet/versions/{id}/certificate` | both | What a version's golden evals certify: the signed and the latest certificate, frontier and per-task bounds, the gate's evidence and the assumptions ([Certificates](#get-ratchetversionsidcertificate)) |
+| GET | `/ratchet/drift` | both | The label-free drift monitor: each (version, task) stream's test martingale on the student's confidence, its alarm and the false-alarm bounds ([Drift](#get-ratchetdrift)) |
 | GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
 | GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
@@ -453,7 +454,8 @@ Needs a key when `RATCHET_API_KEYS` is set.
   "privacy": {"redaction": true, "examples": 2742, "redacted_examples": 12, "placeholders": 19},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
-           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"}
+           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
+  "drift": {"enabled": true, "threshold": 100.0, "family_bound": 0.03, "alarms": 1, "streams": 3}
 }
 ```
 
@@ -498,6 +500,7 @@ Needs a key when `RATCHET_API_KEYS` is set.
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
+- `drift` (v0.5): the [drift monitor](#get-ratchetdrift)'s summary: whether it is on (`RATCHET_DRIFT_ALARM` above 0), its threshold, the chance that any stream it holds ever alarms on unchanged traffic (`family_bound`, K / threshold), how many streams alarmed (`alarms`) and how many it holds (`streams`, a count; the list is in `GET /ratchet/drift`). Off: `enabled` false, `threshold` and `family_bound` `null`, both counts 0.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
@@ -589,20 +592,21 @@ What a version's golden evals certify about the answers it serves (FR-16.3, [ADR
               "calibration": "point", "paired": null, "rechecked_day": 5},
   "bom": {"sha256": "dd71bf42…", "signed": false},
   "live": {"rule": "wilson", "floor": 0.92, "n": 117, "s": 113, "cs": [0.89, 0.996], "…": "ReleaseGate.evidence"},
-  "drift": null,
+  "drift": {"alarm": false, "threshold": 100.0,
+            "streams": [{"version": 3, "task": "ticket-triage", "n": 2611, "log10_martingale": -2.1383, "…": "as in GET /ratchet/drift"}]},
   "assumptions": ["Golden rows are assumed exchangeable with live traffic, …", "Precision means agreement with the teacher model …", "Which requests are golden is decided by a hash of the request, …"]
 }
 ```
 
 (Mock gateway after five simulated days of mixed traffic; simulation numbers from mock models, rounded here.)
 
-- `status`: `certified` or `not certified` from the latest certificate (`current`'s when the version was re-scored, else `training`'s); `suspended` while a drift alarm is open for the version (FR-16.6, not built yet, so never today); `no certificate` for a version evaluated before v0.5 or by an evaluator that writes none.
+- `status`: `certified` or `not certified` from the latest certificate (`current`'s when the version was re-scored, else `training`'s); `suspended` while a drift alarm is open for the version (FR-16.6): its own traffic stopped looking like its earlier traffic, so the golden rows no longer stand for what it serves. The certificate is still shown. An alarm stays open for the version's life; the next version gets new streams. `no certificate` for a version evaluated before v0.5 or by an evaluator that writes none (also under an alarm).
 - `training`: from the signed BOM's `manifest.eval`, written once at training time (INV-14); `null` without a BOM. `current`: from the version's eval, which the nightly champion re-score overwrites for the live version (with `rechecked_day`, `null` until then). Each holds `certificate`, `frontier`, `per_task`, `threshold`, `calibration` and `paired` (`null` when that eval lacks one).
 - `certificate`: the Clopper–Pearson certificate at the version's threshold, on the held-out half: `served` answers, `errors` among them, `precision`, the one-sided lower bound `lcb` at level `delta` (`RATCHET_CERT_DELTA`), and `certified` (`lcb ≥ target`, `RATCHET_CERT_TARGET`). `calibration` is how the threshold was chosen: `point` (v0.4's rule, 97% on the calibration half) or `ltt` (Learn-then-Test over a fixed grid, `RATCHET_CALIBRATION=ltt`), which adds `ltt_trace` (each grid threshold tested on the calibration half, `{threshold, n, k, p_value}`, highest first, stopping at the first that fails).
 - `frontier`: the same counts at each threshold of the fixed grid 0.95, 0.90, …, 0.50, each `lcb` at `delta / 10` (Bonferroni), so every row holds at once: an operator may pick any threshold on it afterwards and keep the guarantee.
 - `per_task`: the certificate's counts per task, each bound at `delta` on its own. A diagnostic that shows a weak task inside a pooled number; it is not corrected for the number of tasks and never changes routing.
 - `paired` (a candidate trained while a version was live): the exact comparison with that version (`against`) on the same held-out rows. `cov_only_live` and `cov_only_cand` are the rows only one of them serves, with `p_cov` the one-sided McNemar p-value for "the candidate serves less"; `neg_flips` are rows the candidate answers wrong where live's answer was right (served right, or escalated to the teacher), `pos_flips` the reverse, with `p_err`; `nfr` is `neg_flips_served / live_served_ok` (answers live served right that the candidate serves wrong), with its 95% Wilson interval `nfr_95`. The opt-in paired gate reads these ([Configuration](CONFIGURATION.md#release-policy-ratchetreleasepy)).
-- `bom`: the BOM's `sha256` and whether it is signed; `null` without one. `live`: the release gate's evidence from the version's audits (the same object as `/ratchet/stats`' `evidence`) for a version that serves or once served (`canary`, `live`, `rolled_back`, `retired`), else `null`. `drift`: the drift monitor's status for the version (FR-16.6), `null` today.
+- `bom`: the BOM's `sha256` and whether it is signed; `null` without one. `live`: the release gate's evidence from the version's audits (the same object as `/ratchet/stats`' `evidence`) for a version that serves or once served (`canary`, `live`, `rolled_back`, `retired`), else `null`. `drift`: the drift monitor's view of the version ([Drift](#get-ratchetdrift)): `alarm` (true while any of its streams has alarmed), the `threshold`, and its streams without trajectories; `null` when the monitor is off or the version never logged a confidence (a candidate or shadow).
 - `assumptions`: what every certificate assumes, in plain words. Precision is agreement with the teacher, not ground truth; golden rows over-represent hard requests, so a certificate is conservative for easy traffic only to the extent that exchangeability fails in that direction.
 
 Check a downloaded BOM's numbers yourself:
@@ -619,6 +623,37 @@ python -m ratchet.stats check bom.json --public-key "<base64 public key>"
 ```
 
 It exits 1 when the signature or hash fails or when any recomputed number differs from the signed one by more than 1e-9, and 0 for a BOM written before v0.5 (no certificate to check).
+
+## GET `/ratchet/drift`
+
+The label-free drift monitor (FR-16.6, [ADR 0032](adr/0032-label-free-drift-alarm.md)). For each version and task, the student's logged confidence is one stream. Each new score gets a conformal p-value (its rank among the stream's earlier scores, small when it is unusually low), and a gambler bets against "traffic has not changed" with those p-values. Its capital is a test martingale: while the traffic a version sees stays exchangeable, the chance that it ever reaches `threshold` is at most 1 / `threshold` (1% at the default 100), however long the stream runs and however often anyone looks. No labels and no teacher calls are needed; the release gate feeds it from the ledger in its tick, so the request path is untouched. Public, like `/ratchet/stats`. `?version=N` narrows `streams` to one version (**422** for a value that is not a whole number); the other numbers stay the monitor's.
+
+```json
+{
+  "enabled": true,
+  "threshold": 100.0,
+  "false_alarm_bound": 0.01,
+  "family_bound": 0.03,
+  "monitored": 3,
+  "alarms": 1,
+  "streams": [
+    {"version": 1, "task": "ticket-triage", "n": 3586, "log10_martingale": 14.7573, "peak_log10": 14.9509,
+     "alarm": true, "alarm_at_request": 6129, "alarm_day": 5, "alarm_n": 3335, "last_request": 6600, "active": true,
+     "trajectory": [[32, -0.6741], [64, -0.8717], [96, -0.9943], "…", [3584, 14.7458]]},
+    {"version": 3, "task": "ticket-triage", "n": 2611, "log10_martingale": -2.1383, "peak_log10": 0.0,
+     "alarm": false, "alarm_at_request": null, "alarm_day": null, "alarm_n": null, "last_request": 9000, "active": true,
+     "trajectory": [[16, -0.6724], [32, -0.7884], "…", [2608, -2.1378]]}
+  ]
+}
+```
+
+(Mock gateway after six simulated days of tickets with a product launch on day 5; simulation numbers from mock models, one stream left out.)
+
+- `enabled`: false when `RATCHET_DRIFT_ALARM=0`; then `threshold`, `false_alarm_bound` and `family_bound` are `null`, the counts 0 and `streams` empty.
+- `false_alarm_bound`: 1 / `threshold`, for one stream. `family_bound`: min(1, K / `threshold`) with K = `monitored`, the chance that any stream the monitor holds ever alarms on unchanged traffic. It grows with every version and task; it is reported, not hidden.
+- `alarms`: streams that alarmed. Each stream alarms at most once (the alarm latches) and writes one `drift` event, once across restarts and processes.
+- Per stream: `n` confidences seen; `log10_martingale` and `peak_log10`, log10 of the capital now and at its highest (the alarm is at log10 `threshold`, 2 by default); `alarm_at_request` (the request id), `alarm_day` and `alarm_n` of the first crossing, or `null`; `last_request`, the last request id seen; `active`, false for an older version that no longer serves (only its final numbers are kept; should it serve again, its stream is replayed from the ledger first); `trajectory`, at most 200 `[n, log10 capital]` points, evenly spaced.
+- The test is one-sided: confidence that rises makes the capital fall. An alarm says traffic changed for this version, not that the model got worse; audits measure that ([Runbook](RUNBOOK.md#drift-event)). It suspends the version's certificate ([Certificates](#get-ratchetversionsidcertificate)) and, opt-in, boosts its audits (`RATCHET_DRIFT_AUDIT_BOOST`) and lets Night School train sooner (`RATCHET_DRIFT_EARLY_NIGHT`).
 
 ## GET `/ratchet/bom/public-key`
 

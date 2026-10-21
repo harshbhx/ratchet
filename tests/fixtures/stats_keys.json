@@ -102,6 +102,13 @@
       "gpu_hours_savings_pct": "number|null",
       "break_even_student_requests_per_gpu_hour": "number|null",
       "recommendation": "string"
+    },
+    "drift": {
+      "enabled": "bool",
+      "threshold": "number|null",
+      "family_bound": "number|null",
+      "alarms": "number",
+      "streams": "number"
     }
   }
 }

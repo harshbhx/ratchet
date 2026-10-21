@@ -570,6 +570,7 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     res = json.loads(out.read_text(encoding="utf-8"))
     assert set(res) == {
         "days", "nights", "versions", "events", "totals", "bill_of_materials", "cost", "exposure", "rollbacks", "served",
+        "drift",
     }  # fmt: skip
     assert res["exposure"] == {} and res["rollbacks"] == []  # nothing rolled back in two days
     assert [d["day"] for d in res["days"]] == [1, 2] and [n["night"] for n in res["nights"]] == [1, 2]

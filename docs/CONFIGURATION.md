@@ -199,7 +199,7 @@ Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served hel
 
 ## Release policy (`ratchet/release.py`)
 
-`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`).
+`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`, `--drift-alarm`, `--drift-boost`, `--drift-early-night`).
 
 | Field | Variable | Default | Used in |
 |---|---|---|---|
@@ -220,8 +220,11 @@ Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served hel
 | `paired_gate` | `RATCHET_PAIRED_GATE` | 0 | 1: the golden gate's regression check compares the candidate with the re-scored live version row by row on the same held-out rows (the candidate's `paired` record), instead of the two point estimates within `tolerance`. It rejects only a regression that is both larger than `tolerance` (as a share of the rows) and significant (exact McNemar, `regression_alpha`), on coverage or on wrong answers, or a negative flip rate above `max_nfr`. Without a paired record against the live version it falls back to the unpaired rule. 0 or 1 |
 | `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | The paired gate's error rate for each McNemar test: a candidate no worse than live is rejected with probability at most this. Strictly between 0 and 1 |
 | `max_nfr` | `RATCHET_MAX_NFR` | 1.0 | The paired gate: reject when the 95% Wilson lower bound of the negative flip rate (answers live served right that the candidate serves wrong) is above this. 1: off. More than 0 and at most 1 |
+| `drift_alarm` | `RATCHET_DRIFT_ALARM` | 100 | The label-free drift alarm ([ADR 0032](adr/0032-label-free-drift-alarm.md)): the alarm threshold of each (version, task) stream's test martingale on the student's confidence. A stream that sees no traffic change alarms with probability at most 1/threshold over its whole life (1% at 100); with K streams, at most K/threshold for any of them (`GET /ratchet/drift` reports both). An alarm writes a `drift` event and suspends the version's certificate; it decides no release. On by default; it reads the ledger in the gate's tick and never touches the request path. 0 turns it off; otherwise more than 1 |
+| `drift_audit_boost` | `RATCHET_DRIFT_AUDIT_BOOST` | 1.0 | After a drift alarm, the alarmed version's audit rate is multiplied by this while it serves (canary or live), up to 0.5, and never lowered (FR-6.40). The boosted rate is logged as `label_p`; a newer version going live clears it. 1: off. 1 or more, and needs the monitor on |
+| `drift_early_night` | `RATCHET_DRIFT_EARLY_NIGHT` | 0 | 1: when a `drift` event is newer than the last `trained` one, Night School needs half the usual new examples (`max(1, min_new_examples // 2)`; FR-6.41). Never while a release is in flight. 0 or 1, and needs the monitor on |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed).
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, `drift_alarm` 0 or more than 1, `drift_audit_boost` 1 or more, the switches 0 or 1. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed), and a drift action (`drift_audit_boost` above 1 or `drift_early_night=1`) with `drift_alarm=0`.
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features not built yet are in [Reserved settings](#reserved-settings).
 
@@ -235,6 +238,7 @@ Other constants:
 | `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration (the `point` rule) |
 | `CERT_GRID` | `stats.py` | 0.95, 0.90, …, 0.50: the thresholds Learn-then-Test and the frontier use (fixed in advance, never from the data) |
 | `floor` | `cascade_eval()` | 0.5: lowest allowed threshold |
+| Drift monitor | `drift.py` | `BINS` 10,000 (a confidence's rank is taken to 4 decimals); `BETS` 0.05, 0.15, 0.3, 0.6, 1.0 (the power betting functions); switching rate 0.01 for a stream's first 100 confidences, then 1/n; `MAX_POINTS` 200 trajectory points per stream; seed 7 for the tie-breaking draws (never the router's generator) |
 | Confidence weights | `confidence.score()` | 0.4 × token probability + 0.6 × agreement |
 | Student sampling | `router._sample` | `temperature=0.7`, `logprobs=True` |
 | Teacher temperature for `n` > 1 | `providers.CHOICES_TEMPERATURE` | 0.7, when the client sets no temperature (at 0 every choice would be the same) |
@@ -261,9 +265,6 @@ The evidence features (PRD §6.16 and FR-15.5) are built one at a time. Their se
 
 | Field | Variable | Default | Feature that will read it |
 |---|---|---|---|
-| `drift_alarm` | `RATCHET_DRIFT_ALARM` | 100 | Drift alarm (FR-16.6): the test martingale's alarm threshold (false-alarm probability at most 1/threshold per stream) |
-| `drift_audit_boost` | `RATCHET_DRIFT_AUDIT_BOOST` | 1.0 | FR-16.6: the audit-rate multiplier after an alarm (1: off) |
-| `drift_early_night` | `RATCHET_DRIFT_EARLY_NIGHT` | 0 | FR-16.6: 1 halves the new examples Night School needs after an alarm |
 | `teacher_noise_max` | `RATCHET_TEACHER_NOISE_MAX` | 0.05 | Teacher watch (FR-16.7): the teacher disagreement rate it tolerates |
 | `alpha_teacher` | `RATCHET_ALPHA_TEACHER` | 0.01 | FR-16.7: the teacher watch's error rate |
 

@@ -18,6 +18,7 @@ import httpx
 from . import licenses, tasks
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
+from .drift import boosted_rate
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
 from .providers import (
     COMPLETE,
@@ -336,6 +337,10 @@ class Ratchet:
         self._plain = self.gen.plan(None)  # the plan of a request without parameters (Scout, the simulator)
         self.clock = clock
         self.on_adapter_missing = on_adapter_missing
+        # {version id: multiplier} of the audit rate after a drift alarm (FR-6.40). Empty unless RATCHET_DRIFT_AUDIT_BOOST
+        # is above 1; the release gate fills it and the gateway and simulator share its dict here (`ReleaseGate
+        # .audit_boost`). Only read, with `.get`, so the gate may change it from another thread.
+        self.audit_boost: dict[int, float] = {}
         # Failed upstream calls since start (health()). Scout calls handle from several threads, hence the lock.
         self.student_errors = 0  # student calls that raised; the teacher answered instead
         self.audit_errors = 0  # teacher audits that raised; the student's answer was served anyway (INV-15)
@@ -924,6 +929,9 @@ class Ratchet:
                 rate = self.s.audit_rate
                 if version.state == "canary" and self.s.canary_audit_rate is not None:
                     rate = self.s.canary_audit_rate
+                boost = self.audit_boost.get(version.id)  # an open drift alarm on this version (FR-6.40)
+                if boost:
+                    rate = boosted_rate(rate, boost)
                 label_p = rate
                 if self.rng.random() < rate:  # audit = quality signal + free training data
                     try:

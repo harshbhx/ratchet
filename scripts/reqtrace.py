@@ -670,6 +670,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.stats:mcnemar_one_sided",
     ),
     "FR-6.31": ("ratchet.release:ReleaseGate.admit", "ratchet.release:_below_certified_floor"),
+    "FR-6.40": (
+        "ratchet.release:ReleaseGate._refresh_audit_boost",
+        "ratchet.drift:boosted_rate",
+        "ratchet.router:Ratchet.handle",
+    ),
+    "FR-6.41": ("ratchet.nightschool.orchestrate:early_night", "ratchet.nightschool.orchestrate:run_night"),
     # 6.7 Dashboard
     "FR-7.1": ("web/src/pages/dashboard/kpis.tsx", "ratchet.ledger:Ledger.totals"),
     "FR-7.2": ("web/src/pages/dashboard/charts.tsx", "ratchet.ledger:Ledger.stats_by_day"),
@@ -756,6 +762,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.config:Settings.cert_policy",
         "ratchet.gateway:version_certificate",
     ),
+    "FR-16.6": (
+        "ratchet.drift:Stream.observe",
+        "ratchet.drift:DriftMonitor.update",
+        "ratchet.drift:Fenwick",
+        "ratchet.release:ReleaseGate.check_drift",
+        "ratchet.ledger:Ledger.confidence_stream",
+        "ratchet.ledger:Ledger.event_once",
+        "ratchet.certificate:status",
+        "ratchet.gateway:drift",
+        "ratchet.gateway:version_certificate",
+        "sim.simulate:run",
+    ),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (
@@ -775,6 +793,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-9": ("ratchet.bom:manifest", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
+    "NFR-55": ("ratchet.release:ReleaseGate._tick_drift", "ratchet.drift:DriftMonitor._update", "ratchet.drift:Stream"),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),

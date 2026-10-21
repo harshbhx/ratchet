@@ -1355,9 +1355,6 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
 
 # A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY).
 RESERVED_POLICY_ENV = {
-    "drift_alarm": "50",
-    "drift_audit_boost": "3",
-    "drift_early_night": "1",
     "teacher_noise_max": "0.1",
     "alpha_teacher": "0.05",
 }

@@ -122,7 +122,7 @@ Details that matter:
 1. **Version choice** (`_pick_version`): if a version is in `canary`, it is chosen with probability `traffic_pct / 100`; otherwise the `live` version is used. With no live version (cold start) and the canary not picked, the request goes straight to the teacher.
 2. **Student sampling** (`_sample`): one call with `n = Settings.samples` (default 3) and `confidence.STUDENT_SAMPLING` (`temperature=0.7`, `logprobs=True`), the constant the golden eval also uses, plus the request's generation parameters as the student's role allows (below). The model name sent is whatever the resolver returns. In live mode that is `version.adapter_uri`, which is the LoRA adapter name. A request for `n` > `Settings.samples` choices draws `n` samples in the same call, but the confidence is scored on the first `Settings.samples` of them, the statistic the threshold was calibrated on ([n choices](#n-choices-and-token-logprobs)).
 3. **Threshold**: `Ratchet.threshold(version, model, task)` returns `version.eval["threshold"]` (calibrated at training time), falling back to `Settings.confidence_threshold` (default 0.80). When the version's eval records another `spec_hash` for the task than its current one (`eval["spec_hashes"]`, `Ratchet.spec_changed`), the threshold is 1.01: the student serves nothing for that task until a night scores the version under the new spec. A sample set with no valid answer (`Scored.valid` false: every sample unparseable, empty or cut off) is never served, whatever the threshold. For `n` > 1 choices, at least `n` samples must also share the majority answer (`confidence.majority`); a confident student that cannot fill them escalates with route `n_choices`.
-4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data. A teacher answer that cannot be stored ([below](#storage-rules)) is not an audit: `audited=0`.
+4. **Audits**: when the student serves, the teacher is also called with probability `audit_rate` (default 0.05; mock mode raises it to at least 0.10). The audit result (`audit_agree`) is the live quality signal for canary and live versions, and the teacher's answer also becomes training data. A teacher answer that cannot be stored ([below](#storage-rules)) is not an audit: `audited=0`. With `RATCHET_DRIFT_AUDIT_BOOST` above 1, a version with an open drift alarm is audited at its rate times the boost, up to 0.5 (`Ratchet.audit_boost`, which the release gate fills; [§6](#drift-monitor-ratchetdriftpy)); still one draw per served answer, and the boosted rate is its `label_p`.
 5. **Teacher calls** (`_call_teacher` → `_ask_teacher`, then `_store_example`): the teacher answer is cleaned (`tasks.clean_answer`), checked against the [storage rules](#storage-rules), the messages, the answer and the stored conditions are redacted ([PII redaction](#pii-redaction)), and they are stored with `Ledger.add_example(task, messages, completion, teacher_model, license_name, license_url, redactions, params)`. The license comes from `Ratchet.licenses`, built when `Ratchet` is constructed with `licenses.require_distillable` for the teacher and the fallback teacher (if set), and looked up by the configured model that wrote the answer. A closed teacher raises `LicenseError` at startup.
 6. **Shadow**: see [state machine](#5-version-state-machine). The shadow candidate never serves.
 7. **Logging**: one row in `requests` per call (columns below), with the API client's name when keys are on.
@@ -236,6 +236,7 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
 ```
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
+- **Early night** (`early_night`, `drift_early_night=1`, FR-6.41): after the in-flight check, so never during a release (INV-5), Night School brings the drift monitor up to date and, when a `drift` event is newer than the last `trained` one, needs `max(1, min_new_examples // 2)` new examples instead of `min_new_examples`. The `skip` and `trained` events say so.
 - **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it.
 
 ### Datasets (`nightschool/dataset.py`)
@@ -277,7 +278,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `client` | TEXT | API key name that sent the request; NULL when keys are off and for internal calls (Scout, demo). Indexed with `ts` for the daily quota |
 | `route` | TEXT | How the request was served (`router.ROUTES`): `student`, `confidence`, `cold_start`, `pinned`, `student_error`, `student_breaker`, `degraded`, `fallback_teacher` ([API.md](API.md#get-ratchetstats)). NULL in rows written before v0.5; `stats_by_task` reports those as `unrecorded` |
 | `stored` | INTEGER | 1 if a teacher answer from this request was stored as an example (inserted, or a duplicate's `seen` bumped); 0 if none was (student-served without audit, pinned, or a skipped answer, see [Storage rules](#storage-rules)); NULL in rows written before v0.5 |
-| `label_p` | REAL | The designed probability that a teacher label of the student's answer is observed: the audit rate this request was drawn at when the student served (`RATCHET_CANARY_AUDIT_RATE` for a canary when set, else `RATCHET_AUDIT_RATE`), 1.0 when the student answered and the request escalated, NULL without a student answer (cold start, a failed or skipped student call, pinned) and in rows written before v0.5 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)); the ledger replay (FR-16.5) weights by it |
+| `label_p` | REAL | The designed probability that a teacher label of the student's answer is observed: the audit rate this request was drawn at when the student served (`RATCHET_CANARY_AUDIT_RATE` for a canary when set, else `RATCHET_AUDIT_RATE`, times a drift boost when one applies), 1.0 when the student answered and the request escalated, NULL without a student answer (cold start, a failed or skipped student call, pinned) and in rows written before v0.5 ([ADR 0025](adr/0025-anytime-valid-release-gate.md)); the ledger replay (FR-16.5) weights by it |
 | `threshold`, `student_agree`, `baseline_est_usd` | REAL, INTEGER, REAL | For the ledger replay (FR-16.5): the threshold the student was held to, whether its answer agreed with the escalation's or a random audit's teacher answer, and the all-teacher cost by the token formula. NULL until that feature writes them ([ADR 0024](adr/0024-evidence-foundations.md)) |
 | `optional_failed` | INTEGER | 1 when an optional teacher call of the request (audit, arbitration) failed; NULL until live readiness writes it |
 
@@ -331,7 +332,7 @@ Created by `SCHEMA` for the evidence features, so later items change no migratio
 |---|---|---|
 | `version_leaves` | `version_id`, `split` (`train` or `golden`), `key` (the example hash, hex), `value` (sha256 of its label, teacher, license and redaction count); primary key (version, split, key), indexed by `key` | Committed training sets (FR-16.4) |
 | `teacher_checks` | `id`, `ts`, `day`, `epoch`, `task`, `source` (`duplicate` or `probe`), `agree`, `model`; indexed by `epoch` | Teacher watch (FR-16.7) |
-| `meta` | `key`, `value` | Small ledger-wide state (the teacher epoch, a training freeze) |
+| `meta` | `key`, `value` | Small ledger-wide state (the teacher epoch, a training freeze). The drift monitor records each alarm's event here (`drift:<version>:<task>` → the event id), so it is written once across processes and restarts (`Ledger.event_once`) |
 | `receipts` | `period` (ledger day), `client` (`''` for the whole gateway), `created_ts`, `doc` (the signed JSON); primary key (period, client) | Savings receipts (FR-15.5) |
 | `spend` | `id`, `ts`, `day`, `kind`, `ref`, `usd`, `realtime_usd`, `in_tokens`, `out_tokens`, `detail` | Money spent outside requests, e.g. backfill labelling (FR-16.8) |
 | `backfill_jobs` | `job`, `ts`, `backend`, `teacher`, `license`, `prompts`, `unique_prompts`, `outputs_discarded`, `source_models` (JSON), `status`, `usd`, `realtime_usd` | Clean-room backfill (FR-16.8) |
@@ -344,7 +345,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `drift`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -390,8 +391,9 @@ In practice step 5's retire branch rarely runs, because `run_night` skips traini
 
 ### Ticks: `ReleaseGate.tick()`
 
-Run after every gateway request and by `python -m ratchet.live tick`. It is five steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The drift monitor (FR-16.6) will run first and the teacher watch (FR-16.7) last; both steps are empty today.
+Run after every gateway request and by `python -m ratchet.live tick`. It is five steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The teacher watch (FR-16.7) will run last; its step is empty today.
 
+0. **Drift** (`_tick_drift` → `check_drift`, FR-16.6): one primary-key range query, `Ledger.confidence_stream(after_id)`, reads the student confidences logged since the last tick, and the drift monitor feeds each to its (version, task) stream ([§6](#drift-monitor-ratchetdriftpy)). A stream whose test martingale reaches `drift_alarm` (100) writes one `drift` event, once across processes and restarts (`Ledger.event_once`, keyed in `meta`), and its version's certificate reads `suspended`. With `drift_audit_boost` above 1, every serving version (canary or live) with an alarm is put in `audit_boost` and every other one taken out, so a newer version going live clears it. It decides no release. The gateway also runs it once at startup, so the replay of the ledger happens before the first request, and Night School runs it before deciding on an early night.
 1. **Live watch:** take the audits of the live version since it became live (`audit_counts(id, stage_since)`: `s` agreements of `n`). By default (`alert_eprocess=1`, FR-16.2), if `n > 0` and the e-value against "precision ≥ `live_floor`" reaches 1/`alpha_alert` (100), write one `alert` event per version, with the e-value and the 95% confidence sequence ([§6](#anytime-valid-evidence-statslog_e_bernoulli-statsconfidence_sequence)). With `alert_eprocess=0`: at least `min_audits` and the Wilson upper bound below `live_floor`. No automatic action is taken on the live version.
 2. **Shadow:** `shadow_quality(id)` returns `served` (would-serve count), `precision` (mean `shadow_agree` where `shadow_serve=1`, an unarbitrated NULL counting as 0), `coverage = served / n`, `live_coverage` (share of the same requests the live student actually served, leaving out those it never answered: route `student_breaker` or `student_error`, ADR 0015) and `unarbitrated`, over the rows with a shadow verdict (`shadow_serve` not NULL). Once `served ≥ min_shadow` (100):
    - precision < 0.95 → `rejected` (the reason adds "N unarbitrated counted as disagreements" when N > 0);
@@ -500,6 +502,26 @@ log e(s, n)  = logsumexp_j( ln w_j + s·ln(q_j / p0) + (n − s)·ln((1 − q_j)
 
 Examples at a 0.92 floor: 0/2 agreeing → 29.8 (a sequential rollback); 0/3 → 268 (a live alert); 7/17 → 2.6 × 10^5; 20/20 → 2.57 against "precision ≤ 0.92" (no promotion yet); 60/60 → 27.6.
 
+### Drift monitor (`ratchet/drift.py`)
+
+A label-free alarm for a change in the traffic a version sees ([ADR 0032](adr/0032-label-free-drift-alarm.md)). One stream per (version, task), fed in request-id order from `Ledger.confidence_stream` (rows with a confidence and a student version; pinned and teacher-only requests log none, and shadow confidences are not logged):
+
+```
+q        = min(10000, max(0, round(confidence · 10000)))            # a Fenwick tree counts the stream's bins
+p_n      = max(1e-12, (#{bin < q} + θ_n · #{bin = q}) / n),  θ_n ~ U(0, 1)   # over the stream's n so far, this one included
+J_n      = min(0.01, 1/n)                                            # the switching rate
+w_e      ← (1 − J_n) · w_e + J_n / 5,   e ∈ {0.05, 0.15, 0.3, 0.6, 1.0}
+M_n      = Σ_e w_e · e · p_n^(e − 1);   ln C += ln M_n;   w_e ← w_e · e · p_n^(e − 1) / M_n
+alarm    the first n with C ≥ drift_alarm (it latches)
+```
+
+- **Null hypothesis:** the version's requests are exchangeable (their order carries no information). The confidence is a fixed function of the request and the student's own sampling, so its stream is exchangeable too, and the smoothed conformal p-values p_n are independent and uniform on [0, 1].
+- **Validity:** each betting function e · p^(e−1) integrates to 1 on [0, 1] and the weights w_e depend only on the past, so E[M_n | past] = 1 and C is a test martingale (the clamp at 1e-12 only lowers decreasing bets: a supermartingale). By Ville's inequality P(C ever ≥ c) ≤ 1/c per stream, however long it runs and however often the gate looks; across K streams, ≤ K/c, which `GET /ratchet/drift` reports.
+- **One-sided:** every bet with e < 1 pays on small p-values, which come from low confidence; e = 1 is "no bet". Confidence that rises makes the capital fall.
+- **Switching rate:** J = 0.01 (Vovk et al.'s Simple Jumper) for a stream's first 100 confidences, then 1/n. A constant rate moves 0.8% of the capital per request into bets that lose while nothing changes, so a version live for a long time would start a change many orders of magnitude down; with 1/n the capital shrinks only like a power of n. J depends on n alone, so validity is unchanged.
+- **Determinism:** θ comes from the stream's own `random.Random(f"{seed}:{version}:{task}")`, never `Ratchet.rng`. Replaying the ledger gives the same capital to the last bit, so a restarted gateway, `python -m ratchet.live tick` and the nightly job all agree, and the `drift` event is written once (`Ledger.event_once`).
+- **Cost:** about 10 µs per confidence (two Fenwick walks of 14 steps). An up-to-date monitor costs one primary-key range query per tick; the versions' states are read again every 1,000 rows to drop the counts (about 160 KB a stream) of versions that stopped serving, keeping canary, live and the most recently retired one. A compacted stream that gets new rows is replayed from the ledger first.
+
 ## 7. Cost accounting
 
 Ratchet reports cost two ways ([ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). Every list price (tokens and GPUs) is unverified until the day-1 checks pass, and the report says so until `RATCHET_PRICES_VERIFIED=1`.
@@ -575,6 +597,7 @@ Worked example with unverified list prices: an L40S at $1.55 per hour and about 
 | [0021](adr/0021-field-comparators-and-task-specs.md) | Field comparators and task specs: typed fields, required by default, pairwise confidence |
 | [0022](adr/0022-task-registry.md) | A task registry: specs as data, operator-only pinning, an unknown-task policy and admin keys |
 | [0023](adr/0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation |
+| [0032](adr/0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions |
 
 ## 10. Scout (multi-agent demo)
 
