@@ -412,3 +412,8 @@ pre.mermaid svg .er.relationshipLabelBox {
   stroke: var(--rt-line-strong);
   stroke-width: 1;
 }
+/* Opaque backing so the ring never shows through the tinted hero labels. */
+.rt-svg .rt-hero-node .rt-hero-under {
+  fill: var(--rt-bg);
+  stroke: none;
+}
