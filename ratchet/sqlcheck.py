@@ -11,28 +11,36 @@ normalised texts are compared instead (`normalize`). Dialect `postgres` runs not
 
 An answer that cannot count is invalid (`compare.INVALID`, with a reason that never quotes it, so it may go into an
 event): not exactly one query that starts with SELECT, WITH or VALUES; a query that reads the clock or the time zone
-(CURRENT_DATE, or the string 'now', 'localtime' or 'utc' anywhere in a date function's arguments: the fixture is fixed,
-so the answer should be too; a check of the text, so a value built at run time gets through, and can only disagree with
-itself across a clock tick); an SQLite error; an operation the sandbox denies; or a query that hits a limit. An invalid
-student sample gets no vote, and an invalid teacher answer is served but never stored (INV-16).
+(the fixture is fixed, so the answer should be too, and its verdict reproducible); an SQLite error; an operation the
+sandbox denies; or a query that hits a limit. Clock reads are caught twice: in the text (`_clock_read`: CURRENT_DATE, a
+date function without a time value such as `julianday()` or `strftime('%s')`, or 'now', 'localtime' or 'utc' as a
+string or a double-quoted name anywhere in a date function's arguments), and when a date function runs (`reads_clock`:
+a value built at run time, a view), so a time-dependent result is never returned or cached. An invalid student sample
+gets no vote, and an invalid teacher answer is served but never stored (INV-16).
 
 The gateway never connects to a customer database: the fixture is the only data it runs SQL on, in a private in-memory
 SQLite database (`Sandbox`), standard library only:
 
 - The fixture is at most 5 MB of UTF-8 text, loaded with `executescript` into at most 64 MB; ATTACH, DETACH, VACUUM INTO,
-  `load_extension`, functions that would load different data each time and all but a few PRAGMAs are refused while it
-  loads. It must create a table or a view.
-- Then `PRAGMA query_only = ON`, and an authorizer that allows reading (SQLITE_SELECT, SQLITE_READ, recursive CTEs) and
-  the deterministic functions in `FUNCTIONS`, and denies the rest: writes, schema changes, ATTACH, PRAGMA (the pragma
-  table-valued functions too), transactions, `random()`, `changes()`, `last_insert_rowid()`, `load_extension()`.
+  `load_extension`, functions that would load different data each time (also through a column's DEFAULT: the date
+  functions, CURRENT_* and random() refuse to run while it loads) and all but a few PRAGMAs are refused while it loads.
+  It must create a table or a view, and no view may read the clock.
+- Then `PRAGMA query_only = ON`, and an authorizer that allows reading the fixture's own tables and views, the schema
+  and `json_each`/`json_tree` (not `sqlite_stmt`, which lists other requests' queries, nor `dbstat`), recursive CTEs
+  and the deterministic functions in `FUNCTIONS`, and denies the rest: writes, schema changes, ATTACH, PRAGMA (the
+  pragma table-valued functions too), transactions, `random()`, `changes()`, `last_insert_rowid()`, `load_extension()`.
 - A progress handler, every `PROGRESS_EVERY` VM steps, stops a query after `max_steps` steps (a runaway recursive
   CTE), after `QUERY_SECONDS` (a step can do a lot of work), or once the process's resident memory has grown by
   `QUERY_MEMORY_BYTES` during the query (read from /proc on Linux): a sorter filled with large rows needs few steps.
-- No progress handler runs inside one step, so what one step can do is bounded too. `Connection.setlimit` caps a
-  value, and so a sorter's row, at `VALUE_BYTES` (a fixture's values too), a LIKE or GLOB pattern at
-  `LIKE_PATTERN_BYTES` (their work is value x pattern), the statement's length, and attached databases at 0. The
-  built-ins that are quadratic in two arguments are replaced by linear versions that give the same results (`_GUARDED`:
-  instr, replace, two-argument trim, ltrim and rtrim) or not allowed (json_patch, unhex).
+- SQLite calls the progress handler only where a loop jumps back, never inside one step or within one row's
+  expressions, so what they can do is bounded too. `Connection.setlimit` caps a value, and so a sorter's row, at
+  `VALUE_BYTES` (a fixture's values too), a LIKE or GLOB pattern at `LIKE_PATTERN_BYTES` (their work is value x
+  pattern), the statement's length, and attached databases at 0. The built-ins that are quadratic in two arguments are
+  replaced by linear versions that give the same results (`_GUARDED`: instr, replace, two-argument trim, ltrim and
+  rtrim) or not allowed (json_patch, unhex). LIKE, GLOB (about 25 ms a call at most) and the date functions run
+  SQLite's own code through Python functions that check the query's time on every call (`_Watch`): one row whose WHERE
+  called LIKE 200 times took 3.4 s before. The rest of the built-ins cost at most about 0.5 ms a call on a 100 KB value,
+  so a hostile query stops within about `QUERY_SECONDS` + 0.3 s.
 - `setlimit` needs Python 3.11: without it one step can copy a value of up to SQLite's own 1 GB cap (a query that
   doubles a string took 3 GB and 18 s on 3.10, measured), so on Python 3.10 a sqlite fixture is refused (`CAN_LIMIT`)
   and only dialect `postgres` works.
@@ -55,9 +63,10 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from .compare import INVALID
 
@@ -80,7 +89,7 @@ VALUE_BYTES = 100_000  # SQLITE_LIMIT_LENGTH: one value, one sorter row (and so 
 LIKE_PATTERN_BYTES = 100  # SQLITE_LIMIT_LIKE_PATTERN_LENGTH: LIKE and GLOB do up to value x pattern work in one step
 NATIVE_WORK = 10_000_000  # the most (length x length) a guarded built-in may get on the helper connection (`_guarded`)
 RESULT_BYTES = 8 * 1024 * 1024  # the values of one result, as hashed
-PROGRESS_EVERY = 100  # VM steps between two calls of the progress handler: one step can cost about 25 ms (LIKE)
+PROGRESS_EVERY = 100  # VM steps between two calls of the progress handler (only where a loop jumps back)
 FETCH_ROWS = 100  # rows fetched at a time
 CACHE_SIZE = 256  # cached outcomes per sandbox
 CACHE_CHARS = 4096  # a longer query is never cached
@@ -88,6 +97,7 @@ CACHE_CHARS = 4096  # a longer query is never cached
 # Why an answer is invalid. Fixed strings, never the answer's text or SQLite's message (it can quote the query).
 NOT_ONE_QUERY = "not one query"
 READS_CLOCK = "reads the clock"
+CALLS_RANDOM = "calls random"  # a fixture whose load calls random() or randomblob() (a column's DEFAULT)
 SQL_ERROR = "sql error"
 SQL_DENIED = "sql denied"
 TOO_MANY_STEPS = "sql steps exceeded"
@@ -114,6 +124,14 @@ FUNCTIONS = frozenset(
 _TIME_FUNCTIONS = frozenset({"date", "time", "datetime", "julianday", "unixepoch", "strftime", "timediff"})
 _CLOCK_ARGS = frozenset({"now", "localtime", "utc"})  # date-function arguments that read the clock or the time zone
 _CLOCK_WORDS = frozenset({"current_date", "current_time", "current_timestamp"})
+_CLOCK_VALUES = frozenset({"now", "subsec", "subsecond"})  # time values that mean the current time (`reads_clock`)
+_ZONE_MODIFIERS = frozenset({"localtime", "utc"})  # modifiers that read the time zone
+# What a query may read besides the fixture's own tables and views: the schema and the JSON table-valued functions. Not
+# the other eponymous virtual tables: sqlite_stmt lists the statements the connection has cached (other requests'
+# queries, which can quote their prompts), and dbstat and sqlite_dbpage expose storage.
+ALWAYS_READABLE = frozenset(
+    {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema", "json_each", "json_tree"}
+)
 _QUERY_STARTS = frozenset({"select", "with", "values"})
 # PRAGMAs a fixture script may set while it loads (a `.dump` starts with `PRAGMA foreign_keys=OFF`); any other is refused.
 LOAD_PRAGMAS = frozenset({"foreign_keys", "defer_foreign_keys", "recursive_triggers", "user_version", "application_id"})
@@ -177,10 +195,54 @@ def _normal(tokens: list[tuple[str, str, int, int]]) -> str:
     return " ".join(v.lower() if kind == "word" else v for kind, v, _, _ in tokens)
 
 
+def _unquote(value: str) -> str:
+    """A string or quoted name without its quotes ('it''s' is it's, [x] is x)."""
+    inner = value[1:-1]
+    return inner if value[0] == "[" else inner.replace(value[0] * 2, value[0])
+
+
+def _clock_read(tokens: list[tuple[str, str, int, int]]) -> bool:
+    """Whether SQL text reads the clock or the time zone: CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP; a date
+    function called without a time value (`date()`, `julianday()`, `strftime('%s')`: SQLite reads the clock then); or
+    'now', 'localtime' or 'utc' anywhere inside a date function's arguments, as a string or as a double-quoted name
+    (SQLite reads a double-quoted name that matches no column as a string). Nested calls and subqueries count."""
+    calls: list[list[Any]] = []  # per open parenthesis: [the date function it calls, or '', commas so far, still empty]
+    in_time = 0  # how many date functions' parentheses are open
+    previous: tuple[str, str] | None = None
+    for kind, value, _, _ in tokens:
+        closing = kind == "other" and value == ")"
+        if calls and not closing:
+            calls[-1][2] = False
+        if kind == "other" and value == "(":
+            name = ""
+            if previous is not None and previous[0] in ("word", "ident"):
+                called = (previous[1] if previous[0] == "word" else _unquote(previous[1])).lower()
+                name = called if called in _TIME_FUNCTIONS else ""
+            calls.append([name, 0, True])
+            in_time += bool(name)
+        elif closing:
+            if calls:
+                name, commas, empty = calls.pop()
+                if name:
+                    in_time -= 1
+                    if (empty and name not in ("strftime", "timediff")) or (name == "strftime" and not empty and not commas):
+                        return True  # no time value (strftime's first argument is its format)
+        elif kind == "other" and value == "," and calls:
+            calls[-1][1] += 1
+        elif kind == "word" and value.lower() in _CLOCK_WORDS:
+            return True
+        elif in_time and (kind == "string" or (kind == "ident" and value[0] == '"')):
+            if _unquote(value).strip().lower() in _CLOCK_ARGS:
+                return True
+        previous = (kind, value)
+    return False
+
+
 def parse_query(text: str, check_clock: bool = True) -> Query | str:
     """The one query in a cleaned answer, or why there is not one (`NOT_ONE_QUERY`, or with `check_clock`
-    `READS_CLOCK`). A `;` may end the query, and comments may sit anywhere; any other statement before or after it makes
-    the answer invalid, as does a query that does not start with SELECT, WITH or VALUES (EXPLAIN, PRAGMA, writes)."""
+    `READS_CLOCK`, `_clock_read`). A `;` may end the query, and comments may sit anywhere; any other statement before or
+    after it makes the answer invalid, as does a query that does not start with SELECT, WITH or VALUES (EXPLAIN, PRAGMA,
+    writes)."""
     if len(text) > MAX_QUERY_CHARS:
         return NOT_ONE_QUERY
     tokens = _tokens(text)
@@ -198,29 +260,19 @@ def parse_query(text: str, check_clock: bool = True) -> Query | str:
     stmt = found[0]
     if stmt[0][0] != "word" or stmt[0][1].lower() not in _QUERY_STARTS:
         return NOT_ONE_QUERY
-    # calls: whether each open parenthesis is a time function's; in_time: how many of them are open
-    depth, ordered, calls, in_time = 0, False, [], 0
+    if check_clock and _clock_read(stmt):
+        return READS_CLOCK
+    depth, ordered = 0, False
     previous: tuple[str, str, int, int] | None = None
     for tok in stmt:
         kind, value = tok[0], tok[1]
         if kind == "other" and value == "(":
-            timed = previous is not None and previous[0] == "word" and previous[1].lower() in _TIME_FUNCTIONS
-            calls.append(timed)
-            in_time += timed
             depth += 1
         elif kind == "other" and value == ")":
-            if calls:
-                in_time -= calls.pop()
             depth -= 1
-        elif kind == "word":
-            word = value.lower()
-            if check_clock and word in _CLOCK_WORDS:
-                return READS_CLOCK
-            if depth == 0 and word == "by" and previous is not None and previous[0] == "word" and previous[1].lower() == "order":
+        elif kind == "word" and depth == 0 and value.lower() == "by":
+            if previous is not None and previous[0] == "word" and previous[1].lower() == "order":
                 ordered = True
-        elif kind == "string" and check_clock and in_time:
-            if value[1:-1].replace("''", "'").strip().lower() in _CLOCK_ARGS:
-                return READS_CLOCK
         previous = tok
     return Query(text[stmt[0][2] : stmt[-1][3]], _normal(stmt), ordered)
 
@@ -333,13 +385,110 @@ class _Budget:
         return 1 if self.reason is not None else 0
 
 
-def _query_authorizer(action: int, arg1: str | None, arg2: str | None, db: str | None, source: str | None) -> int:
-    """Reading and the functions in FUNCTIONS; everything else is denied."""
-    if action in _READ_ACTIONS:
-        return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_FUNCTION and isinstance(arg2, str) and arg2.lower() in FUNCTIONS:
-        return sqlite3.SQLITE_OK
-    return sqlite3.SQLITE_DENY
+class _Watch:
+    """What the sandbox's own SQL functions see of the statement running: the query's budget, checked on every call
+    because SQLite calls the progress handler only where a loop jumps back (one row whose WHERE called LIKE 200 times
+    took 3.4 s past it), and why a function refused to run (`refused`: READS_CLOCK or CALLS_RANDOM)."""
+
+    __slots__ = ("budget", "refused")
+
+    def __init__(self) -> None:
+        self.budget: _Budget | None = None
+        self.refused: str | None = None
+
+    def check(self) -> None:
+        """Stop the query (raise) once its time is up or its progress handler has stopped it."""
+        budget = self.budget
+        if budget is None:
+            return
+        if budget.reason is None and time.monotonic() > budget.deadline:
+            budget.reason = TOO_SLOW
+        if budget.reason is not None:
+            raise OverflowError("query stopped")
+
+    def refuse(self, why: str) -> NoReturn:
+        self.refused = why
+        raise OverflowError(why)
+
+
+def _clock_word(value: Any) -> str | None:
+    """A date-function argument as SQLite compares it with 'now' and the modifiers: text (a blob read as text) up to its
+    first NUL, here also stripped and lower-cased; None for numbers and NULL."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    return value.split("\x00", 1)[0].strip().lower() if isinstance(value, str) else None
+
+
+def reads_clock(name: str, args: tuple[Any, ...]) -> bool:
+    """Whether SQLite's date function `name` reads the clock or the time zone given these argument values: no time value
+    (`date()`, `strftime('%s')`), a time value 'now' (or 'subsec', which means now too), or a 'localtime' or 'utc'
+    modifier (`datetime(placed, 'subsec')` is fine: there 'subsec' is a modifier)."""
+    if name == "strftime":
+        if not args or args[0] is None:  # strftime() and strftime(NULL, ...) return NULL before reading a time value
+            return False
+        args = args[1:]
+    if name == "timediff":  # two time values, no modifiers
+        values, modifiers = args[:2], args[2:2]
+    elif not args:
+        return True
+    else:
+        values, modifiers = args[:1], args[1:]
+    return any(_clock_word(v) in _CLOCK_VALUES for v in values) or any(_clock_word(m) in _ZONE_MODIFIERS for m in modifiers)
+
+
+def _statement(name: str, nargs: int) -> str:
+    return f"SELECT {name}({', '.join('?' * nargs)})"
+
+
+def _time_function(name: str, watch: _Watch, helper: sqlite3.Connection) -> Callable[..., Any]:
+    """SQLite's own date function `name` (run on `helper`), refused (`READS_CLOCK`) when it would read the clock or the
+    time zone, so a value built at run time or a view cannot reach the clock either (the text check sees only literals)."""
+
+    def call(*args: Any) -> Any:
+        watch.check()
+        if reads_clock(name, args):
+            watch.refuse(READS_CLOCK)
+        return helper.execute(_statement(name, len(args)), args).fetchone()[0]
+
+    return call
+
+
+def _metered(name: str, nargs: int, watch: _Watch, helper: sqlite3.Connection) -> Callable[..., Any]:
+    """SQLite's own `name` (run on `helper`, which caps the pattern as the query connection does), after a check of the
+    query's time: LIKE and GLOB cost up to about 25 ms a call, and one row can call them hundreds of times."""
+    stmt = _statement(name, nargs)
+
+    def call(*args: Any) -> Any:
+        watch.check()
+        return helper.execute(stmt, args).fetchone()[0]
+
+    return call
+
+
+def _refuser(watch: _Watch, why: str) -> Callable[..., Any]:
+    """A function that never runs: CURRENT_* and random() while a fixture loads (a column's DEFAULT reaches them without
+    the authorizer), so the database it builds never depends on when or how often it was loaded."""
+
+    def call(*_: Any) -> Any:
+        watch.refuse(why)
+
+    return call
+
+
+def _query_authorizer(tables: frozenset[str]) -> Callable[[int, str | None, str | None, str | None, str | None], int]:
+    """An authorizer that allows reading `tables` (lower-cased names: the fixture's own tables and views, and
+    ALWAYS_READABLE), SELECT, recursive CTEs and the functions in FUNCTIONS, and denies everything else."""
+
+    def authorize(action: int, arg1: str | None, arg2: str | None, db: str | None, source: str | None) -> int:
+        if action == sqlite3.SQLITE_READ:
+            return sqlite3.SQLITE_OK if isinstance(arg1, str) and arg1.lower() in tables else sqlite3.SQLITE_DENY
+        if action in _READ_ACTIONS:
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_FUNCTION and isinstance(arg2, str) and arg2.lower() in FUNCTIONS:
+            return sqlite3.SQLITE_OK
+        return sqlite3.SQLITE_DENY
+
+    return authorize
 
 
 def _allow_all(*_: Any) -> int:
@@ -410,12 +559,13 @@ _GUARDED: dict[tuple[str, int], Any] = {
 }
 
 
-def _guarded(fast: Any, name: str, nargs: int, helper: sqlite3.Connection) -> Any:
+def _guarded(fast: Any, name: str, nargs: int, helper: sqlite3.Connection, watch: _Watch) -> Any:
     """`fast`, falling back to SQLite's own `name` on `helper` for the argument types it leaves (`_NATIVE`), refused
-    when the product of the two first arguments' lengths is over NATIVE_WORK."""
-    stmt = f"SELECT {name}({', '.join('?' * nargs)})"
+    when the product of the two first arguments' lengths is over NATIVE_WORK. Checks the query's time first (`_Watch`)."""
+    stmt = _statement(name, nargs)
 
     def call(*args: Any) -> Any:
+        watch.check()
         out = fast(*args)
         if out is not _NATIVE:
             return out
@@ -461,43 +611,72 @@ class Sandbox:
                 " (Connection.setlimit); use dialect 'postgres' to compare query texts only"
             )
         conn = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
+        # SQLite's own versions of the functions the sandbox wraps; it holds no data and runs only the fixed statements
+        # of `_guarded`, `_metered` and `_time_function`, under this sandbox's lock.
+        helper = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
+        watch = _Watch()
         try:
             # Before the load, so a fixture value no query could read is a load error rather than a failing query.
             conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, VALUE_BYTES)
             conn.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
-            self._load(conn, script)
+            helper.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, VALUE_BYTES)
+            helper.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, LIKE_PATTERN_BYTES)
+            # Before the load too: a column's DEFAULT reaches these without the load authorizer.
+            for fname in sorted(_TIME_FUNCTIONS):
+                conn.create_function(fname, -1, _time_function(fname, watch, helper), deterministic=True)
+            for fname in sorted(_CLOCK_WORDS):
+                conn.create_function(fname, 0, _refuser(watch, READS_CLOCK))
+            conn.create_function("random", 0, _refuser(watch, CALLS_RANDOM))
+            conn.create_function("randomblob", 1, _refuser(watch, CALLS_RANDOM))
+            tables = self._load(conn, script, watch)
             conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 4 * MAX_QUERY_CHARS)  # after it: a script's INSERT is longer
             conn.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, LIKE_PATTERN_BYTES)
             conn.set_authorizer(_allow_all)  # the load authorizer refuses this PRAGMA
             conn.execute("PRAGMA query_only = ON")
-            # SQLite's own versions of the guarded built-ins, for argument types the Python ones leave; it holds no data
-            # and runs only the fixed statements of `_guarded`, under this sandbox's lock.
-            helper = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
-            helper.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, VALUE_BYTES)
             for (fname, nargs), fast in _GUARDED.items():
-                conn.create_function(fname, nargs, _guarded(fast, fname, nargs, helper), deterministic=True)
-            conn.set_authorizer(_query_authorizer)
+                conn.create_function(fname, nargs, _guarded(fast, fname, nargs, helper, watch), deterministic=True)
+            for fname, nargs in (("like", 2), ("like", 3), ("glob", 2)):
+                conn.create_function(fname, nargs, _metered(fname, nargs, watch, helper), deterministic=True)
+            self._authorizer = _query_authorizer(tables | ALWAYS_READABLE)
+            conn.set_authorizer(self._authorizer)
         except BaseException:
             conn.close()
+            helper.close()
             raise
         self._helper = helper
+        self._watch = watch
         self._conn = conn
         self._lock = threading.Lock()
         self._cache: OrderedDict[tuple[str, int, int], Result | str] = OrderedDict()
 
-    def _load(self, conn: sqlite3.Connection, script: str) -> None:
+    def _load(self, conn: sqlite3.Connection, script: str, watch: _Watch) -> frozenset[str]:
+        """Run the fixture script; the lower-cased names of the tables and views it created."""
         page = conn.execute("PRAGMA page_size").fetchone()[0]
         conn.execute(f"PRAGMA max_page_count = {MAX_FIXTURE_DB_BYTES // page}")
         conn.execute("PRAGMA temp_store = MEMORY")  # nothing a query does ever writes a file
+        # The schema is the operator's, and the sandbox's own functions (the date functions, LIKE, ...) must work in its
+        # views as SQLite's do, whatever SQLITE_TRUSTED_SCHEMA this SQLite was built with.
+        conn.execute("PRAGMA trusted_schema = ON")
         deadline = time.monotonic() + LOAD_SECONDS
         conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
         conn.set_authorizer(_load_authorizer)
+        schema = "SELECT type, name, sql FROM sqlite_master UNION ALL SELECT type, name, sql FROM sqlite_temp_master"
         try:
             conn.executescript(script)
             if conn.in_transaction:  # a script that began a transaction and did not end it
                 conn.execute("COMMIT")
-            tables = conn.execute("SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view')").fetchone()[0]
+            objects = conn.execute(schema).fetchall()
         except _SQL_ERRORS as e:
+            if watch.refused == READS_CLOCK:
+                raise ValueError(
+                    f"fixture {self.name!r} reads the clock while it loads (a date function given 'now' or no time value,"
+                    " or a CURRENT_TIMESTAMP default): its database would change from day to day"
+                ) from None
+            if watch.refused == CALLS_RANDOM:
+                raise ValueError(
+                    f"fixture {self.name!r} calls random() or randomblob() while it loads (a column's DEFAULT): its"
+                    " database would change on every load"
+                ) from None
             if time.monotonic() > deadline:
                 raise ValueError(f"fixture {self.name!r} took longer than {LOAD_SECONDS:g} s to load") from None
             if "full" in str(e):
@@ -505,8 +684,14 @@ class Sandbox:
             raise ValueError(f"fixture {self.name!r} cannot be loaded: {e}") from None
         finally:
             conn.set_progress_handler(None, 0)
+        tables = frozenset(name.lower() for kind, name, _ in objects if kind in ("table", "view"))
         if not tables:
             raise ValueError(f"fixture {self.name!r} creates no table")
+        for kind, name, sql in objects:
+            tokens = _tokens(sql) if kind == "view" and isinstance(sql, str) else None
+            if tokens is not None and _clock_read(tokens):
+                raise ValueError(f"fixture {self.name!r}: view {name!r} reads the clock, so no query on it could count")
+        return tables
 
     def __copy__(self) -> Sandbox:
         return self
@@ -532,7 +717,8 @@ class Sandbox:
 
     def _execute(self, sql: str, max_rows: int, max_steps: int) -> Result | str:
         budget = _Budget(max_steps)
-        conn = self._conn
+        conn, watch = self._conn, self._watch
+        watch.budget, watch.refused = budget, None
         conn.set_progress_handler(budget, PROGRESS_EVERY)
         cur = None
         try:
@@ -557,13 +743,17 @@ class Sandbox:
         except _SQL_ERRORS as e:
             if budget.reason is not None:
                 return budget.reason
+            if watch.refused is not None:
+                return watch.refused
             if isinstance(e, MemoryError):
                 return TOO_MUCH_MEMORY
-            return SQL_DENIED if "not authorized" in str(e) else SQL_ERROR
+            message = str(e)  # SQLite's for a denied action; for a denied read, "access to t.c is prohibited"
+            return SQL_DENIED if "not authorized" in message or "is prohibited" in message else SQL_ERROR
         finally:
             if cur is not None:
                 cur.close()
             conn.set_progress_handler(None, 0)
+            watch.budget = None
         return Result(columns, len(rows), _digest(columns, True, rows), _digest(columns, False, sorted(rows)))
 
 

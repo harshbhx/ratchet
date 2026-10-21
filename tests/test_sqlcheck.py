@@ -225,7 +225,7 @@ def test_sql_write_and_attach_denied_and_fixture_unchanged(tmp_path):
                 sandbox._conn.execute("DELETE FROM orders")
             assert sandbox._conn.execute("PRAGMA query_only").fetchone() == (1,)
         finally:
-            sandbox._conn.set_authorizer(sqlcheck._query_authorizer)
+            sandbox._conn.set_authorizer(sandbox._authorizer)
     assert _counts(t) == before
 
 
@@ -248,6 +248,23 @@ def test_sql_pragma_denied():
     ):
         assert sandbox.run(sql, 1000, 200_000) == sqlcheck.SQL_DENIED, sql
     assert t.check("SELECT name FROM sqlite_master WHERE type = 'table'") is None  # reading the schema is reading
+    # Only the fixture's own tables and views, the schema and the JSON table-valued functions can be read: sqlite_stmt
+    # lists the statements the shared connection has cached (other requests' queries) and depends on that history, and
+    # dbstat exposes storage.
+    assert t.valid("SELECT name FROM customers WHERE id = 1")
+    for answer in (
+        "SELECT * FROM sqlite_stmt",
+        "SELECT sql FROM sqlite_stmt WHERE sql LIKE '%customers%'",
+        "SELECT * FROM dbstat",
+    ):
+        assert t.check(answer) == "sql denied", answer
+    for answer in ("SELECT * FROM sqlite_schema", "SELECT * FROM sqlite_temp_master", "SELECT value FROM json_each('[1, 2]')"):
+        assert t.check(answer) is None, answer
+    assert t.check("""SELECT key FROM json_tree('{"a": [1]}')""") is None
+    viewed = tasks.Task(
+        "viewed", sql=sqlcheck.SqlSpec.from_script(SHOP + "CREATE VIEW cached AS SELECT sql FROM sqlite_stmt;", "v.sql")
+    )
+    assert viewed.check("SELECT * FROM cached") == "sql denied" and viewed.check("SELECT COUNT(*) FROM customers") is None
 
 
 @pytest.mark.req("FR-2.56", "NFR-1")
@@ -265,7 +282,7 @@ def test_sql_runaway_recursive_cte_interrupted_quickly(monkeypatch):
     monkeypatch.setattr(sqlcheck, "QUERY_SECONDS", 0.0)
     slow = "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 50000) SELECT MAX(n) FROM r"
     assert patient.check(slow) == "sql time exceeded"
-    monkeypatch.setattr(sqlcheck, "QUERY_SECONDS", 1.0)
+    monkeypatch.setattr(sqlcheck, "QUERY_SECONDS", 60.0)  # not 1 s: a busy machine must not turn this into a timeout
     assert patient.check(slow) is None
 
 
@@ -295,11 +312,58 @@ def test_sql_random_function_denied():
         "SELECT date((SELECT 'now'))",  # anywhere inside a date function's arguments
         "SELECT date(lower(' NOW '))",
         "SELECT strftime('%s', CASE WHEN 1 THEN 'now' END)",
+        # No time value: SQLite reads the clock (strftime's first argument is its format).
+        "SELECT date()",
+        "SELECT time()",
+        "SELECT datetime( /* nothing */ )",
+        "SELECT julianday()",
+        "SELECT unixepoch()",
+        "SELECT strftime('%s')",
+        "SELECT COUNT(*) FROM orders WHERE julianday() - julianday(placed) < 30",
+        "SELECT id FROM orders WHERE placed > strftime('%Y-%m-%d')",
+        """SELECT "date"('now')""",  # a quoted function name
+        "SELECT [julianday]()",
+        # A double-quoted name that matches no column is a string to SQLite.
+        """SELECT date("now")""",
+        """SELECT id FROM orders WHERE placed > date("now", "-30 days")""",
+        """SELECT date(lower("NOW"))""",
+    ):
+        assert t.check(answer) == "reads the clock", answer
+    # A value built at run time, or reached through a subquery, is caught when the date function runs.
+    for answer in (
+        "SELECT date('n' || 'ow')",
+        "SELECT date(x) FROM (SELECT 'now' AS x)",
+        "SELECT date('subsec')",  # as the time value, 'subsec' means now
+        "SELECT datetime(placed, 'local' || 'time') FROM orders",
+        "SELECT strftime('%s', 'NOW' || char(0) || 'x')",  # SQLite reads text up to its first NUL
+        "SELECT julianday(CAST('now' AS BLOB))",
+        "SELECT timediff(placed, upper('now')) FROM orders",
     ):
         assert t.check(answer) == "reads the clock", answer
     assert t.check("SELECT strftime('%Y', placed), date(placed, '+1 day') FROM orders") is None
     assert t.check("SELECT 'now' AS word, 'utc' AS zone") is None  # a string, not a clock read
     assert t.check("SELECT date(placed), lower('now') FROM orders") is None  # after the date function's parenthesis
+    assert t.check("""SELECT date("placed"), date(NULL), strftime() FROM orders""") is None  # a column; NULL in, NULL out
+    assert t.check("SELECT datetime(placed, 'subsec'), unixepoch(placed), timediff(placed, '2026-01-01') FROM orders") is None
+    # The date functions the sandbox wraps give SQLite's own results.
+    plain, sandbox = sqlite3.connect(":memory:"), t.sql.sandbox
+    for expr in (
+        "date('2026-03-01', '+1 month', 'start of month')",
+        "strftime('%j %w %H', '2026-02-14 10:30')",
+        "julianday('2026-01-05')",
+        "unixepoch('2026-01-05 00:00:01')",
+        "datetime(1767225600, 'unixepoch')",
+        "timediff('2026-03-01', '2026-01-05')",
+        "time('12:00', '+90 minutes')",
+        "date(NULL)",
+        "date('nonsense')",
+    ):
+        with sandbox._lock:
+            ours = sandbox._conn.execute(f"SELECT {expr}").fetchone()
+        assert ours == plain.execute(f"SELECT {expr}").fetchone(), expr
+    # Never frozen by the cache: the outcome is the reason, whatever the query's spelling or the moment.
+    assert t.key("SELECT unixepoch()") is INVALID and t.key("select  UNIXEPOCH()") is INVALID
+    assert t.check("SELECT unixepoch()") == "reads the clock"
     assert set(sqlcheck.FUNCTIONS).isdisjoint({"random", "randomblob", "changes", "last_insert_rowid", "load_extension"})
 
 
@@ -341,7 +405,7 @@ def test_sql_quadratic_builtins_replaced_by_linear_ones(monkeypatch):
         f"SELECT length(replace({a}, {half}, 'x'))",
     ):
         assert t.check(answer) is None, answer
-    assert time.perf_counter() - start < 0.5
+    assert time.perf_counter() - start < 2.0  # milliseconds each; SQLite's own trim took 15 s on one of them
     assert t.check(f"SELECT replace({a}, 'a', 'bb')") == "sql error"  # the result would be over VALUE_BYTES
     assert t.check(f"SELECT instr(CAST({a} AS BLOB), {half})") == "sql error"  # mixed types this large: refused
     assert t.check(f"SELECT {a} LIKE '%' || printf('%.{sqlcheck.LIKE_PATTERN_BYTES}c', 'a') || 'b'") == "sql error"
@@ -353,7 +417,15 @@ def test_sql_quadratic_builtins_replaced_by_linear_ones(monkeypatch):
         f"SELECT count(*) FROM r WHERE s LIKE '%' || printf('%.{sqlcheck.LIKE_PATTERN_BYTES - 2}c', 'a') || 'b'"
     )
     start = time.perf_counter()
-    assert t.check(per_row) == "sql time exceeded" and time.perf_counter() - start < 0.6
+    assert t.check(per_row) == "sql time exceeded" and time.perf_counter() - start < 1.5  # about 2 minutes unchecked
+    # SQLite calls the progress handler only where a loop jumps back, never within one row: a row whose WHERE calls LIKE
+    # 400 times (up to 25 ms each, about 10 s in all) is stopped by the check LIKE makes on every call.
+    pattern = f"'%' || printf('%.{sqlcheck.LIKE_PATTERN_BYTES - 2}c', 'a') || 'b'"
+    one_row = f"WITH r(s, p) AS (SELECT {a}, {pattern}) SELECT COUNT(*) FROM r WHERE " + " OR ".join(["s LIKE p"] * 400)
+    start = time.perf_counter()
+    assert t.check(one_row) == "sql time exceeded" and time.perf_counter() - start < 1.5
+    assert t.check(r"SELECT 'a' LIKE 'A', 'a_b' LIKE 'a\_b' ESCAPE '\', 'ab' GLOB 'a*', 'ab' GLOB 'A*'") is None
+    assert t.check("SELECT 'a' LIKE 'a' ESCAPE 'xx'") == "sql error"
     # The Python versions give SQLite's own results: text, blobs, numbers, NULL, NUL characters and empty strings.
     sandbox, plain, rng = t.sql.sandbox, sqlite3.connect(":memory:"), random.Random(5)
 
@@ -395,6 +467,7 @@ def test_sql_memory_guard(monkeypatch):
         "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 40000) "
         "SELECT n, printf('%.2000c', 'x') || n FROM r ORDER BY n DESC"
     )
+    monkeypatch.setattr(sqlcheck, "QUERY_SECONDS", 60.0)  # a busy machine must not turn either check into a timeout
     monkeypatch.setattr(sqlcheck, "QUERY_MEMORY_BYTES", 4 * 1024 * 1024)
     assert t.check(big) == "sql memory exceeded"
     monkeypatch.setattr(sqlcheck, "QUERY_MEMORY_BYTES", 1024 * 1024 * 1024)
@@ -530,6 +603,20 @@ def test_sql_spec_errors_have_paths(fixtures):
     (fixtures / "latin1.sql").write_bytes("CREATE TABLE t (x); INSERT INTO t VALUES ('caf\xe9');".encode("latin-1"))
     (fixtures / "big.sql").write_bytes(b"-" * (sqlcheck.MAX_FIXTURE_BYTES + 1))
     (fixtures / "dir.sql").mkdir()
+    # The database a fixture builds must not depend on when, or how often, it was loaded (the same fixture_sha256 and
+    # spec_hash every day), also through a column's DEFAULT, which the load authorizer never sees.
+    (fixtures / "clock.sql").write_text(
+        "CREATE TABLE t (x, y); INSERT INTO t VALUES (date('now'), unixepoch());", encoding="utf-8"
+    )
+    (fixtures / "default.sql").write_text(
+        "CREATE TABLE t (x, at DEFAULT CURRENT_TIMESTAMP); INSERT INTO t (x) VALUES (1);", encoding="utf-8"
+    )
+    (fixtures / "uuid.sql").write_text(
+        "CREATE TABLE t (x, id DEFAULT (lower(hex(randomblob(16))))); INSERT INTO t (x) VALUES (1);", encoding="utf-8"
+    )
+    (fixtures / "view.sql").write_text(
+        "CREATE TABLE t (x); CREATE VIEW recent AS SELECT * FROM t WHERE x > julianday() - 30;", encoding="utf-8"
+    )
     if hasattr(os, "mkfifo"):
         os.mkfifo(fixtures / "pipe.sql")  # opening it must not block
     doc = {
@@ -551,11 +638,19 @@ def test_sql_spec_errors_have_paths(fixtures):
             {"name": "o", "sql": {"fixture": "big.sql"}},
             {"name": "p", "sql": {"fixture": "dir.sql"}},
             {"name": "q", "format": "tool_calls", "sql": {"fixture": "shop.sql"}},
+            {"name": "r", "sql": {"fixture": "clock.sql"}},
+            {"name": "s", "sql": {"fixture": "default.sql"}},
+            {"name": "t", "sql": {"fixture": "uuid.sql"}},
+            {"name": "u", "sql": {"fixture": "view.sql"}},
         ]
     }
     with pytest.raises(SpecError) as caught:
         taskspec.parse_document(doc, fixtures_dir=fixtures)
     mb = sqlcheck.MAX_FIXTURE_BYTES >> 20
+    clock = (
+        "reads the clock while it loads (a date function given 'now' or no time value, or a CURRENT_TIMESTAMP default):"
+        " its database would change from day to day"
+    )
     assert caught.value.errors == [
         "tasks[0].sql: missing; a sql task needs sql.fixture (a SQL script in RATCHET_FIXTURES_DIR) or sql.dialect 'postgres'",
         "tasks[1].sql: only a task with format 'sql' takes sql options",
@@ -580,6 +675,11 @@ def test_sql_spec_errors_have_paths(fixtures):
         f"tasks[14].sql.fixture: fixture 'big.sql' is larger than {mb} MB",
         "tasks[15].sql.fixture: fixture 'dir.sql' is not a regular file",
         "tasks[16].format: 'tool_calls' is reserved for a later release",
+        f"tasks[17].sql.fixture: fixture 'clock.sql' {clock}",
+        f"tasks[18].sql.fixture: fixture 'default.sql' {clock}",
+        "tasks[19].sql.fixture: fixture 'uuid.sql' calls random() or randomblob() while it loads (a column's DEFAULT): its"
+        " database would change on every load",
+        "tasks[20].sql.fixture: fixture 'view.sql': view 'recent' reads the clock, so no query on it could count",
     ]
     if hasattr(os, "mkfifo"):
         with pytest.raises(SpecError, match="fixture 'pipe.sql' is not a regular file"):
@@ -603,6 +703,9 @@ def test_fixture_load_limits(monkeypatch):
     dump = "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCREATE TABLE t (x);\nINSERT INTO t VALUES (1);\nCOMMIT;\n"
     assert sqlcheck.Sandbox(dump).run("SELECT x FROM t", 10, 1000) != sqlcheck.SQL_ERROR  # a `.dump` loads
     assert sqlcheck.Sandbox("CREATE TABLE t (x); BEGIN; INSERT INTO t VALUES (1);").run("SELECT x FROM t", 10, 1000)
+    # A default that would read the clock is fine while no row takes it (a `.dump` gives every value).
+    stamped = "CREATE TABLE t (x, at DEFAULT CURRENT_TIMESTAMP, d DEFAULT (date('now'))); INSERT INTO t VALUES (1, 'a', 'b');"
+    assert isinstance(sqlcheck.Sandbox(stamped).run("SELECT at, date(d, '+1 day') FROM t", 10, 1000), sqlcheck.Result)
     # A value over VALUE_BYTES could never be read by a query, so it fails the load.
     with pytest.raises(ValueError, match="cannot be loaded: string or blob too big"):
         sqlcheck.Sandbox("CREATE TABLE t (s); INSERT INTO t VALUES ('" + "x" * (sqlcheck.VALUE_BYTES + 1) + "');")
@@ -623,6 +726,8 @@ def test_sql_execution_needs_python_311(fixtures, monkeypatch):
     sees, so a sqlite fixture is refused with a reason that says what to do; dialect postgres still works."""
     assert sqlcheck.CAN_LIMIT is (sys.version_info >= (3, 11))
     monkeypatch.setattr(sqlcheck, "CAN_LIMIT", False)
+    # No sandbox another test left alive (a failed test's traceback can hold one) may answer for shop.sql.
+    monkeypatch.setattr(sqlcheck, "_SANDBOXES", sqlcheck.weakref.WeakValueDictionary())
     with pytest.raises(ValueError, match="needs Python 3.11 or later"):
         sqlcheck.Sandbox("CREATE TABLE t (x); -- a script no other test loads")
     with pytest.raises(SpecError) as caught:
@@ -682,6 +787,8 @@ def test_sql_task_in_the_cascade():
         ("SELECT random()", "sql denied"),
         ("SELECT * FROM nope", "sql error"),
         ("SELECT date('now')", "reads the clock"),
+        ("SELECT COUNT(*) FROM orders WHERE julianday() - julianday(placed) < 30", "reads the clock"),
+        ('SELECT id FROM orders WHERE placed > date("now", "-30 days")', "reads the clock"),
     ):
         led, r = _router(RecordingProvider(answer))
         assert r.handle(_ask(), "shop-sql").text == answer
