@@ -81,3 +81,33 @@ Lane D (operations, security, performance) does not number invariants in CLAUDE.
 **Enforcing code.** `ratchet/router.py`: `Ratchet.handle` (`student_only`), `Ratchet._teacher_only`, `Ratchet._budget_refused`. `ratchet/gateway.py`: `_budget`, `_gateway_budget_error`.
 
 **Proving tests.** `tests/test_limits.py`: `test_student_only_serves_a_confident_student_and_refuses_what_needs_the_teacher`, `test_router_refuses_teacher_work_under_student_only_without_a_gateway`.
+
+## Release transitions are compare-and-set (OPS-ADMIN-API, ADR 0064; the spec's INV-18)
+
+**Text.** Release transitions are compare-and-set: at most one live and at most one shadow or canary version, across processes. Every change of a version's state or traffic outside tests and migrations goes through `Ledger.transition` (which changes the row only while it still has the state and share the caller saw, refuses a move into shadow or canary while another version is in flight, and writes its event in the same transaction only when the row changed) or `Ledger.promote_live` (the new live version and the retirement of the live version the caller saw, both compared, in one transaction). Never call `set_version` from the release gate, Night School or the admin API, and never write `versions.state` or `traffic_pct` with SQL.
+
+**Why.** The gateway's tick, the cron tick (`python -m ratchet.live tick`) and an admin can act on one ledger file at once; an unconditional write lets two of them make one decision twice (two promotions, duplicate events) or leave two versions live.
+
+**Enforcing code.** `ratchet/ledger.py`: `TRANSITION_SQL`, `Ledger.transition`, `Ledger.promote_live`, `Ledger.transaction`, `Ledger._cas`. `ratchet/release.py`: `ReleaseGate.admit` (one transaction, candidates only), `_reject`, `_tick_shadow`, `_tick_canary`. `ratchet/admin.py`: `rollback`, `retire`, `promote`.
+
+**Proving tests.** `tests/test_admin.py`: `test_transition_moves_a_version_only_from_where_the_caller_saw_it`, `test_promote_live_retires_the_old_live_version_in_the_same_transaction`, `test_a_transaction_commits_its_moves_and_events_together_or_not_at_all`, `test_two_ticks_on_one_ledger_file_advance_a_canary_once` (two ledgers on one file, deterministic and threaded), `test_a_promotion_race_leaves_exactly_one_live_version` (gate against gate, admin against gate), `test_admit_leaves_a_version_an_admin_moved_alone`; `tests/test_observability.py`: `test_every_version_transition_writes_an_event` (the gate's moves go through `transition` and `promote_live`; `set_version` raises).
+
+## Every manual change is recorded with it (OPS-ADMIN-API, ADR 0064)
+
+**Text.** A change an operator makes to versions, runtime switches (`runtime_flags`) or runtime task pins (`task_overrides`) goes through `ratchet/admin.py`, from the admin API (an admin key) or the CLI, and commits in one transaction with its `admin_actions` row (the actor's name, never a key; a checked and redacted reason; the state before and after; the call's request id) and an `admin` event. A call that changes nothing writes nothing. Never add a route, command or script that changes them another way.
+
+**Why.** Who rolled back, froze releases or pinned a task, and why, is the first question in an incident; a change without its record, or a record without its change, makes the audit log wrong.
+
+**Enforcing code.** `ratchet/admin.py` (every writer, `check_reason`, `check_actor`, `MOVES`); `ratchet/ledger.py`: `Ledger.record_admin`, `Ledger.set_flag`, `Ledger.set_task_override`, `Ledger.clear_task_override`, `Ledger.transaction`; `ratchet/gateway.py`: the `/ratchet/admin/*` routes (`_admin`, `_admin_call`); `ratchet/access.py`: the `/ratchet/admin/` prefix.
+
+**Proving tests.** `tests/test_admin.py`: `test_canary_rollback_over_http_writes_the_move_an_audit_row_and_an_event`, `test_refused_promotions` (nothing changed or recorded), `test_a_reason_is_required_checked_and_redacted`, `test_every_admin_route_needs_an_admin_key`, `test_student_kill_switch_over_http` (a call that changes nothing writes nothing), `test_cli_changes_reach_a_running_ledger_through_data_version`.
+
+## Holds never stop a rollback (OPS-ADMIN-API, ADR 0064)
+
+**Text.** An operator's holds (`releases_frozen`, a runtime audit rate of 0) only stop versions from taking traffic or taking more (admission to canary, shadow to canary, canary stages, promotion to live). The canary rollback, rejections and the live alert run whatever is held.
+
+**Why.** A freeze exists to keep things stable; a freeze that also stopped the rollback of a canary the audits show is worse would keep serving it.
+
+**Enforcing code.** `ratchet/release.py`: `ReleaseGate._held`, `admit`, `_tick_shadow`, `_tick_canary` (rollback before the freeze check), `_tick_live`.
+
+**Proving tests.** `tests/test_admin.py`: `test_frozen_releases_hold_every_promotion_but_never_a_rollback_or_an_alert`, `test_a_frozen_gate_in_a_corrupt_deploy_simulation`.

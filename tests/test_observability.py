@@ -730,23 +730,40 @@ def test_event_listeners_see_every_event_and_cannot_fail_it():
 @pytest.mark.req("NFR-6")
 def test_every_version_transition_writes_an_event(monkeypatch):
     """Cold start -> canary -> live, then shadow -> canary -> live over the old live version, then a candidate replaced
-    by a newer one, a rolled-back canary and a rejected candidate: every `set_version` the gate makes is followed by an
-    event naming that version, the old live version's retirement included (`live_retired`)."""
+    by a newer one, a rolled-back canary and a rejected candidate: every move the gate makes goes through the
+    compare-and-set writers (`transition`, `promote_live`; never `set_version`, ADR 0064) and writes, in the same call,
+    an event naming that version, the old live version's retirement included (`live_retired`)."""
     led = Ledger(":memory:")
     gate = ReleaseGate(led, ReleasePolicy(min_audits=5, min_shadow=5))
     log: list[tuple[str, int | str, str, str]] = []  # ("set", vid, from, to) and ("event", kind, detail, "")
-    real_set, real_event = led.set_version, led.event
+    real_transition, real_promote, real_event = led.transition, led.promote_live, led.event
 
-    def set_version(vid: int, state: str, traffic_pct: int | None = None) -> None:
-        before = led.version(vid)
-        real_set(vid, state, traffic_pct)
-        log.append(("set", vid, before.state if before else "", state))
+    def set_version(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the release gate moved a version with set_version, which does not compare and set")
+
+    def transition(vid, from_state, from_pct, to_state, to_pct, event=None):
+        moved = real_transition(vid, from_state, from_pct, to_state, to_pct, event)
+        if moved:  # its event was written inside the call, so it is logged after the move it names
+            log.insert(len(log) - (event is not None), ("set", vid, from_state, to_state))
+        return moved
+
+    def promote_live(vid, from_state, from_pct, event=None, *, old_live, retired_event=None):
+        moved = real_promote(vid, from_state, from_pct, event, old_live=old_live, retired_event=retired_event)
+        if moved:  # the retirement's event, then the promotion's, each after its move
+            at = len(log) - (event is not None) - (retired_event is not None)
+            if old_live is not None:
+                log.insert(at, ("set", old_live, "live", "retired"))
+                at += 1 + (retired_event is not None)
+            log.insert(at, ("set", vid, from_state, "live"))
+        return moved
 
     def event(kind: str, detail: str) -> None:
         real_event(kind, detail)
         log.append(("event", kind, detail, ""))
 
     monkeypatch.setattr(led, "set_version", set_version)
+    monkeypatch.setattr(led, "transition", transition)
+    monkeypatch.setattr(led, "promote_live", promote_live)
     monkeypatch.setattr(led, "event", event)
     good = {"precision": 0.99, "coverage": 0.9, "threshold": 0.5}
     v1 = led.create_version("base", "student-v1", 100, "h1", good)

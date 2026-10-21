@@ -2,6 +2,7 @@
 
 One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)`:
 
+0. Skip if an operator paused training (`ledger.flags().training_paused`, the admin API or CLI; ADR 0064), with a `skip` event, before anything else. Reading the switches also publishes the runtime task pins, so `dataset.rows` and `cascade_eval` leave a task pinned at runtime out (`excluded_pinned`) exactly as one its spec pins (INV-10).
 1. Skip if a version is in `shadow` or `canary` (release in flight).
 2. Build the dataset (`dataset.build`): train rows + golden rows + `manifest.json` with the bill of materials.
 3. Skip if fewer than `min_new_examples` new train examples, or no golden rows.

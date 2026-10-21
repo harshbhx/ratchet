@@ -707,6 +707,26 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
     # 6.12 Operations
+    "FR-12.1": (
+        "ratchet.admin:rollback",
+        "ratchet.admin:retire",
+        "ratchet.admin:promote",
+        "ratchet.admin:set_flag",
+        "ratchet.admin:pin_task",
+        "ratchet.admin:unpin_task",
+        "ratchet.admin:tick",
+        "ratchet.admin:MOVES",
+        "ratchet.admin:main",
+        "ratchet.ledger:Ledger.flags",
+        "ratchet.ledger:Ledger.record_admin",
+        "ratchet.tasks:effective",
+        "ratchet.router:Ratchet._pick_version",
+        "ratchet.release:ReleaseGate._held",
+        "ratchet.nightschool.orchestrate:run_night",
+        "ratchet.gateway:admin_promote",
+        "ratchet.gateway:admin_settings",
+        "ratchet.gateway:admin_audit_log",
+    ),
     "FR-12.2": (
         "ratchet.spend:SpendMeter",
         "ratchet.spend:BudgetExceeded",
@@ -758,6 +778,15 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:SnapshotCache",
         "ratchet.config:Settings.tick_interval",
         "ratchet.config:Settings.stats_ttl",
+    ),
+    "FR-12.9": (
+        "ratchet.ledger:Ledger.transition",
+        "ratchet.ledger:Ledger.promote_live",
+        "ratchet.ledger:Ledger.transaction",
+        "ratchet.ledger:TRANSITION_SQL",
+        "ratchet.release:ReleaseGate.admit",
+        "ratchet.release:ReleaseGate._tick_canary",
+        "ratchet.release:ReleaseGate._tick_shadow",
     ),
     # 6.15 Cost and economics
     "FR-15.1": (

@@ -86,12 +86,12 @@ sequenceDiagram
     participant L as Ledger
     App->>GW: POST /v1/chat/completions (X-Ratchet-Task, Bearer key)
     GW->>GW: body size (413), API key → client name (401), rate limits (429/503), validate + normalise (400), task scope (403), quota and budgets (429)
-    opt task is pinned
+    opt task is pinned (by its spec, or at runtime by an admin)
         GW->>T: teacher answers (NOT stored as training data)
         GW->>L: log_request(served_by=teacher)
         GW-->>App: chat.completion
     end
-    GW->>GW: pick version: canary with prob traffic_pct%, else live, else none
+    GW->>GW: pick version: canary with prob traffic_pct%, else live, else none (none while the student is turned off, §14)
     alt a version was picked
         GW->>S: n=3 samples, temperature 0.7, logprobs
         GW->>GW: score() -> confidence
@@ -343,13 +343,17 @@ Created by `SCHEMA` for the evidence features, so later items change no migratio
 
 New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's audits, `shadow_version` for the shadow's rows and `day` for per-day statistics; before them, each gate tick scanned the whole table. `versions_state` (ADR 0060) serves the routing snapshot's rebuild.
 
+### `admin_actions`, `runtime_flags`, `task_overrides`: manual changes
+
+`admin_actions`: `id`, `ts`, `actor` (`api:<admin key name>` or `cli:<OS user>`, never a key), `action` (`rollback`, `retire`, `promote`, `set_flag`, `pin_task`, `unpin_task`, `tick`), `target` (`v7`, a switch, a task, `gate`), `reason` (redacted), `before` and `after` (JSON: the target's state), `request_id` (the admin call's; NULL from the CLI). `runtime_flags`: `name` (primary key: `student_disabled`, `releases_frozen`, `training_paused`, `audit_rate`), `value`, `ts`, `actor`; a missing row is the default. `task_overrides`: `task` (primary key), `pinned`, `ts`, `actor`, `reason`. Written only through `ratchet/admin.py` ([§14](#14-admin-api-and-runtime-switches), [ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)); new tables, so an old file gains them on open.
+
 ### `failures`: what failed, and what it spent
 
 `id`, `ts`, `day`, `request_id`, `client`, `task`, `stage`, `error`, `status`, `latency_ms`, `cost_usd` ([§12](#12-observability), [ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md)). `stage` is one of `ledger.FAILURE_STAGES`; `error` is the exception's class, status and code, never a message; `cost_usd` is what a request that left no `requests` row spent (the student's samples before a teacher failure), 0 for a failure around an answered request, whose cost is in its own row. `Ledger.totals()` adds it as `failed_cost_usd`. Indexes `failures_request_id`, `failures_ts` and `failures_client_ts`. Written by `Ledger.log_failure` only.
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `live_retired`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `live_retired`, `retired`, `rollback`, `alert`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `budget`, `admin` (every manual change, [§14](#14-admin-api-and-runtime-switches)), `conflict`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method that writes, or that the request path and the release gate read, holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). Stats and report queries (`_reads`) use a second, read-only connection with its own lock on a WAL file ([§11](#11-hot-path-and-performance)). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -386,7 +390,9 @@ Using the candidate's `eval` (calibrated on half of the golden set, measured on 
    - no live version → `canary` at 10% (event `canary`, "first student");
    - live version exists → `shadow` (event `shadow`).
 
-In practice step 4's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists.
+In practice step 4's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists. The whole of `admit` is one transaction (`Ledger.transaction`), and it acts only on a `candidate`: one an admin moved while it was being scored is left as it is, with a `conflict` event. While an operator holds releases (`releases_frozen`, or a runtime audit rate of 0), a cold-start candidate goes to `shadow` against the teacher instead of canary.
+
+**Every move compares and sets** ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md), FR-12.9). The gate and the admin API move versions only with `Ledger.transition(vid, from_state, from_pct, to_state, to_pct, event)`, an `UPDATE ... WHERE id=? AND state=? AND traffic_pct=?` inside `BEGIN IMMEDIATE` that writes its event only when the row changed, and `Ledger.promote_live`, which makes a canary live and retires the live version the caller saw, both compared, in one transaction. A move into shadow or canary is refused while another version is in either. So the gateway's tick and the cron tick (two processes on one file) make each decision once, and at most one version is live and one in flight. `set_version` is for tests and migrations only.
 
 ### Ticks: `ReleaseGate.tick()`
 
@@ -400,7 +406,8 @@ Run from the request path (at most once per `RATCHET_TICK_INTERVAL_S`: 5 s in li
 3. **Canary:** `version_live_quality(id)` counts audits of answers this version served since `stage_since`. With `n ≥ min_audits` (20) and audited precision `p`:
    - Wilson upper bound of `p` below `live_floor` (0.92) → `rolled_back` (event `rollback`). Traffic returns to the live version, or to the teacher on cold start.
    - else if `p < 0.92` → hold (no change; keep auditing).
-   - else if traffic is 10% → 50% (event `canary`); the stage counter resets because `set_version` updates `stage_since`.
+   - else if releases are frozen (`releases_frozen`) → hold (a rollback above still runs).
+   - else if traffic is 10% → 50% (event `canary`); the stage counter resets because the move (`Ledger.transition`) updates `stage_since`.
    - else → old live set to `retired`, canary set to `live` at 100% (event `live`).
 
 ### Shadow reference and arbitration
@@ -597,3 +604,19 @@ What a key and the whole gateway may spend and send ([ADR 0063](adr/0063-spend-a
 **Spend (`ratchet/spend.py`).** `SpendMeter` holds, in memory and behind one lock, the answered requests and US dollars per key per UTC day, the dollars per key per UTC month and the gateway's dollars per UTC day, for gateway API requests only (the rows with a gateway request id: Scout's agents and the simulator call `handle` without one, so their spend stays under their own guard, invariant 11). It reads the ledger once, at startup (`Ledger.api_usage_since`: today's requests and failed spend, this month's when a monthly cap is set, one pass over each table's `(client, ts)` index), so the quota and budget checks in `_complete` read memory only. After each request the gateway adds its `cost_usd`, or for a failed request what it spent before failing (`RequestContext.spent_usd`, which the router fills); a job whose cost for a request lands later adds it with `requests=0`. A new UTC day or month starts from zero (re-reading the ledger then could count twice a request logged before the read and added after it); a clock that moves back to an earlier day reads the ledger again. After an add, the meter writes a `budget` event for each `RATCHET_BUDGET_ALERT_PCT` share of a cap reached for the first time in its period, outside its lock; it reads the period's `budget` events at startup, so a restart repeats none.
 
 **The gateway's budget.** Past `RATCHET_DAILY_BUDGET_USD`, `block` refuses every chat request; `student_only` sets `RequestMeta.student_only` on each `/v1` request (a per-request flag, so Scout and the simulator are never affected), and `handle` then serves a confident student answer with no audit (the random draw is still made) and no shadow, and raises `spend.BudgetExceeded` before any teacher call for an escalation, a cold start, a pinned or unregistered task or a request with `tools`. What the student's samples cost by then gets a `budget` failures row and counts against the key, as for any failed request. The gateway maps `BudgetExceeded` to 429 `gateway_budget_exceeded`.
+
+## 14. Admin API and runtime switches
+
+Manual interventions go through one module, `ratchet/admin.py` ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md), FR-12.1), which the gateway's `/ratchet/admin/*` routes (admin key; `admin` prefix in `access.py`) and `python -m ratchet.admin` (on the ledger file, actor `cli:<OS user>`) share. Each function checks its reason and actor, checks the move against `MOVES` (canary → rolled back, retired, another share or live; live → retired; shadow → retired or canary; rejected, rolled back, retired or candidate → canary only with `force`; never a version without a golden eval), and writes the change (`transition` / `promote_live`, compare-and-set), an `admin_actions` row and an `admin` event in one `Ledger.transaction()`. A refused or stale move raises `AdminConflict` (409); a call that changes nothing writes nothing. A promotion's `load_adapter` (live mode) loads the LoRA adapter into vLLM after the checks and outside the transaction, so a slow endpoint never holds the ledger.
+
+**Runtime switches.** `Ledger.flags()` returns a `RuntimeFlags` snapshot of `runtime_flags` and `task_overrides`, rebuilt only when a write on this connection (TEMP triggers, `WATCHED`) or another process's commit (`PRAGMA data_version`) changed them, as the routing snapshot is ([§11](#11-hot-path-and-performance)); `handle` reads it once per request. Its effects:
+
+| Switch | Effect |
+|---|---|
+| `student_disabled` | `_pick_version` returns none: the teacher answers (route `student_disabled`), its answer is stored as on a cold start, no student or shadow call |
+| `releases_frozen` | The gate starts no version taking traffic and gives none more (no shadow → canary, no canary stage or promotion; a cold start shadows the teacher); rollbacks, rejections and the live alert run |
+| `training_paused` | `run_night` writes `skip` before anything else |
+| `audit_rate` | Replaces `Settings.audit_rate` for the audit draw (made either way, so the random stream is the same); at 0 the gate starts no new canary, and setting 0 during a canary needs `force` |
+| Runtime pins | `flags()` publishes the names to `tasks.OVERRIDES`; `tasks.get` and `tasks.effective` return a pinned copy of the registered task (its spec's `spec_hash` kept), so the router's pinned path (`_teacher_only`, nothing stored) and Night School's read-time exclusion (`excluded_pinned`) apply as for a spec pin (invariant 10) |
+
+A switch is seen by every process that shares the ledger on its next request, tick or night: no restart. `/ratchet/stats` shows them under `controls`.

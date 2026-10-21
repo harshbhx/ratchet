@@ -73,7 +73,14 @@ def run_night(
 
     Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
     set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
-    into the one `bom_extra` dict."""
+    into the one `bom_extra` dict.
+
+    An operator's `training_paused` (the admin API or CLI, ADR 0064) skips the night before anything else, with a `skip`
+    event. Reading the switches also publishes the runtime task pins, so the dataset and the golden eval leave a task
+    pinned at runtime out as they do a task pinned in its spec (INV-10)."""
+    if ledger.flags().training_paused:
+        ledger.event("skip", "training paused by an admin; no training tonight")
+        return NightReport(False, None, False, "training paused")
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
