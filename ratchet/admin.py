@@ -587,7 +587,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None, settings:
                 _print(out, rows)
             else:
                 for r in rows:
-                    print(f"#{r['id']} {r['actor']} {r['action']} {r['target']}: {r['reason']}", file=out)
+                    print(f"#{r['id']} {r['actor']} {r['action']} {r['target']}: {r['reason'] or '-'}", file=out)
             return 0
         if args.cmd == "flag" and args.name is None:
             _print(out, flags(led))
