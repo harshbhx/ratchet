@@ -30,7 +30,7 @@ from typing import Any
 
 import httpx
 
-from . import bom, taskspec
+from . import bom, taskspec, teacher_watch
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset
@@ -225,6 +225,7 @@ def main(
     s.check_reserved()  # a setting reserved for a feature not built yet stops here (ADR 0024)
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     cert = s.cert_policy()  # so does a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA (ADR 0026)
+    probes, adjudicate = s.teacher_watch_limits()  # and a bad RATCHET_TEACHER_PROBES or _ADJUDICATE_MAX (ADR 0033)
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -251,6 +252,17 @@ def main(
             cert_delta=cert.delta,
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        # The teacher watch's probes and adjudications (FR-5.40, FR-5.41) ask the teacher on Token Factory, with the
+        # judge's client (same endpoint, key, timeouts and retries), as an audit asks: temperature 0, one answer.
+        relabel = teacher_watch.relabel_with(
+            judge,
+            s.teacher_model,
+            s.gen_policy(),
+            probes,
+            adjudicate,
+            redact_pii=s.redact_pii,
+            price=s.price(s.teacher_model),
+        )
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
             led,
@@ -261,6 +273,7 @@ def main(
             signer=signer,
             train_gpu=policy.train,
             redact_pii=s.redact_pii,
+            relabel=relabel,
         )
         if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
             doc = led.version_bom(rep.version)

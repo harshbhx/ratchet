@@ -2,6 +2,7 @@
 
 One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)`:
 
+0. The teacher watch (FR-16.7, [ADR 0033](../../docs/adr/0033-teacher-watch.md)), with `gate.policy.teacher_watch`: unless frozen and with a `relabel` (`teacher_watch.Relabel`), probes and adjudications (`teacher_watch.night`, also during a release: evidence, not training), then `gate.check_teacher()`; then, if frozen, a `skip` event ("teacher labels look unstable") and `NightReport(False, None, False, 'teacher unstable')`, before the in-flight check and before any teacher call. Contested rows are left out of both sets (`dataset.rows(exclude_contested=)`), and the BOM gets `teacher_watch.bom_section`.
 1. Skip if a version is in `shadow` or `canary` (release in flight).
 2. Build the dataset (`dataset.build`): train rows + golden rows + `manifest.json` with the bill of materials.
 3. Skip if fewer than `min_new_examples` new train examples, or no golden rows.
@@ -10,7 +11,7 @@ One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)
 6. `evaluator.evaluate(adapter, golden_rows)` → `{precision, coverage, threshold, golden_agreement, ..., certificate, frontier, per_task, test_vector}`, plus `spec_hashes`. With a live version, `paired_evidence(recheck, result, live.id)` adds `paired` (the exact comparison of the two test vectors, `certificate.paired`, with `against`) when both evals carry a non-empty vector of the same length, **before** `update_eval` and the BOM, so the signed BOM carries the paired counts (FR-6.30).
 7. The adapter's BOM (`bom.manifest(..., extra=bom_extra or None, redact_pii=redact_pii)`, schema v2), then `gate.admit(vid)`.
 
-Later features add their steps at fixed places (ADR 0024): early-night checks (teacher freeze, erasures, the drift-advanced night) before the `min_new_examples` gate; set commitments right after `create_version`; paired evidence (built: certified precision) right after the candidate's eval, before `update_eval` and the BOM; and BOM sections (`bom.EXTRA_KEYS`) into the one `bom_extra` dict. `run_night(redact_pii=)` takes `Settings.redact_pii` (the gateway, the simulator and `python -m ratchet.live night` pass it) for the BOM's `redactor`.
+Later features add their steps at fixed places (ADR 0024): early-night checks (the teacher freeze, built as step 0 above; erasures; the drift-advanced night) before the `min_new_examples` gate; set commitments right after `create_version`; paired evidence (built: certified precision) right after the candidate's eval, before `update_eval` and the BOM; and BOM sections (`bom.EXTRA_KEYS`) into the one `bom_extra` dict. `run_night(redact_pii=)` takes `Settings.redact_pii` (the gateway, the simulator and `python -m ratchet.live night` pass it) for the BOM's `redactor`.
 
 ## Interfaces
 

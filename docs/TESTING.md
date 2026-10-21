@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 807 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_drift), ~90 s
+pytest -q                     # 855 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_drift, test_teacher_watch), ~90 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -11,6 +11,7 @@ python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's 
 python -m sim.simulate --bad-deploy-version 3 --compare-release      # Wilson vs the anytime-valid gate, same seed
 python -m sim.simulate --calibration ltt --paired-gate              # certified thresholds and the paired gate (ADR 0026)
 python -m sim.simulate --drift-boost 3 --drift-early-night           # the drift alarm's opt-in actions (ADR 0032)
+python -m sim.simulate --days 10 --teacher-noise 0.15 --teacher-noise-day 5   # an unstable teacher freezes Night School (ADR 0033)
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
 python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
 ```
@@ -34,11 +35,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 14 |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
-| **Total** | **807** |
+| `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
+| **Total** | **855** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, most of `tests/test_drift.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, most of `tests/test_drift.py` and `tests/test_teacher_watch.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
@@ -657,6 +659,57 @@ The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, NFR-56, [ADR 0032
 | `test_sim_flags_reach_the_policy_and_the_router` | `--drift-alarm`, `--drift-boost` and `--drift-early-night` set the gate's policy and the router shares the gate's boosts; settings that would do nothing are refused; the table prints the drift line and the event |
 | `test_false_alarm_bounds_keep_three_significant_digits` | `drift.pct` keeps 3 significant digits, and the simulator's drift line at threshold 1000 says 0.1%, not 0% |
 
+### `tests/test_teacher_watch.py`
+
+The teacher watch (FR-16.7, FR-5.40, FR-5.41, FR-6.42, FR-6.43, NFR-57, [ADR 0033](adr/0033-teacher-watch.md)). Simulation numbers are from mock models.
+
+| Test | Covers |
+|---|---|
+| `test_a_disagreeing_label_is_checked_contested_and_left_out_of_both_splits` (2 cases) | A duplicate with another label writes one `teacher_checks` row (`agree` 0, source `duplicate`, epoch 1), marks the row contested and keeps the stored label; `dataset.rows` leaves it out of the train and the golden split (`excluded_contested`), and keeps it with `exclude_contested=False` |
+| `test_the_same_label_is_an_agreeing_check` | Other reply text with the same fields is an agreeing check; the row stays in training |
+| `test_free_text_pinned_and_unregistered_tasks_write_no_check` (3 cases) | `default` (no fields), `research-plan` (pinned, INV-10) and an unregistered name are never checked or contested |
+| `test_labels_that_needed_redaction_are_never_checked` | A stored or a new label with placeholders writes no check (INV-12); a clean re-test of a clean stored label still does |
+| `test_first_re_test_rule_one_check_per_request_per_epoch` | Ten re-labels in one epoch give one check; an ack and a model change each allow one more |
+| `test_a_contested_or_adjudicated_label_is_never_compared_again` | After an ack, a contested label and an adjudicated one (UNCHECKABLE) are compared by no duplicate and offered to no probe; only adjudication lifts a quarantine |
+| `test_labels_from_another_teacher_or_sampled_labels_are_not_compared` | Another configured teacher's label and a label sampled above temperature 0, stored or as a re-test, are not compared; sampled rows are UNCHECKABLE and never probe candidates |
+| `test_a_stored_label_the_current_spec_refuses_is_not_compared` | A stored label a tightened spec refuses is no evidence about the teacher |
+| `test_router_stores_sampled_teacher_answers_as_uncheckable` | `comparable_label`: temperature 0 (or unset) without a reasoning effort only; the router stores a sampled answer as UNCHECKABLE and checks two greedy ones |
+| `test_the_freeze_rule_rarely_alarms_when_the_teacher_is_within_its_noise` (2 cases) | Ville's bound by seeded Monte Carlo: 300 runs of 400 checks over 10 days at 5% and 3% disagreement alarm in at most 1% plus three standard errors |
+| `test_the_freeze_rule_catches_a_teacher_four_times_too_noisy_within_300_checks` | Power: at 20% every run alarms within 300 checks, the median under 100 |
+| `test_reusing_a_stored_label_breaks_the_guarantee_the_first_re_test_keeps` | Requests whose two draws disagree exactly 5% of the time: comparing the stored label with ten re-tests alarms in over 15% of runs (about 30%); the first re-test alone stays within the bound |
+| `test_day_restarts_catch_a_teacher_that_changes_mid_epoch` | After 400 agreeing checks over 14 days, 15% disagreement alarms within 150 checks with the day mixture; a single e-process does not within 200 |
+| `test_evidence_is_a_mixture_over_day_starts_whose_weights_sum_to_one` | The weights 1/(j(j+1)) sum to 1; `evidence` equals the hand-computed mixture (days without checks share the next day's counts; order and repeated days do not matter); a younger epoch weighs a later stretch more |
+| `test_the_ceiling_bounds_any_students_agreement_at_full_coverage` | `self_agreement` and `ceiling` on known distributions; max p ≤ sqrt(sum p²) on 2,000 random distributions and E[max p] ≤ sqrt(E[a]); `summary` |
+| `test_the_golden_gate_warns_when_the_floor_is_above_the_ceiling` | FR-6.43: 30 of 40 agreeing checks write an advisory `warning` naming the ceiling, the floor and the counts, and the candidate is still admitted; 29 checks, or the watch off, write none |
+| `test_the_gate_freezes_night_school_once_and_an_ack_resumes_it` | FR-6.42, NFR-57: 12 of 40 disagreeing checks freeze it with one `teacher_drift` event; a second process finds it frozen and writes none; a quiet tick reads two SELECTs; an ack from the other process starts epoch 2, unfreezes and resets the gate's counts |
+| `test_the_watch_switch_turns_off_every_action` | `teacher_watch=0`: no freeze, the checks still reported |
+| `test_policy_checks_the_teacher_watch_fields` | The alphas and the switch are refused out of range, naming the variable |
+| `test_settings_check_the_nightly_limits` | `RATCHET_TEACHER_PROBES` and `RATCHET_ADJUDICATE_MAX` from 0 to 10,000, whole numbers; `Ratchet` stops on a bad one |
+| `test_a_changed_teacher_model_id_writes_one_event_and_starts_an_epoch` | One `teacher_model_changed` event and epoch 2 when the reported id changes (empty ids ignored); a restarted router reads the id from `meta`; a 500-character id is kept to 200 |
+| `test_a_teacher_alternating_between_two_model_ids_starts_one_epoch` | Twenty responses alternating between two ids write one event; a third id one more; an ack keeps only the last id, so the other is new again |
+| `test_a_ledger_that_refuses_the_model_id_never_fails_the_teachers_answer` | A locked ledger in `teacher_model_seen` still serves the answer; the next response records the id |
+| `test_the_fallback_teachers_model_id_is_not_watched` | A fallback teacher's answer records no id and no event |
+| `test_concurrent_requests_see_a_model_change_once` | 16 threads that all see a new id write one event and one epoch |
+| `test_probes_re_ask_unchecked_stored_labels_in_hash_order_as_first_re_tests` | FR-5.40: only checkable rows are candidates, in hash order; two probes ask under the stored conditions, record `probe` checks, contest a disagreement and write the `teacher_watch` event; a later duplicate of a probed row is no check |
+| `test_a_probe_answer_that_could_not_be_stored_is_no_check` | `usable_label` (reasoning stripped; cut off, invalid or needing a placeholder refused, INV-16, INV-12); such a probe is counted unusable, writes no check and a quiet night no event |
+| `test_adjudication_two_of_three_resolves_and_one_one_one_stays_contested` | FR-5.41: the stored label kept, a 2-of-3 majority replacing it, and two without a majority left UNRESOLVED; resolved labels are UNCHECKABLE; provenance, license and redactions unchanged (INV-1, INV-2); `majority` |
+| `test_labels_never_adjudicated_go_before_unresolved_ones` | A fresh contested label is adjudicated before three unresolved ones |
+| `test_a_failing_teacher_stops_the_nights_watch_work_but_not_the_night` | A connection error stops probes and adjudication; the event names the class, never the message |
+| `test_a_frozen_watch_skips_the_night_before_any_teacher_call` | INV-5: a frozen night writes `skip` and makes no teacher call or training; after an ack it trains on every row that is not contested |
+| `test_probes_run_while_a_release_is_in_flight_but_nothing_trains` | Probes are evidence: they run during a shadow, and the night still skips training |
+| `test_the_bom_records_the_teachers_self_agreement_and_the_labels_left_out` | The BOM's `teacher` section; with the watch off no section and the contested rows trained on |
+| `test_unreadable_meta_values_fall_back_and_the_module_check_freezes` | An epoch, a day or a list of ids in `meta` that does not parse reads as its default; `teacher_watch.check` freezes once without a gate |
+| `test_concurrent_duplicates_give_one_check_per_epoch` | Eight threads adding 200 duplicates write one check; a probe and a duplicate from two connections to one file check an example once; a bad source is refused |
+| `test_an_old_file_gains_the_columns_and_its_rows_are_checked` | A v0.4 examples table gains `contested` and `checked_epoch` (0) and its rows are checked; the state defaults to epoch 1, not frozen, day 1 |
+| `test_redaction_placeholders_never_create_false_disagreements` | Two tickets that differ only in an email address share one stored row; their different labels write no check |
+| `test_mock_teacher_noise_is_reproducible_and_absent_at_zero` | Noise 0 draws nothing; 0.15 changes about 15% of first labels, the same in two instances; 1.0 always changes the category to another valid one and never the priority |
+| `test_teacher_endpoints_report_and_ack_in_mock_mode` | `GET /ratchet/teacher`'s keys and sources, the demo fault (400 or 422 outside 0 to 1), a noisy cold-start day freezing it, the `teacher_watch` block of `/ratchet/stats`, the ack (`mock-admin`) and a fresh epoch |
+| `test_teacher_ack_needs_an_admin_key_in_live_mode` | INV-8, INV-13: in live mode the ack is 403 without admin keys, 401 without a key, 403 with an API key, and works with an admin key (its name in the event, never the key); the demo fault is mock-only; `GET /ratchet/teacher` is public |
+| `test_sim_a_teacher_noisy_from_day_3_freezes_night_school` | FR-9.1: seed 2, 6 days of 1,000 tickets, noise 0.15 from day 3: one `teacher_drift` on day 3 or later, no training after it, the strongest stretch from day 3 or later; the table's teacher line |
+| `test_sim_a_stable_teacher_moves_no_number` | NFR-57: the same run at noise 0 with the watch on and off has the same days, versions and events, no teacher event, and more than 50 checks, none disagreeing |
+| `test_the_reference_run_has_checks_and_no_teacher_event` | The pinned reference run checks the teacher (over 100 checks, no disagreement, e-value below 1) and writes no teacher event |
+| `test_sim_never_freezes_a_stable_teacher_full_size` | Slow: five seeds of 10 days at 2,000 a day never freeze a stable teacher |
+
 ## Live-path tests
 
 Live mode, the training job, the day-1 check, the Scout CLI and the deploy scripts would otherwise run for the first time on paid Nebius resources. `tests/test_live.py` runs each of them offline first, through seams that are default arguments, so production code passes nothing and talks to the real services:
@@ -794,6 +847,21 @@ Simulation, mock models ([ADR 0032](adr/0032-label-free-drift-alarm.md)). With t
 The reference run (seed 7, with the corrupted v3) alarms on v1 on day 5 as well; the corrupted v3 is no traffic change and raises none (its rollback is the audits' job). At 600 requests a day seeds 7 and 11 do not alarm within two days of the launch, and the mixed and research workloads (seed 7, 1,500 a day) raise none in 8 days: power depends on the volume per stream and on how far confidence falls.
 
 The ticket numbers above are the same as in v0.1. Adding the research world did not change the random draws for tickets ([sim/CLAUDE.md](../sim/CLAUDE.md)).
+
+### The teacher watch (10 days, 2,000/day, ticket workload, launch on day 5)
+
+Simulation, mock models ([ADR 0033](adr/0033-teacher-watch.md)). `--teacher-noise 0.15 --teacher-noise-day 5`: from day 5 the mock teacher changes a ticket's category with probability 0.15. The freeze and what the epoch's checks saw by the end; without the noise, none:
+
+| Seed | `teacher_drift` (Night School frozen from) | Checks: duplicates / probes | Disagreements | Strongest stretch | Without the noise |
+|---|---|---|---|---|---|
+| 1 | day 7 | 244 / 140 | 17 | 17 of 95 from day 5 | no freeze, 0 of 445 disagree |
+| 2 | day 6 | 264 / 100 | 13 | 13 of 57 from day 5 | no freeze, 0 of 456 |
+| 3 | day 6 | 256 / 120 | 17 | 17 of 74 from day 5 | no freeze, 0 of 456 |
+| 7 | day 7 | 251 / 120 | 19 | 19 of 73 from day 5 | no freeze, 0 of 451 |
+| 11 | day 6 | 269 / 120 | 16 | 16 of 74 from day 5 | no freeze, 0 of 463 |
+| 23 | day 5 | 248 / 100 | 15 | 15 of 51 from day 5 | no freeze, 0 of 449 |
+
+Most checks come free from duplicates, but after the first days the student serves most repeats, so the probes (20 a night) find about as many disagreements as the traffic does. With the noise off, a run with the watch on has the same days, versions and events as one with it off (`test_sim_a_stable_teacher_moves_no_number`), and the reference run and the three pinned workloads do not move.
 
 ### Workloads: research and mixed
 

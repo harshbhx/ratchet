@@ -4,6 +4,7 @@
     python -m sim.simulate --workload research   # Scout's triage + read calls
     python -m sim.simulate --bad-deploy-version 3 --compare-release   # Wilson vs the anytime-valid gate, same seed
     python -m sim.simulate --calibration ltt --paired-gate   # certified thresholds and the paired gate (ADR 0026)
+    python -m sim.simulate --teacher-noise 0.15 --teacher-noise-day 3   # an unstable teacher from day 3 (ADR 0033)
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -26,6 +27,7 @@ from ratchet.ledger import Ledger
 from ratchet.nightschool.orchestrate import run_night
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
+from ratchet.teacher_watch import Relabel, relabel_with
 
 from .mock_models import MockFleet, MockTeacher
 from .world import WORKLOADS, make_stream, night_task
@@ -68,6 +70,7 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
         drift_alarm=getattr(args, "drift_alarm", 100.0),
         drift_audit_boost=getattr(args, "drift_boost", 1.0),
         drift_early_night=int(bool(getattr(args, "drift_early_night", False))),
+        teacher_watch=int(getattr(args, "teacher_watch", 1)),
     )
     gate = ReleaseGate(ledger, policy)
     ratchet.audit_boost = gate.audit_boost  # the drift audit boost (FR-6.40): empty unless --drift-boost is above 1
@@ -90,14 +93,33 @@ def rollbacks(ledger: Ledger, served: dict[int, int]) -> list[dict[str, Any]]:
     return out
 
 
+def relabel(settings: Settings, ratchet: Ratchet) -> Relabel:
+    """Night School's teacher-watch probes and adjudications (FR-5.40, FR-5.41) against the simulation's mock teacher,
+    as the mock gateway runs them. At teacher noise 0 every answer matches its stored label, so no number moves."""
+    probes, adjudicate = settings.teacher_watch_limits()
+    return relabel_with(
+        ratchet.teacher,
+        settings.teacher_model,
+        ratchet.gen,
+        probes,
+        adjudicate,
+        redact_pii=settings.redact_pii,
+        price=settings.price(settings.teacher_model),
+    )
+
+
 def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
     settings, ledger, fleet, ratchet, gate = build(args, db)
     policy = settings.cost_policy()  # GPU rates and the simulated endpoint's hours a day (RATCHET_MOCK_ENDPOINT_HOURS)
     workload = getattr(args, "workload", "tickets")
     stream = make_stream(workload, seed=args.seed, drift_day=args.drift_day)
+    watch = relabel(settings, ratchet)
+    noise, noise_day = getattr(args, "teacher_noise", 0.0), getattr(args, "teacher_noise_day", 1)
     nights = []
     for day in range(1, args.days + 1):
         ledger.day = day
+        if noise and day >= noise_day:  # an unstable teacher from this day on (fault injection, ADR 0033)
+            ratchet.teacher.noise = noise
         ticks = max(1, args.requests // 10)
         for i in range(args.requests):
             t = stream.sample(day)
@@ -113,6 +135,7 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
             min_new_examples=args.min_new,
             task=night_task(workload),
             redact_pii=settings.redact_pii,
+            relabel=watch,
         )
         # The day's simulated compute on the synthetic clock: writes compute intervals only, so no other number moves.
         trained = ledger.version(rep.version) if rep.trained and rep.version is not None else None
@@ -135,6 +158,8 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "served": served,
         # The drift monitor's streams and alarms (FR-16.6, ADR 0032); simulation, mock models.
         "drift": gate.drift_status(),
+        # The teacher watch's checks, contested labels and freeze (FR-16.7, ADR 0033); simulation, mock models.
+        "teacher": gate.teacher_status(),
     }
 
 
@@ -207,6 +232,15 @@ def table(res: dict) -> str:
         lines.append(
             f"\ndrift (simulation, mock models): {drift['monitored']} streams at threshold {drift['threshold']:g} "
             f"(false alarm <= {each} each, <= {family} in all); alarms: {where}"
+        )
+    teacher = res.get("teacher")
+    if teacher and teacher["checks"]:  # the teacher watch (ADR 0033), labelled as simulation
+        agree = "-" if teacher["self_agreement"] is None else f"{teacher['self_agreement']:.1%}"
+        lines.append(
+            f"\nteacher watch (simulation, mock models): epoch {teacher['epoch']}, {teacher['checks']} first re-tests, "
+            f"{teacher['disagreements']} disagree (self-agreement {agree}, e-value {teacher['e_value']:.3g} vs "
+            f"{teacher['threshold']:.0f}); {teacher['contested']} labels contested; "
+            f"{'Night School frozen' if teacher['frozen'] else 'not frozen'}"
         )
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
@@ -285,6 +319,20 @@ def parser() -> argparse.ArgumentParser:
         help="after a drift alarm, Night School trains on half the usual new examples",
     )
     ap.add_argument(
+        "--teacher-noise",
+        type=float,
+        default=0.0,
+        help="fault injection: from --teacher-noise-day, the mock teacher changes a label with this probability (0 = never)",
+    )
+    ap.add_argument("--teacher-noise-day", type=int, default=1, help="the day the mock teacher becomes noisy")
+    ap.add_argument(
+        "--teacher-watch",
+        type=int,
+        choices=(0, 1),
+        default=1,
+        help="the teacher watch: quarantine, freeze, ceiling warning, probes and adjudication (0 = off; checks still recorded)",
+    )
+    ap.add_argument(
         "--compare-release",
         action="store_true",
         help="run twice with the same seed, once per --release rule, and compare the rolled-back versions",
@@ -313,6 +361,10 @@ def main(argv: list[str] | None = None) -> None:
         ap.error(f"--drift-boost must be 1 or more, not {args.drift_boost}")
     if args.drift_alarm == 0 and (args.drift_boost > 1 or args.drift_early_night):
         ap.error("--drift-boost and --drift-early-night act on drift alarms; --drift-alarm 0 turns the monitor off")
+    if not 0 <= args.teacher_noise <= 1:
+        ap.error(f"--teacher-noise must be from 0 to 1, not {args.teacher_noise}")
+    if args.teacher_noise_day < 1:
+        ap.error(f"--teacher-noise-day must be 1 or more, not {args.teacher_noise_day}")
     if args.compare_release:
         results = compare_release(args)
         print(compare_table(results))

@@ -1311,8 +1311,6 @@ def test_committed_leaves_and_sealed_receipts_are_append_only():
 
 # A value other than the default for every reserved setting (config.RESERVED_SETTINGS).
 RESERVED_ENV = {
-    "RATCHET_TEACHER_PROBES": "5",
-    "RATCHET_ADJUDICATE_MAX": "7",
     "RATCHET_TAKE_RATE": "0.3",
     "RATCHET_RECEIPT_MIN_AUDITS": "40",
     "RATCHET_MOCK_TEACHER_REASONING_MEAN": "420",
@@ -1353,29 +1351,36 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
         Settings()
 
 
-# A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY).
-RESERVED_POLICY_ENV = {
-    "teacher_noise_max": "0.1",
-    "alpha_teacher": "0.05",
-}
+# A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY). Every field
+# declared for the evidence features is built now; the check stays for the next one.
+RESERVED_POLICY_ENV: dict[str, str] = {}
 
 
 def test_reserved_release_policy_fields_stop_startup(monkeypatch):
+    from ratchet import release
     from ratchet.release import RESERVED_POLICY
 
     assert set(RESERVED_POLICY_ENV) == set(RESERVED_POLICY)
     for name in RESERVED_POLICY:
         monkeypatch.delenv(f"RATCHET_{name.upper()}", raising=False)
     assert ReleasePolicy.from_env() == ReleasePolicy()
-    monkeypatch.setenv("RATCHET_ALPHA_TEACHER", "0.01")  # the default, set explicitly
+    monkeypatch.setenv("RATCHET_ALPHA_TEACHER", "0.05")  # the teacher watch's fields are no longer reserved (ADR 0033)
+    monkeypatch.setenv("RATCHET_TEACHER_NOISE_MAX", "0.1")
     monkeypatch.setenv("RATCHET_DRIFT_ALARM", "100")
-    assert ReleasePolicy.from_env() == ReleasePolicy()
+    assert ReleasePolicy.from_env() == ReleasePolicy(alpha_teacher=0.05, teacher_noise_max=0.1)
     for name, value in RESERVED_POLICY_ENV.items():
         env = f"RATCHET_{name.upper()}"
         monkeypatch.setenv(env, value)
         with pytest.raises(ValueError, match=f"{env}.*no effect yet"):
             ReleasePolicy.from_env()
         monkeypatch.delenv(env)
+    # The mechanism itself, for the next feature that reserves a field before it is built.
+    monkeypatch.setitem(release.RESERVED_POLICY, "min_audits", "a feature not built yet")
+    monkeypatch.setenv("RATCHET_MIN_AUDITS", "30")
+    with pytest.raises(ValueError, match="RATCHET_MIN_AUDITS=30 has no effect yet.*a feature not built yet"):
+        ReleasePolicy.from_env()
+    monkeypatch.setenv("RATCHET_MIN_AUDITS", "20")  # its default: fine
+    assert ReleasePolicy.from_env().min_audits == 20
 
 
 @pytest.mark.parametrize(

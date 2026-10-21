@@ -28,6 +28,11 @@ Every decision is computed from two integers per version (audits, agreements), s
 Each tick starts with the label-free drift monitor (FR-16.6, ADR 0032): a conformal test martingale on every version's
 own confidence stream, read from the ledger. It decides no release; an alarm writes a `drift` event and suspends the
 version's certificate, and opt-in it boosts that version's audits and lets Night School train sooner.
+
+Each tick ends with the teacher watch (FR-16.7, FR-6.42, ADR 0033): when the teacher's labels disagree with earlier labels
+of the same requests too often (an e-process over the epoch's first re-tests), Night School is frozen until an operator
+acknowledges. The golden gate also warns when the teacher agrees with itself too little for any student to reach the
+precision floor at full coverage (FR-6.43). Neither changes a release decision.
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
-from . import certificate
+from . import certificate, teacher_watch
 from .drift import Alarm, DriftMonitor
 from .ledger import Ledger, Version
 from .stats import LOG_E_CAP, confidence_sequence, cp_lower, e_bernoulli, log_e_bernoulli, wilson  # `release.wilson` too
@@ -53,11 +58,8 @@ _PROMOTION_SEARCH = 100_000
 # ReleasePolicy fields declared for the evidence features (ADR 0024) before the items that read them are built: field ->
 # the feature. Their defaults keep today's decisions; until a feature lands, any other value stops startup (from
 # `ReleasePolicy.__post_init__`), so nobody relies on a rule that does nothing yet. The item that builds a feature
-# removes its fields here.
-RESERVED_POLICY: dict[str, str] = {
-    "teacher_noise_max": "the teacher watch (FR-16.7)",
-    "alpha_teacher": "the teacher watch (FR-16.7)",
-}
+# removes its fields here; every declared feature is built now, and the check stays for the next one.
+RESERVED_POLICY: dict[str, str] = {}
 
 
 @dataclass
@@ -97,9 +99,13 @@ class ReleasePolicy:
     drift_alarm: float = 100.0
     drift_audit_boost: float = 1.0
     drift_early_night: int = 0
-    # The teacher watch (FR-16.7): the disagreement rate it tolerates and its error rate.
+    # The teacher watch (FR-16.7, ADR 0033): the rate at which a fresh teacher label may disagree with an earlier label
+    # of the same request (H0), the freeze's error rate (Night School stops when the e-value reaches 1/alpha_teacher,
+    # FR-6.42), and the switch (0 = no quarantine, no freeze, no ceiling warning, no probes or adjudications; checks are
+    # still recorded).
     teacher_noise_max: float = 0.05
     alpha_teacher: float = 0.01
+    teacher_watch: int = 1
 
     def __post_init__(self) -> None:
         def bad(name: str, value: object, want: str) -> ValueError:
@@ -115,10 +121,18 @@ class ReleasePolicy:
         for name in ("min_precision", "min_coverage", "tolerance", "min_certified_precision"):
             if not 0 <= getattr(self, name) <= 1:
                 raise bad(name, getattr(self, name), "from 0 to 1")
-        for name in ("live_floor", "alpha_rollback", "alpha_promote", "alpha_alert", "regression_alpha", "teacher_noise_max"):
+        for name in (
+            "live_floor",
+            "alpha_rollback",
+            "alpha_promote",
+            "alpha_alert",
+            "regression_alpha",
+            "teacher_noise_max",
+            "alpha_teacher",
+        ):
             if not 0 < getattr(self, name) < 1:
                 raise bad(name, getattr(self, name), "strictly between 0 and 1")
-        for name in ("sequential", "promote_evidence", "alert_eprocess", "paired_gate", "drift_early_night"):
+        for name in ("sequential", "promote_evidence", "alert_eprocess", "paired_gate", "drift_early_night", "teacher_watch"):
             if getattr(self, name) not in (0, 1):
                 raise bad(name, getattr(self, name), "0 or 1")
         if not 0 < self.max_nfr <= 1:
@@ -211,6 +225,8 @@ class ReleaseGate:
         # Alarms whose `drift` event could not be written yet (the ledger raised); the next check writes them first. The
         # monitor latches an alarm when it sees it, so without this a failed write would never be retried.
         self._unwritten: list[Alarm] = []
+        # The teacher watch's running counts of the current epoch (FR-16.7, ADR 0033), read by `_tick_watchers`.
+        self.teacher = teacher_watch.Watch()
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
@@ -218,9 +234,13 @@ class ReleaseGate:
         when set); then no regression against the live version: row by row with `paired_gate=1` and the candidate's
         paired comparison against that live version (`_paired_regression`), else on the two point estimates within
         `tolerance`. With the defaults this is v0.4's gate exactly; events only append the paired counts and the
-        certificate."""
+        certificate. Before any rule, an advisory `warning` when the teacher agrees with itself too little for any student
+        to reach `min_precision` at full coverage (FR-6.43, `teacher_watch.ceiling_warning`); it decides nothing."""
         p, v = self.policy, self.ledger.version(vid)
         assert v is not None
+        ceiling = teacher_watch.ceiling_warning(self.ledger, p)
+        if ceiling:
+            self.ledger.event("warning", f"v{v.id}: {ceiling}")
         prec, cov = v.eval.get("precision", 0.0), v.eval.get("coverage", 0.0)
         live = self.ledger.live()
         if prec < p.min_precision:
@@ -577,7 +597,20 @@ class ReleaseGate:
         }
 
     def _tick_watchers(self) -> None:
-        """The teacher watch (FR-16.7) will check here, last. Nothing yet."""
+        """The teacher watch (FR-16.7, FR-6.42, ADR 0033), last: the current epoch's new checks are added to the running
+        counts (`check_teacher`), and when their e-value reaches 1/alpha_teacher Night School is frozen with one
+        `teacher_drift` event. It changes no release decision."""
+        self.check_teacher()
+
+    def check_teacher(self) -> str | None:
+        """Freeze Night School when the teacher's labels disagree with earlier labels of the same requests too often
+        (`teacher_watch.Watch.check`); returns the `teacher_drift` event's text when this call froze it. Night School
+        calls it too, right after its probes. None while RATCHET_TEACHER_WATCH=0."""
+        return self.teacher.check(self.ledger, self.policy)
+
+    def teacher_status(self) -> dict[str, Any]:
+        """`GET /ratchet/teacher` (`teacher_watch.status`)."""
+        return teacher_watch.status(self.ledger, self.policy)
 
 
 def _paired_counts(pair: object, live_id: int) -> dict[str, Any] | None:

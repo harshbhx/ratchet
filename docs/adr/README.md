@@ -31,5 +31,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0025](0025-anytime-valid-release-gate.md) | Anytime-valid release gate: e-process rollback, evidence-based promotion and confidence sequences from two integers per version | Accepted | 2026-10-20 |
 | [0026](0026-certified-thresholds-and-a-paired-release-gate.md) | Certified thresholds and a paired release gate: Clopper–Pearson certificates and a frontier in every BOM, opt-in Learn-then-Test and an exact paired champion/challenger gate | Accepted | 2026-10-20 |
 | [0032](0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions | Accepted | 2026-10-21 |
+| [0033](0033-teacher-watch.md) | Teacher watch: free self-consistency checks with a first-re-test rule, quarantine and adjudication, a training freeze by e-process, and the sqrt(A) ceiling | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 from . import tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
@@ -244,6 +244,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
+    # The teacher watch's quarantine (FR-16.7): the contested rows by task without a scan of every example.
+    "CREATE INDEX IF NOT EXISTS examples_contested ON examples (contested, task)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
@@ -251,6 +253,26 @@ _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\
 # each of them.
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
+
+# The teacher watch (FR-16.7, ADR 0033). Its ledger-wide state is in `meta` under these keys: the check epoch (1 until the
+# first ack or model change), the ledger day it started (unset for epoch 1, which starts on day 1), whether Night School
+# is frozen ('1'), the model id the teacher's responses last reported, and the ids reported since the epoch started (a
+# JSON list, at most MAX_EPOCH_MODEL_IDS), so a teacher that alternates between two ids starts one epoch, not one per
+# response.
+TEACHER_EPOCH, TEACHER_EPOCH_DAY = "teacher_epoch", "teacher_epoch_day"
+TEACHER_FROZEN, TEACHER_MODEL = "teacher_frozen", "teacher_model"
+TEACHER_MODEL_IDS = "teacher_model_ids"
+MAX_EPOCH_MODEL_IDS = 8
+# `examples.checked_epoch` of a label that is not one independent greedy teacher answer: sampled above temperature 0 (or
+# under a client's reasoning effort), where two labels of one request may differ by design, or chosen by an adjudication
+# (a majority picked after a disagreement). It is never compared with another label again, nor probed.
+UNCHECKABLE = -1
+# `examples.contested`: 0 clean; CONTESTED when a re-test disagreed (quarantined until adjudicated); UNRESOLVED when an
+# adjudication found no strict majority (still quarantined, adjudicated again after the CONTESTED rows).
+CONTESTED, UNRESOLVED = 1, 2
+CHECK_SOURCES = ("duplicate", "probe")  # teacher_checks.source: a stored request's first re-test, or a Night School probe
+MAX_MODEL_ID = 200  # characters of a response's model id kept in `meta` and events (the upstream chooses the string)
+_META_UPSERT = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
 
 DAY_SECONDS = 86400
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
@@ -275,6 +297,23 @@ def _check_ts(ts: float, what: str) -> float:
     if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(ts):
         raise ValueError(f"{what} must be a finite number of seconds, not {ts!r}")
     return float(ts)
+
+
+class TeacherState(NamedTuple):
+    """The teacher watch's ledger-wide state (`Ledger.teacher_state`)."""
+
+    epoch: int  # the check epoch, 1 or more
+    frozen: bool  # Night School stops training until an operator acknowledges
+    since_day: int  # the ledger day the epoch started
+
+
+def _epoch(value: object) -> int:
+    """A check epoch read from `meta`: a whole number of at least 1; 1 when it is unset or unreadable."""
+    try:
+        epoch = int(str(value))
+    except ValueError:
+        return 1
+    return max(1, epoch)
 
 
 def _locked(fn):
@@ -588,11 +627,18 @@ class Ledger:
         license_url: str,
         redactions: int = 0,
         params: Mapping[str, Any] | None = None,
+        *,
+        comparable: bool = True,
     ) -> bool:
         """Store a teacher-labelled example. Returns False if it was a duplicate.
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
-        under other conditions are another example, in the same split (`_split`)."""
+        under other conditions are another example, in the same split (`_split`).
+
+        The teacher watch (FR-16.7, ADR 0033): a duplicate whose label and stored label both need no redaction and come
+        from the same teacher is the stored request's re-test, and its first one in the current check epoch is compared
+        with the stored label (`_check_label`). `comparable` is False for a label the teacher sampled above temperature 0
+        or under a client's reasoning effort: such a label is stored as UNCHECKABLE, and as a re-test it is not compared."""
         target = target_params(params)
         h = example_hash(task, messages, target)
         split = self._split(example_hash(task, messages) if target else h)  # without conditions, h is the split key
@@ -615,10 +661,14 @@ class Ledger:
                     json.dumps(target, ensure_ascii=False) if target else None,
                 ),
             )
+            if not comparable:  # a sampled label is no reference for a later one (the teacher watch)
+                self.db.execute("UPDATE examples SET checked_epoch=? WHERE hash=?", (UNCHECKABLE, h))
             self.db.commit()
             return True
         except sqlite3.IntegrityError:
             self.db.execute("UPDATE examples SET seen = seen + 1 WHERE hash=?", (h,))
+            if comparable and not redactions:  # the stored request's re-test (FR-16.7)
+                self._check_label(h, completion, teacher_model, "duplicate")
             self.db.commit()
             return False
 
@@ -668,6 +718,286 @@ class Ledger:
             "SELECT COUNT(*) n, SUM(redactions > 0) redacted, COALESCE(SUM(redactions), 0) placeholders FROM examples"
         ).fetchone()
         return {"examples": int(r["n"]), "redacted_examples": int(r["redacted"] or 0), "placeholders": int(r["placeholders"])}
+
+    # ---------- the teacher watch (FR-16.7, ADR 0033) ----------
+    def _teacher_epoch(self) -> int:
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_EPOCH,)).fetchone()
+        return _epoch(r["value"] if r is not None else None)
+
+    def _check_label(self, h: str, completion: str, teacher_model: str, source: str) -> bool | None:
+        """Compare a new label of stored example `h` with its stored label, if this is the example's first re-test in the
+        current check epoch, and record the outcome: a `teacher_checks` row, `checked_epoch` set to the epoch, and
+        `contested` set when they disagree. Returns whether they agree, or None when no check ran.
+
+        A check runs only when both labels can be compared: the stored one needs no redaction (a placeholder could make
+        two different raw requests share one redacted text), it was written by the same configured teacher, it is not
+        UNCHECKABLE or contested (a label a re-test already disagreed with was selected by that disagreement, so it is no
+        independent draw any more), and its task is registered, names fields (`Task.verifiable`), is not pinned, and
+        finds both labels valid under its current spec (a stored label the spec refuses now says nothing about the
+        teacher). The caller checks the new label's redactions. At most one check per example per epoch keeps the checks
+        of an epoch valid as an e-process: every check compares two independent draws, never a re-used stored label with
+        a second re-test. Runs inside the caller's transaction."""
+        row = self.db.execute(
+            "SELECT task, completion, teacher_model, redactions, checked_epoch, contested FROM examples WHERE hash=?", (h,)
+        ).fetchone()
+        if row is None or row["redactions"] or row["contested"] or row["teacher_model"] != teacher_model:
+            return None
+        epoch = self._teacher_epoch()
+        done = int(row["checked_epoch"] or 0)
+        if done < 0 or done >= epoch:  # UNCHECKABLE, or already re-tested in this epoch
+            return None
+        task = tasks.lookup(row["task"])
+        if task is None or task.pinned or not task.verifiable:
+            return None
+        try:
+            stored, new = task.key(row["completion"]), task.key(completion)
+            if stored is tasks.NO_KEY or new is tasks.NO_KEY:
+                return None
+            agree = bool(task.match(stored, new))
+        except Exception:  # noqa: BLE001 - a comparison that fails is no check; never fail the write it rides on
+            return None
+        self.db.execute(
+            "INSERT INTO teacher_checks (ts, day, epoch, task, source, agree, model) VALUES (?,?,?,?,?,?,?)",
+            (time.time(), self.day, epoch, row["task"], source, int(agree), teacher_model),
+        )
+        self.db.execute("UPDATE examples SET checked_epoch=?, contested=? WHERE hash=?", (epoch, 0 if agree else CONTESTED, h))
+        return agree
+
+    @_locked
+    def record_teacher_check(self, h: str, completion: str, teacher_model: str, source: str = "probe") -> bool | None:
+        """`_check_label` in its own transaction, for a label that is not stored (a Night School probe): whether it agrees
+        with stored example `h`'s label, or None when no check ran (already re-tested this epoch, not comparable). The
+        check and its writes are one transaction, so the gateway storing a duplicate at the same time cannot add a second
+        check of the same example to the epoch."""
+        if source not in CHECK_SOURCES:
+            raise ValueError(f"source must be one of {', '.join(CHECK_SOURCES)}, not {source!r}")
+        self._begin()
+        try:
+            agree = self._check_label(h, completion, teacher_model, source)
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return agree
+
+    @_locked
+    def meta_set(self, key: str, value: str) -> None:
+        """Set the `meta` table's `key` to `value` (`meta_value` reads it)."""
+        self.db.execute(_META_UPSERT, (key, value))
+        self.db.commit()
+
+    @_locked
+    def teacher_state(self) -> TeacherState:
+        """The teacher watch's check epoch, whether Night School is frozen, and the day the epoch started, in one query
+        of `meta`."""
+        keys = (TEACHER_EPOCH, TEACHER_FROZEN, TEACHER_EPOCH_DAY)
+        got = {r["key"]: r["value"] for r in self.db.execute("SELECT key, value FROM meta WHERE key IN (?, ?, ?)", keys)}
+        try:
+            since = int(str(got.get(TEACHER_EPOCH_DAY, 1)))
+        except ValueError:
+            since = 1
+        return TeacherState(_epoch(got.get(TEACHER_EPOCH)), got.get(TEACHER_FROZEN) == "1", since)
+
+    def _new_epoch(self, kind: str, detail: str, unfreeze: bool, model_ids: list[str]) -> int:
+        """Start the next check epoch, today, with `model_ids` as the ids reported in it so far, and write event `kind`
+        (its `detail` may use `{epoch}`), inside the caller's transaction. Returns the new epoch."""
+        epoch = self._teacher_epoch() + 1
+        self.db.execute(_META_UPSERT, (TEACHER_EPOCH, str(epoch)))
+        self.db.execute(_META_UPSERT, (TEACHER_EPOCH_DAY, str(self.day)))
+        self.db.execute(_META_UPSERT, (TEACHER_MODEL_IDS, json.dumps(model_ids[-MAX_EPOCH_MODEL_IDS:])))
+        if unfreeze:
+            self.db.execute(_META_UPSERT, (TEACHER_FROZEN, "0"))
+        self.db.execute(
+            "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)",
+            (time.time(), self.day, kind, detail.format(epoch=epoch)),
+        )
+        return epoch
+
+    def _epoch_model_ids(self) -> list[str]:
+        """The model ids reported since the current epoch started (`TEACHER_MODEL_IDS`); [] when unset or unreadable."""
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL_IDS,)).fetchone()
+        try:
+            ids = json.loads(r["value"]) if r is not None and r["value"] else []
+        except ValueError:
+            return []
+        return [str(i) for i in ids] if isinstance(ids, list) else []
+
+    @_locked
+    def teacher_model_seen(self, model: str) -> str | None:
+        """Record the model id a primary-teacher response reported. When it is an id not yet reported in the current
+        epoch and differs from the last one recorded, start a new check epoch with a `teacher_model_changed` event and
+        return the previous id; the first id ever seen is only recorded. An id already reported in this epoch (a teacher
+        alternating between two backends) only becomes the last one: one epoch and one event per new id, not one per
+        response. None otherwise (and for an empty id). One transaction, so two processes that see the change write one
+        event and one new epoch."""
+        model = model[:MAX_MODEL_ID] if isinstance(model, str) else ""
+        if not model:
+            return None
+        self._begin()
+        try:
+            r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL,)).fetchone()
+            before = str(r["value"]) if r is not None and r["value"] else None
+            if before == model:
+                self.db.commit()
+                return None
+            self.db.execute(_META_UPSERT, (TEACHER_MODEL, model))
+            ids = self._epoch_model_ids() or ([before] if before is not None else [])
+            if before is None or model in ids:
+                if model not in ids:
+                    ids.append(model)
+                self.db.execute(_META_UPSERT, (TEACHER_MODEL_IDS, json.dumps(ids[-MAX_EPOCH_MODEL_IDS:])))
+                self.db.commit()
+                return None
+            self._new_epoch(
+                "teacher_model_changed",
+                f"teacher responses now report model {model} (was {before}); check epoch {{epoch}} starts",
+                unfreeze=False,
+                model_ids=[before, model],
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return before
+
+    @_locked
+    def teacher_freeze(self, epoch: int, detail: str) -> bool:
+        """Freeze Night School and write the `teacher_drift` event, unless the epoch moved on since the caller counted
+        (an ack or a model change) or it is frozen already. One transaction, so the gateway and a nightly job that both
+        find the alarm write one event. Returns whether it froze."""
+        self._begin()
+        try:
+            frozen = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_FROZEN,)).fetchone()
+            if self._teacher_epoch() != epoch or (frozen is not None and frozen["value"] == "1"):
+                self.db.commit()
+                return False
+            self.db.execute(_META_UPSERT, (TEACHER_FROZEN, "1"))
+            self.db.execute(
+                "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, "teacher_drift", detail)
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return True
+
+    @_locked
+    def teacher_ack(self, by: str) -> int:
+        """An operator's acknowledgement (`POST /ratchet/teacher/ack`): a new check epoch, Night School unfrozen, and a
+        `teacher_ack` event naming who (an admin key's name, never the key). Returns the new epoch."""
+        self._begin()
+        try:
+            frozen = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_FROZEN,)).fetchone()
+            was = "Night School resumes" if frozen is not None and frozen["value"] == "1" else "Night School was not frozen"
+            last = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL,)).fetchone()
+            ids = [str(last["value"])] if last is not None and last["value"] else []
+            epoch = self._new_epoch(
+                "teacher_ack", f"acknowledged by {by}: check epoch {{epoch}} starts; {was}", unfreeze=True, model_ids=ids
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return epoch
+
+    @_locked
+    def teacher_check_counts(self, epoch: int, by: str = "task") -> dict[str, tuple[int, int]]:
+        """{task (or source, with `by='source'`): (checks, disagreements)} of check epoch `epoch`. One aggregate query."""
+        if by not in ("task", "source"):
+            raise ValueError(f"by must be 'task' or 'source', not {by!r}")
+        rows = self.db.execute(
+            f"SELECT {by} k, COUNT(*) n, COALESCE(SUM(agree = 0), 0) d FROM teacher_checks WHERE epoch=? GROUP BY {by}",
+            (epoch,),
+        )
+        return {str(r["k"]): (int(r["n"]), int(r["d"])) for r in rows}
+
+    @_locked
+    def teacher_check_days(
+        self, epoch: int, after_id: int = 0, *, by_task: bool = False
+    ) -> tuple[int, list[tuple[str, int, int, int]]]:
+        """(the last check id read, [(task, day, checks, disagreements)]) of epoch `epoch`'s checks after id `after_id`,
+        by ledger day (and by task with `by_task`; task '' otherwise), days in order. The release gate keeps the epoch's
+        counts up to date by reading only the new rows: a primary-key range (`+epoch` keeps the planner off the epoch
+        index, which would scan the whole epoch). From the start (`after_id` 0) the epoch index is the short way."""
+        cols, group = ("task, day", "task, day") if by_task else ("'' AS task, day", "day")
+        where = "id > ? AND +epoch = ?" if after_id else "id > ? AND epoch = ?"
+        rows = self.db.execute(
+            f"SELECT {cols}, MAX(id) last, COUNT(*) n, COALESCE(SUM(agree = 0), 0) d FROM teacher_checks"
+            f" WHERE {where} GROUP BY {group} ORDER BY day, task",
+            (after_id, epoch),
+        ).fetchall()
+        last = max((int(r["last"]) for r in rows), default=after_id)
+        return last, [(str(r["task"]), int(r["day"] or 0), int(r["n"]), int(r["d"])) for r in rows]
+
+    @_locked
+    def contested_counts(self) -> dict[str, int]:
+        """{task: stored examples quarantined because a re-test disagreed (`contested`), adjudicated or not}. On the
+        `examples_contested` index."""
+        rows = self.db.execute("SELECT task, COUNT(*) n FROM examples WHERE contested > 0 GROUP BY task")
+        return {str(r["task"]): int(r["n"]) for r in rows}
+
+    @_locked
+    def probe_candidates(self, epoch: int, teacher_model: str, task_names: Iterable[str], limit: int) -> list[sqlite3.Row]:
+        """Up to `limit` stored examples a Night School probe may re-ask (FR-5.40): of the tasks `task_names`, written by
+        `teacher_model`, needing no redaction, not contested and not yet re-tested in epoch `epoch` (UNCHECKABLE rows
+        never), in hash order, so each night takes the next ones and no row is favoured by its content."""
+        names = sorted(set(task_names))
+        if limit <= 0 or not names:
+            return []
+        marks = ",".join("?" * len(names))
+        return list(
+            self.db.execute(
+                "SELECT * FROM examples WHERE redactions = 0 AND COALESCE(contested, 0) = 0 AND checked_epoch >= 0"
+                f" AND checked_epoch < ? AND teacher_model = ? AND task IN ({marks}) ORDER BY hash LIMIT ?",
+                (epoch, teacher_model, *names, limit),
+            )
+        )
+
+    @_locked
+    def contested_examples(self, teacher_model: str, task_names: Iterable[str], limit: int) -> list[sqlite3.Row]:
+        """Up to `limit` contested examples of the tasks `task_names` written by `teacher_model`: what one night
+        adjudicates (FR-5.41). Those never adjudicated come first, oldest first, then the UNRESOLVED ones (no strict
+        majority before), so requests the teacher is split on cannot take every night's adjudications."""
+        names = sorted(set(task_names))
+        if limit <= 0 or not names:
+            return []
+        marks = ",".join("?" * len(names))
+        return list(
+            self.db.execute(
+                f"SELECT * FROM examples WHERE contested > 0 AND teacher_model = ? AND task IN ({marks})"
+                " ORDER BY contested, id LIMIT ?",
+                (teacher_model, *names, limit),
+            )
+        )
+
+    @_locked
+    def resolve_contested(self, h: str, completion: str | None = None) -> bool:
+        """End example `h`'s quarantine after an adjudication: `completion` (the majority teacher answer, already cleaned
+        and needing no redaction) replaces its label when given; its teacher, license and redaction count stay, because
+        the same teacher wrote the majority. The label is UNCHECKABLE from now on: a majority picked after a disagreement
+        is no independent teacher draw, so a later re-test is not compared with it. Only a row that is still contested
+        changes. Returns whether one did."""
+        if completion is None:
+            cur = self.db.execute(
+                "UPDATE examples SET contested = 0, checked_epoch = ? WHERE hash=? AND contested > 0", (UNCHECKABLE, h)
+            )
+        else:
+            cur = self.db.execute(
+                "UPDATE examples SET contested = 0, checked_epoch = ?, completion = ?"
+                " WHERE hash=? AND contested > 0 AND redactions = 0",
+                (UNCHECKABLE, completion, h),
+            )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    @_locked
+    def mark_unresolved(self, h: str) -> bool:
+        """Record that an adjudication of contested example `h` found no strict majority: it stays quarantined, as
+        UNRESOLVED, and later nights adjudicate it after the labels never adjudicated (`contested_examples`). Returns
+        whether a row changed."""
+        cur = self.db.execute("UPDATE examples SET contested = ? WHERE hash=? AND contested > 0", (UNRESOLVED, h))
+        self.db.commit()
+        return cur.rowcount > 0
 
     # ---------- versions ----------
     @_locked
