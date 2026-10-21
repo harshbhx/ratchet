@@ -32,8 +32,12 @@ services:
       - "*"
     expose:
       - "8000"
+    # Recorded live Scout runs (FR-10.40, ADR 0140): committed in evidence/scout, read-only inside the container.
+    environment:
+      RATCHET_SCOUT_RECORDINGS_DIR: /evidence/scout
     volumes:
       - ratchet-data:/data
+      - ../../evidence/scout:/evidence/scout:ro
     restart: unless-stopped
     # On a stop, the gateway finishes its requests, then waits up to RATCHET_SIDECAR_DRAIN_S (10 s) for audits and
     # shadows still queued (live mode, ADR 0072); Docker's default 10 s before SIGKILL would cut that wait short.

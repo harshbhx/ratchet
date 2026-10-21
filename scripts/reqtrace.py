@@ -977,6 +977,15 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-10.20": ("ratchet.scout.guard:Guard.restore", "ratchet.ledger:Ledger.spend_rows"),
     "FR-10.21": ("ratchet.scout.judge:JudgeAccess", "ratchet.gateway:scout_judge"),
     "FR-10.22": ("ratchet.scout.credits:CreditMeter", "ratchet.scout.credits:MeteredSearch", "ratchet.scout.agents:Scout.run"),
+    "FR-10.40": (
+        "ratchet.scout.record:record",
+        "ratchet.scout.record:listing",
+        "ratchet.scout.record:get",
+        "ratchet.scout.__main__:record_main",
+        "ratchet.gateway:scout_recorded",
+        "ratchet.gateway:scout_recorded_one",
+        "web/src/lib/recording-model.ts",
+    ),
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
@@ -1409,6 +1418,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-9": ("ratchet.bom:manifest", "ratchet.nightschool.notices:render", "ratchet.live:publish_bom", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
+    "NFR-71": ("ratchet.scout.record:record", "ratchet.scout.record:get"),
     "NFR-70": ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "ratchet/web/landing.html"),
     "NFR-35": ("ratchet.config:check", "ratchet.gateway:Runtime._check_config", "ratchet.readiness:Readiness.report"),
     # 8.1 Success metrics (ratchet/kpis.py; their targets are checked against the PRD by rule_metric_targets)

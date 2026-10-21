@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { ArrowRight, CircleAlert, Clock, RotateCcw, WifiOff, Wallet } from "lucide-react";
+import { ArrowRight, CircleAlert, Clock, Play, RotateCcw, WifiOff, Wallet } from "lucide-react";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn, fmtMs } from "@/lib/utils";
@@ -251,7 +251,7 @@ export function classifyError(message: string) {
   return { icon: CircleAlert, title: "Scout stopped", retry: true, hint: null as string | null };
 }
 
-export function ErrorAlert({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function ErrorAlert({ message, onRetry, onWatch }: { message: string; onRetry: () => void; onWatch?: () => void }) {
   const c = classifyError(message);
   const Icon = c.icon;
   const text = message.charAt(0).toUpperCase() + message.slice(1);
@@ -270,11 +270,18 @@ export function ErrorAlert({ message, onRetry }: { message: string; onRetry: () 
           {c.hint && <span className="text-muted"> {c.hint}</span>}
         </p>
       </div>
-      {c.retry && (
-        <Button type="button" variant="outline" size="sm" onClick={onRetry} className="self-start">
-          <RotateCcw aria-hidden /> Try again
-        </Button>
-      )}
+      <div className="flex flex-wrap gap-2 self-start">
+        {onWatch && c.title !== "This demo answers the example questions only" && (
+          <Button type="button" size="sm" onClick={onWatch}>
+            <Play aria-hidden /> Watch a recorded live run
+          </Button>
+        )}
+        {c.retry && (
+          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+            <RotateCcw aria-hidden /> Try again
+          </Button>
+        )}
+      </div>
     </motion.div>
   );
 }
