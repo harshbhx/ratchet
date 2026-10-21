@@ -35,6 +35,9 @@ MAX_LOGIT_BIAS = 100
 MAX_METADATA = 16
 MAX_METADATA_KEY = 64
 MAX_METADATA_VALUE = 512
+# `metadata.ratchet_store`, in any case (FR-13.1): "false" or "0" keeps the request's teacher answers out of the
+# training set; "true" or "1" is the default spelled out. Anything else is a 400, so a typo cannot store by accident.
+STORE_METADATA = {"true": True, "1": True, "false": False, "0": False}
 MAX_TOOLS = 128
 MAX_TOOLS_BYTES = 64 * 1024
 MAX_SCHEMA_BYTES = 64 * 1024
@@ -544,7 +547,21 @@ def _metadata(value: Any) -> dict[str, str] | None:
             f"Invalid value for 'metadata.ratchet_task': {_short(task)} is not a task name "
             "(1 to 64 letters, digits, '_', '.' or '-').",
         )
+    store = value.get("ratchet_store")
+    if store is not None and store.strip().lower() not in STORE_METADATA:
+        raise _bad(
+            "metadata.ratchet_store",
+            f"Invalid value for 'metadata.ratchet_store': {_short(store)} is not one of 'false', '0' (do not store) "
+            "or 'true', '1'.",
+        )
     return value
+
+
+def _end_user(body: Mapping[str, Any], key: str) -> str | None:
+    """`user` or `safety_identifier`: any string, as before Ratchet read them (only the body limit bounds it); the
+    gateway hashes it whole (FR-13.2). The type error never quotes the value: it identifies a person, and errors are
+    logged."""
+    return _opt_str(body, key)
 
 
 def _response_format(value: Any) -> dict[str, Any] | None:
@@ -722,8 +739,8 @@ def validate_chat_request(body: Any, limits: Limits | None = None) -> ChatReques
         parallel_tool_calls=_opt_bool(body, "parallel_tool_calls"),
         functions=_tool_list(body.get("functions"), "functions"),
         function_call=_choice(body.get("function_call"), "function_call", FUNCTION_CALLS),
-        user=_opt_str(body, "user"),
-        safety_identifier=_opt_str(body, "safety_identifier"),
+        user=_end_user(body, "user"),
+        safety_identifier=_end_user(body, "safety_identifier"),
         store=_opt_bool(body, "store"),
         metadata=_metadata(body.get("metadata")),
         reasoning_effort=_opt_str(body, "reasoning_effort"),

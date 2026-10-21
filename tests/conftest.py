@@ -54,6 +54,16 @@ def builtin_tasks():
     tasks.reset_builtin()
 
 
+@pytest.fixture(autouse=True)
+def builtin_licenses():
+    """The license registry is module state (`licenses.REGISTRY`, published by `licenses.install` at startup): a test
+    that installs RATCHET_TEACHER_LICENSES leaves no configured teacher behind for the next one."""
+    yield
+    from ratchet import licenses
+
+    licenses.reset_builtin()
+
+
 @pytest.fixture()
 def gw(monkeypatch):
     """The gateway reloaded in mock mode with no warm-up (Scout and page tests)."""

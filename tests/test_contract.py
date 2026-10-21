@@ -395,7 +395,20 @@ def test_stats_contract(gw_env):
     for _ in range(2):
         gw.rt.simulate_day(600, "tickets")
     msgs = gw.rt.stream.sample(gw.rt.ledger.day).messages()
-    assert c.post(CHAT, json={"messages": msgs}, headers={"Authorization": f"Bearer {KEY}"}).status_code == 200
+    r = c.post(CHAT, json={"messages": msgs}, headers={"Authorization": f"Bearer {KEY}"})
+    assert r.status_code == 200
+    # Human feedback (FR-13.30): a correction on that request (a human label in the BOM), and a verdict on an answer
+    # the student served in the simulation (a version's human precision).
+    correction = {
+        "request_id": r.json()["ratchet"]["request_id"],
+        "verdict": "incorrect",
+        "corrected": "Fixed.",
+        "messages": msgs,
+    }
+    fixed = c.post("/v1/ratchet/feedback", json=correction, headers={"Authorization": f"Bearer {KEY}"})
+    assert fixed.status_code == 200 and fixed.json()["correction"]["stored"], fixed.text
+    served = gw.rt.ledger.db.execute("SELECT * FROM requests WHERE served_by='student' AND route='student' LIMIT 1").fetchone()
+    gw.rt.ledger.record_feedback("req_" + "0" * 32, None, "correct", served)
     stats = c.get("/ratchet/stats").json()
     assert _contract_errors(spec, stats) == []
 

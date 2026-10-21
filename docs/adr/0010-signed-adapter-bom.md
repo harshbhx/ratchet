@@ -22,6 +22,11 @@ Ratchet's pitch is license-clean distillation ([ADR 0001](0001-open-teacher-only
 - The BOM records the evaluation at training time. Later re-checks change `/ratchet/stats`, not the signed document.
 - Versions trained before v0.4 have no BOM (`bom: null`).
 
+## Amendments
+
+- **Schema v2** ([ADR 0024](0024-evidence-foundations.md)): new BOMs use `ratchet.bom/v2`, which keeps every v1 field and adds `redactor`, `training.origins` and optional sections later features fill. `verify` accepts v1 and v2 and refuses any other schema; stored v1 documents are never rewritten.
+- **Licenses travel with the adapter** ([ADR 0090](0090-licenses-travel-with-the-adapter.md), NFR-9): v2 also carries `base_model_license` (`{name, url}` of the base model, or a `warning` for one Ratchet does not know), `notices` (the exact `NOTICE.md` written next to the adapter weights, with its SHA-256, so the signature covers it) and each source's `license_origin` (`builtin` or `config`, for a teacher added in `RATCHET_TEACHER_LICENSES`). Live mode also writes the BOM and the NOTICE into `data/adapters/<name>/` and syncs again, so they sit next to the weights in the bucket; `python -m ratchet.live export` bundles them with the adapter. v2 documents written before these fields still verify.
+
 ## Alternatives considered
 
 - **HMAC-SHA256** with the standard library. No dependency, but only holders of the secret can verify, which defeats the purpose of showing provenance to a third party.
