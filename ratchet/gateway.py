@@ -342,6 +342,7 @@ class Runtime:
             self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=sync)
             # Timeouts and retries per role (ADR 0014): the teacher is retried within a deadline; the student never is,
             # because the teacher is its retry. A bad setting raises here, at startup.
+            reasoning_field = s.reasoning_policy().field  # where Token Factory-bound calls carry the kwargs (ADR 0130)
             teacher = OpenAICompatProvider(
                 s.teacher_base,
                 s.teacher_api_key,
@@ -349,6 +350,7 @@ class Runtime:
                 retry=s.teacher_retry(),
                 transport=self.transports.get("teacher"),
                 sleep=self.sleep,
+                reasoning_field=reasoning_field,
             )
             # The fallback teacher (ADR 0019) has the teacher's key, timeouts and retries. On the teacher's endpoint it
             # shares the teacher's client (Ratchet's default); on another one it gets its own, on the teacher transport.
@@ -362,6 +364,7 @@ class Runtime:
                     retry=s.teacher_retry(),
                     transport=self.transports.get("teacher"),
                     sleep=self.sleep,
+                    reasoning_field=reasoning_field,
                 )
             self.reloader = None
             self.student_http = None
@@ -379,7 +382,11 @@ class Runtime:
                     return student, v.adapter_uri  # vLLM serves each LoRA adapter under its own name
             else:  # endpoint offline: the hosted, untuned fallback on Token Factory, still with the student's timeouts
                 fallback = OpenAICompatProvider(
-                    s.teacher_base, s.teacher_api_key, timeout=s.student_timeout(), transport=self.transports.get("teacher")
+                    s.teacher_base,
+                    s.teacher_api_key,
+                    timeout=s.student_timeout(),
+                    transport=self.transports.get("teacher"),
+                    reasoning_field=reasoning_field,
                 )
 
                 def resolver(v: Version):
@@ -3114,6 +3121,8 @@ def _stats_payload() -> dict[str, Any]:
         },
         "budget": _budget_block(spend),
         "cost": stats_block(cost_report(led, rt.settings)),
+        # Nemotron's thinking mode by role and where the kwargs go (ADR 0130).
+        "reasoning": rt.ratchet.reasoning_snapshot(),
         # Human verdicts and labels (FR-13.30, FR-3.54): counts only. Human precision is reported and alerted on, never
         # used to promote or roll back.
         "feedback": {**led.feedback_stats(), "corrections": rt.settings.feedback_corrections},
