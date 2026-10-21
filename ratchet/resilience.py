@@ -322,6 +322,14 @@ def names_model(message: str, model: str) -> bool:
     return re.search(rf"(?<![\w./:-]){re.escape(model)}(?![\w/:-])(?!\.\w)", message) is not None
 
 
+def adapter_missing(e: BaseException, model: str) -> bool:
+    """Whether a failed call says the LoRA adapter `model` is not loaded: a 404 whose message names it as a whole name.
+    vLLM v0.18.0 answers 404 {"error": {"message": "The model `<name>` does not exist.", "type": "NotFoundError",
+    "param": "model", "code": 404}} (`OpenAIServing._check_model`). The router reloads the adapter on it (ADR 0015);
+    scripts/day1_check.py checks the real endpoint's body with it, so change the predicate here only."""
+    return isinstance(e, UpstreamError) and e.status == 404 and names_model(e.message, model)
+
+
 def endpoint_down(e: BaseException) -> bool | None:
     """What a failed call says about the endpoint. True: it looks unhealthy (a timeout, no connection, an unreadable or
     5xx answer, 408, 429). False: it answered, with an error about this request (another 4xx, such as a prompt too long
