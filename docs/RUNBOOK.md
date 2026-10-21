@@ -236,6 +236,22 @@ python -m ratchet.proof heldout heldout.json --bom bom.json --public-key "<base6
 
 Send them `bom.json` and `proof.json` (or `heldout.json`) and the public key you published; they need nothing else. `result: absent` for a request you expected to be included usually means the key differs: the request's task, a `stop`, `response_format` or `tools` field, or the redaction setting (`python -m ratchet.proof key ... [--no-redact]` prints the key the gateway would compute), or the teacher's answer was never stored (`skip_example`, or `requests.stored = 0`). `Ledger.versions_containing(key)` lists every version whose training set holds a key. A 404 `commitment not available` means the version was trained before v0.5. Share a held-out certificate with auditors, not publicly: each non-membership proof names a neighbouring training example's hashes.
 
+### Reading the replay frontier
+
+The ledger replay ([ADR 0028](adr/0028-designed-propensity-replay.md), [API.md](API.md#ledger-replay)) answers "what would last week have looked like at another threshold or audit rate?" for one version:
+
+```bash
+curl -s "localhost:8000/ratchet/replay/frontier?target=0.97&since_day=12&until_day=18" | jq '.rows[] | [.threshold, .coverage, .precision, .interval, .savings]'
+python -m ratchet.replay --db "$RATCHET_DB" --version 3 --sweep 0.4:0.95:0.05 --audit-rate 0.02   # the same from the ledger file
+```
+
+- Read each row as coverage (exact), precision with its approximate interval, and savings at that threshold. Precision below the live threshold comes from escalations, which the teacher labels every time; above it from audits, weighted by 1 / audit rate. A narrow interval needs labels: with an audit rate of 0.05, a threshold above the live one rests on one served answer in twenty.
+- `precision_reason` "audit rate was 0: precision above the live threshold cannot be identified" means nothing labels the answers the student served: raise `RATCHET_AUDIT_RATE` above 0 for a while before asking again. A null precision is never a zero.
+- `suggested` is advice. Its interval is approximate (Wilson at Kish's effective sample size) and computed on the same traffic you are looking at, so it is not a certificate, and nothing applies it. To act on it, let Night School pick the threshold on held-out golden rows (`RATCHET_CALIBRATION=ltt` with `RATCHET_CERT_TARGET` certifies the threshold it picks) and check the result with `GET /ratchet/versions/{id}/certificate`. Never edit a version's threshold by hand to match the replay.
+- `money_left_on_table` (when the suggestion is below the current threshold) is the savings the current threshold gave up on that traffic. When the suggestion is above the current threshold, the replay's interval does not support the target at the current one: compare with the live evidence (`/ratchet/stats` `versions[].evidence`) and the certificate before worrying, since the replay's interval is the least strict of the three.
+- `calibrated_baseline.R` far from 1 means the teacher writes a different number of reasoning tokens than `RATCHET_TEACHER_REASONING_TOKENS` assumes, so every per-token savings figure for student-served answers is off by about that factor. The replay already prices unaudited answers at R times the estimate; to fix the stored figures going forward, change the setting until R is close to 1 on later traffic, and record why.
+- `excluded_by.before_logging` counts rows written before this feature; `no_student_answer` rows the student never answered (endpoint down); `pinned_now` a task pinned since. One version at a time: a request for two versions is a 400, because their confidence scales differ.
+
 ### Teacher answers not stored
 
 **Symptoms:** `skip_example` events reaching the 100th or 1000th of a reason; Night School says `skip` (fewer than 50 new examples) although `escalation_rate` is high; `SELECT task, COUNT(*), SUM(stored) FROM requests WHERE served_by='teacher' GROUP BY task` shows far fewer stored than escalated.

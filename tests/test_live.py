@@ -701,6 +701,68 @@ def test_sim_cli_certificate_flags(tmp_path, capsys):
         assert exc.value.code == 2
 
 
+@pytest.mark.req("FR-16.5", "FR-9.4")
+def test_sim_db_and_the_replay_cli(tmp_path, capsys, monkeypatch):
+    """`python -m sim.simulate --db PATH` keeps the run's ledger in a new file (never an existing one, never with
+    --compare-release), and `python -m ratchet.replay --db PATH` prints one table per version from it, labelled as
+    simulation, or JSON; bad input exits 2."""
+    import sqlite3
+
+    from ratchet import replay
+    from ratchet.ledger import Ledger
+
+    db, out = tmp_path / "run.db", tmp_path / "run.json"
+    simulate.main(["--days", "1", "--requests", "40", "--drift-day", "0", "--out", str(out), "--db", str(db)])
+    assert capsys.readouterr().out.rstrip().endswith(f"replay it: python -m ratchet.replay --db {db}")
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 40
+    con.close()
+    for bad in (["--db", str(db)], ["--db", str(tmp_path / "x.db"), "--compare-release"]):
+        with pytest.raises(SystemExit) as exc:
+            simulate.main(["--days", "1", "--requests", "10", *bad])
+        assert exc.value.code == 2
+    assert not (tmp_path / "x.db").exists()
+    # A run long enough for a student to serve, kept in memory (a file commits every request) and then saved in one go.
+    made: list[Ledger] = []
+
+    class Kept(Ledger):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(simulate, "Ledger", Kept)
+    simulate.main(["--days", "3", "--requests", "150", "--drift-day", "0", "--out", str(out)])
+    capsys.readouterr()
+    db = tmp_path / "three-days.db"
+    saved = sqlite3.connect(db)
+    made[0].db.backup(saved)
+    saved.close()
+    served = sorted({r[0] for r in made[0].db.execute("SELECT student_version FROM requests WHERE confidence IS NOT NULL")})
+    assert served  # the first student served part of day 3 (seed 7: v1 was rejected, v2 is in its canary stage)
+    assert replay.main(["--db", str(db), "--sweep", "0.5:0.9:0.1"]) == 0
+    text = capsys.readouterr().out
+    assert text.startswith(f"v{served[0]}: ") and "simulation (mock models)" in text and "suggested:" in text
+    assert text.count("replayed requests") == len(served)  # one table per version, never pooled
+    header = next(line for line in text.splitlines() if line.lstrip().startswith("threshold"))
+    assert header.split() == ["threshold", "coverage", "precision", "95%", "interval", "n_eff", "cost", "saved", "errors/1k"]
+    assert replay.main(["--db", str(db), "--version", str(served[0]), "--json", "--audit-rate", "0.02"]) == 0
+    (rep,) = json.loads(capsys.readouterr().out)
+    assert rep["version"] == served[0] and rep["label"] == "simulation (mock models)" and rep["n"] > 0
+    assert len(rep["rows"]) == 15 and {row["audit_rate"] for row in rep["rows"]} == {0.02}
+    for bad in (
+        ["--db", str(tmp_path / "missing.db")],
+        ["--db", str(db), "--sweep", "0.9:0.5:0.1"],
+        ["--db", str(db), "--sweep", "half"],
+        ["--db", str(db), "--target", "1"],
+        ["--db", str(db), "--audit-rate", "2"],
+        ["--db", str(db), "--version", "99"],
+        ["--db", str(db), "--since-day", "3", "--until-day", "2"],
+    ):
+        assert replay.main(bad) == 2, bad
+        assert capsys.readouterr().err.startswith("error: "), bad
+    assert not (tmp_path / "missing.db").exists()
+
+
 @pytest.mark.req("FR-16.3", "FR-8.3")
 def test_live_evaluator_passes_its_certificate_settings():
     rows = [

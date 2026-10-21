@@ -30,6 +30,8 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
 | GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
+| GET | `/ratchet/replay` | both | Replay one version's logged traffic at another threshold or audit rate: coverage, precision, cost, and the calibrated baseline ([Ledger replay](#ledger-replay)) |
+| GET | `/ratchet/replay/frontier` | both | One version's cost-precision frontier over thresholds 0.30 to 1.00, an advisory suggested threshold and the money the current one leaves on the table |
 | POST | `/ratchet/cost/endpoint` | both | Record the student endpoint going up or down (admin key) |
 | GET | `/ratchet/tasks` | both | Every registered task with its spec, source, spec hash and traffic ([Tasks](#tasks)) |
 | GET | `/ratchet/tasks/{name}` | both | One registered task |
@@ -798,6 +800,67 @@ curl -s localhost:8000/ratchet/cost/endpoint -H "Authorization: Bearer $ADMIN_KE
 - `state` is required (`up` or `down`); `usd_per_hour` (per GPU, 0 to 1,000; default `RATCHET_STUDENT_GPU_USD_PER_HOUR`), `gpus` (0 to 1,024; default `RATCHET_STUDENT_GPUS`) and `note` (at most 200 characters, PII redacted) are optional. Any other key, or a bad value, is **400**.
 - `up` while the endpoint is up returns its open interval with `changed: false`; `down` while it is down returns `interval: null`, `changed: false`. `down` closes every open endpoint interval. A change writes an `endpoint` event naming the source and the admin's name, never the key.
 - In mock mode the time is on the demo's synthetic clock (the current simulated day at the wall clock's time of day), and the shared demo holds at most 200 such records (**409**; a reset clears them).
+
+## Ledger replay
+
+The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-16.5): what one version's logged traffic would have looked like at another threshold or audit rate. Ratchet designs its own labelling, so every label's probability is logged (`requests.label_p`: 1.0 for a request the student answered and escalated, the audit rate for an answer it served), and precision is estimated at any threshold with weights 1 / `label_p` (Hajek), including thresholds below the live one. Both endpoints are read-only and public, like `/ratchet/stats` (aggregates only, never request text), in both modes. Numbers from the mock demo are simulation output and say so (`label`).
+
+- `version`: one version id (default: the live version; **400** `no live version: name one with ?version=` without one). A version that does not exist is **404**. `version` twice, a list (`1,2`) or a word (`all`) is **400**: confidence scales differ between versions, so a replay never pools them.
+- `since_day`, `until_day`: ledger days, both included (0 to 10,000,000; `since_day` after `until_day` is **400**).
+- `audit_rate`: 0 to 1 (**400** otherwise); prices the audits of every request served at the threshold. Default: each served answer's logged rate (a request that escalated in fact at the version's mean logged rate, `logged_audit_rate`). It changes cost only: precision comes from the labels that were logged.
+- A query value that is not a number is **422**, as elsewhere.
+
+### GET `/ratchet/replay?version=&threshold=&audit_rate=&since_day=&until_day=`
+
+`threshold` is more than 0 and at most 1.01 (serve nothing; **400** otherwise), default: the version's threshold now. An example from the mock demo after four simulated days (simulation, mock models):
+
+```json
+{
+  "version": 2, "state": "live", "label": "simulation (mock models)", "cost_model": "per_token",
+  "n": 1697, "excluded": 0,
+  "excluded_by": {"before_logging": 0, "no_student_answer": 0, "pinned_now": 0, "malformed": 0},
+  "current_threshold": 0.5, "logged_audit_rate": 0.1,
+  "actual": {"threshold": null, "audit_rate": null, "n": 1697, "served": 1653, "coverage": 0.974, "labelled": 172,
+             "precision": 0.983, "precision_reason": null, "n_eff": 172.0, "interval": [0.950, 0.994],
+             "interval_method": "approximate (Wilson at Kish n_eff)", "served_errors_per_1k": 17.0,
+             "cost_usd": 0.282, "baseline_usd": 1.886, "saved_usd": 1.604, "savings": 0.850},
+  "counterfactual": {"threshold": 0.4, "audit_rate": 0.05, "n": 1697, "served": 1680, "coverage": 0.990, "labelled": 199,
+                     "precision": 0.967, "precision_reason": null, "n_eff": 177.2, "interval": [0.930, 0.985],
+                     "interval_method": "approximate (Wilson at Kish n_eff)", "served_errors_per_1k": 32.3,
+                     "cost_usd": 0.162, "baseline_usd": 1.886, "saved_usd": 1.724, "savings": 0.914},
+  "calibrated_baseline": {"R": 1.0003, "se": 0.00026, "interval": [0.9998, 1.0008], "n": 172, "n_eff": 172.0, "min_n": 30,
+                          "status": "ok", "method": "ratio estimator (Cochran), audited served answers weighted by 1/label_p"}
+}
+```
+
+- `n`: requests the version's student answered with the replay's columns logged. `excluded_by` counts the version's other rows: written before the columns (`before_logging`), without a student answer (`no_student_answer`: the call failed or its breaker was open), of a task pinned now (`pinned_now`), or with out-of-range values (`malformed`, a ledger edited outside Ratchet). A request whose escalation failed outright was never logged, so it is not here.
+- `actual`: each request at the threshold it was logged with and each audit at its logged rate (`threshold: null`): what happened. Its `served` is exactly the requests the student served.
+- `counterfactual` at `threshold` and `audit_rate`: `coverage` is exact (no label needed); `precision` is Hajek's weighted mean of `student_agree` over labelled served requests, null with `precision_reason` when nothing is served, when a served request could never be labelled (audit rate 0: "audit rate was 0: precision above the live threshold cannot be identified") or when none has a label; `interval` is approximate (Wilson at Kish's `n_eff`), not a certificate. `cost_usd` = student spend + the all-teacher cost of every request not served + the audit rate times that of every request served; `baseline_usd` = the all-teacher cost of every request; `savings` = 1 − cost / baseline (per token). A request with no valid answer, or one that could not fill its `n` choices, is never served.
+- `calibrated_baseline`: the ratio `R` of what the teacher really cost to the token formula's estimate (which assumes `RATCHET_TEACHER_REASONING_TOKENS`), on audited answers, with its standard error and an approximate 95% interval; `insufficient` (R = 1) below 30 audited answers. The replay prices unaudited answers at R times the estimate. The mock teacher writes exactly the assumed tokens, so R is about 1 in the demo.
+
+### GET `/ratchet/replay/frontier?version=&target=&audit_rate=&since_day=&until_day=`
+
+`target` is strictly between 0 and 1 (default 0.97; **400** otherwise).
+
+```json
+{
+  "version": 2, "state": "live", "label": "simulation (mock models)", "cost_model": "per_token",
+  "n": 1697, "excluded": 0, "excluded_by": {"before_logging": 0, "no_student_answer": 0, "pinned_now": 0, "malformed": 0},
+  "current_threshold": 0.5, "target": 0.97,
+  "rows": [{"threshold": 0.3, "...": "the counterfactual's keys"}, "... 71 rows, 0.30 to 1.00 every 0.01"],
+  "suggested": {"threshold": 0.95, "target": 0.97, "lower": 0.974, "precision": 1.0, "coverage": 0.770, "savings": 0.667,
+                "advisory": "approximate interval, not a certificate; thresholds change only through Night School",
+                "method": "fixed-sequence scan of [0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5], approximate (Wilson at Kish n_eff)"},
+  "money_left_on_table": null,
+  "calibrated_baseline": {"R": 1.0003, "...": "as above"}
+}
+```
+
+- `rows`: one counterfactual per threshold; `coverage` never rises with the threshold.
+- `suggested`: the scan goes down `stats.CERT_GRID` from 0.95 and stops at the first threshold whose interval's lower bound is below `target`; it returns the last one that passed, or null when 0.95 already fails. It is advice: the interval is approximate and computed on the traffic being looked at, so it is not a certificate, and nothing applies it. Thresholds change only through Night School's held-out calibration ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)).
+- `money_left_on_table`: `{threshold, current_threshold, savings, usd}`, what serving at the suggested threshold would have saved over the current one, when the suggestion is lower; null otherwise (above, the suggestion says the current threshold is not supported at the target by this approximate interval).
+
+`python -m ratchet.replay --db PATH [--version V] [--sweep 0.3:0.95:0.05] [--audit-rate A] [--target 0.97] [--since-day D] [--until-day D] [--json]` prints the frontier report as one table per version (labelled as simulation when the simulator wrote the ledger); exit 2 on bad input. `python -m sim.simulate --db PATH` keeps a simulated run's ledger in a new file for it.
 
 ---
 

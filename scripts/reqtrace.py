@@ -775,6 +775,22 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.proof:main",
         "ratchet.live:write_boms",
     ),
+    "FR-16.5": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._formula_baseline",
+        "ratchet.ledger:Ledger.replay_rows",
+        "ratchet.replay:load",
+        "ratchet.replay:at",
+        "ratchet.replay:sweep",
+        "ratchet.replay:ratio",
+        "ratchet.replay:suggest",
+        "ratchet.replay:main",
+        "ratchet.stats:hajek_mean",
+        "ratchet.stats:ratio_estimate",
+        "ratchet.gateway:replay_version",
+        "ratchet.gateway:replay_frontier",
+        "sim.simulate:main",
+    ),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (

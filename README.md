@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 773 tests
+pytest -q                                                                # 788 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -170,6 +170,16 @@ curl -s localhost:8000/ratchet/versions/2/heldout > heldout.json
 python -m ratchet.proof heldout heldout.json --bom bom.json   # OK: all N golden examples provably absent from the training set
 ```
 
+## Replaying past traffic at another threshold
+
+Ratchet designs its own labelling, so it knows the chance of every teacher label it sees: 1 for a request the student escalated, the audit rate for an answer it served. Each request logs that probability, and the **ledger replay** ([ADR 0028](docs/adr/0028-designed-propensity-replay.md)) uses it to answer "what would last week's precision, coverage and cost have been at threshold t, or at audit rate a?" for one version, including thresholds below the live one, where audits alone see nothing. Coverage is exact; precision is a weighted estimate with an approximate interval (null when nothing labels the answers it would count); the frontier's suggested threshold is advice, never applied: thresholds change only through Night School. The replay also measures how far the baseline's 300-reasoning-token assumption is from what the teacher really costs. It adds no model call and no random draw to the request path.
+
+```bash
+curl -s "localhost:8000/ratchet/replay?threshold=0.4&audit_rate=0.05"     # what happened, and what would have
+curl -s "localhost:8000/ratchet/replay/frontier?target=0.97"               # thresholds 0.30 to 1.00, an advisory suggestion
+python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # the same from a simulated run (simulation)
+```
+
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
@@ -220,6 +230,7 @@ ratchet/redact.py       PII placeholders before examples are stored
 ratchet/auth.py         gateway API keys (named, per-key quota in gateway.py)
 ratchet/bom.py          per-adapter bill of materials, Ed25519 signing, `python -m ratchet.bom`
 ratchet/proof.py        committed training sets: membership and held-out proofs, `python -m ratchet.proof`
+ratchet/replay.py       ledger replay: past traffic at another threshold or audit rate, `python -m ratchet.replay`
 ratchet/nightschool/    dataset build, LoRA training (Unsloth), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
 ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI
