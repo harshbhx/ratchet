@@ -270,6 +270,13 @@ def _hex32(value: object, what: str) -> str:
 
 
 DAY_SECONDS = 86400
+# The request columns `Ledger.client_window` returns: metadata only, never text. `wall_ms` and `client_request_id` come
+# with lane D's migrations (OPS-PERF-HOTPATH, OPS-OBSERVABILITY) and read as None on a ledger without them.
+WINDOW_COLUMNS = (
+    "id", "ts", "task", "served_by", "route", "student_version", "escalated", "audited", "audit_agree", "shadow_version",
+    "shadow_serve", "shadow_agree", "latency_ms", "wall_ms", "cost_usd", "baseline_cost_usd", "student_cost_usd",
+    "teacher_cost_usd", "label_p", "stored", "optional_failed", "client_request_id",
+)  # fmt: skip
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -364,6 +371,37 @@ class Ledger:
     def client_requests_since(self, client: str, ts: float) -> int:
         """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
         return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
+
+    @_locked
+    def last_ids(self) -> dict[str, int]:
+        """The highest `requests.id` and `events.id`, 0 for an empty table. The live-run harness keys its rounds by
+        request-id ranges and reads a night's outcome from the events after it (FR-8.20): a live ledger's day is wall
+        time since the first request, not a round."""
+        r = self.db.execute(
+            "SELECT (SELECT COALESCE(MAX(id), 0) FROM requests) req, (SELECT COALESCE(MAX(id), 0) FROM events) ev"
+        ).fetchone()
+        return {"requests": int(r["req"]), "events": int(r["ev"])}
+
+    @_locked
+    def client_window(self, client: str, after_id: int, upto_id: int) -> dict[str, Any]:
+        """One API client's requests with `after_id < id <= upto_id`, in id order, as metadata only (`WINDOW_COLUMNS`;
+        `requests` holds no text, INV-12), and how many rows of other clients (or of none) fall in the same range
+        (`other_clients`, of which `no_client` have no client: an open gateway or an internal call). Columns a later
+        migration adds (`wall_ms`, `client_request_id`) read as None on a ledger without them. A primary-key range scan."""
+        for name, value in (("after_id", after_id), ("upto_id", upto_id)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a whole number, 0 or more, not {value!r}")
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(requests)")}
+        cols = ", ".join(c if c in have else f"NULL AS {c}" for c in WINDOW_COLUMNS)
+        rows = self.db.execute(
+            f"SELECT {cols} FROM requests WHERE id > ? AND id <= ? AND client = ? ORDER BY id", (after_id, upto_id, client)
+        ).fetchall()
+        other = self.db.execute(
+            "SELECT COALESCE(SUM(client IS NULL OR client != ?), 0) other, COALESCE(SUM(client IS NULL), 0) none"
+            " FROM requests WHERE id > ? AND id <= ?",
+            (client, after_id, upto_id),
+        ).fetchone()
+        return {"rows": [dict(r) for r in rows], "other_clients": int(other["other"]), "no_client": int(other["none"])}
 
     @_locked
     def cost_by_day(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
@@ -968,6 +1006,15 @@ class Ledger:
     @_locked
     def events(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
+
+    @_locked
+    def events_since(self, event_id: int) -> list[dict[str, Any]]:
+        """The events with `id > event_id`, in the shape of `events()`: what a night or a release step just wrote."""
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 0:
+            raise ValueError(f"event_id must be a whole number, 0 or more, not {event_id!r}")
+        return [
+            dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events WHERE id > ? ORDER BY id", (event_id,))
+        ]
 
     @_locked
     def audit_counts(self, vid: int, since_id: int = 0) -> tuple[int, int]:

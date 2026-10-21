@@ -11,3 +11,6 @@ web/node_modules/
 web/*.tsbuildinfo
 *.egg-info/
 .coverage
+
+# Live-run harness: run directories stay local; report --publish copies results to evidence/live/
+evidence/live/[0-9]*T*Z/

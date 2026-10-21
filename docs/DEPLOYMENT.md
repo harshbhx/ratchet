@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 821 tests, ~75 s
+pytest -q                                                          # 844 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -141,6 +141,17 @@ Use **one worker**. The ledger is a single SQLite connection inside the process,
 ```
 
 `python -m ratchet.live night` runs `run_night` with `NebiusTrainer` and `LiveEvaluator` (judge = `RATCHET_JUDGE_MODEL`), then prints the last 10 events. `tick` runs `ReleaseGate.tick()` once. Without `RATCHET_STUDENT_BASE`, `night` stops before syncing or starting the training job, and `reload` stops with the same message (nothing to reload is not an error). The same commands run offline in `tests/test_live.py`, against fake endpoints, before they run here.
+
+### Step 8: Measure
+
+The live-run harness (`python -m ratchet.liverun`, [ADR 0121](adr/0121-live-measurement-method.md)) runs on the same host and with the same `.env` as `python -m ratchet.live`, because it runs the nights itself between its rounds and reads the gateway's ledger file. Add `liverun:<key>` to the gateway's `RATCHET_API_KEYS` and set the run's gate profile (`RATCHET_SEQUENTIAL=1`, `RATCHET_CANARY_AUDIT_RATE=0.5`) on the gateway, restart it, pause the cron nights, then:
+
+```bash
+export RATCHET_LIVERUN_KEY=<the liverun key>   # in this shell only, never a flag
+make live-plan && make live-smoke && make live-run MAX_USD=30
+```
+
+On a host or image without `.git`, set `RATCHET_GIT_SHA` to the deployed commit (`git rev-parse HEAD` where you built it) so the results file names the code; it carries a digest of the sources either way. The [runbook](RUNBOOK.md#live-measurement-run) has the prerequisites, the stop reasons, resuming, the repeat run, entering the Nebius bill and publishing.
 
 ## 3. Keeping the demo alive for judging (Dec 1–15, 2026)
 

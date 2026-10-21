@@ -78,9 +78,12 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
     "db_sync": ("RATCHET_DB_SYNC", "FULL", "live readiness (WAL journal)"),
     "gateway_lease": ("RATCHET_GATEWAY_LEASE", "warn", "one gateway process per live ledger (NFR-60)"),
 }
-# Variables read through a helper the traceability check cannot see (scripts/reqtrace.py: every one needs a row in
-# docs/CONFIGURATION.md).
-KNOWN_ENV: tuple[str, ...] = tuple(env for env, _, _ in RESERVED_SETTINGS.values())
+# Variables the live-run harness (ratchet/liverun.py) reads outside `Settings`: its gateway key, the code's commit in an
+# image without .git, and an optional Token Factory key for its own arms (docs/CONFIGURATION.md#live-run-harness).
+TOOL_ENV: tuple[str, ...] = ("RATCHET_LIVERUN_KEY", "RATCHET_GIT_SHA", "NEBIUS_API_KEY_LIVERUN")
+# Variables read through a helper the traceability check cannot see, or outside `Settings` (scripts/reqtrace.py: every
+# one needs a row in docs/CONFIGURATION.md).
+KNOWN_ENV: tuple[str, ...] = tuple(env for env, _, _ in RESERVED_SETTINGS.values()) + TOOL_ENV
 
 
 def _is_default(value: object, default: str) -> bool:
