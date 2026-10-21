@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 1002 tests, ~120 s
+pytest -q                                                          # 1058 tests, ~120 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -193,6 +193,17 @@ python -m ratchet.live export --version 3 --out ./student-v3-export
 ```
 
 The folder gets the adapter files from `RATCHET_DATA_DIR/adapters/<name>/` when they are on this machine. With an upload-only `RATCHET_SYNC_CMD`, that folder holds only the `ratchet_bom.json` and `NOTICE.md` the night wrote, not the weights; the export then counts no adapter files and says so (`exported the licenses of student-v3 (v3) to student-v3-export; the adapter weights (adapter_config.json and adapter_model.safetensors) are not at data/adapters/student-v3: copy them from the bucket's adapters/student-v3/ into student-v3-export`). It also gets the BOM stored at training time (`ratchet_bom.json`, checked against its own `sha256` and signature first; a BOM that does not verify is refused) and the `NOTICE.md` that BOM signed: the base model's license (the NVIDIA Nemotron Open Model License for the Nano models), each teacher's license and URL, that the targets were teacher outputs only, and the Ratchet version. The output folder must be new or empty, and outside `RATCHET_DATA_DIR`, which the next sync would upload to the bucket. Give the recipient your public key: `python -m ratchet.bom verify student-v3-export/ratchet_bom.json --public-key <yours> --notice student-v3-export/NOTICE.md` prints `OK` for the BOM and `OK: NOTICE.md matches the BOM` for the notice (its SHA-256 equals the BOM's `notices[0].sha256`). Keep `NOTICE.md` with the adapter wherever it goes; a version trained before v0.4 has no BOM and is refused.
+
+### Step 8: Measure
+
+The live-run harness (`python -m ratchet.liverun`, [ADR 0121](adr/0121-live-measurement-method.md)) runs on the same host and with the same `.env` as `python -m ratchet.live`, because it runs the nights itself between its rounds and reads the gateway's ledger file. Add `liverun:<key>` to the gateway's `RATCHET_API_KEYS` and set the run's gate profile (`RATCHET_SEQUENTIAL=1`, `RATCHET_CANARY_AUDIT_RATE=0.5`) on the gateway, restart it, pause the cron nights, then:
+
+```bash
+export RATCHET_LIVERUN_KEY=<the liverun key>   # in this shell only, never a flag
+make live-plan && make live-smoke && make live-run MAX_USD=30
+```
+
+On a host or image without `.git`, set `RATCHET_GIT_SHA` to the deployed commit (`git rev-parse HEAD` where you built it) so the results file names the code; it carries a digest of the sources either way. The [runbook](RUNBOOK.md#live-measurement-run) has the prerequisites, the stop reasons, resuming, the repeat run, entering the Nebius bill and publishing.
 
 ## 3. Keeping the demo alive for judging (Dec 1–15, 2026)
 

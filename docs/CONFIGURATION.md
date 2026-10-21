@@ -111,7 +111,24 @@ Read in `ratchet/config.py`; used by `ratchet/gateway.py` and `ratchet/scout/gua
 | `RATCHET_SCOUT_MAX_RESULTS` | `4` | Tavily results per query. With 3 queries, at most 12 results are triaged |
 | `RATCHET_TRUST_PROXY` | `0` | `1`: take the client IP for the per-IP limit from the first `X-Forwarded-For` entry. Only set it when a proxy you control overwrites that header; otherwise clients can fake their IP. Not needed on the demo VM, where uvicorn runs with `--proxy-headers` |
 
-The budget counts the `cost_usd` of every Scout step, including audits and shadow calls. It does not cover `/v1/chat/completions`. Counters are in memory and reset at 00:00 UTC and on restart.
+The budget counts the `cost_usd` of every Scout step, including audits and shadow calls. It does not cover `/v1/chat/completions`. In live mode the daily counters are kept in the ledger (`scout_run` rows in `spend`, `usd` 0) and restored at startup, so a restart or `update.sh` does not reset them ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)). They reset at 00:00 UTC. The per-IP windows stay in memory and reset on restart, so no IP is stored. On the first restart after upgrading, runs from earlier that day have no rows and are not counted, once.
+
+### Judge access and Tavily credits
+
+Read with `Settings.scout_policy()` in `Runtime.reset`; a bad value stops startup with a `ValueError` naming the variable, and no message ever shows the judge code ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_SCOUT_JUDGE_CODE` | empty | The access code for hackathon judges; empty turns judge access off. 16 to 256 printable ASCII characters with no spaces: use `openssl rand -hex 16`. Set it if and only if `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` is above 0. Judges send it once (`POST /scout/judge`) and get a signed cookie; never put it in a URL, the project page or the video |
+| `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` | `0` | Runs per UTC day held back for judges, 0 to `RATCHET_SCOUT_MAX_RUNS_PER_DAY`. The public gets the run cap minus this; judges get their share plus whatever public room is left. Equal to the run cap: judges only, and the public gets 429 (allowed) |
+| `RATCHET_SCOUT_JUDGE_BUDGET_USD` | unset | USD per UTC day held back for judges, 0 to `RATCHET_SCOUT_DAILY_BUDGET_USD`. Unset: the daily budget × judge runs / run cap, rounded down to the cent (7 of 22 runs of $3.00: $0.95). Above 0 only with judge access on |
+| `RATCHET_SCOUT_JUDGE_SESSION_S` | `604800` | How long a judge cookie lasts, 60 s to 30 days (7 days: a judge who comes back does not need the code again). Rotating the code ends every session |
+| `RATCHET_TAVILY_MONTHLY_CREDITS` | `0` | Tavily credits per cycle (the free plan gives 1,000 a month; the Nebius Builders Program may add more, unverified). `0` counts credits without a cap. A basic search costs 1 credit, an advanced one 2; the meter charges what Tavily reports in `usage.credits` |
+| `RATCHET_TAVILY_JUDGE_CREDITS` | unset | Credits per cycle held back for judge runs, at most the monthly credits, above 0 only with judge access on. Unset: monthly × judge runs / run cap, rounded down (1,000 × 7 / 22 = 318) |
+| `RATCHET_TAVILY_CYCLE_DAY` | `1` | Day of the month (1 to 28) the credit cycle starts, at 00:00 UTC. Tavily's own reset day is not documented (unverified): set the day your dashboard shows |
+| `RATCHET_TAVILY_PACE_UNTIL` | unset | A date (`YYYY-MM-DD`, UTC). While it falls in the current cycle and is today or later, the public's daily credit allowance spreads what is left until that date instead of the cycle's end; unused credits roll forward. Recommended: `2026-12-15`, the last day of judging |
+
+A public run whose search credits for today are used up still runs: the planner (pinned to the teacher) has already called Token Factory, and the writer answers without web sources, labelled "search unavailable" (FR-10.22). Credits never refuse a run; the run and USD caps bound the cost.
 
 ## Mock-mode demo
 
@@ -147,6 +164,18 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 | `RATCHET_ADAPTER_ROOT` | `/data/adapters` | Adapter folder as the vLLM endpoint sees it (`lora_path` = `<root>/<version>`). Also read by the gateway in live mode, which reloads an adapter from there when vLLM answers 404 for it |
 
 Commands are split with `shlex.split` and run without a shell, so pipes and `&&` do not work. Wrap them in a script.
+
+## Live-run harness
+
+`python -m ratchet.liverun` ([ADR 0121](adr/0121-live-measurement-method.md), [RUNBOOK](RUNBOOK.md#live-measurement-run)) runs on the gateway's host with the gateway's `.env` (it reads the same `RATCHET_DB`, task registry, audit rates, release policy and prices), plus these variables, which only the harness reads. Its budget is a flag (`--max-usd`), never a variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_LIVERUN_KEY` | empty (required) | The harness's gateway API key: the key of the `liverun:<key>` entry in `RATCHET_API_KEYS` (`--client` names another entry). Export it in the harness's shell only; never a flag, so it stays out of shell history and the process list, and it is never written or printed (results carry the name) |
+| `NEBIUS_API_KEY_LIVERUN` | empty (`NEBIUS_API_KEY`) | A separate Token Factory key for the harness's own arms (the control arm and the untuned-Nano arm), so a runaway run cannot drain the key the gateway and the judge demo serve with. The gateway's own teacher calls keep `NEBIUS_API_KEY`. Results record which variable was used, never its value |
+| `RATCHET_GIT_SHA` | empty | The code's commit when the image has no `.git` (`git rev-parse HEAD` comes first). 40 or 64 hex characters; anything else is ignored. Results carry a SHA-256 over the `ratchet` and `sim` sources either way |
+
+The run's planned gate profile is set on the gateway, not here: `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5` ([Release policy](#release-policy-ratchetreleasepy)). `python -m ratchet.liverun run` refuses to start without them unless `--gate-profile as-set` is passed.
 
 ## Deploy scripts (`deploy/`)
 
@@ -284,6 +313,7 @@ The evidence features (PRD §6.16) are built one at a time. Their settings are d
 | `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
 | `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |
 | `RATCHET_DB_SYNC` | `FULL` | Live readiness: `NORMAL` will switch a file ledger to the WAL journal. `FULL` is today's rollback journal |
+| `RATCHET_GATEWAY_LEASE` | `warn` | One gateway process per live ledger (NFR-60, waiting for the leases table): `warn` will write a `gateway_lease` event when a second process serves the same ledger and keep serving, `exclusive` will refuse to start, `off` will do nothing. Any other value stops startup now, also through `Settings.scout_policy()` |
 
 `ReleasePolicy` (`release.RESERVED_POLICY`, read by `from_env` as `RATCHET_<FIELD>` in live mode like the fields above):
 

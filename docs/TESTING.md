@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1002 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_licensing, test_feedback, test_docs_claims), ~120 s
+pytest -q                     # 1058 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_licensing, test_feedback, test_docs_claims), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -23,13 +23,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_nightschool.py` | 29 (25 functions; one has 5 cases) |
 | `tests/test_release.py` | 37 (28 functions; one has 8 cases, two have 2) |
 | `tests/test_system.py` | 18 |
-| `tests/test_hardening.py` | 102 (68 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
+| `tests/test_hardening.py` | 104 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 15 |
+| `tests/test_scout.py` | 40 |
 | `tests/test_contract.py` | 56 (45 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| `tests/test_live.py` | 29 |
+| `tests/test_live.py` | 58 (3 of them strict xfails for NFR-60) |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
@@ -39,7 +39,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_licensing.py` | 10 |
 | `tests/test_feedback.py` | 30 |
 | `tests/test_docs_claims.py` | 10 |
-| **Total** | **1002** |
+| **Total** | **1058** |
 
 There are three layers:
 
@@ -574,6 +574,29 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_endpoint_args_carry_the_model_card_flags` | FR-8.2, NFR-5 (W0): `create`'s flags (image `vllm/vllm-openai:v0.18.0-cu130`, platform, preset, port 8000, `--shm-size 16Gi`, the bucket volume, token auth, runtime LoRA) and its vLLM arguments in order, split as the container does: the model card's `--mamba_ssm_cache_dtype float32`, `--max-model-len 8192`, `--max-num-seqs 64` and `--default-chat-template-kwargs` with JSON that parses to `{"enable_thinking": false}`; the token never printed; `RATCHET_VLLM_IMAGE`, `RATCHET_SERVE_MAX_LEN`, `RATCHET_SERVE_MAX_SEQS`, `RATCHET_REASONING_PARSER_PLUGIN` (adds `--reasoning-parser nano_v3`), `RATCHET_SUBNET_ID` and an empty `RATCHET_SERVE_TEMPLATE_KWARGS` take effect; `DRY_RUN=1` adds `--dry-run` and records nothing; values that would break the one `--args` string or that vLLM would refuse after the GPU is up (not a whole number, not a JSON object, a relative plugin path, a single quote) and a missing token or bucket stop before `create`. Skipped where bash is missing |
 | `test_deploy_scripts_never_say_cost_nothing` | FR-15.2 (W0): neither deploy script, `deploy/CLAUDE.md` nor `docs/DEPLOYMENT.md` says a stopped endpoint costs nothing (the mounted bucket is still billed); the endpoint script says so |
 | `test_deploy_variables_are_listed_and_documented` | NFR-10 (W0): every `RATCHET_*` variable the two Nebius scripts read is read by `config.py` or listed in `config.DEPLOY_ENV` (part of `KNOWN_ENV`, which the traceability check holds to a row in CONFIGURATION.md), with no stale or duplicate name; all of them and `DRY_RUN` are documented |
+| `test_liverun_plan_refuses_over_budget` | FR-8.20: `python -m ratchet.liverun plan --max-usd 0.01` exits 3 and makes no call at all; the plan lists requests per release stage at the configured canary audit rate, 0.5 and 1.0, the audit rates as set, the gate profile and whether it is in force, the golden-size line and a USD row per round; at the default rates the 10% canary stage needs 7,398 requests against 737 at 0.5; `plan_stage_requests` equals a brute-force scan with `binom_sf` |
+| `test_liverun_refuses_mock_gateway_and_wrong_ledger` | FR-8.20, INV-8: a mock gateway exits 2 after `/healthz` alone (no demo route); `RATCHET_DB` on another file than the gateway's exits 2 after the one probe; a gateway without `RATCHET_API_KEYS` exits 2 naming `liverun:<key>`; no `RATCHET_LIVERUN_KEY`, a training command not on PATH or a script that is not there, and no open endpoint interval exit 2 before any paid call |
+| `test_liverun_end_to_end_offline` | FR-8.20, FR-8.21, INV-8: the module run (`liverun_world`: a live `Runtime` on Token Factory and vLLM fakes, 3 rounds of 100 tickets, nights in process, a 50% control sample, the untuned arm): exit 0, two versions trained through `live.main`'s seams (canary, then shadow), only `/healthz` and `/v1/chat/completions` requested, every request with its `liverun-<run>-r<k>-<i>` id and the harness's key, `results.json` with the documented keys and `live.*` values each with a source, the three `liverun_*` events, the models as listed, no key or base URL in the settings, client and server-side latency, the cost total as its parts, LIVE_RESULTS.md with claim anchors |
+| `test_liverun_rounds_are_keyed_by_client_and_id_range` | FR-8.20: a request with another key between two batches of round 2 falls inside round 2's id range, is counted as `other_clients` and is left out of its counts |
+| `test_liverun_writes_no_text_and_no_key` | FR-8.20, INV-12, INV-13: no file in the run directory and nothing on stdout holds a key, a base URL or any 20-character piece of a request or answer the fakes saw; the `liverun_*` events neither |
+| `test_liverun_control_arm_is_never_stored` | FR-8.21, INV-2, INV-10: the ledger has one row per cascade request (none for the control calls); the same rounds with `--control-share 0` on a fresh world store exactly as many training and golden examples |
+| `test_liverun_control_call_matches_the_serving_teacher` | FR-8.21: for escalated requests the control arm's body equals the gateway's teacher call (model, messages, `max_tokens` cap, temperature, no logprobs, `n` 1), with the Token Factory key |
+| `test_liverun_control_ratio_and_reasoning_tokens` | FR-8.21: control reasoning tokens average 420 beside the formula's 300; `ratio_student` equals `stats.ratio_estimate` on the pairs read back from `requests.ndjson.gz` and is above 1; teacher-served pairs give 1; the measured reduction and its interval; nine student-served pairs are `insufficient` and leave the value out, ten give the exact ratio |
+| `test_liverun_accuracy_against_template_labels` | FR-8.21: with a teacher wrong on hard templates and invalid on one, cascade accuracy is 100% on easy and below on hard, invalid answers count as wrong, category and priority are reported apart, the control arm's accuracy too, labelled "template labels"; a cold start without nights has no student pairs, so no measured baseline |
+| `test_liverun_usd_cap_stops_between_batches` | FR-8.20: a teacher reporting 200,000 output tokens per call stops the run with `max_usd` (exit 1) after one batch, spend within the cap plus one batch, the control arm's own cap skipping the rest of its sample, results and state complete |
+| `test_liverun_server_cap_and_rate_limit_responses` | FR-8.20, INV-7: a 429 `rate_limit_exceeded` waits its `Retry-After` and retries once; a 429 `budget_exceeded` stops with `server_cap`; a 401 with `auth`; three 503 `teacher_circuit_open` in a row with `teacher_down`; failures above 10% of a batch with `gateway_errors` |
+| `test_liverun_night_failure_stops_with_partial_results` | FR-8.20: a failing training command records `night_failed` (the class, never its output), exit 1, round 1's results written and the training interval closed; resumed once fixed, the night runs again and trains before round 2, the failure kept on record; `--on-night-failure continue` runs round 2 on the teacher |
+| `test_liverun_until_settled_extends_the_round` | FR-8.20, INV-5: a canary still in flight after a round's requests gets extension batches until it settles; `--max-extend 0` records `settled: false`, and the next night skips by itself ("still in canary") |
+| `test_liverun_resume_continues_the_stream` | FR-8.20: a host that goes away after round 1's second batch stops the run; `run --resume` (with the base URL again: it is never written) sends every remaining index with the same id and template as an uninterrupted run, never one index twice, and only the lost batch is missing |
+| `test_window_percentiles_filter_by_route_client_and_ids` | FR-8.20: `Ledger.last_ids`, `client_window` (one client's rows in an id range, `other_clients` and `no_client`), `events_since`, and the per-route nearest-rank percentiles of `liverun.window_stats` on a hand-built ledger |
+| `test_liverun_report_bill_publish_and_verify` | FR-8.21: `report --bill-usd 12.34 --bill-note ...` sets `live.bill.nebius_usd`, redacts the note and shows the bill next to the break-even line; bad amounts and notes exit 2; `verify` exits 0, and 1 after one edited number or a missing source; `--publish` refuses a stopped run without `--allow-partial` and a smoke run always |
+| `test_live_targets_stay_out_of_test_and_ci` | FR-8.20: the Makefile's `test` and `lint` recipes and the CI workflows never mention `live-smoke`, `live-run` or `ratchet.liverun` |
+| `test_liverun_untuned_arm_paired` | FR-8.21: the hosted Nano (unsure on hard templates) covers less than the tuned adapter on the same golden rows; `arms.untuned.paired` equals `certificate.paired` of the two test vectors; the arm's calls went straight to Token Factory |
+| `test_liverun_scout_phase` | FR-8.21, INV-11: `--scout-runs 1` with Tavily on a `MockTransport` runs Scout over `/v1` with the harness's key, one request id per agent call, its totals and Tavily credits recorded; no key or question text written; without `TAVILY_API_KEY` it is refused before any call |
+| `test_liverun_file_workload` | FR-8.21: a JSONL workload with three mislabelled rows scores 9 of 12 against the file's labels (priority 12 of 12), sends every row once in a pass, and a bad row names its line and field, never its text |
+| `test_liverun_gate_profile_and_the_arms_key` | FR-8.20, FR-8.21, INV-13: `run` without the planned gate profile exits 2 before any call; `--gate-profile as-set` runs and records which settings were in force; `NEBIUS_API_KEY_LIVERUN` carries the arms' calls while the gateway keeps `NEBIUS_API_KEY`, and is never written |
+| `test_liverun_control_budget_is_reserved_across_workers` | FR-8.21: eight workers reserving $1 against a $3 control cap at once: exactly three win |
+| `test_liverun_repeat_run_and_report` | FR-8.21: `smoke --repeat-of` runs the same plan and seed under a new run id (same texts, same order) and compares every value with the first run's; `report <first> --repeat <repeat> --publish` attaches the comparison and copies the repeat to `evidence/live/repeat/`, both verify, an edited repeat table fails `verify`; a smoke repeats only a smoke, a repeat of the wrong run is refused, `--resume` with `--repeat-of` exits 2 |
 
 The React app itself is checked with `npx tsc --noEmit`, `npm test` (pure helpers in `web/tests/*.test.mjs` under Node's test runner, such as the Economics panel's axis labels and scales and the story page's honest bill) and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
@@ -874,6 +897,8 @@ Live mode, the training job, the day-1 check, the Scout CLI and the deploy scrip
 | `argv=` | `sim.simulate.main(argv)`, the Scout CLI | a list |
 
 The student's sampling parameters are one read-only constant, `confidence.STUDENT_SAMPLING` (`temperature` 0.7, `logprobs` on), used by `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate`, so the golden eval samples exactly as production does (FR-5.1) and a test fails if one of them drifts. The judge's free-text candidate is still sampled greedily (TASK-FREE-TEXT-SIMILARITY changes that).
+
+The live-run harness (`python -m ratchet.liverun`, [ADR 0121](adr/0121-live-measurement-method.md)) is tested the same way: `LiveRunWorld` builds a live `Runtime` on Token Factory and vLLM fakes with its ledger in a file, and the harness gets its seams as default arguments (`client=` an `httpx.Client` on `AppTransport(gateway.app)` that records every path and header, `provider_factory=` over the fakes, `run=` a `RecordingRun`, `http=`, `tavily=`, `clock=` a `FakeClock`, `timer=` and `sleep=`). The module fixture `liverun_world` runs one 3-round run with nights in process once and most of the tests read its run directory. Tests that need the gateway's seeded audit draws in a fixed order pass `--concurrency 1`.
 
 These tests prove the wiring, the order of operations and the failure handling. They do not prove that the real services accept the requests: model ids, `nebius` CLI flags, vLLM's runtime LoRA loading and GPU training stay `untested (live)` in the PRD until the day-1 checks ([DAY1.md](DAY1.md)) and a live run pass.
 

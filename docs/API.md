@@ -54,7 +54,9 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/demo/sample-example` | mock only | A committed example's prompt, as a body for the proof endpoint |
 | POST | `/ratchet/demo/reset` | mock only | Start over |
 | GET | `/scout/examples` | both | Example questions and whether free text is allowed |
-| GET | `/scout/status` | both | Budget guard state, and which model answers student calls (`fallback_student`, `student_serving`) |
+| GET | `/scout/status` | both | Budget guard state, the judges' reserve, search and Tavily credits, and which model answers student calls (`fallback_student`, `student_serving`) |
+| POST | `/scout/judge` | both | Open a judge session: the access code in the body, a signed cookie back |
+| DELETE | `/scout/judge` | both | End a judge session (clears the cookie) |
 | GET | `/scout/stream?q=` | both | Run Scout, stream events (Server-Sent Events) |
 | POST | `/scout/run` | both | Run Scout, return all events at the end |
 
@@ -1325,7 +1327,11 @@ Before a run starts, both run endpoints check, in this order:
 | Live mode without `TAVILY_API_KEY` | 503 | `error` event |
 | Budget guard refuses: daily budget used, daily run cap reached, or per-IP hourly limit | 429 (message says which) | `error` event |
 
-A run that passes these checks counts against the per-IP hourly limit and the daily run cap, even if it fails later. Its spend is added to the daily total step by step, so a run that fails halfway still counts what it spent.
+A run that passes these checks counts against the per-IP hourly limit and the daily run cap, even if it fails later. Its spend is added to the daily total step by step, so a run that fails halfway still counts what it spent. In live mode the counters are kept in the ledger and restored at startup ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)).
+
+**Judge runs.** A request that carries a valid `ratchet_judge` cookie (from `POST /scout/judge`) is a judge run: it draws on the runs and spend held back for judges (`RATCHET_SCOUT_JUDGE_RUNS_PER_DAY`, `RATCHET_SCOUT_JUDGE_BUDGET_USD`), and on public room that is left, and has its own per-IP hourly window. Only the cookie counts: a `code` query parameter or body field is ignored. When the public share is used up, the public gets 429 `The public demo has reached its run limit for today. ...` or `The daily demo budget is used up. ...`; a judge run past the whole allowance gets `Today's demo allowance, judges' share included, is used up.` None of them mentions a code.
+
+**Search unavailable.** A search that fails (any HTTP or transport error) or that the Tavily credit meter refuses does not end the run: the searcher step carries `detail.unavailable` (the reason), no more queries are made, triage and reader run on whatever earlier queries found, and the writer answers (without sources if nothing was found). The `done` event says so in `search`. The planner, pinned to the teacher, has called Token Factory before any search, so every admitted run makes a runtime Token Factory call.
 
 The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when `RATCHET_TRUST_PROXY=1` ([CONFIGURATION.md](CONFIGURATION.md#scout-the-multi-agent-demo)).
 
@@ -1341,10 +1347,16 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 
 ```json
 {"mode": "live", "budget_usd": 3.0, "spent_today_usd": 0.0412, "runs_today": 3,
- "runs_per_hour_per_ip": 6, "max_runs_per_day": 30, "tavily": true,
+ "runs_per_hour_per_ip": 6, "max_runs_per_day": 22, "tavily": true,
  "fallback_student": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
  "student_serving": {"kind": "hosted_fallback", "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B", "version": 3,
                      "threshold": 0.8, "certified": false}}
+ "public_runs_left_today": 13, "public_budget_left_usd": 2.0088, "judge_runs_today": 1, "persistent": true,
+ "judge": {"enabled": true, "session": false, "reserved_runs_per_day": 7, "runs_today": 1, "runs_left_today": 19},
+ "search": {"provider": "tavily", "available": true, "last_error": null, "errors_today": 0,
+            "credits": {"monthly": 1000, "used_this_cycle": 9, "left": 991, "public_left_today": 39,
+                        "judge_reserve": 318, "judge_left": 315, "cycle_start": "2026-12-01",
+                        "pace_until": "2026-12-15", "exhausted_until": null}}}
 ```
 
 | Field | Meaning |
@@ -1357,8 +1369,32 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 | `tavily` | `true` when live search (Tavily) is configured |
 | `fallback_student` | v0.5: the hosted fallback's model id, as in `/ratchet/stats`. A `step` whose `served_by` is `student` and whose `model` is this id came from the untuned hosted Nano, not our adapter |
 | `student_serving` | v0.5: the same object as in [`/ratchet/stats`](#get-ratchetstats), so the Scout page labels each call without a stats call |
+| `public_runs_left_today` | Runs the public can still start today: the run cap minus the judges' reserve, minus public runs and judge runs past the reserve; `null` without a cap (mock mode) |
+| `public_budget_left_usd` | The same for spend; `null` without a budget. A public run can be refused a little earlier, while a judge budget is reserved: the largest finished run today is kept as a margin |
+| `judge_runs_today` | Judge runs admitted today |
+| `persistent` | `true` when the counters are kept in the ledger (live mode) and survive a restart |
+| `judge` | `enabled` (judge access is on), `session` (this request carries a valid judge cookie), `reserved_runs_per_day`, `runs_today`, `runs_left_today` (the reserve plus public room left; `null` without a cap) |
+| `search` | `provider` (`tavily`, `mock-search` or `null`), `available` (configured, not paused after Tavily's 432 or 433, and the last search did not fail), `last_error` (the last failure's class and status, `null` once a search works again), `errors_today` (failures, not credit refusals) and `credits` (`null` without a meter; otherwise the cycle's credits, used (searches in flight included) and left, the public's allowance left today, the judge reserve and what is left of it, the cycle's first day, `RATCHET_TAVILY_PACE_UNTIL` and when a pause after a 432 or 433 ends; `null` limits when `RATCHET_TAVILY_MONTHLY_CREDITS` is 0) |
 
-The counters live in memory and reset at 00:00 UTC and when the process restarts.
+Every v0.2 key keeps its name and type; new keys are only added. In live mode the counters are restored from the ledger at startup and reset at 00:00 UTC; in mock mode they live in memory.
+
+### POST `/scout/judge`
+
+Opens a judge session. Body: `{"code": "<RATCHET_SCOUT_JUDGE_CODE>"}`. The code travels only here, in a POST body, because uvicorn and Caddy write URLs and custom headers to their access logs. The body is parsed by hand, so no validation error can echo it.
+
+| Status | When |
+|---|---|
+| 200 | `{"judge": true, "expires": "2026-12-08T10:00:00+00:00", "runs_left_today": 19}` and `Set-Cookie: ratchet_judge=<signed value>; Path=/scout; Max-Age=<RATCHET_SCOUT_JUDGE_SESSION_S>; HttpOnly; SameSite=Strict` (plus `Secure` in live mode). Writes the event `judge` `judge session opened`, with no IP and no code |
+| 400 | `Send {"code": "..."}.`: not a JSON object with a non-empty string `code` |
+| 401 | `That code is not valid.`, with no cookie |
+| 404 | `Judge access is not enabled on this demo.` (`RATCHET_SCOUT_JUDGE_CODE` is empty) |
+| 429 | More than 10 attempts from this IP in a rolling hour (well-formed attempts, the right code included) |
+
+The cookie is `v1.<expires>.<nonce>.<HMAC-SHA256>`, keyed from the code: it survives a restart, and rotating the code ends every session. `SameSite=Strict` keeps another site from starting a judge's runs through `/scout/stream`, which is a GET.
+
+### DELETE `/scout/judge`
+
+204, and clears the cookie (`Max-Age=0`). Idempotent; needs no session.
 
 ### GET `/scout/stream?q=<question>`
 
@@ -1382,9 +1418,9 @@ Request body: `{"question": "What is LoRA fine-tuning?"}`. Runs without pacing a
 
 | Status | When |
 |---|---|
-| 200 | Run finished; the last event is `done` |
+| 200 | Run finished; the last event is `done`. Also when search was unavailable: `done.search.available` is `false` and the answer was written without (some) web sources |
 | 400 / 429 / 503 | Pre-run checks above |
-| 502 | The run failed partway: a model or search call failed (`a model or search call failed: upstream 503`, or `upstream 502 upstream_unreachable`, `upstream 504 upstream_timeout`: the status and code, never the URL), or anything else raised (`run failed: <type>: <message>`). `detail` is the `error` event's message |
+| 502 | A model call failed partway (`a model or search call failed: upstream 503`, or `upstream 502 upstream_unreachable`, `upstream 504 upstream_timeout`: the status and code, never the URL), or anything else raised (`run failed: <type>: <message>`). `detail` is the `error` event's message. A failed search is no longer a 502 (v0.5) |
 | 422 | Body is not JSON |
 
 ---

@@ -68,6 +68,11 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `human_alert` | `POST /v1/ratchet/feedback` (`feedback.check_human_alert`) | A version's human precision on the answers it served itself has at least `RATCHET_MIN_AUDITS` verdicts and anytime-valid evidence (a mixture e-value of at least 40, `feedback.ALERT_ALPHA` 0.025) that it is below `RATCHET_LIVE_FLOOR`: the people using it judge it worse than the floor. Checked after every verdict, with a false-alarm rate under 2.5% however many arrive. Once per version (kept across restarts). It never promotes or rolls back anything | See [Human feedback alert](#human-feedback-alert) |
 | `import` | `python -m ratchet.importer` | Labelled rows were imported: how many of how many were stored, as human labels or an open teacher's answers, golden only or not, new, replaced, duplicates, invalid and refused, the file's name and SHA-256 and the attestation (redacted). Never row text | Keep the file and the attestation with your records; see [Importing labelled data](#importing-labelled-data) |
 | `receipt_skipped` | sealing (`receipts.seal_due`: `python -m ratchet.live seal`, the gateway when a receipt is asked for) | Request retention folded some of a day's request rows before its receipts were sealed, so the day gets no receipt (the rows left would leave requests out); the next day's receipts chain to the last one sealed. Written once per day | Run `python -m ratchet.live seal` hourly from cron; the gateway's hourly retention, `python -m ratchet.live purge` and a live night seal every day that has ended before they fold, so this means sealing failed or the clock moved |
+| `judge` | `POST /scout/judge` | A judge opened a session with the access code (`judge session opened`). No IP and no code; refused attempts write nothing | None. Many in a day when no judging is under way: the code may have leaked, see [Judges cannot run Scout](#judges-cannot-run-scout) |
+| `search_error` | the gateway's Scout runs (`Runtime.note_search`) | A Scout search failed and the run finished without (more) web sources, labelled "search unavailable" (`scout search: HTTPStatusError 401`, `ConnectError`): the class and status, never the message or URL. Logged on the 1st, 10th, 100th and 1000th failure since the last start; credit refusals are not failures | See [Tavily credits running low or search unavailable](#tavily-credits-running-low-or-search-unavailable). A 401 or 403 is a broken key |
+| `tavily_exhausted` | `CreditMeter` | Tavily answered 432 ("Key limit or Plan Limit exceeded") or 433 ("PayGo limit exceeded"): no search is sent for an hour, and runs answer without search, labelled. Once per exhaustion | See [Tavily credits running low or search unavailable](#tavily-credits-running-low-or-search-unavailable) |
+| `gateway_lease` | (planned, NFR-60) | Not written yet: the single-writer lease waits for the leases table. It will say that another gateway process serves the same live ledger, so Scout's guard and the other in-memory limits are per process | See [Two gateway processes on one ledger](#two-gateway-processes-on-one-ledger) |
+| `liverun_start`, `liverun_round`, `liverun_stop` | `python -m ratchet.liverun` | A live measurement run's synthetic traffic: `liverun 20261025T083000Z started: synthetic tickets traffic, 4 rounds x 1500 requests, cap $30.00 (key liverun)`, one line per round (`round 2 done: 1512 requests, 71% student, 388 audits`) and `stopped: <reason>` or `finished`. Key names, counts and reasons only | None. They mark which traffic in the release log was synthetic; see [Live measurement run](#live-measurement-run) |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -403,9 +408,94 @@ All request messages escalated or audited to the teacher are stored in `examples
 
 The gateway, the simulator, `python -m ratchet.live` or `python -m ratchet.admin` stops with `LicenseConfigError: RATCHET_TEACHER_LICENSES <file>: invalid teacher licenses (N errors)` and one line per problem (`[2].license: 'CC-BY-NC-4.0' is not an allowed license; ...`). The file adds open teachers to the license registry, and every entry is checked conservatively ([CONFIGURATION.md](CONFIGURATION.md#teacher-licenses), [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)): only OpenMDW-1.1, Apache-2.0, MIT or the NVIDIA Nemotron Open Model License, never a model id in a closed family (a part starting with `gpt`, `o1`, `o3`, `o4`, `claude`, `gemini` or `o` and a digit, or containing `gpt`, `claude`, `gemini`, `davinci`, `babbage`, `codex`, `openai` or `anthropic`), never a router alias (`openrouter/...`, `.../auto`), never a built-in teacher, an `https://` URL. Fix each line the message lists. A teacher whose license is not on that list, or whose name matches a closed family although it is open, needs a reviewed change to `ratchet/licenses.py` instead. Nothing was opened or changed before the stop.
 
+### Judges cannot run Scout
+
+1. `curl -s https://<domain>/scout/status | jq '{judge, runs_today, public_runs_left_today, search}'`.
+2. `judge.enabled` false: `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` are not set in `deploy/vm/.env` (both, or neither: one alone stops startup). Set them and run `update.sh`.
+3. `POST /scout/judge` answers 401: the code in the testing instructions does not match the VM's. 429: more than 10 attempts from that address within an hour; wait, or check for guessing in the access log (the code is never in it).
+4. `judge.runs_left_today` 0: the judges' reserve and the public's room are used up for today; they come back at 00:00 UTC. Raise `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` (and the run cap) if judges need more. A restart does not reset the counters any more: they are restored from the ledger.
+5. A judge without the code still gets public runs, and a run without search still calls Token Factory.
+6. To revoke every session (a leaked code), set a new code and run `update.sh`, then send the new code to the hackathon managers.
+
+### Tavily credits running low or search unavailable
+
+1. `curl -s https://<domain>/scout/status | jq .search`: `available`, `last_error`, `errors_today` and `credits` (`used_this_cycle`, `left`, `public_left_today`, `judge_left`, `exhausted_until`).
+2. `last_error` is `HTTPStatusError 401` or `403`: the key is wrong or revoked. Runs still finish without web sources, but the Tavily prize needs working Tavily calls: fix `TAVILY_API_KEY` and run `update.sh`.
+3. `exhausted_until` is set: Tavily answered 432 or 433 and searches pause for an hour. Check the plan in the Tavily dashboard; buy credits or wait for the reset, and set `RATCHET_TAVILY_CYCLE_DAY` to the day the dashboard shows.
+4. `public_left_today` 0: today's public allowance is spent; public runs answer without search until 00:00 UTC, judge runs still search from their reserve. Nothing to do unless it happens every day early: lower `RATCHET_SCOUT_MAX_RUNS_PER_DAY` or raise `RATCHET_TAVILY_MONTHLY_CREDITS` if you have more credits.
+5. Weekly: compare `used_this_cycle` with the Tavily dashboard. The meter counts conservatively (a 5xx or a read timeout is charged at the table amount, because whether Tavily bills those is not documented), so it should read at or above the dashboard.
+
+### Two gateway processes on one ledger
+
+The compose file runs one uvicorn worker (ADR 0006), and Scout's guard, the per-IP windows and the breakers are per process. Until the single-writer lease lands (NFR-60, `gateway_lease` events), check by hand after an unusual deploy: `docker compose ps` shows one `ratchet` container, and its command has `--workers 1`. A second process on the same `RATCHET_DB` doubles every in-memory limit; the Scout counters restored at startup are only read once.
+
 ### Startup refused: a reserved setting
 
-The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`). One that names `RATCHET_PROMOTE_EVIDENCE` or `RATCHET_MAX_STAGE_AUDITS` is a sequential-gate setting that would decide nothing (evidence-based promotion without `RATCHET_SEQUENTIAL=1`, or a cap that would retire every canary); the message says how many audits are needed. `RATCHET_CANARY_AUDIT_RATE` must be more than 0 and at most 1. `RATCHET_CALIBRATION` must be `point` or `ltt`, and `RATCHET_CERT_TARGET` and `RATCHET_CERT_DELTA` strictly between 0 and 1.
+The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`). One that names `RATCHET_PROMOTE_EVIDENCE` or `RATCHET_MAX_STAGE_AUDITS` is a sequential-gate setting that would decide nothing (evidence-based promotion without `RATCHET_SEQUENTIAL=1`, or a cap that would retire every canary); the message says how many audits are needed. `RATCHET_CANARY_AUDIT_RATE` must be more than 0 and at most 1. `RATCHET_CALIBRATION` must be `point` or `ltt`, and `RATCHET_CERT_TARGET` and `RATCHET_CERT_DELTA` strictly between 0 and 1. A message about `RATCHET_SCOUT_JUDGE_*` or `RATCHET_TAVILY_*` names the bad Scout setting ([CONFIGURATION.md](CONFIGURATION.md#judge-access-and-tavily-credits)); it never shows the judge code. `RATCHET_GATEWAY_LEASE` is reserved for NFR-60: keep it unset or `warn`.
+
+## Live measurement run
+
+`python -m ratchet.liverun` ([ADR 0121](adr/0121-live-measurement-method.md)) sends synthetic workload traffic through the live gateway in rounds, runs Night School in process between them, sends a 5% control sample straight to Ultra, and writes one results file behind every live number in the docs. It never calls `/ratchet/*`, and it writes no request text, answer text, key or base URL.
+
+**Before you start:**
+
+- The [day-1 checks](DAY1.md) passed, and `make live-smoke` ran once (cents).
+- The student endpoint is up and recorded: `bash deploy/student_endpoint.sh start` (or `python -m ratchet.cost endpoint up`). Without an open `student_endpoint` interval the harness refuses, because the GPU-hours view would miss the endpoint.
+- The harness has its own key: `liverun:<key>` in the gateway's `RATCHET_API_KEYS`, and `export RATCHET_LIVERUN_KEY=<key>` in the harness's shell only. Optionally `export NEBIUS_API_KEY_LIVERUN=<a second Token Factory key>` for the arms, so a runaway run cannot drain the demo's key. Once the per-key spend limits land (lane D), add `RATCHET_KEY_LIMITS='liverun:daily_usd=<cap>'` as a server-side backstop.
+- The gateway runs the planned gate profile: `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5` in its `.env`, then restart it. `run` refuses without them (the plan's stage table shows why: at the default rates a 10% canary stage alone needs about 7,400 requests). `--gate-profile as-set` measures other settings on purpose.
+- Pause the cron nights (`python -m ratchet.live night`) for the run: the harness runs the nights itself. If lane E's retention window is set, it must be longer than the run.
+- Run on the host where nights can run, with the gateway's `.env` sourced (same `RATCHET_DB`, task registry and prices): the stock gateway image has neither the `nebius` CLI nor `deploy/` ([DEPLOYMENT.md](DEPLOYMENT.md) step 7).
+
+**Commands:**
+
+```bash
+make live-plan                 # free: the plan, no call at all (MAX_USD=30, ROUNDS=4, REQUESTS=1500, WORKLOAD=tickets)
+make live-smoke                # 20 requests, about 5 control calls, no nights: cents
+make live-run MAX_USD=30       # rounds with nights between; results in evidence/live/<run id>/
+python -m ratchet.liverun run --resume evidence/live/<run id> --base-url http://localhost:8000/v1   # after a crash or a stop
+python -m ratchet.liverun smoke --repeat-of evidence/live/<smoke id> --base-url http://localhost:8000/v1   # the repeat run
+python -m ratchet.liverun report evidence/live/<run id> --bill-usd 14.20 --bill-note "Nebius console, failed jobs included"
+python -m ratchet.liverun report evidence/live/<run id> --repeat evidence/live/<repeat id> --publish
+python -m ratchet.liverun verify evidence/live
+```
+
+The plan prints, before any paid call: requests per release stage for `RATCHET_MIN_AUDITS` audits (at the configured canary audit rate, at 0.5 and at 1.0), the golden size a certifiable first version needs, whether round 1 stores the 50 new examples a night needs, and per round the teacher, control, training and endpoint USD. A plan over `--max-usd` exits 3 having sent nothing. After each round the rest is planned again from what was measured, and the run stops with `plan_over_budget` rather than start a round it cannot finish. The cap is checked before every batch, so a batch already sent can overshoot it by its own cost.
+
+**The run directory** (`evidence/live/<run id>/`, or `--out`): `plan.json` (the first plan, written before round 1), `state.json` (arguments, windows, nights and the arms' spend, rewritten after every batch; what `--resume` reads), `requests.ndjson.gz` (one metadata record per request and control call, no text), `log.txt` (stdout), `results.json` and `LIVE_RESULTS.md`. `results.json` (generator `ratchet.liverun/1`) has, in order: `generator`, `kind` (`run` or `smoke`), `mode`, `run_id`, `started`, `finished`, `stopped` (null or `{reason, detail}`), `code` (`git_sha`, `code_digest`, `version`), `models` (as Token Factory and vLLM list them), `client` (the key's name), `workload`, `settings` (non-secret only, with `gate_profile` and `arms_teacher_key`, the variable's name), `plan`, `rounds` (each round's window, `other_clients`, `unrecorded`, extension, settled, the ledger snapshot `ledger`, the client-side block `client`, the night and the endpoint hours), `arms` (`control`, `untuned`, `scout`), `cost`, `kpis`, `repeat` (null, or the comparison with the other run of a repeat pair), `values` (flat `{live.*: number}`), `sources` (one line per value, or why it was not measured) and `caveats`.
+
+**Exit codes:** 0 done; 1 stopped early with a valid partial results file; 2 bad input or a refused preflight (one line says what to fix); 3 the plan exceeds `--max-usd`.
+
+**Stop reasons** (`results.json` `stopped.reason`, and the `liverun_stop` event):
+
+| Reason | Meaning | What to do |
+|---|---|---|
+| `max_usd` | The next batch (or the untuned arm, or the Scout phase) would pass `--max-usd`, or a night did | Decide whether the rest is worth it; `--resume` with a higher `--max-usd` continues |
+| `plan_over_budget` | The re-planned remaining rounds would pass the cap | As above, or publish the partial run with `--allow-partial` |
+| `server_cap` | The gateway refused the key with its own daily quota or budget (429 `daily_quota_exceeded` or `budget_exceeded`) | Raise the key's limit, or wait for the next UTC day, then `--resume` |
+| `auth` | The gateway answered 401 for the key | Check `RATCHET_API_KEYS` and `RATCHET_LIVERUN_KEY` |
+| `teacher_down` | Three 503 `teacher_circuit_open` answers in a row | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts), then `--resume` |
+| `gateway_errors` | More than 10% of a batch failed (detail: the commonest statuses) | Read the gateway's log; `--resume` once fixed |
+| `control_failed` | Every control call of a batch failed (detail: the error class) | Check Token Factory and `NEBIUS_API_KEY_LIVERUN` |
+| `night_failed` | A night raised (detail: the class only, never the message) | Read `python -m ratchet.live night`'s own output by running it by hand; once fixed, `--resume` runs that night again before the next round. `--on-night-failure continue` goes on without it |
+| `error`, `interrupted` | The harness itself failed (class only), or Ctrl-C | `--resume`. Requests sent but not recorded before a crash are counted from the ledger as `unrecorded`, and their spend is counted |
+
+Rate limits (429 `rate_limit_exceeded`, 503 `overloaded`) wait `Retry-After` (at most 60 s) and retry once. An unsettled release at the end of a round (`settled: false`, `--max-extend` reached) is recorded, and the next night skips by itself (INV-5); the harness never forces it.
+
+**Resume** rebuilds the stream and skips every index already handed out, so the next request gets the same text as an uninterrupted run with the same seed and no index is sent twice. Only `--max-usd` and `--base-url` may change on resume.
+
+**The repeat run.** After the run, repeat the smoke run once against the final version (`smoke --repeat-of`): the same plan, workload and seed, a new run id. Its results compare every value with the first run's, and `report <first> --repeat <repeat> --publish` attaches the comparison and copies the repeat to `evidence/live/repeat/`. Two runs show how much a number moves between runs; they are not a confidence interval.
+
+**The bill.** Read the Nebius console's total for the run's window, failed jobs included, and enter it with `report --bill-usd X --bill-note TEXT` (the note is redacted and at most 200 characters). LIVE_RESULTS.md shows it next to Ratchet's own total and the cost report's break-even line. Ratchet's numbers use list prices until the day-1 checks verify them, and say so.
+
+**Publishing and the post-run checklist:**
+
+1. `report <run dir> --publish` copies `results.json` and `requests.ndjson.gz` to `evidence/live/` and the Markdown to `docs/LIVE_RESULTS.md`. It refuses a smoke run, and a stopped run without `--allow-partial`.
+2. `python -m ratchet.liverun verify evidence/live` exits 0 (it recomputes every client-side value from the records; ledger-side values are snapshots and it says which).
+3. Fill each `[LIVE NUMBER]` in `docs/HACKATHON_SUBMISSION.md` and the demo script from `evidence/live/results.json`, using the placeholder map in `docs/LIVE_RESULTS.md`, with the `<!-- claim:live.* -->` anchor right after each number.
+4. Move the PRD statuses that wait on live evidence (NFR-1, FR-8.1, FR-8.2, FR-8.4, SM-1 to SM-5) in that same commit, and only there.
+5. Stop the endpoint (`bash deploy/student_endpoint.sh stop`, which records the uptime) and resume the cron nights.
+
+**Tavily:** `--scout-runs K` runs Scout's example questions over `/v1` with live search: up to 3 credits a run from the same monthly allowance as the demo. Subtract them from `RATCHET_TAVILY_MONTHLY_CREDITS`'s pacing, since the gateway's credit meter does not see the harness's searches.
 
 ## Backups
 

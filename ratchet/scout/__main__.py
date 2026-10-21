@@ -40,7 +40,11 @@ def main(argv: list[str] | None = None, client: httpx.Client | None = None) -> i
             d = ev["detail"]
             info = {
                 "planner": lambda: "; ".join(d["queries"]),
-                "searcher": lambda: f"{d['query']} -> {len(d['results'])} results",
+                "searcher": lambda: (
+                    f"{d['query']} -> search unavailable ({d['unavailable']})"
+                    if "unavailable" in d
+                    else f"{d['query']} -> {len(d['results'])} results"
+                ),
                 "triage": lambda: f"#{d['id']} relevant={d['relevant']} ({d['source_type']})",
                 "reader": lambda: f"#{d['id']} {d['fact_type']}: {d['key_fact'][:70]}",
                 "writer": lambda: "answer ready",
@@ -48,6 +52,10 @@ def main(argv: list[str] | None = None, client: httpx.Client | None = None) -> i
             print(f"  {ev['agent']:<8} [{who:<7}] ${ev['cost_usd']:.5f}  {info}")
         elif ev["type"] == "done":
             t = ev["totals"]
+            search_state = ev.get("search") or {}
+            if search_state.get("available") is False:
+                what = "with partial web sources" if search_state.get("partial") else "without web sources"
+                print(f"warning: search unavailable ({search_state.get('reason')}); answered {what}", file=sys.stderr)
             print(f"\n{ev['answer']}\n")
             for c in ev["citations"]:
                 print(f"  [{c['n']}] {c['title']} - {c['url']}")

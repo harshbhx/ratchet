@@ -19,4 +19,6 @@ Run these before building more. Each one is a known risk from the stress test. E
 
 Stop the endpoint after each check (`bash deploy/student_endpoint.sh stop`; `start` brings the same one back): a stopped endpoint is not billed for compute or its own storage, but the mounted bucket still is.
 
+After `scripts/day1_check.py` passes and the student endpoint is up, run `make live-smoke` (20 requests through the live gateway, about 5 control calls to Ultra, no nights: cents); it checks the key, the ledger and the gateway end to end before the real run ([RUNBOOK.md](RUNBOOK.md#live-measurement-run)).
+
 Budget guess: about $40–80 total, assuming L40S at about $1.55/hour (training runs under an hour, endpoint only while testing and recording, $20–30 of Ultra calls). The Builder Program gives $25 of Token Factory credit; ask in Discord for more.

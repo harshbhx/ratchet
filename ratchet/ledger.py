@@ -143,6 +143,8 @@ CREATE TABLE IF NOT EXISTS receipts (        -- sealed, signed savings receipts 
 CREATE TABLE IF NOT EXISTS spend (           -- money spent outside requests, e.g. backfill labelling (FR-16.8)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, day INTEGER, kind TEXT, ref TEXT,
+    -- usd: billable spend outside requests (backfill). Scout's rows (kinds 'scout_run' and 'tavily', ADR 0120) keep 0
+    -- here and their amounts in detail (JSON): their model calls are already in requests.cost_usd.
     usd REAL, realtime_usd REAL, in_tokens INTEGER, out_tokens INTEGER, detail TEXT
 );
 CREATE TABLE IF NOT EXISTS backfill_jobs (   -- historical prompts relabelled by the teacher (FR-16.8)
@@ -379,6 +381,8 @@ INDEXES = [
     # Feedback (FR-13.30): a request by the gateway's id, and one version's verdicts (its human precision).
     "CREATE INDEX IF NOT EXISTS requests_request_id ON requests (request_id)",
     "CREATE INDEX IF NOT EXISTS feedback_version ON feedback (version)",
+    # Scout's guard and credit meter restore today's and this cycle's rows at startup (ADR 0120).
+    "CREATE INDEX IF NOT EXISTS spend_kind_ts ON spend (kind, ts)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -386,6 +390,9 @@ _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 LEAF_SPLITS = ("train", "golden")  # the splits a version commits to (version_leaves.split)
+# Spend rows whose `detail` may be rewritten after they are written: a Scout run's row, updated with its cost so far while
+# it runs (ADR 0120). Every other kind (a backfill's bill, a Tavily search) is written once and never edited.
+MUTABLE_SPEND_KINDS = ("scout_run",)
 _HEX32 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -460,6 +467,13 @@ EXPORT_FILTERS: dict[str, frozenset[str]] = {
     "events": frozenset({"since"}),
     "erasures": frozenset({"since"}),
 }
+# The request columns `Ledger.client_window` returns: metadata only, never text. `wall_ms` and `client_request_id` come
+# with lane D's migrations (OPS-PERF-HOTPATH, OPS-OBSERVABILITY) and read as None on a ledger without them.
+WINDOW_COLUMNS = (
+    "id", "ts", "task", "served_by", "route", "student_version", "escalated", "audited", "audit_agree", "shadow_version",
+    "shadow_serve", "shadow_agree", "latency_ms", "wall_ms", "cost_usd", "baseline_cost_usd", "student_cost_usd",
+    "teacher_cost_usd", "label_p", "stored", "optional_failed", "client_request_id",
+)  # fmt: skip
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -659,6 +673,37 @@ class Ledger:
     def client_requests_since(self, client: str, ts: float) -> int:
         """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
         return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
+
+    @_locked
+    def last_ids(self) -> dict[str, int]:
+        """The highest `requests.id` and `events.id`, 0 for an empty table. The live-run harness keys its rounds by
+        request-id ranges and reads a night's outcome from the events after it (FR-8.20): a live ledger's day is wall
+        time since the first request, not a round."""
+        r = self.db.execute(
+            "SELECT (SELECT COALESCE(MAX(id), 0) FROM requests) req, (SELECT COALESCE(MAX(id), 0) FROM events) ev"
+        ).fetchone()
+        return {"requests": int(r["req"]), "events": int(r["ev"])}
+
+    @_locked
+    def client_window(self, client: str, after_id: int, upto_id: int) -> dict[str, Any]:
+        """One API client's requests with `after_id < id <= upto_id`, in id order, as metadata only (`WINDOW_COLUMNS`;
+        `requests` holds no text, INV-12), and how many rows of other clients (or of none) fall in the same range
+        (`other_clients`, of which `no_client` have no client: an open gateway or an internal call). Columns a later
+        migration adds (`wall_ms`, `client_request_id`) read as None on a ledger without them. A primary-key range scan."""
+        for name, value in (("after_id", after_id), ("upto_id", upto_id)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a whole number, 0 or more, not {value!r}")
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(requests)")}
+        cols = ", ".join(c if c in have else f"NULL AS {c}" for c in WINDOW_COLUMNS)
+        rows = self.db.execute(
+            f"SELECT {cols} FROM requests WHERE id > ? AND id <= ? AND client = ? ORDER BY id", (after_id, upto_id, client)
+        ).fetchall()
+        other = self.db.execute(
+            "SELECT COALESCE(SUM(client IS NULL OR client != ?), 0) other, COALESCE(SUM(client IS NULL), 0) none"
+            " FROM requests WHERE id > ? AND id <= ?",
+            (client, after_id, upto_id),
+        ).fetchone()
+        return {"rows": [dict(r) for r in rows], "other_clients": int(other["other"]), "no_client": int(other["none"])}
 
     @_locked
     def cost_by_day(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
@@ -2151,6 +2196,80 @@ class Ledger:
         rows = self.db.execute("SELECT period, client FROM receipts ORDER BY period, client")
         return [(int(r["period"]), r["client"] or None) for r in rows]
 
+    # ---------- spend outside requests ----------
+    @_locked
+    def add_spend(
+        self,
+        kind: str,
+        ref: str,
+        usd: float = 0.0,
+        realtime_usd: float | None = None,
+        in_tokens: int | None = None,
+        out_tokens: int | None = None,
+        detail: Mapping[str, Any] | None = None,
+        ts: float | None = None,
+    ) -> int:
+        """Write one `spend` row and return its id. `usd` is billable spend that no request row holds (a backfill's bill);
+        Scout's rows keep it 0 and put their amounts in `detail`, written as sorted JSON (ADR 0120)."""
+        if not isinstance(kind, str) or not kind:
+            raise ValueError(f"a spend kind must be a non-empty string, not {kind!r}")
+        for what, value in (("usd", usd), ("realtime_usd", realtime_usd)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value < math.inf
+            ):
+                raise ValueError(f"{what} must be a finite amount, 0 or more, not {value!r}")
+        when = time.time() if ts is None else _check_ts(ts, "ts")
+        cur = self.db.execute(
+            "INSERT INTO spend (ts, day, kind, ref, usd, realtime_usd, in_tokens, out_tokens, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                when,
+                self.day,
+                kind,
+                ref,
+                float(usd),
+                None if realtime_usd is None else float(realtime_usd),
+                in_tokens,
+                out_tokens,
+                None if detail is None else json.dumps(dict(detail), sort_keys=True),
+            ),
+        )
+        self.db.commit()
+        return int(cur.lastrowid)
+
+    @_locked
+    def update_spend_detail(self, row_id: int, detail: Mapping[str, Any]) -> None:
+        """Rewrite the `detail` of a spend row of a kind in MUTABLE_SPEND_KINDS (a Scout run's cost so far). Any other
+        kind, or a missing row, raises ValueError: a bill or a search is written once. `usd` is never touched."""
+        row = self.db.execute("SELECT kind FROM spend WHERE id=?", (row_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"no spend row {row_id!r}")
+        if row["kind"] not in MUTABLE_SPEND_KINDS:
+            raise ValueError(f"spend rows of kind {row['kind']!r} are written once; only {list(MUTABLE_SPEND_KINDS)} rows change")
+        self.db.execute("UPDATE spend SET detail=? WHERE id=?", (json.dumps(dict(detail), sort_keys=True), row_id))
+        self.db.commit()
+
+    @_locked
+    def spend_rows(self, kinds: Iterable[str], since_ts: float) -> list[dict[str, Any]]:
+        """Spend rows of `kinds` written at or after `since_ts`, oldest first: id, ts, kind, ref and `detail` parsed (in
+        Python, so no JSON1 dependency). A row whose detail is not a JSON object is skipped: restoring counters from it
+        could only guess."""
+        kinds = list(kinds)
+        if not kinds:
+            return []
+        marks = ",".join("?" for _ in kinds)
+        out = []
+        for r in self.db.execute(
+            f"SELECT id, ts, kind, ref, detail FROM spend WHERE kind IN ({marks}) AND ts >= ? ORDER BY id",
+            (*kinds, since_ts),
+        ):
+            try:
+                detail = json.loads(r["detail"]) if r["detail"] else None
+            except ValueError:
+                detail = None
+            if isinstance(detail, dict):
+                out.append({"id": r["id"], "ts": r["ts"], "kind": r["kind"], "ref": r["ref"], "detail": detail})
+        return out
+
     # ---------- events + stats ----------
     @_locked
     def event(self, kind: str, detail: str) -> None:
@@ -2160,6 +2279,15 @@ class Ledger:
     @_locked
     def events(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
+
+    @_locked
+    def events_since(self, event_id: int) -> list[dict[str, Any]]:
+        """The events with `id > event_id`, in the shape of `events()`: what a night or a release step just wrote."""
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id < 0:
+            raise ValueError(f"event_id must be a whole number, 0 or more, not {event_id!r}")
+        return [
+            dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events WHERE id > ? ORDER BY id", (event_id,))
+        ]
 
     @_locked
     def audit_counts(self, vid: int, since_id: int = 0) -> tuple[int, int]:

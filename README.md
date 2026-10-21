@@ -37,7 +37,7 @@ The original no-build pages stay at `/lite`, `/lite/scout` and `/lite/dashboard`
 | Reader | `page-read` | **Distilled**: one call per relevant result, pulls out the key fact |
 | Writer | `research-write` | **Pinned** to Nemotron 3 Ultra (open-ended) |
 
-Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit.
+Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a share held back for hackathon judges and a paced Tavily credit budget; a run whose search fails still finishes, labelled.
 
 ## Why "license-clean"
 
@@ -88,7 +88,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 1002 tests
+pytest -q                                                                # 1058 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -136,6 +136,28 @@ print(r.usage.total_tokens, r.system_fingerprint)  # the served answer's tokens;
 ```
 
 See [docs/DAY1.md](docs/DAY1.md) for the checks to run before relying on live mode.
+
+### Measuring a live run
+
+`python -m ratchet.liverun` ([ADR 0121](docs/adr/0121-live-measurement-method.md)) sends synthetic workload traffic through the live gateway in rounds with Night School between them, sends a small control sample straight to Ultra for a measured all-Ultra baseline, and writes one results file behind every live number in the docs. It runs on the gateway's host with its `.env`, under its own API key, and never spends past `--max-usd`:
+
+```bash
+export RATCHET_LIVERUN_KEY=...   # the key of liverun:<key> in RATCHET_API_KEYS; never a flag
+make live-plan                   # free: requests per release stage, golden size, USD per round
+make live-smoke                  # 20 requests, about 5 control calls, no nights: cents
+make live-run MAX_USD=30         # results in evidence/live/<run id>/
+```
+
+The [runbook](docs/RUNBOOK.md#live-measurement-run) covers the prerequisites (the gateway runs `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5`), resuming, the repeat run, entering the Nebius bill and publishing.
+
+## Proof, not promises
+
+### Live numbers (after the live run)
+
+| What | How |
+|---|---|
+| Every live number, with how it was computed and the run that measured it | `evidence/live/results.json` (`values` and `sources`, one `live.*` id per number; `docs/LIVE_RESULTS.md` is its readable form) |
+| The client-side numbers, recomputed from the per-request records | `python -m ratchet.liverun verify evidence/live` |
 
 ## Hosting the demo
 
@@ -310,6 +332,7 @@ ratchet/replay.py       ledger replay: past traffic at another threshold or audi
 ratchet/receipts.py     verified savings receipts: calibrated baseline, lower-bound billing, `python -m ratchet.receipt`
 ratchet/nightschool/    dataset build, LoRA training (TRL + PEFT), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
+ratchet/liverun.py      live-run harness: rounds of synthetic traffic, control arm, results file, `python -m ratchet.liverun`
 ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI
 web/                    React app: story, Scout, dashboard (Vite, Tailwind, motion, recharts)
 ratchet/web/dist/       committed build of web/, served by the gateway

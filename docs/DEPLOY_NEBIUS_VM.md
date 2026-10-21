@@ -113,10 +113,25 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
 2. Set the **budget guard** to what you can afford:
    - `RATCHET_SCOUT_DAILY_BUDGET_USD` caps Scout's Ratchet spend per UTC day (default 3.00). Over 48 days the worst case is the cap × 48, so 3.00 can reach **$144**. The Builder Program credit is $25 ([DEPLOYMENT.md](DEPLOYMENT.md#step-1-token-factory-key-and-checks)), so **0.50/day ($24 worst case)** fits inside it.
    - `RATCHET_SCOUT_RUNS_PER_HOUR` (default 6) limits each client IP.
-   - `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (default 30) caps runs per UTC day for everyone, and with it Tavily credits (about 3 per run). It is not in `.env.vm.example`; add the line if you want a different value.
+   - `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (default 30) caps runs per UTC day for everyone, and with it Tavily credits (about 3 per run).
    - `RATCHET_AUDIT_RATE` (default 0.05): each audit is an extra Ultra call. Keep it at 0.05 or lower.
-3. Apply: `sudo -u ratchet docker compose up -d`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
-4. Watch the Token Factory usage page and the Tavily dashboard daily for the first week.
+   - The counters are kept in the ledger and restored at startup, so `update.sh`, a crash or a recreate no longer resets the daily cap ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)). The first restart after upgrading misses the runs from earlier that day, once.
+3. Hold part of the day back for **judges**, and set the **Tavily credit budget** (the commented lines in `.env.vm.example`; details in [CONFIGURATION.md](CONFIGURATION.md#judge-access-and-tavily-credits)). The Devpost gallery is public, so without a reserve any visitor can use up the day's runs before a judge arrives. An example that keeps runs and credits consistent through judging:
+
+   ```bash
+   RATCHET_SCOUT_JUDGE_CODE=<openssl rand -hex 16>   # goes in the submission's testing instructions only
+   RATCHET_SCOUT_MAX_RUNS_PER_DAY=22
+   RATCHET_SCOUT_JUDGE_RUNS_PER_DAY=7                 # the public gets 15 runs a day
+   RATCHET_TAVILY_MONTHLY_CREDITS=1000                # the free plan; more if the Builders Program adds credits (unverified)
+   RATCHET_TAVILY_PACE_UNTIL=2026-12-15               # spread what is left until the last day of judging
+   ```
+
+   - Credit math: Tavily's free plan gives **1,000 credits a month**, and a basic search costs 1 credit ([Tavily credits](https://docs.tavily.com/documentation/api-credits), checked Oct 20, 2026). The Nebius Builders Program may offer more (unverified; set the real number). Scout makes up to 3 searches a run.
+   - The judges' credits default to `floor(1000 × 7 / 22) = 318`. In a calendar-month cycle that leaves `floor(682 / 15) = 45` public credits a day on Dec 1, which is 15 public runs of 3 searches; leftovers roll forward. The judges' budget defaults to their share of `RATCHET_SCOUT_DAILY_BUDGET_USD` (7/22 of $0.50 is $0.15).
+   - Tavily does not document its monthly reset day (unverified): set `RATCHET_TAVILY_CYCLE_DAY` to the day the Tavily dashboard shows.
+   - When the public's credits for the day are used up, public runs still run, without web search and labelled "search unavailable": the planner has already called Token Factory, and the writer answers without sources. Judge runs keep searching from their reserve.
+4. Apply: `sudo -u ratchet docker compose up -d`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
+5. Watch the Token Factory usage page and the Tavily dashboard daily for the first week, and check `curl -s https://<domain>/scout/status | jq .search` shows `"available": true`.
 
 ### Night School cron (off by default)
 
@@ -154,10 +169,10 @@ Usage costs in live mode (on top of the infrastructure):
 |---|---|---|---|
 | Token Factory (Scout) | `RATCHET_SCOUT_DAILY_BUDGET_USD` per UTC day | A Scout run makes 1 planner + up to 12 triage + up to 6 reader + 1 writer call. With list prices in [CONFIGURATION.md](CONFIGURATION.md#prices-default_prices) that is roughly $0.02–0.03 per run before the student is trained, and under $0.01 after. 10–30 runs a day is about **$0.10–0.90/day** | cap × 48 days: $24 at 0.50, $144 at 3.00 |
 | Token Factory (`/v1/chat/completions`) | **Not covered by the Scout budget.** Gateway API keys with `RATCHET_API_KEY_DAILY_REQUESTS`, or the edge guard | $0 with `RATCHET_API_GUARD=guarded` or keys you do not share | Keys: the daily quota × your keys. Unbounded with both off |
-| Tavily search | 3 basic searches per run, 1 credit each ([Tavily credits](https://docs.tavily.com/documentation/api-credits)) | 1,000 free credits per month ≈ 330 runs a month | `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (30) × 3 = 90 credits a day; beyond the free credits, $0.008 per credit on pay-as-you-go |
+| Tavily search | 3 basic searches per run, 1 credit each ([Tavily credits](https://docs.tavily.com/documentation/api-credits)); `RATCHET_TAVILY_MONTHLY_CREDITS` with daily pacing | 1,000 free credits per month ≈ 330 runs a month | `RATCHET_TAVILY_MONTHLY_CREDITS` a cycle when set; otherwise `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (30) × 3 = 90 credits a day; beyond the free credits, $0.008 per credit on pay-as-you-go |
 | Student endpoint (L40S) | Only while running | $0 if you use the hosted fallback | ~$37 per full day if left on ([DEPLOYMENT.md](DEPLOYMENT.md#4-cost-estimates)) |
 
-To keep Tavily at $0, stay on the free plan without pay-as-you-go: once the 1,000 monthly credits are used, searches fail, and Scout should report an error rather than charge you.
+To keep Tavily at $0, stay on the free plan without pay-as-you-go: once the 1,000 monthly credits are used, Tavily answers 432 and charges nothing. Scout then pauses searching for an hour (a `tavily_exhausted` event) and every run still finishes, labelled "search unavailable", with the planner's and the writer's Token Factory calls. With `RATCHET_TAVILY_MONTHLY_CREDITS` set, the meter usually stops before Tavily has to.
 
 ### Monitoring
 
@@ -166,8 +181,11 @@ cd /opt/ratchet/deploy/vm
 sudo -u ratchet docker compose ps                    # both "running", ratchet "healthy"
 sudo -u ratchet docker compose logs -f --tail=100 ratchet
 sudo -u ratchet docker compose logs -f --tail=100 caddy   # certificate problems show here
-curl -s https://<domain>/scout/status                 # live mode: spend today vs budget
+curl -s https://<domain>/scout/status                 # live mode: spend today vs budget, judges' reserve, search and credits
 ```
+
+- `/scout/status` keeps today's runs and spend across `update.sh`: the counters are restored from the ledger. `search.available` false, a `search_error` event or a `tavily_exhausted` event: see [RUNBOOK.md](RUNBOOK.md#tavily-credits-running-low-or-search-unavailable).
+- One gateway process per ledger: the compose file pins `--workers 1`. Detection of a second process (`gateway_lease`, NFR-60) waits for the leases table; until then see [RUNBOOK.md](RUNBOOK.md#two-gateway-processes-on-one-ledger).
 
 - The ratchet container has a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
@@ -214,7 +232,9 @@ sudo -u ratchet docker compose start ratchet
   - In mock mode the guard also disables the dashboard's **Run day**, **Break next deploy** and **Reset** buttons, which call `/ratchet/demo/*`. Use `open` for the mock demo and `guarded` for live mode.
   - Using the API yourself while guarded: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or pass `default_headers={"X-Ratchet-Admin-Token": TOKEN}` to the OpenAI SDK.
 - **The mock demo is shared.** All visitors see the same simulated state, and one visitor's Reset affects everyone. That is acceptable for a demo, and it costs nothing.
-- **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence API keys or the edge guard), and it does not stop someone with many IP addresses from using up the daily budget early. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
+- **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence API keys or the edge guard), and it does not stop someone with many IP addresses from using up the public share early; the judges' reserve is held back from them. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
+- **Judge code.** Never put `RATCHET_SCOUT_JUDGE_CODE` on the public project page, in the video or in a URL. Judges type it into the Scout page, which sends it once in a POST body; the session then lives in an `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Rotating the code ends every session ([THREAT_MODEL.md](THREAT_MODEL.md) T24).
+- **Access logs.** Caddy logs request headers and redacts only Cookie, Set-Cookie, Authorization and Proxy-Authorization, so the Caddyfile's log filter deletes `X-Ratchet-Admin-Token` (guarded mode). Check it once on the VM with `docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile`. Scout questions stay in both access logs (`/scout/stream?q=`): they are public demo questions.
 - **Real client IPs.** Caddy replaces any client-sent `X-Forwarded-For` with the real address, and uvicorn runs with `--proxy-headers`, so the per-IP limit sees real IPs.
 - **After judging:** rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN_TOKEN` and `RATCHET_API_KEYS`, and revoke any GitHub token used for cloning. Keep `RATCHET_BOM_SIGNING_KEY` (or its public key) if you want old BOMs to stay verifiable.
 
@@ -247,6 +267,10 @@ Confirmed in the Nebius docs on Oct 20, 2026:
 - The CLI installer URL and `nebius profile create --parent-id` ([CLI quickstart](https://docs.nebius.com/cli/quickstart)).
 
 Verify on day 1:
+
+- Tavily's `usage.credits` in a search response (`include_usage`), its 432 and 433 answers and its monthly reset day, against the Tavily dashboard (FR-10.22).
+- The judge cookie through Caddy over HTTPS: `POST /scout/judge` from the Scout page, then `/scout/status` shows `"session": true` (FR-10.21).
+- `caddy validate` with the log filter for `X-Ratchet-Admin-Token`.
 
 - `nebius vpc subnet list --parent-id ...` (the quickstart runs it without `--parent-id`).
 - `nebius compute disk list --parent-id ...` in the teardown.
