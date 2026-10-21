@@ -332,7 +332,7 @@ Created by `SCHEMA` for the evidence features, so later items change no migratio
 |---|---|---|
 | `version_leaves` | `version_id`, `split` (`train` or `golden`), `key` (the example hash, hex), `value` (sha256 of its label, teacher, license and redaction count); primary key (version, split, key), indexed by `key` | Committed training sets (FR-16.4) |
 | `teacher_checks` | `id`, `ts`, `day`, `epoch`, `task`, `source` (`duplicate` or `probe`), `agree`, `model`; indexed by `epoch` | Teacher watch (FR-16.7) |
-| `meta` | `key`, `value` | Small ledger-wide state (the teacher epoch, a training freeze). The drift monitor records each alarm's event here (`drift:<version>:<task>` → the event id), so it is written once across processes and restarts (`Ledger.event_once`) |
+| `meta` | `key`, `value` | Small ledger-wide state (the teacher epoch, a training freeze). The drift monitor records each alarm's event here (`drift:<version>:<task>` → the event id, the alarm's request and its day), so it is written once across processes and restarts (`Ledger.event_once`) |
 | `receipts` | `period` (ledger day), `client` (`''` for the whole gateway), `created_ts`, `doc` (the signed JSON); primary key (period, client) | Savings receipts (FR-15.5) |
 | `spend` | `id`, `ts`, `day`, `kind`, `ref`, `usd`, `realtime_usd`, `in_tokens`, `out_tokens`, `detail` | Money spent outside requests, e.g. backfill labelling (FR-16.8) |
 | `backfill_jobs` | `job`, `ts`, `backend`, `teacher`, `license`, `prompts`, `unique_prompts`, `outputs_discarded`, `source_models` (JSON), `status`, `usd`, `realtime_usd` | Clean-room backfill (FR-16.8) |
@@ -504,10 +504,10 @@ Examples at a 0.92 floor: 0/2 agreeing → 29.8 (a sequential rollback); 0/3 →
 
 ### Drift monitor (`ratchet/drift.py`)
 
-A label-free alarm for a change in the traffic a version sees ([ADR 0032](adr/0032-label-free-drift-alarm.md)). One stream per (version, task), fed in request-id order from `Ledger.confidence_stream` (rows with a confidence and a student version; pinned and teacher-only requests log none, and shadow confidences are not logged):
+A label-free alarm for a change in the traffic a version sees ([ADR 0032](adr/0032-label-free-drift-alarm.md)). One stream per (version, task), fed in request-id order from `Ledger.confidence_stream` (rows with a confidence and a student version; pinned and teacher-only requests log none, and shadow confidences are not logged). A version gets at most 16 task streams, opened in the order it first sees each task name; the rows of every later name share one more stream of that version, task `*` ("other tasks"), so client-chosen `X-Ratchet-Task` values cannot grow the monitor ([Threat model](THREAT_MODEL.md) T12):
 
 ```
-q        = min(10000, max(0, round(confidence · 10000)))            # a Fenwick tree counts the stream's bins
+q        = min(10000, max(0, round(confidence · 10000)))            # the stream's bins, sorted, then in a Fenwick tree
 p_n      = max(1e-12, (#{bin < q} + θ_n · #{bin = q}) / n),  θ_n ~ U(0, 1)   # over the stream's n so far, this one included
 J_n      = min(0.01, 1/n)                                            # the switching rate
 w_e      ← (1 − J_n) · w_e + J_n / 5,   e ∈ {0.05, 0.15, 0.3, 0.6, 1.0}
@@ -519,8 +519,9 @@ alarm    the first n with C ≥ drift_alarm (it latches)
 - **Validity:** each betting function e · p^(e−1) integrates to 1 on [0, 1] and the weights w_e depend only on the past, so E[M_n | past] = 1 and C is a test martingale (the clamp at 1e-12 only lowers decreasing bets: a supermartingale). By Ville's inequality P(C ever ≥ c) ≤ 1/c per stream, however long it runs and however often the gate looks; across K streams, ≤ K/c, which `GET /ratchet/drift` reports.
 - **One-sided:** every bet with e < 1 pays on small p-values, which come from low confidence; e = 1 is "no bet". Confidence that rises makes the capital fall.
 - **Switching rate:** J = 0.01 (Vovk et al.'s Simple Jumper) for a stream's first 100 confidences, then 1/n. A constant rate moves 0.8% of the capital per request into bets that lose while nothing changes, so a version live for a long time would start a change many orders of magnitude down; with 1/n the capital shrinks only like a power of n. J depends on n alone, so validity is unchanged.
-- **Determinism:** θ comes from the stream's own `random.Random(f"{seed}:{version}:{task}")`, never `Ratchet.rng`. Replaying the ledger gives the same capital to the last bit, so a restarted gateway, `python -m ratchet.live tick` and the nightly job all agree, and the `drift` event is written once (`Ledger.event_once`).
-- **Cost:** about 10 µs per confidence (two Fenwick walks of 14 steps). An up-to-date monitor costs one primary-key range query per tick; the versions' states are read again every 1,000 rows to drop the counts (about 160 KB a stream) of versions that stopped serving, keeping canary, live and the most recently retired one. A compacted stream that gets new rows is replayed from the ledger first.
+- **Determinism:** θ comes from the stream's own `random.Random(f"{seed}:{version}:{task}")`, never `Ratchet.rng`. Replaying the ledger gives the same capital to the last bit, so a restarted gateway, `python -m ratchet.live tick` and the nightly job all agree, and the `drift` event is written once (`Ledger.event_once`). Which task names get a stream of their own depends only on the order of the version's rows, so a replay makes the same choice.
+- **Late alarms:** a monitor that replays the ledger (a restart, a lowered threshold, the nightly job in its own process) can find an alarm days after it happened. Its `drift` event is dated on the alarm's own ledger day and `meta` records its request and day; the early night counts an alarm only when its request was logged after the last `trained` event. An event the ledger refuses to write is queued and written by the next check.
+- **Cost:** about 5 µs per confidence. A stream keeps its bins in a sorted array (2 bytes each, about 3 KB for a new stream with its generator) until it has seen 4,096 confidences, then in one Fenwick tree (about 80 KB, two walks of 14 steps per rank); both give the same counts. A version therefore holds at most 17 streams of at most about 100 KB each. An up-to-date monitor costs one primary-key range query per tick; the versions' states are read again every 1,000 rows to drop the counts and generators of versions that stopped serving, keeping canary, live and the most recently retired one. A compacted stream that gets new rows is replayed from the ledger first. `/ratchet/stats` reads counts the monitor keeps, not a row per stream.
 
 ## 7. Cost accounting
 

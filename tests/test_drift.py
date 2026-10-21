@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import bisect
 import functools
+import gc
 import json
 import math
 import random
 import sqlite3
 import threading
 import time
+import tracemalloc
 from collections import Counter
 
 import pytest
@@ -23,9 +25,20 @@ from fastapi.testclient import TestClient
 
 from ratchet import drift
 from ratchet.config import Settings
-from ratchet.drift import BINS, COMPACT_EVERY, MAX_POINTS, DriftMonitor, Fenwick, Stream, bin_of, boosted_rate
+from ratchet.drift import (
+    BINS,
+    COMPACT_EVERY,
+    MAX_POINTS,
+    MAX_STREAMS,
+    OTHER_TASKS,
+    DriftMonitor,
+    Fenwick,
+    Stream,
+    bin_of,
+    boosted_rate,
+)
 from ratchet.ledger import Ledger
-from ratchet.nightschool.orchestrate import run_night
+from ratchet.nightschool.orchestrate import early_night, run_night
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
 from sim import simulate
@@ -243,21 +256,26 @@ def test_confidence_stream_reads_only_student_confidences_in_id_order():
 
 
 @pytest.mark.req("FR-16.6")
-def test_events_once_and_the_last_event_id(tmp_path):
+def test_events_once_and_the_last_event(tmp_path):
     """`event_once` writes an event under a key once, also from a second connection to the same file (the gateway and
-    `python -m ratchet.live tick`), and records the event's id in `meta`; `last_event_id` is 0 without one."""
+    `python -m ratchet.live tick`), and records the event's id in `meta` with any extra entries; `day` dates an event
+    that happened on another day. `last_event` is None without one; `request_ts` reads a request's time."""
     path = str(tmp_path / "ratchet.db")
     a, b = Ledger(path), Ledger(path)
-    assert a.last_event_id("drift") == 0
+    assert a.last_event("drift") is None and a.request_ts(1) is None
     a.event("trained", "v1 on 60 examples")
     assert a.event_once("drift:1:t", "drift", "first") is True
     assert b.event_once("drift:1:t", "drift", "again") is False
     assert a.event_once("drift:1:t", "drift", "again") is False
-    assert b.event_once("drift:2:t", "drift", "other stream") is True
-    kinds = [(e["kind"], e["detail"]) for e in a.events()]
-    assert kinds == [("trained", "v1 on 60 examples"), ("drift", "first"), ("drift", "other stream")]
-    assert a.last_event_id("drift") == a.events()[-1]["id"] and a.last_event_id("trained") == a.events()[0]["id"]
-    assert a.meta_value("drift:1:t") == f'{{"event": {a.events()[1]["id"]}}}' and a.meta_value("nope") is None
+    assert b.event_once("drift:2:t", "drift", "other stream", day=3, meta={"request": 7, "day": 3}) is True
+    events = a.events()
+    kinds = [(e["kind"], e["detail"], e["day"]) for e in events]
+    assert kinds == [("trained", "v1 on 60 examples", 0), ("drift", "first", 0), ("drift", "other stream", 3)]
+    assert a.last_event("drift") == events[-1] and a.last_event("trained") == events[0]
+    assert a.meta_value("drift:1:t") == f'{{"event": {events[1]["id"]}}}' and a.meta_value("nope") is None
+    assert json.loads(a.meta_value("drift:2:t")) == {"event": events[2]["id"], "request": 7, "day": 3}
+    rid = a.log_request(task=TASK, served_by="teacher", cost_usd=0.0, baseline_cost_usd=0.0, latency_ms=1.0, ts=12.5)
+    assert a.request_ts(rid) == 12.5 and a.request_ts(rid + 1) is None
 
 
 def _three_streams(led: Ledger) -> tuple[int, int, int]:
@@ -375,6 +393,111 @@ def test_rows_without_a_finite_confidence_are_skipped():
     assert m.streams[(v, TASK)].n == 3 and m.skipped == 2 and m.last_id == 5
 
 
+def _traced(fn):
+    """`fn()`'s result and the memory it still holds once it returns and garbage is collected (tracemalloc)."""
+    tracemalloc.start()
+    try:
+        out = fn()
+        gc.collect()
+        return out, tracemalloc.get_traced_memory()[0]
+    finally:
+        tracemalloc.stop()
+
+
+@pytest.mark.req("FR-16.6", "NFR-56")
+def test_stream_memory_follows_what_it_has_seen(monkeypatch):
+    """A stream keeps its bins in a sorted array (2 bytes each) until DENSE_AFTER observations, then in one Fenwick tree.
+    A stream that saw one confidence holds a few KB, not a tree; both forms count the same, so the capital is the same
+    to the last bit whichever held the bins."""
+    one, held = _traced(lambda: _feed(Stream(1, TASK), [0.9]))
+    assert one is None and held < 8_000, held
+    xs = _confidences(5, drift.DENSE_AFTER + 2_000, drop_at=drift.DENSE_AFTER + 500)
+    lazy = Stream(1, TASK)
+    hit = _feed(lazy, xs)
+    assert hit is not None and lazy.ranks.tree is not None and lazy.ranks.bins is None
+    monkeypatch.setattr(drift, "DENSE_AFTER", 0)  # a tree from the first observation
+    dense = Stream(1, TASK)
+    assert _feed(dense, xs) == hit
+    assert (lazy.log_c, lazy.peak, lazy.alarm_at, lazy.trajectory) == (dense.log_c, dense.peak, dense.alarm_at, dense.trajectory)
+    bins = sorted(bin_of(x) for x in xs)
+    tree = Fenwick(BINS + 1)
+    for b in bins:
+        tree.add(b)
+    assert Fenwick.build(BINS + 1, bins).tree == tree.tree == lazy.ranks.tree.tree
+    with pytest.raises(IndexError):
+        Fenwick.build(3, [3])
+    lazy.compact()
+    assert lazy.ranks is None and lazy.rng is None and not lazy.active
+
+
+def _junk(led: Ledger, vid: int, n: int, start: int = 0, seed: int = 3) -> list[str]:
+    """`n` requests for `vid`, each under a task name of its own: what a client inventing X-Ratchet-Task values logs
+    under RATCHET_UNKNOWN_TASKS=distill (the default)."""
+    r = random.Random(seed)
+    names = [f"junk-{i}" for i in range(start, start + n)]
+    for name in names:
+        _log(led, vid, [r.uniform(0.5, 0.99)], task=name)
+    return names
+
+
+@pytest.mark.req("FR-16.6", "NFR-56")
+def test_client_task_names_cannot_grow_the_monitor():
+    """docs/THREAT_MODEL.md T12: a version opens MAX_STREAMS task streams, in the order it first sees the names, and every
+    later name shares its OTHER_TASKS stream. 1,000 invented names hold 17 streams, not 1,000 (it was 164 KB a
+    stream); 5,000 more add no stream and at most one Fenwick tree; a name that got a stream keeps it; another version
+    gets its own MAX_STREAMS; the family bound stops growing with the names."""
+    led = Ledger(":memory:")
+    v = _version(led, "live", CERTIFIED)
+    names = _junk(led, v, 1_000)
+    m, held = _traced(lambda: (mon := DriftMonitor(), mon.update(led))[0])
+    assert len(m.streams) == MAX_STREAMS + 1 and held < 250_000, (len(m.streams), held)
+    assert set(m.streams) == {(v, t) for t in [*names[:MAX_STREAMS], OTHER_TASKS]}
+    assert m.streams[(v, OTHER_TASKS)].n == 1_000 - MAX_STREAMS
+    assert m.family_bound() == (MAX_STREAMS + 1) / 100 and m.counts()["monitored"] == MAX_STREAMS + 1
+
+    _junk(led, v, 5_000, start=1_000, seed=4)
+    _log(led, v, [0.8, 0.7], task=names[0])  # an early name keeps its own stream
+    _, grew = _traced(lambda: m.update(led))
+    assert len(m.streams) == MAX_STREAMS + 1 and grew < 150_000, grew
+    assert m.streams[(v, names[0])].n == 3 and m.streams[(v, OTHER_TASKS)].n == 6_000 - MAX_STREAMS
+    w = _version(led, "canary", CERTIFIED)
+    _junk(led, w, 40, start=10_000)
+    m.update(led)
+    assert len(m.streams) == 2 * (MAX_STREAMS + 1) and m.streams[(w, OTHER_TASKS)].n == 40 - MAX_STREAMS
+    fresh = DriftMonitor()
+    fresh.update(led)
+    assert _state(fresh) == _state(m)  # the choice of streams depends on the rows' order alone, so a replay agrees
+    capped = DriftMonitor(max_streams=0)  # every task shares one stream per version
+    capped.update(led)
+    assert set(capped.streams) == {(v, OTHER_TASKS), (w, OTHER_TASKS)}
+    with pytest.raises(ValueError):
+        DriftMonitor(max_streams=-1)
+
+
+@pytest.mark.req("FR-16.6")
+def test_a_compacted_shared_stream_replays_its_own_rows():
+    """When a compacted version serves again, its OTHER_TASKS stream is replayed from the version's rows whose task has
+    no stream of its own, so it holds what a full replay gives; a new name still goes to it."""
+    led = Ledger(":memory:")
+    old = _version(led, "retired", CERTIFIED)
+    for i in range(MAX_STREAMS + 4):
+        _log(led, old, _confidences(i, 30), task=f"t{i}")
+    newer = _version(led, "retired", CERTIFIED)  # the most recently retired keeps its counts; `old` is compacted
+    _log(led, newer, _confidences(99, 30))
+    m = DriftMonitor()
+    m.update(led)
+    assert not m.streams[(old, OTHER_TASKS)].active and m.streams[(old, OTHER_TASKS)].n == 4 * 30
+    led.set_version(old, "live", 100)  # an operator restores it
+    _log(led, old, _confidences(50, 40), task=f"t{MAX_STREAMS + 1}")  # a pooled name
+    _log(led, old, _confidences(51, 40), task="t0")  # a name with its own stream
+    _log(led, old, _confidences(52, 40), task="brand-new")  # a new name: pooled
+    m.update(led)
+    assert m.streams[(old, OTHER_TASKS)].n == 4 * 30 + 80 and m.streams[(old, "t0")].n == 70
+    fresh = DriftMonitor()
+    fresh.update(led)
+    assert _state(fresh) == _state(m)
+
+
 # ---------- the gate: events, the certificate, the policy ----------
 @pytest.mark.req("FR-16.6")
 def test_tick_writes_one_drift_event_per_alarm_across_restarts(tmp_path):
@@ -391,7 +514,10 @@ def test_tick_writes_one_drift_event_per_alarm_across_restarts(tmp_path):
     gate.tick()
     gate.tick()
     (event,) = [e for e in led.events() if e["kind"] == "drift"]
-    assert event["day"] == led.day
+    alarm = gate.drift.open_alarm(v)
+    assert event["day"] == alarm["alarm_day"] == 5 != led.day  # the alarm's own day, not the ledger's today
+    recorded = json.loads(led.meta_value(f"drift:{v}:{TASK}"))
+    assert recorded == {"event": event["id"], "request": alarm["alarm_at_request"], "day": 5}
     d = event["detail"]
     assert d.startswith(f"v{v} ({TASK}): confidence on recent traffic no longer matches earlier traffic for this version")
     assert "test martingale " in d and ">= 100 after " in d and "false-alarm probability <= 1% for this stream" in d
@@ -406,6 +532,50 @@ def test_tick_writes_one_drift_event_per_alarm_across_restarts(tmp_path):
     assert stream["alarm"] and stream["alarm_day"] == 5 and stream["version"] == v and stream["trajectory"]
     assert gate.drift.open_alarm(v)["alarm_at_request"] == stream["alarm_at_request"]
     assert gate.drift.open_alarm(v + 1) is None and gate.drift.alarmed_versions() == {v}
+
+
+@pytest.mark.req("FR-16.6", "NFR-56")
+def test_a_shift_under_invented_task_names_alarms_on_the_shared_stream():
+    """Traffic under task names beyond MAX_STREAMS is still watched, in one stream: a drop there alarms on it, and the
+    event names it 'other tasks'."""
+    led = Ledger(":memory:")
+    v = _version(led, "live", CERTIFIED)
+    for i in range(MAX_STREAMS):
+        _log(led, v, _confidences(i, 10), task=f"t{i}", day=4)
+    confs = _confidences(4, 1000) + _confidences(5, 500, drop_at=0)
+    for i, c in enumerate(confs):
+        _log(led, v, [c], task=f"junk-{i}", day=4 if i < 1000 else 5)
+    gate = ReleaseGate(led)
+    gate.tick()
+    (event,) = [e for e in led.events() if e["kind"] == "drift"]
+    assert event["detail"].startswith(f"v{v} (other tasks): confidence on recent traffic no longer matches")
+    assert f"across {MAX_STREAMS + 1} streams" in event["detail"] and event["day"] == 5
+    assert led.meta_value(f"drift:{v}:{OTHER_TASKS}") is not None
+    assert gate.drift.open_alarm(v)["task"] == OTHER_TASKS and gate.drift_counts()["monitored"] == MAX_STREAMS + 1
+
+
+@pytest.mark.req("FR-16.6")
+def test_a_drift_event_the_ledger_refused_is_written_by_the_next_check(monkeypatch):
+    """The monitor latches an alarm as it sees it; if the ledger refuses the event (a busy database), the error
+    propagates and the next check writes the event, once."""
+    led = Ledger(":memory:")
+    v = _version(led, "live", CERTIFIED)
+    _drifting(led, v, drop=True)
+    gate = ReleaseGate(led)
+    real = led.event_once
+
+    def busy(*a, **kw):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(led, "event_once", busy)
+    with pytest.raises(sqlite3.OperationalError):
+        gate.check_drift()
+    assert gate.drift.alarmed_versions() == {v} and not [e for e in led.events() if e["kind"] == "drift"]
+    monkeypatch.setattr(led, "event_once", real)
+    assert gate.check_drift() == []  # no new alarm; the queued event is written
+    gate.check_drift()
+    (event,) = [e for e in led.events() if e["kind"] == "drift"]
+    assert event["day"] == 5 and event["detail"].startswith(f"v{v} ({TASK}): ")
 
 
 @pytest.mark.req("FR-16.6")
@@ -510,6 +680,27 @@ def test_drift_endpoint_and_stats_block(gw_env):
         "alarms": 0,
         "streams": 0,
     }
+
+
+@pytest.mark.req("FR-16.6", "NFR-56")
+def test_task_headers_sent_to_the_gateway_hold_a_bounded_number_of_streams(gw_env):
+    """docs/THREAT_MODEL.md T12 end to end: unauthenticated requests to the mock gateway, each with an invented
+    X-Ratchet-Task, are distilled and log a confidence, but the monitor holds MAX_STREAMS + 1 streams for the version
+    and `/ratchet/stats` reports that count and its family bound."""
+    gw = gw_env()
+    client = TestClient(gw.app)
+    led = gw.rt.ledger
+    v = _version(led, "live", {"threshold": 0.5, "precision": 0.97, "coverage": 0.8})
+    gw.rt.fleet.train([], BASE_MODEL, led.version(v).adapter_uri)  # the mock student serves this adapter
+    msgs = gw.rt.stream.sample(1).messages()
+    extra = 24
+    for i in range(MAX_STREAMS + extra):
+        r = client.post("/v1/chat/completions", json={"model": "ratchet", "messages": msgs}, headers={"X-Ratchet-Task": f"x-{i}"})
+        assert r.status_code == 200 and r.json()["ratchet"]["student_version"] == v
+    block = client.get("/ratchet/stats").json()["drift"]
+    assert block["streams"] == MAX_STREAMS + 1 and block["family_bound"] == (MAX_STREAMS + 1) / 100
+    streams = client.get(f"/ratchet/drift?version={v}").json()["streams"]
+    assert len(streams) == MAX_STREAMS + 1 and [s["n"] for s in streams if s["task"] == OTHER_TASKS] == [extra]
 
 
 @pytest.mark.req("FR-16.6")
@@ -716,6 +907,31 @@ def test_early_night_never_trains_while_a_release_is_in_flight():
     assert led.events()[-1]["detail"] == f"v{canary} still in canary; no training tonight (saves GPU time)"
 
 
+@pytest.mark.req("FR-6.41")
+def test_an_alarm_found_by_a_replay_keeps_its_day_and_counts_only_after_the_last_training():
+    """A monitor that replays the ledger (the first start after an upgrade, a lowered threshold, a nightly job in its own
+    process) finds an old alarm late. Its event is dated on the alarm's day, and an alarm from before the last training
+    brings no early night, even though its event is newer; a change after that training does, even when only Night
+    School's own check finds it."""
+    led = Ledger(":memory:")
+    v1 = _version(led, "live", CERTIFIED)
+    _log(led, v1, _confidences(4, 1000), day=2)
+    _log(led, v1, _confidences(5, 500, drop_at=0), day=3)  # a launch on day 3 under v1; no gate ticked then
+    v2 = _version(led, "live", CERTIFIED)
+    led.set_version(v1, "retired", 0)
+    led.day = 9
+    led.event("trained", f"v{v2} on 300 examples")  # v2 trained after the launch
+    _log(led, v2, _confidences(6, 1000), day=9)
+    gate = ReleaseGate(led, ReleasePolicy(drift_early_night=1))
+    assert early_night(led, gate, 50) == (50, "")
+    (event,) = [e for e in led.events() if e["kind"] == "drift"]
+    assert event["day"] == 3 and event["detail"].startswith(f"v{v1} ({TASK}): ")
+    assert event["id"] > led.last_event("trained")["id"]  # what the old rule compared, and got wrong
+    _log(led, v2, _confidences(7, 500, drop_at=0), day=10)  # traffic changes after that training
+    assert early_night(led, gate, 50) == (25, " (halved from 50 after a drift alarm)")
+    assert [e["day"] for e in led.events() if e["kind"] == "drift"] == [3, 10]
+
+
 # ---------- the simulator (simulation, mock models) ----------
 @functools.cache
 def _sim(seed: int, drift_day: int, days: int, requests: int, alarm: float = 100.0) -> dict:
@@ -787,3 +1003,10 @@ def test_sim_flags_reach_the_policy_and_the_router(capsys):
     table = simulate.table(_sim(11, 5, 6, 1000))
     assert "drift (simulation, mock models): " in table and "alarms: v1 (ticket-triage) on day 5" in table
     assert "[drift] v1 (ticket-triage): confidence on recent traffic" in table
+
+
+def test_false_alarm_bounds_keep_three_significant_digits():
+    """A threshold above 200 has a bound below 0.5%, which a whole-percent format would print as 0%."""
+    assert drift.pct(1 / 1000) == "0.1%" and drift.pct(1 / 100) == "1%" and drift.pct(17 / 1000) == "1.7%"
+    args = simulate.parser().parse_args(["--days", "2", "--requests", "300", "--drift-alarm", "1000"])
+    assert "(false alarm <= 0.1% each, <= 0.1% in all)" in simulate.table(simulate.run(args))
