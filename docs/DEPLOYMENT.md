@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 1779 tests, ~120 s
+pytest -q                                                          # 1781 tests, ~120 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -229,15 +229,15 @@ Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop
 
 These are **estimates**: Serverless pricing was not confirmed (on-demand list prices assumed), and token counts depend on your prompts.
 
-Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (or `GET /ratchet/cost`) prices the recorded endpoint and training hours at `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR`, reports savings per token and by GPU-hours paid, the break-even volume, and whether self-hosting pays at your traffic ([RUNBOOK.md](RUNBOOK.md#cost-and-the-self-host-recommendation), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). At about $1.55 per GPU-hour a 24/7 endpoint breaks even near 1,500 student-served requests an hour (unverified list prices); below that, use the hosted fallback or stop the endpoint when idle. Above it the endpoint beats the teacher, but the untuned hosted fallback is cheaper per answer below its crossover (roughly 52,000 student answers an hour at list prices), if it serves as many requests as the tuned student.
+Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (or `GET /ratchet/cost`) prices the recorded endpoint and training hours at `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR`, reports savings per token and by GPU-hours paid, the break-even volume, and whether self-hosting pays at your traffic ([RUNBOOK.md](RUNBOOK.md#cost-and-the-self-host-recommendation), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). At $1.35 per GPU-hour (an L40S on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate until your bill confirms it) a 24/7 endpoint breaks even near 1,350 student-served requests an hour; below that, use the hosted fallback or stop the endpoint when idle. Above it the endpoint beats the teacher, but the untuned hosted fallback is cheaper per answer below its crossover (roughly 52,000 student answers an hour at list prices), if it serves as many requests as the tuned student.
 
 | Item | Assumption | Estimate |
 |---|---|---|
-| Training run | L40S at about $1.55/h, 30–60 min per night | ~$0.80–1.60 per night |
-| Student endpoint | L40S at about $1.55/h, only while testing or recording | ~$37 per full day if left on |
+| Training run | L40S at $1.35/GPU-hour, 30–60 min per night | ~$0.70–1.35 per night (estimate) |
+| Student endpoint | L40S at $1.35/GPU-hour, only while testing or recording | ~$32 per full day if left on (estimate) |
 | Teacher calls | Ultra $1 / $3 per 1M tokens; ~150 input + ~380 output tokens per call | ~$1.30 per 1,000 calls |
 | Judge | Super $0.30 / $0.90; only for free-text tasks | small |
-| Hackathon total | 6–8 training runs, endpoint on a few hours a day, ~$20–30 of teacher calls | **~$40–80** |
+| Hackathon total | 6–8 training runs, endpoint on a few hours a day, ~$20–30 of teacher calls | **~$35–75** (estimate) |
 
 ## 5. Verification after deploy
 
