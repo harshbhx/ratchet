@@ -1,6 +1,6 @@
 # Ratchet documentation
 
-Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a cheaper model you own. Start with the [project README](../README.md) for a quick start.
+Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base). Start with the [project README](../README.md) for a quick start.
 
 ## Product
 

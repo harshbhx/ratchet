@@ -1,20 +1,20 @@
 # Competitive analysis
 
-As of 2026-10-19. Based on pages opened during research; anything unconfirmed is marked "unverified".
+As of Oct 21, 2026. Based on pages opened during research. A fact re-read on a primary page says "checked" with its date; a fact taken from the research notes without a fresh check says "(research notes, <date>)" until someone re-checks it; anything nobody could confirm is marked "unverified".
 
 ## Summary
 
-Every piece of what Ratchet does exists somewhere: gateways, routers, one-off distillation jobs, fine-tuning APIs. A fully automatic, safely gated loop is rare. **No competitor sells license-clean distillation.**
+Every piece of what Ratchet does exists somewhere: gateways, routers, one-off distillation jobs, fine-tuning APIs, and managed training loops that stage each new model for review. A fully automatic loop with a statistical release gate is rare. OpenRouter filters for distillable teachers at request time; no gateway we found records each example's teacher and license when it is captured and signs that lineage into every trained adapter.
 
-The closest rivals are two-person YC Summer 2026 teams that launched between August and October 2026: Orchestra/Understudy and Experiential Labs. Inference.net has the pieces and $11.8M of funding, but you start each training run yourself. The two earlier independents, OpenPipe and Predibase, were both acquired in 2025.
+The closest rivals are Inference.net, whose platform (Apr 14, 2026) retrains on production data, benchmarks each candidate against the live model and stages new models "for final review and deployment", and two two-person YC Summer 2026 teams that launched between August and October 2026: Orchestra/Understudy and Experiential Labs. The two earlier independents, OpenPipe and Predibase, were both acquired in 2025. NVIDIA has published the pattern itself, as a reference blueprint (Jun 2025, deprecated Apr 2026) and a license-compliant distillation tutorial (Feb 5, 2026).
 
 ## Competitor table
 
 | Player | What they do | Fully automatic loop? | Customer owns weights? | Status, Oct 2026 |
 |---|---|---|---|---|
 | [Orchestra / Understudy](https://www.ycombinator.com/launches/SPb-understudy-the-self-optimizing-inference-cloud) | Swap one URL. Builds evals from traffic, trains specialist open models, routes once they match the frontier model | Yes, as claimed; no data shown | Yes ("your company owns") | YC S26, 2 people, launched Aug 5, 2026. Claims "100x" cost cut and "80% off an Anthropic bill" |
-| [Experiential Labs](https://github.com/experientiallabs/experiential) | Apache-2.0, OpenAI-compatible gateway (~9.6k GitHub stars). Custom router from traffic; fine-tunes open models on demand | Partial: training is a manual CLI command; no eval or rollout steps shown | Yes, explicitly | YC S26, 2 people, free. Guarantees at least 50% lower cost with an SLA |
-| [Inference.net](https://inference.net/blog/seed-round/) | Gateway logging, datasets from traffic, LLM-judge evals, training recipes, dedicated GPU serving | No: you start each run | Says yes; download unverified | $11.8M seed (Oct 2025). Targets customers spending $50K+/month |
+| [Experiential Labs](https://github.com/experientiallabs/experiential) | Apache-2.0, OpenAI-compatible gateway (about 10k GitHub stars, checked Oct 21, 2026; about 9.9k in the research notes the same day). Custom router from traffic; fine-tunes open models on demand | Partial: training is a manual CLI command; no eval or rollout steps shown | Yes, explicitly ("a specialized model you own", checked Oct 21, 2026) | YC S26, 2 people, free |
+| [Inference.net](https://inference.net/blog/seed-round/) | Gateway logging, datasets from traffic, LLM-judge evals, training, dedicated GPU serving. Fine-tunes NVIDIA Nemotron Nano 2 models with NeMo Megatron-Bridge ([blog, Mar 11, 2026](https://inference.net/blog/nemotron-finetuning/), checked Oct 21, 2026) | Partial: the platform runs a continuous training loop on production data and benchmarks each candidate against the live model; "When new models are ready, they're staged for final review and deployment"; no canary or rollback described ([launch post, Apr 14, 2026](https://inference.net/blog/introducing-inference-platform/), checked Oct 21, 2026) | Says yes ("The model weights are fully owned by you"); download not stated | $11.8M seed (Oct 2025). Targets customers spending $50K+/month |
 | [OpenPipe](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning) | Logged traffic into fine-tunes; later RL (ART library) | No | Unverified | Acquired by CoreWeave (Sep 2025). Tech went into CoreWeave Serverless RL and Forge |
 | [Predibase](https://techcrunch.com/2025/06/25/rubrik-acquires-predibase-to-accelerate-adoption-of-ai-agents/) | LoRA/RFT fine-tuning; LoRAX multi-adapter serving | No | VPC option | Acquired by Rubrik (Jun 2025) |
 | [Proxis](https://www.ycombinator.com/companies/proxis) | Was a distillation and serving platform | n/a | n/a | Pivoted to email and sales agents |
@@ -30,22 +30,28 @@ The closest rivals are two-person YC Summer 2026 teams that launched between Aug
 | Azure OpenAI distillation | Stored completions, "Distill" button | No | No | Stored completions retired Oct 15, 2026 |
 | [Nebius Token Factory post-training](https://nebius.com/blog/posts/post-training-in-token-factory) | SFT (LoRA/full), downloadable checkpoints | No: "continuous optimization" is on the roadmap | Yes | Active; no Nemotron students |
 | Routers: [Not Diamond](https://notdiamond.ai), [RouteLLM](https://lmsys.org/blog/2024-07-01-routellm/), OpenRouter Auto | Pick a model per request | No training | n/a | Active |
-| Gateways: LiteLLM, Portkey, Helicone | Logging, routing, policy | No training | n/a | Portkey being acquired by Palo Alto Networks; Helicone acquired by Mintlify |
+| Gateways: LiteLLM, Helicone | Logging, routing, policy | No training | n/a | Helicone acquired by Mintlify |
+| [Portkey](https://www.paloaltonetworks.com/company/press/2026/palo-alto-networks-completes-acquisition-of-portkey-to-secure-ai-agents) | AI gateway: logging, routing, policy | No training | n/a | Acquired by Palo Alto Networks; the deal closed May 29, 2026 (press release, checked Oct 21, 2026) |
+| [OpenRouter distillable routing](https://openrouter.ai/docs/guides/evaluate-and-optimize/distillation) | A router across providers. `enforce_distillable_text` will "Restrict routing to only models that allow text distillation"; "OpenRouter provides distillation information on a best-effort basis" | No training, no lineage kept | n/a | Active (guide undated, checked Oct 21, 2026) |
+| [NVIDIA Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel) | Reference blueprint that distils an agent's production traffic into smaller models with NeMo microservices and evaluates them ([blog, Jun 11, 2025](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint)) | No: "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision"; "Think of the Flywheel as a flashlight, not an autopilot" | n/a (a blueprint you run) | Repo marked deprecated in Apr 2026 (checked Oct 21, 2026) |
+| [NVIDIA license-compliant distillation tutorial](https://developer.nvidia.com/blog/how-to-build-license-compliant-synthetic-data-pipelines-for-ai-model-distillation/) | Synthetic data from Nemotron 3 Nano through OpenRouter's distillable endpoints (`enforce_distillable_text`), generated with NeMo Data Designer and scored by an LLM judge | No: a one-off batch run | n/a (a tutorial) | Published Feb 5, 2026 (checked Oct 21, 2026) |
+| [TensorZero](https://github.com/tensorzero/tensorzero) | Open-source LLMOps platform: gateway, observability, evaluation, optimization and experimentation | n/a: archived | n/a | Repo archived by its owner on Jun 12, 2026 (checked Oct 21, 2026); about 11.7k stars |
 | taskdistill (open source, hobby) | Capture proxy, MLX LoRA, confidence cascade | No (scheduled retraining on roadmap) | Yes | 97.6% agreement at 23.7% escalation on Banking77 ([GitHub](https://github.com/B0yko/taskdistill)) |
 
 ## Where Ratchet wins
 
-1. **License-clean by design.** OpenAI's [Business Terms 3.3(e)](https://openai.com/policies/business-terms/) and Anthropic's [Commercial Terms D.4(a)](https://www.anthropic.com/legal/commercial-terms) ban training competing models on their outputs. A tool that distills Claude or GPT traffic exposes its users. Ratchet refuses those teachers in code and keeps a per-example provenance ledger. Nemotron 3 Ultra's [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16) license places no restrictions on outputs.
-2. **A decision for every request.** The student answers each request; only that request escalates if the student is unsure. Orchestra routes per task once a specialist passes evals.
-3. **Release safety.** Shadow mode, a golden-set gate with champion-vs-challenger rescoring, canary 10% → 50% → 100%, and rollback on a statistical bound. No competitor page documents all of these.
+1. **License-clean by design, with lineage.** OpenAI's [Business Terms 3.3(e)](https://openai.com/policies/business-terms/) and Anthropic's [Commercial Terms D.4(a)](https://www.anthropic.com/legal/commercial-terms) ban training competing models on their outputs. A tool that distills Claude or GPT traffic exposes its users. Ratchet refuses those teachers in code, records each example's teacher and license when it is captured, and signs them into every adapter's bill of materials. OpenRouter's `enforce_distillable_text` filters teachers at request time, on license data it gives "on a best-effort basis", and keeps no training lineage. Nemotron 3 Ultra's [OpenMDW-1.1](https://openmdw.ai/license/1-1/) "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" (license page last updated May 27, 2026).
+2. **A decision for every request.** The student answers each request; only that request escalates if the student is unsure.
+3. **Release safety without a person in the loop.** Shadow mode, a golden-set gate with champion-vs-challenger rescoring and an exact precision certificate in each signed BOM, canary 10% → 50% → 100%, and rollback on a statistical bound. NVIDIA's blueprint leaves promotion to production to "a human decision", and Inference.net stages new models "for final review and deployment"; no competitor page we found documents shadow, canary and automatic rollback.
 4. **A home for OpenAI fine-tuning migrants.** The Jan 6, 2027 cutoff creates a deadline-driven buyer.
-5. **Native to Nebius and NVIDIA.** It fills the gap on Nebius's own "continuous optimization" roadmap. Nebius could be a partner or an acquirer.
+5. **Native to Nebius and NVIDIA.** It fills the gap on Nebius's own "continuous optimization" roadmap and runs four of the six steps of the LLM-to-SLM algorithm in NVIDIA Research's [arXiv 2506.02153](https://arxiv.org/abs/2506.02153) (v3, Sep 22, 2026) automatically: S1, S2, S5 and S6. Task clustering (S3) and model selection (S4) are manual: the caller or operator names each task, and there is one base model. Nebius could be a partner or an acquirer.
 
 ## Where Ratchet is weaker today
 
 - No live production data yet. Simulation results only.
 - Single developer. Orchestra and Experiential Labs have two founders each and YC backing.
-- Experiential Labs already has open-source traction (~9.6k stars).
+- Experiential Labs already has open-source traction (about 10k stars, checked Oct 21, 2026).
+- Inference.net has funding and a managed training loop with evals against the live model (Apr 14, 2026).
 - Per-token savings against the labs' cheapest tiers (Claude Haiku 5.5 at $0.10/$0.50 per million tokens) are only about 2x. The big savings come from moving traffic off top-tier models.
 
 ## Evidence numbers
@@ -58,9 +64,8 @@ The closest rivals are two-person YC Summer 2026 teams that launched between Aug
 | [Distilling Step-by-Step](https://arxiv.org/html/2305.02301v2) | A 770M T5 beats 540B PaLM few-shot |
 | [AWS Bedrock distillation](https://aws.amazon.com/bedrock/model-distillation) | Up to 500% faster, 75% cheaper, under 2% accuracy loss (RAG) |
 | [taskdistill](https://github.com/B0yko/taskdistill) | 97.6% teacher agreement at 23.7% escalation |
-| Experiential Labs (claim) | At least 50% lower cost under SLA; up to 97% on some tasks |
 | Understudy (claim, no data) | 80% off an Anthropic bill |
 
 ## Positioning statement
 
-For AI teams paying frontier prices for narrow, high-volume tasks, Ratchet is a drop-in gateway that turns their traffic into a model they own. Unlike distillation tools that learn from closed models, Ratchet only learns from teachers whose licenses allow it, proves it with a provenance ledger, and never ships a model that has not beaten the one in production.
+For AI teams paying frontier prices for narrow, high-volume tasks, Ratchet is a drop-in gateway that turns their traffic into a LoRA adapter they own. Unlike distillation tools that learn from closed models, Ratchet only learns from teachers whose licenses allow it, records that lineage for every example and signs it into every adapter, and never ships a model that has not held up against the one in production on the same held-out rows.

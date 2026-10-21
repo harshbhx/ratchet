@@ -3,7 +3,7 @@
 | Term | Meaning in Ratchet |
 |---|---|
 | **Teacher** | The large model that answers requests the student can't handle. Default: NVIDIA Nemotron 3 Ultra on Nebius Token Factory. Its answers become training data. |
-| **Student** | The small model the customer owns. Default: NVIDIA Nemotron 3 Nano 4B plus a LoRA adapter, served by vLLM. |
+| **Student** | The small model that answers first. Default: NVIDIA Nemotron 3 Nano 4B plus a LoRA adapter, served by vLLM. The customer owns the adapter; the base model keeps its own license. |
 | **Version** | One trained student adapter (`student-v1`, `student-v2`, ...). Each has its own eval numbers, threshold and state. |
 | **Cascade** | Try the cheap model first; send the request to the expensive model only when needed. |
 | **Escalation** | A request the student was not confident about, sent to the teacher. |

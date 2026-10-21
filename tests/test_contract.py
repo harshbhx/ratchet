@@ -956,6 +956,38 @@ def test_story_page_helpers():
     assert re.search(r"^# fail 0$", r.stdout, re.M) and not re.search(r"^# pass 0$", r.stdout, re.M), r.stdout[-2000:]
 
 
+@pytest.mark.req("FR-7.40")
+@pytest.mark.skipif(not _node_strips_types(), reason="needs Node 22.6 or later (the CI web job runs npm test)")
+@pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")
+def test_who_model_helpers():
+    """Who answered a call (web/tests/who-model.test.mjs, `npm test`): a student answer whose model is the fallback id is
+    "Nano 30B · hosted" with its threshold and no certificate, any other is "Nano · yours", the teacher is "Ultra · Token
+    Factory"; a run or page the hosted fallback answered stops saying "your model" and shows no precision figure."""
+    r = subprocess.run(
+        [NODE, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/who-model.test.mjs"],
+        cwd=WEB,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert re.search(r"^# fail 0$", r.stdout, re.M) and not re.search(r"^# pass 0$", r.stdout, re.M), r.stdout[-2000:]
+
+
+@pytest.mark.req("FR-7.40")
+def test_student_serving_kinds_match_the_ui(gw):
+    """The pages know every `student_serving.kind` the gateway reports (web/src/lib/api.ts), and the badge compares a
+    call's model with the same setting the live resolver sends student calls to without an endpoint."""
+    api_ts = (WEB / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
+    union = re.search(r"^export type StudentServingKind = (.+);$", api_ts, re.M)
+    assert union, "api.ts lost StudentServingKind"
+    assert tuple(re.findall(r'"(\w+)"', union[1])) == gw.STUDENT_SERVING_KINDS
+    body = TestClient(gw.app).get("/ratchet/stats").json()
+    assert body["student_serving"]["kind"] in gw.STUDENT_SERVING_KINDS
+    assert body["fallback_student"] == gw.rt.settings.fallback_student_model
+
+
 def _invariants() -> dict[int, str]:
     """CLAUDE.md's numbered invariants: number -> its text."""
     text = (REPO / "CLAUDE.md").read_text(encoding="utf-8").split("## Invariants", 1)[1].split("\n## ", 1)[0]

@@ -48,6 +48,7 @@ from ratchet.providers import DEFAULT_STUDENT_MAX_TOKENS, GenParams, OpenAICompa
 from ratchet.resilience import RetryPolicy, timeouts
 from ratchet.router import Ratchet
 from ratchet.scout.__main__ import main as scout_main
+from ratchet.scout.agents import Call
 from ratchet.scout.guard import Guard
 from ratchet.scout.prompts import EXAMPLE_QUESTIONS
 from ratchet.scout.search import MockSearch
@@ -446,6 +447,129 @@ def test_live_runtime_wiring(gw_env, tmp_path, monkeypatch):
         FALLBACK,
         "hosted nano says hi",
     )
+
+
+# ---------- live mode: which model the pages name (FR-7.40) ----------
+CERTIFIED_EVAL = {
+    "threshold": 0.42,
+    "certificate": {
+        "method": "clopper_pearson",
+        "certified": True,
+        "target": 0.95,
+        "delta": 0.05,
+        "threshold": 0.42,
+        "lcb": 0.97,
+    },
+}
+NO_STUDENT = {"kind": "none", "model": None, "version": None, "threshold": None, "certified": False}
+
+
+@pytest.mark.req("FR-7.40", "FR-8.3")
+def test_stats_student_serving_kinds(gw_env, tmp_path, monkeypatch):
+    """`/ratchet/stats` names the model a student call goes to: the mock fleet's adapter, our adapter on the endpoint, the
+    hosted untuned fallback without RATCHET_STUDENT_BASE, or nobody on a cold start (the teacher answers everything)."""
+    gw = gw_env()
+    c = TestClient(gw.app)
+    teacher = FakeOpenAIServer("teacher says hi")
+
+    def stats(rt: Any) -> dict[str, Any]:
+        monkeypatch.setattr(gw, "rt", rt)
+        body = c.get("/ratchet/stats").json()
+        assert body["fallback_student"] == rt.settings.fallback_student_model
+        return body["student_serving"]
+
+    # Mock mode: `mock` with or without a version; Night School's adapter names never equal the fallback id.
+    mock_rt = gw.rt
+    assert stats(mock_rt) == {**NO_STUDENT, "kind": "mock"}
+    mock_rt.simulate_day(300, "mixed")
+    (v,) = mock_rt.ledger.versions()
+    assert re.fullmatch(r"student-v\d+", v.adapter_uri) and v.adapter_uri != mock_rt.settings.fallback_student_model
+    got = stats(mock_rt)
+    assert (got["kind"], got["model"], got["version"]) == ("mock", v.adapter_uri, v.id)  # a first student, in canary
+    assert got["threshold"] == v.eval["threshold"]
+
+    # Live, no student endpoint: nobody on a cold start, then the hosted fallback for a live version.
+    hosted = gw.Runtime(
+        _live_settings(tmp_path, db_path=str(tmp_path / "h.db"), student_base=""), transports={"teacher": teacher.transport}
+    )
+    assert stats(hosted) == NO_STUDENT
+    vid = _version(hosted.ledger, "live", CERTIFIED_EVAL)
+    assert stats(hosted) == {"kind": "hosted_fallback", "model": FALLBACK, "version": vid, "threshold": 0.8, "certified": False}
+
+    # Live with the endpoint: our adapter, under its own calibrated threshold, certified by its certificate.
+    endpoint = gw.Runtime(_live_settings(tmp_path, db_path=str(tmp_path / "e.db")), transports={"teacher": teacher.transport})
+    assert stats(endpoint) == NO_STUDENT
+    first = _version(endpoint.ledger, "canary", {"threshold": 0.6})  # a cold start's first student serves in canary
+    assert stats(endpoint) == {"kind": "endpoint", "model": "student-v1", "version": first, "threshold": 0.6, "certified": False}
+    vid = _version(endpoint.ledger, "live", CERTIFIED_EVAL)  # with a live version, the live one is named
+    assert stats(endpoint) == {"kind": "endpoint", "model": "student-v2", "version": vid, "threshold": 0.42, "certified": True}
+    assert teacher.calls == []  # reading the stats calls no model
+
+
+@pytest.mark.req("FR-7.40", "FR-8.3")
+def test_hosted_fallback_is_never_certified(gw_env, tmp_path, monkeypatch):
+    """The version's certificate was computed for our adapter, so it never covers the hosted model: `certified` is false
+    and the threshold is the global one the router holds the fallback to. A certificate that does not certify is not
+    `certified` on the endpoint either."""
+    gw = gw_env()
+    c = TestClient(gw.app)
+    teacher = FakeOpenAIServer("teacher says hi")
+    settings = _live_settings(tmp_path, student_base="", confidence_threshold=0.85)
+    rt = gw.Runtime(settings, transports={"teacher": teacher.transport})
+    monkeypatch.setattr(gw, "rt", rt)
+    vid = _version(rt.ledger, "live", CERTIFIED_EVAL)
+    got = c.get("/ratchet/stats").json()["student_serving"]
+    assert got["certified"] is False and got["threshold"] == settings.confidence_threshold == 0.85
+    assert got["threshold"] == rt.ratchet.threshold(rt.ledger.version(vid), FALLBACK)
+
+    rt.settings.student_base = STUDENT_BASE  # the same ledger behind an endpoint
+    got = c.get("/ratchet/stats").json()["student_serving"]
+    assert (got["kind"], got["certified"], got["threshold"]) == ("endpoint", True, 0.42)
+    uncertified = {**CERTIFIED_EVAL, "certificate": {**CERTIFIED_EVAL["certificate"], "certified": False, "lcb": 0.81}}
+    rt.ledger.update_eval(vid, uncertified)
+    assert c.get("/ratchet/stats").json()["student_serving"]["certified"] is False
+
+
+@pytest.mark.req("FR-7.40", "FR-8.3")
+def test_hosted_fallback_response_names_the_fallback_model(gw_env, tmp_path, monkeypatch):
+    """A student answer from the hosted fallback says so: the response's `model` is the fallback id (what Token Factory
+    served), `ratchet.served_by` stays `student`, and a Scout step built from the same result carries that id, which
+    the pages compare with `fallback_student`."""
+    gw = gw_env()
+    hosted = FakeOpenAIServer("hosted nano says hi")
+    rt = gw.Runtime(_live_settings(tmp_path, student_base=""), transports={"teacher": hosted.transport})
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.2})
+    c = TestClient(gw.app)
+    body = c.post(CHAT, json={"messages": _ask(1)}).json()
+    assert (body["ratchet"]["served_by"], body["model"]) == ("student", FALLBACK)
+    assert (
+        body["model"] == c.get("/ratchet/stats").json()["fallback_student"] == c.get("/scout/status").json()["fallback_student"]
+    )
+    assert [x.json["model"] for x in hosted.calls] == [FALLBACK]
+    step = Call.from_result(rt.ratchet.handle(_ask(2)))
+    assert (step.served_by, step.model) == ("student", FALLBACK)
+
+
+@pytest.mark.req("FR-7.40")
+def test_scout_status_has_fallback_student(gw_env, tmp_path, monkeypatch):
+    """`/scout/status` carries the fallback id and the serving student, so the Scout page labels each call without a
+    stats call; the guard's keys are still there."""
+    gw = gw_env()
+    c = TestClient(gw.app)
+    st = c.get("/scout/status").json()
+    assert st["fallback_student"] == gw.rt.settings.fallback_student_model and st["student_serving"]["kind"] == "mock"
+    assert {"mode", "budget_usd", "spent_today_usd", "runs_today", "runs_per_hour_per_ip", "max_runs_per_day", "tavily"} <= set(
+        st
+    )
+
+    rt = gw.Runtime(_live_settings(tmp_path, student_base=""), transports={"teacher": FakeOpenAIServer().transport})
+    monkeypatch.setattr(gw, "rt", rt)
+    vid = _version(rt.ledger, "live", CERTIFIED_EVAL)
+    st = c.get("/scout/status").json()
+    assert st["mode"] == "live" and st["fallback_student"] == FALLBACK
+    assert st["student_serving"] == c.get("/ratchet/stats").json()["student_serving"]
+    assert (st["student_serving"]["kind"], st["student_serving"]["version"]) == ("hosted_fallback", vid)
 
 
 # ---------- live mode: evaluation ----------

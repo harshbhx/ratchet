@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { ListTree, PenLine } from "lucide-react";
 import type { ServedBy } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { studentCopy } from "@/lib/who-model";
 import { AGENTS, AgentDisc, stateLabel } from "./bits";
 import {
   PLACEHOLDER_PER_QUERY,
@@ -251,7 +252,7 @@ function buildModel(run: RunState, d: Derived, w: number): Model {
       escalated: !!step?.escalated,
       cite: null,
       title: step
-        ? `Triage · ${step.served_by === "student" ? "your model" : "Ultra"} · ${step.detail?.relevant ? "relevant" : "not relevant"}${step.escalated ? " · escalated" : ""}: ${r?.title ?? ""}`
+        ? `Triage · ${step.served_by === "student" ? studentCopy(d.hosted).tried : "Ultra"} · ${step.detail?.relevant ? "relevant" : "not relevant"}${step.escalated ? " · escalated" : ""}: ${r?.title ?? ""}`
         : r
           ? `Triage pending: ${r.title}`
           : "Triage call",
@@ -281,7 +282,7 @@ function buildModel(run: RunState, d: Derived, w: number): Model {
       escalated: !!step?.escalated,
       cite,
       title: step
-        ? `Reader · ${step.served_by === "student" ? "your model" : "Ultra"} · ${step.detail?.answers_question ? "answers" : "does not answer"}: ${step.detail?.key_fact ?? ""}`
+        ? `Reader · ${step.served_by === "student" ? studentCopy(d.hosted).tried : "Ultra"} · ${step.detail?.answers_question ? "answers" : "does not answer"}: ${step.detail?.key_fact ?? ""}`
         : "Reader call",
     };
   });
@@ -334,13 +335,13 @@ function buildModel(run: RunState, d: Derived, w: number): Model {
         ? stateLabel(st("triage"))
         : vertical
           ? `${tri.length}/${d.order.length} · ${yoursT} ●`
-          : `${tri.length}/${d.order.length} · ${yoursT} yours`,
+          : `${tri.length}/${d.order.length} · ${yoursT} ${studentCopy(d.hosted).compact}`,
     reader:
       run.status === "idle" || (!d.readQueue.length && !d.triageDone)
         ? stateLabel(st("reader"))
         : vertical
           ? `${rd.length}/${d.readQueue.length}${d.triageDone ? "" : "+"} · ${yoursR} ●`
-          : `${rd.length}/${d.readQueue.length}${d.triageDone ? "" : "+"} · ${yoursR} yours`,
+          : `${rd.length}/${d.readQueue.length}${d.triageDone ? "" : "+"} · ${yoursR} ${studentCopy(d.hosted).compact}`,
     writer: run.writer || run.done ? "answer ready" : stateLabel(writerState),
   };
   const labels: Label[] = (Object.keys(labelPos) as AgentRow["agent"][]).map((agent) => ({
@@ -557,7 +558,7 @@ function GraphLabel({ l }: { l: Label }) {
     ) : (
       <span className="text-muted">{left ? "tool · search" : "tool · web search"}</span>
     );
-  // "●" in compact progress stands for calls answered by your model; render it as an owned dot.
+  // "●" in compact progress stands for calls the student answered; render it as an owned dot.
   const parts = l.progress.split("●");
   const progress =
     parts.length > 1 ? (
@@ -590,8 +591,8 @@ function summary(run: RunState, d: Derived) {
   return [
     `Planner ${run.planner ? "done, answered by Ultra" : "working"}.`,
     `Searcher: ${d.groups.filter((g) => g.step).length} of ${d.groups.length || 3} queries.`,
-    `Triage: ${tri.length} of ${d.order.length || "?"} calls, ${tri.filter((s) => s.served_by === "student").length} by your model.`,
-    `Reader: ${rd.length} of ${d.readQueue.length} calls, ${rd.filter((s) => s.served_by === "student").length} by your model.`,
+    `Triage: ${tri.length} of ${d.order.length || "?"} calls, ${tri.filter((s) => s.served_by === "student").length} ${studentCopy(d.hosted).byShort}.`,
+    `Reader: ${rd.length} of ${d.readQueue.length} calls, ${rd.filter((s) => s.served_by === "student").length} ${studentCopy(d.hosted).byShort}.`,
     `Writer ${run.writer || run.done ? "done, answered by Ultra" : "waiting"}.`,
   ].join(" ");
 }
@@ -692,15 +693,16 @@ export function AgentGraph({ run, derived, className }: { run: RunState; derived
   );
 }
 
-export function GraphLegend({ className }: { className?: string }) {
+export function GraphLegend({ className, hosted = false }: { className?: string; hosted?: boolean }) {
   const item = "inline-flex items-center gap-2";
+  const who = studentCopy(hosted);
   return (
     <ul className={cn("flex flex-wrap gap-x-5 gap-y-2 text-[12.5px] text-muted", className)} aria-label="Legend">
       <li className={item}>
         <svg width="14" height="14" aria-hidden>
           <circle cx="7" cy="7" r="6" fill="var(--owned)" />
         </svg>
-        Answered by your model
+        {who.label}
       </li>
       <li className={item}>
         <svg width="14" height="14" aria-hidden>
@@ -713,7 +715,7 @@ export function GraphLegend({ className }: { className?: string }) {
           <circle cx="9" cy="9" r="8" fill="none" stroke="var(--owned)" strokeWidth="1.5" strokeDasharray="2.5 2" />
           <circle cx="9" cy="9" r="5" fill="var(--rented)" />
         </svg>
-        Escalated: your model tried first
+        Escalated: {who.tried} tried first
       </li>
       <li className={item}>
         <svg width="14" height="14" aria-hidden>

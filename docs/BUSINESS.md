@@ -11,7 +11,7 @@ Owner: Harsh Bhanushali (DualMind Labs). As of 2026-10-19. All market sizes belo
 | Tier | What you get | Price idea |
 |---|---|---|
 | Open source (Apache-2.0) | Gateway, cascade, provenance ledger, Night School scripts, release gate, dashboard. Self-host on any GPU | Free |
-| Ratchet Cloud | Managed nightly loop on Nebius, hosted dashboard, canary and rollback, weight export, alerts | 20–30% of verified monthly savings. No savings, no fee |
+| Ratchet Cloud | Managed nightly loop on Nebius, hosted dashboard, canary and rollback, adapter export with its signed BOM, alerts | 20–30% of verified monthly savings. No savings, no fee |
 | Enterprise | Runs in the customer's cloud or on-prem, data residency (EU, India), audit export of the provenance ledger, SSO, support | Annual contract |
 
 "Verified savings" = the **billable lower bound** of a sealed savings receipt ([ADR 0029](adr/0029-verified-savings-receipts.md)): for each day and each client, the all-teacher baseline of the requests the student served, calibrated on audited teacher bills (a ratio estimator with a confidence bound), plus the teacher's own bills, minus actual cost, at the one-sided 95% lower bound, minus spend outside requests. The fee is the take rate (`RATCHET_TAKE_RATE`, 25% by default) of that bound, never of the token formula's estimate, which assumes 300 reasoning tokens nobody measured. A task with too few audits that day (`RATCHET_RECEIPT_MIN_AUDITS`, 30) is reported but not billed. Each receipt is signed, chained to the client's previous one and proves every request id the client saw (`X-Ratchet-Request-Id`), so the client can check it offline (`python -m ratchet.receipt verify`). It cannot prove the costs logged at request time; the client reconciles the receipts' teacher spend with its Token Factory bill for the same key. The dashboard's savings are the formula's, as the ledger records them; they are not what is billed.
@@ -41,7 +41,7 @@ Headwinds: open-source share of enterprise LLM *spend* fell from 19% to 11% ([Me
 
 1. **Launch through the hackathon.** Public repo, demo video, Devpost page.
 2. **Developer channels.** Hacker News "Show HN", r/LocalLLaMA, NVIDIA and Nebius developer communities.
-3. **Migration content.** "Move your OpenAI fine-tune to a model you own before Jan 6, 2027."
+3. **Migration content.** "Move your OpenAI fine-tune to an open model and an adapter you own before Jan 6, 2027."
 4. **Partners.** Apply to NVIDIA Inception. Pitch Ratchet to Nebius as the "continuous optimization" layer on its Token Factory roadmap.
 5. **Design partners.** First 10 from Parul University's PIERC incubation cell and the Indian startup scene, then AI-native startups abroad.
 6. **Proof assets.** Every design partner gets its signed daily savings receipts (`GET /ratchet/receipts`), which double as a case study.
@@ -57,7 +57,7 @@ Headwinds: open-source share of enterprise LLM *spend* fell from 19% to 11% ([Me
 
 - Keep the core loop open (Apache-2.0): it builds trust, and the license-clean claim is easier to believe when the code is public.
 - Charge for running it: managed GPUs, hosted dashboard, alerts, SSO, compliance exports, support.
-- Differentiate from Experiential Labs (open source, ~9.6k stars) on the automatic nightly loop, release safety, and provenance.
+- Differentiate from Experiential Labs (open source, about 10k GitHub stars, checked Oct 21, 2026) on the automatic nightly loop, release safety, and provenance.
 
 ## 8. Exit logic
 
@@ -65,7 +65,7 @@ GPU clouds and platforms buy this capability:
 
 - CoreWeave acquired OpenPipe (Sep 2025).
 - Rubrik acquired Predibase (Jun 2025; reported $100–500M).
-- Palo Alto Networks is acquiring Portkey (announced Apr 2026).
+- Palo Alto Networks acquired Portkey (announced Apr 2026, closed May 29, 2026: [press release](https://www.paloaltonetworks.com/company/press/2026/palo-alto-networks-completes-acquisition-of-portkey-to-secure-ai-agents), checked Oct 21, 2026).
 
 Natural acquirers for Ratchet: Nebius (fills its continuous-optimization roadmap), other GPU clouds, and security/governance companies that value the provenance ledger.
 

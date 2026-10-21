@@ -111,6 +111,11 @@ class ReceiptTree(NamedTuple):
     tree: LogTree
 
 
+# What `Runtime.student_serving` reports (FR-7.40): mock models; our adapter on the student endpoint; the hosted, untuned
+# fallback (live mode without RATCHET_STUDENT_BASE); no student yet (the teacher answers everything).
+STUDENT_SERVING_KINDS = ("mock", "endpoint", "hosted_fallback", "none")
+
+
 class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
@@ -283,6 +288,39 @@ class Runtime:
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
         return self.keys.names if self.keys.enabled else None
+
+    def student_serving(self) -> dict[str, Any]:
+        """Which model answers a student call right now, so the pages name it (FR-7.40): `kind` (STUDENT_SERVING_KINDS),
+        the served `model` id, the `version` that serves (the live one, or the first student's canary on a cold start),
+        the confidence `threshold` it is held to, and whether a certificate covers it. In live mode without
+        RATCHET_STUDENT_BASE the resolver sends every version's calls to the untuned hosted model: it is held to the
+        global threshold (`Ratchet.threshold`) and never `certified`, because the version's certificate was computed
+        for its adapter. Read-only: one query of the versions table. The one place that decides the kind, so a resolver
+        that switches between the endpoint and the fallback (scheduled endpoint windows) changes it here."""
+        s = self.settings
+        serving = self.ledger.versions(["live", "canary"])
+        live_now = [v for v in serving if v.state == "live"]
+        v = live_now[-1] if live_now else (serving[-1] if serving else None)
+        if s.mode == "mock":
+            kind = "mock"  # the mock fleet serves each version's own adapter, so the rest reads as for an endpoint
+        elif v is None:
+            kind = "none"
+        elif s.student_base:
+            kind = "endpoint"
+        else:
+            kind = "hosted_fallback"
+        if v is None:
+            return {"kind": kind, "model": None, "version": None, "threshold": None, "certified": False}
+        hosted = kind == "hosted_fallback"
+        model = s.fallback_student_model if hosted else v.adapter_uri
+        certified = not hosted and certificate.status(certificate.section(v.eval), None, None) == "certified"
+        return {
+            "kind": kind,
+            "model": model,
+            "version": v.id,
+            "threshold": self.ratchet.threshold(v, model),
+            "certified": certified,
+        }
 
     # ----- mock-mode simulation helpers -----
     def simulate_day(self, requests: int, workload: str = "tickets") -> NightReport:
@@ -1164,6 +1202,9 @@ def stats() -> dict[str, Any]:
         "day": led.day,
         "teacher": rt.settings.teacher_model,
         "student_base": rt.settings.student_base_model,
+        # The model that answers student calls now: our adapter, or the hosted fallback with the endpoint off (FR-7.40).
+        "fallback_student": rt.settings.fallback_student_model,
+        "student_serving": rt.student_serving(),
         "days": led.stats_by_day(),
         "tasks": led.stats_by_task(),
         # What the release gate reads for the canary and the live version, from their counts (ADR 0025); null otherwise.
@@ -2127,7 +2168,15 @@ def scout_examples() -> dict[str, Any]:
 
 @app.get("/scout/status")
 def scout_status() -> dict[str, Any]:
-    return {"mode": rt.settings.mode, **rt.guard.status(), "tavily": isinstance(rt.search, TavilySearch)}
+    """The guard's state, and which model answers student calls (FR-7.40), so the page labels each call without a
+    stats call: a step whose `model` is `fallback_student` came from the hosted fallback, not our adapter."""
+    return {
+        "mode": rt.settings.mode,
+        **rt.guard.status(),
+        "tavily": isinstance(rt.search, TavilySearch),
+        "fallback_student": rt.settings.fallback_student_model,
+        "student_serving": rt.student_serving(),
+    }
 
 
 @app.get("/scout/stream")

@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 986 tests, ~120 s
+pytest -q                                                          # 1002 tests, ~120 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -202,7 +202,7 @@ Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop
 
 1. **Host the gateway in mock mode as the public demo.** The dashboard with Run day, Break next deploy and Reset is safe, calls no model (so it spends no credits) and never breaks. Label it "simulation".
 2. **For the live path,** keep a second gateway in live mode with `RATCHET_STUDENT_BASE` **unset**. Student calls then go to the hosted, untuned `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on Token Factory, and you pay per token instead of per GPU-hour. Be honest that this is the fallback, not the tuned student. Note that a version's calibrated threshold was set for the tuned adapter, so precision on the fallback may be lower; audits will show it.
-3. **Stop the vLLM endpoint when not recording or testing** (`bash deploy/student_endpoint.sh stop`, then `start` to bring the same endpoint back). A stopped endpoint is not billed for compute or its own storage; the mounted bucket still is.
+3. **Stop the vLLM endpoint when not recording or testing** (`bash deploy/student_endpoint.sh stop`, then `start` to bring the same endpoint back). A stopped endpoint is not billed for compute or its own storage; a mounted Object Storage bucket still is ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 21, 2026).
 4. **Cap teacher spend:** keep `RATCHET_AUDIT_RATE` at 0.05 or lower and watch the Token Factory usage page daily. In live mode, keep Scout's budget guard on (`RATCHET_SCOUT_DAILY_BUDGET_USD`, `RATCHET_SCOUT_MAX_RUNS_PER_DAY`, `RATCHET_SCOUT_RUNS_PER_HOUR`; see [CONFIGURATION.md](CONFIGURATION.md#scout-the-multi-agent-demo)) and turn on the Caddy guard (`RATCHET_API_GUARD=guarded`).
 
 ## 4. Cost estimates

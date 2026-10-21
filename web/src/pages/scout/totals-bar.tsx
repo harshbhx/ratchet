@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { CircleCheck, CircleSlash, LoaderCircle, Square, TriangleAlert } from "lucide-react";
 import { cn, fmtMs } from "@/lib/utils";
 import { Container } from "@/components/ui/section";
+import { studentCopy } from "@/lib/who-model";
 import { AnimatedNumber, usd } from "./bits";
 import type { Derived, RunState } from "./state";
 
@@ -23,19 +24,19 @@ function useElapsed(run: RunState) {
   return t;
 }
 
-function Metric({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+function Metric({ label, long, children, className }: { label: string; long?: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={cn("min-w-0", className)}>
       <div className="truncate text-[11.5px] text-muted sm:text-[12px]">
         <span className="sm:hidden">{label}</span>
-        <span className="hidden sm:inline">{label === "Your model" ? "Answered by your model" : label}</span>
+        <span className="hidden sm:inline">{long ?? label}</span>
       </div>
       <div className="mt-0.5 truncate text-[17px] font-semibold leading-tight tracking-[-0.02em] text-ink tabular sm:text-[20px]">{children}</div>
     </div>
   );
 }
 
-/** Sticky run totals: model calls, share answered by the owned model, cost vs all-Ultra, % saved. */
+/** Sticky run totals: model calls, share answered by the student (our model, or the hosted fallback), cost vs all-Ultra, % saved. */
 export function TotalsBar({ run, derived, onStop }: { run: RunState; derived: Derived; onStop: () => void }) {
   const stopBtn = run.status === "running" && (
     <button
@@ -47,6 +48,7 @@ export function TotalsBar({ run, derived, onStop }: { run: RunState; derived: De
     </button>
   );
   const t = derived.totals;
+  const who = studentCopy(derived.hosted);
   const elapsed = useElapsed(run);
   const sShare = t.llm ? t.student / t.llm : 0;
   const tShare = t.llm ? t.teacher / t.llm : 0;
@@ -95,7 +97,7 @@ export function TotalsBar({ run, derived, onStop }: { run: RunState; derived: De
             <Metric label="Model calls">
               <AnimatedNumber value={t.llm} format={(v) => String(Math.round(v))} />
             </Metric>
-            <Metric label="Your model">
+            <Metric label={who.short} long={who.label}>
               <span className="text-owned-ink">
                 <AnimatedNumber value={t.student} format={(v) => String(Math.round(v))} />
               </span>
@@ -128,7 +130,7 @@ export function TotalsBar({ run, derived, onStop }: { run: RunState; derived: De
             />
           </div>
           <p className="sr-only">
-            {t.student} of {t.llm} model calls answered by your model, {t.teacher} by Ultra. Cost {usd(t.cost)} against {usd(t.baseline)} on Ultra
+            {t.student} of {t.llm} model calls answered {who.by}, {t.teacher} by Ultra. Cost {usd(t.cost)} against {usd(t.baseline)} on Ultra
             alone.
           </p>
         </section>
