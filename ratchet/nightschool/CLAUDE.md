@@ -3,6 +3,7 @@
 One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)`:
 
 0. With `retention` (live mode: `Settings.retention()`), apply the retention windows first (`privacy.apply_retention`), so the night never reads expired text (FR-13.4).
+0. Skip if an operator paused training (`ledger.flags().training_paused`, the admin API or CLI; ADR 0064), with a `skip` event, before anything else. Reading the switches also publishes the runtime task pins, so `dataset.rows` and `cascade_eval` leave a task pinned at runtime out (`excluded_pinned`) exactly as one its spec pins (INV-10).
 1. Skip if a version is in `shadow` or `canary` (release in flight).
 2. Build the dataset (`dataset.build`): train rows + golden rows + `manifest.json` with the bill of materials.
 3. Skip if fewer than `min_new_examples` new train examples, or no golden rows. New = train rows now − `Ledger.train_rows_kept(task)` (for each version, its `train_examples` less its own training rows purged since; the largest), so a deletion never stops training and never starts it (FR-4.4: measured against the largest version's purges instead, it retrained every night once a later version trained on fewer rows); without purges it is v0.4's count, which the reference workloads pin (event text included).

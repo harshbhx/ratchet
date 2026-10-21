@@ -721,11 +721,53 @@ def restore(name: str, previous: Task | None) -> None:
 
 
 def reset_builtin() -> None:
-    """Make the registry the built-in tasks again (tests; `taskspec.install` builds its registry from
-    `builtin_registry` and publishes it whole instead, so requests never see the built-in tasks alone)."""
+    """Make the registry the built-in tasks again, with no runtime pins (tests; `taskspec.install` builds its registry
+    from `builtin_registry` and publishes it whole instead, so requests never see the built-in tasks alone)."""
     global REGISTRY
     with _REGISTRY_LOCK:
         REGISTRY = dict(BUILTIN)
+    set_overrides(())
+
+
+# The operator's runtime pins (the admin API's and CLI's `pin`, ADR 0064): task names answered by the teacher alone on
+# top of their specs. `Ledger.flags` publishes them from the ledger's `task_overrides` (one assignment, like REGISTRY),
+# and `get` and `effective` apply them, so the router, Night School and the stats all see a pinned task (INV-10). A pin
+# applies to an operator's task (built-in, file or API); a name that is not registered cannot be pinned.
+OVERRIDES: frozenset[str] = frozenset()
+PINNABLE_SOURCES = frozenset({"builtin", "file", "api"})
+_PINNED_COPIES: dict[str, tuple[Task, Task]] = {}  # name -> (the task as registered, its pinned copy)
+
+
+def set_overrides(names: Iterable[str]) -> None:
+    """Publish the runtime pins (`Ledger.flags` calls this whenever they differ from the ledger's)."""
+    global OVERRIDES
+    OVERRIDES = frozenset(names)
+
+
+def _pinned_copy(task: Task) -> Task:
+    """`task` pinned at runtime: the same task with `pinned` true and its spec's own spec_hash. A runtime pin changes who
+    answers, not how answers are compared, so an eval's record of the spec stays valid and unpinning needs no re-score.
+    Built once per registered task object."""
+    cached = _PINNED_COPIES.get(task.name)
+    if cached is not None and cached[0] is task:
+        return cached[1]
+    copy = replace(task, pinned=True)
+    object.__setattr__(copy, "spec_hash", task.spec_hash)
+    _PINNED_COPIES[task.name] = (task, copy)
+    return copy
+
+
+def effective(task: Task) -> Task:
+    """`task` as requests and Night School must treat it now: pinned when an operator pinned it at runtime
+    (`OVERRIDES`), and back to the task as registered when that pin was removed. Two lookups; no lock."""
+    if task.name in OVERRIDES:
+        if task.pinned or task.source not in PINNABLE_SOURCES:
+            return task
+        return _pinned_copy(task)
+    cached = _PINNED_COPIES.get(task.name)
+    if cached is not None and cached[1] is task:
+        return cached[0]
+    return task
 
 
 def lookup(name: Any) -> Task | None:
@@ -755,7 +797,9 @@ def get(name: str | None) -> Task:
     """The registered task called `name`. An unknown valid name gets a task without fields (whole answers compared) that
     is NOT registered, so arbitrary client headers cannot grow the registry (`source` 'adhoc', never pinned); what a
     request for it gets is RATCHET_UNKNOWN_TASKS's call (`router.Ratchet.task_for`). Invalid names fall back to
-    'default'. Night School uses this too, so a stored example always has a task to compare with."""
+    'default'. Night School uses this too, so a stored example always has a task to compare with. A task an operator
+    pinned at runtime comes back pinned (`effective`)."""
     if not name or not valid_name(name):
-        return REGISTRY["default"]
-    return REGISTRY.get(name) or Task(name, source="adhoc")
+        return effective(REGISTRY["default"])
+    task = REGISTRY.get(name)
+    return effective(task) if task is not None else Task(name, source="adhoc")

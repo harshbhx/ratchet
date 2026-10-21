@@ -118,7 +118,14 @@ def run_night(
 
     New data is the training rows now less the most training rows any version had that are still stored
     (`Ledger.train_rows_kept`: each version's `train_examples` less its own training rows purged since), so deleting
-    data never hides new data and never makes old data look new (FR-4.4); without purges the count is v0.4's."""
+    data never hides new data and never makes old data look new (FR-4.4); without purges the count is v0.4's.
+
+    An operator's `training_paused` (the admin API or CLI, ADR 0064) skips the night before anything else, with a `skip`
+    event (the gateway's hourly retention purge still runs). Reading the switches also publishes the runtime task pins,
+    so the dataset and the golden eval leave a task pinned at runtime out as they do a task pinned in its spec (INV-10)."""
+    if ledger.flags().training_paused:
+        ledger.event("skip", "training paused by an admin; no training tonight")
+        return NightReport(False, None, False, "training paused")
     if retention is not None and retention.enabled:
         privacy.apply_retention(ledger, retention)
     if not store_examples:

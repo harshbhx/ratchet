@@ -1699,6 +1699,8 @@ def test_every_request_row_has_a_route():
     teacher.raise_on.clear()
     student.raise_on.add("student-v1")
     seen += [r.handle(_ask(f"down {i}"), TRIAGE).route for i in range(3)]
+    led.set_flag("student_disabled", True, "cli:ops")  # an operator's kill switch (ADR 0064): not even a breaker probe
+    seen.append(r.handle(_ask("student off"), TRIAGE).route)
     assert seen == [
         "cold_start",
         "pinned",
@@ -1712,6 +1714,7 @@ def test_every_request_row_has_a_route():
         "student_error",
         "student_error",
         "student_breaker",
+        "student_disabled",
     ]
     assert set(seen) == set(ROUTES)
     assert led.db.execute("SELECT COUNT(*) FROM requests WHERE route IS NULL").fetchone()[0] == 0
@@ -1727,6 +1730,7 @@ def test_every_request_row_has_a_route():
             "student": 1,
             "student_breaker": 1,
             "n_choices": 1,
+            "student_disabled": 1,
         },
         "research-plan": {"pinned": 1},
         "unregistered-task": {"unknown_task": 1},

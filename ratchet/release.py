@@ -24,6 +24,10 @@ request does not), with no minimum audit count; it is promoted a stage on the po
 `promote_evidence=1` on an e-value that precision is above the floor; and it is retired when a stage reaches
 `max_stage_audits` audits without a decision. The live alert uses the same e-process by default (`alert_eprocess`).
 Every decision is computed from two integers per version (audits, agreements), so anyone can re-check it.
+
+Every move is compare-and-set (`Ledger.transition`, `Ledger.promote_live`; ADR 0064), so the gateway's tick and the
+cron tick can run at once without promoting twice. An operator can hold releases (`releases_frozen`, or an audit rate of
+0): no version starts taking traffic or takes more, while rollback, rejections and the live alert keep running.
 """
 
 from __future__ import annotations
@@ -269,60 +273,94 @@ class ReleaseGate:
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
-        """The golden gate, in order: the precision and coverage floors; the certified floor (`min_certified_precision`,
-        when set); then no regression against the live version: row by row with `paired_gate=1` and the candidate's
-        paired comparison against that live version (`_paired_regression`), else on the two point estimates within
-        `tolerance`. With the defaults this is v0.4's gate exactly; events only append the paired counts and the
-        certificate."""
-        p, v = self.policy, self.ledger.version(vid)
-        assert v is not None
-        prec, cov = v.eval.get("precision", 0.0), v.eval.get("coverage", 0.0)
-        live = self.ledger.live()
-        if prec < p.min_precision:
-            return self._reject(v, f"golden precision {prec:.1%} < {p.min_precision:.0%}")
-        if cov < p.min_coverage:
-            return self._reject(v, f"golden coverage {cov:.1%} < {p.min_coverage:.0%}")
-        if p.min_certified_precision > 0:
-            short = _below_certified_floor(v.eval.get("certificate"), p.min_certified_precision)
-            if short:
-                return self._reject(v, short)
-        paired_note = ""
-        if live:
-            counts = _paired_counts(v.eval.get("paired"), live.id) if p.paired_gate else None
-            if counts is not None:
-                why = self._paired_regression(counts, live)
-                if why:
-                    return self._reject(v, why)
-                n, b, c, nf, pf = (counts[k] for k in ("n", "cov_only_live", "cov_only_cand", "neg_flips", "pos_flips"))
-                paired_note = (
-                    f"; serves {c - b:+d} of {n} vs live v{live.id} (McNemar p={counts['p_cov']:.2f}); "
-                    f"{nf} negative flips, {pf} positive flips"
+        """The golden gate, then the candidate's first stage. The gate, in order: the precision and coverage floors; the
+        certified floor (`min_certified_precision`, when set); then no regression against the live version: row by row
+        with `paired_gate=1` and the candidate's paired comparison against that live version (`_paired_regression`), else
+        on the two point estimates within `tolerance`. With the defaults this is v0.4's gate exactly; events only append
+        the paired counts and the certificate. One transaction (ADR 0064): the checks, the retirement of an older shadow
+        or canary and the candidate's move commit together, so no other process (the gateway's tick, an admin) sees half
+        of it or acts in between. A version that is no longer a candidate (an admin moved it while it was scored) is left
+        as it is, with a `conflict` event."""
+        p = self.policy
+        with self.ledger.transaction():
+            v = self.ledger.version(vid)
+            assert v is not None
+            if v.state != "candidate":
+                self._conflict(v)
+                return False
+            prec, cov = v.eval.get("precision", 0.0), v.eval.get("coverage", 0.0)
+            live = self.ledger.live()
+            if prec < p.min_precision:
+                return self._reject(v, f"golden precision {prec:.1%} < {p.min_precision:.0%}")
+            if cov < p.min_coverage:
+                return self._reject(v, f"golden coverage {cov:.1%} < {p.min_coverage:.0%}")
+            if p.min_certified_precision > 0:
+                short = _below_certified_floor(v.eval.get("certificate"), p.min_certified_precision)
+                if short:
+                    return self._reject(v, short)
+            paired_note = ""
+            if live:
+                counts = _paired_counts(v.eval.get("paired"), live.id) if p.paired_gate else None
+                if counts is not None:
+                    why = self._paired_regression(counts, live)
+                    if why:
+                        return self._reject(v, why)
+                    n, b, c, nf, pf = (counts[k] for k in ("n", "cov_only_live", "cov_only_cand", "neg_flips", "pos_flips"))
+                    paired_note = (
+                        f"; serves {c - b:+d} of {n} vs live v{live.id} (McNemar p={counts['p_cov']:.2f}); "
+                        f"{nf} negative flips, {pf} positive flips"
+                    )
+                else:
+                    lp, lc = live.eval.get("precision", 0.0), live.eval.get("coverage", 0.0)
+                    if prec < lp - p.tolerance or cov < lc - p.tolerance:
+                        return self._reject(
+                            v,
+                            f"regresses vs live v{live.id} (precision {prec:.1%} vs {lp:.1%}, coverage {cov:.1%} vs {lc:.1%})",
+                        )
+            for old in self.ledger.versions(["shadow", "canary"]):
+                self.ledger.transition(
+                    old.id,
+                    old.state,
+                    old.traffic_pct,
+                    "retired",
+                    0,
+                    ("retired", f"v{old.id} replaced by newer candidate v{v.id}"),
+                )
+            certified = _certified_text(v.eval.get("certificate"))
+            held = self._held()
+            if live is None and held is None:
+                # Cold start: nothing to shadow against, so a small canary audited by the teacher.
+                moved = self.ledger.transition(
+                    v.id,
+                    v.state,
+                    v.traffic_pct,
+                    "canary",
+                    CANARY_STEPS[0],
+                    (
+                        "canary",
+                        f"v{v.id} first student: golden precision {prec:.1%}, coverage {cov:.1%}; canary {CANARY_STEPS[0]}%"
+                        f"{certified}",
+                    ),
                 )
             else:
-                lp, lc = live.eval.get("precision", 0.0), live.eval.get("coverage", 0.0)
-                if prec < lp - p.tolerance or cov < lc - p.tolerance:
-                    return self._reject(
-                        v, f"regresses vs live v{live.id} (precision {prec:.1%} vs {lp:.1%}, coverage {cov:.1%} vs {lc:.1%})"
-                    )
-        for old in self.ledger.versions(["shadow", "canary"]):
-            self.ledger.set_version(old.id, "retired", 0)
-            self.ledger.event("retired", f"v{old.id} replaced by newer candidate v{v.id}")
-        certified = _certified_text(v.eval.get("certificate"))
-        if live is None:
-            # Cold start: nothing to shadow against, so a small canary audited by the teacher.
-            self.ledger.set_version(v.id, "canary", CANARY_STEPS[0])
-            self.ledger.event(
-                "canary",
-                f"v{v.id} first student: golden precision {prec:.1%}, coverage {cov:.1%}; canary {CANARY_STEPS[0]}%{certified}",
-            )
-        else:
-            self.ledger.set_version(v.id, "shadow", 0)
-            self.ledger.event(
-                "shadow",
-                f"v{v.id} passed golden gate (precision {prec:.1%}, coverage {cov:.1%}); shadowing live v{live.id}"
-                f"{paired_note}{certified}",
-            )
-        return True
+                # A cold start while an operator holds releases shadows the teacher instead: no traffic moves until the
+                # hold is lifted, and then the shadow is promoted on its evidence as usual.
+                against = f"shadowing live v{live.id}" if live is not None else f"shadowing the teacher ({held})"
+                moved = self.ledger.transition(
+                    v.id,
+                    v.state,
+                    v.traffic_pct,
+                    "shadow",
+                    0,
+                    (
+                        "shadow",
+                        f"v{v.id} passed golden gate (precision {prec:.1%}, coverage {cov:.1%}); {against}"
+                        f"{paired_note}{certified}",
+                    ),
+                )
+            if not moved:  # cannot happen inside the transaction; kept so a refused move is never silent
+                self._conflict(v)
+            return moved
 
     def _paired_regression(self, pair: dict[str, Any], live: Version) -> str | None:
         """Why the candidate regresses against `live` on the same held-out rows, or None. A regression must be both
@@ -353,9 +391,27 @@ class ReleaseGate:
         return None
 
     def _reject(self, v: Version, why: str) -> bool:
-        self.ledger.set_version(v.id, "rejected", 0)
-        self.ledger.event("rejected", f"v{v.id}: {why}")
+        """Reject `v` unless another process moved it first (then that process's decision stands)."""
+        self.ledger.transition(v.id, v.state, v.traffic_pct, "rejected", 0, ("rejected", f"v{v.id}: {why}"))
         return False
+
+    def _conflict(self, v: Version) -> None:
+        """A candidate `admit` passed could not be placed: another process (an admin, the cron tick) moved it, or put
+        another version in flight, while the gate decided. Nothing was written, so the log says what happened instead."""
+        now = self.ledger.version(v.id)
+        self.ledger.event(
+            "conflict", f"v{v.id} left as {now.state if now else 'missing'}: changed by another process while the gate decided"
+        )
+
+    def _held(self) -> str | None:
+        """Why no new version may take traffic now, or None: an operator froze releases (`releases_frozen`), or set the
+        audit rate to 0, so a canary could neither advance nor be rolled back (ADR 0064)."""
+        flags = self.ledger.flags()
+        if flags.releases_frozen:
+            return "releases frozen"
+        if flags.audit_rate == 0:
+            return "audit rate 0"
+        return None
 
     # ---- steps 2-4: call periodically (e.g. every few minutes in production) ----
     def tick(self) -> None:
@@ -407,7 +463,8 @@ class ReleaseGate:
             )
 
     def _tick_shadow(self, live: Version | None) -> None:
-        """Decide on the shadow once it would have served `min_shadow` answers: reject it, or promote it to canary."""
+        """Decide on the shadow once it would have served `min_shadow` answers: reject it, or promote it to canary unless
+        an operator holds releases (`_held`)."""
         p = self.policy
         shadow = self.ledger.by_state("shadow")
         if not shadow:
@@ -421,19 +478,25 @@ class ReleaseGate:
                 self._reject(shadow, f"shadow precision {s['precision']:.1%} < {p.min_precision:.0%}{unarbitrated}")
             elif s["coverage"] < live_cov - p.tolerance:
                 self._reject(shadow, f"shadow coverage {s['coverage']:.1%} < live {live_cov:.1%}")
-            else:
-                self.ledger.set_version(shadow.id, "canary", CANARY_STEPS[0])
-                self.ledger.event(
+            elif self._held() is None:  # a hold (ADR 0064) keeps it shadowing; a rejection still runs
+                self.ledger.transition(
+                    shadow.id,
+                    "shadow",
+                    shadow.traffic_pct,
                     "canary",
-                    f"v{shadow.id} shadow precision {s['precision']:.1%}{unarbitrated}, coverage "
-                    f"{s['coverage']:.1%} (live {live_cov:.1%}); canary {CANARY_STEPS[0]}%",
+                    CANARY_STEPS[0],
+                    (
+                        "canary",
+                        f"v{shadow.id} shadow precision {s['precision']:.1%}{unarbitrated}, coverage "
+                        f"{s['coverage']:.1%} (live {live_cov:.1%}); canary {CANARY_STEPS[0]}%",
+                    ),
                 )
 
     def _tick_canary(self, live: Version | None) -> None:
         """Roll the canary back when the Wilson upper bound of its audited precision in this stage is below the floor;
-        hold while the point estimate is below it; otherwise advance a stage, or promote it to live over `live`, which
-        is retired with a `live_retired` event. With `sequential=1` the anytime-valid rule decides instead
-        (`_sequential_canary`)."""
+        hold while the point estimate is below it, or while an operator froze releases; otherwise advance a stage, or
+        promote it to live over `live`, which is retired with a `live_retired` event in the same transaction. With
+        `sequential=1` the anytime-valid rule decides instead (`_sequential_canary`)."""
         p = self.policy
         canary = self.ledger.by_state("canary")
         if not canary:
@@ -444,29 +507,48 @@ class ReleaseGate:
         n, prec = self.ledger.version_live_quality(canary.id)
         if n >= p.min_audits and prec is not None:
             lo, hi = wilson(prec * n, n)
-            if hi < p.live_floor:
-                self.ledger.set_version(canary.id, "rolled_back", 0)
+            if hi < p.live_floor:  # a rollback runs whatever an operator holds (ADR 0064)
                 back = f"live v{live.id}" if live else "the teacher"
-                self.ledger.event(
-                    "rollback",
-                    f"v{canary.id} audited precision {prec:.1%} (n={n}, upper bound "
-                    f"{hi:.1%} < {p.live_floor:.0%}); traffic back to {back}",
+                self.ledger.transition(
+                    canary.id,
+                    "canary",
+                    canary.traffic_pct,
+                    "rolled_back",
+                    0,
+                    (
+                        "rollback",
+                        f"v{canary.id} audited precision {prec:.1%} (n={n}, upper bound "
+                        f"{hi:.1%} < {p.live_floor:.0%}); traffic back to {back}",
+                    ),
                 )
                 return
             if prec < p.live_floor:
                 return  # not enough evidence either way yet: hold this stage, keep auditing
+            if self.ledger.flags().releases_frozen:
+                return  # an operator froze releases: no advance and no promotion until they lift it (ADR 0064)
             nxt = [s for s in CANARY_STEPS if s > canary.traffic_pct]
             if nxt:
-                self.ledger.set_version(canary.id, "canary", nxt[0])
-                self.ledger.event("canary", f"v{canary.id} audited precision {prec:.1%} (n={n}); canary {nxt[0]}%")
+                self.ledger.transition(
+                    canary.id,
+                    "canary",
+                    canary.traffic_pct,
+                    "canary",
+                    nxt[0],
+                    ("canary", f"v{canary.id} audited precision {prec:.1%} (n={n}); canary {nxt[0]}%"),
+                )
             else:
-                if live:
-                    self.ledger.set_version(live.id, "retired", 0)
-                    # Its own event (ADR 0062), so every version transition is in the log. A kind of its own too: the
-                    # v0.4 kind `retired` names candidates replaced at admission, which the pinned reference runs count.
-                    self.ledger.event("live_retired", f"v{live.id} retired: v{canary.id} replaces it as live")
-                self.ledger.set_version(canary.id, "live", 100)
-                self.ledger.event("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n})")
+                # One transaction retires `live` and promotes the canary, both compare-and-set, so two versions are never
+                # live and a second process promotes nothing. The retirement has its own event (ADR 0062), so every
+                # version transition is in the log, of a kind of its own: the v0.4 kind `retired` names candidates
+                # replaced at admission, which the pinned reference runs count.
+                self.ledger.promote_live(
+                    canary.id,
+                    "canary",
+                    canary.traffic_pct,
+                    ("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n})"),
+                    old_live=live.id if live else None,
+                    retired_event=("live_retired", f"v{live.id} retired: v{canary.id} replaces it as live") if live else None,
+                )
 
     def _sequential_canary(self, canary: Version, live: Version | None) -> None:
         """The anytime-valid canary rule (FR-16.1, ADR 0025), in order:

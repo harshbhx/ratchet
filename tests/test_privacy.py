@@ -356,7 +356,7 @@ def test_store_false_over_http_escalation(gw_env):
 @pytest.mark.req("FR-13.1", "INV-22")
 def test_store_header_metadata_and_key_opt_outs(gw_env):
     gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{ACME_KEY},globex:{GLOBEX_KEY}", RATCHET_KEY_LIMITS="acme:store=0")
-    assert gw.rt.key_limits == {"acme": KeyLimits(store=False)}
+    assert (gw.rt.key_limits["acme"].store, gw.rt.key_limits["globex"].store) == (False, True)
     _escalating(gw)
     c = TestClient(gw.app)
     led = gw.rt.ledger
@@ -802,28 +802,30 @@ def test_privacy_stats_report_opt_outs_and_clients(gw_env):
 # ---------- settings and schema ----------
 @pytest.mark.req("FR-13.1", "INV-13")
 def test_key_limits_parse_and_refuse_typos():
+    # Every key gets its limits (the defaults unless RATCHET_KEY_LIMITS names it; lane D's spend and rate limits share the
+    # syntax, ADR 0063); `store` is the storage opt-out (FR-13.1).
     names = ["acme", "globex"]
-    assert parse_key_limits("", names) == {}
-    assert parse_key_limits("acme:store=0", names) == {"acme": KeyLimits(store=False)}
+    assert parse_key_limits("", names) == {"acme": KeyLimits(), "globex": KeyLimits()}
+    assert parse_key_limits("acme:store=0", names) == {"acme": KeyLimits(store=False), "globex": KeyLimits()}
     assert parse_key_limits(" acme : store = 1 ; globex:store=0 ;", names) == {
         "acme": KeyLimits(store=True),
         "globex": KeyLimits(store=False),
     }
-    assert parse_key_limits("acme:", names) == {"acme": KeyLimits()}
     secret = "sk-0123456789abcdef0123"
     for spec, message in (
-        (f"{secret}:store=0", "names no key in RATCHET_API_KEYS"),
-        ("acme:daily_usd=5", "unknown field 'daily_usd'"),
+        (f"{secret}:store=0", "does not start with the name of a key in RATCHET_API_KEYS"),
+        ("acme:daily_bytes=5", "unknown field 'daily_bytes'"),
         ("acme:store=yes", "store must be 0 or 1"),
         ("acme:store=0;acme:store=1", "appears twice"),
-        ("acme:store=0,store=1", "'store' appears twice"),
-        ("acme store=0", "must read name:field=value"),
+        ("acme:store=0,store=1", "store appears twice"),
+        ("acme store=0", "does not start with the name of a key"),
         ("acme:store", "must read field=value"),
+        ("acme:", "must read acme:field=value"),
     ):
         with pytest.raises(ValueError, match=message) as e:
             parse_key_limits(spec, names)
         assert secret not in str(e.value)  # a key pasted where its name belongs never reaches the logs
-    with pytest.raises(ValueError, match="names no key"):
+    with pytest.raises(ValueError, match="does not start with the name of a key"):
         parse_key_limits("acme:store=0", [])  # keys off: nothing to name
 
 

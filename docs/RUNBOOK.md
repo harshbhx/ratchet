@@ -36,7 +36,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Kind | Written by | Meaning | Action |
 |---|---|---|---|
 | `trained` | `run_night` | A new version was trained and scored on the golden set | None |
-| `skip` | `run_night` | No training tonight: storage disabled (`RATCHET_STORE_EXAMPLES=0`; a task whose spec changed is still re-scored), release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight and storage on |
+| `skip` | `run_night` | No training tonight: storage disabled (`RATCHET_STORE_EXAMPLES=0`; a task whose spec changed is still re-scored), training paused by an admin (`training_paused`), release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight and storage on and no pause |
 | `rejected` | `admit` / `tick` | Candidate failed the golden gate or shadow (reason in detail) | Repeated rejections: see [Persistent rejections](#persistent-rejections) |
 | `shadow` | `admit` | Candidate passed the golden gate and is running silently. Appends `serves +c−b of n vs live vL (McNemar p=…); nf negative flips, pf positive flips` with the paired gate, and `certified >= 95% (lcb 96.4%, delta 0.05)` when its certificate holds ([Checking a certificate](#checking-a-certificate)) | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
@@ -79,6 +79,9 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `tavily_exhausted` | `CreditMeter` | Tavily answered 432 ("Key limit or Plan Limit exceeded") or 433 ("PayGo limit exceeded"): no search is sent for an hour, and runs answer without search, labelled. Once per exhaustion | See [Tavily credits running low or search unavailable](#tavily-credits-running-low-or-search-unavailable) |
 | `gateway_lease` | (planned, NFR-60) | Not written yet: the single-writer lease waits for the leases table. It will say that another gateway process serves the same live ledger, so Scout's guard and the other in-memory limits are per process | See [Two gateway processes on one ledger](#two-gateway-processes-on-one-ledger) |
 | `liverun_start`, `liverun_round`, `liverun_stop` | `python -m ratchet.liverun` | A live measurement run's synthetic traffic: `liverun 20261025T083000Z started: synthetic tickets traffic, 4 rounds x 1500 requests, cap $30.00 (key liverun)`, one line per round (`round 2 done: 1512 requests, 71% student, 388 audits`) and `stopped: <reason>` or `finished`. Key names, counts and reasons only | None. They mark which traffic in the release log was synthetic; see [Live measurement run](#live-measurement-run) |
+| `budget` | the spend meter (`ratchet/spend.py`) | A key or the gateway reached a share of a US dollar cap for the first time in its UTC day or month (`acme reached 80% of $5.00 daily budget`, `the gateway reached 100% of $20.00 daily budget`; shares from `RATCHET_BUDGET_ALERT_PCT`). Written once per share and cap, also across restarts; a lower cap set at a restart writes the shares it already passed at once | At 80%: check who is spending (`clients[].spent_today_usd` in `/ratchet/stats`). At 100%: the key (or, in `block` mode, every chat request) is refused until the reset; see [Cost spike](#cost-spike) |
+| `admin` | the admin API and CLI (`ratchet/admin.py`) | An operator changed something: a version (`v7 rolled back from canary 50% by api:ops: <reason>`, `v5 promoted from canary 50% to live by cli:harsh; v4 retired: <reason>`), a switch (`releases_frozen set to true by ...`), a task pin, or ran the gate (`release gate run by ...`). The same change has an `admin_actions` row (`python -m ratchet.admin audit-log`) | Expected after an operator change; an unexpected one: check who (`audit-log`) and rotate admin keys if needed |
+| `conflict` | `admit` | The candidate trained tonight was moved by someone else (an admin) while it was scored, so the gate left it as it is (`v7 left as canary: changed by another process while the gate decided`) | None, if an admin did it on purpose |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -99,18 +102,18 @@ grep req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79 /var/log/ratchet-gateway.log   # its c
 
 | Stage | Written by | The client got | Meaning | Action |
 |---|---|---|---|---|
-| `teacher` | `Ratchet` | 400, 429, 502, 503 or 504 | The teacher's answer was needed and could not be had (after its retries; `CircuitOpen 503 teacher_circuit_open` while its breaker is open, one row in 10). `cost_usd` is what the student's samples already cost. Also written, with the client answered, when the fallback teacher or a degraded student answer stood in | [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts); `UpstreamError 429`: [Rate limited](#rate-limited) |
+| `teacher` | `Ratchet` | 400, 429, 502, 503 or 504 | The teacher's answer was needed and could not be had (after its retries; `CircuitOpen 503 teacher_circuit_open` while its breaker is open: one row in 10, except a request that already spent money on the student, which always gets its row). `cost_usd` is what the student's samples already cost. An error that is not an HTTP failure is a bug, not the teacher's: its row is `gateway`. Also written, with the client answered, when the fallback teacher or a degraded student answer stood in | [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts); `UpstreamError 429`: [Rate limited](#rate-limited) |
 | `student` | `Ratchet` | Its answer (the teacher covered) | A student call failed (`UpstreamError 504 upstream_timeout`, `ConnectError`, `AdapterMissing 404`), or its breaker refused it (`CircuitOpen 503`, one row in 10) | [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
 | `audit` | `Ratchet` | Its answer | A teacher audit failed or was skipped by the teacher's breaker; the request is logged with `audited=0` | As `teacher` if it repeats |
 | `shadow` | `Ratchet` | Its answer | `sampling: ...` (the shadow's own call) or `arbitration: ...` (the teacher's ruling; the disagreement counts against the shadow) | As `shadow_error` in [Event kinds](#event-kinds) |
-| `quota` | the gateway | 429 `daily_quota_exceeded` | A key used up `RATCHET_API_KEY_DAILY_REQUESTS` | Raise the quota or talk to the client |
+| `quota` | the gateway | 429 `daily_quota_exceeded` | A key used up its daily request quota (`RATCHET_API_KEY_DAILY_REQUESTS`, or its `daily_requests` in `RATCHET_KEY_LIMITS`) | Raise the quota or talk to the client |
 | `auth` | the gateway | 401 | A wrong or missing API, admin or dashboard key (`client` is empty: the caller is unknown). Many in a row from one place: someone is guessing keys | Check the caller; rotate keys if one leaked |
-| `budget` | the gateway | 429 on `/scout/run` | The Scout demo's budget guard refused a run | None on a public demo |
-| `rate` | the gateway | 429 | Any other 429 the gateway answered | Check the client |
+| `budget` | the gateway, `Ratchet` | 429 on `/scout/run`; 429 `budget_exceeded` or `gateway_budget_exceeded` on `/v1` | The Scout demo's budget guard refused a run; or a key's US dollar budget, or the gateway's (`RATCHET_DAILY_BUDGET_USD`), is spent. In `student_only` mode a request that needed the teacher after the student was sampled gets a `Ratchet` row with `error` `BudgetExceeded` and what the samples cost | None on a public demo; on `/v1` see [Cost spike](#cost-spike) |
+| `rate` | the gateway | 429 `rate_limit_exceeded`, 503 `overloaded`, or any other 429 | A key's requests a minute or in flight, a client address's requests a minute, or the gateway's in-flight cap (`RATCHET_MAX_INFLIGHT`) | See [Rate limited](#rate-limited) |
 | `upstream` | the gateway | 502, 503 or 504 | A model or search call a route made itself failed (Scout) | As `teacher` |
-| `gateway` | the gateway | 413 or 500 | A body over `RATCHET_MAX_BODY_BYTES`, or an unhandled error (`RuntimeError`): a bug; the traceback is in the gateway's log | Fix the bug; see `gateway_error` in [Event kinds](#event-kinds) |
+| `gateway` | the gateway | 413 or 500 | A body over `RATCHET_MAX_BODY_BYTES`, or an unhandled error (`RuntimeError`): a bug, also one on the teacher path after the student was sampled (`cost_usd` is then what the samples cost); the traceback is in the gateway's log | Fix the bug; see `gateway_error` in [Event kinds](#event-kinds) |
 
-The gateway writes at most 120 rows a minute per stage; a 400 for a malformed request writes none (it is counted in `/metrics` only). `errors.last_hour` in `/ratchet/stats` counts the rows of the last hour by stage. Logs: in live mode the gateway writes one JSON line per chat request to stderr (`docker compose logs ratchet` on the demo VM) and one `upstream_error` line per failed model call, and repeats every release-log event; none of them holds prompt or answer text, a URL or a key ([CONFIGURATION.md](CONFIGURATION.md#observability)).
+The gateway writes at most 120 rows a minute per stage (a row that carries spent money is never dropped), each just before its response starts, so a lookup by the response's `x-request-id` finds it; a 400 for a malformed request writes none (it is counted in `/metrics` only). `errors.last_hour` in `/ratchet/stats` counts the rows of the last hour by stage. Logs: in live mode the gateway writes one JSON line per chat request to stderr (`docker compose logs ratchet` on the demo VM) and one `upstream_error` line per failed model call, and repeats every release-log event; none of them holds prompt or answer text, a URL or a key ([CONFIGURATION.md](CONFIGURATION.md#observability)).
 
 ## Alerts
 
@@ -149,30 +152,37 @@ groups:
 
 ## Manual interventions
 
-All state lives in the SQLite ledger (`RATCHET_DB`). Stop the gateway or make sure no Night School run is in progress, take a backup, then use either the Python API or SQL. A running gateway picks up a version change made from another process (the Python API below, or `sqlite3`) on its next request: its routing snapshot checks the file's `PRAGMA data_version` ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). Open the file with the same `RATCHET_DB_SYNC` the gateway uses (`Ledger(path, sync=...)`; the default `NORMAL` is the WAL journal).
+Change versions, switches and task pins with `python -m ratchet.admin` (on the ledger file: `RATCHET_DB` or `--db`) or the admin API (`/ratchet/admin/*` with a key from `RATCHET_ADMIN_KEYS`; [API.md](API.md#admin)). Both go through `ratchet/admin.py` ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)): every change needs a reason (3 to 500 characters), is checked against the allowed moves, compares and sets (so it can never race the release gate's tick or another admin into two live versions), and writes the change, an `admin_actions` row (who, what, why, before and after) and an `admin` event in one transaction. A running gateway, and the cron tick, see a change on their next request or tick without a restart. No need to stop anything first; take a backup before large changes anyway. Never edit `versions`, `runtime_flags` or `task_overrides` with SQL: it skips the checks, the audit trail and `stage_since`.
 
-Python (preferred: it also updates `stage_since` and writes events):
-
-```python
-from ratchet.ledger import Ledger
-
-led = Ledger("ratchet.db")
-for v in led.versions():
-    print(v.id, v.state, v.traffic_pct, v.eval.get("precision"), v.eval.get("coverage"))
+```bash
+python -m ratchet.admin versions                 # states, traffic, golden numbers, this stage's audits, the switches
+python -m ratchet.admin audit-log --limit 20     # who changed what, and why
+curl -s -H "Authorization: Bearer $ADMIN_KEY" $GATEWAY/ratchet/admin/versions | jq
 ```
 
-| Goal | Python |
-|---|---|
-| Roll back the current canary | `led.set_version(<canary id>, "rolled_back", 0); led.event("rollback", "manual: <reason>")` |
-| Take the live version out (all traffic to teacher) | `led.set_version(<live id>, "retired", 0); led.event("retired", "manual: <reason>")` |
-| Restore a previous version as live | `led.set_version(<old id>, "live", 100); led.set_version(<bad id>, "retired", 0); led.event("live", "manual restore v<old id>")`. The old adapter must be loaded in vLLM: `ratchet.live.load_adapter(base, key, "student-v<old>", "/data/adapters/student-v<old>")` |
-| Force a candidate to canary (skip shadow) | `led.set_version(<id>, "canary", 10); led.event("canary", "manual")`. Only if you accept the risk |
-| Cancel an in-flight shadow so tonight's training runs | `led.set_version(<shadow id>, "retired", 0)` |
+| Goal | CLI | HTTP (admin key) |
+|---|---|---|
+| Roll back the current canary | `python -m ratchet.admin rollback <id> --reason "..."` | `POST /ratchet/admin/versions/<id>/rollback` `{"reason": "..."}` |
+| Take the live version out (the teacher answers what no canary takes) | `python -m ratchet.admin retire <live id> --reason "..."` | `POST /ratchet/admin/versions/<id>/retire` |
+| Stop using the student at once, whatever version is live (kill switch) | `python -m ratchet.admin flag student_disabled on --reason "..."` (`off` to undo) | `POST /ratchet/admin/student/disable` (`.../enable`) |
+| Restore a previous version | `promote <old id> --to canary --force --reason "..."`, watch its audits (`versions`), then `promote <old id> --to live --load-adapter --reason "..."` (retires the current live version in the same transaction) | `POST /ratchet/admin/versions/<id>/promote` `{"to": "canary", "force": true, ...}`, then `{"to": "live", "load_adapter": true, ...}` |
+| Promote a canary now (skip the remaining stages) | `promote <id> --to live --reason "..."` | `{"to": "live"}` |
+| Force a candidate to canary (skip the gate and the shadow) | `promote <id> --to canary --force --reason "..."`. Only if you accept the risk | `{"to": "canary", "force": true}` |
+| Cancel an in-flight shadow so tonight's training runs | `retire <shadow id> --reason "..."` | `POST /ratchet/admin/versions/<id>/retire` |
+| Hold every release (a demo, a holiday), keeping rollbacks and alerts | `flag releases_frozen on --reason "..."` | `POST /ratchet/admin/releases/freeze` (`.../unfreeze`) |
+| Stop training for a while (GPU quota, an incident) | `flag training_paused on --reason "..."` | `POST /ratchet/admin/training/pause` (`.../resume`) |
+| Audit more (a suspicious canary) or less | `flag audit_rate 0.3 --reason "..."` (`default` to go back to `RATCHET_AUDIT_RATE`; `--force` for 0 during a canary) | `PUT /ratchet/admin/settings` `{"audit_rate": 0.3, "reason": "..."}` |
+| Keep one task on the teacher now, without changing its spec | `pin <task> --reason "..."` (`unpin` to undo) | `POST /ratchet/admin/tasks/<task>/pin` (`DELETE` to undo) |
+| Run the release gate now | `python -m ratchet.live tick` | `POST /ratchet/admin/tick` |
 
+Other interventions:
+
+| Goal | How |
+|---|---|
 | Check an adapter's bill of materials | `curl -s $GATEWAY/ratchet/versions/<id>/bom > bom.json && python -m ratchet.bom verify bom.json --public-key <published key>` |
 | Add or rotate a client's API key | Edit `RATCHET_API_KEYS` (`name:key,...`) and restart the gateway. Keep the same name so per-client stats, end-user hashes and the client's no-train registrations continue (renaming unlinks them; a `no_train_unmatched` event says how many); the old key stops working at once |
 | Add, change or remove a task | Edit `RATCHET_TASKS_FILE` and restart, or use the admin API with a key from `RATCHET_ADMIN_KEYS`: `curl -X PUT $GATEWAY/ratchet/tasks/<name> -H "Authorization: Bearer $ADMIN_KEY" -d @spec.json` (check it first with `POST /ratchet/tasks/validate`). [CONFIGURATION.md](CONFIGURATION.md#adding-a-task) has the spec format |
-| Keep a task on the teacher | Set `"pinned": true` in its spec (file or API). Its stored examples stay in the ledger but leave training and the golden eval from the next night on (`excluded_pinned` in the manifest) |
+| Keep a task on the teacher for good | Set `"pinned": true` in its spec (file or API); a runtime pin (above) needs no spec change and no restart. Its stored examples stay in the ledger but leave training and the golden eval from the next night on (`excluded_pinned` in the manifest) |
 | Stop distilling task names nobody registered | `RATCHET_UNKNOWN_TASKS=teacher` (teacher only, nothing stored) or `reject` (a 400 that lists the registered tasks); `GET /ratchet/tasks` lists the unregistered names requests used |
 | Record the student endpoint going up or down | `python -m ratchet.cost endpoint up` / `down` where the ledger is (`--db`, default `RATCHET_DB`; `--at "2026-10-20T08:00:00Z"` for a time other than now, `--usd-per-hour`, `--gpus`), or `POST /ratchet/cost/endpoint` with an admin key. `deploy/student_endpoint.sh` and `... stop` do it for you when they run next to the ledger. `up` while up and `down` while down change nothing |
 | Close a training job whose end was lost (the night process died) | `python -m ratchet.cost close training_job --at <end time from the Nebius console>`; until then the report counts it up to now and warns |
@@ -182,14 +192,11 @@ for v in led.versions():
 | Apply the retention windows now | `python -m ratchet.live purge [--client <name>] [--older-than-days N] [--dry-run]` (the gateway does it hourly) |
 | Hand over data (an audit, a client leaving) | `python -m ratchet.admin export examples --client <name> --out examples.ndjson` (also `requests`, `versions`, `events`, `erasures`), or `GET /ratchet/admin/export/<kind>` with an admin key |
 
-Never keep two versions in `live`. `Ledger.live()` returns the newest one, and the other would never be retired automatically.
+The CLI exits 1 when a move is refused (`refused: v7 is rolled_back; only a canary is rolled back`: someone or the gate got there first, or the move is not allowed) and 2 on a bad input; the API answers 409 and 400. A call that changes nothing (a switch already on) writes nothing. Open the ledger with the same `RATCHET_DB_SYNC` the gateway uses (the CLI reads it from the environment, as the gateway does).
 
-SQL equivalents (no `stage_since` update, so prefer Python):
+What the switches do, in short: `student_disabled` sends every request to the teacher (route `student_disabled`; its answers are stored, no student or shadow call); `releases_frozen` stops every promotion (shadow to canary, canary stages, canary to live; a first student shadows the teacher instead of taking 10%) while rollbacks, rejections and the live alert keep running; `training_paused` makes every night `skip`; `audit_rate` replaces `RATCHET_AUDIT_RATE`, and at 0 the gate starts no new canary. Current values: `controls` in `/ratchet/stats`, `python -m ratchet.admin flag` (with who set each one).
 
-```sql
-UPDATE versions SET state='rolled_back', traffic_pct=0 WHERE id=7;
-INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rollback', 'manual: bad outputs');
-```
+Never keep two versions in `live`; the admin API cannot make two, and `promote --to live` retires the old one with it.
 
 ## Playbooks
 
@@ -216,14 +223,18 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 ### Rate limited
 
-**Symptoms:** clients get **429**. Tell the two kinds apart by `error.code`:
+**Symptoms:** clients get **429** (or **503** `overloaded`). Tell the kinds apart by `error.code`:
 
-- `daily_quota_exceeded` (`type` `insufficient_quota`): a gateway API key used up `RATCHET_API_KEY_DAILY_REQUESTS`. `Retry-After` and `X-RateLimit-Reset-Requests` say when it resets (00:00 UTC), and `X-Should-Retry: false` stops OpenAI SDKs from retrying. The dashboard's **Trust and privacy** panel shows requests per key.
+- `daily_quota_exceeded` (`type` `insufficient_quota`): a gateway API key used up its daily request quota (`RATCHET_API_KEY_DAILY_REQUESTS`, or `daily_requests` in `RATCHET_KEY_LIMITS`). `Retry-After` and `X-RateLimit-Reset-Requests` say when it resets (00:00 UTC), and `X-Should-Retry: false` stops OpenAI SDKs from retrying. The dashboard's **Trust and privacy** panel shows requests per key.
+- `budget_exceeded` or `gateway_budget_exceeded` (`type` `insufficient_quota`): a key's US dollar budget, or the gateway's, is spent. See [Cost spike](#cost-spike).
+- `rate_limit_exceeded` (`type` `rate_limit_error`): a key went past its requests a minute (`rpm`) or in flight (`concurrency`), or on a gateway without keys a client address went past `RATCHET_IP_RPM`. SDKs retry after `Retry-After`. A `rate` failures row names the key; many rows from one key mean its client sends faster than its limit.
+- 503 `overloaded` (`type` `api_error`): `RATCHET_MAX_INFLIGHT` chat requests were already in flight, so the gateway answered at once instead of queueing. `ratchet_inflight_requests` in `/metrics` shows how close it runs. Usually slow upstreams (teacher latency, a student near its timeout) hold requests longer, not more traffic: check `ratchet_upstream_seconds` first.
 - `upstream_rate_limited` (`type` `rate_limit_error`): Token Factory rate-limited the teacher. The gateway already waited for Token Factory's `Retry-After` and retried (twice, if each wait was 8 s or less); `Retry-After` on the 429 is Token Factory's wait, clamped to 1 to 60 s, and SDKs honour it. Five such 429s in a row open the teacher's breaker: clients then get a 503 `teacher_circuit_open` with the breaker's wait instead, and the teacher gets no calls until its probe.
 
 **Steps:**
 
-1. Daily quota: raise `RATCHET_API_KEY_DAILY_REQUESTS` and restart, give the client its own key, or wait for midnight UTC. A refused request was not logged and used no quota.
+1. Daily quota: raise `RATCHET_API_KEY_DAILY_REQUESTS` (or the key's `daily_requests` in `RATCHET_KEY_LIMITS`) and restart, give the client its own key, or wait for midnight UTC. A refused request was not logged and used no quota. A restart keeps today's counts: the gateway reads them from the ledger.
+1. Rate or concurrency: raise the key's `rpm` or `concurrency` in `RATCHET_KEY_LIMITS` and restart, or ask the client to spread its requests (SDKs already wait for `Retry-After`). For `overloaded`, raise `RATCHET_MAX_INFLIGHT` only together with the worker thread pool (40 by default): past it, requests queue for a thread instead of getting the 503.
 2. Token Factory rate limit: check the account's limits in the Token Factory console. Fewer escalations mean fewer teacher calls: look at the escalation rate (drift, or a broken student) and the audit rate. Lower `RATCHET_AUDIT_RATE` (not to 0 while a canary is in flight) and avoid running Night School's judge during peak traffic.
 3. Repeated `audit_error` events with `UpstreamError 429` mean audits are being rate-limited: the student's answers are still served, but canary promotion slows down.
 
@@ -259,7 +270,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 1. Check `GET /ratchet/stats` → `days[-1].audit_agreement` and whether escalations jumped (drift).
 2. If drift is the cause (a new product or new wording), the student's confidence usually drops and it escalates. The `alert` means it is confidently wrong on some slice, which is serious.
-3. Immediately take the live version out (manual intervention above) or restore the previous good version. All traffic then goes to the teacher, which costs more but is correct.
+3. Immediately take the live version out (`python -m ratchet.admin retire <id> --reason "..."`), turn the student off (`flag student_disabled on`), or restore the previous good version ([Manual interventions](#manual-interventions)). Traffic then goes to the teacher, which costs more but is correct. With `releases_frozen` on, nothing new is promoted meanwhile; rollbacks of a bad canary still happen.
 4. Inspect recent audited disagreements:
 
    ```sql
@@ -380,15 +391,26 @@ A ledger day is not a UTC day: day 1 starts at the first request's time, and eac
 
 ### Cost spike
 
+**Symptoms:** `budget` events at 50 or 80% early in the day, a daily total far above the usual in `/ratchet/stats` (`budget.spent_today_usd`, `clients[].spent_today_usd`) or in `ratchet_cost_usd_total`, clients getting 429 `budget_exceeded` or `gateway_budget_exceeded`, or the Token Factory bill.
+
 **Checks:**
 
-1. Is `escalation_rate` up? That means drift, or a broken student.
-2. Is shadow running? Shadow adds student sampling and arbitration calls to every request.
-3. Is `RATCHET_AUDIT_RATE` too high?
-4. Is the vLLM endpoint left running (GPU-hours)? `python -m ratchet.cost report --days 1` shows today's endpoint hours and whether they paid for themselves.
-5. Are teacher outputs long because of reasoning? Look at token usage on Token Factory.
+1. Who is spending? `clients[].spent_today_usd` in `/ratchet/stats` (or `ratchet_spend_today_usd` in `/metrics`) by key. One key far above the others: a client in a loop, a leaked key, or a new workload. `SELECT client, COUNT(*), SUM(cost_usd) FROM requests WHERE ts > strftime('%s','now','start of day') GROUP BY client ORDER BY 3 DESC;` and the same on `failures` for failed spend.
+2. Is `escalation_rate` up? That means drift, or a broken student. Escalations are what cost: each pays the student's samples and a teacher call.
+3. Is shadow running? Shadow adds student sampling and arbitration calls to every request.
+4. Is `RATCHET_AUDIT_RATE` too high?
+5. Is the vLLM endpoint left running (GPU-hours)? `python -m ratchet.cost report --days 1` shows today's endpoint hours and whether they paid for themselves. Endpoint hours are not part of the spend limits, which count per-token model calls.
+6. Are teacher outputs long because of reasoning? Look at token usage on Token Factory.
+7. Many failed requests? `totals.failed_cost_usd` and `errors.last_hour`: a teacher outage makes every escalation pay its student samples for nothing.
 
-**Mitigations:** lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
+**Mitigations:**
+
+- Cap the spender ([CONFIGURATION.md](CONFIGURATION.md#spend-and-rate-limits)): give the key a `daily_usd` (and `monthly_usd`) in `RATCHET_KEY_LIMITS`, or every key a default with `RATCHET_API_KEY_DAILY_USD`, and restart; a key that runs past it gets 429 `budget_exceeded` until 00:00 UTC (the 1st for a monthly budget), and today's spend so far counts, because the gateway reads it from the ledger at startup. Slow a looping client with `rpm` and `concurrency`. Rotate a leaked key: remove it from `RATCHET_API_KEYS` (and from `RATCHET_KEY_LIMITS`, or startup stops) and restart.
+- Cap the gateway: `RATCHET_DAILY_BUDGET_USD` with `RATCHET_BUDGET_MODE=student_only` keeps serving what the student answers alone and refuses only what needs the teacher; `block` refuses every chat request. Either way requests are refused until 00:00 UTC unless you raise the budget and restart. In `student_only` mode no audits run, so a canary waiting for audits does not promote; rollback still acts on the audits it has. Scout has its own budget (`RATCHET_SCOUT_DAILY_BUDGET_USD`).
+- Spend less per request: lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
+- Watch it: alert on `budget` events in the log (`"event":"ledger_event","kind":"budget"`), or on `increase(ratchet_cost_usd_total[1h])` against your usual hour.
+
+The limits count per-token prices of the calls Ratchet made (list prices, unverified until the day-1 checks pass), so compare them with the Token Factory bill weekly. A request in flight can overshoot a cap by its own cost.
 
 ### Cost and the self-host recommendation
 

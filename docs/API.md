@@ -54,6 +54,19 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | DELETE | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Remove an API task; its stored examples stay (admin key) |
 | POST | `/ratchet/admin/privacy/erase` | both | Erase stored examples by client, end user, hash or text; a dry run by default (admin key; [Erasure and export](#erasure-and-export)) |
 | GET | `/ratchet/admin/export/{kind}` | both | One table (`examples`, `requests`, `versions`, `events`, `erasures`) as NDJSON (admin key) |
+| GET | `/ratchet/admin/versions` | both | [admin](#access-levels) | Every version with its golden eval and its current stage's evidence, and the runtime switches ([Admin](#admin)) |
+| GET | `/ratchet/admin/flags` | both | [admin](#access-levels) | The runtime switches and task pins, with who set each one last |
+| GET | `/ratchet/admin/audit-log?limit=50` | both | [admin](#access-levels) | The newest admin actions: who, what, why, state before and after |
+| POST | `/ratchet/admin/versions/{id}/rollback` | both | [admin](#access-levels) | Roll a canary back |
+| POST | `/ratchet/admin/versions/{id}/retire` | both | [admin](#access-levels) | Retire a live, canary or shadow version |
+| POST | `/ratchet/admin/versions/{id}/promote` | both | [admin](#access-levels) | Promote a version to a canary stage, or to live over the live version |
+| POST | `/ratchet/admin/student/disable`, `/ratchet/admin/student/enable` | both | [admin](#access-levels) | Turn the student off (the teacher answers everything) or back on |
+| POST | `/ratchet/admin/releases/freeze`, `/ratchet/admin/releases/unfreeze` | both | [admin](#access-levels) | Hold every promotion (rollbacks and alerts keep running), or lift the hold |
+| POST | `/ratchet/admin/training/pause`, `/ratchet/admin/training/resume` | both | [admin](#access-levels) | Skip Night School until resumed |
+| PUT | `/ratchet/admin/settings` | both | [admin](#access-levels) | Set the runtime audit rate |
+| POST | `/ratchet/admin/tasks/{name}/pin` | both | [admin](#access-levels) | Pin a registered task to the teacher at runtime |
+| DELETE | `/ratchet/admin/tasks/{name}/pin` | both | [admin](#access-levels) | Remove a task's runtime pin |
+| POST | `/ratchet/admin/tick` | both | [admin](#access-levels) | Run the release gate now, recorded as an admin action |
 | POST | `/ratchet/demo/day` | mock only | [mock](#access-levels) | Simulate one day of traffic and one night of training |
 | POST | `/ratchet/demo/break-next` | mock only | [mock](#access-levels) | Make the next trained student deploy corrupted |
 | POST | `/ratchet/demo/student-outage` | mock only | [mock](#access-levels) | Take the student endpoint down for a while, to show the circuit breaker |
@@ -80,8 +93,8 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`) or as `X-API-Key: <key>`.
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
-- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
-- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)); the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` ([Committed training sets](#committed-training-sets)), which would otherwise tell anyone whether a text they can guess was trained on; and they may register or remove a no-train end user for any client ([End users and storage](#end-users-and-storage)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
+- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight. `RATCHET_KEY_LIMITS` gives a key its own quota, US dollar budgets, rates, task scope and storage switch ([Limits and headers](#limits-and-headers)).
+- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)); every route under `/ratchet/admin/`, its reads included ([Admin](#admin)); the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` ([Committed training sets](#committed-training-sets)), which would otherwise tell anyone whether a text they can guess was trained on; and they may register or remove a no-train end user for any client ([End users and storage](#end-users-and-storage)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - **Savings receipts** (`/ratchet/receipts*`, [Savings receipts](#savings-receipts)): with API keys on, a key reads only its own receipts and proofs; an admin key reads every receipt; any other caller is **401**. In mock mode without keys they are open; in live mode without any keys they are **403** (`receipts need RATCHET_API_KEYS or RATCHET_ADMIN_KEYS in live mode`), because their leaves list every request's time, task and cost.
 - **Dashboard keys** (`RATCHET_DASHBOARD_KEYS`, same syntax, never an API or admin key) read the dashboard API and write nothing. Who needs which key is the route's access level ([Access levels](#access-levels)): in live mode the dashboard API needs an admin or dashboard key by default.
 - Pages, `/healthz`, `/livez`, `/readyz`, `/ratchet/bom/public-key` and Scout are always public. The mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
@@ -100,13 +113,43 @@ Every route has one access level (the Access column above; `ratchet/access.py`, 
 | `admin` | An admin key. Without `RATCHET_ADMIN_KEYS`: nobody in live mode, anyone in mock mode (as `mock-admin`) | **401** `invalid or missing admin key`; **403** for an API key or a dashboard key; **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys |
 | `mock` | Anyone, in mock mode only (invariant 8) | **403** `demo controls are only available in mock mode` in live mode |
 
-On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public) and `/ratchet/kpis` (dashboard).
+On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/admin/` (admin), `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public) and `/ratchet/kpis` (dashboard).
 
 **Scrubbed reads.** A dashboard shown to anyone should not show who your clients are or where your endpoints live. By default an anonymous read of a public dashboard in live mode is scrubbed (`RATCHET_SCRUB_STATS=1` scrubs every read, `0` none): in `/ratchet/stats` client names become `client-1`, `client-2`, ... (stable, by sorted name; the same pseudonyms replace the names in task allow-lists from `GET /ratchet/tasks`, in a request lookup and in the `client` labels of `/metrics`), every `http(s)://` URL in an event detail becomes `<url>`, and an error message after an exception's class is cut (`ConnectError: [Errno 111] ...` becomes `ConnectError`). `security.scrubbed` says whether a payload was scrubbed. A reader who sends an admin or dashboard key gets the full payload. Only names and pseudonyms ever appear, never keys (invariant 13).
 
 **Security headers.** Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and the `Content-Security-Policy` in `RATCHET_CSP` when it is set (none by default, so the pages never break; [CONFIGURATION.md](CONFIGURATION.md#privacy-and-security) has a recommended value).
 
-The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratchet/demo/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
+The demo VM's Caddy config also has an opt-in edge guard for `/v1/*`, `/ratchet/demo/*` and `/ratchet/admin/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
+
+### Limits and headers
+
+What a key, a client address and the whole gateway may spend and send on `POST /v1/chat/completions` ([ADR 0063](adr/0063-spend-and-rate-limits.md); settings in [CONFIGURATION.md](CONFIGURATION.md#spend-and-rate-limits)). Every limit is off by default except the in-flight cap (32) and, in live mode without API keys, the per-IP rate (120 a minute). Limits are per process and keyed by key name, never the key.
+
+```bash
+RATCHET_API_KEY_DAILY_REQUESTS=10000 RATCHET_API_KEY_RPM=120 \
+RATCHET_KEY_LIMITS="acme:daily_usd=5,monthly_usd=100,concurrency=4,tasks=ticket-triage|invoice-extract;globex:daily_usd=1,store=0" \
+RATCHET_DAILY_BUDGET_USD=20 RATCHET_BUDGET_MODE=student_only uvicorn ratchet.gateway:app
+```
+
+They are checked in this order, so a refusal calls no model and costs nothing: the key's (or the client address's) requests a minute, before the body is read; then, once the body is in, the in-flight cap and the key's requests in flight; then, after the body is validated, the task scope, the daily request quota, the key's US dollar budgets and the gateway's budget. The rate runs before the body is read, so a request refused later has used its token. The in-flight caps count only requests whose body has arrived, so a client that sends its body slowly holds no slot meant for requests that are being answered.
+
+| Limit | Setting (per key: `RATCHET_KEY_LIMITS` field) | Over it | Headers |
+|---|---|---|---|
+| Chat requests in flight, all clients | `RATCHET_MAX_INFLIGHT` (32) | **503** `api_error` / `overloaded`: the gateway answers at once instead of queueing the request | `Retry-After: 1` |
+| A key's requests in flight | `RATCHET_API_KEY_CONCURRENCY` (`concurrency`) | **429** `rate_limit_error` / `rate_limit_exceeded` (`'acme' has 4 requests in flight, its limit; ...`) | `Retry-After: 1` |
+| A key's requests a minute | `RATCHET_API_KEY_RPM` (`rpm`): a token bucket of `max(1, rpm // 6)` requests that refills continuously | **429** `rate_limit_error` / `rate_limit_exceeded` (`rate limit of 60 requests a minute reached for 'acme'; retry after 1 s`) | `Retry-After` (seconds until one more request passes), `X-RateLimit-Limit-Requests` (the rate), `X-RateLimit-Remaining-Requests` (`0`), `X-RateLimit-Reset-Requests` (until the bucket is full) |
+| A client address's requests a minute, on a gateway without API keys | `RATCHET_IP_RPM` (live 120, mock 0); the first `X-Forwarded-For` hop with `RATCHET_TRUST_PROXY=1` | As for a key (`... for this client address ...`; the address is not echoed) | As for a key |
+| The tasks a key may send | `tasks=a\|b` | **403** `permission_error` / `task_not_allowed` (`task not allowed for this key`), also for a request without a task (`default`) unless the scope lists it; an unknown-task 400 lists only the scope's tasks | None |
+| A key's chat completions per UTC day | `RATCHET_API_KEY_DAILY_REQUESTS` (`daily_requests`) | **429** `insufficient_quota` / `daily_quota_exceeded` until 00:00 UTC | `Retry-After`, `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests`, `X-RateLimit-Reset-Requests`, `X-Should-Retry: false` |
+| A key's US dollars per UTC day and month | `RATCHET_API_KEY_DAILY_USD` (`daily_usd`), `RATCHET_API_KEY_MONTHLY_USD` (`monthly_usd`) | **429** `insufficient_quota` / `budget_exceeded` (`the daily budget of $5.00 is spent for 'acme'; it resets at 00:00 UTC`; a spent monthly budget resets at 00:00 UTC on the 1st, and the message names the cap that resets last) | `Retry-After` and `X-Ratchet-Budget-Reset` (the reset, in seconds and as `3h12m5s`), `X-Ratchet-Spend-Today-USD`, `X-Ratchet-Budget-Remaining-USD: 0.000000`, `X-Should-Retry: false` |
+| The gateway's US dollars per UTC day, all keys together | `RATCHET_DAILY_BUDGET_USD`, `RATCHET_BUDGET_MODE` | `block`: **429** `insufficient_quota` / `gateway_budget_exceeded` for every chat request until 00:00 UTC. `student_only`: a confident student answer is still a 200 (no audit, no shadow); a request that needs the teacher (an escalation, a cold start, a pinned or unregistered task, `tools`) gets that 429. The gateway's budget is not named in the message | `Retry-After` (to 00:00 UTC), `X-Should-Retry: false` |
+| Training data from a key | `store=0` | Never refused: the key's teacher answers are served and audited but never stored as training examples (`requests.stored = 0`) | None |
+
+On a 200, a key with a daily request quota gets the `X-RateLimit-*-Requests` headers for that quota (as since v0.4); a key with a rate and no daily quota gets them for its bucket. A key with a US dollar budget also gets `X-Ratchet-Spend-Today-USD` (its dollars since 00:00 UTC, this request included, six decimals) and `X-Ratchet-Budget-Remaining-USD` (what it may still spend before its first cap). Dollars are per-token prices, answered and failed requests together (a request that failed after the student was sampled spent those samples); they are simulated in mock mode.
+
+A check reads what was spent before the request, so a request in flight can overshoot a cap by its own cost, and concurrent requests by theirs. Counts live in memory: the gateway reads today's (and with a monthly budget this month's) spend from the ledger at startup, so a restart forgets nothing, and a new UTC day or month starts from zero. Only gateway API requests count: Scout's agents call the cascade inside the process and stay under the Scout budget (invariant 11).
+
+The first time a key or the gateway reaches each `RATCHET_BUDGET_ALERT_PCT` share (50, 80 and 100%) of a dollar cap in its UTC day or month, the release log gets a `budget` event (`acme reached 80% of $5.00 daily budget`); a restart does not repeat one. `/ratchet/stats` shows each key's `spent_today_usd` and `daily_cap_usd` under `clients`, and the gateway's budget under `budget` ([GET /ratchet/stats](#get-ratchetstats)). A scrubbed copy names no key and no cap: the event reads `client-1 reached 80% of its daily budget`, and `daily_cap_usd`, `budget.daily_usd` and `budget.remaining_usd` are `null`.
 
 ---
 
@@ -432,7 +475,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 400 | `invalid_request_error` | `null` | Mock mode only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`) | No |
 | 400 | `invalid_request_error` | `unknown_task` | `RATCHET_UNKNOWN_TASKS=reject` and the task is not registered (`unknown task "x"; registered: default, page-read, ...`, at most 20 names, only tasks this key may use); `param` is `metadata.ratchet_task` when the name came from there | No |
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
-| 403 | `permission_error` | `task_not_allowed` | The task's `clients` do not name this key, or the request has no key (`task not allowed for this key`). Checked before the quota, so it uses none | No |
+| 403 | `permission_error` | `task_not_allowed` | The task's `clients` do not name this key, or the request has no key, or the key's `tasks` scope does not list the task (`task not allowed for this key`). Checked before the quota, so it uses none | No |
 | 404 | `not_found_error` | `unknown_url` | No such route: `Unknown request URL: POST /v1/foo.` | No |
 | 405 | `invalid_request_error` | `null` | A route called with the wrong method (`Allow` names the right one) | No |
 | 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
@@ -441,12 +484,16 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 409 | `invalid_request_error` | `idempotency_key_in_use` | The first request with this `Idempotency-Key` was still running after `RATCHET_TEACHER_DEADLINE_S`, or four requests were already waiting for it; `Retry-After: 1`. The retry gets its answer once it finished | Yes, after `Retry-After` |
 | 400 | `invalid_request_error` | the teacher's (`context_length_exceeded`, ...), `request_too_large` for an upstream 413 without one, or `null` | Live mode: the teacher refused the request with 400, 413 or 422, so it cannot succeed as sent (too long for the model, a content part it cannot read). `message` and `param` are the teacher's; `X-Should-Retry: false` | No |
 | 429 | `insufficient_quota` | `daily_quota_exceeded` | The key's daily quota is used up (`daily request quota of N used up for 'acme'; resets at 00:00 UTC`); `Retry-After` (seconds to 00:00 UTC), `X-RateLimit-Reset-Requests` and `X-Should-Retry: false` | No: the response tells them not to |
+| 429 | `insufficient_quota` | `budget_exceeded` | The key's daily or monthly US dollar budget is spent (`the daily budget of $5.00 is spent for 'acme'; it resets at 00:00 UTC`); `Retry-After` and `X-Ratchet-Budget-Reset` (until the cap that resets last resets), `X-Ratchet-Budget-Remaining-USD: 0.000000` and `X-Should-Retry: false` ([Limits and headers](#limits-and-headers)) | No: the response tells them not to |
+| 429 | `insufficient_quota` | `gateway_budget_exceeded` | The gateway's daily budget (`RATCHET_DAILY_BUDGET_USD`) is spent: every chat request with `RATCHET_BUDGET_MODE=block`, only a request that needs the teacher with `student_only`; `Retry-After` (to 00:00 UTC) and `X-Should-Retry: false` | No: the response tells them not to |
+| 429 | `rate_limit_error` | `rate_limit_exceeded` | The key's requests a minute or in flight, or on a gateway without keys the client address's requests a minute, are over their limit; `Retry-After`, and for a rate the `X-RateLimit-*-Requests` headers ([Limits and headers](#limits-and-headers)) | Yes, after `Retry-After` |
 | 429 | `rate_limit_error` | `upstream_rate_limited` | Live mode: Token Factory rate-limited the teacher call, after the gateway's own retries (`teacher rate limited: upstream 429; retry after 7 s`). `Retry-After` is the teacher's wait, clamped to 1 to 60 s (1 when it sent none) | Yes, after `Retry-After` |
 | 500 | `api_error` | `null` | A bug in the gateway (`The server had an error while processing your request.`). The message never includes request text; the ledger records a `gateway_error` event with the exception's class at the 1st, 10th, 100th, ... occurrence. In live mode this includes a `KeyError` from the cascade, which is a 400 only in mock mode | Yes |
 | 502 | `api_error` | `teacher_unavailable` | Live mode: a teacher call whose answer was needed failed after its retries: an escalation, a cold start, a pinned task or a teacher-only request (`teacher unavailable: upstream 503`, `teacher unavailable: upstream 502 upstream_unreachable` when Token Factory could not be reached, `... bad_upstream_response` when its answer could not be read). Student failures do not cause errors: they fall back to the teacher. Neither do a failed audit or shadow arbitration: the student's answer is served ([ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)). An upstream redirect or 4xx outside the other rows (402, for example) adds `X-Should-Retry: false`. When Token Factory sent a wait (`Retry-After` on a 503, for example), it is passed on as `Retry-After`, clamped to 1 to 60 s. See [RUNBOOK.md](RUNBOOK.md#teacher-api-down-token-factory-errors-or-timeouts) | Yes (after `Retry-After` when present), unless `X-Should-Retry: false` |
 | 502 | `api_error` | `upstream_auth_error` | Live mode: Token Factory refused the gateway's own key (401 or 403): `NEBIUS_API_KEY` is wrong or lacks access. `X-Should-Retry: false` | No |
 | 502 | `api_error` | `upstream_not_found` | Live mode: Token Factory answered 404: `RATCHET_TEACHER_MODEL` or `RATCHET_TEACHER_BASE` is wrong. The request's `model` never selects the teacher, so this is the gateway's configuration, not the client's mistake. `X-Should-Retry: false` | No |
 | 502 | `api_error` | `tool_calls_unsupported` | Live mode, only when `RATCHET_TEACHER_PARAMS` allows `tools`: the teacher answered with a tool call, which the gateway cannot return yet (`The teacher answered with a tool call, which this gateway cannot return yet; send the request without tools.`). Nothing is stored. `X-Should-Retry: false` | No |
+| 503 | `api_error` | `overloaded` | `RATCHET_MAX_INFLIGHT` chat requests are in flight (`the gateway has 32 chat requests in flight, its limit; retry in a second`): answered at once instead of queueing; `Retry-After: 1` | Yes, after `Retry-After` |
 | 503 | `api_error` | `teacher_circuit_open` | Live mode: the teacher failed `RATCHET_TEACHER_BREAKER_FAILURES` (5) calls in a row, so its circuit breaker is open and the gateway does not call it until the next probe (`teacher circuit open: recent teacher calls failed, so the gateway is not calling it; retry after 18 s`). Answered at once, for any request that needs the teacher's answer (an escalation, a cold start, a pinned task, a teacher-only request) that no fallback teacher or degraded answer covers. `Retry-After` is the time until the breaker lets a probe through, clamped to 1 to 60 s ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)) | Yes, after `Retry-After` |
 | 504 | `api_error` | `teacher_timeout` | Live mode: the teacher did not answer in time (`RATCHET_TEACHER_TIMEOUT_S`, retried once within `RATCHET_TEACHER_DEADLINE_S`), or Token Factory answered 504 (`teacher timeout: upstream 504 upstream_timeout`). Token Factory's `Retry-After`, if it sent one, is passed on (1 to 60 s) | Yes, after `Retry-After` when present |
 
@@ -719,7 +766,7 @@ Needs a key when `RATCHET_API_KEYS` is set.
 
 ## GET `/ratchet/stats`
 
-Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; in live mode an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`, and then an anonymous reader gets a scrubbed copy (client pseudonyms, no URLs or error messages in `events`).
+Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; in live mode an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`, and then an anonymous reader gets a scrubbed copy (client pseudonyms, also in `budget` events, no URLs or error messages in `events`, and no dollar caps: `clients[].daily_cap_usd`, `budget.daily_usd` and `budget.remaining_usd` are `null`, and a `budget` event names no amount).
 
 ```json
 {
@@ -762,6 +809,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   "clients": [
     {"client": "acme", "requests": 40, "student_share": 0.95, "cost_usd": 0.0044, "baseline_usd": 0.044, "savings_pct": 0.9,
      "end_users": 12, "stored_share": 0.05}
+     "spent_today_usd": 0.0011, "daily_cap_usd": 5.0}
   ],
   "privacy": {"redaction": true, "examples": 2742, "redacted_examples": 12, "placeholders": 19,
               "not_stored_requests": 310, "not_stored_by_reason": {"request": 290, "end_user": 20},
@@ -770,7 +818,10 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
               "request_retention_days": 400, "erasure_shared": "delete", "purged_examples": 61,
               "purged_by_reason": {"retention": 58, "erasure": 3}, "erasures": 2, "erasure_refusals": 1,
               "rolled_up_requests": 120400},
-  "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
+  "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d",
+               "key_limits": true, "ip_rpm": null, "max_inflight": 32},
+  "budget": {"daily_usd": 20.0, "mode": "student_only", "spent_today_usd": 3.41, "remaining_usd": 16.59, "exceeded": false,
+             "alert_pct": [50, 80, 100]},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
            "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
   "feedback": {"verdicts": 40, "correct": 37, "incorrect": 3, "corrections_sent": 3, "corrections_stored": 2,
@@ -782,6 +833,8 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
               "submitted": 5130, "done": 5124, "failed": 0, "full": 0, "refused": 0, "abandoned": 0,
               "by_version": [{"version": 5, "audits_inline": 0, "shadows_dropped": 0, "audits_abandoned": 0,
                               "shadows_abandoned": 0}]}
+  "controls": {"student_disabled": false, "releases_frozen": false, "training_paused": false, "audit_rate": null,
+               "pinned_tasks": []}
 }
 ```
 
@@ -805,13 +858,14 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `student` | student | Its confidence reached the version's threshold (and, for `n` > 1 choices, at least `n` samples agreed) |
   | `confidence` | teacher | The student was unsure (below the threshold) |
   | `cold_start` | teacher | No version serves yet (no live version, and the canary was not picked) |
-  | `pinned` | teacher | A pinned task, or a request with a part only the teacher reads (`RATCHET_TEACHER_MODALITIES`) |
+  | `pinned` | teacher | A pinned task (by its spec, or at runtime by an operator: [Admin](#admin)), or a request with a part only the teacher reads (`RATCHET_TEACHER_MODALITIES`) |
   | `student_error` | teacher | The student call failed (timeout, connection error, an error status, a lost adapter) |
   | `student_breaker` | teacher | The student's circuit breaker was open, so the student was not called ([ARCHITECTURE.md](ARCHITECTURE.md#student-circuit-breaker)) |
   | `degraded` | student | The student was unsure and the teacher unavailable, so its own answer was served (`RATCHET_ON_TEACHER_FAILURE=serve_student`, `ratchet.degraded`); not audited, stored or shadowed ([ARCHITECTURE.md](ARCHITECTURE.md#when-the-teacher-is-down)) |
   | `fallback_teacher` | teacher | The teacher was unavailable (its retries failed or its breaker was open), so the fallback teacher answered (`RATCHET_TEACHER_FALLBACK_MODEL`); an escalation, a cold start, a pinned task or a teacher-only request |
   | `n_choices` | teacher | The student was confident, but fewer than the request's `n` samples gave its answer, so it could not fill `n` choices ([Choices and logprobs](#choices-and-logprobs)) |
   | `unknown_task` | teacher | The task is not registered and `RATCHET_UNKNOWN_TASKS=teacher`: the student was not called and nothing was stored ([Tasks](#tasks)) |
+  | `student_disabled` | teacher | An operator turned the student off (`POST /ratchet/admin/student/disable`, [Admin](#admin)): no student or shadow call; the teacher's answer is stored as on a cold start |
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
   Later versions add routes; a client should show an unknown route as it is. `human_feedback` counts the task's requests that got a verdict ([Feedback](#feedback)), the latest per request, and `human_agreement` is the share of them judged `correct` (`null` without any).
@@ -833,15 +887,17 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `wilson` | 95% Wilson interval of the current stage (what the Wilson rule reads; valid for one look only) |
 
   e-values are finite (capped at e^690). With no audits `n` is 0, the e-values are 1 and both intervals are `[0, 1]`.
-- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash; only rows still kept count, since folded rows keep no end user); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5). In a scrubbed copy `client` is a pseudonym.
+- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash; only rows still kept count, since folded rows keep no end user); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5). In a scrubbed copy `client` is a pseudonym. Since v0.5 each entry also has `spent_today_usd`, the key's chat-request dollars since 00:00 UTC (failed requests' spend included), and `daily_cap_usd`, its daily US dollar budget (`null` when it has none, when the name is no longer a key, and in a scrubbed copy; [Limits and headers](#limits-and-headers)).
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
-- `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)).
+- `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)); whether any key has a limit of its own (`key_limits`), the per-IP rate of a gateway without keys (`ip_rpm`, `null` when off) and the in-flight cap (`max_inflight`, `null` when off).
+- `budget` (v0.5): the gateway's own daily budget (`daily_usd`, `null` when `RATCHET_DAILY_BUDGET_USD` is 0), what happens past it (`mode`: `block` or `student_only`), what chat requests spent since 00:00 UTC (`spent_today_usd`; Scout is not counted), what is left (`remaining_usd`, `null` without a budget), whether it is spent (`exceeded`) and the shares that write a `budget` event (`alert_pct`). A scrubbed copy leaves the operator's budget out (`daily_usd` and `remaining_usd` are `null`), as the gateway's 429s do.
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
 - `feedback`: human verdicts and labels ([Feedback](#feedback), `Ledger.feedback_stats`): verdicts in all, `correct` and `incorrect`, corrections sent and stored, examples that still have their text whose label a person wrote (`human_examples`, `verified` = 1: corrections and human imports) and golden-only examples (`golden_only_examples`), whether corrections may be stored (`corrections`, `RATCHET_FEEDBACK_CORRECTIONS`), and per version the human precision of the answers it served itself (route `student`) with its 95% Wilson bounds (`by_version`). Reported and alerted on (`human_alert`), never used to promote or roll back. Counts only, never a request id.
 - `totals.failed_cost_usd` (v0.5): what requests that failed spent without leaving a request row, such as the student's samples of an escalation whose teacher call then failed (NFR-3). It counts against the savings: `saved_usd = baseline_usd − cost_usd − failed_cost_usd` and `savings_pct = 1 − (cost_usd + failed_cost_usd) / baseline_usd`. Without failures both are what they were before. `days`, `tasks` and `clients` leave it out.
 - `errors.last_hour` (v0.5): the failures of the last hour by stage (`failures.stage`: `teacher`, `student`, `audit`, `shadow`, `quota`, `auth`, `budget`, `rate`, `upstream`, `gateway`), busiest first; `{}` when nothing failed. A failed student call the teacher covered counts here too, although the client got its answer. [RUNBOOK.md](RUNBOOK.md#failures-and-request-ids) explains each stage.
 - `sidecar` (v0.5, [Off-path checks](#off-path-checks)): the queue that runs audits and shadows after the response. `workers` (0: every check runs before the response, mock mode's default), `max_queue`, `audit_places` (the places only a job with an audit may take) and `max_bytes` (the request text queued and running jobs may hold) are the settings; `queued` (places taken, jobs waiting included), `running` and `bytes` (the request text their jobs hold) are now; since start, `submitted`, `done`, `failed` (a job that raised; logged by class), `full` (a place refused because the queue or its byte budget was full), `refused` (a job handed over after shutdown began, which its request ran itself) and `abandoned` (still queued when the shutdown's drain ended: those rows stay pending). `by_version` lists every routed version, and any other version that lost something, with what could not go through the queue: `audits_inline` (drawn audits that ran before the response because the queue was full; an audit is never dropped), `shadows_dropped` (shadows that did not run for that reason), and `audits_abandoned` and `shadows_abandoned` (given up at shutdown). Counts are per process: a restart starts them at 0.
+- `controls` (v0.5): the operator's runtime switches ([Admin](#admin)): whether the student is turned off (`student_disabled`), releases are frozen (`releases_frozen`) and training is paused (`training_paused`), the runtime audit rate (`audit_rate`, `null` while `RATCHET_AUDIT_RATE` applies) and the tasks pinned to the teacher at runtime (`pinned_tasks`, sorted; such a task also shows `pinned: true` under `tasks`).
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
@@ -866,7 +922,7 @@ What the ledger knows about one request, by the id the gateway gave it ([Request
 }
 ```
 
-`request` is `null` for a request that failed before the cascade logged it (a teacher error after the student's samples, a quota 429, an unhandled error); then its `failures` row says where it failed, what it spent (`cost_usd`) and the status (`status`: the status of the stage that failed; for an upstream stage the upstream's, such as 504 for a timeout or 503 for an open breaker). `failures` also lists the optional calls that failed around an answered request: a student call the teacher covered, a failed audit, shadow sample or arbitration. `error` is the exception's class, status and code (`UpstreamError 502 upstream_unreachable`, `APIError 429 daily_quota_exceeded`), never a message. A request that is not found, and an id that is not one of the two forms, is a 404.
+`request` is `null` for a request that failed before the cascade logged it (a teacher error after the student's samples, a quota 429, an unhandled error); then its `failures` row says where it failed, what it spent (`cost_usd`) and the status (`status`: the status of the stage that failed; for an upstream stage the upstream's, such as 504 for a timeout or 503 for an open breaker). `failures` also lists the optional calls that failed around an answered request: a student call the teacher covered, a failed audit, shadow sample or arbitration. `error` is the exception's class, status and code (`UpstreamError 502 upstream_unreachable`, `APIError 429 daily_quota_exceeded`), never a message. A failed request's rows are written before its response starts, so a lookup made as soon as the error arrives finds them; under a flood the gateway keeps at most 120 of its own rows a minute per stage (a row that carries spent money is always kept), so the id of a refusal past that is a 404. A request that is not found, and an id that is not one of the two forms, is a 404.
 
 ### GET `/ratchet/requests/{request_id}`
 
@@ -900,7 +956,7 @@ Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plai
 | `ratchet_audits_total` | counter | `result` | Teacher audits of served student answers: `agree`, `disagree`, `invalid` (the teacher's answer measured nothing), `error`, `circuit_open` |
 | `ratchet_examples_stored_total` | counter | `task`, `split` | New training examples (`train` or `golden`); a duplicate's `seen` bumped is not one |
 | `ratchet_failures_total` | counter | `stage` | Failures by stage (`failures.stage`), every one: the table samples breaker refusals 1 in 10 and throttles the gateway's rows, this counter does not |
-| `ratchet_rejections_total` | counter | `reason` | Chat requests refused before the cascade: `auth`, `invalid_request`, `unknown_task`, `task_not_allowed`, `quota`, `too_large`, `disconnected`, `forbidden`, `idempotency` (a malformed or reused `Idempotency-Key`, or the 409 while its first request runs), `other` |
+| `ratchet_rejections_total` | counter | `reason` | Chat requests refused before the cascade: `auth`, `invalid_request`, `unknown_task`, `task_not_allowed`, `quota`, `budget` (a key's or the gateway's dollar budget), `rate` (a key's or an address's rate or in-flight limit), `overloaded` (the in-flight cap's 503), `too_large`, `disconnected`, `forbidden`, `idempotency` (a malformed or reused `Idempotency-Key`, or the 409 while its first request runs), `other` |
 | `ratchet_idempotent_requests_total` | counter | `outcome` | Chat requests with an `Idempotency-Key` ([Idempotency and retries](#idempotency-and-retries)): `first` (ran, answer kept), `uncached` (ran, answer not kept), `failed` (ran and failed; the key is released), `replayed` (sent from the cache), `joined` (waited for the first and got its answer), `reused` (400), `in_flight` (409), `invalid` (400) |
 | `ratchet_seen_skipped_total` | counter | `reason` | Repeats of a stored example not counted in its `seen`: `retry` (`x-stainless-retry-count` above 0) or `window` (the same API client within `RATCHET_SEEN_DEDUP_S`) |
 | `ratchet_sidecar_jobs_total` | counter | `outcome` | Off-path jobs (a request's audit, shadow samples and arbitration; [Off-path checks](#off-path-checks)): `queued`, `done`, `failed` (the job raised; logged by class), `abandoned` (still queued when the shutdown's drain ended) |
@@ -910,6 +966,7 @@ Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plai
 | `ratchet_circuit_open` | gauge | `breaker` | 1 while a breaker (`student`, `shadow`, `teacher`, `fallback_teacher`, ...) is open or half-open, else 0 |
 | `ratchet_version_traffic_pct` | gauge | `version`, `state` | Traffic share of the live, canary and shadow versions (`v5`, `live`, 100) |
 | `ratchet_spend_today_usd` | gauge | `client` | US dollars spent since 00:00 UTC, failed requests included |
+| `ratchet_inflight_requests` | gauge | | Chat requests in flight at the scrape; `RATCHET_MAX_INFLIGHT` refuses past it with a 503 ([Limits and headers](#limits-and-headers)) |
 | `ratchet_info` | gauge | `version`, `mode` | Always 1 |
 
 Label values stay a small set: `task` is a registered task's name, `other` for a name the registry does not hold, or `none` before a request named one; `client` is a `RATCHET_API_KEYS` name, `none` (no key: an open gateway, Scout) or `other`. Counters count from the start of the process (a demo reset keeps them); use `rate()` or `increase()`. Validation 400s are counted here (`ratchet_requests_total{status="400"}`, `ratchet_rejections_total`) and nowhere else. Alert examples are in [RUNBOOK.md](RUNBOOK.md#alerts).
@@ -1403,13 +1460,13 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
      "fields": {"vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]}, "total": {"type": "number", "abs_tol": 0.01}},
      "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
      "source": "api", "spec_hash": "1c7e77bb7041b4d8", "verifiable": true,
-     "requests": 420, "student_share": 0.81, "recalibrating": false}
+     "requests": 420, "student_share": 0.81, "recalibrating": false, "runtime_pinned": false}
   ],
   "unregistered": [{"name": "invoice-extrct", "requests": 3}]
 }
 ```
 
-- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
+- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version; `runtime_pinned` (v0.5) is true while an operator has pinned the task to the teacher at runtime ([Admin](#admin)), on top of its spec's `pinned`.
 - `unknown_tasks`: the `RATCHET_UNKNOWN_TASKS` policy. `max_tasks`: how many tasks the registry holds at most, built-in ones included.
 - `unregistered`: names requests used that are not registered (a typo, or a task to register or pin), with their request counts.
 - The dashboard's **Task registry** panel reads this list, `GET /ratchet/tasks/{name}` for its drawer, and the write results below. The keys it reads are listed with their JSON types in `tests/fixtures/tasks_keys.json` and checked by `test_task_registry_contract`; like `/ratchet/stats`, these responses add keys and never remove or retype one. The panel writes API tasks with an admin key the operator types in, sent only as `Authorization: Bearer` and kept in the page's memory ([ADR 0100](adr/0100-dashboard-task-writes-and-derived-breaker-state.md)).
@@ -1451,6 +1508,124 @@ The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `ta
 ### DELETE `/ratchet/tasks/{name}`
 
 Remove an API task: `{"deleted": "invoice-extract", "spec_hash": "...", "examples_kept": 420}` and a `task_deleted` event. Its stored examples stay, for provenance (and stay trainable under the name's adhoc task unless it is registered again or pinned). Requests that name it then follow `RATCHET_UNKNOWN_TASKS`. **403** for a built-in or file task, **404** for a name that is not registered.
+
+## Admin
+
+Manual interventions with an audit trail ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)). Every route under `/ratchet/admin/`, its reads included, needs an admin key (`RATCHET_ADMIN_KEYS`; [Access levels](#access-levels)): **401** without a key or with a wrong one, **403** for an API key or a dashboard key, **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys; open in mock mode without them (as `mock-admin`). `python -m ratchet.admin` does the same on the ledger file (see [CLI](#cli)).
+
+Conventions:
+
+- **Body.** A JSON object with only the keys each route names (**400** `unknown keys [...]` otherwise); an empty body is `{}`. Every call that can change something takes `reason`: one line of 3 to 500 characters saying why (**400** without it). It is redacted like a training example (an e-mail address becomes `[EMAIL]`) before it is stored, because it lands in the release log. `POST /ratchet/admin/tick` is the one route where it is optional.
+- **Answer.** `{"action", "target", "changed", "before", "after", "action_id"}`: what was acted on (`v7`, a switch, a task, `gate`), its state before and after, and the `admin_actions` row written (`null` when the call changed nothing: a switch already set, a canary already at that share; nothing is then written).
+- **Record.** The change, its `admin_actions` row (time, actor `api:<admin key name>` or `cli:<OS user>`, action, target, reason, before, after, and the call's `x-request-id`) and an `admin` event (`v7 rolled back from canary 50% by api:ops: refund labels are wrong`) commit in one transaction. Keys are never stored, only names (invariant 13).
+- **Conflicts.** A move the table below does not allow, or a version that another admin or the release gate moved while the call ran (every move compares and sets, FR-12.9), is **409** with what the version is now; nothing is written. **404** for an unknown version or task.
+- **Effect.** Every process that shares the ledger sees a change on its next request, tick or night without a restart: the switches and pins are read through a snapshot that any write invalidates, also another process's (`PRAGMA data_version`).
+
+| From | To | How | Needs `force` |
+|---|---|---|---|
+| `canary` | `rolled_back` | `rollback`: its traffic returns to the live version, or the teacher | No |
+| `canary` | `retired` | `retire` | No |
+| `canary` | `canary` (another share) | `promote` with `to: canary` | No |
+| `canary` | `live` | `promote` with `to: live`: the live version is retired in the same transaction | No |
+| `live` | `retired` | `retire`: the teacher answers what the canary (if any) does not | No |
+| `shadow` | `retired` | `retire`: cancels the shadow, so tonight's training can run | No |
+| `shadow` | `canary` | `promote` with `to: canary`: ends the shadow early | No |
+| `rejected`, `rolled_back`, `retired`, `candidate` | `canary` | `promote` with `to: canary`: the golden gate or the canary did not pass it (or never saw it) | Yes |
+
+Nothing becomes live except a canary, a version without a golden eval (no calibrated threshold) is never promoted, force or not, and a move into canary is refused while another version is in shadow or canary (one in flight at a time). With the runtime audit rate at 0, a new canary needs `force` (it would get no audits, so it could neither advance nor be rolled back).
+
+### GET `/ratchet/admin/versions`
+
+```json
+{
+  "versions": [
+    {"id": 7, "day": 12, "state": "canary", "traffic_pct": 50, "adapter": "student-v7", "train_examples": 4210,
+     "golden": {"precision": 0.97, "coverage": 0.91, "threshold": 0.74, "golden_n": 412},
+     "stage_audits": {"n": 31, "precision": 0.968}},
+    {"id": 6, "day": 9, "state": "live", "traffic_pct": 100, "adapter": "student-v6", "train_examples": 3890,
+     "golden": {"precision": 0.96, "coverage": 0.9, "threshold": 0.76, "golden_n": 401},
+     "stage_audits": {"n": 640, "precision": 0.95}}
+  ],
+  "controls": {"student_disabled": false, "releases_frozen": false, "training_paused": false, "audit_rate": null,
+               "pinned_tasks": []}
+}
+```
+
+Newest first. `stage_audits` (live and canary) counts the teacher's audits of what the version served in its current stage; a shadow has `shadow` instead (`Ledger.shadow_quality`: would-serve answers, precision, coverage, the live student's coverage, unarbitrated disagreements).
+
+### GET `/ratchet/admin/flags`
+
+`controls` as above, plus `set_by` (each stored switch: its raw value, when and by whom it was last set) and `task_pins` (each runtime pin: task, when, by whom and why).
+
+### GET `/ratchet/admin/audit-log?limit=50`
+
+`{"actions": [...]}`: the newest `limit` (1 to 1000, **400** otherwise) `admin_actions` rows, newest first, with `before` and `after` parsed.
+
+### POST `/ratchet/admin/versions/{id}/rollback` and `.../retire`
+
+Body `{"reason": "..."}`. Roll a canary back, or retire a live, canary or shadow version.
+
+```bash
+curl -X POST $GATEWAY/ratchet/admin/versions/7/rollback -H "Authorization: Bearer $ADMIN_KEY" \
+  -d '{"reason": "refund labels are wrong since 09:00"}'
+```
+
+```json
+{"action": "rollback", "target": "v7", "changed": true, "action_id": 12,
+ "before": {"v7": {"state": "canary", "traffic_pct": 50}}, "after": {"v7": {"state": "rolled_back", "traffic_pct": 0}}}
+```
+
+### POST `/ratchet/admin/versions/{id}/promote`
+
+Body `{"reason", "to", "traffic_pct", "force", "load_adapter"}`:
+
+- `to`: `canary` or `live` (**400** otherwise).
+- `traffic_pct`: a canary's share, 1 to 99; by default the next stage (10% from outside canary, then 50%). Leave it out for `live` (100%).
+- `force`: allows the moves the table marks, and a canary while the audit rate is 0. The event says `(forced)`.
+- `load_adapter`: in live mode, first load the version's LoRA adapter into the student endpoint (`/v1/load_lora_adapter` at `RATCHET_STUDENT_BASE`, path `RATCHET_ADAPTER_ROOT/<adapter>`), after the checks and before the move, outside the ledger's transaction. **409** without `RATCHET_STUDENT_BASE`; a failed load is **502** (`loading adapter student-v5 failed: HTTPStatusError 500; nothing changed`). Ignored in mock mode, whose fleet serves every version.
+
+A promotion to live answers both versions: `before` `{"v7": canary 50, "v6": live 100}`, `after` `{"v7": live 100, "v6": retired 0}`.
+
+### POST `/ratchet/admin/student/disable`, `.../enable`
+
+Body `{"reason"}`. Sets `student_disabled`. While it is on, no request calls the student or the shadow candidate: the teacher answers (route `student_disabled`) and its answers are stored as on a cold start. A kill switch for a misbehaving endpoint or adapter that keeps every version's state as it is.
+
+### POST `/ratchet/admin/releases/freeze`, `.../unfreeze`
+
+Body `{"reason"}`. Sets `releases_frozen`. While it is on the release gate starts no version taking traffic and gives none more: no shadow is promoted to canary, no canary advances or becomes live, and a cold-start candidate shadows the teacher instead of taking 10%. Rollbacks, rejections and the live alert run as usual, so a bad canary is still rolled back. Lifted, the gate goes on from the evidence gathered meanwhile.
+
+### POST `/ratchet/admin/training/pause`, `.../resume`
+
+Body `{"reason"}`. Sets `training_paused`. While it is on, every night writes `skip` (`training paused by an admin; no training tonight`) and trains nothing.
+
+### PUT `/ratchet/admin/settings`
+
+Body `{"audit_rate", "reason", "force"}`. `audit_rate` is required: a number from 0 to 1 that replaces `RATCHET_AUDIT_RATE` (the share of student answers the teacher audits), or `null` to go back to it. 0 while a canary is in flight is **409** unless `force`: with no audits it could neither advance nor be rolled back. With the rate at 0 the gate also starts no new canary.
+
+### POST and DELETE `/ratchet/admin/tasks/{name}/pin`
+
+Body `{"reason"}`. Pin a registered task (built-in, file or API) to the teacher at runtime, or remove that pin. While pinned, its requests go to the teacher alone and nothing of them is stored (invariant 10), and Night School leaves its stored rows out of training and the golden eval from the next night on (`excluded_pinned`), as for a task its spec pins. The spec itself and its `spec_hash` do not change, so removing the pin needs no re-score. **404** for a name that is not registered; a task its spec pins answers `changed: false` to a pin and **409** to an unpin (change the spec instead).
+
+### POST `/ratchet/admin/tick`
+
+Body `{"reason"}`, optional. Runs the release gate now, as the cron tick does, and records it (action `tick`, target `gate`). `before` and `after` are the live, canary and shadow versions around it (a version that left them, such as a rolled-back canary, is in both), `moved` lists the versions whose state changed, and `changed` says whether any did. The gate's own events say why.
+
+### CLI
+
+`python -m ratchet.admin` works on `RATCHET_DB` (or `--db`; a missing file is an error, never created) with the actor `cli:<OS user>`, through the same functions. Exit 0 on success (`nothing changed` on stderr when nothing did), 1 for a refused move (a 409), 2 for a bad input or an unknown version or task.
+
+```bash
+python -m ratchet.admin versions [--json]
+python -m ratchet.admin rollback 7 --reason "refund labels are wrong since 09:00"
+python -m ratchet.admin retire 6 --reason "..."
+python -m ratchet.admin promote 5 --to canary [--traffic-pct 10] [--force] --reason "..."
+python -m ratchet.admin promote 5 --to live [--load-adapter] --reason "..."
+python -m ratchet.admin flag                                            # the switches, who set them, the task pins (JSON)
+python -m ratchet.admin flag student_disabled on --reason "..."         # on|off; also releases_frozen, training_paused
+python -m ratchet.admin flag audit_rate 0.2 --reason "..."              # or `default`; --force for 0 during a canary
+python -m ratchet.admin pin ticket-triage --reason "..."                # and unpin
+python -m ratchet.admin audit-log [--limit 50] [--json]
+```
 
 ## Demo controls (mock mode only)
 
