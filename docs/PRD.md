@@ -400,7 +400,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 |---|---|---|
 | Nebius Token Factory | Teacher (Nemotron 3 Ultra), judge (Super), fallback (Nano 30B) | OpenAI-compatible API; Builder Program gives $25 credit |
 | Nebius Serverless Jobs | Nightly LoRA training | GPU billed per second |
-| Nebius Serverless Endpoints | vLLM student serving | Stopped endpoints cost nothing |
+| Nebius Serverless Endpoints | vLLM student serving | A stopped endpoint is not billed for compute or its own storage; a mounted bucket still is |
 | Nebius Object Storage | Datasets and adapters | S3-compatible |
 | NVIDIA Nemotron 3 Nano 4B | Student base | NVIDIA Nemotron Open Model License |
 | vLLM | Student serving, runtime LoRA | Nemotron-H LoRA support listed |
@@ -431,7 +431,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | Q2 | Do Nemotron models on Token Factory return logprobs? | Harsh | `scripts/day1_check.py` |
 | Q3 | Does vLLM serve LoRA on Nemotron-H (Nano 4B) correctly, including runtime loading? | Harsh | Day-1 endpoint test; fallback: merge adapter |
 | Q4 | What does Serverless GPU time actually cost? | Harsh | Nebius console on day 1 |
-| Q5 | Are the exact `nebius ai` CLI flags in `deploy/` correct? | Harsh | `--help` on day 1 |
+| Q5 | Are the exact `nebius ai` CLI flags in `deploy/` correct? | Harsh | Checked against the CLI reference (auto generated 19-Oct-2026) on Oct 21; `DRY_RUN=1` runs of both scripts and `--help` on Oct 22 ([DAY1.md](DAY1.md) check 11) |
 | Q6 | Which live task and dataset to show in the video? | Harsh | Default: synthetic ticket triage through the real teacher |
 
 ## 13. Glossary

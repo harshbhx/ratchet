@@ -1,6 +1,6 @@
 # Deployment
 
-There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). Every Nebius CLI flag below follows the Nebius Serverless quickstart and tutorials as of October 2026. Flags marked **verify on day 1** have not been run against a real account yet, so check them with `--help` before relying on them. The checklist is in [DAY1.md](DAY1.md).
+There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They have not been run against a real account yet: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. The checklist is in [DAY1.md](DAY1.md).
 
 ## 1. Local mock mode
 
@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 833 tests, ~75 s
+pytest -q                                                          # 839 tests, ~75 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -74,22 +74,40 @@ The image is CUDA 12.8 devel with torch, Unsloth, TRL, PEFT and datasets. It als
 
 ```bash
 export RATCHET_STUDENT_KEY=$(openssl rand -hex 24)
-bash deploy/student_endpoint.sh        # verify on day 1: nebius ai endpoint create --help
+DRY_RUN=1 bash deploy/student_endpoint.sh create   # nebius validates the request (--dry-run), creates nothing
+bash deploy/student_endpoint.sh create             # once
 export RATCHET_STUDENT_BASE=https://<endpoint host>/v1
-bash deploy/student_endpoint.sh stop   # when idle: stopped endpoints cost nothing (verify: nebius ai endpoint stop --help)
+bash deploy/student_endpoint.sh status             # prints "<id> <state>", e.g. "aiendpoint-... RUNNING"
+bash deploy/student_endpoint.sh stop               # when idle
+bash deploy/student_endpoint.sh start              # the same endpoint again: same URL, same token
 ```
 
-After creating and after stopping the endpoint, the script records it in the ledger (`python -m ratchet.cost endpoint up|down`, with `RATCHET_DB` pointing at the ledger file), so the cost report knows the GPU-hours you paid for ([Cost estimates](#4-cost-estimates)). Recording is best effort: run where the ledger is not, the deploy still succeeds and prints the command to run there (or use `POST /ratchet/cost/endpoint` with an admin key).
+The four actions:
 
-What the script sets:
+| Action | What it runs |
+|---|---|
+| `create` | `nebius ai endpoint create ...` (below). Run it once: it stops with an error when an endpoint with the name exists |
+| `start` (the default) | `nebius ai endpoint start --id <id>`. Nothing when the endpoint is already `RUNNING`, `STARTING`, `IMAGE_PULLING` or `PROVISIONING`; an error while it is `STOPPING` or `DELETING`. When no endpoint has the name, it runs `create` instead |
+| `stop` | `nebius ai endpoint stop --id <id>`. Nothing when it is already `STOPPED` or `STOPPING`; an error when no endpoint has the name |
+| `status` | Prints `<id> <state>` (exit 1 when there is no such endpoint) |
 
-- Image: `vllm/vllm-openai:v0.18.0-cu130`
+`nebius ai endpoint start` and `stop` take the endpoint's id, not its name (`--id`, required; there is no `--name`). The script finds the id by name (`RATCHET_ENDPOINT_NAME`, default `ratchet-student`) in `nebius ai endpoint list --format json`, read with `RATCHET_PYTHON`, or uses `RATCHET_ENDPOINT_ID` as given without the lookup. It never guesses: output that is not JSON, two endpoints with the name, an endpoint without an id, or a name missing from a list with more pages stops the script before anything starts, stops or is created; set `RATCHET_ENDPOINT_ID` then. (`nebius ai endpoint get-by-name` needs `--parent-id` and does not document what it does for a missing name, so the script reads the list.)
+
+With `DRY_RUN=1`, `create` passes `--dry-run`; `start` and `stop` have no `--dry-run`, so the script prints the command instead of running it. The read-only list lookup still runs, and no uptime is recorded. Every command is echoed on stderr first, with the token shown as `<RATCHET_STUDENT_KEY>`.
+
+After `create`, `start` and `stop`, the script records the endpoint in the ledger (`python -m ratchet.cost endpoint up|down`, with `RATCHET_DB` pointing at the ledger file), so the cost report knows the GPU-hours you paid for ([Cost estimates](#4-cost-estimates)). Recording is best effort: run where the ledger is not, the deploy still succeeds and prints the command to run there (or use `POST /ratchet/cost/endpoint` with an admin key). A stopped endpoint is not billed for compute or its own storage, but the mounted bucket still is, also while the endpoint is stopped ([Nebius Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 21, 2026).
+
+What `create` sets:
+
+- Image: `vllm/vllm-openai:v0.18.0-cu130` (`RATCHET_VLLM_IMAGE`; `vllm/vllm-openai:v0.18.0` is the CUDA 12 build, for a host driver too old for CUDA 13)
 - Platform and preset: `gpu-l40s-a`, `1gpu-8vcpu-32gb`
 - `--container-port 8000`, `--shm-size 16Gi`
-- `--volume $RATCHET_BUCKET_ID:/data`
+- `--volume $RATCHET_BUCKET_ID:/data`, and `--subnet-id $RATCHET_SUBNET_ID` when set
 - `--auth token --token $RATCHET_STUDENT_KEY`
 - `--env VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`
-- vLLM args: `--model nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 --trust-remote-code --enable-lora --max-lora-rank 16 --max-loras 4`
+- vLLM args: `--model nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 --trust-remote-code --enable-lora --max-lora-rank 16 --max-loras 4 --mamba_ssm_cache_dtype float32 --max-model-len 8192 --max-num-seqs 64 --default-chat-template-kwargs '{"enable_thinking":false}'`. `--mamba_ssm_cache_dtype float32` is the model card's flag ([model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16), read Oct 21, 2026). The context cap (`RATCHET_SERVE_MAX_LEN`) is far below the card's 262,144-token example: ticket prompts are short, and a longer one gets vLLM's 400 and escalates. `--default-chat-template-kwargs` (vLLM v0.18.0, parsed as JSON) turns thinking off unless a request asks (`RATCHET_SERVE_TEMPLATE_KWARGS`, empty to leave it out). With `RATCHET_REASONING_PARSER_PLUGIN=/data/nano_v3_reasoning_parser.py` (the card's parser, uploaded to the bucket), it adds `--reasoning-parser-plugin /data/nano_v3_reasoning_parser.py --reasoning-parser nano_v3`.
+
+The vLLM arguments are one string that the container splits as a shell would (Nebius's fine-tuning tutorial relies on the same splitting for its `bash -c` script), so the JSON keeps its single quotes. `--dry-run` validates the request but cannot show the split: on day 1, check that the endpoint reaches `RUNNING` and that a request without `chat_template_kwargs` returns no reasoning. If vLLM refuses the flag, recreate the endpoint with `RATCHET_SERVE_TEMPLATE_KWARGS=` and rely on the per-request `chat_template_kwargs`.
 
 Checks once it is up:
 
@@ -104,16 +122,17 @@ curl -s ${RATCHET_STUDENT_BASE%/v1}/v1/load_lora_adapter -H "Authorization: Bear
 
 ### Step 5: Training job
 
-`deploy/train_job.sh <version>` submits:
+`deploy/train_job.sh <version>` submits (`DRY_RUN=1` adds `--dry-run`: nebius validates the request and submits nothing):
 
 ```
-nebius ai create --type job --name ratchet-<version> --image $RATCHET_TRAIN_IMAGE
+nebius ai job create --name ratchet-<version> --image $RATCHET_TRAIN_IMAGE
   --platform gpu-l40s-a --preset 1gpu-8vcpu-32gb --volume $RATCHET_BUCKET_ID:/data
   --disk-size 200Gi --timeout 2h --container-command bash
   --args "-c 'python -m ratchet.nightschool.train --data /data/night/train.jsonl --base <base> --out /data/adapters/<version>'"
+  [--subnet-id $RATCHET_SUBNET_ID] [--registry-secret $RATCHET_REGISTRY_SECRET]
 ```
 
-(Verify these flags on day 1.) With `RATCHET_BUCKET_S3` set, the script then polls for `adapters/<version>/adapter_model.safetensors` every 30 s for up to 2 h. That makes it suitable as `RATCHET_TRAIN_CMD`, which must block until the adapter exists.
+`nebius ai create` is the interactive wizard; scripts use `nebius ai job create` ([CLI reference](https://docs.nebius.com/cli/reference/ai/job/create)). `--timeout` is the job's own limit (1 h to 168 h, default 24 h), `--subnet-id` defaults to the project's default subnet, and `--registry-secret` names a MysteryBox secret with the credentials of a private image. With `RATCHET_BUCKET_S3` set, the script then polls for `adapters/<version>/adapter_model.safetensors` every 30 s for up to 2 h. That makes it suitable as `RATCHET_TRAIN_CMD`, which must block until the adapter exists; a refused job fails the script, so the night stops instead of waiting.
 
 Training defaults (`train.py`): 2 epochs, learning rate 2e-4, LoRA rank 16 (alpha 32), max sequence 2048, batch 8, bf16, assistant-only loss.
 
@@ -150,9 +169,9 @@ Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop
 
 **Recommended host: one Nebius CPU VM.** [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) sets up the gateway with Docker Compose and Caddy (automatic HTTPS) on a 2 vCPU / 8 GB VM, with the budget guard, an opt-in edge guard for `/v1/*`, backups, monitoring, updates and teardown. It starts in mock mode with a warmed-up student. The points below still apply to it.
 
-1. **Host the gateway in mock mode as the public demo.** The dashboard with Run day, Break next deploy and Reset is safe, costs nothing and never breaks. Label it "simulation".
+1. **Host the gateway in mock mode as the public demo.** The dashboard with Run day, Break next deploy and Reset is safe, calls no model (so it spends no credits) and never breaks. Label it "simulation".
 2. **For the live path,** keep a second gateway in live mode with `RATCHET_STUDENT_BASE` **unset**. Student calls then go to the hosted, untuned `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on Token Factory, and you pay per token instead of per GPU-hour. Be honest that this is the fallback, not the tuned student. Note that a version's calibrated threshold was set for the tuned adapter, so precision on the fallback may be lower; audits will show it.
-3. **Stop the vLLM endpoint when not recording or testing.** Stopped endpoints cost nothing for compute; mounted buckets are still billed.
+3. **Stop the vLLM endpoint when not recording or testing** (`bash deploy/student_endpoint.sh stop`, then `start` to bring the same endpoint back). A stopped endpoint is not billed for compute or its own storage; the mounted bucket still is.
 4. **Cap teacher spend:** keep `RATCHET_AUDIT_RATE` at 0.05 or lower and watch the Token Factory usage page daily. In live mode, keep Scout's budget guard on (`RATCHET_SCOUT_DAILY_BUDGET_USD`, `RATCHET_SCOUT_MAX_RUNS_PER_DAY`, `RATCHET_SCOUT_RUNS_PER_HOUR`; see [CONFIGURATION.md](CONFIGURATION.md#scout-the-multi-agent-demo)) and turn on the Caddy guard (`RATCHET_API_GUARD=guarded`).
 
 ## 4. Cost estimates

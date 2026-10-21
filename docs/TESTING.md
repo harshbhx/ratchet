@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 833 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts), ~75 s
+pytest -q                     # 839 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -29,12 +29,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_contract.py` | 46 (35 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| `tests/test_live.py` | 19 |
+| `tests/test_live.py` | 25 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 41 (30 functions; one has 8 cases, one has 5) |
-| **Total** | **833** |
+| **Total** | **839** |
 
 There are three layers:
 
@@ -537,6 +537,12 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_deploy_scripts_parse_and_dry_run` | FR-11.1, FR-11.2: `bash -n` on every `deploy/**/*.sh`; `DRY_RUN=1 bash deploy/vm/create_vm.sh` prints the subnet, disk and instance `nebius` commands with the project id and `<cloud-init.yaml>` in place of the user data, never the private-repo token; a given subnet skips the lookup; a missing project, missing key file, reserved user name or bad preset stops before any command; `backup.sh` exits 0 in mock mode. Skipped where bash is missing |
 | `test_sim_cli_certificate_flags` | FR-9.4, FR-16.3, FR-6.30, FR-6.31: `--calibration ltt --cert-target 0.9 --cert-delta 0.1` reach every night's certificate and the table's certificates block (simulation); `--paired-gate` and `--min-certified` reach the gate's policy; bad values exit 2 |
 | `test_sim_db_and_the_replay_cli` | FR-16.5, FR-9.4: `python -m sim.simulate --db` writes the run's ledger to a new file and refuses an existing one and `--compare-release` (exit 2); `python -m ratchet.replay --db` prints one table per version (never pooled), labelled as simulation, with its suggestion, and `--json` with `--audit-rate`; a missing file, a bad sweep, target, audit rate, version or day range exit 2 with `error:` and create nothing || `test_live_evaluator_passes_its_certificate_settings` | FR-16.3, FR-8.3: `LiveEvaluator(calibration='ltt', cert_target=0.6, cert_delta=0.2)` writes that certificate with its trace; the default is `point` |
+| `test_train_job_uses_job_create` | FR-4.6 (W0): with a fake `nebius` on `PATH` (`FakeNebius`), `deploy/train_job.sh student-v3` makes exactly one call, `ai job create` (never the interactive `ai create`), with `--name ratchet-student-v3`, the image, `--platform gpu-l40s-a --preset 1gpu-8vcpu-32gb`, `--volume <bucket>:/data`, `--disk-size 200Gi`, `--timeout 2h` and `--container-command bash`; `--args` splits (as a shell would) into `-c` and the training command with the dataset and adapter paths `ratchet.live` uses; `--subnet-id` and `--registry-secret` appear only when set; `DRY_RUN=1` adds `--dry-run` and returns without polling; `DRY_RUN=true`, a version or base model that would break out of `bash -c '...'` and a missing image stop before any call; a refused job fails the script. Skipped where bash is missing |
+| `test_endpoint_stop_and_start_use_the_id` | FR-8.2, FR-15.2 (W0): `stop` and `start` call `ai endpoint list --format json`, then `ai endpoint stop\|start --id <id from tests/fixtures/nebius_endpoint_list.json>`; `start` is the default; `RATCHET_ENDPOINT_ID` skips the lookup; with no endpoint of that name `start` creates one and `stop` exits 1; nothing to do in the state already reached; `status` prints `<id> <state>` (by name, or by `RATCHET_ENDPOINT_ID`); `DRY_RUN=1` prints start and stop instead of running them; a start or stop that nebius refuses fails the script. A stub `ratchet.cost` shows exactly which uptime records were made (`up` after create or start, `down` after stop, none in a dry run or after a refused call). Skipped where bash is missing |
+| `test_endpoint_lookup_never_guesses` | FR-8.2 (W0): `create` refuses an existing name; output that is not JSON, `items` that is not a list, two endpoints with the name, an id that is empty or has a space, a name missing from a list with more pages, or a failing `list` stop `start` (and `stop` and `create` where it matters) before anything else runs; an empty list printed as nothing, `{}`, `{"items": null}`, `[]` and the like means `start` creates; `STOPPING` and `DELETING` refuse, a lower-case, numeric, missing or `ERROR` state lets Nebius decide; an unknown action or `DRY_RUN` value and a missing Python stop first. Skipped where bash is missing |
+| `test_endpoint_args_carry_the_model_card_flags` | FR-8.2, NFR-5 (W0): `create`'s flags (image `vllm/vllm-openai:v0.18.0-cu130`, platform, preset, port 8000, `--shm-size 16Gi`, the bucket volume, token auth, runtime LoRA) and its vLLM arguments in order, split as the container does: the model card's `--mamba_ssm_cache_dtype float32`, `--max-model-len 8192`, `--max-num-seqs 64` and `--default-chat-template-kwargs` with JSON that parses to `{"enable_thinking": false}`; the token never printed; `RATCHET_VLLM_IMAGE`, `RATCHET_SERVE_MAX_LEN`, `RATCHET_SERVE_MAX_SEQS`, `RATCHET_REASONING_PARSER_PLUGIN` (adds `--reasoning-parser nano_v3`), `RATCHET_SUBNET_ID` and an empty `RATCHET_SERVE_TEMPLATE_KWARGS` take effect; `DRY_RUN=1` adds `--dry-run` and records nothing; values that would break the one `--args` string or that vLLM would refuse after the GPU is up (not a whole number, not a JSON object, a relative plugin path, a single quote) and a missing token or bucket stop before `create`. Skipped where bash is missing |
+| `test_deploy_scripts_never_say_cost_nothing` | FR-15.2 (W0): neither deploy script, `deploy/CLAUDE.md` nor `docs/DEPLOYMENT.md` says a stopped endpoint costs nothing (the mounted bucket is still billed); the endpoint script says so |
+| `test_deploy_variables_are_listed_and_documented` | NFR-10 (W0): every `RATCHET_*` variable the two Nebius scripts read is read by `config.py` or listed in `config.DEPLOY_ENV` (part of `KNOWN_ENV`, which the traceability check holds to a row in CONFIGURATION.md), with no stale or duplicate name; all of them and `DRY_RUN` are documented |
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
@@ -573,7 +579,7 @@ Utilization-aware cost accounting (FR-15.1 to FR-15.4, NFR-11, [ADR 0023](adr/00
 | `test_post_endpoint_is_open_in_mock_capped_and_off_in_live` | FR-15.2, INV-8: open in mock mode as `mock-admin` on the synthetic clock, the mock cap (409, never for `down`), 403 in live mode without admin keys, and the report public in live mode |
 | `test_cli_records_and_reports` | FR-15.2, FR-15.3: `endpoint up` (with `--at` and `--gpus`), `up` again, `down` with an ISO time, `report` and `report --json` (the second `up` adds nothing), `--days 1` meaning today, `close training_job`; exit 2 for a missing ledger (never created), a bad or future `--at`, an end before the start, a rate above the cap or too large for a float, too many GPUs, `--days 0` and a bad setting |
 | `test_cli_runs_as_a_module_with_the_environment` | FR-15.3: `python -m ratchet.cost report` in a subprocess with `RATCHET_DB` |
-| `test_deploy_script_records_uptime_and_never_fails_on_it` | FR-15.2, FR-8.2: `deploy/student_endpoint.sh` start and stop with a stub `nebius` record the endpoint through the CLI; with no ledger the deploy still exits 0 and says so; an unknown action exits 2. Skipped where bash is missing |
+| `test_deploy_script_records_uptime_and_never_fails_on_it` | FR-15.2, FR-8.2: `deploy/student_endpoint.sh` start (creating the endpoint, since the fake `nebius` lists none) and stop (by the id the list gives) with `FakeNebius` record the endpoint in a real ledger through the CLI; with no ledger the deploy still exits 0 and says so; an unknown action exits 2. Skipped where bash is missing |
 | `test_v04_database_gets_the_cost_columns_and_table` | FR-15.1, FR-15.2: a v0.4 file gains the split and token columns and `compute_intervals`; its old rows count as teacher spend (`split_unknown_requests`, a warning) and give no hosted-fallback price |
 | `test_bad_cost_settings_stop_startup_naming_the_variable` | FR-15.3, NFR-11: a negative, non-numeric, NaN or 1e308 rate, fractional, negative or 4,096 GPUs, an unknown cost model and 25 endpoint hours a day each stop the runtime with the variable's name (9 cases) |
 | `test_cost_settings_defaults_and_spellings` | NFR-11: the defaults, a cost model in any case with spaces, `RATCHET_PRICES_VERIFIED=1` changing the label, an empty model meaning `per_token`, and `--at` parsing |
@@ -684,6 +690,7 @@ Live mode, the training job, the day-1 check, the Scout CLI and the deploy scrip
 | `transports=` | `Runtime(settings, transports={"teacher": ..., "student": ...})`, live mode only (other keys raise) | the same; later items drive live mode offline through it |
 | `client=` / `http=` | `load_adapter`, `NebiusTrainer`, `reload_adapters`, `live.main`, `http_caller`, the Scout CLI's `main(argv, client)`, `day1_check.main(client)` | an `httpx.Client` on a fake server, or on `AppTransport(gateway.app)` |
 | `run=` | `NebiusTrainer`, `live.main` (in place of `subprocess.run`) | `RecordingRun` |
+| `PATH` | `deploy/train_job.sh`, `deploy/student_endpoint.sh` (the `nebius` they call) | `FakeNebius`: logs each call's argv, prints `tests/fixtures/nebius_endpoint_list.json` for `ai endpoint list`; a stub `ratchet.cost` in the working directory logs the uptime records |
 | `provider_factory=` | `live.main` (builds the student and judge clients) | a factory returning providers on fake servers |
 | `argv=` | `sim.simulate.main(argv)`, the Scout CLI | a list |
 
