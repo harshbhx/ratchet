@@ -211,7 +211,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-4.2 | Retrain from the base model each night (no adapter stacking) | Done (v0.1) |
 | FR-4.3 | Golden set: ~10% of unique requests by hash, held out; requests seen 3+ times move to training | Done (v0.1) |
 | FR-4.4 | Skip training if fewer than 50 new examples, no golden set, or a release is in flight. New examples are the training rows now less the most training rows any version had that are still stored (each version's training rows less its own training rows purged since; v0.5, FR-13.3, FR-13.4), so deleting data never stops training and never makes old data look new | Done (v0.1) |
-| FR-4.5 | LoRA fine-tune script with Unsloth (fallback: transformers + peft) for Nemotron 3 Nano 4B | Done (v0.1), untested (on GPU) |
+| FR-4.5 | LoRA fine-tune script (transformers + PEFT + TRL; Unsloth until v0.5) for Nemotron 3 Nano 4B | Done (v0.1), untested (on GPU) |
 | FR-4.6 | Run training as a Nebius Serverless Job; wait for adapter in bucket | Done (v0.1), untested (on Nebius) |
 | FR-4.7 | PII redaction before storing examples (pattern-based with checksums; names and addresses not covered), in message content, `name`, `refusal` and tool and function call arguments | Done (v0.4); NER-based detection planned |
 | FR-4.50 | Golden-only rows ([ADR 0091](adr/0091-human-labels-as-a-provenance-source.md)): rows imported with `--golden-only` are stored in the golden split whatever their hash says, flagged `examples.golden_only`, and never trained on, even past FREQUENT; every other variant of their prompt (the same task and messages under other conditions) is held out too, whatever its own split, because the trainer sees only the messages; a golden-only row is refused (`trained`) for a prompt that may already have been trained on (a variant in the train split, or seen FREQUENT times), checked per row in the transaction that writes it, so the human-verified golden set is held-out evidence (INV-3, INV-6) | Done (v0.5) |
@@ -268,6 +268,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-8.3 | Fallback to hosted untuned Nemotron Nano on Token Factory when no student endpoint | Done (v0.1) |
 | FR-8.4 | `python -m ratchet.live night` and `tick` commands for cron | Done (v0.1), untested (on Nebius) |
 | FR-8.5 | `scripts/day1_check.py` verifies model IDs, logprobs, JSON mode | Done (v0.1), untested (live) |
+| FR-8.42 | Training rows carry the chat-template arguments the student is served with (reasoning off), and the training image is pinned and fails its build without the Mamba kernels ([ADR 0145](adr/0145-train-on-the-served-prompt.md)): `train.jsonl` holds TRL's conversational prompt-completion rows with `chat_template_kwargs: {"enable_thinking": false}`, the same arguments as the endpoint's `--default-chat-template-kwargs`; a train row whose answer holds a literal `<think>` or `</think>` is left out of training and counted (`skipped_think_tag` in `manifest.json`); `train.py` trains with completion-only loss (never `assistant_only_loss`), refuses a row that would train another prompt and stops before training when the tokenizer's prompt is not a prefix of prompt + answer or differs from the one vLLM renders, and writes `versions.json` next to the adapter; `deploy/Dockerfile.train` installs exact versions (`deploy/train-versions.txt`, read as constraints, with `trl==1.16.0` and no Unsloth), never ignores a failed kernel build, and imports the Mamba kernels as its last build step | Done (v0.5), untested (on GPU) |
 
 ### 6.9 Simulation
 
@@ -421,11 +422,11 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 |---|---|---|
 | Nebius Token Factory | Teacher (Nemotron 3 Ultra), judge (Super), fallback (Nano 30B) | OpenAI-compatible API; Builder Program gives $25 credit |
 | Nebius Serverless Jobs | Nightly LoRA training | GPU billed per second |
-| Nebius Serverless Endpoints | vLLM student serving | Stopped endpoints cost nothing |
+| Nebius Serverless Endpoints | vLLM student serving | A stopped endpoint is not billed for compute or its own storage; a mounted bucket still is |
 | Nebius Object Storage | Datasets and adapters | S3-compatible |
 | NVIDIA Nemotron 3 Nano 4B | Student base | NVIDIA Nemotron Open Model License |
 | vLLM | Student serving, runtime LoRA | Nemotron-H LoRA support listed |
-| Unsloth / TRL / PEFT | Training | Unsloth supports Nemotron 3 |
+| TRL / PEFT / transformers | Training | Exact versions in `deploy/train-versions.txt` (Unsloth dropped in v0.5: its release requires an older TRL, ADR 0145) |
 | FastAPI, httpx, SQLite | Gateway, client, ledger | |
 
 ## 11. Risks and mitigations
@@ -452,7 +453,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | Q2 | Do Nemotron models on Token Factory return logprobs? | Harsh | `scripts/day1_check.py` |
 | Q3 | Does vLLM serve LoRA on Nemotron-H (Nano 4B) correctly, including runtime loading? | Harsh | Day-1 endpoint test; fallback: merge adapter |
 | Q4 | What does Serverless GPU time actually cost? | Harsh | Nebius console on day 1 |
-| Q5 | Are the exact `nebius ai` CLI flags in `deploy/` correct? | Harsh | `--help` on day 1 |
+| Q5 | Are the exact `nebius ai` CLI flags in `deploy/` correct? | Harsh | Checked against the CLI reference (auto generated 19-Oct-2026) on Oct 21; `DRY_RUN=1` runs of both scripts and `--help` on Oct 22 ([DAY1.md](DAY1.md) check 11) |
 | Q6 | Which live task and dataset to show in the video? | Harsh | Default: synthetic ticket triage through the real teacher |
 
 ## 13. Glossary

@@ -24,7 +24,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
                          ┌──────────────▼──── Nebius AI Cloud ─────────────────────────────┐
                          │ Serverless Endpoint: vLLM + nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 │
                          │   LoRA adapters loaded at runtime (/v1/load_lora_adapter)         │
-                         │ Serverless Job (nightly): ratchet.nightschool.train (Unsloth)     │
+                         │ Serverless Job (nightly): ratchet.nightschool.train (TRL + PEFT)  │
                          │ Object Storage bucket mounted at /data: night/train.jsonl,        │
                          │   adapters/<version>/                                             │
                          └───────────────────────────────────────────────────────────────────┘
@@ -51,7 +51,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/bom.py` | Per-adapter bill of materials: `manifest()`, `document()`, Ed25519 `Signer`, `verify()`, CLI (`keygen`, `verify`) |
 | `ratchet/cost.py` | Utilization-aware cost accounting ([§7](#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)): `cost_report()` (savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover, a recommendation), interval merging (`segments`), the simulator's compute (`record_simulated_day`), CLI (`report`, `endpoint up\|down`, `close`) |
 | `ratchet/nightschool/dataset.py` | Builds train and golden sets from the ledger |
-| `ratchet/nightschool/train.py` | LoRA fine-tune script, run inside the Serverless Job; saves `ratchet_manifest.json` and `NOTICE.md` next to the weights |
+| `ratchet/nightschool/train.py` | LoRA fine-tune script, run inside the Serverless Job: checks the prompt-completion rows and their rendering, then trains with TRL + PEFT; saves `ratchet_manifest.json`, `versions.json` and `NOTICE.md` next to the weights |
 | `ratchet/nightschool/notices.py` | `NOTICE.md` for an adapter folder: the base model's license, each teacher's, teacher outputs only and the Ratchet version (`write_notices`, `render`); the BOM and NOTICE files of a version (`write_adapter_files`) |
 | `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold (point rule or Learn-then-Test), and the certificate |
 | `ratchet/replay.py` | The ledger time machine ([§7](#calibrated-baseline-and-the-ledger-replay-replaypy), [ADR 0028](adr/0028-designed-propensity-replay.md)): one version's logged traffic replayed at another threshold or audit rate (`load`, `at`, `sweep`, `frontier`), Hajek precision weighted by 1 / `label_p`, the calibrated baseline (`ratio`), the advisory `suggest`, CLI |
@@ -275,7 +275,17 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
 - Train rows whose answer is not valid under the task's current spec (`Task.valid`: a vocabulary shrank, a field became required) are dropped and counted (`skipped_invalid` in `manifest.json`); the ledger keeps them, so loosening the spec brings them back. Golden rows stay in the set, and `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`).
 - Purged rows (retention or erasure) have no text and are in neither set; their `seen` still counts toward their request's frequency ([Retention and erasure](#retention-and-erasure)).
 - Training is cumulative: each night trains from the **base model** on every train row so far ([ADR 0004](adr/0004-retrain-from-base-cumulative.md)).
-- `build()` also writes `manifest.json`: train and golden counts, `dataset_sha256` (a hash of the train rows' example hashes), `skipped_invalid`, `excluded_pinned`, and the bill of materials.
+- Train rows whose answer holds a literal `<think>` or `</think>` are dropped and counted (`skipped_think_tag`): Nemotron's chat template renders such an answer without the empty think block the served prompt ends in (FR-8.42). They stay golden rows.
+- `build()` also writes `manifest.json`: train and golden counts, `dataset_sha256` (a hash of the train rows' example hashes), `skipped_invalid`, `skipped_think_tag`, `excluded_pinned`, and the bill of materials.
+
+### Training format (`nightschool/train.py`, [ADR 0145](adr/0145-train-on-the-served-prompt.md))
+
+The student must be trained on the prompt vLLM renders for it. Nemotron 3 Nano's chat template turns thinking on unless told otherwise (the generation prompt then ends in `<think>\n`), while the endpoint serves with `--default-chat-template-kwargs '{"enable_thinking":false}'` (the prompt ends in `<think></think>`), and TRL only warns when the two renderings disagree. So:
+
+- `train.jsonl` (`dataset.write_training`) holds TRL's conversational prompt-completion rows: `prompt` (the stored messages), `completion` (the teacher's stored answer as one assistant message) and `chat_template_kwargs: {"enable_thinking": false}` (`dataset.TRAIN_TEMPLATE_KWARGS`, equal to `train.TEMPLATE_KWARGS` and the endpoint's default, which a test keeps equal), plus `task`, `params`, `seen` and `provenance`. `golden.jsonl` and every in-memory consumer keep the `messages` rows.
+- `train.py` refuses a row that would train another prompt before the model loads (`check_rows`), then renders every row with the tokenizer as TRL will and stops when the prompt is not a prefix of prompt + answer or differs from the prompt rendered for the request (`check_prefix`). TRL gets the three columns only (`columns`), with `completion_only_loss=True`: the loss covers the teacher's answer and its end-of-turn token.
+- It writes `versions.json` (Python, CUDA and every pinned package) and `ratchet_manifest.json` (base model, licenses, template arguments) beside the adapter; neither is part of the signed BOM.
+- `deploy/Dockerfile.train` installs the exact versions in `deploy/train-versions.txt` (TRL 1.16.0, no Unsloth), read as pip constraints after torch, and fails its build when the Mamba kernels do not import.
 
 ## 4. Data model (SQLite)
 
@@ -658,7 +668,7 @@ The manifest (`ratchet.receipt/v1`) carries the totals, the calibration, the sav
 - **Licenses travel with the adapter** ([ADR 0090](adr/0090-licenses-travel-with-the-adapter.md), NFR-9): the v2 manifest also carries `base_model_license` (`licenses.BASE_MODELS`; a `warning`, never an error, for a base model Ratchet does not know), each source's `license_origin` (`builtin` or `config`) and `notices`, the exact `NOTICE.md` text (`nightschool/notices.render`: base model license, each teacher's license and URL, teacher outputs only, the Ratchet version) with its SHA-256. The training job writes a `NOTICE.md` next to the weights (`train.write_metadata`); live Night School overwrites it with the BOM's text and syncs; `python -m ratchet.live export --version N --out DIR` copies the adapter folder (when it is on the machine), the BOM and that `NOTICE.md` into one folder and prints the BOM's `sha256`.
 - **Configured teachers**: `RATCHET_TEACHER_LICENSES` (a JSON list of `{model, license, url, note}`) adds open teachers without a code change. `licenses.install()` checks the file and publishes a copy of the built-in registry with them, in one assignment, at every entry point's startup (`Ratchet.__init__`, the gateway's `Runtime.reset`, `python -m ratchet.live`, `python -m ratchet.admin`). An entry needs a license in `ALLOWED_LICENSES` (OpenMDW-1.1, Apache-2.0, MIT, NVIDIA Nemotron Open Model License) and a model id in no closed family (`closed_family`: no part starts with a `CLOSED` prefix or `o` and a digit, or contains `gpt`, `claude`, `gemini` or a `CLOSED_NAMES` or `CLOSED_VENDORS` name) that is no router alias (`ROUTER`: `openrouter/...`, `.../auto`); it can never relabel a built-in teacher; a bad file stops startup with every error listed. Configuration therefore cannot relabel a closed model Ratchet knows of; any other id rests on the operator's claim, which every BOM and NOTICE marks `config`.
 - **Human labels** ([ADR 0091](adr/0091-human-labels-as-a-provenance-source.md)): provenance `human` (`licenses.SOURCES`, never in the teacher registry) is listed apart: `label_sources` in `/ratchet/bom` and in each adapter's BOM (examples by origin), `training.targets` naming them when they are among the targets, `golden.human_labels`, and a Human labels section in NOTICE.md (absent, and the text unchanged, for an adapter without them).
-- `train.py` writes `ratchet_manifest.json` next to each adapter, listing the base model, example count and the (teacher, license) pairs.
+- `train.py` writes `ratchet_manifest.json` next to each adapter, listing the base model, example count, the (teacher, license) pairs and the chat-template arguments it trained under, and `versions.json` with the library versions (FR-8.42).
 - `licenses.require_distillable()` refuses unknown teachers and any model whose ID (after the last `/`) starts with `gpt`, `o1`, `o3`, `o4`, `claude` or `gemini`.
 
 ## 9. Design decisions

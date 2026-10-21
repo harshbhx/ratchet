@@ -7,6 +7,8 @@
 - `FakeOpenAIServer`, `RecordingRun`, `AppTransport`: the live-mode boundary without the network. An OpenAI-compatible
   server (Token Factory, or vLLM with runtime LoRA loading) behind `httpx.MockTransport`; a stand-in for
   `subprocess.run`; and a transport that sends an `httpx.Client`'s requests to the gateway app in-process.
+- `FakeNebius`: a fake `nebius` executable first on `PATH` for the deploy scripts; it logs each call's argv and prints
+  the endpoint list fixture (`tests/fixtures/nebius_endpoint_list.json`) for `ai endpoint list`.
 - `_version`, `_audit`, `_shadow`, `_examples`, `_repeat`, `_request`: put versions, teacher audits, shadow answers,
   teacher examples and single requests into a ledger through its public writers (`create_version` + `set_version`,
   `log_request`, `add_example`), the way the router and the release gate write them, so tests exercise the real
@@ -19,9 +21,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Collection, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
@@ -356,6 +361,76 @@ class AppTransport(httpx.BaseTransport):
         r = self.client.request(request.method, str(request.url), headers=headers, content=request.read())
         keep = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in ("content-length", "content-encoding")]
         return httpx.Response(r.status_code, headers=keep, content=r.content, request=request)
+
+
+NEBIUS_ENDPOINT_LIST = Path(__file__).resolve().parent / "fixtures" / "nebius_endpoint_list.json"
+
+_FAKE_NEBIUS_PY = '''"""A fake `nebius` CLI for the deploy-script tests (tests/fakes.py: FakeNebius). It never reaches Nebius."""
+import json
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+with open({log!r}, "a", encoding="utf-8") as f:
+    f.write(json.dumps(argv) + "\\n")
+fail = Path({fail!r})
+if fail.exists() and any(argv[: len(p)] == p for p in json.loads(fail.read_text(encoding="utf-8"))):
+    sys.exit("nebius: the fake was told to fail this call")
+listing = Path({listing!r})
+if argv[:3] == ["ai", "endpoint", "list"] and listing.exists():
+    sys.stdout.write(listing.read_text(encoding="utf-8"))
+'''
+
+
+class FakeNebius:
+    """A fake `nebius` executable for the deploy scripts, first on `PATH` through `env()`. Each call appends its argv
+    (a JSON list per line) to a log that `calls` reads back; `ai endpoint list` prints the listing (the endpoint list
+    fixture by default; `listing(None)` prints nothing, as an empty list may); a call whose argv starts with one of
+    `fail(...)`'s prefixes exits 1. Nothing it does reaches Nebius or costs money."""
+
+    def __init__(self, root: Path) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        self.bin = root / "fake-nebius-bin"
+        self.bin.mkdir(exist_ok=True)
+        self._log, self._listing, self._fail = root / "nebius-calls.jsonl", root / "nebius-list.json", root / "nebius-fail.json"
+        script = self.bin / "fake_nebius.py"
+        script.write_text(
+            _FAKE_NEBIUS_PY.format(log=str(self._log), fail=str(self._fail), listing=str(self._listing)), encoding="utf-8"
+        )
+        launcher = self.bin / "nebius"
+        launcher.write_text(f'#!/usr/bin/env bash\nexec "{sys.executable}" -I "{script}" "$@"\n', encoding="utf-8")
+        launcher.chmod(0o755)
+        self.listing(self.fixture())
+
+    @staticmethod
+    def fixture() -> dict[str, Any]:
+        """A fresh copy of `tests/fixtures/nebius_endpoint_list.json`, to edit before passing it to `listing`."""
+        return json.loads(NEBIUS_ENDPOINT_LIST.read_text(encoding="utf-8"))
+
+    def listing(self, data: Any) -> None:
+        """What `ai endpoint list` prints: JSON for a dict or a list, a str as it is, nothing for None."""
+        if data is None:
+            self._listing.unlink(missing_ok=True)
+        else:
+            self._listing.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+
+    def fail(self, *prefixes: list[str]) -> None:
+        """Calls whose argv starts with one of these prefixes exit 1; with none, every call succeeds again."""
+        self._fail.write_text(json.dumps([list(p) for p in prefixes]), encoding="utf-8")
+
+    def env(self, base: Mapping[str, str]) -> dict[str, str]:
+        """`base` with the fake first on `PATH`."""
+        return {**base, "PATH": f"{self.bin}{os.pathsep}{base.get('PATH', '/usr/bin:/bin')}"}
+
+    @property
+    def calls(self) -> list[list[str]]:
+        """Every call's argv since the last `clear()`, in order."""
+        if not self._log.exists():
+            return []
+        return [json.loads(line) for line in self._log.read_text(encoding="utf-8").splitlines() if line]
+
+    def clear(self) -> None:
+        self._log.unlink(missing_ok=True)
 
 
 class FakeClock:
