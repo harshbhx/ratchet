@@ -164,7 +164,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 **Steps:**
 
-1. The breaker stays `open` (probes keep failing): check the endpoint (`nebius ai endpoint` commands, or the console) and restart it if it is down. The next successful probe closes the breaker; nothing else needs restarting.
+1. The breaker stays `open` (probes keep failing): check the endpoint (`bash deploy/student_endpoint.sh status` prints its id and state, or the console) and start it if it is stopped (`bash deploy/student_endpoint.sh start`, the same endpoint and URL). The next successful probe closes the breaker; nothing else needs restarting.
 2. `adapter_reload_failed` keeps repeating: the detail names the error. A 404 or 400 from `/v1/load_lora_adapter` usually means the adapter path is wrong (`RATCHET_ADAPTER_ROOT`, default `/data/adapters`, must be where the endpoint sees the bucket) or the endpoint was started without `--enable-lora` and `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. A 401 means `RATCHET_STUDENT_KEY` is wrong.
 3. **Manual fallback:** reload the adapters of every version in `live`, `canary` and `shadow` by hand:
 

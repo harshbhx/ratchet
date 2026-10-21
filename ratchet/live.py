@@ -122,7 +122,7 @@ class NebiusTrainer:
         # Check before the sync and the paid GPU job: an adapter with no endpoint to load into cannot be evaluated.
         if not self.s.student_base:
             raise RuntimeError(NO_STUDENT_BASE)
-        dataset.write_jsonl(train_rows, self.data / "night" / "train.jsonl")
+        dataset.write_training(train_rows, self.data / "night" / "train.jsonl")  # prompt-completion rows (FR-8.42)
         if self.sync_cmd:
             _run(self.sync_cmd, self.run)
         _run(self.train_cmd.format(version=name, data=str(self.data)), self.run)

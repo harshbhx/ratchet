@@ -10,9 +10,10 @@ One JSON object per line (blank lines are skipped), in either format:
 - OpenAI's chat fine-tuning format: `{"messages": [...]}` with the answer as the last message (role `assistant`),
   optionally `tools` and `parallel_tool_calls`. Earlier assistant messages are context; only the last one is the label.
   A last message with `weight: 0`, or one that is a tool call, is refused.
-- Ratchet's own `train.jsonl` (`nightschool.dataset.write_jsonl`): `{"task", "messages", "params", "seen",
-  "provenance"}`. The row's task must be `--task`, and its provenance's teacher must be the `--source`, so a teacher's
-  outputs can never come back in as human labels.
+- Ratchet's own rows (`nightschool.dataset.write_jsonl`, as in golden.jsonl): `{"task", "messages", "params", "seen",
+  "provenance"}`, or the training file Night School writes (`dataset.write_training`, train.jsonl), where `prompt` and
+  `completion` stand for `messages` and `chat_template_kwargs` is ignored (FR-8.42). The row's task must be `--task`, and
+  its provenance's teacher must be the `--source`, so a teacher's outputs can never come back in as human labels.
 
 `--source human` marks the labels as written or approved by the customer (`licenses.SOURCES`) and needs `--attest`, a
 statement of where they came from, which goes into the `import` event with the counts and the file's SHA-256.
@@ -63,6 +64,8 @@ MAX_ATTEST_CHARS = 1000
 MAX_REPORTED = 20  # problem lines listed in the summary; every one is counted
 OPENAI_KEYS = frozenset({"messages", "tools", "parallel_tool_calls"})
 RATCHET_KEYS = frozenset({"task", "messages", "params", "seen", "provenance"})
+# Night School's training file (`dataset.write_training`): `prompt` + `completion` instead of `messages` (FR-8.42).
+TRAINING_KEYS = frozenset({"task", "prompt", "completion", "chat_template_kwargs", "params", "seen", "provenance"})
 TEXT_ONLY = frozenset({TEXT_MODALITY})
 
 
@@ -229,15 +232,23 @@ def _label(last: Any, limits: Limits) -> str:
 
 def parse_row(obj: Any, task: str, source: Source, limits: Limits) -> tuple[dict[str, Any], str]:
     """(the request body to validate: the prompt messages and their conditions, the label) from one parsed line, or
-    RowError. The format is Ratchet's when the row has any of its own keys (`task`, `params`, `seen`, `provenance`)."""
+    RowError. The format is Ratchet's when the row has any of its own keys (`task`, `params`, `seen`, `provenance`), and
+    Night School's training file's when it has `prompt` or `completion`."""
     if not isinstance(obj, dict):
         raise RowError("not an object", "each line must be one JSON object")
-    ratchet_format = bool(set(obj) & (RATCHET_KEYS - {"messages"}))
-    allowed = RATCHET_KEYS if ratchet_format else OPENAI_KEYS
+    training_format = "prompt" in obj or "completion" in obj
+    ratchet_format = training_format or bool(set(obj) & (RATCHET_KEYS - {"messages"}))
+    allowed = TRAINING_KEYS if training_format else RATCHET_KEYS if ratchet_format else OPENAI_KEYS
     unknown = sorted(str(k) for k in obj if k not in allowed)
     if unknown:
         raise RowError("unknown keys", f"unknown keys {unknown[:5]}; use {sorted(allowed)}")
-    messages = obj.get("messages")
+    if training_format:
+        prompt, completion = obj.get("prompt"), obj.get("completion")
+        if not (isinstance(prompt, list) and isinstance(completion, list) and len(completion) == 1):
+            raise RowError("no answer", "'prompt' must hold the request's messages and 'completion' the assistant's answer")
+        messages: Any = prompt + completion
+    else:
+        messages = obj.get("messages")
     if not isinstance(messages, list) or len(messages) < 2:
         raise RowError("no answer", "'messages' must hold the prompt and, last, the assistant's answer")
     label = _label(messages[-1], limits)

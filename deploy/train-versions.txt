@@ -1,0 +1,17 @@
+# The exact versions deploy/Dockerfile.train installs (pip constraints: name==version per line).
+# Candidates read from PyPI and download.pytorch.org/whl/cu128 on Oct 21, 2026; the Oct 22 smoke job (docs/DAY1.md row 4)
+# confirms them, or its versions.json replaces them here and in Dockerfile.train together. The image's pip steps after
+# torch read this file as constraints, so the two files disagreeing fails the build, and
+# tests/test_nightschool.py::test_dockerfile_is_pinned checks them offline.
+torch==2.11.0
+transformers==4.57.6
+trl==1.16.0
+peft==0.21.2
+accelerate==1.15.0
+datasets==4.8.5
+causal-conv1d==1.6.2.post1
+mamba-ssm==2.3.2.post1
+ninja==1.13.0
+packaging==26.2
+setuptools==82.0.1
+wheel==0.47.0

@@ -1324,9 +1324,9 @@ RESERVED_ENV = {
 def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, tmp_path):
     """A setting declared for a feature that is not built yet would do nothing, so any value but its default stops the
     cascade, the gateway and the nightly job at startup, naming the variable; its default, spelled any way, is fine."""
-    from ratchet.config import KNOWN_ENV, RESERVED_SETTINGS
+    from ratchet.config import DEPLOY_ENV, KNOWN_ENV, RESERVED_SETTINGS
 
-    assert set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()} == set(KNOWN_ENV)
+    assert set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()} == set(KNOWN_ENV) - set(DEPLOY_ENV)
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()

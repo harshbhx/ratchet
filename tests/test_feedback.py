@@ -1056,6 +1056,23 @@ def test_import_ratchet_train_jsonl_roundtrip(tmp_path):
 
 
 @pytest.mark.req("FR-13.31")
+def test_import_night_school_training_file(tmp_path):
+    # Night School's train.jsonl holds prompt-completion rows (dataset.write_training, FR-8.42); the importer reads them
+    # as it reads write_jsonl's rows, with the same task and provenance checks.
+    src = Ledger(":memory:")
+    for i in range(3):
+        src.add_example(TRIAGE, _msgs(f"trained {i}"), A, OPEN_TEACHER, "OpenMDW-1.1", "")
+    path = dataset.write_training(dataset.rows(src, "train") + dataset.rows(src, "golden"), tmp_path / "train.jsonl")
+    dst = Ledger(":memory:")
+    with path.open("rb") as f:
+        rep = importer.run_import(dst, _settings(), f, task=TRIAGE, source=f"teacher:{OPEN_TEACHER}")
+    assert rep.inserted == 3 and {r["hash"] for r in dst.examples()} == {r["hash"] for r in src.examples()}
+    with path.open("rb") as f:
+        rep = importer.run_import(Ledger(":memory:"), _settings(), f, task=TRIAGE, source="human", attest="ours")
+    assert rep.inserted == 0 and dict(rep.invalid) == {"provenance mismatch": 3}
+
+
+@pytest.mark.req("FR-13.31")
 def test_import_cli_dry_run_and_apply(tmp_path, monkeypatch, capsys):
     for k, v in PINNED_ENV.items():
         monkeypatch.setenv(k, v)

@@ -150,19 +150,30 @@ Commands are split with `shlex.split` and run without a shell, so pipes and `&&`
 
 ## Deploy scripts (`deploy/`)
 
+Read only by `deploy/train_job.sh` and `deploy/student_endpoint.sh` on the machine that runs the `nebius` CLI, never by the gateway (`config.DEPLOY_ENV` lists them so the traceability check holds each to a row here). The Nebius commands follow the CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026); [DEPLOYMENT.md](DEPLOYMENT.md#step-4-student-endpoint-vllm-with-runtime-lora) has the actions.
+
 | Variable | Used by | Default | Meaning |
 |---|---|---|---|
-| `RATCHET_BUCKET_ID` | both | required | Nebius Object Storage bucket ID, mounted at `/data` |
+| `DRY_RUN` | both | `0` | `1`: `train_job.sh` and `student_endpoint.sh create` pass `--dry-run` (nebius validates the request and creates nothing); `start` and `stop`, which have no `--dry-run`, print the command instead of running it; the read-only `nebius ai endpoint list` still runs, and no uptime is recorded. Any value but `0` or `1` is refused (exit 2), so `DRY_RUN=true` never starts a paid GPU |
+| `RATCHET_BUCKET_ID` | both | required (job; endpoint `create`) | Nebius Object Storage bucket ID, mounted at `/data` |
+| `RATCHET_SUBNET_ID` | both | empty (the project's default subnet) | `--subnet-id` for the job and for `create` |
 | `RATCHET_TRAIN_IMAGE` | `train_job.sh` | required | Training image built from `deploy/Dockerfile.train` |
 | `RATCHET_TRAIN_PLATFORM` | `train_job.sh` | `gpu-l40s-a` | Nebius GPU platform |
 | `RATCHET_TRAIN_PRESET` | `train_job.sh` | `1gpu-8vcpu-32gb` | Nebius preset |
-| `RATCHET_BUCKET_S3` | `train_job.sh` | empty | `s3://bucket[/prefix]`. When set, the script polls for `adapters/<version>/adapter_model.safetensors` (every 30 s, up to 2 h) so it can be used as `RATCHET_TRAIN_CMD` |
+| `RATCHET_REGISTRY_SECRET` | `train_job.sh` | empty | `--registry-secret`: a MysteryBox secret with `REGISTRY_USERNAME` and `REGISTRY_PASSWORD`, for a private training image (Nebius Container Registry) |
+| `RATCHET_BUCKET_S3` | `train_job.sh` | empty | `s3://bucket[/prefix]`. When set, the script polls for `adapters/<version>/adapter_model.safetensors` (every 30 s, up to 2 h, the job's `--timeout`) so it can be used as `RATCHET_TRAIN_CMD` |
 | `RATCHET_S3_ENDPOINT` | `train_job.sh` | empty | S3 endpoint URL for Nebius Object Storage |
-| `RATCHET_STUDENT_KEY` | `student_endpoint.sh` | required (start) | Token clients must send to the endpoint |
-| `RATCHET_ENDPOINT_NAME` | `student_endpoint.sh` | `ratchet-student` | Name of the Serverless Endpoint that `start` creates and `stop` stops |
-| `RATCHET_PYTHON` | `student_endpoint.sh` | `python` | Python that runs `python -m ratchet.cost endpoint up\|down` after `start` and `stop` to record the endpoint's uptime in the ledger at `RATCHET_DB` (best effort: when it fails, the deploy still succeeds and prints the command to run where the ledger is) |
+| `RATCHET_STUDENT_KEY` | `student_endpoint.sh` | required (`create`) | Token clients must send to the endpoint. Passed to `--token`, never printed (`<RATCHET_STUDENT_KEY>` in the echoed command) |
+| `RATCHET_ENDPOINT_NAME` | `student_endpoint.sh` | `ratchet-student` | Name `create` gives the endpoint, and the name `start`, `stop` and `status` look up in `nebius ai endpoint list --format json` to find its id |
+| `RATCHET_ENDPOINT_ID` | `student_endpoint.sh` | empty | The endpoint's id (`metadata.id`). When set, `start` and `stop` use it without the list lookup, and `status` looks this id up instead of the name. Set it when the lookup cannot decide (two endpoints with the name, or a list with more pages) |
+| `RATCHET_PYTHON` | `student_endpoint.sh` | `python` | Python 3 that reads the endpoint list (standard library only, `-I`) and runs `python -m ratchet.cost endpoint up\|down` after `create`, `start` and `stop` to record the endpoint's uptime in the ledger at `RATCHET_DB` (best effort: when recording fails, the deploy still succeeds and prints the command to run where the ledger is) |
 | `RATCHET_SERVE_PLATFORM` | `student_endpoint.sh` | `gpu-l40s-a` | GPU platform for vLLM |
 | `RATCHET_SERVE_PRESET` | `student_endpoint.sh` | `1gpu-8vcpu-32gb` | Preset for vLLM |
+| `RATCHET_VLLM_IMAGE` | `student_endpoint.sh` | `vllm/vllm-openai:v0.18.0-cu130` | vLLM image. `vllm/vllm-openai:v0.18.0` is the CUDA 12 build of the same release (both on Docker Hub, pushed Mar 20, 2026), for a host driver too old for CUDA 13 |
+| `RATCHET_SERVE_MAX_LEN` | `student_endpoint.sh` | `8192` | vLLM `--max-model-len`. The model card's example uses 262,144 tokens; ticket prompts need far less, and a longer prompt gets vLLM's 400 and escalates to the teacher |
+| `RATCHET_SERVE_MAX_SEQS` | `student_endpoint.sh` | `64` | vLLM `--max-num-seqs` (concurrent sequences) |
+| `RATCHET_SERVE_TEMPLATE_KWARGS` | `student_endpoint.sh` | `{"enable_thinking":false}` | vLLM `--default-chat-template-kwargs` (a JSON object, checked before `create`; no single quote), so the student answers without reasoning unless a request asks. Set but empty to leave the flag out (requests then carry their own `chat_template_kwargs`) |
+| `RATCHET_REASONING_PARSER_PLUGIN` | `student_endpoint.sh` | empty | Absolute path in the container of the model card's `nano_v3_reasoning_parser.py` (for example `/data/nano_v3_reasoning_parser.py`, uploaded to the bucket). When set, vLLM gets `--reasoning-parser-plugin <file> --reasoning-parser nano_v3` |
 | `RATCHET_STUDENT_BASE_MODEL` | both | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model |
 
 ## Prices (`DEFAULT_PRICES`)

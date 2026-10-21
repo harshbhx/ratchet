@@ -26,6 +26,7 @@ from fakes import (
     OPEN_TEACHER,
     REJECTED_EVAL,
     FakeClock,
+    FakeNebius,
     FakeOpenAIServer,
     RecordingEvaluator,
     RecordingProvider,
@@ -928,21 +929,17 @@ def test_cli_runs_as_a_module_with_the_environment(tmp_path):
 @pytest.mark.skipif(BASH is None, reason="needs bash")
 @pytest.mark.req("FR-15.2", "FR-8.2")
 def test_deploy_script_records_uptime_and_never_fails_on_it(tmp_path):
-    """`deploy/student_endpoint.sh` start and stop call `nebius` (a stub here) and then record the endpoint in the ledger
-    through the CLI; with no ledger to record in, the deploy still succeeds and says so."""
+    """`deploy/student_endpoint.sh` start and stop call `nebius` (a fake here) and then record the endpoint in the
+    ledger through the CLI; with no ledger to record in, the deploy still succeeds and says so."""
     assert BASH is not None
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    log = tmp_path / "nebius.log"
-    stub = bin_dir / "nebius"
-    stub.write_text(f'#!/usr/bin/env bash\necho "$*" >> "{log}"\n', encoding="utf-8")
-    stub.chmod(0o755)
+    nebius = FakeNebius(tmp_path / "nebius")
+    nebius.listing(None)  # no endpoint yet: start creates it
     db = tmp_path / "live.db"
     Ledger(str(db), auto_day=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith("RATCHET_")}
-    env.update(
+    env = nebius.env(
         {
-            "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '/usr/bin:/bin')}",
+            **env,
             "RATCHET_PYTHON": sys.executable,
             "RATCHET_DB": str(db),
             "RATCHET_BUCKET_ID": "bucket-e00test",
@@ -960,13 +957,17 @@ def test_deploy_script_records_uptime_and_never_fails_on_it(tmp_path):
     assert r.returncode == 0, r.stderr
     (iv,) = Ledger(str(db), auto_day=True).compute_intervals("student_endpoint")
     assert (iv["source"], iv["end_ts"], iv["usd_per_hour"]) == ("deploy", None, 1.55)
+    running = nebius.fixture()
+    running["items"][1]["status"]["state"] = "RUNNING"
+    nebius.listing(running)
     r = run("stop")
     assert r.returncode == 0, r.stderr
     assert Ledger(str(db), auto_day=True).compute_intervals("student_endpoint")[0]["end_ts"] is not None
-    calls = log.read_text(encoding="utf-8").splitlines()
-    assert (
-        calls[0].startswith("ai endpoint create --name ratchet-student") and calls[1] == "ai endpoint stop --name ratchet-student"
-    )
+    calls = nebius.calls
+    assert [c[:3] for c in calls[:2]] == [["ai", "endpoint", "list"], ["ai", "endpoint", "create"]]
+    assert "--name" in calls[1] and calls[1][calls[1].index("--name") + 1] == "ratchet-student"
+    stop = ["ai", "endpoint", "stop", "--id", "aiendpoint-e00fixturestudent00"]  # by id, found by name in the list
+    assert calls[2:] == [["ai", "endpoint", "list", "--format", "json"], stop]
     r = run("stop", RATCHET_DB=str(tmp_path / "missing.db"))
     assert r.returncode == 0 and "endpoint down not recorded" in r.stderr
     assert not (tmp_path / "missing.db").exists()

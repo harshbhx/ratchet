@@ -89,9 +89,32 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
     "db_sync": ("RATCHET_DB_SYNC", "FULL", "live readiness (WAL journal)"),
 }
-# Variables read through a helper the traceability check cannot see (scripts/reqtrace.py: every one needs a row in
-# docs/CONFIGURATION.md).
-KNOWN_ENV: tuple[str, ...] = tuple(env for env, _, _ in RESERVED_SETTINGS.values())
+# Variables only the deploy scripts read (deploy/student_endpoint.sh, deploy/train_job.sh), never the package. Listed
+# here so the traceability check requires their rows in docs/CONFIGURATION.md ("Deploy scripts"); tests/test_live.py
+# checks the list against the scripts.
+DEPLOY_ENV: tuple[str, ...] = (
+    "RATCHET_BUCKET_ID",
+    "RATCHET_BUCKET_S3",
+    "RATCHET_ENDPOINT_ID",
+    "RATCHET_ENDPOINT_NAME",
+    "RATCHET_PYTHON",
+    "RATCHET_REASONING_PARSER_PLUGIN",
+    "RATCHET_REGISTRY_SECRET",
+    "RATCHET_S3_ENDPOINT",
+    "RATCHET_SERVE_MAX_LEN",
+    "RATCHET_SERVE_MAX_SEQS",
+    "RATCHET_SERVE_PLATFORM",
+    "RATCHET_SERVE_PRESET",
+    "RATCHET_SERVE_TEMPLATE_KWARGS",
+    "RATCHET_SUBNET_ID",
+    "RATCHET_TRAIN_IMAGE",
+    "RATCHET_TRAIN_PLATFORM",
+    "RATCHET_TRAIN_PRESET",
+    "RATCHET_VLLM_IMAGE",
+)
+# Variables read through a helper the traceability check cannot see, or only by the deploy scripts (scripts/reqtrace.py:
+# every one needs a row in docs/CONFIGURATION.md).
+KNOWN_ENV: tuple[str, ...] = tuple(env for env, _, _ in RESERVED_SETTINGS.values()) + DEPLOY_ENV
 
 
 def _is_default(value: object, default: str) -> bool:

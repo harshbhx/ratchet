@@ -31,6 +31,12 @@
   `python -m ratchet.importer --golden-only`) is golden for good, even past FREQUENT, and so is every
   other variant of its prompt, whatever its own split: the trainer sees only the messages, so a variant
   in train would teach the held-out prompt (INV-3, INV-6; FR-4.50).
+- The training file (`write_training`, read by train.py on the GPU) holds conversational prompt-completion
+  rows with the chat-template arguments the student is served with (`TRAIN_TEMPLATE_KWARGS`, reasoning off),
+  so the model trains on the prompt vLLM sends it: Nemotron's template turns thinking on unless told
+  otherwise, and TRL only warns when the rendered prompt is not a prefix of prompt+answer (FR-8.42). A train
+  row whose answer holds a literal `<think>` or `</think>` is left out and counted (`skipped_think_tag`): the
+  template renders such an answer without its empty think block, so its prompt would not be a prefix either.
 """
 
 from __future__ import annotations
@@ -38,7 +44,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from .. import bom, licenses, tasks
@@ -46,6 +54,14 @@ from ..ledger import Ledger, prompt_key, seen_count
 from ..merkle import KeySet
 
 FREQUENT = 3
+# The chat-template arguments every training row carries, so TRL renders it as the student endpoint serves it: vLLM's
+# `--default-chat-template-kwargs` in deploy/student_endpoint.sh (DEFAULT_TEMPLATE_KWARGS) and train.py's
+# TEMPLATE_KWARGS, which must stay equal (tests/test_nightschool.py checks all three). Nemotron 3 Nano's template
+# defaults to thinking on; the student is trained and served with it off.
+TRAIN_TEMPLATE_KWARGS: Mapping[str, Any] = MappingProxyType({"enable_thinking": False})
+# The strings Nemotron's chat template looks for in an assistant turn: with either one in the answer it does not add the
+# empty think block, so the answer would not follow the generation prompt it is served after.
+THINK_TAGS = ("<think>", "</think>")
 
 
 def _golden_only(r: Any) -> bool:
@@ -80,8 +96,9 @@ def counts_as_train(r: Any, seen: Counter[str]) -> bool:
 
 def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
     """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
-    gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec) and
-    `excluded_pinned` (rows left out because their task is pinned now), each only when it happens."""
+    gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec),
+    `skipped_think_tag` (train rows whose answer holds a literal think tag) and `excluded_pinned` (rows left out because
+    their task is pinned now), each only when it happens."""
     out = []
     specs: dict[str, tasks.Task] = {}
     examples = ledger.examples(task=task)
@@ -114,6 +131,10 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
             if counts is not None:
                 counts["skipped_invalid"] = counts.get("skipped_invalid", 0) + 1
             continue  # the spec tightened since it was stored: never a training target
+        if effective == "train" and any(tag in r["completion"] for tag in THINK_TAGS):
+            if counts is not None:
+                counts["skipped_think_tag"] = counts.get("skipped_think_tag", 0) + 1
+            continue  # the template would render it without the empty think block the served prompt ends in
         msgs = json.loads(r["messages"])
         out.append(
             {
@@ -175,19 +196,39 @@ def write_jsonl(items: list[dict[str, Any]], path: str | Path) -> Path:
     return p
 
 
+def training_record(row: dict[str, Any]) -> dict[str, Any]:
+    """A training row as train.py reads it (FR-8.42): TRL's conversational prompt-completion format, `prompt` (the
+    request's messages) and `completion` (the teacher's stored answer as the one assistant message, INV-2), with
+    `chat_template_kwargs` set to `TRAIN_TEMPLATE_KWARGS`, which TRL passes to both renderings. Every other key of the
+    row (`task`, `params`, `seen`, `provenance`) is kept; train.py reads `provenance` for ratchet_manifest.json and
+    gives TRL only the three columns, so stored conditions never reach the template."""
+    messages = row["messages"]
+    out = {k: v for k, v in row.items() if k != "messages"}
+    out["prompt"] = messages[:-1]
+    out["completion"] = [messages[-1]]
+    out["chat_template_kwargs"] = dict(TRAIN_TEMPLATE_KWARGS)
+    return out
+
+
+def write_training(items: list[dict[str, Any]], path: str | Path) -> Path:
+    """Write train rows as the training file the GPU job reads (`training_record` per row)."""
+    return write_jsonl([training_record(it) for it in items], path)
+
+
 def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[str, Any]:
     counts: dict[str, int] = {}
     golden_counts: dict[str, int] = {}
     train = rows(ledger, "train", task, counts)
     golden = rows(ledger, "golden", task, golden_counts)
     out = Path(out_dir)
-    write_jsonl(train, out / "train.jsonl")
-    write_jsonl(golden, out / "golden.jsonl")
+    write_training(train, out / "train.jsonl")
+    write_jsonl(golden, out / "golden.jsonl")  # the eval's rows (messages and stored conditions): never trained on
     manifest = {
         "train_examples": len(train),
         "golden_examples": len(golden),
         "dataset_sha256": dataset_hash(train),
         "skipped_invalid": counts.get("skipped_invalid", 0),
+        "skipped_think_tag": counts.get("skipped_think_tag", 0),
         "excluded_pinned": counts.get("excluded_pinned", 0) + golden_counts.get("excluded_pinned", 0),
         "bill_of_materials": ledger.bill_of_materials(),
     }
