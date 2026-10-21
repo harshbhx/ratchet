@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 792 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 833 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -10,6 +10,7 @@ python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 python -m sim.simulate --workload research --days 8 --requests 1500   # Scout's triage + reader calls
 python -m sim.simulate --bad-deploy-version 3 --compare-release      # Wilson vs the anytime-valid gate, same seed
 python -m sim.simulate --calibration ltt --paired-gate              # certified thresholds and the paired gate (ADR 0026)
+python -m sim.simulate --receipts --teacher-reasoning-mean 420      # savings receipts against the true cost (ADR 0029)
 python scripts/regen_sim_reference.py --check        # does the pinned reference simulation still match? (writes nothing)
 python scripts/reference_check.py                    # do tickets, mixed and research still reproduce v0.4.0? (make reference, CI)
 ```
@@ -32,11 +33,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
-| **Total** | **792** |
+| `tests/test_receipts.py` | 41 (30 functions; one has 8 cases, one has 5) |
+| **Total** | **833** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_receipts.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
@@ -634,6 +636,43 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 | `test_verifiers_never_raise_on_malformed_files` | FR-16.4: 14 malformed proofs (non-list siblings among them, the regression) and 11 malformed certificates each give `FAIL:` lines and no exception; a value in another hex case still verifies |
 | `test_proof_endpoints_need_an_admin_key_in_live_mode` | FR-16.4, INV-8, INV-13: in live mode the proof and held-out endpoints are 401 without a key and 403 for an API key, admitted for an admin key (404: nothing trained), 403 `admin API disabled` without admin keys; the sample endpoint is 403 (mock-only) even for an admin |
 | `test_cli_key_prints_the_stored_key` | FR-16.4: `python -m ratchet.proof key` prints `request_key` for a messages file (with `--no-redact` too) and for a request body with `metadata.ratchet_task` and `stop`; junk, a missing file, a string and empty messages exit 2 |
+
+### `tests/test_receipts.py`
+
+Verified savings receipts (FR-15.5, [ADR 0029](adr/0029-verified-savings-receipts.md)). Synthetic populations are seeded; simulation runs are a few days of mock traffic and assert trends.
+
+| Test | Covers |
+|---|---|
+| `test_leaves_hold_only_metadata_and_the_key_name` | INV-12, INV-13: through a gateway with an API key, a request's leaf has exactly `LEAF_KEYS`, whole numbers and strings only, the key's name; neither the receipt, the leaves nor the proof holds the request's text, its answer or the key; no float anywhere in the manifest |
+| `test_leaf_turns_amounts_into_whole_nano_usd` | `leaf` rounds USD to nano-USD (half to even), `label_p` to parts per billion and `ts` to milliseconds; NaN and missing amounts are null; `''` clients are null; `leaf_bytes` is canonical JSON |
+| `test_ratio_estimator_recovers_the_ratio_and_its_lower_bound_covers` | y = 1.3 x (1 + 0.1 z) audited at 20%: the mean R over 200 seeded populations is within 0.01 of 1.3, and the one-sided 95% lower bound covers the true total in at least 180 of 200 (about 95% in 2,000) |
+| `test_weights_follow_label_p_and_the_finite_population_correction` | Answers audited at two rates are weighted 1 / `label_p` (R equals the hand-computed Horvitz-Thompson ratio, n_eff below n); with every answer audited the variance is 0 and the point is the exact total |
+| `test_insufficient_tasks_are_not_billed_and_the_fee_is_a_share_of_the_lower_bound` | A task under `min_audits` is `insufficient_audits` and only counts at its recorded baseline; the billable set is the teacher-served requests and the calibrated task's served answers; margin = ⌈1.645 se⌉; fee = ⌊share × net⌋ (share as a float or a string); spend outside requests comes off; a negative bound or no calibrated task bills 0 (`formula`); bad shares, minimums and spend raise |
+| `test_stand_in_answers_are_never_billed` | `UNVERIFIED_ROUTES` equals the router's `STAND_IN_ROUTES`; a degraded answer and a fallback teacher's answer change neither the calibration nor the bill, and count at their recorded baseline |
+| `test_unlogged_formula_estimates_are_never_calibrated` | Served answers without `baseline_est_usd` (before v0.5) make the task `unlogged`: no point, no bill |
+| `test_integer_sums_are_exact_over_100k_rows` | 100,000 synthetic rows: the totals equal the sum of the rounded amounts exactly, within half a nano-USD per row of the float sum |
+| `test_seal_is_idempotent_and_never_updates` | INV-17: a second `seal` and `seal_due` return the stored document and issue no INSERT, UPDATE, DELETE or REPLACE (`set_trace_callback`); `add_receipt` refuses an existing (period, client) |
+| `test_period_rows_are_read_in_chunks_with_the_lock_free_between_them` | `period_rows` reads `RECEIPT_CHUNK` rows per locked statement: another thread logs a request between chunks; the chunks equal the one read, in id order, a client's rows only for a client; `receipt_row` reads one row |
+| `test_concurrent_sealing_writes_each_receipt_once` | 8 threads sealing at once write each (day, client) receipt once with no error; a second connection to the same file that loses the race keeps the first writer's document |
+| `test_a_day_is_sealed_only_once_it_is_over` | The current day raises `PeriodOpen`; a day without requests has no receipt; on a live ledger a day is closed 5 minutes after it ended, not before |
+| `test_signature_verifies_and_edits_break_it_and_the_chain` | Three chained days: `prev_sha256` links each to the one before; the signature verifies with the public key and fails with another; an edited total fails, also re-hashed; an earlier receipt with a lowered fee, or the wrong day, breaks the chain check |
+| `test_receipts_are_chained_per_client_and_hold_only_that_clients_ids` | Two clients and anonymous traffic over two days: each client's receipt holds only its ids, rechecks from its own leaves and chains to its own previous receipt; the gateway's covers every request; GPU-view notes |
+| `test_spend_outside_requests_is_netted_and_shared_by_request_count` | A backfill spend row comes off the gateway's bound in full and off a client's by its share of the day's requests |
+| `test_recheck_recomputes_everything_from_the_leaves` | `recheck` passes on the stored leaves; a changed amount (root and totals), reversed order, a missing leaf and a fee beyond the tolerance are caught; an estimated amount within 2 nano-USD is not |
+| `test_verifiers_never_raise_on_malformed_input` | 8 junk documents: `verify_receipt`, `verify_chain`, `verify_proof`, `verify_rows` and `check_manifest` return failures, never an exception |
+| `test_gateway_returns_the_request_id_and_its_proof_verifies` | A signed mock gateway: `X-Ratchet-Request-Id` and `ratchet.request_id` (also on the last stream chunk); the day is 409 until it ends, then sealed by the demo day; the listing, the signature, the GPU view; each request's proof verifies with `merkle.verify_inclusion` and `verify_proof`; unknown ids 404, bad periods 400; the leaves recheck; the next day chains to it |
+| `test_api_keys_read_only_their_own_receipts` | With API and admin keys: client B gets 403 on client A's receipt, proof and leaves, 404 for A's request in its own receipt; no key or a wrong key 401; an admin reads the gateway's and every client's receipt, and the listing per caller |
+| `test_live_mode_without_keys_serves_no_receipts` | Live mode without keys: 403; the mock demo without keys is open |
+| `test_rows_changed_after_sealing_are_caught` | A row slipped into a sealed day: proof and leaves answer 500 (twice) with one `integrity` event, and the receipt is unchanged; a row edited after its tree was cached is caught too (the proof reads its row again) |
+| `test_bad_receipt_settings_stop_the_gateway` | 5 cases: a take rate above 1 or NaN, a minimum of 1 audit, a negative or huge mock reasoning mean stop the gateway with a message naming the variable |
+| `test_receipt_settings_are_read_and_checked` | Defaults 0.25 and 30 and no mock mean; the variables read and no longer reserved; `share_text` |
+| `test_mock_teacher_reasoning_varies_around_its_mean_deterministically` | The default bills exactly 300; with mean 420 and cv 0.3 the same request always costs the same, the mean is 395 to 445 over 400 requests, `out_tokens` follow; cv 0 bills the mean |
+| `test_sealing_moves_no_simulation_number` | `--receipts` on, off and with `seal_due` monkeypatched out: identical days, totals, versions, nights, events and serving; with the formula right (300 tokens) the bound held and R is about 1 |
+| `test_receipts_measure_and_correct_a_teacher_that_reasons_more` | `--teacher-reasoning-mean 420` (simulation): each calibrated day's `ticket-triage` R is above 1.2, the formula's baseline is below 95% of the true cost and the calibrated one within 10% of it, a fee is billed on the bound, and the bound is at or below the truth on all but one day at most |
+| `test_cli_verifies_a_bundle_and_fails_after_a_one_digit_edit` | `python -m ratchet.receipt verify` with the key, the previous receipt, a proof and the leaves: four OK lines, exit 0; one digit of the fee changed: exit 1 (`sha256 does not match`); not JSON: 1; a missing file: 2 |
+| `test_cli_module_entry_point` | The same as a subprocess (`python -m ratchet.receipt`), with an unchecked chain reported |
+| `test_offline_seal_of_a_simulated_ledger` | `python -m ratchet.receipt seal --db` on a `sim.simulate --db` ledger: every logged day sealed and labelled simulation, a day after the run 2, nothing left to seal 0, a missing file and `--client` without `--period` 2 |
+| `test_live_seal_command_seals_every_day_that_ended` | `python -m ratchet.live seal` on a live ledger seals every client's and the gateway's receipts of the days that ended (not today's), then says nothing is left; labelled live traffic |
 
 ## Live-path tests
 

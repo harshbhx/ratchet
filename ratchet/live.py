@@ -4,6 +4,8 @@
     python -m ratchet.live tick         # advance the release gate (run every few minutes via cron)
     python -m ratchet.live reload       # re-load live/canary/shadow adapters after an endpoint restart (the gateway
                                         # also does this by itself when vLLM answers 404 for an adapter: AdapterReloader)
+    python -m ratchet.live seal         # seal the savings receipts of every day that has ended (run daily via cron;
+                                        # the gateway also seals when a receipt is asked for)
 
 Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
@@ -33,7 +35,7 @@ from typing import Any
 
 import httpx
 
-from . import bom, taskspec
+from . import bom, receipts, taskspec
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset
@@ -262,6 +264,7 @@ def main(
     s.check_reserved()  # a setting reserved for a feature not built yet stops here (ADR 0024)
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     cert = s.cert_policy()  # so does a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA (ADR 0026)
+    s.receipt_policy()  # and a bad RATCHET_TAKE_RATE or RATCHET_RECEIPT_MIN_AUDITS (ADR 0029)
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
@@ -273,6 +276,15 @@ def main(
         gate.tick()
     elif cmd == "reload":
         print("reloaded:", reload_adapters(s, led, http))
+    elif cmd == "seal":
+        # Every day that ended (SEAL_GRACE_S ago) gets its receipts, each client's and the gateway's, signed with the BOM
+        # key; a day already sealed is left as it is (INV-17).
+        signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        sealed = receipts.seal_due(led, receipts.SealConfig.from_settings(s, signer, "live traffic"))
+        for period, client in sealed:
+            print(f"sealed the receipt of day {period} ({client or 'gateway'})")
+        if not sealed:
+            print("nothing to seal: every day that has ended is sealed")
     elif cmd == "night":
         # The student keeps its own timeouts but is retried like the teacher: in the golden eval no teacher stands
         # behind it, and one failed call would end the night (ADR 0014). The judge is a teacher call.
@@ -305,7 +317,7 @@ def main(
         synced = write_boms(led, rep.version, trainer) if rep.version is not None else True
         print(rep)
     else:
-        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick' or 'reload'")
+        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick', 'reload' or 'seal'")
     for e in led.events()[-10:]:
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
     if not synced:

@@ -201,21 +201,24 @@ def document(m: dict[str, Any], signer: Signer | None = None) -> dict[str, Any]:
     return {"manifest": m, "sha256": hashlib.sha256(data).hexdigest(), "signature": sig}
 
 
-def verify(doc: dict[str, Any], public_key_b64: str | None = None) -> tuple[bool, str]:
+def verify(doc: dict[str, Any], public_key_b64: str | None = None, accepted: tuple[str, ...] = ACCEPTED) -> tuple[bool, str]:
     """(ok, reason). Pass the public key you trust: the key embedded in the document only proves
-    the document matches itself, not who signed it."""
+    the document matches itself, not who signed it. `accepted` names the schemas this check reads: BOMs by default, the
+    savings receipts' schema for a receipt (ratchet/receipts.py), which the same key signs the same way. Never raises."""
     try:
         data = canonical(doc["manifest"])
         schema = doc["manifest"].get("schema")
     except (KeyError, TypeError, AttributeError, ValueError):
-        return False, "not a Ratchet BOM document"
-    if schema not in ACCEPTED:
-        return False, f"unknown schema {schema!r} (this verifier reads {', '.join(ACCEPTED)})"
+        return False, "not a Ratchet BOM document" if accepted == ACCEPTED else "not a signed Ratchet document"
+    if schema not in accepted:
+        return False, f"unknown schema {schema!r} (this verifier reads {', '.join(accepted)})"
     if hashlib.sha256(data).hexdigest() != doc.get("sha256"):
         return False, "sha256 does not match the manifest (edited after it was written)"
     sig = doc.get("signature")
     if not sig:
         return (False, "unsigned") if public_key_b64 else (True, "unsigned; sha256 matches")
+    if not isinstance(sig, dict):
+        return False, "malformed signature"
     if sig.get("alg") != ALG:
         return False, f"unknown signature algorithm {sig.get('alg')!r}"
     key = public_key_b64 or sig.get("public_key", "")
@@ -226,7 +229,7 @@ def verify(doc: dict[str, Any], public_key_b64: str | None = None) -> tuple[bool
         Ed25519PublicKey.from_public_bytes(base64.b64decode(key)).verify(base64.b64decode(sig["value"]), data)
     except ImportError:  # pragma: no cover
         return False, 'cannot check the signature: pip install "ratchet-distill[sign]"'
-    except (InvalidSignature, ValueError, KeyError):
+    except (InvalidSignature, ValueError, KeyError, TypeError):
         return False, "bad signature"
     trust = "trusted key" if public_key_b64 else "embedded key only; pass --public-key to check the signer"
     return True, f"signature valid ({ALG}, key {key_id(key)}, {trust})"
