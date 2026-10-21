@@ -258,7 +258,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `id` | INTEGER PK | Auto-increment. Also used as the "since" marker for stages |
 | `ts` | REAL | Unix time |
 | `day` | INTEGER | `Ledger.day` at the time (set by the simulator or demo; see note) |
-| `task` | TEXT | Task name, as resolved ([request path](#2-request-path)). Indexed with `ts` for `GET /v1/models` (`Ledger.recent_tasks`) |
+| `task` | TEXT | Task name, as resolved ([request path](#2-request-path)). Indexed as `(task, ts)` and `(client, task, ts)` for `GET /v1/models` (`Ledger.recent_tasks` and `task_seen` probe them one task name at a time) |
 | `served_by` | TEXT | `student` or `teacher` |
 | `student_version` | INTEGER | Version that was tried first; NULL on cold start |
 | `confidence` | REAL | Student confidence; NULL if no student was tried |

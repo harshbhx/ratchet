@@ -22,6 +22,7 @@ from .providers import (
     parse_param_allowlist,
 )
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
+from .tasks import MAX_TASKS
 
 
 def _env(name: str, default: str) -> str:
@@ -104,6 +105,7 @@ UNKNOWN_TASK_POLICIES = ("distill", "teacher", "reject")
 # `per_token`: the hosted Nano price per token, as every savings figure since v0.1; `gpu_hours`: the GPU-hours the student
 # endpoint and the training jobs ran. Each request's `cost_usd` keeps the per-token price in both, so history never moves.
 COST_MODELS = ("per_token", "gpu_hours")
+MAX_AUTO_TASKS_LIMIT = MAX_TASKS // 2  # RATCHET_MAX_AUTO_TASKS: auto tasks may hold at most half the task registry
 
 
 def _choice(value: object, env: str, choices: tuple[str, ...]) -> str:
@@ -421,11 +423,12 @@ class Settings:
         return ModelRouting(policy, parse_aliases(self.model_aliases), auto)
 
     def auto_task_cap(self) -> int:
-        """RATCHET_MAX_AUTO_TASKS, checked: a whole number, 0 or more (0: no auto task is ever made). Anything else raises
-        ValueError, so the gateway stops at startup."""
+        """RATCHET_MAX_AUTO_TASKS, checked: a whole number from 0 (no auto task is ever made) to MAX_AUTO_TASKS_LIMIT,
+        half the task registry, so request traffic cannot take the places of the file and API tasks. Anything else
+        raises ValueError, so the gateway stops at startup."""
         n = self.max_auto_tasks
-        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
-            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number, 0 or more, not {n!r}")
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= MAX_AUTO_TASKS_LIMIT:
+            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number from 0 to {MAX_AUTO_TASKS_LIMIT}, not {n!r}")
         return n
 
     def min_task_golden_rows(self) -> int:

@@ -10,7 +10,9 @@ import json
 import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
+import h11
 import pytest
 from fakes import CLOSED_TEACHER, OPEN_TEACHER, FakeOpenAIServer, _version
 from fastapi.testclient import TestClient
@@ -19,7 +21,7 @@ from sdk_bridge import make_openai_client, sdk
 import ratchet.ledger as ledger_module
 from ratchet import tasks, taskspec
 from ratchet.auth import bearer
-from ratchet.config import Settings
+from ratchet.config import MAX_AUTO_TASKS_LIMIT, Settings
 from ratchet.ledger import Ledger
 from ratchet.openai_compat import (
     APIError,
@@ -199,9 +201,16 @@ def test_alias_and_routing_settings_are_checked_at_startup():
 
 @pytest.mark.req("FR-1.50")
 def test_bad_routing_setting_stops_the_gateway(gw_env):
-    for env in ({"RATCHET_MODEL_POLICY": "loose"}, {"RATCHET_MODEL_ALIASES": "gpt-4o"}, {"RATCHET_MAX_AUTO_TASKS": "-1"}):
-        with pytest.raises(ValueError):
+    for env in (
+        {"RATCHET_MODEL_POLICY": "loose"},
+        {"RATCHET_MODEL_ALIASES": "gpt-4o"},
+        {"RATCHET_MAX_AUTO_TASKS": "-1"},
+        {"RATCHET_MAX_AUTO_TASKS": str(MAX_AUTO_TASKS_LIMIT + 1)},  # more than half the registry
+    ):
+        with pytest.raises(ValueError, match=next(iter(env))):
             _gateway(gw_env, **env)
+    assert MAX_AUTO_TASKS_LIMIT == tasks.MAX_TASKS // 2
+    assert Settings(max_auto_tasks=MAX_AUTO_TASKS_LIMIT).auto_task_cap() == MAX_AUTO_TASKS_LIMIT
 
 
 @pytest.mark.req("FR-1.50")
@@ -213,12 +222,43 @@ def test_api_key_header_and_its_precedence():
     assert bearer(None, None, "   ") is None and bearer(None) is None
 
 
+def _h11_accepts(headers: Any) -> None:
+    """Raise as uvicorn's HTTP/1.1 server (h11) would on sending these response headers. TestClient checks none, so a
+    value h11 refuses passes it and then drops the real connection after the request was served and billed."""
+    h11.Response(status_code=200, headers=[(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers])
+
+
+# Model ids an h11 server cannot echo as they are: spaces around them, control characters, other scripts, '%'.
+AWKWARD_MODELS = (" gpt-4o", "gpt-4o ", "   ", "\tgpt", "a\r\nX-Evil: 1", "模型-4", "50%", "gpt 4o")
+
+
 @pytest.mark.req("FR-1.50")
 def test_header_value_never_breaks_a_response():
     assert header_value("gpt-4o") == "gpt-4o"
+    assert header_value("openai/gpt-4o:latest@2024") == "openai/gpt-4o:latest@2024"  # visible ASCII stays as it is
     assert header_value("模型-4") == "%E6%A8%A1%E5%9E%8B-4"
     assert header_value("a\r\nX-Evil: 1") == "a%0D%0AX-Evil:%201"
+    assert (header_value(" gpt-4o"), header_value("gpt-4o "), header_value("   ")) == ("%20gpt-4o", "gpt-4o%20", "%20%20%20")
+    assert header_value("50%") == "50%25"  # so every value decodes back to the id
     assert len(header_value("m" * 5000)) == 256
+    assert header_value("m" * 254 + "模") == "m" * 254  # never half an escape
+    for model in AWKWARD_MODELS:
+        value = header_value(model)
+        _h11_accepts([("x-ratchet-model-alias", value)])
+        assert unquote(value) == model
+
+
+@pytest.mark.req("FR-1.50")
+def test_awkward_model_ids_keep_the_real_server_answering(gw_env):
+    """Every response header the gateway sends for an unknown model id, streamed or not, is one h11 sends."""
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    for model in AWKWARD_MODELS:
+        for stream in (False, True):
+            r = c.post(CHAT, json={"model": model, "messages": HI, "stream": stream})
+            assert r.status_code == 200, (model, r.text)
+            _h11_accepts(r.headers.multi_items())
+            assert unquote(r.headers["X-Ratchet-Model-Alias"]) == model
 
 
 # ---------- the model field through the gateway ----------
@@ -438,9 +478,85 @@ def test_auto_task_made_only_for_an_admitted_request(gw_env):
     assert r.status_code == 429  # over the quota: no task made, nothing stored
     assert tasks.lookup(_auto("second")) is None and gw.rt.ledger.saved_task(_auto("second")) is None
 
+    # No room for a new auto task: a refused request leaves no trace, the first admitted one logs the cap once.
+    gw = _gateway(
+        gw_env,
+        RATCHET_AUTO_TASK="system_prompt",
+        RATCHET_API_KEYS=KEYS,
+        RATCHET_API_KEY_DAILY_REQUESTS="1",
+        RATCHET_MAX_AUTO_TASKS="1",
+    )
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    assert c.post(CHAT, json={"messages": _system("first")}, headers=ACME).status_code == 200
+    assert c.post(CHAT, json={"messages": _system("second")}, headers=ACME).status_code == 429
+
+    def caps() -> int:
+        return [e["kind"] for e in gw.rt.ledger.events()].count("auto_task_cap")
+
+    assert caps() == 0
+    assert c.post(CHAT, json={"messages": _system("second")}, headers=GLOBEX).json()["ratchet"]["task"] == "default"
+    assert caps() == 1
+
     gw = _gateway(gw_env, RATCHET_AUTO_TASK="system_prompt", RATCHET_MAX_AUTO_TASKS="0")
     meta = TestClient(gw.app).post(CHAT, json={"messages": _system("first")}).json()["ratchet"]
     assert (meta["task"], meta["task_source"]) == ("default", "default")
+    assert caps() == 0  # 0 means no auto task is ever made: nothing filled up, nothing to report
+
+
+@pytest.mark.req("FR-1.50")
+def test_auto_tasks_leave_room_for_other_tasks_and_admins_can_delete_them(gw_env):
+    """Request traffic cannot fill the registry: the mock demo holds at most 50 auto tasks, and auto tasks never take the
+    registry's last AUTO_FREE_SLOTS slots, so the admin API can still add a task. An admin can delete an auto task (it
+    is stored, so it would come back at every restart), which frees its place."""
+    gw = _gateway(gw_env, RATCHET_AUTO_TASK="system_prompt", RATCHET_MAX_AUTO_TASKS="200")
+    assert gw.rt.max_auto_tasks == gw.MOCK_MAX_AUTO_TASKS == 50
+    c = TestClient(gw.app)
+    one = _auto("You sort mail.")
+    assert c.post(CHAT, json={"messages": _system("You sort mail.")}).json()["ratchet"]["task"] == one
+
+    filler = tasks.MAX_TASKS - gw.AUTO_FREE_SLOTS - len(tasks.REGISTRY)
+    for i in range(filler):
+        tasks.register(tasks.Task(f"filler-{i}", source="file"))  # as a large tasks file would
+    meta = c.post(CHAT, json={"messages": _system("You file taxes.")}).json()["ratchet"]
+    assert (meta["task"], meta["task_source"]) == ("default", "default")  # the free slots stay free
+    assert [e["kind"] for e in gw.rt.ledger.events()].count("auto_task_cap") == 1
+
+    r = c.delete(f"/ratchet/tasks/{one}")  # frees a place: the next new prompt gets its own task again
+    assert r.status_code == 200 and r.json()["deleted"] == one
+    assert tasks.lookup(one) is None and gw.rt.ledger.saved_task(one) is None
+    assert any(e["kind"] == "task_deleted" and e["detail"].startswith(one) for e in gw.rt.ledger.events())
+    assert c.post(CHAT, json={"messages": _system("You file taxes.")}).json()["ratchet"]["task"] == _auto("You file taxes.")
+    assert c.post(CHAT, json={"messages": _system("You sort mail.")}).json()["ratchet"]["task"] == "default"
+    assert len(tasks.REGISTRY) == tasks.MAX_TASKS - gw.AUTO_FREE_SLOTS
+    assert c.put("/ratchet/tasks/invoice-extract", json={"description": "an admin's task"}).status_code == 200
+    assert c.delete("/ratchet/tasks/default").status_code == 403  # built-in tasks stay
+
+
+@pytest.mark.req("FR-1.50")
+def test_auto_tasks_are_listed_only_to_keys_that_used_them(gw_env):
+    """An auto task is named after a digest of a client's system prompt (threat model T12): /v1/models offers it only to
+    a key whose own requests used it lately, so no key learns another's prompts' digests. A key that sends the same
+    prompt shares the task, as the name says, and is then offered it too. With keys off there is one tenant."""
+    prompt = "Acme's private triage prompt."
+    name = f"ratchet/{_auto(prompt)}"
+    gw = _gateway(gw_env, RATCHET_AUTO_TASK="system_prompt", RATCHET_API_KEYS=KEYS)
+    c = TestClient(gw.app)
+
+    def offered(headers: dict[str, str]) -> bool:
+        listed = name in {m["id"] for m in c.get("/v1/models", headers=headers).json()["data"]}
+        found = c.get(f"/v1/models/{name}", headers=headers).status_code == 200
+        assert listed == found
+        return listed
+
+    assert c.post(CHAT, json={"messages": _system(prompt)}, headers=ACME).json()["ratchet"]["task"] == name[8:]
+    assert offered(ACME) and not offered(GLOBEX)
+    assert c.post(CHAT, json={"messages": _system(prompt)}, headers=GLOBEX).json()["ratchet"]["task"] == name[8:]
+    assert offered(GLOBEX)
+
+    gw = _gateway(gw_env, RATCHET_AUTO_TASK="system_prompt")
+    c = TestClient(gw.app)
+    assert c.post(CHAT, json={"messages": _system(prompt)}).status_code == 200
+    assert offered({})
 
 
 @pytest.mark.req("FR-1.50")
@@ -515,12 +631,20 @@ def test_every_model_validates_with_the_openai_sdk(gw_env, tmp_path):
     assert got.id == f"ratchet/{TRIAGE}" and got.model_extra["ratchet"]["compare_keys"] == ["category", "priority"]
     assert client.models.retrieve(f"ratchet:{TRIAGE}").id == f"ratchet/{TRIAGE}"
     assert client.models.retrieve("gpt-4o-mini").model_extra["ratchet"]["task"] == TRIAGE
-    for missing in ("gpt-4o", "ratchet/globex-only", "ratchet/never-seen"):
+    for missing in ("gpt-4o", "ratchet/globex-only", "hidden"):
         with pytest.raises(openai.NotFoundError) as caught:
             client.models.retrieve(missing)
         assert caught.value.code == "model_not_found" and caught.value.body["message"] == f"The model '{missing}' does not exist."
     r = c.get("/v1/models/gpt-4o", headers=ACME)
     assert r.status_code == 404 and r.json()["error"]["type"] == "invalid_request_error"
+    for item in data:  # retrieve looks up one id, and finds what the list says
+        assert c.get(f"/v1/models/{quote(item['id'], safe='')}", headers=ACME).json() == item
+    # Chat completions admit any task name under RATCHET_UNKNOWN_TASKS=distill, also under RATCHET_MODEL_POLICY=strict,
+    # so retrieve finds one no request used yet: a client that checks its model first gets the request's answer. Another
+    # key's ad hoc name gets the same answer as any name, its first use not shown.
+    for name in ("never-seen", "globex-adhoc"):
+        got = client.models.retrieve(f"ratchet/{name}")
+        assert (got.id, got.created, got.model_extra["ratchet"]["task"]) == (f"ratchet/{name}", gw.PROCESS_START, name)
 
 
 @pytest.mark.req("FR-1.2", "FR-1.50")
@@ -536,8 +660,11 @@ def test_models_show_the_live_version_and_the_unknown_task_policy(gw_env):
 
     gw = _gateway(gw_env, RATCHET_UNKNOWN_TASKS="reject")
     gw.rt.ledger.log_request(task="seen-once", served_by="teacher", client=None)
-    ids = {m["id"] for m in TestClient(gw.app).get("/v1/models").json()["data"]}
+    c = TestClient(gw.app)
+    ids = {m["id"] for m in c.get("/v1/models").json()["data"]}
     assert "ratchet/seen-once" not in ids  # a request for it would be refused, so it is not offered
+    for name in ("seen-once", "never-seen"):
+        assert c.get(f"/v1/models/ratchet/{name}").json()["error"]["code"] == "model_not_found"
 
 
 @pytest.mark.req("FR-1.50")
@@ -560,12 +687,41 @@ def test_recent_tasks_window_client_and_limit(monkeypatch):
     assert [r["task"] for r in led.recent_tasks(30, client="acme")] == ["fresh"]
     assert [r["task"] for r in led.recent_tasks(50, limit=2)] == ["both", "fresh"]
     assert [r["task"] for r in led.recent_tasks(50)] == ["both", "fresh", "old"]
+    # Past RECENT_TASK_PROBES distinct names, one aggregate gives the same answers.
+    probed = [led.recent_tasks(d, client=c) for d in (30, 50) for c in (None, "acme", "globex", "nobody")]
+    monkeypatch.setattr(ledger_module, "RECENT_TASK_PROBES", 1)
+    assert [led.recent_tasks(d, client=c) for d in (30, 50) for c in (None, "acme", "globex", "nobody")] == probed
+    assert led.task_seen("both") == {"first_ts": now - 35 * day, "last_ts": now - day}
+    assert led.task_seen("both", "acme") == {"first_ts": now - 35 * day, "last_ts": now - 35 * day}
+    assert led.task_seen("both", "nobody") is None and led.task_seen("never") is None
     monkeypatch.undo()
     for bad in (0, -1, float("inf"), True):
         with pytest.raises(ValueError, match="days"):
             led.recent_tasks(bad)
     with pytest.raises(ValueError, match="limit"):
         led.recent_tasks(30, limit=0)
+
+
+@pytest.mark.req("FR-1.50")
+def test_recent_tasks_cost_grows_with_task_names_not_requests():
+    """GET /v1/models reads recent_tasks under the ledger's lock, which request logging needs too: it walks the indexes
+    one distinct task name at a time, so 20,000 requests over 3 names cost a handful of SQLite steps, not a pass over
+    every row (which the aggregate past RECENT_TASK_PROBES names is)."""
+    led = Ledger(":memory:")
+    rows = [(1_800_000_000.0 - i, "abc"[i % 3], "acme" if i % 2 else None) for i in range(20000)]
+    led.db.executemany("INSERT INTO requests (ts, day, task, served_by, client) VALUES (?, 0, ?, 'teacher', ?)", rows)
+    steps = [0]
+
+    def count() -> int:
+        steps[0] += 1
+        return 0
+
+    led.db.set_progress_handler(count, 100)  # once per 100 virtual machine instructions
+    for client in (None, "acme"):
+        steps[0] = 0
+        assert sorted(r["task"] for r in led.recent_tasks(10**6, client=client)) == ["a", "b", "c"]
+        assert led.task_seen("b", client) is not None
+        assert steps[0] < 20, (client, steps[0])
 
 
 # ---------- Azure-style route ----------

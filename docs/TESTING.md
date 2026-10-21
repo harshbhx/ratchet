@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 773 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_model_routing), ~85 s
+pytest -q                     # 778 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_model_routing), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -27,14 +27,14 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| `tests/test_live.py` | 14 |
+| `tests/test_live.py` | 15 |
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 13 |
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 18 |
-| `tests/test_model_routing.py` | 22 |
-| **Total** | **773** |
+| `tests/test_model_routing.py` | 26 |
+| **Total** | **778** |
 
 There are three layers:
 
@@ -485,6 +485,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
 | `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every model request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; then the teacher gets `max_tokens` 8,192 with a stop, a seed, a temperature and JSON mode, and a 400 there fails the check; all present exits 0 with "All good." |
 | `test_deploy_scripts_parse_and_dry_run` | FR-11.1, FR-11.2: `bash -n` on every `deploy/**/*.sh`; `DRY_RUN=1 bash deploy/vm/create_vm.sh` prints the subnet, disk and instance `nebius` commands with the project id and `<cloud-init.yaml>` in place of the user data, never the private-repo token; a given subnet skips the lookup; a missing project, missing key file, reserved user name or bad preset stops before any command; `backup.sh` exits 0 in mock mode. Skipped where bash is missing |
+| `test_caddy_guard_covers_every_paid_route` | NFR-5, FR-1.50: every gateway route under the OpenAI-compatible prefixes (`/v1/` and the Azure-style `/openai/`, `gateway.API_PREFIXES`) and every mock demo control matches a path the demo VM Caddyfile's `guarded` block protects, so `RATCHET_API_GUARD=guarded` keeps the whole paid API behind the admin token; each prefix is guarded as a whole, so a later route under it is covered too |
 
 The React app itself is checked with `npx tsc --noEmit` and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 

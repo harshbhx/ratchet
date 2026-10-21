@@ -13,6 +13,7 @@ none passed, the code talks to the real services. No test here opens a socket or
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -25,6 +26,7 @@ from typing import Any
 import httpx
 import pytest
 from fakes import OPEN_TEACHER, AppTransport, FakeClock, FakeOpenAIServer, RecordingProvider, RecordingRun, _examples, _version
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from ratchet import bom, licenses, live
@@ -764,3 +766,20 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     backup = ROOT / "deploy" / "vm" / "backup.sh"
     r = subprocess.run([BASH, str(backup)], env={**env, "RATCHET_MODE": "mock"}, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
+
+
+@pytest.mark.req("NFR-5", "FR-1.50")
+def test_caddy_guard_covers_every_paid_route(gw):
+    """RATCHET_API_GUARD=guarded is offered as the demo VM's alternative to API keys, so it must cover every route that
+    runs the paid cascade: each route under the gateway's OpenAI-compatible prefixes (/v1/ and the Azure-style
+    /openai/) and the mock demo controls match a path the Caddyfile's guarded block protects."""
+    text = (ROOT / "deploy" / "vm" / "Caddyfile").read_text(encoding="utf-8")
+    block = re.search(r"\(guarded\) \{\s*@protected \{\s*path ([^\n]+)\n", text)
+    assert block is not None, "the guarded block's path matcher moved; update this test"
+    guarded = block.group(1).split()
+    routes = [r.path for r in gw.app.routes if isinstance(r, APIRoute)]
+    paid = [p for p in routes if p.startswith(gw.API_PREFIXES) or p.startswith("/ratchet/demo/")]
+    assert {"/v1/chat/completions", "/openai/deployments/{deployment}/chat/completions"} <= set(paid)
+    for path in paid:
+        assert any(fnmatch.fnmatchcase(path, pattern) for pattern in guarded), f"{path} is not behind RATCHET_API_GUARD"
+    assert {f"{prefix}*" for prefix in gw.API_PREFIXES} <= set(guarded)  # a later route under a prefix is covered too
