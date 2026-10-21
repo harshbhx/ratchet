@@ -7,7 +7,7 @@ const { title = "Explain it like I'm 10" } = Astro.props;
 ---
 
 <section class="rt-eli10" aria-label={title}>
-  <header class="rt-eli10-head">
+  <div class="rt-eli10-head">
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
       <path
         d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2V16h5v-.2c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3Z"
@@ -18,7 +18,7 @@ const { title = "Explain it like I'm 10" } = Astro.props;
         stroke-linejoin="round"></path>
     </svg>
     <span>{title}</span>
-  </header>
+  </div>
   <div class="rt-eli10-body"><slot /></div>
 </section>
 
