@@ -9,7 +9,7 @@
 export const TRUST_FILES = ["ratchet/redact.py", "ratchet/bom.py", "scripts/reqtrace.py", "docs/REQUIREMENTS.md", ".github/workflows/ci.yml", "ratchet/release.py", "ratchet/stats.py", "ratchet/merkle.py", "tests/test_release.py"];
 
 /** Every redaction rule, in `redact.PATTERNS` order. */
-export const TRUST_REDACTS = ["SECRET", "EMAIL", "IBAN", "CARD", "AADHAAR", "SSN", "PAN", "IP", "PHONE"];
+export const TRUST_REDACTS = ["SECRET", "EMAIL", "UPI", "IBAN", "CARD", "AADHAAR", "SSN", "GSTIN", "PAN", "IP", "PHONE"];
 
 /** `ReleasePolicy` defaults the chapter prints. */
 export const TRUST_GATE = { "min_precision": 0.95, "tolerance": 0.02, "min_audits": 20, "live_floor": 0.92 };
@@ -27,10 +27,12 @@ export const GATE_TESTS = "python -m pytest -q tests/test_release.py";
 export const REDACT_WORDS: Record<string, string> = {
   SECRET: "API secrets",
   EMAIL: "emails",
+  UPI: "UPI IDs",
   IBAN: "IBANs",
   CARD: "card numbers",
   AADHAAR: "Aadhaar numbers",
   SSN: "US Social Security numbers",
+  GSTIN: "Indian GSTINs",
   PAN: "Indian PAN numbers",
   IP: "IPv4 addresses",
   PHONE: "phone numbers",

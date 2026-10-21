@@ -771,7 +771,15 @@ def test_allowlists_and_token_caps_through_the_gateway(gw_env, tmp_path, monkeyp
     (tbody,) = _bodies(teacher)
     (sbody,) = _bodies(student)
     assert (tbody["max_tokens"], tbody["logit_bias"], tbody["presence_penalty"]) == (8192, {"50256": -100}, 0.5)
-    assert (sbody["max_tokens"], sbody["logit_bias"]) == (1024, {"50256": -100}) and "presence_penalty" not in sbody
+    # `logit_bias` is not in the student's default allowlist (ADR 0017, changed at the lanes' merge): a client's bias would
+    # steer the student's answer while the audit runs without it. Only an operator naming it forwards it.
+    assert sbody["max_tokens"] == 1024 and "logit_bias" not in sbody and "presence_penalty" not in sbody
+    teacher = FakeOpenAIServer(A)
+    rt, student = _gen_runtime(gw, tmp_path, teacher, student_params="max_tokens,logit_bias")
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.99})
+    assert c.post(CHAT, json={"messages": HI, **sent}).status_code == 200
+    assert (_bodies(student)[0]["max_tokens"], _bodies(student)[0]["logit_bias"]) == (1024, {"50256": -100})
 
     # RATCHET_TEACHER_PARAMS without logit_bias: not forwarded; RATCHET_STUDENT_PARAMS=none: the cap alone.
     allowed = ",".join(f for f in sorted(DEFAULT_TEACHER_PARAMS) if f != "logit_bias")
