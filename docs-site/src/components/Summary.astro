@@ -1,0 +1,45 @@
+---
+/** "In one sentence": the first thing on every guide page. */
+interface Props {
+  label?: string;
+}
+const { label = 'In one sentence' } = Astro.props;
+---
+
+<aside class="rt-summary" aria-label={label}>
+  <p class="rt-summary-label">{label}</p>
+  <div class="rt-summary-body"><slot /></div>
+</aside>
+
+<style>
+  .rt-summary {
+    margin: 0 0 1.5rem;
+    padding: 1rem 1.25rem 1.1rem;
+    border: 1px solid var(--rt-line);
+    border-left: 3px solid var(--rt-owned);
+    border-radius: 0.875rem;
+    background: var(--rt-surface);
+  }
+  .rt-summary-label {
+    margin: 0 0 0.35rem;
+    color: var(--rt-muted);
+    font-family: var(--__sl-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .rt-summary-body {
+    color: var(--rt-ink);
+    font-size: clamp(1.05rem, 1.8vw, 1.2rem);
+    line-height: 1.55;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-wrap: pretty;
+  }
+  .rt-summary-body :global(p) {
+    margin: 0;
+  }
+  .rt-summary-body :global(p + p) {
+    margin-top: 0.5rem;
+  }
+</style>

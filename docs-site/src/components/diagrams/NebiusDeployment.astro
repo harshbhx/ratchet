@@ -1,0 +1,123 @@
+---
+// The Nebius deployment (deploy/vm/, deploy/student_endpoint.sh, deploy/train_job.sh, docs/DEPLOY_NEBIUS_VM.md).
+import Figure from './Figure.astro';
+import { connector, head, type Pt } from './geom';
+
+type Cls = 'line' | 'line-owned' | 'line-rented' | 'line-dash';
+const edges: Array<{ pts: Pt[]; cls: Cls }> = [
+  { pts: [[156, 92], [206, 92]], cls: 'line' }, // visitors -> caddy
+  { pts: [[355, 120], [355, 146]], cls: 'line' }, // caddy -> gateway
+  { pts: [[355, 242], [355, 268]], cls: 'line' }, // gateway -> volume
+  { pts: [[504, 170], [532, 170], [532, 91], [576, 91]], cls: 'line-rented' }, // gateway -> token factory
+  { pts: [[504, 214], [548, 214], [548, 243], [576, 243]], cls: 'line-owned' }, // gateway -> endpoint
+  { pts: [[504, 370], [540, 370], [540, 326], [576, 326]], cls: 'line-dash' }, // night school -> bucket (sync)
+  { pts: [[504, 406], [576, 406]], cls: 'line-dash' }, // night school -> job
+  { pts: [[748, 378], [748, 354]], cls: 'line' }, // job -> bucket
+  { pts: [[748, 298], [748, 274]], cls: 'line-owned' }, // bucket -> endpoint
+  { pts: [[206, 220], [180, 220], [180, 332], [156, 332]], cls: 'line' }, // gateway -> Tavily
+];
+const headClass: Record<Cls, string> = { line: 'head', 'line-dash': 'head', 'line-owned': 'head-owned', 'line-rented': 'head-rented' };
+---
+
+<Figure minWidth={600} legend={['owned', 'rented', 'fallback', 'neutral']}>
+  <svg class="rt-svg" viewBox="0 0 952 470" role="img" aria-labelledby="nd-title nd-desc">
+    <title id="nd-title">Ratchet on Nebius: what runs where</title>
+    <desc id="nd-desc">
+      Visitors and your app reach one Nebius CPU VM over HTTPS. On the VM, Docker Compose runs Caddy, which terminates TLS,
+      and the Ratchet gateway on port 8000, which is never published. The ledger is a SQLite file in a Docker volume. Cron
+      runs the daily backup; the Night School lines are off by default. The gateway calls Nebius Token Factory for the
+      teacher, the judge and the hosted fallback, and the student on a Nebius Serverless Endpoint running vLLM. Night
+      School uploads train.jsonl to an Object Storage bucket, starts a Serverless Job that writes the new adapter to the
+      bucket, and the endpoint loads the adapter from the same bucket, mounted at /data. Scout uses Tavily for web search.
+    </desc>
+
+    <text class="eyebrow" x="16" y="48">Internet</text>
+    <rect class="box-plain" x="16" y="58" width="140" height="68" rx="10"></rect>
+    <text class="t" x="30" y="86">Visitors, app</text>
+    <text class="tm" x="30" y="106">your domain or sslip.io</text>
+
+    <text class="eyebrow" x="16" y="290">Search</text>
+    <rect class="box" x="16" y="300" width="140" height="64" rx="10"></rect>
+    <text class="t" x="30" y="326">Tavily</text>
+    <text class="tm" x="30" y="346">TAVILY_API_KEY</text>
+
+    <!-- The VM -->
+    <rect class="zone" x="190" y="12" width="330" height="444" rx="16"></rect>
+    <text class="eyebrow" x="206" y="34">CPU VM · cpu-e2 · 2vcpu-8gb</text>
+    <text class="tm" x="206" y="52">ufw: ports 22, 80, 443 only</text>
+
+    <rect class="box" x="206" y="64" width="298" height="56" rx="10"></rect>
+    <text class="t" x="222" y="89">caddy</text>
+    <text class="tm" x="222" y="108">HTTPS certificate · headers · guard</text>
+
+    <rect class="box-plain" x="206" y="146" width="298" height="96" rx="12" style="stroke-width:1.75"></rect>
+    <text class="t" x="222" y="172">ratchet (gateway)</text>
+    <text class="t2" x="222" y="194">uvicorn, 1 worker, port 8000</text>
+    <text class="tm" x="222" y="214">exposed to Caddy only, never published</text>
+    <text class="mono tm" x="222" y="232">deploy/vm/.env (mode 0600)</text>
+
+    <rect class="box" x="206" y="268" width="298" height="56" rx="10"></rect>
+    <text class="t" x="222" y="292">Volume ratchet-data</text>
+    <text class="mono tm" x="222" y="312">/data/ratchet.db (SQLite, WAL)</text>
+
+    <rect class="box" x="206" y="350" width="298" height="92" rx="10"></rect>
+    <text class="t" x="222" y="375">/etc/cron.d/ratchet</text>
+    <text class="t2" x="222" y="397">backup.sh daily at 03:10 UTC</text>
+    <text class="tm" x="222" y="417">Night School lines: off by default</text>
+
+    <!-- Token Factory -->
+    <rect class="zone" x="560" y="12" width="376" height="138" rx="16"></rect>
+    <text class="eyebrow" x="576" y="34">Token Factory · per token</text>
+    <rect class="rented" x="576" y="52" width="114" height="78" rx="10"></rect>
+    <text class="t" x="590" y="78">Teacher</text>
+    <text class="t2 rented-t" x="590" y="98">Ultra</text>
+    <text class="tm" x="590" y="116">escalations</text>
+    <rect class="box" x="700" y="52" width="106" height="78" rx="10"></rect>
+    <text class="t" x="714" y="78">Judge</text>
+    <text class="t2" x="714" y="98">Super</text>
+    <text class="tm" x="714" y="116">nightly eval</text>
+    <rect class="fallback" x="816" y="52" width="104" height="78" rx="10"></rect>
+    <text class="t" x="830" y="78">Fallback</text>
+    <text class="t2" x="830" y="98">Nano 30B</text>
+    <text class="tm" x="830" y="116">endpoint off</text>
+
+    <!-- AI Cloud -->
+    <rect class="zone" x="560" y="176" width="376" height="280" rx="16"></rect>
+    <text class="eyebrow" x="576" y="198">AI Cloud · eu-north1 · per GPU-hour</text>
+
+    <rect class="owned" x="576" y="212" width="344" height="62" rx="10"></rect>
+    <text class="t" x="592" y="237">Serverless Endpoint</text>
+    <text class="t2 owned-t" x="592" y="259">vLLM · Nano 4B + LoRA · L40S</text>
+
+    <rect class="box" x="576" y="298" width="344" height="56" rx="10"></rect>
+    <text class="t" x="592" y="322">Object Storage bucket</text>
+    <text class="mono tm" x="592" y="342">mounted at /data · S3 API for sync</text>
+
+    <rect class="box" x="576" y="378" width="344" height="56" rx="10"></rect>
+    <text class="t" x="592" y="402">Serverless Job</text>
+    <text class="mono tm" x="592" y="422">gpu-l40s-a · 1gpu-8vcpu-32gb · 2h max</text>
+
+    {
+      edges.map((e) => (
+        <g>
+          <path class={e.cls} d={connector(e.pts)} />
+          <polygon class={headClass[e.cls]} points={head(e.pts)} />
+        </g>
+      ))
+    }
+
+    <rect class="lbl-bg" x="160" y="72" width="44" height="14" rx="3"></rect>
+    <text class="lbl" x="182" y="83" text-anchor="middle">HTTPS</text>
+    <text class="lbl" x="758" y="370">writes adapter</text>
+    <text class="lbl owned-t" x="758" y="290">loads adapter</text>
+  </svg>
+  <Fragment slot="caption">
+    <p>
+      <strong>On Nebius.</strong> One CPU VM runs Caddy and the gateway with Docker Compose; the ledger lives in a Docker volume.
+      Token Factory serves the teacher, the judge and the hosted fallback per token. The student runs on a Serverless Endpoint,
+      billed per GPU-hour while it runs: a stopped endpoint is not billed for compute or its own storage, but the mounted bucket
+      still is. Night School (dashed, off by default on the VM) uploads the training file, runs a Serverless Job, and the endpoint
+      loads the new adapter from the same bucket.
+    </p>
+  </Fragment>
+</Figure>

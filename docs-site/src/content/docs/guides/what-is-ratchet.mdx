@@ -1,0 +1,151 @@
+---
+title: What is Ratchet
+description: An OpenAI-compatible gateway that moves narrow, repeated traffic from a rented teacher to a small student trained nightly from open teachers only.
+---
+
+import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import Summary from '../../../components/Summary.astro';
+import Eli10 from '../../../components/Eli10.astro';
+import Who from '../../../components/Who.astro';
+import BigPicture from '../../../components/diagrams/BigPicture.astro';
+
+<Summary>Ratchet is an OpenAI-compatible gateway: a small student model answers the requests it is sure about, a large open teacher answers the rest, and every night a better student is trained from the teacher's answers and released only if it passes statistical gates.</Summary>
+
+<Eli10>
+
+Imagine your app is a busy restaurant, and every order is one request.
+
+Today you hire a famous **head chef from an agency** for every dish, and the agency charges per plate. Most orders are the same few dishes again and again, so you pay top rates for toast.
+
+Ratchet puts an **apprentice chef** next to the **pass**. For each order the apprentice cooks the dish three times. If all three come out the same and the apprentice is sure, the plate goes out. If not, the head chef cooks it, and the dish goes into the **recipe book** with who cooked it and a note that copying it is allowed.
+
+Every night the apprentice goes to **night school**, studies the whole recipe book and writes a fresh **notebook of techniques**. The new notebook must pass a **sealed exam**, work a silent **trial shift**, then serve a few tables first. If the **inspector**'s random tastings say quality dropped, the apprentice goes back to class automatically.
+
+Some agency chefs' contracts say "you may not copy my recipes to train a rival kitchen". Ratchet only learns from chefs whose license allows copying.
+
+</Eli10>
+
+## How it really works
+
+### The problem
+
+- Many apps rent a large model per token for narrow, repetitive work a small model could do: labelling, extraction, ticket triage, steps inside longer pipelines ([PRD](/reference/prd/), section 2).
+- Distilling that traffic by hand is slow: log, clean, fine-tune, evaluate, deploy, watch for regressions. Most tools cover one step.
+- The obvious shortcut breaks contracts. Closed models such as GPT forbid using their outputs to train competing models ([OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/); the README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) lists more).
+
+### The idea
+
+<Steps>
+
+1. **Change one line.** Point any OpenAI SDK at Ratchet's `/v1` base URL and name the task with the `X-Ratchet-Task` header.
+2. **The student answers first.** <Who as="student" /> NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM on a Nebius Serverless Endpoint, is sampled 3 times. Its confidence mixes agreement across the samples with token probabilities.
+3. **The teacher answers when the student is unsure.** <Who as="teacher" /> NVIDIA Nemotron 3 Ultra on Nebius Token Factory takes every request whose confidence is below the version's calibrated threshold. It also checks a random 5% of the student's answers (audits).
+4. **Teacher answers become training data with provenance**: each stored example records the teacher that wrote it and the license that allows training on it, after personal data is redacted. Closed models are refused as teachers in code.
+5. **Night School trains a new adapter every night** on a Nebius Serverless Job, from teacher answers only, and scores it on a held-out golden set.
+6. **Releases are gated**: the golden gate, then shadow mode, then a canary at 10%, 50% and 100% of traffic, with automatic rollback when audited precision drops.
+7. **The bill is honest.** Ratchet reports savings per token and by GPU-hours actually paid, and says when a GPU endpoint costs more than it saves.
+
+</Steps>
+
+<BigPicture />
+
+### How it differs
+
+From the README's "Why not a router or a distillation API?" table (the distillation column covers services such as OpenPipe, AWS Bedrock Model Distillation and OpenAI's distillation):
+
+| | Cascade router | Distillation service | Ratchet |
+|---|---|---|---|
+| Who owns the student | Nobody: each call is rented | Usually stays on the provider's platform | You own the LoRA adapter and its signed lineage; the Nano base keeps NVIDIA's license |
+| Teacher license per example | Not recorded | Not stated | Recorded at capture and signed into the adapter's bill of materials |
+| Retraining | None | You start each job | Every night, from teacher answers only |
+| Release safety | Nothing ships | Your own evaluation | Held-out certificate, shadow, canary and automatic rollback |
+| Says when it loses money | Per-token savings only | No | Savings by GPU-hours paid, the break-even volume and a recommendation |
+
+Ratchet did not invent the pieces. The README's [prior art](https://github.com/harshbhx/ratchet#prior-art-and-what-is-new) section names them (sources and dates in the [competitive analysis](/reference/competitive-analysis/)):
+
+- **Gateways and routing:** [LiteLLM](https://github.com/BerriAI/litellm), [Portkey](https://portkey.ai), [OpenRouter](https://openrouter.ai), whose [`enforce_distillable_text`](https://openrouter.ai/docs/guides/evaluate-and-optimize/distillation) already restricts routing to models that allow distillation.
+- **Cascades and distillation:** [FrugalGPT](https://arxiv.org/abs/2305.05176) (2023); cascades that distil as traffic arrives, [Cache & Distil](https://arxiv.org/abs/2310.13561) (2024) and [Online Cascade Learning](https://arxiv.org/abs/2402.04513) (2024); NVIDIA's [Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), where promotion "remains a human decision" (its README, read Oct 21, 2026); and services such as OpenPipe, AWS Bedrock Model Distillation and OpenAI's distillation.
+- **Safe decisions:** [Trust or Escalate](https://arxiv.org/abs/2407.18370) (ICLR 2025) and sequential tests for canaries ([Netflix](https://arxiv.org/abs/2205.14762), 2022).
+
+What Ratchet adds is the combination, in one loop that runs by itself: per-request escalation, a nightly retrain and a gated release, with each example's teacher and license signed into the adapter's bill of materials and savings measured by GPU-hours paid.
+
+### What is real and what is simulated today
+
+<Aside type="caution" title="Not run on Nebius yet">
+As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Live mode, the student endpoint, the training job and the demo VM kit are written and tested offline only.
+</Aside>
+
+| Part | Status |
+|---|---|
+| Gateway, cascade, ledger, Night School logic, release gate, Scout, dashboard | Built and tested offline: 1,412 tests per the README, no network, no GPU |
+| Every result (student share, savings, precision) on the story page, in the README and in these docs | **Simulation**: mock models. They show how the loop behaves, not real model quality |
+| Live mode, the vLLM student endpoint, the training job, the demo VM kit | Written and tested offline with fake transports; **not yet run on Nebius** |
+| Model IDs and prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
+| Live results | **Pending.** The submission draft holds `[LIVE NUMBER]` placeholders, filled only from a published live run (`python -m ratchet.liverun`) |
+| Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer yet. Not legal advice |
+| Public demo | `[DEMO URL]` (placeholder: the address is not known yet) |
+
+In the README's seed-7 run (**simulation**, mock models, 2,000 tickets a day, a corrupted deploy of v3): the teacher answers everything on day 1; by day 3 the student serves 98% of requests; on day 4 the corrupted v3 is rolled back automatically; on day 10 the cost is $0.147 per 1,000 requests against $1.093 for all-Ultra, 87% saved (unverified list prices).
+
+## For engineers
+
+| Where | What |
+|---|---|
+| [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) | The FastAPI app: `POST /v1/chat/completions`, `/ratchet/stats`, the pages `/`, `/scout`, `/dashboard` |
+| [`ratchet/router.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/router.py) `Ratchet.handle` | The cascade: student, confidence, teacher, audits, shadow, cost |
+| [`ratchet/nightschool/orchestrate.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/nightschool/orchestrate.py) `run_night` | One night: dataset, training, golden eval, bill of materials |
+| [`ratchet/release.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/release.py) `ReleaseGate` | Golden gate, shadow, canary, rollback |
+| [`ratchet/licenses.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/licenses.py) `require_distillable` | Refuses any teacher whose license forbids distillation |
+
+Try it with no keys, in mock mode (simulation):
+
+```bash
+pip install -e ".[dev]"
+python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
+RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000
+```
+
+Then call it like any OpenAI endpoint:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+r = client.chat.completions.create(
+    model="ratchet",
+    messages=[{"role": "user", "content": "I was charged twice this month."}],
+    extra_headers={"X-Ratchet-Task": "ticket-triage"},
+)
+print(r.model_extra["ratchet"])  # served_by, confidence, cost_usd, all_teacher_cost_usd, ...
+```
+
+## Common questions
+
+### Is the student as good as the teacher? What if it is wrong?
+
+"As good" means agreement with Nemotron 3 Ultra on held-out rows, not ground truth. Each version's threshold is calibrated to 97% precision on half the golden set and measured on the other half, where a candidate needs at least 95%. A confident but wrong answer is served; random audits catch such answers in aggregate, and a canary is rolled back when the 95% upper bound of its audited precision falls below 92%. See [Escalation and audits](/guides/escalation-and-audits/).
+
+### Does it always save money?
+
+No. A GPU endpoint bills by the hour whether requests arrive or not. With unverified list prices (an L40S at about $1.55 an hour), the README estimates the break-even at about 1,500 student answers per endpoint hour. Below that, a 24/7 endpoint loses money, and Ratchet's cost report says so and recommends the hosted fallback or stopping the endpoint when idle. See [Cost and savings](/guides/cost-and-savings/).
+
+### What do I own at the end?
+
+The LoRA adapter Night School trains and its signed bill of materials. The student's base, Nemotron 3 Nano 4B, stays under the NVIDIA Nemotron Open Model License.
+
+### Why not learn from GPT?
+
+Its terms forbid using outputs to train competing models, so Ratchet refuses closed models as teachers in code. Nemotron 3 Ultra is under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16), which places no restrictions on outputs (license page checked Oct 21, 2026). See [Licenses](/guides/licenses/). Not legal advice.
+
+### What is not done yet?
+
+A real run on Nebius and the live numbers that come from it. The rest of the loop is built and tested offline.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="The big picture" href="/guides/big-picture/" description="Every component and how they connect." />
+  <LinkCard title="One request's journey" href="/guides/request-journey/" description="What happens to a single API call." />
+  <LinkCard title="For judges" href="/guides/for-judges/" description="The short tour for the hackathon." />
+  <LinkCard title="Evidence" href="/guides/evidence/" description="What you can check yourself." />
+</CardGrid>
