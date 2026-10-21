@@ -21,7 +21,8 @@ statement of where they came from, which goes into the `import` event with the c
 `gpt-*`, `o1`/`o3`/`o4`, `claude-*` and `gemini-*` (any id of a closed family) are refused with the clause of their terms
 quoted. Every row is validated and normalised as a chat request is, its label is cleaned and checked against the task's
 spec, everything is redacted as a teacher answer is (invariant 12), and duplicates are stored once. A pinned task, a
-no-store task, an unregistered task and zero retention are refused before anything is read (invariant 10, FR-13.1).
+no-store task, an unregistered task, zero retention and a `--client` whose `RATCHET_KEY_LIMITS` entry says `store=0` are
+refused before anything is read (invariant 10, FR-13.1).
 
 `--golden-only` stores the rows in the golden split whatever their hash says, flagged `golden_only`, so they are never
 trained on, even past FREQUENT (FR-4.50): a human-verified golden set. A row whose prompt may already have been trained
@@ -51,7 +52,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
 from . import feedback, licenses, privacy, tasks, taskspec
-from .auth import valid_name
+from .auth import KeyRing, parse_key_limits, valid_name
 from .config import Settings
 from .ledger import SCHEMA, STORED_PARAM_KEYS, Ledger
 from .openai_compat import TEXT_MODALITY, APIError, Limits, normalize_messages, parse_body, validate_chat_request
@@ -195,6 +196,26 @@ def check_task(name: str, settings: Settings) -> tasks.Task:
     return task
 
 
+def check_client(client: str | None, settings: Settings) -> None:
+    """The API key name an import attributes its rows to (`--client`), or ImportRefused: a name that is no name, or a key whose
+    RATCHET_KEY_LIMITS entry says `store=0` (FR-13.1: nothing that key sends is stored, so a row attributed to it, which
+    erasure and export would list under it, may not be either). A name that is no configured key is only a label."""
+    if client is None:
+        return
+    if not valid_name(client):
+        raise ImportRefused("--client must be an API key name (letters, digits, '_', '.', '-', at most 64)")
+    try:
+        policy = settings.limit_policy()
+        limits = parse_key_limits(policy.key_limits, KeyRing(settings.api_keys).names, policy.key_defaults).get(client)
+    except ValueError as e:  # a bad key list or limits spec: the same text the gateway stops at startup with
+        raise ImportRefused(f"cannot read the key limits to check --client: {e}") from None
+    if limits is not None and not limits.store:
+        raise ImportRefused(
+            f"--client {client!r} is an API key with store=0 in RATCHET_KEY_LIMITS: nothing it sends is stored, so no row "
+            "may be attributed to it either (FR-13.1)"
+        )
+
+
 def check_attest(source: Source, attest: str | None) -> str | None:
     """The attestation, stripped: required (non-empty) for human labels, optional for a teacher's, at most
     MAX_ATTEST_CHARS and on one line, because it goes into an event."""
@@ -317,8 +338,7 @@ def run_import(
     src = parse_source(source)
     statement = check_attest(src, attest)
     t = check_task(task, settings)
-    if client is not None and not valid_name(client):
-        raise ImportRefused("--client must be an API key name (letters, digits, '_', '.', '-', at most 64)")
+    check_client(client, settings)
     limits = settings.limits()
     policy: GenPolicy = settings.gen_policy()
     report = Report(t.name, src.name, src.license.name, golden_only, dry_run, file_name)
