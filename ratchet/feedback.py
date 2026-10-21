@@ -375,6 +375,16 @@ def _policy_reason(ratchet: Ratchet, task: tasks.Task, row: Any, aliases: tuple[
     return ratchet.store_opt_out(task, meta)
 
 
+def _prepare_correction(task: tasks.Task, correction: Correction, redact_pii: bool) -> Prepared | str:
+    """`prepare` for a correction, its refusal as the FeedbackError the client gets."""
+    try:
+        return prepare(task, correction.messages, correction.text, params=correction.params, redact_pii=redact_pii)
+    except LabelError as e:
+        raise FeedbackError(
+            "invalid_correction", f"The correction is not a valid answer for task {task.name!r}: {e}.", "corrected"
+        ) from None
+
+
 def submit(
     ledger: Ledger,
     ratchet: Ratchet,
@@ -408,15 +418,15 @@ def submit(
     prepared: Prepared | str | None = None
     aliases: tuple[str, ...] = ()
     if correction is not None:
-        try:  # string work, outside the ledger's lock
-            prepared = prepare(
-                task, correction.messages, correction.text, params=correction.params, redact_pii=ratchet.s.redact_pii
-            )
-        except LabelError as e:
-            raise FeedbackError(
-                "invalid_correction", f"The correction is not a valid answer for task {task.name!r}: {e}.", "corrected"
-            ) from None
+        invalid = f"The correction is not a valid answer for task {task.name!r}: %s."
+        problem = task.check(tasks.clean_answer(task, correction.text))  # the cheap part first: no redaction yet
+        if problem is not None:
+            raise FeedbackError("invalid_correction", invalid % problem, "corrected")
         aliases = _end_user_check(row, correction.end_user_ids, client, end_users)
+        # Redaction is the expensive string work: only for a correction a policy may keep (the verdict is recorded either
+        # way; a correction that is kept out is never redacted), so a flood of refused corrections costs little CPU.
+        if _policy_reason(ratchet, task, row, aliases, key_store) is None:
+            prepared = _prepare_correction(task, correction, ratchet.s.redact_pii)
     outcome: Stored | None = None
     with ledger.locked():  # one verdict at a time per ledger: the checks and the writes see the same rows
         prior = ledger.feedback_row(request_id)
@@ -432,6 +442,8 @@ def submit(
             )
         if correction is not None:
             reason = _policy_reason(ratchet, task, row, aliases, key_store)
+            if reason is None and prepared is None:  # a policy changed since the check above: redact under the lock, rarely
+                prepared = _prepare_correction(task, correction, ratchet.s.redact_pii)
             if reason is None and isinstance(prepared, str):
                 reason = prepared  # 'invalid after redaction'
             if reason is not None:
