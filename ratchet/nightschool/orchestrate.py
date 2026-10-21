@@ -68,14 +68,16 @@ def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: in
 
 def early_night(ledger: Ledger, gate: ReleaseGate, min_new_examples: int) -> tuple[int, str]:
     """The new examples tonight needs, and the note a skip event adds (FR-6.41, ADR 0032). With drift_early_night=1,
-    when a `drift` event was written after the last `trained` one, half of `min_new_examples` (at least 1): traffic
-    changed, so a student trained on it is worth having sooner. The drift monitor is brought up to date first, so a
-    nightly job in its own process sees the alarms the gateway would. Otherwise `min_new_examples` and no note. It runs
-    after the in-flight check, so it never trains during a release (INV-5)."""
+    when a drift alarm came from a request logged after the last `trained` event, half of `min_new_examples` (at least
+    1): traffic changed, so a student trained on it is worth having sooner. The drift monitor is brought up to date
+    first, so a nightly job in its own process sees the alarms the gateway would; the alarm's request decides, not when
+    its event was written, so an old alarm that a replay finds late does not count. Otherwise `min_new_examples` and no
+    note. It runs after the in-flight check, so it never trains during a release (INV-5)."""
     if not gate.policy.drift_early_night or gate.drift is None:
         return min_new_examples, ""
     gate.check_drift()
-    if ledger.last_event_id("drift") <= ledger.last_event_id("trained"):
+    trained = ledger.last_event("trained")
+    if not gate.drift_alarm_since(trained["ts"] if trained is not None else None):
         return min_new_examples, ""
     return max(1, min_new_examples // 2), f" (halved from {min_new_examples} after a drift alarm)"
 

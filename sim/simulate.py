@@ -20,6 +20,8 @@ from typing import Any
 from ratchet.certificate import CALIBRATIONS
 from ratchet.config import Settings
 from ratchet.cost import cost_report, record_simulated_day
+from ratchet.drift import pct as drift_pct
+from ratchet.drift import task_label
 from ratchet.ledger import Ledger
 from ratchet.nightschool.orchestrate import run_night
 from ratchet.release import ReleaseGate, ReleasePolicy
@@ -200,10 +202,11 @@ def table(res: dict) -> str:
     drift = res.get("drift")
     if drift and drift["enabled"]:  # the label-free drift alarm (ADR 0032), labelled as simulation
         alarmed = [x for x in drift["streams"] if x["alarm"]]
-        where = ", ".join(f"v{x['version']} ({x['task']}) on day {x['alarm_day']}" for x in alarmed) or "none"
+        where = ", ".join(f"v{x['version']} ({task_label(x['task'])}) on day {x['alarm_day']}" for x in alarmed) or "none"
+        each, family = drift_pct(drift["false_alarm_bound"]), drift_pct(drift["family_bound"])
         lines.append(
             f"\ndrift (simulation, mock models): {drift['monitored']} streams at threshold {drift['threshold']:g} "
-            f"(false alarm <= {drift['false_alarm_bound']:.0%} each, <= {drift['family_bound']:.0%} in all); alarms: {where}"
+            f"(false alarm <= {each} each, <= {family} in all); alarms: {where}"
         )
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]

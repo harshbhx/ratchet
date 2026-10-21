@@ -828,24 +828,37 @@ class Ledger:
         return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
 
     @_locked
-    def last_event_id(self, kind: str) -> int:
-        """The id of the latest event of `kind`, 0 when there is none (Night School compares 'drift' with 'trained')."""
-        return int(self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE kind=?", (kind,)).fetchone()[0])
+    def last_event(self, kind: str) -> dict[str, Any] | None:
+        """The latest event of `kind` (id, ts, day, kind, detail), or None. Night School reads the last 'trained' one to
+        tell a drift alarm that came after it from one found late."""
+        r = self.db.execute("SELECT id, ts, day, kind, detail FROM events WHERE kind=? ORDER BY id DESC LIMIT 1", (kind,))
+        row = r.fetchone()
+        return dict(row) if row is not None else None
 
     @_locked
-    def event_once(self, key: str, kind: str, detail: str) -> bool:
+    def request_ts(self, rid: int) -> float | None:
+        """When request `rid` was logged (its `ts`), or None for an id the ledger does not hold (or a row without one)."""
+        r = self.db.execute("SELECT ts FROM requests WHERE id=?", (rid,)).fetchone()
+        return None if r is None or r["ts"] is None else float(r["ts"])
+
+    @_locked
+    def event_once(self, key: str, kind: str, detail: str, *, day: int | None = None, meta: dict[str, Any] | None = None) -> bool:
         """Write event `kind` unless one was already written under `key`, and record it in `meta` (key -> the event's
-        id). The check and both writes are one transaction, so two processes watching the same ledger (the gateway and
-        `python -m ratchet.live tick`) or a restart that replays it write the event once. Returns whether it wrote."""
+        id, with `meta`'s entries). The check and both writes are one transaction, so two processes watching the same
+        ledger (the gateway and `python -m ratchet.live tick`) or a restart that replays it write the event once. `day`
+        dates the event when it happened on another day than today (a drift alarm found by replaying old rows). Returns
+        whether it wrote."""
         self._begin()
         try:
             if self.db.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None:
                 self.db.commit()
                 return False
             cur = self.db.execute(
-                "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail)
+                "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)",
+                (time.time(), self.day if day is None else day, kind, detail),
             )
-            self.db.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, json.dumps({"event": cur.lastrowid})))
+            value = json.dumps({"event": cur.lastrowid, **(meta or {})})
+            self.db.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, value))
             self.db.commit()
         except BaseException:
             self.db.rollback()

@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 799 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_drift), ~90 s
+pytest -q                     # 807 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_drift), ~90 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -33,8 +33,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 14 |
-| `tests/test_drift.py` | 40 (34 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
-| **Total** | **799** |
+| `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
+| **Total** | **807** |
 
 There are three layers:
 
@@ -610,7 +610,7 @@ Merkle trees and the BOM v2 scaffold ([ADR 0024](adr/0024-evidence-foundations.m
 
 ### `tests/test_drift.py`
 
-The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, [ADR 0032](adr/0032-label-free-drift-alarm.md)). Simulation numbers are from mock models.
+The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, NFR-56, [ADR 0032](adr/0032-label-free-drift-alarm.md)). Simulation numbers are from mock models.
 
 | Test | Covers |
 |---|---|
@@ -626,15 +626,21 @@ The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, [ADR 0032](adr/00
 | `test_ten_thousand_observations_take_under_150_ms` | NFR-55: 10,000 `observe` calls in under 150 ms (best of three) |
 | `test_boosted_rate_is_capped_and_never_lowers_a_rate` | `boosted_rate`: the rate times the boost, at most 0.5, never below the rate itself |
 | `test_confidence_stream_reads_only_student_confidences_in_id_order` | `Ledger.confidence_stream` returns rows with a confidence and a student version only (no cold start, no failed student call, no pinned task), in id order, after an id, up to a limit, and narrowed by version, task and an id bound; `version_states` |
-| `test_events_once_and_the_last_event_id` | `Ledger.event_once` writes an event under a key once, also from a second connection to the same file, and records its id in `meta`; `last_event_id` is 0 without one |
+| `test_events_once_and_the_last_event` | `Ledger.event_once` writes an event under a key once, also from a second connection to the same file, and records its id in `meta` with extra entries; `day` dates it; `last_event` is `None` without one; `request_ts` |
 | `test_replaying_the_ledger_reproduces_every_capital_exactly` | A monitor fed tick by tick, one that replays the whole ledger at once and one that reads it in batches of 50 hold the same numbers to the last bit, alarms included; `rebuild` reproduces them; another seed gives other numbers |
 | `test_compaction_keeps_serving_versions_and_replays_a_restored_one` | Counts are kept for canary, live and the most recently retired version; an older retired or rolled-back one keeps only its final numbers and refuses to observe; restored to live by hand, its stream is replayed first and matches a fresh replay |
 | `test_compaction_keeps_the_most_recently_retired_version_not_the_newest` | A canary retired early has a higher id than the live version retired later; the later one (the one an operator would restore) keeps its counts |
 | `test_rows_without_a_finite_confidence_are_skipped` | Infinite confidences are counted as skipped and never observed |
-| `test_tick_writes_one_drift_event_per_alarm_across_restarts` | An alarm writes one `drift` event naming the version, the task, the evidence and both false-alarm bounds; later ticks and a second gate replaying the same file write no other; `drift_status` and `open_alarm` |
+| `test_stream_memory_follows_what_it_has_seen` | NFR-56: a stream that saw one confidence holds under 8 KB; the sorted array of bins and the Fenwick tree (forced from the first observation) give the same capital, alarm and trajectory to the last bit; `Fenwick.build` equals one insert per value; `compact` drops the counts and the generator |
+| `test_client_task_names_cannot_grow_the_monitor` | NFR-56, threat model T12: 1,000 invented task names hold 17 streams (16 by first appearance and `*`) in under 250 KB; 5,000 more add no stream and under 150 KB; an early name keeps its stream; another version gets its own 16; a replay agrees; `max_streams=0` pools every task |
+| `test_a_compacted_shared_stream_replays_its_own_rows` | A compacted version restored by hand replays its `*` stream from its rows whose task has no stream of its own; a new name still goes to it; the result matches a fresh replay |
+| `test_tick_writes_one_drift_event_per_alarm_across_restarts` | An alarm writes one `drift` event naming the version, the task, the evidence and both false-alarm bounds, dated on the alarm's day with its request and day in `meta`; later ticks and a second gate replaying the same file write no other; `drift_status` and `open_alarm` |
+| `test_a_shift_under_invented_task_names_alarms_on_the_shared_stream` | NFR-56: a drop in confidence spread over 1,500 invented names alarms on the version's `*` stream, and the event calls it "other tasks" |
+| `test_a_drift_event_the_ledger_refused_is_written_by_the_next_check` | A busy database refuses the event: the error propagates, the alarm stays latched, and the next check writes the event once, dated on the alarm's day |
 | `test_policy_turns_the_monitor_off_and_refuses_actions_without_it` | `RATCHET_DRIFT_ALARM=0` turns the monitor off (no events, no streams, the off status); thresholds of 1 or less, a boost below 1, an action with the monitor off and a switch other than 0 or 1 are refused; the three variables are read by `from_env` |
 | `test_certificate_is_suspended_while_a_drift_alarm_is_open` | FR-16.3: `GET /ratchet/versions/{id}/certificate` is `certified` with a quiet stream (its `drift` lists the streams without trajectories), `suspended` while an alarm is open (the certificate still shown), and `drift` is `null` for a version that never served |
 | `test_drift_endpoint_and_stats_block` | `GET /ratchet/drift` with every key, a stream's fields, `?version=` filtering and a 422 for a bad value; the `drift` block of `/ratchet/stats`; both with the monitor off |
+| `test_task_headers_sent_to_the_gateway_hold_a_bounded_number_of_streams` | NFR-56, threat model T12: 40 unauthenticated requests to the mock gateway, each with its own `X-Ratchet-Task`, are distilled, yet the monitor holds 17 streams for the version (the 24 later names in `*`); `/ratchet/stats` reports 17 and a family bound of 0.17 |
 | `test_a_restarted_gateway_replays_the_ledger_at_startup` | A live `Runtime` on an existing ledger file replays it when it starts, writes no second event for an alarm already recorded, and shares its audit boosts with the router |
 | `test_sqlite_stores_no_nan` | A NaN confidence is stored as NULL, which `confidence_stream` leaves out |
 | `test_an_up_to_date_monitor_reads_one_query_per_update` | NFR-55: after its replay an update is one range query; the versions' states are read again only every 1,000 rows |
@@ -643,11 +649,13 @@ The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, [ADR 0032](adr/00
 | `test_gate_boosts_an_alarmed_serving_version_until_a_newer_one_goes_live` | FR-6.40: off by default; with a boost of 3 the alarmed live version is boosted in the dict the router holds, and cleared (in place) once a newer version is live |
 | `test_early_night_halves_the_new_examples_needed_only_after_an_alarm` | FR-6.41, INV-5: 30 new examples do not train without an alarm, nor with the action off after one; with it on they train (the `trained` event says it was an early night); once a night has trained, 30 more need the usual 50 again |
 | `test_early_night_never_trains_while_a_release_is_in_flight` | FR-6.41, INV-5: an alarm on a canary does not let Night School train |
+| `test_an_alarm_found_by_a_replay_keeps_its_day_and_counts_only_after_the_last_training` | FR-6.41: a replay finds an alarm from day 3, before the last training on day 9; its event is dated day 3 and brings no early night although its id is newer; a change after that training, found only by Night School's own check, halves the examples needed |
 | `test_sim_alarms_on_the_launch_day` | FR-9.4: the ticket launch on day 5 alarms on day 5 or 6, never before (the seed-7 reference run at 2,000 a day, whose corrupted v3 raises no alarm, and seed 11 at 1,000 a day) |
 | `test_sim_never_alarms_without_drift` (2 cases) | Seeds 7 and 11, 6 days × 1,000 requests without drift: no `drift` event |
 | `test_monitor_draws_nothing_from_the_router_rng` | NFR-55: the same seeded run with the monitor on and off gives the same days, versions, totals and events, apart from the `drift` event |
 | `test_sim_alarm_sweep` (5 cases) | Slow: seeds 1, 2, 3, 7 and 11 at 2,000 a day alarm on day 5 or 6 after the launch and never in 6 days without one |
 | `test_sim_flags_reach_the_policy_and_the_router` | `--drift-alarm`, `--drift-boost` and `--drift-early-night` set the gate's policy and the router shares the gate's boosts; settings that would do nothing are refused; the table prints the drift line and the event |
+| `test_false_alarm_bounds_keep_three_significant_digits` | `drift.pct` keeps 3 significant digits, and the simulator's drift line at threshold 1000 says 0.1%, not 0% |
 
 ## Live-path tests
 

@@ -208,6 +208,9 @@ class ReleaseGate:
         # A mock night (`early_night`) and the gateway's ticks may check drift at once; one at a time keeps the boosts
         # consistent. The monitor has its own lock for its streams.
         self._drift_lock = threading.Lock()
+        # Alarms whose `drift` event could not be written yet (the ledger raised); the next check writes them first. The
+        # monitor latches an alarm when it sees it, so without this a failed write would never be retried.
+        self._unwritten: list[Alarm] = []
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
@@ -322,16 +325,39 @@ class ReleaseGate:
     def check_drift(self) -> list[Alarm]:
         """Bring the drift monitor up to date with the ledger and act on the alarms raised: a `drift` event for each,
         written once per (version, task) across processes and restarts (`Ledger.event_once`), and the audit boosts
-        (`audit_boost`) refreshed. Returns the new alarms (none while RATCHET_DRIFT_ALARM=0)."""
+        (`audit_boost`) refreshed. Returns the new alarms (none while RATCHET_DRIFT_ALARM=0).
+
+        The event is dated with the alarm's own ledger day, and `meta` records its request and day, because a monitor
+        that replays the ledger (a restart, a lowered threshold, a nightly job in its own process) can find an alarm
+        days after it happened. An event the ledger refused to write stays queued and is written by the next check; the
+        error still propagates."""
         if self.drift is None:
             return []
         with self._drift_lock:
             alarms = self.drift.update(self.ledger)
-            for alarm in alarms:
-                self.ledger.event_once(alarm.key, "drift", alarm.detail())
+            self._unwritten.extend(alarms)
+            while self._unwritten:
+                alarm = self._unwritten[0]
+                meta = {"request": alarm.request_id, "day": alarm.day}
+                self.ledger.event_once(alarm.key, "drift", alarm.detail(), day=alarm.day, meta=meta)
+                self._unwritten.pop(0)
             if self.policy.drift_audit_boost > 1:
                 self._refresh_audit_boost()
         return alarms
+
+    def drift_alarm_since(self, ts: float | None) -> bool:
+        """Whether some stream alarmed on a request logged after `ts` (any alarm when `ts` is None). The alarm's own
+        request decides, not when its event was written, so an alarm a replay finds late does not count as new (FR-6.41).
+        Both times are the ledger's wall-clock `ts`, also in simulations."""
+        if self.drift is None:
+            return False
+        latest = self.drift.alarm_requests()[:1]
+        if not latest:
+            return False
+        if ts is None:
+            return True
+        when = self.ledger.request_ts(latest[0])
+        return when is not None and when > ts
 
     def _refresh_audit_boost(self) -> None:
         """Boost the audits of every version that has an open drift alarm and still serves (canary or live); drop the
@@ -352,16 +378,15 @@ class ReleaseGate:
         """`GET /ratchet/drift`: whether the monitor is on, its threshold and false-alarm bounds, and every stream (or
         `version`'s) with its capital and trajectory (`DriftMonitor.status`)."""
         if self.drift is None:
-            return {
-                "enabled": False,
-                "threshold": None,
-                "false_alarm_bound": None,
-                "family_bound": None,
-                "monitored": 0,
-                "alarms": 0,
-                "streams": [],
-            }
+            return {**self.drift_counts(), "streams": []}
         return {"enabled": True, **self.drift.status(version, trajectory)}
+
+    def drift_counts(self) -> dict[str, Any]:
+        """`drift_status` without the streams: what `/ratchet/stats` shows on every poll, without a row per stream."""
+        if self.drift is None:
+            off = dict.fromkeys(("threshold", "false_alarm_bound", "family_bound"))
+            return {"enabled": False, **off, "monitored": 0, "alarms": 0}
+        return {"enabled": True, **self.drift.counts()}
 
     def drift_view(self, version: int) -> dict[str, Any] | None:
         """The certificate endpoint's `drift` for `version`: `alarm` (open or not), the threshold and its streams; None

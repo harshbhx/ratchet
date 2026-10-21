@@ -749,8 +749,8 @@ def stats() -> dict[str, Any]:
 
 def _drift_block() -> dict[str, Any]:
     """`/ratchet/stats`' `drift`: whether the monitor is on, its threshold and family false-alarm bound, the streams it
-    holds (a count here; the list is in `GET /ratchet/drift`) and how many alarmed."""
-    d = rt.gate.drift_status(trajectory=False)
+    holds (a count here; the list is in `GET /ratchet/drift`) and how many alarmed. Counts only: no row per stream."""
+    d = rt.gate.drift_counts()
     return {k: d[k] for k in ("enabled", "threshold", "family_bound", "alarms")} | {"streams": d["monitored"]}
 
 
