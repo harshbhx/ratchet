@@ -19,12 +19,23 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, AppTransport, FakeClock, FakeOpenAIServer, RecordingProvider, RecordingRun, _examples, _version
+from fakes import (
+    OPEN_TEACHER,
+    AppTransport,
+    FakeClock,
+    FakeOpenAIServer,
+    RecordingProvider,
+    RecordingRun,
+    _examples,
+    _version,
+    by_host,
+)
 from fastapi.testclient import TestClient
 
 from ratchet import bom, licenses, live
@@ -963,3 +974,440 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     backup = ROOT / "deploy" / "vm" / "backup.sh"
     r = subprocess.run([BASH, str(backup)], env={**env, "RATCHET_MODE": "mock"}, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
+
+
+# ---------- day-1 probes (scripts/day1_check.py: choices, reasoning, student, tavily, cli, --json) ----------
+TF = "https://tf.test/v1"
+TF_KEY = "tf-day1-key"
+TAVILY_KEY = "tvly-day1-secret-key"
+NANO4B = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"  # RATCHET_STUDENT_BASE_MODEL's default: vLLM serves the base under it
+PROBE = "day1-probe"
+NEBIUS_FLAGS = "--name --image --auth --args --timeout --container-command --id --type --format"
+
+
+def _day1(day1_check: Any, monkeypatch: pytest.MonkeyPatch, key: str = TF_KEY, **env: str) -> None:
+    """A clean environment and the script's module constants pointed at the fakes, as the default-flow test does."""
+    _live_env(monkeypatch, **env)
+    for name, value in (("BASE", TF), ("KEY", key), ("TEACHER", OPEN_TEACHER), ("TEACHER_MAX_TOKENS", 8192)):
+        monkeypatch.setattr(day1_check, name, value)
+
+
+def _student_env(**extra: str) -> dict[str, str]:
+    return {"RATCHET_STUDENT_BASE": STUDENT_BASE, "RATCHET_STUDENT_KEY": STUDENT_KEY, "RATCHET_SAMPLES": "3", **extra}
+
+
+def _tf(day1_check: Any, models: list[str] | None = None, **kw: Any) -> FakeOpenAIServer:
+    """Token Factory listing every WANT model (or `models`), answering JSON with token logprobs."""
+    return FakeOpenAIServer(LABELS, models=list(day1_check.WANT) if models is None else models, **kw)
+
+
+def _vllm(**kw: Any) -> FakeOpenAIServer:
+    """The student endpoint on vLLM v0.18.0: the base model is served, and each model answers in its own words."""
+    kw.setdefault("loaded", {NANO4B})
+    kw.setdefault("errors", "v0.18.0")
+    return FakeOpenAIServer(kw.pop("text", lambda body: f"answer from {body['model']}"), **kw)
+
+
+def _route(server: FakeOpenAIServer) -> list[tuple[str, Any]]:
+    """Each call to a fake as (path, chat model or adapter name)."""
+    return [(httpx.URL(c.url).path, (c.json or {}).get("model") or (c.json or {}).get("lora_name")) for c in server.calls]
+
+
+@pytest.mark.req("FR-8.5", "INV-9")
+def test_day1_check_default_is_the_teacher_check(day1_check, monkeypatch, capsys, tmp_path):
+    _day1(day1_check, monkeypatch)
+    assert isinstance(day1_check.WANT, list) and day1_check.WANT[0] == OPEN_TEACHER
+
+    runs = []
+    for args in ((), ([],), (["teacher"],)):
+        tf = _tf(day1_check)
+        assert day1_check.main(httpx.Client(transport=tf.transport), *args) == 0
+        runs.append(([(c.method, c.url, c.json) for c in tf.calls], capsys.readouterr().out))
+    assert runs[0] == runs[1] == runs[2] and runs[0][1].rstrip().endswith("All good.")
+    assert len(runs[0][0]) == 1 + len(day1_check.WANT) + 1  # /models, one call per model, the generation parameters
+
+    # main never reads sys.argv: only the __main__ block passes it.
+    monkeypatch.setattr(sys, "argv", ["day1_check.py", "student"])
+    tf = _tf(day1_check)
+    assert day1_check.main(httpx.Client(transport=tf.transport)) == 0
+    assert all(httpx.URL(c.url).host == "tf.test" for c in tf.calls) and "student:" not in capsys.readouterr().out
+
+    tf = _tf(day1_check)
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["bogus"]) == 2 and tf.calls == []
+    assert day1_check.main(None, ["--help"]) == 0 and "--adapter-path" in capsys.readouterr().out
+
+    # Token Factory lists Ultra in lower case: a hint, and the fact in the JSON.
+    tf = _tf(day1_check, models=[OPEN_TEACHER.lower(), *day1_check.WANT[1:]])
+    path = tmp_path / "day1" / "day1.json"
+    code = day1_check.main(httpx.Client(transport=tf.transport), ["teacher", "--json", str(path)], run=RecordingRun())
+    out = capsys.readouterr().out
+    assert code == 1 and f"[hint] {OPEN_TEACHER} is listed as {OPEN_TEACHER.lower()} (case differs)" in out
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert doc["checks"]["teacher"]["models"]["case_mismatch"] == {OPEN_TEACHER: OPEN_TEACHER.lower()}
+    assert doc["exit_code"] == 1 and doc["checks_run"] == ["teacher"] and doc["checks"]["teacher"]["outcome"] == "fail"
+
+
+@pytest.mark.req("FR-2.11", "FR-8.2")
+def test_day1_student_probe_on_vllm_0_18_0(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+    # The fake's body is vLLM v0.18.0's, from `OpenAIServing._check_model`.
+    missing = httpx.Client(transport=_vllm().transport).post(f"{STUDENT_BASE}/chat/completions", json={"model": "student-v1"})
+    assert missing.status_code == 404 and missing.json() == {
+        "error": {"message": "The model `student-v1` does not exist.", "type": "NotFoundError", "param": "model", "code": 404}
+    }
+
+    vllm = _vllm()
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student"], transport=vllm.transport) == 0
+    out = capsys.readouterr().out
+    assert "adapter_missing ok" in out and out.rstrip().endswith("All good.") and "student.test" not in out
+    chat = "/v1/chat/completions"
+    assert _route(vllm) == [
+        ("/v1/load_lora_adapter", PROBE),
+        ("/v1/load_lora_adapter", PROBE),  # vLLM's 400 'already loaded'
+        (chat, PROBE),  # the samples
+        (chat, NANO4B),  # the base model
+        (chat, PROBE),  # the adapter at temperature 0
+        (chat, PROBE),  # the thinking switch
+        (chat, "student-v0"),
+        ("/v1/unload_lora_adapter", PROBE),
+    ]
+    load, _, samples, base, adapter, thinking, lost, unload = [c.json for c in vllm.calls]
+    assert load == {"lora_name": PROBE, "lora_path": "/data/adapters/test"}
+    student_max = Settings().gen_policy().plan(None).student.max_tokens
+    assert (samples["n"], samples["temperature"], samples["logprobs"], samples["max_tokens"]) == (3, 0.7, True, student_max)
+    assert base["temperature"] == adapter["temperature"] == 0.0 and base["max_tokens"] == 64
+    assert thinking["chat_template_kwargs"] == {"enable_thinking": False} and "chat_template_kwargs" not in samples
+    assert lost["n"] == 1 and unload == {"lora_name": PROBE}
+    assert all(c.headers["authorization"] == f"Bearer {STUDENT_KEY}" for c in vllm.calls)
+    assert vllm.loaded == {NANO4B}  # the probe adapter is gone again
+
+
+@pytest.mark.req("FR-2.11")
+def test_day1_adapter_missing_fails_when_the_front_end_rewrites_the_404(day1_check, monkeypatch, capsys, tmp_path):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+    rewritten = (
+        httpx.Response(404, json={"detail": "Not Found"}),
+        httpx.Response(404, text="<html><body><h1>404 Not Found</h1></body></html>"),
+        httpx.Response(200, json={"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}),
+    )
+    for answer in rewritten:
+        vllm = _vllm()
+
+        def front_end(request: httpx.Request, vllm: FakeOpenAIServer = vllm, answer: httpx.Response = answer) -> httpx.Response:
+            body = json.loads(request.content) if request.content else {}
+            return answer if body.get("model") == "student-v0" else vllm(request)
+
+        transport = by_host({"student.test": front_end})
+        path = tmp_path / "rewritten.json"
+        args = ["student", "--json", str(path)]
+        assert day1_check.main(httpx.Client(transport=transport), args, transport=transport, run=RecordingRun()) == 1
+        assert "[FAIL] student: adapter_missing" in capsys.readouterr().out
+        record = json.loads(path.read_text(encoding="utf-8"))["checks"]["student"]["adapter_missing"]
+        assert record["router_reloads"] is False and record["http"] == answer.status_code
+
+    # vLLM before its OpenAI-shaped errors (the fake's legacy body) still names the adapter.
+    vllm = _vllm(errors="legacy")
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student"], transport=vllm.transport) == 0
+    assert "adapter_missing ok" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-8.2")
+def test_day1_student_probe_reports_load_and_unload_outcomes(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+
+    def probe(vllm: FakeOpenAIServer, transport: httpx.BaseTransport | None = None) -> tuple[int, str]:
+        t = transport or vllm.transport
+        code = day1_check.main(httpx.Client(transport=t), ["student"], transport=t, which=lambda _: None)
+        return code, capsys.readouterr().out
+
+    refused = "While loading /data/adapters/test, expected target modules in {'qkv_proj', 'o_proj'} but received ['in_proj']"
+    vllm = _vllm(load=lambda body: (400, refused))
+    code, out = probe(vllm)
+    assert code == 1 and "/data/adapters/test" in out and "vLLM refused a module train.py trained" in out
+    assert _route(vllm) == [
+        ("/v1/load_lora_adapter", PROBE),
+        ("/v1/chat/completions", NANO4B),  # DAY1 row 5 still runs
+        ("/v1/chat/completions", "student-v0"),
+    ]
+    code, out = probe(_vllm(load=lambda body: (404, "Not Found")))
+    assert code == 1 and "VLLM_ALLOW_RUNTIME_LORA_UPDATING" in out
+
+    # A second load answering 200 is harmless but not v0.18.0; one answering 500 would break a reload.
+    code, out = probe(_vllm(errors="legacy"))
+    assert code == 0 and "[warn] student: a second load answered 200" in out
+    loads = iter([(200, "Success"), (500, "boom")])
+    code, out = probe(_vllm(errors="legacy", load=lambda body: next(loads)))
+    assert code == 1 and "a second load of day1-probe raised HTTPStatusError 500" in out
+    code, out = probe(_vllm(unload=lambda body: (404, "The lora adapter 'day1-probe' cannot be found.")))
+    assert code == 0 and "day1-probe was already gone" in out
+
+    # The samples: all n with logprobs, ended by themselves, within the student's timeout.
+    code, out = probe(_vllm(finish_reason="length"))
+    assert code == 0 and "[warn] student: samples" in out and "token cap" in out
+    code, out = probe(_vllm(logprob=None))
+    assert code == 1 and "3 of 3 choices, 0 with token logprobs" in out
+
+    def samples(vllm: FakeOpenAIServer, change: Any) -> httpx.MockTransport:
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/chat/completions") and json.loads(request.content).get("n") == 3:
+                return change(request)
+            return vllm(request)
+
+        return httpx.MockTransport(handle)
+
+    def two_of_three(request: httpx.Request) -> httpx.Response:
+        data = vllm(request).json()
+        return httpx.Response(200, json={**data, "choices": data["choices"][:2]})
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    vllm = _vllm()
+    code, out = probe(vllm, samples(vllm, two_of_three))
+    assert code == 1 and "2 of 3 choices" in out
+    vllm = _vllm()
+    code, out = probe(vllm, samples(vllm, timeout))
+    assert code == 1 and "UpstreamError 504 upstream_timeout" in out and "RATCHET_STUDENT_TIMEOUT_S" in out
+
+
+@pytest.mark.req("FR-8.2")
+def test_day1_student_probe_flags_an_adapter_that_changes_nothing(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+    vllm = _vllm(text="the same answer")
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student"], transport=vllm.transport) == 0
+    assert "vLLM may have skipped its weights" in capsys.readouterr().out
+    vllm = _vllm()
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student", "--adapter-name", "student-v3"]) == 2
+    assert vllm.calls == [] and "use a name production does not serve" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-1.14")
+def test_day1_choices_and_reasoning_probes(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch)
+
+    def run(checks: str, t: httpx.BaseTransport) -> tuple[int, str]:
+        code = day1_check.main(httpx.Client(transport=t), [checks], transport=t, which=lambda _: None)
+        return code, capsys.readouterr().out
+
+    tf = _tf(day1_check)
+    code, out = run("choices", tf.transport)
+    (call,) = tf.calls
+    assert code == 0 and "returned 2 choices, each with token logprobs" in out
+    sent = {k: call.json[k] for k in ("model", "n", "temperature", "logprobs", "max_tokens")}
+    assert sent == {"model": OPEN_TEACHER, "n": 2, "temperature": 0.7, "logprobs": True, "max_tokens": 8192}
+    assert "top_logprobs" not in call.json and call.headers["authorization"] == f"Bearer {TF_KEY}"
+    one = httpx.MockTransport(lambda r: httpx.Response(200, json=tf.completion({**json.loads(r.content), "n": 1})))
+    code, out = run("choices", one)
+    assert code == 0 and "returned 1 of 2 choices" in out and "RATCHET_MAX_N" in out
+    code, out = run("choices", _tf(day1_check, logprob=None).transport)
+    assert code == 0 and "RATCHET_TEACHER_PARAMS" in out
+    code, out = run("choices", httpx.MockTransport(lambda r: httpx.Response(400, json={"error": {"message": "n too large"}})))
+    assert code == 1 and "[FAIL] choices" in out and "n too large" in out
+
+    # Reasoning: four raw bodies per listed model. A refusal is a fact (a warning); a failing default call fails.
+    listed = list(day1_check.WANT[:3])
+    tf = _tf(day1_check, models=listed, reasoning_tokens=100)
+    seen: list[dict[str, Any]] = []
+
+    def token_factory(request: httpx.Request, default_status: int = 200) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return tf(request)
+        body = json.loads(request.content)
+        seen.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(400, json={"error": {"message": "reasoning_effort is not supported"}})
+        plain = "chat_template_kwargs" not in body and "extra_body" not in body
+        if body["model"] == listed[2] and plain and default_status != 200:
+            return httpx.Response(default_status, text="upstream error")
+        data = tf.completion(body)
+        if "chat_template_kwargs" in body:
+            data["usage"]["completion_tokens_details"] = {"reasoning_tokens": 0}
+        if body["model"] == listed[1]:
+            data["usage"].pop("completion_tokens_details", None)
+        return httpx.Response(200, json=data)
+
+    code, out = run("reasoning", httpx.MockTransport(token_factory))
+    assert code == 0 and [b["model"] for b in seen] == [m for m in listed for _ in range(4)]
+    assert all(b["max_tokens"] == 1024 and b["temperature"] == 0 for b in seen)
+    assert set(seen[0]) == {"model", "messages", "max_tokens", "temperature"}
+    assert seen[1]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert seen[2]["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert seen[3]["reasoning_effort"] == "none"
+    assert f"[warn] reasoning {listed[0]}: default 200 (reasoning 100) | chat_template_kwargs 200 (reasoning 0)" in out
+    assert "reasoning_effort none 400" in out and f"{listed[1]}: default 200 (reasoning not reported)" in out
+    code, out = run("reasoning", httpx.MockTransport(lambda r: token_factory(r, 500)))
+    assert code == 1 and f"[FAIL] reasoning {listed[2]}: default 500" in out
+
+
+@pytest.mark.req("FR-10.3")
+def test_day1_tavily_probe_is_one_basic_search(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", TAVILY_API_KEY=TAVILY_KEY)
+    seen: list[httpx.Request] = []
+    results = [{"title": f"t{i}", "url": f"https://example.org/{i}", "content": "LoRA"} for i in range(3)]
+
+    def tavily(request: httpx.Request, status: int = 200) -> httpx.Response:
+        seen.append(request)
+        if status != 200:
+            return httpx.Response(status, json={"detail": {"error": "This request exceeds your plan's set usage limit."}})
+        return httpx.Response(200, json={"results": results, "usage": {"credits": 1}})
+
+    t = by_host({"api.tavily.com": tavily})
+    assert day1_check.main(httpx.Client(transport=t), ["tavily"], which=lambda _: None) == 0
+    (request,) = seen
+    body = json.loads(request.content)
+    assert str(request.url) == "https://api.tavily.com/search" and request.headers["authorization"] == f"Bearer {TAVILY_KEY}"
+    assert body["search_depth"] == "basic" and body["max_results"] == 4
+    assert "[ok] tavily: 3 hits" in capsys.readouterr().out
+    seen.clear()
+    t = by_host({"api.tavily.com": lambda r: tavily(r, 432)})
+    assert day1_check.main(httpx.Client(transport=t), ["tavily"], which=lambda _: None) == 1
+    assert len(seen) == 1 and "no credits are left for judging" in capsys.readouterr().out
+
+    _live_env(monkeypatch)
+    assert day1_check.main(httpx.Client(transport=t), ["tavily"]) == 2 and len(seen) == 1
+    assert "Set TAVILY_API_KEY first." in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-15.2")
+def test_day1_cli_probe_checks_the_flags_the_scripts_use(day1_check, monkeypatch, capsys, tmp_path):
+    script = "\n".join(
+        [
+            "# nebius ai endpoint delete --name x   (a comment, not a command)",
+            'nebius ai endpoint create --name "${NAME}" --image img \\',
+            '  --auth token --args "--model ${BASE} --enable-lora --max-lora-rank 16"',
+            'nebius ai endpoint stop --name "${NAME}"',
+            "local cmd=(nebius ai job create",
+            '  --name "${1}" --timeout=2h',
+            "  --container-command bash)",
+            'run_or_show nebius ai endpoint start --id "${id}"',
+            'listing="$(nebius ai endpoint list --format json)"',
+        ]
+    )
+    found = day1_check.nebius_commands(script)
+    assert [(c.line, " ".join(c.path), c.flags) for c in found] == [
+        (2, "ai endpoint create", ("--name", "--image", "--auth", "--args")),
+        (4, "ai endpoint stop", ("--name",)),
+        (5, "ai job create", ("--name", "--timeout", "--container-command")),
+        (8, "ai endpoint start", ("--id",)),
+    ]
+    # The real scripts, whatever their shape after the day-1 fixes: nebius commands only, never vLLM's flags.
+    for name in day1_check.DEPLOY_SCRIPTS:
+        commands = day1_check.nebius_commands((ROOT / name).read_text(encoding="utf-8"))
+        assert commands and all(c.path[0] == "ai" for c in commands), name
+        assert not {"--enable-lora", "--model", "--max-lora-rank"} & {f for c in commands for f in c.flags}, name
+
+    helps = {
+        ("ai", "endpoint", "stop"): "Stops an endpoint.\n  --id string  [required]\n  --async",
+        ("ai", "create"): "Interactively creates a Serverless AI job, endpoint, or Devlab.\n  --type --name --image",
+    }
+
+    def result(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        if argv == ["nebius", "version"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="nebius 0.12.3\n", stderr="")
+        path = tuple(argv[1:-1])
+        if path == ("ai", "endpoint", "start"):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="unknown command")
+        text = helps.get(path, f"Creates it (deterministic and non-interactive).\n{NEBIUS_FLAGS}")
+        return subprocess.CompletedProcess(argv, 0, stdout=text, stderr="")
+
+    def check(text: str, which: str | None = "/usr/bin/nebius") -> tuple[int, str, RecordingRun]:
+        (tmp_path / "deploy").mkdir(exist_ok=True)
+        (tmp_path / "deploy" / "fake.sh").write_text(text, encoding="utf-8")
+        run = RecordingRun(result=result)
+        code = day1_check.main(None, ["cli"], run=run, which=lambda _: which)
+        return code, capsys.readouterr().out, run
+
+    _day1(day1_check, monkeypatch, key="")
+    monkeypatch.setattr(day1_check, "DEPLOY_SCRIPTS", ("deploy/fake.sh",))
+    monkeypatch.setattr(day1_check, "ROOT", tmp_path)
+    code, out, run = check(script)
+    assert code == 0 and "[warn] cli: deploy/fake.sh:4 nebius ai endpoint stop: --name is not in its --help" in out
+    assert "[ok] cli: nebius ai endpoint create takes every flag deploy/fake.sh uses (4)" in out
+    assert "[warn] cli: nebius ai endpoint start --help exited 1" in out and "interactive" not in out
+    assert all(c == "nebius version" or c.endswith("--help") for c in run.commands)  # read-only
+    code, out, _ = check(script + '\nnebius ai create --type job --name "${1}"')
+    assert code == 0 and "nebius ai create describes itself as interactive" in out
+    code, out, run = check(script, which=None)
+    assert code == 0 and "[skip] cli: nebius is not installed here" in out and run.calls == []
+
+
+@pytest.mark.req("INV-13", "FR-8.5")
+def test_day1_json_holds_the_facts_and_no_secret(day1_check, monkeypatch, capsys, tmp_path):
+    _day1(day1_check, monkeypatch, **_student_env(TAVILY_API_KEY=TAVILY_KEY))
+    tf, vllm = _tf(day1_check), _vllm()
+    leak = f"{TF_KEY} {STUDENT_KEY} {TAVILY_KEY} at {TF} and {STUDENT_BASE}"
+
+    def token_factory(request: httpx.Request) -> httpx.Response:
+        if b"reasoning_effort" in request.content:
+            return httpx.Response(400, json={"error": {"message": f"refused for {leak}"}})
+        return tf(request)
+
+    def student(request: httpx.Request) -> httpx.Response:
+        if b'"student-v0"' in request.content:
+            message = f"The model `student-v0` does not exist. ({leak})"
+            return httpx.Response(404, json={"error": {"message": message, "type": "NotFoundError", "code": 404}})
+        return vllm(request)
+
+    def tavily(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [{"title": "t", "url": "https://example.org/a", "content": leak}]})
+
+    def result(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, stdout=f"help for {leak}\n{NEBIUS_FLAGS}", stderr="")
+
+    t = by_host({"tf.test": token_factory, "student.test": student, "api.tavily.com": tavily})
+    path = tmp_path / "day1" / "day1.json"
+    code = day1_check.main(
+        httpx.Client(transport=t),
+        ["all", "--json", str(path)],
+        transport=t,
+        run=RecordingRun(result=result),
+        which=lambda _: "/usr/bin/nebius",
+        now=lambda: 1_792_744_443.0,
+    )
+    out = capsys.readouterr().out
+    text = path.read_text(encoding="utf-8")
+    doc = json.loads(text)
+    assert code == doc["exit_code"] == 0 and doc["checks_run"] == list(day1_check.CHECKS)
+    assert {"generator", "checked_at", "checks_run", "exit_code", "ratchet_version", "git_sha", "note", "checks"} <= set(doc)
+    assert doc["checked_at"] == "2026-10-23T08:34:03Z" and all("outcome" in sec for sec in doc["checks"].values())
+    assert doc["checks"]["student"]["adapter_missing"]["router_reloads"] is True
+    assert doc["checks"]["reasoning"]["outcome"] == "warn" and doc["checks"]["tavily"]["credits_source"] == "table"
+    for secret in (TF_KEY, STUDENT_KEY, TAVILY_KEY, "tf.test", "student.test", "api.tavily.com", "://"):
+        assert secret not in text and secret not in out, secret
+
+
+@pytest.mark.req("FR-8.5")
+def test_day1_checks_need_their_prerequisites(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch)
+    tf = _tf(day1_check)
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["student"]) == 2 and tf.calls == []
+    assert "Set RATCHET_STUDENT_BASE first" in capsys.readouterr().out
+
+    code = day1_check.main(httpx.Client(transport=tf.transport), ["all"], transport=tf.transport, which=lambda _: None)
+    out = capsys.readouterr().out
+    assert code == 0 and "[skip] student: Set RATCHET_STUDENT_BASE first" in out and "[skip] tavily:" in out
+    assert "[skip] cli: nebius is not installed here" in out and "[ok] choices" in out and "reasoning " in out
+
+    _day1(day1_check, monkeypatch, key="")
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["all"], which=lambda _: None) == 2
+    _day1(day1_check, monkeypatch, **_student_env(RATCHET_SAMPLES="three"))
+    calls = len(tf.calls)
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["student"]) == 2 and len(tf.calls) == calls
+    assert "Settings:" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-8.2")
+def test_load_and_unload_adapter_return_the_response():
+    vllm = _vllm(loaded=set())
+    r = live.load_adapter(STUDENT_BASE, STUDENT_KEY, "student-v1", "/data/adapters/student-v1", client=_http(vllm))
+    assert r.status_code == 200 and vllm.loaded == {"student-v1"}
+    again = live.load_adapter(STUDENT_BASE, STUDENT_KEY, "student-v1", "/data/adapters/student-v1", client=_http(vllm))
+    assert again.status_code == 400 and "already been loaded" in again.text  # still not an error
+    for base in ("https://student.test/v1", "https://student.test/v1/", "https://student.test"):
+        server = _vllm(loaded={"student-v1"})
+        r = live.unload_adapter(base, STUDENT_KEY, "student-v1", client=_http(server))
+        (call,) = server.calls
+        assert r.status_code == 200 and call.url == "https://student.test/v1/unload_lora_adapter"
+        assert call.json == {"lora_name": "student-v1"} and call.headers["authorization"] == f"Bearer {STUDENT_KEY}"
+        gone = live.unload_adapter(base, "", "student-v1", client=_http(server))  # a 404 is returned, never raised
+        assert gone.status_code == 404 and "cannot be found" in gone.text and "authorization" not in server.calls[1].headers
