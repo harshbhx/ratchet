@@ -51,7 +51,8 @@
       "calibrated": "bool|null",
       "disabled": "string|null",
       "compare_keys": "list",
-      "compare_source": "string|null"
+      "compare_source": "string|null",
+      "tool_requests": "number"
     },
     "versions[]": {
       "id": "number",

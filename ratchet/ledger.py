@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS requests (
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
     route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
     stored INTEGER,            -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
+    uses_tools INTEGER,        -- 1: it offered tools or carried tool calls or results (FR-1.41); NULL before v0.5
     -- Evidence columns (ADR 0024), NULL until the feature that writes them lands, and in older rows:
     threshold REAL,            -- the confidence threshold the student was held to; NULL without a version (FR-16.5)
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
@@ -211,6 +212,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "client": "TEXT",
         "route": "TEXT",
         "stored": "INTEGER",
+        "uses_tools": "INTEGER",
         "student_cost_usd": "REAL",
         "teacher_cost_usd": "REAL",
         "student_in_tokens": "INTEGER",
@@ -959,11 +961,14 @@ class Ledger:
         They are None without a live version, for a pinned task, and (all but `threshold`) when the live version has no
         record for the task. `compare_keys` are the paths of the fields its answers are compared on, and
         `compare_source` where they come from: `schema` for an auto task (derived from a response_format schema,
-        FR-14.2), `registry` for a built-in, file or API task, None for an unregistered name (whole answers compared)."""
+        FR-14.2), `registry` for a built-in, file or API task, None for an unregistered name (whole answers compared).
+        `tool_requests` counts the requests that offered tools or carried tool calls or results, whatever their route
+        (FR-1.41; rows written before the column count as none)."""
         rows = self.db.execute(
             """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms,
-                      SUM(audited=1) audits, AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree
+                      SUM(audited=1) audits, AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
+                      SUM(uses_tools=1) tool_requests
                FROM requests GROUP BY task ORDER BY COUNT(*) DESC"""
         ).fetchall()
         routes: dict[str, dict[str, int]] = {}
@@ -995,6 +1000,7 @@ class Ledger:
                     **_live_calibration(live, task),
                     "compare_keys": [f.path for f in task.fields],
                     "compare_source": COMPARE_SOURCES.get(task.source),
+                    "tool_requests": int(r["tool_requests"] or 0),
                 }
             )
         return out

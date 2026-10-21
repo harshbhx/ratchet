@@ -19,6 +19,7 @@ from . import calibration, licenses, schema_tasks, tasks, taskspec
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
+from .openai_compat import tool_turns
 from .providers import (
     COMPLETE,
     Completion,
@@ -65,7 +66,9 @@ MAX_REFUSED_SCHEMAS = 1024  # refused schema digests remembered per endpoint; pa
 # not fill n choices (`n_choices`, FR-1.14, ADR 0020); or the teacher alone because the task is not registered and
 # RATCHET_UNKNOWN_TASKS is `teacher` (`unknown_task`, FR-2.15, ADR 0022); or the teacher without a student call because
 # the serving version's per-task record lets the student answer nothing (`task_disabled`: the release gate disabled the
-# task on that version, or its eval had no held-out row of it; FR-14.1, ADR 0040).
+# task on that version, or its eval had no held-out row of it; FR-14.1, ADR 0040); or the teacher alone because the
+# request offers tools or carries tool calls or results (`tools`), or holds a content part only the teacher reads
+# (`multimodal`, RATCHET_TEACHER_MODALITIES; FR-1.41, ADR 0043).
 ROUTES = (
     "student",
     "confidence",
@@ -78,6 +81,8 @@ ROUTES = (
     "n_choices",
     "unknown_task",
     "task_disabled",
+    "tools",
+    "multimodal",
 )
 # Routes whose answer is not the primary teacher's or a confident student's: such a request runs no shadow, so release
 # statistics never rest on a stand-in's answer (ADR 0019).
@@ -88,9 +93,11 @@ TEACHER_UNAVAILABLE = "teacher_unavailable"
 # finish_reason values a `skip_example` event names as they are; any other is `other`, so the reasons stay a short list.
 _FINISH_NAMED = frozenset({"length", "content_filter", "function_call", "abort", "error", "unknown"})
 # The finish_reason values a client gets (`Result.finish_reason`); any other upstream value is reported as `stop`.
-# `tool_calls` is not one yet: a response carries no `message.tool_calls` until the tool-call item, and OpenAI clients
-# read that finish as "the calls are in the message". A teacher answer that is a tool call is refused (`_ask_teacher`).
-CLIENT_FINISH = ("stop", "length", "content_filter")
+# `tool_calls` only for a choice that has tool calls (`Choice.tool_calls`, FR-1.41): OpenAI clients read that finish as
+# "the calls are in the message", so a model that claims it without any is reported as `stop` (`_client_finish`).
+CLIENT_FINISH = ("stop", "length", "content_filter", "tool_calls")
+# Finishes that say an answer was cut short: kept for a tool call too, whose arguments may then be incomplete.
+_CUT_SHORT = frozenset({"length", "content_filter"})
 
 
 def refuses_json_schema(e: BaseException, gen: GenParams | None) -> bool:
@@ -164,11 +171,14 @@ class Choice:
     """One of a response's choices (FR-1.14): the answer as served (`tasks.clean_answer`), why it ended (one of
     CLIENT_FINISH), and its token logprobs in OpenAI's `logprobs.content` shape (`providers.served_logprobs`, whose
     tokens spell `text` exactly). `logprobs` is None when the client did not ask for them, and when it did but they
-    cannot be given (the model returned none, or they cannot be told apart from stripped reasoning)."""
+    cannot be given (the model returned none, or they cannot be told apart from stripped reasoning). `tool_calls` are
+    the teacher's tool calls for a tool request, as the provider read them (`Completion.tool_calls`, upstream ids kept),
+    or None (FR-1.41); `text` is then the content the model wrote beside them, usually ''."""
 
     text: str
     finish_reason: str = "stop"
     logprobs: list[dict[str, Any]] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -228,20 +238,34 @@ class Result:
 
 
 def _client_finish(c: Completion) -> str:
-    return c.finish_reason if c.finish_reason in CLIENT_FINISH else "stop"
+    """The finish a client gets: `tool_calls` for a choice with tool calls (unless it was cut short: `length` and
+    `content_filter` stay, since the arguments may be incomplete), never `tool_calls` for one without; any value
+    outside CLIENT_FINISH is `stop`."""
+    if c.tool_calls and c.finish_reason not in _CUT_SHORT:
+        return "tool_calls"
+    if c.finish_reason == "tool_calls" or c.finish_reason not in CLIENT_FINISH:
+        return "stop"
+    return c.finish_reason
 
 
 def _choices(task: tasks.Task, served: list[Completion], params: GenParams | None) -> list[Choice]:
     """The response's choices for the served completions: each cleaned as it is served, with its token logprobs when the
-    client asked for them (`params.logprobs`; at most `params.top_logprobs` alternatives per token). String work only,
-    and the logprobs only for a client that asked."""
+    client asked for them (`params.logprobs`; at most `params.top_logprobs` alternatives per token) and its tool calls.
+    String work only, and the logprobs only for a client that asked."""
     asked = params is not None and bool(params.logprobs)
     top = params.top_logprobs if params is not None else None
     out = []
     for c in served:
         text = tasks.clean_answer(task, c.text)
-        out.append(Choice(text, _client_finish(c), served_logprobs(c, text, top) if asked else None))
+        out.append(Choice(text, _client_finish(c), served_logprobs(c, text, top) if asked else None, c.tool_calls or None))
     return out
+
+
+def uses_tools(messages: list[dict[str, Any]], params: GenParams | None) -> bool:
+    """Whether a request is a tool request (FR-1.41): it offers tools (`params.tools`, where the gateway maps the legacy
+    `functions` too) or its messages carry tool calls or results (`openai_compat.tool_turns`). A field lookup, then one
+    pass over the messages."""
+    return (params is not None and bool(params.tools)) or tool_turns(messages)
 
 
 def fingerprint(*parts: object) -> str:
@@ -262,7 +286,8 @@ def _usage(messages: list[dict[str, Any]], served: list[Completion], choices: li
     prompt = first.in_tokens or approx_tokens(json.dumps(messages, ensure_ascii=False, default=str))
     completion = reasoning = 0
     for c, choice in zip(served, choices, strict=True):
-        out = c.out_tokens or (approx_tokens(choice.text) if choice.text else 0)
+        written = choice.text + (json.dumps(choice.tool_calls, ensure_ascii=False) if choice.tool_calls else "")
+        out = c.out_tokens or (approx_tokens(written) if written else 0)
         completion += out
         reasoning += min(c.reasoning_tokens, out)
     return {
@@ -318,10 +343,12 @@ def _asked(served: list[Completion], first: Completion | None) -> list[Completio
 
 def _schema_valid(task: tasks.Task, choices: list[Choice]) -> bool | None:
     """`Result.schema_valid`: whether every choice, as served, meets the task's bound `response_format`; None without
-    one."""
-    if task.contract is None:
+    one. A tool call is not held to the format (it applies to the content of the final answer), so choices with tool
+    calls are left out, and when every choice is one there is nothing to check: None."""
+    answers = [ch for ch in choices if not ch.tool_calls]
+    if task.contract is None or not answers:
         return None
-    return all(task.contract.problem(ch.text) is None for ch in choices)
+    return all(task.contract.problem(ch.text) is None for ch in answers)
 
 
 def _task(task: str | tasks.Task | None) -> tasks.Task:
@@ -643,20 +670,23 @@ class Ratchet:
         visible_max: int | None,
         fallback: bool = False,
         n: int = 1,
+        tool_calls: bool = False,
     ) -> list[Completion]:
         """The teacher's answer under `gen` (the fallback teacher's with `fallback`): one choice, or up to `n` for a served
         answer. When the reasoning headroom let the teacher write more than the client's `max_tokens` (`visible_max`), a
         choice whose visible part (`tasks.clean_answer`) is longer than that, by `approx_tokens`, is marked `length`: over
         the client's budget, so it is not stored (INV-16) and the client is told. The text is not cut, because the count
-        is an estimate. A choice that ends in a tool call (only when an operator allows `tools` for the teacher) raises
-        `UpstreamError` 502 `tool_calls_unsupported`: the provider does not read tool calls yet, so its text is not the
-        whole answer, and a response claiming `tool_calls` without them breaks OpenAI clients. Nothing is stored; an audit
-        or arbitration counts it as a failed optional call. The teacher answered, so its breaker counts the call as a
-        success."""
+        is an estimate.
+
+        A tool call is an answer only where `tool_calls` says so: the teacher-only path, which returns it to the client
+        and never stores it (FR-1.41). Anywhere else (the cascade, whose requests offer no tools) a choice with tool calls,
+        or one that ends in `tool_calls`, raises `UpstreamError` 502 `tool_calls_unsupported`: it could be neither
+        compared, stored nor served as the answer to that request. An audit or arbitration counts it as a failed optional
+        call. The teacher answered, so its breaker counts the call as a success."""
         cs = self._teacher_complete(messages, gen, fallback, n)
-        if any(c.finish_reason == "tool_calls" for c in cs):
+        if not tool_calls and any(c.tool_calls or c.finish_reason == "tool_calls" for c in cs):
             raise UpstreamError(
-                502, "the teacher answered with a tool call, which the gateway cannot return yet", code=TOOL_CALLS_UNSUPPORTED
+                502, "the teacher answered with a tool call to a request that offers no tools", code=TOOL_CALLS_UNSUPPORTED
             )
         if visible_max is not None:
             cs = [
@@ -668,22 +698,29 @@ class Ratchet:
         return cs
 
     def _serve_teacher(
-        self, task: tasks.Task, messages: list[dict[str, Any]], gen: GenParams, visible_max: int | None, n: int = 1
+        self,
+        task: tasks.Task,
+        messages: list[dict[str, Any]],
+        gen: GenParams,
+        visible_max: int | None,
+        n: int = 1,
+        tool_calls: bool = False,
     ) -> tuple[list[Completion], bool]:
         """The teacher answer a request needs (escalation, cold start, pinned, teacher-only), up to `n` choices, and
-        whether the fallback teacher wrote it. The fallback teacher (RATCHET_TEACHER_FALLBACK_MODEL) is asked only when
-        the primary is unavailable (`resilience.teacher_unavailable`: its retries failed, or its breaker is open); never
-        for an answer about the request itself (a 400 such as `context_length_exceeded`) or a tool call. When the fallback
-        fails as an upstream call too, the primary's error is raised: it is the configured teacher, and its breaker says
-        when to come back. Anything else the fallback raises (a bug) propagates as it is."""
+        whether the fallback teacher wrote it. `tool_calls` lets the answer be tool calls (the teacher-only path,
+        `_ask_teacher`). The fallback teacher (RATCHET_TEACHER_FALLBACK_MODEL) is asked only when the primary is
+        unavailable (`resilience.teacher_unavailable`: its retries failed, or its breaker is open); never for an answer
+        about the request itself (a 400 such as `context_length_exceeded`) or a refused tool call. When the fallback fails
+        as an upstream call too, the primary's error is raised: it is the configured teacher, and its breaker says when to
+        come back. Anything else the fallback raises (a bug) propagates as it is."""
         try:
-            return self._ask_teacher(task, messages, gen, visible_max, n=n), False
+            return self._ask_teacher(task, messages, gen, visible_max, n=n, tool_calls=tool_calls), False
         except Exception as e:
             if self.fallback_teacher is None or not teacher_unavailable(e):
                 raise
             primary = e
         try:
-            cs = self._ask_teacher(task, messages, gen, visible_max, fallback=True, n=n)
+            cs = self._ask_teacher(task, messages, gen, visible_max, fallback=True, n=n, tool_calls=tool_calls)
         except httpx.HTTPError:
             raise primary  # noqa: B904 - the primary's error is the one the client gets; the fallback's is its context
         self._count_failure("fallback_answers", "fallback_teacher", f"{task.name}: {describe_failure(primary)}")
@@ -736,8 +773,11 @@ class Ratchet:
         repair's answer replaces the first unless it was cut off or is empty (the first, which ended by itself, is then
         kept). The repair conversation is never stored: an example keeps the request's own messages and the answer that
         met the contract, which is still the teacher's (INV-2). An answer that still breaks the contract is served with
-        `schema_valid` false and not stored (INV-16)."""
+        `schema_valid` false and not stored (INV-16). A tool call is not held to the format (it applies to the final
+        answer's content), so it is never repaired."""
         if task.contract is None or not self.s.schema_repair or len(cs) != 1 or cs[0].finish_reason not in COMPLETE:
+            return cs, None, None
+        if cs[0].tool_calls:
             return cs, None, None
         first = tasks.clean_answer(task, cs[0].text)
         if task.contract.problem(first) is None:  # the check the router has already made (memoised): no second one
@@ -946,16 +986,20 @@ class Ratchet:
         params: GenParams | None = None,
         route: str = "pinned",
     ) -> Result:
-        """The teacher alone: a pinned task, a request the student cannot take (`teacher_only`), or an unregistered
-        task under RATCHET_UNKNOWN_TASKS=teacher (`route` `unknown_task`). The request is logged, but the answer is never
-        stored as a training example, so it cannot leak into a student that was never meant to do it (INV-10), and the
-        student is never sampled. When the primary teacher is unavailable, the fallback teacher may answer (route
-        `fallback_teacher`); the student never does, so this path never degrades. The baseline is the primary teacher's
-        price for the same tokens. `params` are the client's, for the logprobs it asked to get back. An answer that breaks
-        the request's `response_format` is repaired once (`_repair`): both calls are paid for in `cost_usd` and their
+        """The teacher alone: a pinned task, a request the student cannot take (`teacher_only`), an unregistered task
+        under RATCHET_UNKNOWN_TASKS=teacher (`route` `unknown_task`), or a tool request (`tools`, FR-1.41). The request is
+        logged, but the answer is never stored as a training example, so it cannot leak into a student that was never
+        meant to do it (INV-10), and the student is never sampled. When the primary teacher is unavailable, the fallback
+        teacher may answer (route `fallback_teacher`); the student never does, so this path never degrades. The baseline
+        is the primary teacher's price for the same tokens. `params` are the client's, for the logprobs it asked to get
+        back. For a tool request the answer may be tool calls, returned as the teacher wrote them (`Choice.tool_calls`);
+        for any other request (a pinned task offering no tools, say) a tool call is a 502 `tool_calls_unsupported`, as in
+        the cascade. The row records whether the request used tools (`requests.uses_tools`). An answer that breaks the
+        request's `response_format` is repaired once (`_repair`): both calls are paid for in `cost_usd` and their
         latencies added, while the baseline and the client's usage count the request's own prompt (`_asked`)."""
         plan = plan or self._plain
-        served, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n)
+        tool_request = uses_tools(messages, params)  # only then may the answer be tool calls (`_ask_teacher`)
+        served, fallback = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n, tool_calls=tool_request)
         served, rejected, first = self._repair(task, messages, plan.serve, plan.visible_max, fallback, served)
         c = served[0]
         asked = _asked(served, first)
@@ -988,6 +1032,7 @@ class Ratchet:
             client=client,
             route=route,
             stored=0,
+            uses_tools=int(tool_request),
         )
         choices = _choices(task, served, params)
         return Result(
@@ -1020,17 +1065,25 @@ class Ratchet:
         params: GenParams | None = None,
         meta: RequestMeta | None = None,
         n: int = 1,
+        route: str | None = None,
     ) -> Result:
         """A request the student cannot take, such as one with an image part the teacher reads
-        (RATCHET_TEACHER_MODALITIES): the pinned path, so the teacher answers (or the fallback teacher, when the primary
-        is unavailable), the request is logged, and nothing is stored as a training example. No student, audit or shadow
-        call, so it never degrades. `n` choices, as for `handle`. An unregistered task under RATCHET_UNKNOWN_TASKS=reject
-        raises `tasks.UnknownTask`; under `teacher` it is logged with route `unknown_task`, as in `handle`. A
+        (RATCHET_TEACHER_MODALITIES; the gateway passes `route` `multimodal`): the pinned path, so the teacher answers (or
+        the fallback teacher, when the primary is unavailable), the request is logged, and nothing is stored as a
+        training example. No student, audit or shadow call, so it never degrades. `n` choices, as for `handle`. An
+        unregistered task under RATCHET_UNKNOWN_TASKS=reject raises `tasks.UnknownTask`. The row's route says why the
+        teacher answered alone, the operator's reason first: `unknown_task` (an unregistered task under `teacher`),
+        `pinned` (a pinned task), then `route`, then `tools` for a tool request (FR-1.41), else `pinned`. A
         `response_format` binds the task as in `handle`."""
         task = self.resolve(task, params)
         params = schema_tasks.forwardable(params)
         self._admit(task, client)
-        route = "unknown_task" if task.source == "adhoc" and self.unknown_tasks == "teacher" else "pinned"
+        if task.source == "adhoc" and self.unknown_tasks == "teacher":
+            route = "unknown_task"
+        elif task.pinned:
+            route = "pinned"
+        elif route is None:
+            route = "tools" if uses_tools(messages, params) else "pinned"
         return self._teacher_only(task, messages, client, self.plan(params, n), params, route=route)
 
     def task_for(self, task: str | tasks.Task | None, client: str | None = None, params: GenParams | None = None) -> tasks.Task:
@@ -1199,7 +1252,11 @@ class Ratchet:
         gateway to map (INV-7).
 
         A pinned task, and an unregistered one under RATCHET_UNKNOWN_TASKS=teacher (route `unknown_task`), go to the
-        teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. The client
+        teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. So does a tool
+        request (`uses_tools`: tools offered, or tool calls or results in its messages; route `tools`, FR-1.41): its
+        tools reach the teacher, its tool calls come back to the client, and nothing is stored, whatever the task's
+        `tools` says until tool-call distillation is built (the student is never sent tools, so its answer could not be
+        the call the client expects, and a stored tool call needs comparators of its own; ADR 0043). The client
         allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key. A task whose
         record on the serving version lets the student answer nothing (the release gate disabled it, or the version had
         no held-out row of it) is escalated without a student call (route `task_disabled`, FR-14.1), so it costs no
@@ -1217,6 +1274,8 @@ class Ratchet:
             return self._teacher_only(task, messages, client, plan, params, route="unknown_task")
         if task.pinned:
             return self._teacher_only(task, messages, client, plan, params)
+        if uses_tools(messages, params):  # tool calls pass through, teacher only, never stored (FR-1.41, ADR 0043)
+            return self._teacher_only(task, messages, client, plan, params, route="tools")
         version = self._pick_version()
         cost = 0.0
         # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
@@ -1417,6 +1476,7 @@ class Ratchet:
             client=client,
             route=route,
             stored=int(stored),
+            uses_tools=0,  # a tool request never reaches the cascade (FR-1.41)
         )
         choices = _choices(task, served_choices, params)
         return Result(

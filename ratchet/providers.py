@@ -14,9 +14,11 @@ the live golden eval and the mock one apply the same rules (ADR 0017).
 from __future__ import annotations
 
 import difflib
+import json
 import math
 import random
 import re
+import secrets
 import time
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
@@ -24,6 +26,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from .openai_compat import tool_params
 from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_upstream, retry_call
 
 __all__ = [
@@ -60,10 +63,9 @@ class Completion:
     is kept as it came, not copied or checked, so a request that does not return logprobs pays nothing for it;
     `served_logprobs` checks it and puts it in OpenAI's shape for a client that asked. Never mutate it.
 
-    `tool_calls` are the choice's `message.tool_calls` in OpenAI's shape (`[{id, type: "function", function: {name,
-    arguments}}]`, `arguments` a JSON string), or None. Only the mock models fill it so far (sim/generic.py): this
-    provider does not read tool calls yet, the router refuses a teacher answer that ends in one (`tool_calls_unsupported`)
-    and the gateway never returns one."""
+    `tool_calls` are the choice's tool calls in OpenAI's shape (`[{id, type: "function", function: {name, arguments}}]`,
+    `arguments` always a string), or None when it made none (`_tool_calls`; FR-1.41). The router returns them for a tool
+    request, which the teacher answers alone (ADR 0043); `text` is then the message's content, often empty."""
 
     text: str
     model: str
@@ -123,14 +125,13 @@ NEVER_FORWARDED = frozenset(
         "function_call",
     }
 )
-# Standard fields no default allowlist forwards, because the gateway cannot use what comes back yet: a tool call (a
-# response has no `message.tool_calls` until the tool-call item, and the student's vLLM runs without a tool parser, so
-# it refuses `tools`). An operator can still name them. The teacher's `logprobs` and `top_logprobs` are forwarded since
-# responses carry logprobs (FR-1.14): only when the client asked, and never to an audit or arbitration (CHECK_DROPS).
-NOT_YET_FORWARDED = frozenset({"tools", "tool_choice", "parallel_tool_calls"})
-# RATCHET_TEACHER_PARAMS and RATCHET_STUDENT_PARAMS when unset. The student gets what shapes the answer it must give
-# (length, stops, format), not the client's sampling: its own sampling is fixed (confidence.STUDENT_SAMPLING).
-DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS) - NOT_YET_FORWARDED
+# RATCHET_TEACHER_PARAMS and RATCHET_STUDENT_PARAMS when unset. The teacher gets every standard field: since tool calls
+# pass through (FR-1.41, ADR 0043) that includes `tools`, `tool_choice` and `parallel_tool_calls`, which only a tool
+# request has, and that request the teacher answers alone. Its `logprobs` and `top_logprobs` go only when the client
+# asked, and never to an audit or arbitration (CHECK_DROPS). The student gets what shapes the answer it must give
+# (length, stops, format), not the client's sampling (its own is fixed, confidence.STUDENT_SAMPLING), and no tools: its
+# vLLM runs without a tool parser, and a tool request never reaches it.
+DEFAULT_TEACHER_PARAMS = frozenset(PARAM_FIELDS)
 DEFAULT_STUDENT_PARAMS = frozenset({"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"})
 DEFAULT_TEACHER_MAX_TOKENS = 8192  # RATCHET_TEACHER_MAX_TOKENS
 DEFAULT_STUDENT_MAX_TOKENS = 1024  # RATCHET_STUDENT_MAX_TOKENS
@@ -171,7 +172,10 @@ class GenParams:
     @classmethod
     def from_request(cls, req: Any) -> GenParams:
         """The parameters of an `openai_compat.ChatRequest` (already validated). Empty `stop`, `tools` and `logit_bias`
-        count as not sent, so they are never forwarded or stored as a condition."""
+        count as not sent, so they are never forwarded or stored as a condition. The tool fields are
+        `openai_compat.tool_params`': the legacy `functions` and `function_call` mapped to `tools` and `tool_choice`, and
+        no `tool_choice` or `parallel_tool_calls` without a tool to call."""
+        tool = tool_params(req)
         return cls(
             max_tokens=req.max_tokens,
             temperature=req.temperature,
@@ -182,9 +186,9 @@ class GenParams:
             frequency_penalty=req.frequency_penalty,
             logit_bias=req.logit_bias or None,
             response_format=req.response_format,
-            tools=req.tools or None,
-            tool_choice=req.tool_choice,
-            parallel_tool_calls=req.parallel_tool_calls,
+            tools=tool.tools,
+            tool_choice=tool.tool_choice,
+            parallel_tool_calls=tool.parallel_tool_calls,
             logprobs=req.logprobs,
             top_logprobs=req.top_logprobs,
             reasoning_effort=req.reasoning_effort,
@@ -522,6 +526,64 @@ def _content(message: Any) -> str:
     return ""
 
 
+def _bad_call(why: str) -> UpstreamError:
+    return UpstreamError(502, f"the upstream model returned a tool call that cannot be returned: {why}", code=BAD_RESPONSE)
+
+
+def _encodable(value: str) -> bool:
+    """False for a string holding an unpaired surrogate, which UTF-8 (and so the response) cannot carry."""
+    return value.isascii() or not _SURROGATE.search(value)
+
+
+def _tool_call(item: Any) -> dict[str, Any]:
+    """One tool call in OpenAI's shape, `{id, type: 'function', function: {name, arguments}}`, and nothing else (vLLM's
+    `index` and vendor keys are dropped). A missing `type` means a function call; `arguments` is always a string (an
+    object or array is JSON-encoded, a missing one is `{}`); a missing id becomes `call_` and 24 random hex digits.
+    Raises `UpstreamError` 502 for a call a client could not use."""
+    if not isinstance(item, dict):
+        raise _bad_call("not an object")
+    kind = item.get("type")
+    if kind is not None and kind != "function":
+        raise _bad_call("only function calls are supported")
+    fn = item.get("function")
+    if not isinstance(fn, dict):
+        raise _bad_call("no function")
+    name = fn.get("name")
+    if not isinstance(name, str) or not name.strip() or not _encodable(name):
+        raise _bad_call("no function name")
+    args = fn.get("arguments")
+    if args is None:
+        args = "{}"
+    elif not isinstance(args, str):
+        try:
+            args = json.dumps(args, ensure_ascii=False)
+        except (TypeError, ValueError, RecursionError) as e:
+            raise _bad_call("arguments are not JSON") from e
+    if not _encodable(args):
+        raise _bad_call("arguments are not valid Unicode")
+    call_id = item.get("id")
+    if not isinstance(call_id, str) or not call_id.strip() or not _encodable(call_id):
+        call_id = "call_" + secrets.token_hex(12)
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": args}}
+
+
+def _tool_calls(message: Any) -> list[dict[str, Any]] | None:
+    """A choice's tool calls (`message.tool_calls`; from a server that answers in the legacy form, `message.function_call`
+    as one call), each as `_tool_call` returns it, or None when it made none (`null`, `[]` or absent). A call that cannot
+    be returned (not an object, another type than function, no function name, text that is not valid Unicode) makes the
+    whole response a 502 `bad_upstream_response`: serving the others would hand the client part of the model's answer."""
+    if not isinstance(message, dict):
+        return None
+    raw = message.get("tool_calls")
+    if raw is not None and not isinstance(raw, list):
+        raise _bad_call("tool_calls is not an array")
+    calls = [_tool_call(item) for item in raw or ()]
+    legacy = message.get("function_call")
+    if not calls and legacy is not None:
+        calls = [_tool_call({"type": "function", "function": legacy})]
+    return calls or None
+
+
 _FINISH = re.compile(r"[a-z0-9_.-]{1,40}")
 
 
@@ -606,7 +668,8 @@ def _token_logprobs(choice: dict[str, Any]) -> list[float]:
 
 def _completions(data: Any, model: str, latency: float) -> list[Completion]:
     """Parse a chat-completions body. A body that is not an object, or has no choices, is a 502 `bad_upstream_response`
-    (before: an IndexError, so a 500); malformed optional fields (usage, logprobs, finish_reason) count as absent."""
+    (before: an IndexError, so a 500), and so is a tool call a client could not use (`_tool_calls`); malformed optional
+    fields (usage, logprobs, finish_reason) count as absent."""
     choices = data.get("choices") if isinstance(data, dict) else None
     if not isinstance(choices, list) or not choices or not all(isinstance(ch, dict) for ch in choices):
         raise UpstreamError(502, "the upstream model returned no choices", code=BAD_RESPONSE)
@@ -630,6 +693,7 @@ def _completions(data: Any, model: str, latency: float) -> list[Completion]:
             reasoning_tokens=thought,
             cached_tokens=cached,
             logprobs_content=_logprob_list(ch),
+            tool_calls=_tool_calls(ch.get("message")),
         )
         for ch, out, thought in zip(choices, out_tokens, reasoning, strict=True)
     ]

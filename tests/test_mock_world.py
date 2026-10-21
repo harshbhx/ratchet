@@ -568,15 +568,18 @@ def test_schema_workload_student_takes_over(monkeypatch):
     assert all(json.loads(e["params"])["response_format"]["type"] == "json_schema" for e in examples)
 
 
-@pytest.mark.req("FR-9.7")
-def test_tools_workload_runs_with_tools_kept_from_both_models(monkeypatch):
-    """Simulation, mock models. The default allowlists forward `tools` to neither model yet (providers.NOT_YET_FORWARDED),
-    so both answer the tools workload's prompts as free text, and that prose is what is stored and learned."""
+@pytest.mark.req("FR-9.7", "FR-1.41")
+def test_tools_workload_is_answered_by_the_teacher_alone(monkeypatch):
+    """Simulation, mock models. Every request of the tools workload offers tools, so the teacher answers it alone with
+    its tool calls (route `tools`, FR-1.41): the student is never sampled and nothing is stored, so it never takes over,
+    until a task opts in to tool-call distillation."""
     res, led = _simulate(monkeypatch, "tools", 3, 300)
-    share = [d["student_share"] for d in res["days"]]
-    assert res["totals"]["requests"] == 900 and share[0] == 0 and share[-1] > share[0]
-    examples = led.examples(task="order-support")
-    assert examples and all(e["params"] is None and e["completion"].startswith("[mock teacher] ") for e in examples)
+    assert res["totals"]["requests"] == 900 and [d["student_share"] for d in res["days"]] == [0, 0, 0]
+    assert led.examples() == []
+    rows = [dict(r) for r in led.db.execute("SELECT route, served_by, uses_tools, stored FROM requests GROUP BY 1, 2, 3, 4")]
+    assert rows == [{"route": "tools", "served_by": "teacher", "uses_tools": 1, "stored": 0}]
+    (task,) = led.stats_by_task()
+    assert (task["task"], task["tool_requests"], task["routes"]) == ("order-support", 900, {"tools": 900})
 
 
 @pytest.mark.req("FR-9.7", "INV-8")
@@ -640,15 +643,21 @@ def test_sdk_gets_answers_and_structured_outputs_from_the_mock_gateway(gw):
     assert stats["totals"]["requests"] == 2
 
 
-@pytest.mark.req("FR-9.7")
-def test_a_mock_tool_call_is_refused_until_tool_calls_pass_through(gw_env):
-    """With `tools` forwarded to the teacher, the mock teacher calls one, and the gateway refuses that answer as a real
-    one (502 tool_calls_unsupported): a response cannot carry tool calls yet. Nothing is stored."""
+@pytest.mark.req("FR-9.7", "FR-1.41")
+def test_a_mock_tool_call_passes_through(gw_env):
+    """The mock teacher is sent the tools (the default RATCHET_TEACHER_PARAMS forwards them since FR-1.41) and calls one;
+    the gateway returns the call as it was made, and nothing is stored. An operator who keeps tools from the teacher
+    gets its prose answer, still teacher-only and not stored."""
     body = {"messages": [{"role": "user", "content": LOOKUP}], "tools": generic.TOOLS}
-    gw = gw_env(RATCHET_TEACHER_PARAMS="all")
+    gw = gw_env()
     r = TestClient(gw.app).post("/v1/chat/completions", json=body)
-    assert r.status_code == 502 and r.json()["error"]["code"] == "tool_calls_unsupported"
+    assert r.status_code == 200, r.text
+    (choice,) = r.json()["choices"]
+    want = MockTeacher().complete(body["messages"], "t", params=GenParams(tools=generic.TOOLS))[0].tool_calls
+    assert choice["message"]["tool_calls"] == want and choice["finish_reason"] == "tool_calls"
+    assert want[0]["function"]["name"] == "lookup_order" and choice["message"]["content"] is None
     assert gw.rt.ledger.examples() == []
-    gw = gw_env(RATCHET_TEACHER_PARAMS="")  # the default: no model sees the tools, so the teacher answers in prose
+    gw = gw_env(RATCHET_TEACHER_PARAMS="max_tokens,stop")
     r = TestClient(gw.app).post("/v1/chat/completions", json=body)
     assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"].startswith("[mock teacher] ")
+    assert r.json()["ratchet"]["served_by"] == "teacher" and gw.rt.ledger.examples() == []

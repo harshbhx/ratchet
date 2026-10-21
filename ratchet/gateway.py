@@ -51,10 +51,13 @@ from .openai_compat import (
     Limits,
     from_validation_errors,
     http_error,
+    legacy_history,
     normalize_messages,
     parse_body,
     parse_modalities,
+    tool_params,
     usage_object,
+    uses_tools,
     validate_chat_request,
 )
 from .providers import GenParams, OpenAICompatProvider
@@ -505,8 +508,8 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
     the teacher's wait; a timeout is a 504; everything else is a 502. `X-Should-Retry: false` marks the ones a retry
     cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing. A 502 or 504 the client
     may retry carries the teacher's `Retry-After` when it sent one: the provider stops retrying at a wait over its cap,
-    so the client is the one that has to wait. A teacher answer that is a tool call (`router.Ratchet._ask_teacher`, only
-    when an operator allows `tools`) is a 502 `tool_calls_unsupported` no retry can change. The teacher's open breaker
+    so the client is the one that has to wait. A teacher tool call to a request that offers no tools
+    (`router.Ratchet._ask_teacher`) is a 502 `tool_calls_unsupported` no retry can change. The teacher's open breaker
     (`router.Ratchet._teacher_complete`, ADR 0019) is a 503 `teacher_circuit_open` at once, with the time until its next
     probe as `Retry-After` (1 to 60 s)."""
     u = as_upstream(e)
@@ -515,7 +518,7 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
         message = f"teacher circuit open: recent teacher calls failed, so the gateway is not calling it; retry after {wait} s"
         return APIError(503, message, "api_error", TEACHER_CIRCUIT_OPEN, headers={"Retry-After": str(wait)})
     if u.code == TOOL_CALLS_UNSUPPORTED:
-        message = "The teacher answered with a tool call, which this gateway cannot return yet; send the request without tools."
+        message = "The teacher answered with a tool call to a request that offers no tools."
         return APIError(502, message, "api_error", TOOL_CALLS_UNSUPPORTED, headers=NO_RETRY)
     if u.status in CLIENT_CAUSED:
         code = u.code or ("request_too_large" if u.status == 413 else None)
@@ -567,6 +570,43 @@ def _logprobs(asked: bool, content: list[dict[str, Any]] | None) -> dict[str, An
     """A choice's `logprobs`: null unless the client asked (`logprobs: true`); then `{content, refusal: null}`, with
     `content` null when the token logprobs cannot be given (FR-1.14)."""
     return {"content": content, "refusal": None} if asked else None
+
+
+def _call(call: Mapping[str, Any]) -> dict[str, Any]:
+    """A tool call as a response carries it: `{id, type, function: {name, arguments}}` (a copy, so the response never
+    shares the router's objects)."""
+    fn = call["function"]
+    return {"id": call["id"], "type": "function", "function": {"name": fn["name"], "arguments": fn["arguments"]}}
+
+
+def _message(ch: Choice, legacy: bool) -> dict[str, Any]:
+    """A choice's `message` (FR-1.41). With tool calls, `content` is the text the model wrote beside them or null, and
+    the calls are `tool_calls` with the upstream ids, or for a request that used the legacy `functions` (`legacy`)
+    `function_call`, the first call's name and arguments: the legacy form has one call per message."""
+    msg: dict[str, Any] = {"role": "assistant", "content": ch.text, "refusal": None, "annotations": []}
+    if ch.tool_calls:
+        msg["content"] = ch.text or None
+        if legacy:
+            msg["function_call"] = _call(ch.tool_calls[0])["function"]
+        else:
+            msg["tool_calls"] = [_call(c) for c in ch.tool_calls]
+    return msg
+
+
+def _finish(ch: Choice, legacy: bool) -> str:
+    """A choice's `finish_reason`: `function_call` in place of `tool_calls` for a legacy request."""
+    return "function_call" if legacy and ch.finish_reason == "tool_calls" else ch.finish_reason
+
+
+def _call_deltas(ch: Choice, legacy: bool) -> list[dict[str, Any]]:
+    """The stream deltas of a choice's tool calls: one per call, `{tool_calls: [{index, id, type, function: {name,
+    arguments}}]}` with the whole arguments string, which is what the OpenAI SDK's `ChatCompletionStreamState` and
+    LangChain's chunk accumulators merge by `index`; for a legacy request one `{function_call: {name, arguments}}`."""
+    if not ch.tool_calls:
+        return []
+    if legacy:
+        return [{"function_call": _call(ch.tool_calls[0])["function"]}]
+    return [{"tool_calls": [{"index": k, **_call(c)}]} for k, c in enumerate(ch.tool_calls)]
 
 
 def _stream_pieces(choice: Choice, asked: bool) -> list[tuple[str, dict[str, Any] | None]]:
@@ -621,7 +661,10 @@ async def chat(
 def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
-    params = GenParams.from_request(req)
+    params = GenParams.from_request(req)  # the legacy `functions` and `function_call` arrive as tools (FR-1.41)
+    legacy = tool_params(req).legacy  # answer tool calls as `function_call`, as the request asked
+    if uses_tools(req):  # the teacher answers alone; legacy turns go in the form open-model servers render
+        messages = legacy_history(messages)
     # The header wins over metadata.ratchet_task, and either over a response_format schema's auto task (ADR 0042);
     # refused before the quota, so a refusal costs nothing.
     try:
@@ -632,8 +675,9 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
     headers = _quota(client)
-    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
-    serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
+    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task. A tool
+    # request takes the same path inside `handle` (route `tools`, FR-1.41).
+    serve = functools.partial(rt.ratchet.teacher_only, route="multimodal") if flags.multimodal else rt.ratchet.handle
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
         r = serve(messages, task, client=client, params=params, n=req.n)
     except KeyError as e:
@@ -669,9 +713,9 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         choices = [
             {
                 "index": i,
-                "message": {"role": "assistant", "content": ch.text, "refusal": None, "annotations": []},
+                "message": _message(ch, legacy),
                 "logprobs": _logprobs(asked, ch.logprobs),
-                "finish_reason": ch.finish_reason,
+                "finish_reason": _finish(ch, legacy),
             }
             for i, ch in enumerate(r.choices)
         ]
@@ -698,16 +742,22 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         return sse({**ev, **extra})
 
     def events() -> Iterator[str]:
-        # One choice after the other: its role chunk, its content, its own finish chunk (FR-1.14).
+        # One choice after the other: its role chunk, its content, its tool calls (one delta each, FR-1.41), its own
+        # finish chunk (FR-1.14). A choice that is only tool calls has null content and no content chunks, as OpenAI's.
         last = len(r.choices) - 1
         for i, ch in enumerate(r.choices):
-            yield chunk(i, {"role": "assistant", "content": "", "refusal": None})
-            for piece, logprobs in _stream_pieces(ch, asked):
-                yield chunk(i, {"content": piece}, logprobs=logprobs)
+            text = bool(ch.text) or not ch.tool_calls
+            yield chunk(i, {"role": "assistant", "content": "" if text else None, "refusal": None})
+            if text:
+                for piece, logprobs in _stream_pieces(ch, asked):
+                    yield chunk(i, {"content": piece}, logprobs=logprobs)
+            for delta in _call_deltas(ch, legacy):
+                yield chunk(i, delta)
+            finish = _finish(ch, legacy)
             if include_usage or i < last:
-                yield chunk(i, {}, ch.finish_reason)
+                yield chunk(i, {}, finish)
             else:  # the ratchet block rides on the last finish chunk
-                yield chunk(i, {}, ch.finish_reason, ratchet=meta)
+                yield chunk(i, {}, finish, ratchet=meta)
         if include_usage:  # one more chunk with no choices, the usage and the ratchet block
             yield sse({**envelope, "choices": [], "usage": usage, "ratchet": meta})
         yield "data: [DONE]\n\n"
