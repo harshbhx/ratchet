@@ -231,6 +231,34 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 | `RATCHET_REPO_URL` | `https://github.com/harshbhx/ratchet.git` | What the VM clones into `/opt/ratchet` |
 | `RATCHET_BACKUP_DIR` | `/var/backups/ratchet` | `backup.sh`: the host folder for ledger backups |
 | `RATCHET_BACKUP_KEEP` | `14` | `backup.sh`: local copies to keep |
+| `RATCHET_BACKUP_TAG` | empty | `backup.sh`: 1 to 32 letters, digits or `-`, added to the file name (`ratchet-<stamp>-<tag>.db.gz`); `update.sh` sets `pre-update`. Anything else exits 1 |
+
+## Demo watchdog (`ratchet/watch.py`)
+
+Read on the VM host by `python3 -m ratchet.watch` (standard library only), from `deploy/vm/.env` with the process environment winning, and by the gateway's `python -m ratchet.config check`, which refuses a bad value before `update.sh` replaces the container ([ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md), [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#watchdog)). A bad value names its variable and never echoes a secret. Variables marked secret are never printed, logged or sent.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_WATCH` | `on` | `on` or `off`. `off`: every command but `status` prints one line and exits 0 |
+| `RATCHET_WATCH_CLIENT` | `watchdog` | The `RATCHET_API_KEYS` name the probe uses; the host takes that name's key from `RATCHET_API_KEYS` itself. The pinned task's `clients` list in `deploy/vm/config/tasks.json` must name it |
+| `RATCHET_WATCH_FAILURES` | `3` | Failed liveness checks, or failed ledger checks, in a row before a restart (2 to 20, one check every 2 minutes) |
+| `RATCHET_WATCH_RESTART_COOLDOWN_S` | `600` | Seconds after a restart before another (120 to 86,400) |
+| `RATCHET_WATCH_MAX_RESTARTS_PER_HOUR` | `2` | Restarts in a rolling hour; past it one alert and no restart (1 to 10) |
+| `RATCHET_WATCH_START_GRACE_S` | `240` | No check counts while the container started less than this ago (0 to 3,600) |
+| `RATCHET_WATCH_PROBE_TIMEOUT_S` | `200` | The probe's HTTP timeout, above the gateway's own teacher deadline (180 s) so its retries finish first (10 to 900) |
+| `RATCHET_WATCH_REALERT_S` | `21600` | While a check keeps failing, repeat its alert this often (600 to 604,800) |
+| `RATCHET_WATCH_CONNECT` | `public` | `public`: the probe resolves `RATCHET_DOMAIN` as anyone would. `local`: it connects to `127.0.0.1:443` with the domain as SNI and `Host` (certificates still checked), for a VM that cannot reach its own public IP. Whether Nebius VMs can (hairpin NAT) is unverified |
+| `RATCHET_WATCH_HEARTBEAT_URL` | empty | Secret. An `https://` URL the probe GETs after a healthy probe that follows a healthy tick (healthchecks.io or any dead-man's switch: it alerts when the VM, cron or the watchdog is dead, which nothing on the VM can report) |
+| `RATCHET_WATCH_STATE_DIR` | `/var/lib/ratchet` | State files and locks (`watch-tick.json`, `watch-probe.json`, `watch.paused`, `update.lock`), mode 0600 |
+| `RATCHET_WATCH_FLAG_MAX_AGE_S` | `10800` | Gateway: a banner flag older than this reads `stale` and shows nothing (600 to 604,800) |
+| `RATCHET_ALERT_WEBHOOK_URL` | empty | Secret. `https://` only. Alerts are POSTed here as JSON with a `text` field (Slack's incoming-webhook shape; whether Slack ignores the other keys, and Discord's `/slack` suffix, are unverified: `python3 -m ratchet.watch test-alert` is the check). Empty: alerts go to `/var/log/ratchet/watch.log` only |
+| `RATCHET_ALERT_WEBHOOK_SECRET` | empty | Secret. When set, each alert carries `X-Ratchet-Signature: sha256=<hex HMAC-SHA256 of the body>` |
+| `RATCHET_ALERT_KINDS` | `alert,rollback,train_failed,circuit,budget,admin,task_disabled,probe,watchdog_restart` | Kinds to send; an unknown kind is an error naming it. The watchdog sends only `probe` and `watchdog_restart` |
+| `RATCHET_INSTANCE_NAME` | the host name | `gateway` in the alert body |
+| `RATCHET_WATCH_KEY` | empty | Secret. `scripts/demo_check.py --chat` only: the `watchdog` key for its one live completion (from the environment, never a flag) |
+| `RATCHET_DEMO_CHECK_KEY` | empty | Secret. `scripts/demo_check.py` only: the key for its free `GET /v1/models` check (the judge key's), unless `--key-env` names another variable |
+
+The probe also reads `RATCHET_MODE`, `RATCHET_DOMAIN`, `RATCHET_API_GUARD`, `RATCHET_ADMIN_TOKEN`, `RATCHET_API_KEYS` and `RATCHET_TEACHER_FALLBACK_MODEL` from the same file.
 
 ## Live Night School (`ratchet/live.py`)
 

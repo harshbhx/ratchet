@@ -34,6 +34,9 @@ services:
       - "8000"
     volumes:
       - ratchet-data:/data
+      # A directory, so a `git pull` that replaces config/tasks.json is seen on the next start. The watchdog's pinned probe
+      # task lives there; set RATCHET_TASKS_FILE=/config/tasks.json in .env once a `watchdog` key is in RATCHET_API_KEYS.
+      - ./config:/config:ro
     restart: unless-stopped
     # On a stop, the gateway finishes its requests, then waits up to RATCHET_SIDECAR_DRAIN_S (10 s) for audits and
     # shadows still queued (live mode, ADR 0072); Docker's default 10 s before SIGKILL would cut that wait short.

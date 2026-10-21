@@ -1015,6 +1015,7 @@ def test_scout_status_only_adds_keys(gw, monkeypatch, tmp_path):
         "tavily": bool,
     }  # docs/SCOUT.md's list before v0.5
     new = {"public_runs_left_today", "public_budget_left_usd", "judge_runs_today", "persistent", "judge", "search"}
+    new |= {"live_check"}  # the demo watchdog's flag (FR-11.33)
     new |= {"fallback_student", "student_serving"}  # which model answers student calls (FR-7.40, lane W)
     mock = TestClient(gw.app).get("/scout/status").json()
     _live_gateway(gw, monkeypatch, _live_scout_settings(tmp_path, tavily_monthly_credits=1000), TavilyStub(), FakeClock(DEC1))

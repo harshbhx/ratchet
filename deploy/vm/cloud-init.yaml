@@ -47,6 +47,16 @@ write_files:
       APT::Periodic::Unattended-Upgrade "1";
       APT::Periodic::AutocleanInterval "7";
 
+  # The demo watchdog: liveness and restart rule every 2 minutes, one live probe an hour (a no-op in mock mode and with
+  # RATCHET_WATCH=off). Same content as deploy/vm/ratchet-watch.cron.
+  - path: /etc/cron.d/ratchet-watch
+    permissions: "0644"
+    content: |
+      SHELL=/bin/bash
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      */2 * * * * ratchet cd /opt/ratchet && python3 -m ratchet.watch tick >> /var/log/ratchet/watch.log 2>&1
+      17 * * * * ratchet cd /opt/ratchet && python3 -m ratchet.watch probe >> /var/log/ratchet/watch.log 2>&1
+
   # Cron jobs. Only the backup is on by default.
   - path: /etc/cron.d/ratchet
     permissions: "0644"
