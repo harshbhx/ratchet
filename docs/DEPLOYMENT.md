@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 784 tests, ~80 s
+pytest -q                                                          # 793 tests, ~80 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -44,9 +44,15 @@ cron: python -m ratchet.live tick
 Create a bucket in the same region as your GPUs (eu-north1 has L40S and H100). It is mounted at `/data` in both the job and the endpoint, with this layout:
 
 ```
-/data/night/train.jsonl          written by ratchet.live (via RATCHET_SYNC_CMD)
-/data/adapters/student-vN/       written by the training job, read by vLLM
+/data/night/train.jsonl                    written by ratchet.live (via RATCHET_SYNC_CMD)
+/data/boms/student-vN.json                 the adapter's bill of materials, written by ratchet.live after the night
+/data/adapters/student-vN/                 written by the training job, read by vLLM
+/data/adapters/student-vN/NOTICE.md        the licenses that travel with the adapter (the job writes it; ratchet.live
+                                           replaces it with the text the BOM signed)
+/data/adapters/student-vN/ratchet_bom.json the adapter's BOM, synced by ratchet.live after the night
 ```
+
+`RATCHET_SYNC_CMD` runs twice on a night that trains: before the job (the dataset) and after the evaluation (the BOM and `NOTICE.md` into the adapter's folder). It must only upload: `aws s3 sync` without `--delete` leaves the weights the job wrote alone.
 
 Set:
 
@@ -140,7 +146,22 @@ Use **one worker**. The ledger is a single SQLite connection inside the process,
 */5 * * * * cd /opt/ratchet && . ./.env && python -m ratchet.live tick  >> /var/log/ratchet-tick.log 2>&1
 ```
 
-`python -m ratchet.live night` runs `run_night` with `NebiusTrainer` and `LiveEvaluator` (judge = `RATCHET_JUDGE_MODEL`), then prints the last 10 events. `tick` runs `ReleaseGate.tick()` once. Without `RATCHET_STUDENT_BASE`, `night` stops before syncing or starting the training job, and `reload` stops with the same message (nothing to reload is not an error). The same commands run offline in `tests/test_live.py`, against fake endpoints, before they run here.
+`python -m ratchet.live night` runs `run_night` with `NebiusTrainer` and `LiveEvaluator` (judge = `RATCHET_JUDGE_MODEL`), writes the adapter's BOM and `NOTICE.md` into `RATCHET_DATA_DIR/adapters/<name>/` and runs `RATCHET_SYNC_CMD` again, then prints the last 10 events. If that second sync fails, the night still counts (the version exists and is in the release gate), a `sync_failed` event is written and the command exits non-zero: run `RATCHET_SYNC_CMD` by hand. `tick` runs `ReleaseGate.tick()` once. Without `RATCHET_STUDENT_BASE`, `night` stops before syncing or starting the training job, and `reload` stops with the same message (nothing to reload is not an error). The same commands run offline in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints, before they run here.
+
+### Export an adapter with its licenses
+
+To hand an adapter to someone (another team, a customer, a model registry), export it with its licenses ([ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)):
+
+```bash
+aws s3 sync s3://<bucket name>/adapters/student-v3 ./data/adapters/student-v3 --endpoint-url $RATCHET_S3_ENDPOINT  # weights, if not local
+python -m ratchet.live export --version 3 --out ./student-v3-export
+# exported student-v3 (v3) from data/adapters/student-v3 to student-v3-export
+# bill of materials: student-v3-export/ratchet_bom.json (signature valid (Ed25519, key 6cf6bc1a39c4491d, embedded key only; ...))
+# notice: student-v3-export/NOTICE.md
+# bom sha256: 9b1f…
+```
+
+The folder gets the adapter files from `RATCHET_DATA_DIR/adapters/<name>/` (when they are on this machine; otherwise the command says where to copy them from), the BOM stored at training time (`ratchet_bom.json`, checked against its own `sha256` and signature first; a BOM that does not verify is refused) and the `NOTICE.md` that BOM signed: the base model's license (the NVIDIA Nemotron Open Model License for the Nano models), each teacher's license and URL, that the targets were teacher outputs only, and the Ratchet version. The output folder must be new or empty, and outside the adapter folder. Give the recipient your public key: `python -m ratchet.bom verify student-v3-export/ratchet_bom.json --public-key <yours> --notice student-v3-export/NOTICE.md` prints `OK` for the BOM and `OK: NOTICE.md matches the BOM` for the notice (its SHA-256 equals the BOM's `notices[0].sha256`). Keep `NOTICE.md` with the adapter wherever it goes; a version trained before v0.4 has no BOM and is refused.
 
 ## 3. Keeping the demo alive for judging (Dec 1–15, 2026)
 
@@ -171,6 +192,6 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 
 1. `curl $GATEWAY/healthz` returns `{"status":"ok",...}`, and `curl -H "Authorization: Bearer $KEY" $GATEWAY/v1/models` returns `ratchet` (drop the header if `RATCHET_API_KEYS` is not set).
 2. Send 20 real requests. `GET /ratchet/stats` shows them with `served_by=teacher` (cold start), and `GET /ratchet/bom` shows the teacher with license `OpenMDW-1.1`.
-3. Run `python -m ratchet.live night` once you have at least 50 new examples. Expect a `trained` event and either `canary` or `rejected`, and a bill of materials at `data/boms/student-v1.json` (also at `GET /ratchet/versions/1/bom`). With `RATCHET_BOM_SIGNING_KEY` set, `python -m ratchet.bom verify data/boms/student-v1.json --public-key <yours>` prints `OK`.
+3. Run `python -m ratchet.live night` once you have at least 50 new examples. Expect a `trained` event and either `canary` or `rejected`, and a bill of materials at `data/boms/student-v1.json` (also at `GET /ratchet/versions/1/bom`), with `ratchet_bom.json` and `NOTICE.md` in the bucket's `adapters/student-v1/` next to the weights. With `RATCHET_BOM_SIGNING_KEY` set, `python -m ratchet.bom verify data/boms/student-v1.json --public-key <yours>` prints `OK`.
 4. Check that `curl $RATCHET_STUDENT_BASE/models` lists `student-v1` after the night.
 5. Watch the `canary` → `live` events over the next requests. Audits need traffic: at a 5% audit rate and 10% canary, reaching 20 audits takes roughly 4,000+ requests, so for a demo raise `RATCHET_AUDIT_RATE`, or lower `ReleasePolicy.min_audits` in code (there is no environment variable for it).

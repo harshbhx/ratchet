@@ -219,6 +219,10 @@ class Settings:
     fallback_student_model: str = field(
         default_factory=lambda: _env("RATCHET_FALLBACK_STUDENT", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
     )
+    # Open teachers added without a code change (ratchet/licenses.py, ADR 0090): a JSON list of {model, license, url,
+    # note}, merged into a copy of the built-in registry at startup. Only allowed licenses, never a closed model family;
+    # a bad file stops startup with every error listed. Empty = the built-in registry only.
+    teacher_licenses_file: str = field(default_factory=lambda: _env("RATCHET_TEACHER_LICENSES", ""))
 
     # Student on a Nebius Serverless Endpoint running vLLM with LoRA adapters.
     student_base: str = field(default_factory=lambda: _env("RATCHET_STUDENT_BASE", ""))

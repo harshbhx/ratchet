@@ -15,6 +15,8 @@ import argparse
 import json
 from pathlib import Path
 
+from .notices import sources, write_notices
+
 
 def load_rows(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as f:
@@ -28,6 +30,18 @@ def manifest(base: str, rows: list[dict]) -> dict:
         "examples": len(rows),
         "provenance": sorted({(r["provenance"]["teacher"], r["provenance"]["license"]) for r in rows}),
     }
+
+
+def write_metadata(out: str | Path, base: str, rows: list[dict]) -> list[Path]:
+    """The files saved next to the adapter weights: `ratchet_manifest.json` and NOTICE.md, which carries the base model's
+    license and each teacher's (NFR-9). The job runs with the built-in license registry only, so a teacher added in
+    RATCHET_TEACHER_LICENSES shows its URL as not recorded here; live Night School writes NOTICE.md again from the
+    adapter's BOM, with every URL, and syncs it into the same folder."""
+    folder = Path(out)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "ratchet_manifest.json"
+    path.write_text(json.dumps(manifest(base, rows), indent=2, default=list))
+    return [path, write_notices(folder, base, sources(rows))]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -101,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs a G
     trainer.train()
     model.save_pretrained(str(out))
     tok.save_pretrained(str(out))
-    (out / "ratchet_manifest.json").write_text(json.dumps(manifest(a.base, rows), indent=2, default=list))
+    write_metadata(out, a.base, rows)  # ratchet_manifest.json and NOTICE.md next to the weights
     print(f"saved adapter to {out}")
 
 

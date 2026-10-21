@@ -138,8 +138,8 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RATCHET_DATA_DIR` | `data` | Local folder for `night/train.jsonl`, synced to the bucket |
-| `RATCHET_SYNC_CMD` | empty | Command that uploads `RATCHET_DATA_DIR` to the bucket, e.g. `aws s3 sync ./data s3://my-bucket --endpoint-url https://storage.eu-north1.nebius.cloud` (skipped if empty) |
+| `RATCHET_DATA_DIR` | `data` | Local folder synced to the bucket, laid out as the training job sees the bucket at `/data`: `night/train.jsonl`, `boms/student-vN.json`, and `adapters/<name>/ratchet_bom.json` and `NOTICE.md` (written after a night that trained, next to where the job wrote the weights). `python -m ratchet.live export` copies `adapters/<name>/` from here when the weights are here too (a bucket mount, or synced down) |
+| `RATCHET_SYNC_CMD` | empty | Command that uploads `RATCHET_DATA_DIR` to the bucket, e.g. `aws s3 sync ./data s3://my-bucket --endpoint-url https://storage.eu-north1.nebius.cloud` (skipped if empty). Run before the training job and again after a night that trained, so the adapter's BOM and NOTICE.md reach its bucket folder; a failure of the second run is a `sync_failed` event and a non-zero exit. It must only upload: an option that deletes remote files missing locally (`--delete`) would delete the adapter weights |
 | `RATCHET_TRAIN_CMD` | `bash deploy/train_job.sh {version}` | Command that runs training and **waits** for it. `{version}` and `{data}` are substituted |
 | `RATCHET_ADAPTER_ROOT` | `/data/adapters` | Adapter folder as the vLLM endpoint sees it (`lora_path` = `<root>/<version>`). Also read by the gateway in live mode, which reloads an adapter from there when vLLM answers 404 for it |
 
@@ -391,4 +391,27 @@ Choose fields that are verifiable (labels, IDs, numbers, dates). Typed compariso
 
 ## Teacher licenses
 
-Edit `ratchet/licenses.py` to add a teacher. `REGISTRY` holds known distillable teachers; `CLOSED` holds ID prefixes that are always refused (`gpt`, `o1`, `o3`, `o4`, `claude`, `gemini`). Unknown teachers are refused until registered. See [ADR 0001](adr/0001-open-teacher-only.md).
+`ratchet/licenses.py` holds the built-in registry (`BUILTIN`: known distillable teachers) and `CLOSED`, the ID prefixes that are always refused (`gpt`, `o1`, `o3`, `o4`, `claude`, `gemini`). Unknown teachers are refused until registered. See [ADR 0001](adr/0001-open-teacher-only.md).
+
+An open teacher can also be added without a code change ([ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_TEACHER_LICENSES` | empty | A JSON file: a list of `{"model", "license", "url", "note"}` objects (`note` optional, at most 100 entries). Read at startup by the gateway (and on a mock demo reset), the simulator, `python -m ratchet.live` and `python -m ratchet.admin`, and merged into a copy of the built-in registry. The configured teachers can then be `RATCHET_TEACHER_MODEL` or `RATCHET_TEACHER_FALLBACK_MODEL`, Night School trains on their stored answers, and each adapter's BOM and NOTICE.md name them with `license_origin` `config`. A bad file stops startup with every error and its place (`[2].license: 'CC-BY-NC-4.0' is not an allowed license; ...`). Empty = the built-in registry only |
+
+Each entry is checked conservatively, so invariant 1 cannot be configured away:
+
+- `license` must be one of the **allowed licenses**: `OpenMDW-1.1`, `Apache-2.0`, `MIT`, `NVIDIA Nemotron Open Model License` (any case; stored in this spelling). Licenses with use restrictions or custom terms (a community license, a non-commercial one) need a reviewed change to `ratchet/licenses.py`.
+- `model` must not belong to a closed model family (`closed_family`). The id is split at every character that is not a letter or digit; it is refused when a part starts with a `CLOSED` prefix (`gpt`, `o1`, `o3`, `o4`, `claude`, `gemini`), a part contains `gpt`, `claude` or `gemini` anywhere (`chatgpt-4o-latest`), or a part contains a closed vendor's name (`openai`, `anthropic`; `CLOSED_VENDORS`). `gpt-4o`, `azure-gpt-4o`, `chatgpt-4o-latest`, `openai/davinci-002` or `anthropic/claude-3-5-sonnet` claimed as `Apache-2.0` are refused. The rule errs toward refusing, so it also refuses open models with such a name (`openai/gpt-oss-120b`, `EleutherAI/gpt-j-6b`): add those in code, after reading their license.
+- `model` must not be a built-in teacher, in any case (configuration never relabels one), or appear twice; `url` must be an `https://` URL; no other keys.
+
+```json
+[
+  {"model": "Qwen/Qwen3-235B-A22B-Instruct-2507", "license": "Apache-2.0",
+   "url": "https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507", "note": "Checked on the model card, Oct 2026."}
+]
+```
+
+A configured teacher has no entry in `DEFAULT_PRICES`, so it is priced as described in [Prices](#prices-default_prices). Removing an entry later makes the teacher unknown again: the gateway refuses it at startup and Night School leaves its stored rows out of training (they keep the license they were stored with). Not legal advice: check each license yourself.
+
+`BASE_MODELS` in the same file maps the student base models Ratchet knows (Nemotron 3 Nano 4B and 30B-A3B) to their license, the NVIDIA Nemotron Open Model License, which every adapter's BOM (`base_model_license`) and NOTICE.md carry. For another `RATCHET_STUDENT_BASE_MODEL` they carry a warning instead (never an error): find its license and ship it with the adapter, or add the model to `BASE_MODELS`.

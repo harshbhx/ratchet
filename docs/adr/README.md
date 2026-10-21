@@ -13,7 +13,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0007](0007-golden-set-split-and-frequent-requests.md) | Hash-based golden split; frequent requests always train | Accepted | 2026-10-19 |
 | [0008](0008-pinned-tasks.md) | Pinned tasks stay on the teacher and are never training data | Accepted | 2026-10-20 |
 | [0009](0009-pattern-based-pii-redaction.md) | Pattern-based PII redaction before examples are stored | Accepted | 2026-10-20 |
-| [0010](0010-signed-adapter-bom.md) | A signed bill of materials per adapter | Accepted | 2026-10-20 |
+| [0010](0010-signed-adapter-bom.md) | A signed bill of materials per adapter (amended: schema v2, licenses travel with the adapter) | Accepted | 2026-10-20 |
 | [0011](0011-requirements-traceability.md) | Requirements traceability from PRD rows and test markers, checked in CI | Accepted | 2026-10-20 |
 | [0012](0012-openai-request-validation-and-error-envelope.md) | Validate and normalise OpenAI requests at the gateway, and answer errors in OpenAI's envelope | Accepted | 2026-10-20 |
 | [0013](0013-optional-teacher-calls-fail-open.md) | Optional teacher calls fail open for the request and count against the shadow in the release gate | Accepted | 2026-10-20 |
@@ -30,5 +30,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0024](0024-evidence-foundations.md) | Foundations for the evidence features: exact statistics, Merkle trees, one schema change with append-only tables, reserved settings and three pinned workloads | Accepted | 2026-10-20 |
 | [0080](0080-storage-opt-outs-and-pseudonymous-end-users.md) | Storage opt-outs at every level, and end users kept only as scoped keyed hashes | Accepted | 2026-10-20 |
 | [0081](0081-retention-tombstones-erasure-and-export.md) | Retention: tombstones, erasure and export | Accepted | 2026-10-20 |
+| [0090](0090-licenses-travel-with-the-adapter.md) | Licenses travel with the adapter (base-model license in the BOM, NOTICE.md, export), and open teachers addable by configuration without weakening invariant 1 | Accepted | 2026-10-20 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.
