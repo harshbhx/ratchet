@@ -37,8 +37,11 @@ web:
 web-dev:
 	cd web && npm ci && npm run dev
 
+# Live day-1 probes (never in test, lint or CI). Default: the Token Factory teacher check.
+# make day1 DAY1_CHECKS="all --json evidence/day1/day1.json" runs every probe whose key is set.
+DAY1_CHECKS ?=
 day1:
-	python scripts/day1_check.py
+	python scripts/day1_check.py $(DAY1_CHECKS)
 
 docker:
 	docker build -t ratchet-gateway .
