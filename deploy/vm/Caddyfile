@@ -11,8 +11,11 @@
 (open) {
 }
 
-# "guarded": the gateway has no auth in v0.1, so keep the paid API and the demo controls
-# behind a shared token. The UI stays public: /, /scout*, /dashboard, /ratchet/stats, /ratchet/bom.
+# "guarded": keep the paid API and the demo controls behind a shared token, with or without the
+# gateway's own keys (RATCHET_API_KEYS; without them a live gateway needs
+# RATCHET_ALLOW_UNAUTHENTICATED=1). The UI stays public here: /, /scout*, /dashboard,
+# /ratchet/stats, /ratchet/bom; the gateway's RATCHET_PUBLIC_DASHBOARD decides whether the last
+# two need a key.
 # Note: the mock dashboard's "Run day", "Break next deploy" and "Reset" buttons call
 # /ratchet/demo/*, so they stop working for visitors in this mode.
 #

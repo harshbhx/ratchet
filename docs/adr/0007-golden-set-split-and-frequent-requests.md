@@ -26,6 +26,10 @@ Simulation showed two problems:
 - Negative: the golden set is drawn from teacher-labelled traffic, which over-represents escalations (hard cases). Its coverage is a conservative estimate of live coverage.
 - Negative: halving the golden set doubles the noise. With about 200 golden rows, precision is only known to a few points. Shadow and canary exist partly for this reason.
 
+## Amendment (2026-10-21): retries are not repeats
+
+`seen` must count how often traffic asks a request, not how often one client retried it: three retries of one escalated request used to reach `FREQUENT` and move a golden example into training. Since [ADR 0071](0071-idempotency-keys-and-retry-de-duplication.md) a request whose `x-stainless-retry-count` is above 0 never adds to a duplicate's `seen` (`Ledger.add_example(count_seen=False)`), and the same API client's repeat of a stored example within `RATCHET_SEEN_DEDUP_S` (300 s in live mode, off in mock mode) counts once. A repeat from another client, or minutes later, still counts, and internal traffic (Scout, the simulator, the warm-up) counts every repeat, so the rule above and every simulation number are unchanged. With an `Idempotency-Key` a retry does not reach the cascade at all.
+
 ## Alternatives considered
 
 - **Time-based holdout** (yesterday's data): tracks drift better, but frequent requests leak between train and test.

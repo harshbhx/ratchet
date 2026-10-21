@@ -81,7 +81,8 @@ def _nest(depth: int) -> dict[str, Any]:
 
 def _error(resp: Any) -> dict[str, Any]:
     body = resp.json()
-    assert set(body) == {"error", "detail"}, body
+    assert set(body) == {"error", "detail", "request_id"}, body
+    assert body["request_id"] == resp.headers["x-request-id"]  # the request's id beside OpenAI's error (ADR 0062)
     assert set(body["error"]) == {"message", "type", "param", "code"}
     assert body["detail"] == body["error"]["message"]  # kept for one release, for {"detail"} clients
     return body["error"]
@@ -239,7 +240,14 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
     gw = _gateway(gw_env)
     mock = gw.rt
     live = gw.Runtime(
-        Settings(mode="live", db_path=str(tmp_path / "live.db"), student_base="", teacher_api_key="", audit_rate=0.0),
+        Settings(
+            mode="live",
+            db_path=str(tmp_path / "live.db"),
+            student_base="",
+            teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
+            audit_rate=0.0,
+            allow_unauthenticated=True,
+        ),
         transports={"teacher": FakeOpenAIServer(A).transport},
     )
     c = TestClient(gw.app, raise_server_exceptions=False)
@@ -296,7 +304,14 @@ def test_unpaired_surrogate_is_a_400_in_both_modes(gw_env, tmp_path, monkeypatch
     # Live mode: the teacher is never called (before the fix, encoding its request body raised: a 500).
     teacher = FakeOpenAIServer(A)
     live = gw.Runtime(
-        Settings(mode="live", db_path=str(tmp_path / "live.db"), student_base="", teacher_api_key="", audit_rate=0.0),
+        Settings(
+            mode="live",
+            db_path=str(tmp_path / "live.db"),
+            student_base="",
+            teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
+            audit_rate=0.0,
+            allow_unauthenticated=True,
+        ),
         transports={"teacher": teacher.transport},
     )
     monkeypatch.setattr(gw, "rt", live)
@@ -377,7 +392,14 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
     assert gw.rt.gateway_errors == 0
 
     # In live mode a KeyError is a bug in the gateway, not a client mistake.
-    live = _gateway(gw_env, RATCHET_MODE="live", RATCHET_DB=str(tmp_path / "live.db"), RATCHET_STUDENT_BASE="", NEBIUS_API_KEY="")
+    live = _gateway(
+        gw_env,
+        RATCHET_MODE="live",
+        RATCHET_DB=str(tmp_path / "live.db"),
+        RATCHET_STUDENT_BASE="",
+        NEBIUS_API_KEY="tf-key",  # live mode needs a teacher key to start (ADR 0070)
+        RATCHET_ALLOW_UNAUTHENTICATED="1",
+    )
 
     def lookup_bug(*args: Any, **kwargs: Any) -> Any:
         raise KeyError("threshold")
@@ -640,6 +662,7 @@ def _gen_runtime(gw: Any, tmp_path: Any, teacher: FakeOpenAIServer, **overrides:
         "student_max_tokens": 1024,
         "teacher_reasoning_headroom": 0,
         "api_keys": "",
+        "allow_unauthenticated": True,  # no API keys in live mode (ADR 0061)
         "api_key_daily_requests": 0,
         "bom_signing_key": "",
         "mock_warmup_days": 0,
@@ -688,6 +711,7 @@ def test_generation_parameters_reach_teacher_student_and_audit(gw_env, tmp_path,
     hello = [{"role": "user", "content": "hello"}]
     r = c.post(CHAT, json={"messages": hello, **sent})
     assert r.json()["ratchet"]["served_by"] == "student" and r.json()["choices"][0]["finish_reason"] == "stop"
+    assert rt.ratchet.sidecar.drain(10)  # live mode audits after the response (ADR 0072)
     assert _bodies(teacher)[-1] == {
         "model": OPEN_TEACHER,
         "messages": hello,
@@ -1216,7 +1240,9 @@ def test_n_choices_escalated_over_http(gw_env, tmp_path, monkeypatch):
 
     gw = _gateway(gw_env)
     teacher = FakeOpenAIServer(A, out_tokens=6)
-    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_modalities="text,image_url")
+    # Without the seen window (live mode's 300 s would count this client's repeats once, ADR 0071), each request's one
+    # bump shows in `seen`: n choices never bump more than once.
+    rt, student = _gen_runtime(gw, tmp_path, teacher, teacher_modalities="text,image_url", seen_dedup_s=0)
     monkeypatch.setattr(gw, "rt", rt)
     _version(rt.ledger, "live", {"threshold": 0.99})  # unsure of everything: the teacher answers
     c = TestClient(gw.app)

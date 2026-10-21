@@ -13,12 +13,14 @@ import sqlite3
 import threading
 import time
 from collections import Counter
-from collections.abc import Collection, Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from . import licenses, tasks
+from . import licenses, metrics, tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
+from .idem import SeenWindow
 from .stats import wilson
 
 SCHEMA = """
@@ -40,6 +42,7 @@ CREATE TABLE IF NOT EXISTS requests (
     client TEXT,               -- API key name (RATCHET_API_KEYS); NULL when auth is off or for internal calls
     route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
     stored INTEGER,            -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
+    wall_ms REAL,              -- the whole cascade on the gateway's clock (perf_counter); latency_ms is the providers' part
     -- Evidence columns (ADR 0024), NULL until the feature that writes them lands, and in older rows:
     threshold REAL,            -- the confidence threshold the student was held to; NULL without a version (FR-16.5)
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
@@ -49,12 +52,16 @@ CREATE TABLE IF NOT EXISTS requests (
     -- Data governance (FR-13.1, FR-13.2, ADR 0080):
     end_user TEXT,             -- HMAC of the request's safety_identifier or user (privacy.EndUsers), never the value
     store_opt_out TEXT,        -- why its teacher answers could not be stored (privacy.OPT_OUTS); NULL: no opt-out
-    -- The gateway's request id ('req_' + 32 hex; the completion id is 'chatcmpl-' + the same digits), which feedback
-    -- names the request by (FR-13.30); NULL for internal calls (Scout, the simulator) and older rows.
+    -- The gateway's request id ('req_' + 32 hex, also in x-request-id; the completion id is 'chatcmpl-' + the same digits),
+    -- which feedback names the request by (FR-13.30, ADR 0062); NULL for internal calls (Scout, the simulator) and older rows.
     request_id TEXT,
     -- HMAC of the second end-user identifier the request carried ('user' beside 'safety_identifier'), in the same scope as
     -- end_user, never the value: a correction must name it too, so a no-train registration made with it applies (FR-13.30)
-    end_user_secondary TEXT
+    end_user_secondary TEXT,
+    -- The client's own request id (X-Request-Id or X-Client-Request-Id, validated; ADR 0062); NULL for internal calls and
+    -- older rows.
+    client_request_id TEXT,
+    retry_count INTEGER DEFAULT 0  -- the client SDK's attempt number (x-stainless-retry-count, ADR 0071); 0 when unsent
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,6 +116,18 @@ CREATE TABLE IF NOT EXISTS compute_intervals (
     version INTEGER,           -- the version a training job produced; NULL otherwise
     source TEXT,               -- 'cli' | 'api' | 'deploy' | 'night' | 'simulation'
     note TEXT
+);
+CREATE TABLE IF NOT EXISTS failures (  -- what failed, with what it spent (ADR 0062); metadata only, never text
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER,
+    request_id TEXT,           -- the gateway's request id; NULL for a call outside a gateway request (Scout, simulator)
+    client TEXT,               -- API key name; NULL when unknown (a 401), when keys are off, or for internal calls
+    task TEXT,                 -- NULL when the request failed before naming one
+    stage TEXT,                -- FAILURE_STAGES: where it failed
+    error TEXT,                -- the exception's class, status and code (resilience.describe_failure); never a message
+    status INTEGER,            -- the HTTP status of the stage that failed (an upstream's for upstream stages)
+    latency_ms REAL,           -- from the start of the request (or the cascade) to the failure
+    cost_usd REAL              -- what a request that left no requests row spent (its student samples); 0 otherwise
 );
 CREATE TABLE IF NOT EXISTS tasks (
     name TEXT PRIMARY KEY,
@@ -327,6 +346,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "store_opt_out": "TEXT",
         "request_id": "TEXT",
         "end_user_secondary": "TEXT",
+        "wall_ms": "REAL",
+        "client_request_id": "TEXT",
+        "retry_count": "INTEGER DEFAULT 0",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -365,6 +387,9 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS requests_version_id ON requests (student_version, id)",
     "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
+    # The routing snapshot's rebuild reads only the live, canary and shadow rows (ADR 0060). SQLite ends every index with
+    # the rowid, so requests_shadow_version already serves `shadow_version=? AND id>?` ranges.
+    "CREATE INDEX IF NOT EXISTS versions_state ON versions (state)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
@@ -383,6 +408,11 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS feedback_version ON feedback (version)",
     # Scout's guard and credit meter restore today's and this cycle's rows at startup (ADR 0120).
     "CREATE INDEX IF NOT EXISTS spend_kind_ts ON spend (kind, ts)",
+    # Request lookups by id (requests_request_id, above), the failures of the last hour (/ratchet/stats) and today's
+    # spend per client (/metrics).
+    "CREATE INDEX IF NOT EXISTS failures_request_id ON failures (request_id)",
+    "CREATE INDEX IF NOT EXISTS failures_ts ON failures (ts)",
+    "CREATE INDEX IF NOT EXISTS failures_client_ts ON failures (client, ts)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -474,6 +504,12 @@ WINDOW_COLUMNS = (
     "shadow_serve", "shadow_agree", "latency_ms", "wall_ms", "cost_usd", "baseline_cost_usd", "student_cost_usd",
     "teacher_cost_usd", "label_p", "stored", "optional_failed", "client_request_id",
 )  # fmt: skip
+# Where a request failed (`failures.stage`, ADR 0062). Upstream stages: the serving teacher (also the fallback teacher),
+# the student's samples, a teacher audit, the shadow's samples or its arbitration, and an upstream a gateway route called
+# itself (Scout's models and search). Gateway stages: the daily quota, an API, admin or dashboard key, the Scout budget
+# guard, a rate limit of the gateway's own, and the gateway itself (a 413, an unhandled error).
+FAILURE_STAGES = ("teacher", "student", "audit", "shadow", "quota", "auth", "budget", "rate", "upstream", "gateway")
+FAILURE_COLUMNS = frozenset({"ts", "day", "request_id", "client", "task", "stage", "error", "status", "latency_ms", "cost_usd"})
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -493,6 +529,57 @@ RECEIPT_CHUNK = 20_000
 
 class ReceiptExists(ValueError):
     """A receipt for this (period, client) is already sealed: receipts are written once (INV-17)."""
+
+
+# RATCHET_DB_SYNC (ADR 0060): NORMAL puts a file ledger in the WAL journal with synchronous=NORMAL (readers never wait for
+# the writer and a commit does not wait for the disk; a power cut can lose the last commits, never corrupt the file);
+# FULL keeps the rollback journal with synchronous=FULL, v0.4's behaviour, for a filesystem without shared memory.
+SYNC_MODES = ("NORMAL", "FULL")
+BUSY_TIMEOUT_MS = 5000  # how long a connection waits for another process's write lock before it raises
+# Paths SQLite keeps out of any file other connections can open: no journal mode, no second connection.
+PRIVATE_PATHS = ("", ":memory:")
+# The versions a request is routed by (`Ledger.live`, `Ledger.by_state`), kept in the routing snapshot.
+ROUTED_STATES = ("live", "canary", "shadow")
+# Tables whose writes on this connection bump a generation (`_bump`, through TEMP triggers that live only on
+# the writer's connection): any write to `versions` invalidates the routing snapshot; a deleted or rewritten request or
+# example invalidates the incremental tallies built from them. Inserts into requests and examples are not watched (the
+# tallies read rows above the last id they saw), so the request path pays nothing for them.
+WATCHED = {
+    "versions": ("INSERT", "UPDATE", "DELETE"),
+    "requests": ("UPDATE", "DELETE"),
+    "examples": ("UPDATE OF hash, purged_ts", "DELETE"),  # purged_ts: a purge or a restore moves the BOM digest
+}
+MAX_TALLIES = 64  # version_live_quality's incremental tallies kept, oldest dropped first (two are used per tick)
+# What `update_request` may write (ADR 0072): a pending audit's verdict, a pending shadow's, whether the request stored an
+# example, its all-teacher baseline, and the cost and token columns the off-path calls add to. Never a column a cache or
+# the routing keys on (`ts`, `day`, `served_by`, `route`, `student_version`, `wall_ms`, ...).
+# `student_agree` (FR-16.5) is an off-path audit's label of the student's answer, written with its verdict.
+AUDIT_VERDICT = ("audited", "audit_agree", "student_agree")
+SHADOW_VERDICT = ("shadow_version", "shadow_serve", "shadow_agree")
+ADDABLE_COLUMNS = ("cost_usd", "student_cost_usd", "teacher_cost_usd", "student_in_tokens", "student_out_tokens")
+_IN_CHUNK = 500  # ids per `IN (...)` when the tally checks its pending audits
+
+# The release gate's queries, named so tests can check their plans (each must search an index, never scan requests).
+# A version's audits of answers it served, above a request id (requests_version_audited): version_live_quality's tally.
+AUDIT_TALLY_SQL = (
+    "SELECT COUNT(*) n, COUNT(audit_agree) k, COALESCE(SUM(audit_agree), 0) s, MAX(id) top FROM requests"
+    " WHERE student_version=? AND audited=1 AND served_by='student' AND id>?"
+)
+# A version's audits still pending (an off-path audit not done yet, ADR 0072) in the id range the tally just read.
+AUDIT_PENDING_SQL = (
+    "SELECT id FROM requests WHERE student_version=? AND audited=1 AND served_by='student' AND id>? AND id<=?"
+    " AND audit_agree IS NULL"
+)
+# A shadow candidate's verdicts (requests_shadow_version): shadow_quality.
+SHADOW_QUALITY_SQL = """SELECT COUNT(*) n, SUM(shadow_serve) served,
+                      AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
+                      SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
+                      AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
+                               WHEN route = 'n_choices' THEN 1
+                               ELSE served_by='student' END) live_cov
+               FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL"""
+# The routing snapshot's rebuild (versions_state).
+ROUTED_SQL = f"SELECT * FROM versions WHERE state IN ({','.join('?' * len(ROUTED_STATES))}) ORDER BY id"
 
 
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
@@ -584,14 +671,74 @@ def _locked(fn):
     return wrapper
 
 
+def _reads(fn):
+    """A read-only query for stats, the dashboard and reports. On a file ledger in WAL mode it runs on the read-only
+    connection (`self._rdb`) under its own lock, inside one read transaction, so its statements see one snapshot and it
+    never waits for the writer's lock (nor makes a request wait for it). Elsewhere `self._rdb` is the writer, under its
+    lock, as before. A method wrapped here must only read, through `self._rdb`, and must not take `self._lock`."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        if self._ro is None:
+            with self._lock:
+                return fn(self, *args, **kwargs)
+        with self._ro_lock:
+            if self._ro.in_transaction:  # called from another reader method: already inside its snapshot
+                return fn(self, *args, **kwargs)
+            self._ro.execute("BEGIN")
+            try:
+                return fn(self, *args, **kwargs)
+            finally:
+                self._ro.execute("ROLLBACK")  # a read transaction: nothing to commit
+
+    return wrapper
+
+
+@dataclass
+class _Tally:
+    """version_live_quality's running audit counts for one (version, stage) above request id `last_id`, valid while the
+    writer's request generation and data_version stay `gen`."""
+
+    gen: tuple[int, int]
+    last_id: int
+    n: int = 0  # audits with a verdict (audit_agree set): the count and AVG's denominator
+    agreed: int = 0  # their sum
+    pending: set[int] = field(default_factory=set)  # ids at or below last_id whose off-path audit had no verdict yet
+
+
+def _bump(gen: dict[str, int], table: str) -> None:
+    """`ratchet_written(table)`, called by the writer's TEMP triggers (`Ledger._watch`)."""
+    gen[table] += 1
+
+
+def _nearest_rank(q: float, n: int) -> int:
+    """The 0-based offset of the q-quantile among n sorted values, by the nearest-rank rule: the smallest value with at
+    least a share q of the values at or below it (q=0: the minimum, q=1: the maximum). q*n is rounded to 9 decimals
+    first, so 0.07 * 100 counts as 7, not 7.000000000000001."""
+    return min(n, max(1, math.ceil(round(q * n, 9)))) - 1
+
+
+def _check_quantiles(qs: Iterable[float]) -> tuple[float, ...]:
+    out = tuple(qs)
+    for q in out:
+        if isinstance(q, bool) or not isinstance(q, (int, float)) or not 0 <= q <= 1:
+            raise ValueError(f"quantiles must be numbers from 0 to 1, not {q!r}")
+    return out
+
+
 class Ledger:
     """`day` is set by the caller in simulations. With `auto_day=True` (live mode) it is
     derived from wall-clock time: day 1 starts at the first logged request."""
 
-    def __init__(self, path: str = ":memory:", golden_fraction: float = 0.10, auto_day: bool = False):
+    def __init__(self, path: str = ":memory:", golden_fraction: float = 0.10, auto_day: bool = False, sync: str = "NORMAL"):
+        mode = sync.strip().upper() if isinstance(sync, str) else None
+        if mode not in SYNC_MODES:
+            raise ValueError(f"RATCHET_DB_SYNC must be {' or '.join(SYNC_MODES)}, not {sync!r}")
         self._lock = threading.RLock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.path = path
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=BUSY_TIMEOUT_MS / 1000)
         self.db.row_factory = sqlite3.Row
+        self.journal_mode = self._journal(mode)
         self.db.executescript(SCHEMA)
         self._migrate()
         self.golden_fraction = golden_fraction
@@ -605,6 +752,127 @@ class Ledger:
             "SELECT MAX(COALESCE((SELECT MAX(day) FROM requests), 0), COALESCE((SELECT MAX(day) FROM daily_rollup), 0))"
         ).fetchone()[0]
         self.day = int(last_day)
+        # Hot-path caches (ADR 0060). Generations count this connection's writes to WATCHED tables; PRAGMA data_version
+        # changes when another connection (the cron tick, the cost CLI) commits.
+        self._gen = dict.fromkeys(WATCHED, 0)
+        # The `requests` bumps `update_request` caused (ADR 0072): it rewrites no column a cache keys on, and the audit
+        # tallies follow pending rows themselves, so those rewrites are left out of the generation the caches compare
+        # (`_requests_gen`). `_gen_lock` makes a reader's (bumps, generation) pair consistent.
+        self._offpath_bumps = 0
+        self._gen_lock = threading.Lock()
+        self._routing_key: tuple[int, int] | None = None
+        self._routing: dict[str, sqlite3.Row] = {}
+        self._tallies: dict[tuple[int, int], _Tally] = {}
+        # stats_by_day's percentiles per day: (count, highest id, request generation) -> (p50 student, p95).
+        self._day_latency: dict[int | None, tuple[tuple[int, int, int | None], float | None, float | None]] = {}
+        self._digest: tuple[tuple[int, int | None, int | None, int], str] | None = None  # bill_of_materials' sha
+        self._listeners: list[Callable[[dict[str, Any]], object]] = []  # event listeners (add_event_listener)
+        # When each (example, sender) repeat was last counted (`add_example`, ADR 0071); None counts every repeat, as
+        # before. The gateway sets one from RATCHET_SEEN_DEDUP_S; in memory only, like the request path's other caches.
+        self.seen_window: SeenWindow | None = None
+        self._watch()
+        self._ro, self._ro_lock = self._reader()
+        self._rdb = self._ro if self._ro is not None else self.db
+
+    def _journal(self, mode: str) -> str:
+        """Set a file ledger's journal (WAL for NORMAL, the rollback journal for FULL) and sync level, and return the
+        journal mode SQLite reports. In-memory and private databases keep theirs. When WAL cannot be had (a filesystem
+        without shared memory), the rollback journal stays and synchronous stays FULL, the level that journal needs to
+        survive a power cut."""
+        if self.path in PRIVATE_PATHS:
+            return str(self.db.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        self.db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        want = "WAL" if mode == "NORMAL" else "DELETE"
+        try:
+            got = str(self.db.execute(f"PRAGMA journal_mode={want}").fetchone()[0]).lower()
+        except sqlite3.OperationalError as e:  # leaving WAL needs the file to itself
+            raise sqlite3.OperationalError(
+                f"cannot switch the ledger at {self.path!r} to the {want.lower()} journal (RATCHET_DB_SYNC={mode}): {e}; "
+                "another process has it open, so stop it or give every process the same RATCHET_DB_SYNC"
+            ) from e
+        self.db.execute(f"PRAGMA synchronous={'NORMAL' if got == 'wal' else 'FULL'}")
+        return got
+
+    def _watch(self) -> None:
+        """TEMP triggers that bump `_gen[table]` on every write to a WATCHED table through this connection, whoever
+        issues it (a Ledger method or SQL on `ledger.db`), so no write can leave a cache stale. They exist only on this
+        connection: other processes see a plain file, and their commits show up in PRAGMA data_version instead."""
+        # The callback holds the counters only, not the ledger, so the connection and the ledger form no reference cycle.
+        self.db.create_function("ratchet_written", 1, functools.partial(_bump, self._gen))
+        for table, ops in WATCHED.items():
+            for op in ops:
+                name = f"ratchet_watch_{table}_{op.split()[0].lower()}"
+                self.db.execute(
+                    f"CREATE TEMP TRIGGER IF NOT EXISTS {name} AFTER {op} ON main.{table} "
+                    f"BEGIN SELECT ratchet_written('{table}'); END"
+                )
+
+    def _settled(self, table: str) -> int | None:
+        """This connection's write generation for `table`, for a reader-side cache key; None while the writer is inside
+        a transaction, because a write it counted may not be committed yet (the TEMP trigger fires before the commit),
+        and caching what a snapshot without it shows would outlive the commit. Read it before the snapshot's first
+        statement: once the writer is outside a transaction, every counted write has ended and the snapshot sees it."""
+        gen = self._requests_gen() if table == "requests" else self._gen[table]
+        return None if self.db.in_transaction else gen
+
+    def _requests_gen(self) -> int:
+        """The `requests` generation without `update_request`'s finishing writes (`_offpath_bumps`)."""
+        with self._gen_lock:
+            return self._gen["requests"] - self._offpath_bumps
+
+    def _reader(self) -> tuple[sqlite3.Connection | None, threading.RLock]:
+        """A read-only connection for `_reads` methods, on a file ledger in WAL mode (where readers never block the
+        writer); None elsewhere, or when it cannot be opened (the writer then serves reads, as before)."""
+        lock = threading.RLock()
+        if self.journal_mode != "wal":
+            return None, lock
+        try:
+            ro = sqlite3.connect(
+                Path(self.path).resolve().as_uri() + "?mode=ro",
+                uri=True,
+                check_same_thread=False,
+                timeout=BUSY_TIMEOUT_MS / 1000,
+                isolation_level=None,  # explicit read transactions only (`_reads`), never an implicit one left open
+            )
+        except sqlite3.Error:
+            return None, lock
+        ro.row_factory = sqlite3.Row
+        return ro, lock
+
+    @_locked
+    def close(self) -> None:
+        """Close both connections. The ledger cannot be used afterwards."""
+        if self._ro is not None:
+            with self._ro_lock:
+                self._ro.close()
+        self.db.close()
+
+    def probe(self, wait_s: float = 2.0) -> None:
+        """Readiness (FR-12.30, ADR 0070): raise unless this ledger can still be read and written. SELECT 1 on the
+        writer's connection, then a write that is rolled back: BEGIN IMMEDIATE takes the write lock (it fails while
+        another process holds it past `wait_s`) and re-setting `user_version` to its own value needs a writable file (a
+        read-only file or `query_only` connection refuses it, where BEGIN IMMEDIATE alone succeeds). Nothing is
+        committed, so no reader cache moves. Waits at most `wait_s` for the ledger's lock (TimeoutError), and lowers the
+        connection's busy timeout to `wait_s` meanwhile, so a probe never holds requests behind a stuck writer for
+        longer. A connection already inside a transaction (a write of this thread in progress) is only read."""
+        if not self._lock.acquire(timeout=max(0.0, wait_s)):
+            raise TimeoutError("the ledger's lock was held for longer than the probe waits")
+        try:
+            self.db.execute("SELECT 1").fetchone()
+            if self.db.in_transaction:
+                return
+            self.db.execute(f"PRAGMA busy_timeout={max(0, int(wait_s * 1000))}")
+            try:
+                self.db.execute("BEGIN IMMEDIATE")
+                try:
+                    version = int(self.db.execute("PRAGMA user_version").fetchone()[0])
+                    self.db.execute(f"PRAGMA user_version={version}")
+                finally:
+                    self.db.execute("ROLLBACK")
+            finally:
+                self.db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        finally:
+            self._lock.release()
 
     def locked(self) -> threading.RLock:
         """The ledger's lock, for a caller that reads, decides and then writes through several methods (an erasure, a
@@ -670,11 +938,131 @@ class Ledger:
         return int(cur.lastrowid)
 
     @_locked
+    def update_request(self, request_id: int, **cols: Any) -> bool:
+        """Finish a logged request's off-path checks (ADR 0072) in one transaction; True when the row exists.
+
+        `audited` and `audit_agree` are written only while the row's audit is pending (`audited=1`, `audit_agree` NULL),
+        and `shadow_version`, `shadow_serve` and `shadow_agree` only while its shadow is (`shadow_version` set,
+        `shadow_serve` NULL), so a verdict is written once and never rewritten. `stored` only goes up; `baseline_cost_usd`
+        is set. `add_<column>` adds to a cost or token column (ADDABLE_COLUMNS) a number, or a sequence of numbers one
+        after the other, so the total is the float the request path would have summed call by call. Any other column
+        raises ValueError before anything is written.
+
+        None of these is a column a cache keys on, and a verdict only leaves pending, which the audit tallies follow
+        themselves (`version_live_quality`), so these writes do not count in the `requests` generation the caches compare
+        (`_offpath_bumps`): finishing a request's checks never makes a tick recount a stage or a dashboard re-sort a day."""
+        audit = {k: cols.pop(k) for k in AUDIT_VERDICT if k in cols}
+        shadow = {k: cols.pop(k) for k in SHADOW_VERDICT if k in cols}
+        sets: list[str] = []
+        args: list[Any] = []
+        if "stored" in cols:
+            sets.append("stored=MAX(COALESCE(stored, 0), ?)")
+            args.append(int(bool(cols.pop("stored"))))
+        if "baseline_cost_usd" in cols:
+            sets.append("baseline_cost_usd=?")
+            args.append(cols.pop("baseline_cost_usd"))
+        for key in [k for k in cols if k.startswith("add_") and k[4:] in ADDABLE_COLUMNS]:
+            value = cols.pop(key)
+            terms = list(value) if isinstance(value, (list, tuple)) else [value]
+            for v in terms:
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    raise ValueError(f"{key} takes finite numbers, not {v!r}")
+            if terms:
+                expr = f"COALESCE({key[4:]}, 0)"
+                for _ in terms:
+                    expr = f"({expr} + ?)"
+                sets.append(f"{key[4:]}={expr}")
+                args.extend(terms)
+        if cols:
+            raise ValueError(f"update_request cannot write {sorted(cols)}")
+        if self.db.execute("SELECT 1 FROM requests WHERE id=?", (request_id,)).fetchone() is None:
+            return False
+        statements: list[tuple[str, list[Any]]] = []
+        if audit:
+            assigned = ", ".join(f"{k}=?" for k in audit)
+            where = "id=? AND audited=1 AND audit_agree IS NULL"
+            statements.append((f"UPDATE requests SET {assigned} WHERE {where}", [*audit.values(), request_id]))
+        if shadow:
+            assigned = ", ".join(f"{k}=?" for k in shadow)
+            where = "id=? AND shadow_version IS NOT NULL AND shadow_serve IS NULL"
+            statements.append((f"UPDATE requests SET {assigned} WHERE {where}", [*shadow.values(), request_id]))
+        if sets:
+            statements.append((f"UPDATE requests SET {', '.join(sets)} WHERE id=?", [*args, request_id]))
+        try:
+            with self._gen_lock:
+                before = self._gen["requests"]
+                for sql, values in statements:
+                    self.db.execute(sql, values)
+                self._offpath_bumps += self._gen["requests"] - before
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return True
+
+    @_locked
+    def log_failure(self, **row: Any) -> int:
+        """One `failures` row (FAILURE_COLUMNS; `stage` one of FAILURE_STAGES, `error` a class, status and code, never a
+        message). `cost_usd` is what a request that left no `requests` row spent, so `totals()` can count it; a failure
+        around an answered request (its cost is in its own row) records 0. Returns the row id."""
+        unknown = set(row) - FAILURE_COLUMNS
+        if unknown:
+            raise ValueError(f"failures has no columns {sorted(unknown)}")
+        if row.get("stage") not in FAILURE_STAGES:
+            raise ValueError(f"failure stage must be one of {', '.join(FAILURE_STAGES)}, not {row.get('stage')!r}")
+        row.setdefault("ts", time.time())
+        self._tick_day(row["ts"])
+        row.setdefault("day", self.day)
+        row.setdefault("cost_usd", 0.0)
+        cols = ",".join(row)
+        qs = ",".join("?" for _ in row)
+        cur = self.db.execute(f"INSERT INTO failures ({cols}) VALUES ({qs})", list(row.values()))
+        self.db.commit()
+        return int(cur.lastrowid)
+
+    @_reads
+    def request_record(self, request_id: str) -> dict[str, Any] | None:
+        """The `requests` row (metadata only: the table holds no text) the gateway logged under `request_id`, or None."""
+        r = self._rdb.execute("SELECT * FROM requests WHERE request_id=? ORDER BY id LIMIT 1", (request_id,)).fetchone()
+        return dict(r) if r is not None else None
+
+    @_reads
+    def failures_for(self, request_id: str) -> list[dict[str, Any]]:
+        """The `failures` rows of one request, oldest first: a failed request's, or the failed optional calls around an
+        answered one."""
+        rows = self._rdb.execute("SELECT * FROM failures WHERE request_id=? ORDER BY id", (request_id,))
+        return [dict(r) for r in rows]
+
+    @_reads
+    def failure_counts(self, since: float) -> dict[str, int]:
+        """Failures since `since` (a wall-clock time) by stage, most frequent first."""
+        rows = self._rdb.execute(
+            "SELECT stage, COUNT(*) n FROM failures WHERE ts>=? GROUP BY stage ORDER BY n DESC, stage", (since,)
+        )
+        return {r["stage"]: int(r["n"]) for r in rows}
+
+    @_reads
+    def spend_since(self, since: float, clients: Iterable[str | None]) -> dict[str | None, float]:
+        """US dollars each client in `clients` (an API key name, or None for requests without one) spent since `since`,
+        answered and failed requests together: one indexed range per client and table (`requests_client_ts`,
+        `failures_client_ts`), so a scrape stays cheap on a large ledger."""
+        out: dict[str | None, float] = {}
+        for client in dict.fromkeys(clients):
+            where = "client IS NULL" if client is None else "client=?"
+            args: tuple[Any, ...] = (since,) if client is None else (client, since)
+            total = 0.0
+            for table in ("requests", "failures"):
+                q = f"SELECT COALESCE(SUM(cost_usd), 0.0) FROM {table} WHERE {where} AND ts>=?"
+                total += float(self._rdb.execute(q, args).fetchone()[0])
+            out[client] = total
+        return out
+
+    @_locked
     def client_requests_since(self, client: str, ts: float) -> int:
         """Requests logged for one API client since `ts` (drives the per-key daily quota)."""
         return int(self.db.execute("SELECT COUNT(*) FROM requests WHERE client=? AND ts>=?", (client, ts)).fetchone()[0])
 
-    @_locked
+    @_reads
     def last_ids(self) -> dict[str, int]:
         """The highest `requests.id` and `events.id`, 0 for an empty table. The live-run harness keys its rounds by
         request-id ranges and reads a night's outcome from the events after it (FR-8.20): a live ledger's day is wall
@@ -738,7 +1126,7 @@ class Ledger:
         if until is not None:
             q += " AND day <= ?"
             args.append(until)
-        rows = [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
+        rows = [dict(r) for r in self._rdb.execute(q + " GROUP BY day ORDER BY day", args)]
         if not self._has_rollup():
             return rows
         where = " AND ".join(["1=1"] + (["day >= ?"] if since is not None else []) + (["day <= ?"] if until is not None else []))
@@ -962,6 +1350,8 @@ class Ledger:
         origin: str | None = None,
         replace: bool = False,
         bump: bool = True,
+        count_seen: bool = True,
+        sender: str | None = None,
     ) -> bool | None:
         """Store a teacher-labelled example. Returns True when it was inserted, False when it was a duplicate, and None
         when it was refused because an erasure tombstoned its hash (FR-13.3): nothing is stored or bumped, and only the
@@ -980,7 +1370,14 @@ class Ledger:
         `end_user` (its HMAC, `privacy.EndUsers`) record who sent the request (FR-13.2). A duplicate keeps its first
         sender and adds a client that is not that one to `example_clients`, so a client's data can be found later, and
         moves `last_seen_ts`, which retention counts from. A duplicate of an example whose text retention purged restores
-        the text, with this answer's teacher and license (FR-13.4)."""
+        the text, with this answer's teacher and license (FR-13.4).
+
+        A duplicate adds one to `seen`, which the frequent-request rule reads (INV-3), unless it is a retry (FR-1.70,
+        ADR 0071): `count_seen=False` (the client's SDK said it retries) never counts, and with a seen window
+        (`seen_window`, RATCHET_SEEN_DEDUP_S) a repeat from the same `sender` counts at most once per window. `sender`
+        is who sent the request (the API key's name, '' without one), or None for internal traffic (Scout, the
+        simulator, the mock warm-up), whose repeats are traffic by construction and always count. The window is
+        checked and the row written under the ledger's lock, so two concurrent retries cannot both count."""
         target = target_params(params)
         h = example_hash(task, messages, target)
         # Without conditions, h is the split key. A golden-only label is golden whatever its hash says (ADR 0091).
@@ -991,6 +1388,7 @@ class Ledger:
         if self.db.execute("SELECT 1 FROM tombstones WHERE key=?", (h,)).fetchone() is not None:
             return self._refuse_erased(h, now)
         label = (completion, teacher_model, license_name, license_url, redactions, int(verified), origin)
+        window = self.seen_window if sender is not None else None
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
@@ -1019,6 +1417,8 @@ class Ledger:
                 ),
             )
             self.db.commit()
+            if window is not None:
+                window.note(h, sender or "")
             return True
         except sqlite3.IntegrityError:
             pass
@@ -1026,7 +1426,15 @@ class Ledger:
         reason = row["purge_reason"] if row is not None else None
         if reason == "erasure":  # every erasure writes a tombstone; a row purged without one is refused all the same
             return self._refuse_erased(h, now)
+        # A duplicate is one more occurrence of its request (INV-3), unless it is no occurrence (`bump` False) or a
+        # client's retry (FR-1.70, ADR 0071): the SDK said so, or the same sender repeated it inside the seen window.
         more = int(bump)
+        if more and not count_seen:
+            metrics.SEEN_SKIPPED.inc("retry")
+            more = 0
+        elif more and window is not None and not window.count(h, sender or ""):
+            metrics.SEEN_SKIPPED.inc("window")
+            more = 0
         if reason == "retention":
             self.db.execute(
                 "UPDATE examples SET messages=?, completion=?, params=?, teacher_model=?, license=?, license_url=?,"
@@ -1053,7 +1461,7 @@ class Ledger:
                 " WHERE hash=? AND client IS NOT ?",
                 (client, h, client),
             )
-        self.db.commit()
+        self.db.commit()  # also ends the transaction the refused INSERT opened
         return False
 
     def _refuse_erased(self, h: str, now: float) -> None:
@@ -1062,6 +1470,11 @@ class Ledger:
         self.db.execute("UPDATE tombstones SET suppressed = suppressed + 1 WHERE key=?", (h,))
         self.db.commit()
         return None
+
+    def split_of(self, task: str, messages: list[dict[str, Any]]) -> str:
+        """The split ('train' or 'golden') `add_example` puts these messages in, under any conditions: a pure function of
+        the task and the messages (`_split`), for the metrics. Reads nothing."""
+        return self._split(example_hash(task, messages))
 
     def _split(self, key: str) -> str:
         """'golden' or 'train', deterministic from `key`, the hash of an example's task and messages without its
@@ -1119,35 +1532,48 @@ class Ledger:
         """Stored examples of one task (what deleting the task keeps, for provenance)."""
         return int(self.db.execute("SELECT COUNT(*) FROM examples WHERE task=?", (task,)).fetchone()[0])
 
-    @_locked
+    @_reads
     def bill_of_materials(self) -> dict[str, Any]:
         """Model bill of materials: which teachers and licenses produced the training data. Only examples that still
         have their text count in `sources` and the fingerprint; purged ones (FR-13.3, FR-13.4) are counted in
         `purged_examples`, so a purge changes the fingerprint. Labels from a provenance source that is not a teacher
         (`licenses.SOURCES`: `human`) are listed apart, in `label_sources`, and count in the fingerprint like the rest
-        (FR-3.54). Each adapter's own signed BOM is never touched (INV-14)."""
-        grouped = self.db.execute(
+        (FR-3.54). Each adapter's own signed BOM is never touched (INV-14). `examples_sha256` (over every kept example
+        hash in order) is recomputed only when the examples' count, highest id or rewrite generation moved: ids are never
+        reused, so an insert or a delete moves the first two, and a hash rewritten or a text purged or restored on this
+        connection moves the third (`WATCHED`; another process never rewrites a hash in place, and its commits change
+        the purged count the key also holds)."""
+        gen = self._settled("examples")  # before the snapshot: a later write makes the next call recompute
+        grouped = self._rdb.execute(
             "SELECT teacher_model, license, license_url, split, COUNT(*) n FROM examples WHERE purged_ts IS NULL"
             " GROUP BY teacher_model, license, license_url, split"
         ).fetchall()
         rows = [r for r in grouped if r["teacher_model"] not in licenses.SOURCES]
         labels = [r for r in grouped if r["teacher_model"] in licenses.SOURCES]
-        digest = hashlib.sha256()
-        for r in self.db.execute("SELECT hash FROM examples WHERE purged_ts IS NULL ORDER BY hash"):
-            digest.update(r["hash"].encode())
-        purged = int(self.db.execute("SELECT COUNT(*) FROM examples WHERE purged_ts IS NOT NULL").fetchone()[0])
+        count, top, purged = self._rdb.execute(
+            "SELECT COUNT(*), MAX(id), COALESCE(SUM(purged_ts IS NOT NULL), 0) FROM examples"
+        ).fetchone()
+        key = (int(count), top, gen, int(purged))
+        if gen is not None and self._digest is not None and self._digest[0] == key:
+            sha = self._digest[1]
+        else:
+            digest = hashlib.sha256()
+            for r in self._rdb.execute("SELECT hash FROM examples WHERE purged_ts IS NULL ORDER BY hash"):
+                digest.update(r["hash"].encode())
+            sha = digest.hexdigest()
+            self._digest = (key, sha) if gen is not None else None
         return {
             "generated_at": time.time(),
-            "examples_sha256": digest.hexdigest(),
+            "examples_sha256": sha,
             "sources": [dict(r) for r in rows],
             "label_sources": [dict(r) for r in labels],
-            "purged_examples": purged,
+            "purged_examples": int(purged),
         }
 
-    @_locked
+    @_reads
     def privacy_stats(self) -> dict[str, int]:
         """Examples that still have their text, and how many carry redaction placeholders."""
-        r = self.db.execute(
+        r = self._rdb.execute(
             "SELECT COUNT(*) n, SUM(redactions > 0) redacted, COALESCE(SUM(redactions), 0) placeholders FROM examples"
             " WHERE purged_ts IS NULL"
         ).fetchone()
@@ -1494,15 +1920,19 @@ class Ledger:
             args.append(client)
         return where, args
 
-    def _has_rollup(self) -> bool:
-        return self.db.execute("SELECT 1 FROM daily_rollup LIMIT 1").fetchone() is not None
+    def _has_rollup(self, con: sqlite3.Connection | None = None) -> bool:
+        """Whether any request rows were folded; `con` is the connection to read (the writer by default, the reader
+        connection from a `_reads` method, so its statements share one snapshot)."""
+        return (con or self.db).execute("SELECT 1 FROM daily_rollup LIMIT 1").fetchone() is not None
 
-    def _rollup_by(self, key: str, where: str = "", args: Iterable[Any] = ()) -> dict[Any, dict[str, Any]]:
+    def _rollup_by(
+        self, key: str, where: str = "", args: Iterable[Any] = (), con: sqlite3.Connection | None = None
+    ) -> dict[Any, dict[str, Any]]:
         """Folded request rows summed per `key` (a daily_rollup column), with each route's count in `route:<name>` and
         each opt-out's in `opt_out:<name>`."""
         sums = ", ".join(f"SUM({c}) {c}" for c in ROLLUP_SUMS)
         out: dict[Any, dict[str, Any]] = {}
-        for r in self.db.execute(f"SELECT {key} k, {sums} FROM daily_rollup {where} GROUP BY {key}", list(args)):
+        for r in (con or self.db).execute(f"SELECT {key} k, {sums} FROM daily_rollup {where} GROUP BY {key}", list(args)):
             out[r["k"]] = {c: r[c] for c in ROLLUP_SUMS}
         per_route = f"SELECT {key} k, route, store_opt_out, SUM(requests) n FROM daily_rollup {where}"
         for r in self.db.execute(per_route + f" GROUP BY {key}, route, store_opt_out", list(args)):
@@ -1985,16 +2415,17 @@ class Ledger:
         r = self.db.execute("SELECT bom FROM versions WHERE id=?", (vid,)).fetchone()
         return json.loads(r["bom"]) if r and r["bom"] else None
 
-    @_locked
+    @_reads
     def bom_status(self) -> dict[int, str]:
         """{version id: 'signed' | 'unsigned'} for versions that have a BOM."""
         out = {}
-        for r in self.db.execute("SELECT id, bom FROM versions WHERE bom IS NOT NULL"):
+        for r in self._rdb.execute("SELECT id, bom FROM versions WHERE bom IS NOT NULL"):
             out[int(r["id"])] = "signed" if json.loads(r["bom"]).get("signature") else "unsigned"
         return out
 
     @staticmethod
     def _version(r: sqlite3.Row) -> Version:
+        """A new Version from a `versions` row, with its own eval dict (callers may change it freely)."""
         return Version(
             r["id"],
             r["day"],
@@ -2024,17 +2455,35 @@ class Ledger:
     @_locked
     def version(self, vid: int) -> Version | None:
         r = self.db.execute("SELECT * FROM versions WHERE id=?", (vid,)).fetchone()
-        return self._version(r) if r else None
+        return self._version(r) if r else self._version(r) if r is not None else None
+
+    def _routed(self) -> dict[str, sqlite3.Row]:
+        """The newest version row per routed state (ROUTED_STATES), rebuilt only when a version was written: on this
+        connection (the `versions` generation, bumped by a TEMP trigger on every write) or by another connection, such
+        as the cron tick or the cost CLI (PRAGMA data_version). Two cheap reads per call instead of every version row and
+        its eval. Call it under the lock."""
+        key = (self._gen["versions"], int(self.db.execute("PRAGMA data_version").fetchone()[0]))
+        if key != self._routing_key:
+            routed: dict[str, sqlite3.Row] = {}
+            for r in self.db.execute(ROUTED_SQL, ROUTED_STATES):
+                routed[r["state"]] = r  # ascending ids: the newest wins, as `versions([state])[-1]` picks it
+            self._routing, self._routing_key = routed, key
+        return self._routing
 
     @_locked
     def live(self) -> Version | None:
-        live = self.versions(["live"])
-        return live[-1] if live else None
+        """The live version (the newest one, should there be two), from the routing snapshot; a fresh copy per call."""
+        return self.by_state("live")
 
     @_locked
     def by_state(self, state: str) -> Version | None:
-        vs = self.versions([state])
-        return vs[-1] if vs else None
+        """The newest version in `state`. The routed states come from the routing snapshot, any other from one indexed
+        query; either way a fresh copy per call."""
+        if state in ROUTED_STATES:
+            r = self._routed().get(state)
+        else:
+            r = self.db.execute("SELECT * FROM versions WHERE state=? ORDER BY id DESC LIMIT 1", (state,)).fetchone()
+        return self._version(r) if r is not None else None
 
     # ---------- tasks (the admin API's and auto tasks; built-in and file tasks are never stored) ----------
     @_locked
@@ -2271,14 +2720,40 @@ class Ledger:
         return out
 
     # ---------- events + stats ----------
-    @_locked
     def event(self, kind: str, detail: str) -> None:
-        self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail))
-        self.db.commit()
+        """Append to the release log, then hand the row ({id, ts, day, kind, detail}) to every listener
+        (`add_event_listener`), outside the lock when the caller does not hold it. A failing listener is ignored: the
+        event is already stored, and a log handler must never fail what wrote it."""
+        with self._lock:
+            ts, day = time.time(), self.day
+            cur = self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (ts, day, kind, detail))
+            self.db.commit()
+            listeners = tuple(self._listeners)
+        if listeners:
+            row = {"id": int(cur.lastrowid), "ts": ts, "day": day, "kind": kind, "detail": detail}
+            for fn in listeners:
+                try:
+                    fn(row)
+                except Exception:  # noqa: BLE001 - the event is stored; a listener (the log) must not undo that
+                    pass
 
-    @_locked
-    def events(self) -> list[dict[str, Any]]:
-        return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
+    def add_event_listener(self, fn: Callable[[dict[str, Any]], object]) -> None:
+        """Call `fn(row)` after every event this ledger writes (the gateway mirrors them to the log, ADR 0062). Adding the
+        same function twice calls it once."""
+        with self._lock:
+            if fn not in self._listeners:
+                self._listeners.append(fn)
+
+    @_reads
+    def events(self, last: int | None = None) -> list[dict[str, Any]]:
+        """Every event, oldest first; with `last`, only the newest `last` of them (still oldest first), read without
+        the rest (the dashboard shows 40 of a log that only grows)."""
+        q = "SELECT id, ts, day, kind, detail FROM events"
+        if last is None:
+            return [dict(r) for r in self._rdb.execute(q + " ORDER BY id")]
+        if isinstance(last, bool) or not isinstance(last, int) or last < 0:
+            raise ValueError(f"last must be a whole number, 0 or more, not {last!r}")
+        return [dict(r) for r in self._rdb.execute(f"SELECT * FROM ({q} ORDER BY id DESC LIMIT ?) ORDER BY id", (last,))]
 
     @_locked
     def events_since(self, event_id: int) -> list[dict[str, Any]]:
@@ -2293,18 +2768,46 @@ class Ledger:
     def audit_counts(self, vid: int, since_id: int = 0) -> tuple[int, int]:
         """(audits, agreements): teacher audits of answers version `vid` served, in requests after id `since_id` (0: its
         whole life; a version's `stage_since`: its current stage). Every release decision is computed from these two
-        integers (ADR 0025). An audited row without a verdict, which the router never writes, counts as a disagreement."""
-        r = self.db.execute(
-            "SELECT COUNT(*) n, COALESCE(SUM(audit_agree = 1), 0) s FROM requests WHERE student_version=? AND audited=1"
-            " AND served_by='student' AND id>?",
-            (vid, since_id),
-        ).fetchone()
-        return int(r["n"]), int(r["s"])
+        integers (ADR 0025).
+
+        Only audits with a verdict count: a row whose off-path audit is still pending (`audited=1`, `audit_agree` NULL,
+        ADR 0072) counts in neither number until its verdict is written, so the count and the agreements always describe
+        the same rows (a bound over a count that included pending rows would claim evidence it does not have).
+
+        Incremental (ADR 0060): a tally per (version, `since_id`) keeps the count and sum up to the last id it read, and
+        each call reads only rows above it, through `requests_version_audited`. SQLite assigns ids in commit order, so no
+        row can appear below a tally later. Pending audits it read are kept by id and checked again on each call, so a
+        verdict `update_request` writes later is counted then (a failed or invalid audit leaves as `audited=0`). Any
+        other rewrite or deletion of a request on this connection (the `requests` generation) or any commit by another
+        connection (PRAGMA data_version) starts the tally again from the first row. The numbers are exactly what one
+        `COUNT(audit_agree)`, `SUM(audit_agree)` over those rows gives."""
+        since = since_id
+        gen = (self._requests_gen(), int(self.db.execute("PRAGMA data_version").fetchone()[0]))
+        key = (vid, since)
+        tally = self._tallies.get(key)
+        if tally is None or tally.gen != gen:
+            tally = _Tally(gen, since)
+            self._tallies.pop(key, None)
+            self._tallies[key] = tally
+            while len(self._tallies) > MAX_TALLIES:
+                self._tallies.pop(next(iter(self._tallies)))
+        r = self.db.execute(AUDIT_TALLY_SQL, (vid, tally.last_id)).fetchone()
+        if r["top"] is not None:
+            top = int(r["top"])
+            tally.n += int(r["k"])
+            tally.agreed += int(r["s"])
+            if int(r["n"]) > int(r["k"]):  # audits in this range without a verdict yet
+                tally.pending.update(int(row[0]) for row in self.db.execute(AUDIT_PENDING_SQL, (vid, tally.last_id, top)))
+            tally.last_id = top
+        if tally.pending:
+            self._settle_pending(tally)
+        return tally.n, tally.agreed
 
     @_locked
     def version_live_quality(self, vid: int, current_stage_only: bool = True) -> tuple[int, float | None]:
         """(audits, audited precision) for a version, from teacher audits of answers it served (`audit_counts`), in its
-        current stage or over its whole life; precision is None without audits."""
+        current stage (by default: rows after `stage_since`) or over its whole life; precision is None without audits.
+        Only audits with a verdict count (ADR 0072): see `audit_counts`."""
         since = 0
         if current_stage_only:
             v = self.version(vid)
@@ -2382,6 +2885,25 @@ class Ledger:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def _settle_pending(self, tally: _Tally) -> None:
+        """Count the tally's pending audits that have a verdict now and forget those that are no audit any more
+        (`audited` 0: the off-path audit failed or measured nothing). One primary-key lookup per id."""
+        ids = sorted(tally.pending)
+        for i in range(0, len(ids), _IN_CHUNK):
+            chunk = ids[i : i + _IN_CHUNK]
+            rows = self.db.execute(
+                f"SELECT id, audited, audit_agree FROM requests WHERE id IN ({','.join('?' * len(chunk))})", chunk
+            ).fetchall()
+            found = {int(row["id"]): row for row in rows}
+            for rid in chunk:
+                row = found.get(rid)
+                if row is None or row["audited"] != 1:
+                    tally.pending.discard(rid)
+                elif row["audit_agree"] is not None:
+                    tally.n += 1
+                    tally.agreed += int(row["audit_agree"])
+                    tally.pending.discard(rid)
+
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:
         """How a shadow candidate would have done on real traffic, next to the live student.
@@ -2395,16 +2917,7 @@ class Ledger:
         A request the live student was confident about but escalated only because fewer than the client's n samples
         agreed (route `n_choices`) counts as served: the shadow's verdict uses the one-choice rule, so the live student is
         held to the same one (ADR 0020)."""
-        r = self.db.execute(
-            """SELECT COUNT(*) n, SUM(shadow_serve) served,
-                      AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
-                      SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
-                      AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
-                               WHEN route = 'n_choices' THEN 1
-                               ELSE served_by='student' END) live_cov
-               FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL""",
-            (vid,),
-        ).fetchone()
+        r = self.db.execute(SHADOW_QUALITY_SQL, (vid,)).fetchone()
         n = int(r["n"] or 0)
         served = int(r["served"] or 0)
         return {
@@ -2416,15 +2929,20 @@ class Ledger:
             "unarbitrated": int(r["unarbitrated"] or 0),
         }
 
-    @_locked
+    @_reads
     def stats_by_day(self) -> list[dict[str, Any]]:
         """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
         `fallback_teacher`: the fallback teacher; ADR 0019). Days whose request rows retention folded (FR-13.4) add
-        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before."""
+        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before.
+        `p50_student_ms` and `p95_ms` are nearest-rank percentiles of `wall_ms` (the whole cascade on the gateway's clock)
+        over the day's student-served and all requests that recorded it and are still kept (None without any). A day's
+        percentiles are computed again only when its count or highest id moved (ids are never reused) or a request was
+        rewritten or folded on this connection, so a stats read sorts today's rows only."""
+        gen = self._settled("requests")  # before the snapshot: a later rewrite makes the next call recompute
         rows = [
             dict(r)
-            for r in self.db.execute(
+            for r in self._rdb.execute(
                 """SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
@@ -2435,16 +2953,21 @@ class Ledger:
                       SUM(route='fallback_teacher') fallback_teacher,
                       SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n,
                       SUM(CASE WHEN audited=1 THEN audit_agree END) audit_sum,
-                      COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n
+                      COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n,
+                      MAX(id) top, COUNT(wall_ms) timed,
+                      COALESCE(SUM(served_by='student' AND wall_ms IS NOT NULL), 0) timed_student
                FROM requests GROUP BY day ORDER BY day"""
             )
         ]
-        if self._has_rollup():
-            rows = sorted(_merge(rows, "day", self._rollup_by("day")).values(), key=lambda r: r["day"])
+        if self._has_rollup(self._rdb):
+            rows = sorted(_merge(rows, "day", self._rollup_by("day", con=self._rdb)).values(), key=lambda r: r["day"])
         out = []
         for r in rows:
             n = r["requests"] or 1
             cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
+            # A day whose rows were all folded has no kept row to time (`_EMPTY_STATS` has no `top`).
+            timing = (r["requests"], r.get("top"), gen)
+            p50_student, p95 = self._day_percentiles(r["day"], timing, r.get("timed_student") or 0, r.get("timed") or 0)
             out.append(
                 {
                     "day": r["day"],
@@ -2458,18 +2981,69 @@ class Ledger:
                     "audit_agreement": r["audit_agree"],
                     "degraded": int(r["degraded"] or 0),
                     "fallback_teacher": int(r["fallback_teacher"] or 0),
+                    "p50_student_ms": p50_student,
+                    "p95_ms": p95,
                 }
             )
+        days = {r["day"] for r in rows}
+        for day in [d for d in self._day_latency if d not in days]:
+            del self._day_latency[day]
         return out
 
-    @_locked
+    def _day_percentiles(
+        self, day: int | None, key: tuple[int, int, int | None], timed_student: int, timed: int
+    ) -> tuple[float | None, float | None]:
+        """(p50 of the day's student-served wall_ms, p95 of all of its wall_ms), cached under `key` (count, highest id,
+        settled request generation; never cached without one). Call it from a `_reads` method."""
+        cached = self._day_latency.get(day)
+        if key[2] is not None and cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        p50 = self._nth_wall(_nearest_rank(0.5, timed_student), day, "student") if timed_student else None
+        p95 = self._nth_wall(_nearest_rank(0.95, timed), day, None) if timed else None
+        if key[2] is None:
+            self._day_latency.pop(day, None)
+        else:
+            self._day_latency[day] = (key, p50, p95)
+        return p50, p95
+
+    def _where_wall(self, day: int | None, served_by: str | None) -> tuple[str, list[Any]]:
+        q, args = " FROM requests WHERE wall_ms IS NOT NULL", []
+        if day is not None:
+            q += " AND day=?"
+            args.append(day)
+        if served_by is not None:
+            q += " AND served_by=?"
+            args.append(served_by)
+        return q, args
+
+    def _nth_wall(self, offset: int, day: int | None, served_by: str | None) -> float | None:
+        """The wall_ms at 0-based `offset` in ascending order among the rows the filters select: an ORDER BY with an
+        OFFSET, no SQLite extension."""
+        q, args = self._where_wall(day, served_by)
+        r = self._rdb.execute(f"SELECT wall_ms{q} ORDER BY wall_ms LIMIT 1 OFFSET ?", (*args, offset)).fetchone()
+        return float(r[0]) if r is not None else None
+
+    @_reads
+    def latency_percentiles(
+        self, day: int | None = None, served_by: str | None = None, qs: Iterable[float] = (0.5, 0.95)
+    ) -> dict[float, float | None]:
+        """{q: wall_ms} for each quantile in `qs` (0 to 1) over the requests that recorded `wall_ms`, of one day and one
+        `served_by` ('student' or 'teacher') when given, by the nearest-rank rule (`_nearest_rank`: a value that was
+        observed, never an interpolation). None for each q when no row matches. Overhead per request is `wall_ms -
+        latency_ms` (the providers' part)."""
+        quantiles = _check_quantiles(qs)
+        q, args = self._where_wall(day, served_by)
+        n = int(self._rdb.execute(f"SELECT COUNT(*){q}", args).fetchone()[0])
+        return {p: (self._nth_wall(_nearest_rank(p, n), day, served_by) if n else None) for p in quantiles}
+
+    @_reads
     def stats_by_task(self) -> list[dict[str, Any]]:
         """Per task: requests, student share, escalations, cost, savings, latency, and `routes`: how many requests took
         each route (`unrecorded` for rows older than the route column), most frequent first. Folded request rows
         (FR-13.4) count too."""
         rows = [
             dict(r)
-            for r in self.db.execute(
+            for r in self._rdb.execute(
                 """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms,
                       SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n
@@ -2477,13 +3051,13 @@ class Ledger:
             )
         ]
         routes: dict[str, dict[str, int]] = {}
-        counted = self.db.execute("SELECT task, route, COUNT(*) n FROM requests GROUP BY task, route ORDER BY n DESC, route")
+        counted = self._rdb.execute("SELECT task, route, COUNT(*) n FROM requests GROUP BY task, route ORDER BY n DESC, route")
         for r in counted:
             per_task = routes.setdefault(r["task"], {})
             key = r["route"] or UNRECORDED_ROUTE
             per_task[key] = per_task.get(key, 0) + int(r["n"])
-        if self._has_rollup():
-            folded = self._rollup_by("task")
+        if self._has_rollup(self._rdb):
+            folded = self._rollup_by("task", con=self._rdb)
             for name, sums in folded.items():
                 per_task = routes.setdefault(name, {})
                 for k, v in sums.items():
@@ -2494,7 +3068,7 @@ class Ledger:
         # Human verdicts on the task's answers (FR-13.30), the latest per request; their rows outlive the requests'.
         human = {
             f["task"]: (int(f["n"]), int(f["ok"]))
-            for f in self.db.execute(
+            for f in self._rdb.execute(
                 "SELECT task, COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback GROUP BY task"
             )
         }
@@ -2521,7 +3095,7 @@ class Ledger:
             )
         return out
 
-    @_locked
+    @_reads
     def stats_by_client(self) -> list[dict[str, Any]]:
         """Per API key: requests, cost and savings (the basis for per-client receipts); `end_users`, the distinct end
         users its requests named (FR-13.2); and `stored_share`, the share of its requests that stored or bumped a
@@ -2529,7 +3103,7 @@ class Ledger:
         every figure but `end_users`: a fold keeps no end user, so that counts the rows still kept."""
         rows = [
             dict(r)
-            for r in self.db.execute(
+            for r in self._rdb.execute(
                 """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
                       COUNT(DISTINCT end_user) end_users, AVG(stored) stored_share,
@@ -2537,8 +3111,8 @@ class Ledger:
                FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
             )
         ]
-        if self._has_rollup():
-            folded = self._rollup_by("client", "WHERE client IS NOT NULL")
+        if self._has_rollup(self._rdb):
+            folded = self._rollup_by("client", "WHERE client IS NOT NULL", con=self._rdb)
             rows = sorted(_merge(rows, "client", folded).values(), key=lambda r: -r["requests"])
         out = []
         for r in rows:
@@ -2557,18 +3131,24 @@ class Ledger:
             )
         return out
 
-    @_locked
+    @_reads
     def totals(self) -> dict[str, float]:
-        """Requests, cost and savings over the whole ledger, folded request rows included (FR-13.4)."""
-        r = dict(self.db.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone())
-        if self._has_rollup():
-            f = self.db.execute("SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup").fetchone()
+        """Requests, cost and baseline over the whole ledger, folded request rows included (FR-13.4). `failed_cost_usd` is
+        what failed requests spent without leaving a `requests` row (the student's samples before a teacher failure,
+        NFR-3); it counts against the savings: `saved_usd` = baseline - cost - failed cost, `savings_pct` = 1 - (cost +
+        failed cost) / baseline. A ledger without failures or folded rows gives exactly v0.4's numbers."""
+        r = dict(self._rdb.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone())
+        if self._has_rollup(self._rdb):
+            f = self._rdb.execute("SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup").fetchone()
             r = {"n": r["n"] + int(f["n"] or 0), "c": _add(r["c"], f["c"]), "b": _add(r["b"], f["b"])}
         c, b = r["c"] or 0.0, r["b"] or 0.0
+        failed = float(self._rdb.execute("SELECT COALESCE(SUM(cost_usd), 0.0) FROM failures").fetchone()[0])
+        spent = c + failed
         return {
             "requests": r["n"],
             "cost_usd": c,
             "baseline_usd": b,
-            "saved_usd": b - c,
-            "savings_pct": 0.0 if b == 0 else 1 - c / b,
+            "saved_usd": b - spent,
+            "savings_pct": 0.0 if b == 0 else 1 - spent / b,
+            "failed_cost_usd": failed,
         }

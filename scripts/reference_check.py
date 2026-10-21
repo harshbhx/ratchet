@@ -52,7 +52,7 @@ CONFIGS: dict[str, tuple[str, ...]] = {
     "research-seed7": ("--seed", "7", "--days", "8", "--requests", "1500", "--workload", "research"),
 }
 # Advisory event kinds later features write without changing a decision; they are not part of v0.4's log.
-IGNORED_KINDS = frozenset({"drift", "teacher_drift", "teacher_model_changed", "warning", "student_healed"})
+IGNORED_KINDS = frozenset({"drift", "teacher_drift", "teacher_model_changed", "warning", "student_healed", "live_retired"})
 # v0.4.0's keys of `Ledger.stats_by_day` rows; keys added since are not pinned, so the fixture is exactly v0.4.0's output.
 DAY_KEYS = (
     "day", "requests", "student_share", "escalation_rate", "cost_per_1k", "baseline_per_1k", "savings_pct",

@@ -4,14 +4,16 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 
 ## Daily checks (5 minutes)
 
-1. **Dashboard** (`/dashboard`) or `GET /ratchet/stats`:
+1. **Dashboard** (`/dashboard`) or `GET /ratchet/stats`. In live mode the dashboard API needs an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1` (`curl -H "Authorization: Bearer $DASHBOARD_KEY" .../ratchet/stats`); the page sends no key yet ([API.md](API.md#access-levels)):
    - **Answered by your model** should be stable or rising. A sudden drop means drift (new kinds of requests) or a student problem.
    - **Cost reduction** should track student share. If share is high but savings are low, audits or shadow are costing more than expected.
    - **Release log**: read every event since yesterday (meanings below).
 2. **Night School log** (`/var/log/ratchet-night.log`): exactly one of `trained` or `skip` per night.
-3. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
-4. **Ledger backup** exists for today (see [Backups](#backups)).
+3. **Failures:** `errors.last_hour` in `/ratchet/stats` should be empty or small, and `totals.failed_cost_usd` should not jump. With Prometheus, the [alerts](#alerts) do this for you.
+4. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
+5. **Ledger backup** exists for today (see [Backups](#backups)).
 5. **Savings receipts**: yesterday's are sealed (`GET /ratchet/receipts` with an admin key lists them; the cron job below seals them). See [Savings receipts](#savings-receipts).
+6. **Readiness:** `curl -s .../readyz` answers 200 with `"status": "ready"`. `degraded` names what the gateway is working around under `checks` (the student endpoint, a missing adapter in `checks.student.missing_adapters`, which it has already queued for reload, or the teacher's model list); `checks.teacher.probe_due` `true` means the teacher's breaker is open but its wait is over: the next request probes the teacher, and a success closes it. `checks.ledger.busy_runs` means another writer held the ledger past 2 s (a night's job, a long write); twice in a row is 503. `checks.config.warnings` above 0 means a setting does nothing as set: run `python -m ratchet.config check` ([Startup refused: configuration errors](#startup-refused-configuration-errors)).
 
 ## Reading the dashboard
 
@@ -23,6 +25,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Model versions | `versions` | Exactly one `live` once past cold start; at most one `shadow` or `canary` |
 | Release log | last 40 `events` | See below |
 | Provenance | `bill_of_materials` | Only distillable teachers and licenses; fingerprint changes as data grows |
+| (not on the dashboard yet) | `errors.last_hour`, `totals.failed_cost_usd` | Failures of the last hour by stage, and what failed requests spent (it counts against `saved_usd`). See [Failures and request ids](#failures-and-request-ids) |
 | Economics | `GET /ratchet/cost` (else the `cost` summary) | The GPU-hour view next to the per-token one, break-even and the recommendation. The other panels price the student per token (`totals.cost_model`) |
 | By task | `tasks` | A task whose share stays at 0 while its neighbours rise: check its spec in the Task registry |
 | Task registry | `GET /ratchet/tasks` | Unregistered names (typos, or tasks to register or pin); `Recalibrating` should clear after the next night. Admin API tasks can be changed here with an admin key, which the page keeps in memory only |
@@ -38,6 +41,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `shadow` | `admit` | Candidate passed the golden gate and is running silently. Appends `serves +c−b of n vs live vL (McNemar p=…); nf negative flips, pf positive flips` with the paired gate, and `certified >= 95% (lcb 96.4%, delta 0.05)` when its certificate holds ([Checking a certificate](#checking-a-certificate)) | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
 | `live` | `tick` | Candidate promoted to 100%; previous live retired | None |
+| `live_retired` | `tick` | Written just before `live`: the previous live version is retired because the canary replaces it (`v4 retired: v5 replaces it as live`) | None |
 | `retired` | `admit` | An in-flight shadow or canary was replaced by a newer candidate | None |
 | `rollback` | `tick` | The canary's audited precision is clearly below 0.92: by default its Wilson upper bound after `min_audits` audits (`v3 audited precision 41.2% (n=17, upper bound 64.0% < 92%)`), with `RATCHET_SEQUENTIAL=1` an e-value over all its audits (`v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 ...`, see [Reading an e-value event](#reading-an-e-value-event)). Traffic is back on the previous live version (or the teacher) | Investigate: see [Bad deploy](#bad-deploy--rollback) |
 | `inconclusive` | `tick` | `RATCHET_SEQUENTIAL=1` only: a canary stage reached `RATCHET_MAX_STAGE_AUDITS` audits without enough evidence either way (`v4 retired after 400 audits at canary 50% without enough evidence either way (366/400 agree); 95% CS [0.865, 0.953]; ...`). The canary is `retired`, traffic is back on the live version, and Night School trains again | Usually a version right at the floor. If it repeats, compare its golden precision with the confidence sequence; a raised audit rate (`RATCHET_CANARY_AUDIT_RATE`) decides sooner |
@@ -48,6 +52,8 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `adapter_reload_failed` | the gateway's `AdapterReloader` | Loading a lost adapter failed (detail: the error class and HTTP status). The next 404 after 60 s tries again; meanwhile that version's requests go to the teacher | See [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
 | `audit_error` | `Ratchet.handle` | A teacher audit of a served student answer raised (after the teacher's retries); the student's answer was served and the request is logged with `audited=0`. Detail is the task and the exception's class (with the HTTP status for an HTTP error, and the code for an upstream error: `UpstreamError 504 upstream_timeout`), never its message. Logged on the 1st, 10th, 100th and 1000th failure | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `shadow_error` | `Ratchet.handle` | A shadow call raised: `sampling` (the shadow's own samples; no shadow record for that request) or `arbitration` (the teacher's arbitration; the disagreement counts against the shadow). The request was not affected. Same detail and throttling as `audit_error` | `sampling`: the shadow's adapter may be missing, see [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost). `arbitration`: see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
+| `sidecar_inline` | `Ratchet.handle` | The off-path queue was full, so a drawn audit ran before the response instead of after it (`v5: audit ran on the request path, the off-path queue is full`). The audit counted as usual; that request waited for the teacher. Logged on the 1st, 10th, 100th and 1000th time since the last restart; `/ratchet/stats` `sidecar.by_version[].audits_inline` has the count | A few during a burst are fine. Many: the workers cannot keep up with the teacher's latency; raise `RATCHET_SIDECAR_WORKERS` (each holds one teacher call) or check the teacher's latency ([Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts)) |
+| `sidecar_dropped` | `Ratchet.handle`, `Ratchet.close` | `v4: shadow skipped, the off-path queue is full`: a shadow found no place in the queue and did not run for that request (counted in `sidecar.by_version[].shadows_dropped`; same throttling as `sidecar_inline`). `shutdown: N off-path jobs not run after 10 s (audits v5: 2; shadows v4: 1)`: the shutdown's drain (`RATCHET_SIDECAR_DRAIN_S`) ended with jobs still queued; their rows stay pending (`audited` 1 with `audit_agree` NULL, `shadow_serve` NULL), which the release gate ignores | Shadow skips: as for `sidecar_inline`; the shadow needs more requests to reach `RATCHET_MIN_SHADOW`. At shutdown: raise `RATCHET_SIDECAR_DRAIN_S` (and the container's stop timeout) if it happens on every deploy |
 | `degraded` | `Ratchet.handle` | `RATCHET_ON_TEACHER_FAILURE=serve_student`: an escalated request got the student's own below-threshold answer because the teacher was unavailable (route `degraded`, `X-Ratchet-Degraded: teacher_unavailable`). Detail is the task and the teacher's failure (`ticket-triage: UpstreamError 503`, or `CircuitOpen 503 teacher_circuit_open` while its breaker is open). Logged on the 1st, 10th, 100th and 1000th since the last restart; `days[].degraded` in `/ratchet/stats` has the count | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `fallback_teacher` | `Ratchet` | The fallback teacher (`RATCHET_TEACHER_FALLBACK_MODEL`) answered because the teacher was unavailable (route `fallback_teacher`). Detail is the task and the teacher's failure. Same throttling; `days[].fallback_teacher` has the count | See [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) |
 | `skip_example` | `Ratchet._store_example` | A teacher answer was served but not stored as a training example (INV-16). Detail is the task and the reason: `finish_reason length` (cut off by the token limit), another `finish_reason` (`content_filter`, `other`, ...), `empty answer` (nothing left once reasoning is stripped), `invalid answer` (a JSON task's answer does not parse), `invalid field <path>` (a field of the task's spec is missing, null where it may not be, or does not normalise, such as a label outside its vocabulary; FR-2.14), `invalid after redaction`, `client logit_bias`, `client penalty`, `client temperature above 1`, `client vendor field` (written under a client's sampling that can steer the label, so it is never a training target), or `erased` (the same text was erased before: its hash is tombstoned and never stored again, FR-13.3). Logged on the 1st, 10th, 100th and 1000th skip of each reason; never the answer. The request row has `stored = 0`, and an audit with such an answer is not counted | A few are normal. Many: see [Teacher answers not stored](#teacher-answers-not-stored) |
@@ -78,9 +84,72 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 
 The `alert` event is written once per live version per process (a restart can write it again), not on every tick. An `inconclusive` canary is retired, not rolled back: it was not shown to be worse.
 
+## Failures and request ids
+
+Every request has an id, `req_` and 32 hex digits, in the `x-request-id` response header, in `ratchet.request_id`, in `request_id` of every `/v1/*` error, and in the completion's `id` (`chatcmpl-` and the same digits). OpenAI's SDKs show it as `response._request_id` and `error.request_id`. When a client reports a problem, ask for that id (or their own `X-Request-Id`, stored as `client_request_id`) and look the request up ([API.md](API.md#request-lookups)):
+
+```bash
+curl -s -H "Authorization: Bearer $DASHBOARD_KEY" $GATEWAY/ratchet/requests/req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79 | jq
+# the client itself, with its own API key, sees only its own requests:
+curl -s -H "Authorization: Bearer $API_KEY" $GATEWAY/v1/ratchet/requests/chatcmpl-3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79
+grep req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79 /var/log/ratchet-gateway.log   # its chat line (live mode logs JSON at INFO)
+```
+
+`request` is the ledger row (route, version, confidence, cost, latency; never text). `failures` lists what went wrong, one row per failure, with `stage`, `error` (the exception's class, status and code), `status` and `cost_usd`. A request that failed has no `request` row, only its failure. In SQL: `SELECT stage, error, status, COUNT(*), SUM(cost_usd) FROM failures WHERE ts > strftime('%s','now') - 3600 GROUP BY 1, 2, 3 ORDER BY 4 DESC;`.
+
+| Stage | Written by | The client got | Meaning | Action |
+|---|---|---|---|---|
+| `teacher` | `Ratchet` | 400, 429, 502, 503 or 504 | The teacher's answer was needed and could not be had (after its retries; `CircuitOpen 503 teacher_circuit_open` while its breaker is open, one row in 10). `cost_usd` is what the student's samples already cost. Also written, with the client answered, when the fallback teacher or a degraded student answer stood in | [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts); `UpstreamError 429`: [Rate limited](#rate-limited) |
+| `student` | `Ratchet` | Its answer (the teacher covered) | A student call failed (`UpstreamError 504 upstream_timeout`, `ConnectError`, `AdapterMissing 404`), or its breaker refused it (`CircuitOpen 503`, one row in 10) | [Student endpoint down or adapters lost](#student-endpoint-down-or-adapters-lost) |
+| `audit` | `Ratchet` | Its answer | A teacher audit failed or was skipped by the teacher's breaker; the request is logged with `audited=0` | As `teacher` if it repeats |
+| `shadow` | `Ratchet` | Its answer | `sampling: ...` (the shadow's own call) or `arbitration: ...` (the teacher's ruling; the disagreement counts against the shadow) | As `shadow_error` in [Event kinds](#event-kinds) |
+| `quota` | the gateway | 429 `daily_quota_exceeded` | A key used up `RATCHET_API_KEY_DAILY_REQUESTS` | Raise the quota or talk to the client |
+| `auth` | the gateway | 401 | A wrong or missing API, admin or dashboard key (`client` is empty: the caller is unknown). Many in a row from one place: someone is guessing keys | Check the caller; rotate keys if one leaked |
+| `budget` | the gateway | 429 on `/scout/run` | The Scout demo's budget guard refused a run | None on a public demo |
+| `rate` | the gateway | 429 | Any other 429 the gateway answered | Check the client |
+| `upstream` | the gateway | 502, 503 or 504 | A model or search call a route made itself failed (Scout) | As `teacher` |
+| `gateway` | the gateway | 413 or 500 | A body over `RATCHET_MAX_BODY_BYTES`, or an unhandled error (`RuntimeError`): a bug; the traceback is in the gateway's log | Fix the bug; see `gateway_error` in [Event kinds](#event-kinds) |
+
+The gateway writes at most 120 rows a minute per stage; a 400 for a malformed request writes none (it is counted in `/metrics` only). `errors.last_hour` in `/ratchet/stats` counts the rows of the last hour by stage. Logs: in live mode the gateway writes one JSON line per chat request to stderr (`docker compose logs ratchet` on the demo VM) and one `upstream_error` line per failed model call, and repeats every release-log event; none of them holds prompt or answer text, a URL or a key ([CONFIGURATION.md](CONFIGURATION.md#observability)).
+
+## Alerts
+
+`GET /metrics` serves Prometheus metrics ([API.md](API.md#get-metrics)); give the scraper its own `RATCHET_METRICS_TOKEN`. Counters start at zero when the gateway starts, so alert on `rate()` and `increase()`. Examples to start from (thresholds are guesses until you have a week of live numbers):
+
+```yaml
+groups:
+  - name: ratchet
+    rules:
+      - alert: RatchetEscalationRatioHigh          # the student stopped taking traffic: drift, a bad version or an outage
+        expr: |
+          sum(rate(ratchet_escalations_total[30m]))
+            / sum(rate(ratchet_requests_total{status="200",route!~"pinned|unknown_task|cold_start"}[30m])) > 0.5
+        for: 30m
+      - alert: RatchetStudentErrors                # more than 5% of student calls fail or are refused by the breaker
+        expr: |
+          sum(rate(ratchet_upstream_requests_total{upstream="student",outcome!="ok"}[10m]))
+            / sum(rate(ratchet_upstream_requests_total{upstream="student"}[10m])) > 0.05
+        for: 10m
+      - alert: RatchetBreakerOpen                  # see "Student endpoint down" or "Teacher API down"
+        expr: max by (breaker) (ratchet_circuit_open) == 1
+        for: 5m
+      - alert: RatchetTeacherFailures              # clients are getting errors because the teacher's answer could not be had
+        expr: sum(rate(ratchet_failures_total{stage="teacher"}[10m])) > 0.1
+        for: 10m
+      - alert: RatchetFailedSpend                  # money spent on requests that failed without an answer
+        expr: sum(increase(ratchet_failed_cost_usd_total[1h])) > 0.50
+      - alert: RatchetSpendToday                   # a client's spend since 00:00 UTC
+        expr: max by (client) (ratchet_spend_today_usd) > 20
+      - alert: RatchetSidecarBehind                # audits run before the response again: the off-path workers cannot keep up
+        expr: sum(rate(ratchet_sidecar_full_total[10m])) > 0
+        for: 10m
+```
+
+`totals.failed_cost_usd` in `/ratchet/stats` is the exact failed spend over the whole ledger; `SELECT SUM(cost_usd) FROM failures WHERE ts > strftime('%s','now') - 86400` gives the last day's. In mock mode every figure is simulation output from mock models.
+
 ## Manual interventions
 
-All state lives in the SQLite ledger (`RATCHET_DB`). Stop the gateway or make sure no Night School run is in progress, take a backup, then use either the Python API or SQL.
+All state lives in the SQLite ledger (`RATCHET_DB`). Stop the gateway or make sure no Night School run is in progress, take a backup, then use either the Python API or SQL. A running gateway picks up a version change made from another process (the Python API below, or `sqlite3`) on its next request: its routing snapshot checks the file's `PRAGMA data_version` ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). Open the file with the same `RATCHET_DB_SYNC` the gateway uses (`Ledger(path, sync=...)`; the default `NORMAL` is the WAL journal).
 
 Python (preferred: it also updates `stage_since` and writes events):
 
@@ -166,6 +235,8 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 - **Endpoint restarted:** vLLM forgets every adapter loaded at runtime and answers 404 ``The model `student-vN` does not exist.`` The `student_error` detail says `AdapterMissing 404 adapter_missing`. The breaker stays closed (the endpoint answers), and the gateway reloads the adapter by itself: one `adapter_reloaded` event per version within seconds, at most one try per adapter per minute. Shadow and canary adapters are reloaded the same way when their traffic hits the 404.
 
 **What the gateway already does** ([ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)): opens the student breaker after `RATCHET_STUDENT_BREAKER_FAILURES` (5) endpoint failures in a row, probes again after `RATCHET_STUDENT_BREAKER_COOLDOWN_S` (30 s), and reloads lost adapters. A breaker that closes again and `adapter_reloaded` events need no action.
+
+`/readyz` shows it too, without waiting for traffic: `degraded` with `checks.student.breakers.student` `open`, or with the lost adapters in `checks.student.missing_adapters` (handed to the same reloader, `reload_queued`).
 
 **Steps:**
 
@@ -429,6 +500,10 @@ The gateway, the simulator, `python -m ratchet.live` or `python -m ratchet.admin
 
 The compose file runs one uvicorn worker (ADR 0006), and Scout's guard, the per-IP windows and the breakers are per process. Until the single-writer lease lands (NFR-60, `gateway_lease` events), check by hand after an unusual deploy: `docker compose ps` shows one `ratchet` container, and its command has `--workers 1`. A second process on the same `RATCHET_DB` doubles every in-memory limit; the Scout counters restored at startup are only read once.
 
+### Startup refused: configuration errors
+
+The gateway stops with `ConfigError: N configuration problems stop startup:` and one line per problem, each naming its variable ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks), [ADR 0070](adr/0070-configuration-checks-and-readiness.md)). Fix them all, then check without starting anything: `python -m ratchet.config check` (on the demo VM, `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check` in `deploy/vm`). Exit 0 is clean, 1 warnings only (the gateway starts; each warning says what does nothing as set, such as a misspelled variable with the name it probably meant), 2 errors. Lines that end with "(a warning; RATCHET_STRICT_CONFIG=1 makes it fatal)" stop startup only in strict mode. `deploy/vm/update.sh` runs the same check in the new image and leaves the running gateway alone when it finds errors.
+
 ### Startup refused: a reserved setting
 
 The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: RATCHET_<NAME>=... has no effect yet: it is reserved for <feature>, not built yet`. The variable belongs to an evidence feature that is declared but not built in this version ([CONFIGURATION.md](CONFIGURATION.md#reserved-settings), [ADR 0024](adr/0024-evidence-foundations.md)). Ratchet refuses it rather than run without the protection you asked for. Unset it, or set it to the default the message names. A `ValueError` that names `ReleasePolicy.<field>` is a value out of range (for example `RATCHET_LIVE_FLOOR=1`). One that names `RATCHET_PROMOTE_EVIDENCE` or `RATCHET_MAX_STAGE_AUDITS` is a sequential-gate setting that would decide nothing (evidence-based promotion without `RATCHET_SEQUENTIAL=1`, or a cap that would retire every canary); the message says how many audits are needed. `RATCHET_CANARY_AUDIT_RATE` must be more than 0 and at most 1. `RATCHET_CALIBRATION` must be `point` or `ltt`, and `RATCHET_CERT_TARGET` and `RATCHET_CERT_DELTA` strictly between 0 and 1. A message about `RATCHET_SCOUT_JUDGE_*` or `RATCHET_TAVILY_*` names the bad Scout setting ([CONFIGURATION.md](CONFIGURATION.md#judge-access-and-tavily-credits)); it never shows the judge code. `RATCHET_GATEWAY_LEASE` is reserved for NFR-60: keep it unset or `warn`.
@@ -506,8 +581,8 @@ sqlite3 /var/lib/ratchet/ratchet.db ".backup '/var/backups/ratchet-$(date +%F).d
 aws s3 cp /var/backups/ratchet-$(date +%F).db s3://<bucket>/backups/ --endpoint-url $RATCHET_S3_ENDPOINT
 ```
 
-Keep at least 14 days. Adapters and `train.jsonl` are already in the bucket; keep every adapter referenced by a `live` version for rollback.
+Keep at least 14 days. Adapters and `train.jsonl` are already in the bucket; keep every adapter referenced by a `live` version for rollback. Use `.backup` (or `deploy/vm/backup.sh`, which uses the same API), never `cp`: in the WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default) recent commits live in `ratchet.db-wal` until a checkpoint, and a copy of the main file alone misses them.
 
-**Restore:** stop the gateway, copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM. A backup taken before an erasure still holds the erased text: after a restore, run every erasure since the backup again (the `erasures` table of the newer file, or your record of them), and keep backups no longer than your retention window.
+**Restore:** stop the gateway (and the cron jobs), remove `ratchet.db-wal` and `ratchet.db-shm` next to `RATCHET_DB` if they are there (a stale WAL file would be replayed onto the restored copy), copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter in vLLM. A backup taken before an erasure still holds the erased text: after a restore, run every erasure since the backup again (the `erasures` table of the newer file, or your record of them), and keep backups no longer than your retention window.
 
 **Schema changes:** opening a ledger migrates it: `Ledger._migrate()` adds the columns in `MIGRATIONS`, `SCHEMA` creates new tables and triggers, and `INDEXES` the indexes, so an upgraded gateway or `python -m ratchet.live` brings an old file up to date by itself (back it up first). Never edit `version_leaves` or `receipts` by hand: they are append-only (INV-17) and the database refuses the change, because signed roots and receipt chains are built from those rows.

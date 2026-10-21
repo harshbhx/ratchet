@@ -1317,23 +1317,21 @@ RESERVED_ENV = {
     "RATCHET_BATCH_API": "openai",
     "RATCHET_BATCH_DISCOUNT": "0.4",
     "RATCHET_BACKFILL_MAX_TOKENS": "1024",
-    "RATCHET_DB_SYNC": "NORMAL",
     "RATCHET_GATEWAY_LEASE": "exclusive",
-}
+}  # RATCHET_DB_SYNC left with the WAL journal (ADR 0060); tests/test_perf.py covers it
 
 
 def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, tmp_path):
     """A setting declared for a feature that is not built yet would do nothing, so any value but its default stops the
     cascade, the gateway and the nightly job at startup, naming the variable; its default, spelled any way, is fine."""
-    from ratchet.config import DEPLOY_ENV, KNOWN_ENV, RESERVED_SETTINGS, TOOL_ENV
+    from ratchet.config import KNOWN_ENV, RESERVED_SETTINGS
 
-    assert (
-        set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()} == set(KNOWN_ENV) - set(DEPLOY_ENV) - set(TOOL_ENV)
-    )
+    assert set(RESERVED_ENV) == {env for env, _, _ in RESERVED_SETTINGS.values()}
+    assert set(RESERVED_ENV) <= set(KNOWN_ENV)  # KNOWN_ENV lists every variable the package reads (ADR 0070)
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()
-    for env, value in {"RATCHET_BATCH_DISCOUNT": "0.50", "RATCHET_BATCH_API": " Operations ", "RATCHET_DB_SYNC": "full"}.items():
+    for env, value in {"RATCHET_BATCH_DISCOUNT": "0.50", "RATCHET_BATCH_API": " Operations "}.items():
         monkeypatch.setenv(env, value)
     Settings().check_reserved()
     for env, value in RESERVED_ENV.items():

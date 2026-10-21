@@ -494,6 +494,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.auth:KeyRing",
         "ratchet.gateway:_client",
         "ratchet.gateway:_quota",
+        "ratchet.gateway:Runtime._set_access",
         "ratchet.ledger:Ledger.stats_by_client",
     ),
     "FR-1.8": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat", "ratchet.gateway:_map_upstream"),
@@ -551,6 +552,32 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_complete",
         "ratchet.gateway:_stream_pieces",
         "sim.mock_models:MockStudent",
+    ),
+    "FR-1.60": (
+        "ratchet.obs:new_context",
+        "ratchet.obs:parse_traceparent",
+        "ratchet.obs:upstream_headers",
+        "ratchet.gateway:ObservabilityMiddleware",
+        "ratchet.gateway:_with_request_id",
+        "ratchet.gateway:request_lookup",
+        "ratchet.gateway:own_request",
+        "ratchet.ledger:Ledger.request_record",
+        "ratchet.providers:OpenAICompatProvider.complete",
+    ),
+    "FR-1.70": (
+        "ratchet.idem:IdemCache",
+        "ratchet.idem:SeenWindow",
+        "ratchet.idem:check_key",
+        "ratchet.idem:fingerprint",
+        "ratchet.idem:retry_count",
+        "ratchet.gateway:chat",
+        "ratchet.gateway:_complete_idempotent",
+        "ratchet.gateway:_replay",
+        "ratchet.gateway:BufferedStream",
+        "ratchet.ledger:Ledger.add_example",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.config:Settings.idempotency",
+        "ratchet.config:Settings.seen_dedup",
     ),
     # 6.2 Cascade and confidence
     "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),
@@ -877,6 +904,76 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.importer:parse_row",
         "ratchet.feedback:prepare",
     ),
+    # 6.12 Operations
+    "FR-12.4": (
+        "ratchet.ledger:Ledger.log_failure",
+        "ratchet.ledger:Ledger.totals",
+        "ratchet.ledger:Ledger.add_event_listener",
+        "ratchet.router:Ratchet._record_failure",
+        "ratchet.router:Ratchet._count_request",
+        "ratchet.gateway:_after_response",
+        "ratchet.gateway:metrics_endpoint",
+        "ratchet.metrics:Registry.render",
+        "ratchet.obs:log",
+        "ratchet.obs:JsonFormatter",
+        "ratchet.release:ReleaseGate._tick_canary",
+    ),
+    "FR-12.7": (
+        "ratchet.access:route_access",
+        "ratchet.access:scrub_stats",
+        "ratchet.gateway:_access",
+        "ratchet.gateway:Runtime._set_access",
+        "ratchet.gateway:SecurityHeadersMiddleware",
+        "ratchet.config:Settings.access",
+    ),
+    "FR-12.8": (
+        "ratchet.ledger:Ledger._journal",
+        "ratchet.ledger:Ledger._reader",
+        "ratchet.ledger:Ledger._routed",
+        "ratchet.ledger:Ledger.version_live_quality",
+        "ratchet.ledger:INDEXES",
+        "ratchet.gateway:Runtime.tick",
+        "ratchet.gateway:SnapshotCache",
+        "ratchet.config:Settings.tick_interval",
+        "ratchet.config:Settings.stats_ttl",
+    ),
+    "FR-12.30": (
+        "ratchet.config:Settings.validate",
+        "ratchet.config:check",
+        "ratchet.config:load",
+        "ratchet.config:main",
+        "ratchet.config:tasks_file_issues",
+        "ratchet.config:KNOWN_ENV",
+        "ratchet.release:ReleasePolicy.validate",
+        "ratchet.gateway:Runtime._check_config",
+        "ratchet.gateway:healthz",
+        "ratchet.gateway:livez",
+        "ratchet.gateway:readyz",
+        "ratchet.readiness:Readiness",
+        "ratchet.readiness:ProbeCache",
+        "ratchet.ledger:Ledger.probe",
+        "deploy/vm/update.sh",
+    ),
+    "FR-12.31": (
+        "ratchet.sidecar:SideCar",
+        "ratchet.sidecar:Slot",
+        "ratchet.sidecar:job_bytes",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._audit",
+        "ratchet.router:Ratchet._shadow",
+        "ratchet.router:Ratchet._finish_offpath",
+        "ratchet.router:Ratchet._sidecar_full",
+        "ratchet.router:Ratchet.close",
+        "ratchet.router:Ratchet.sidecar_report",
+        "ratchet.router:OffPath",
+        "ratchet.ledger:Ledger.update_request",
+        "ratchet.ledger:Ledger.version_live_quality",
+        "ratchet.providers:OpenAICompatProvider.complete",
+        "ratchet.config:Settings.sidecar",
+        "ratchet.gateway:Runtime.shutdown",
+        "ratchet.gateway:_lifespan",
+        "ratchet.gateway:_stats_payload",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -990,7 +1087,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "sim.simulate:main",
     ),
     # 7 Non-functional
-    "NFR-1": ("ratchet.router:Ratchet._sample",),
+    "NFR-1": (
+        "ratchet.router:Ratchet._sample",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.ledger:Ledger.latency_percentiles",
+        "ratchet.sidecar:SideCar",
+    ),
     "NFR-2": (
         "ratchet.router:Ratchet.handle",
         "ratchet.router:Ratchet._teacher_complete",
@@ -998,8 +1100,14 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.resilience:Breaker",
         "ratchet.live:AdapterReloader",
         "ratchet.live:reload_adapters",
+        "ratchet.readiness:Readiness.report",
     ),
-    "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night", "ratchet.providers:GenPolicy"),
+    "NFR-3": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._finish_offpath",
+        "ratchet.nightschool.orchestrate:run_night",
+        "ratchet.providers:GenPolicy",
+    ),
     "NFR-4": (
         "ratchet.redact:redact_messages",
         "ratchet.router:Ratchet.store_opt_out",
@@ -1007,14 +1115,28 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.privacy:erase",
         "ratchet.privacy:apply_retention",
     ),
-    "NFR-5": ("ratchet.auth:KeyRing.identify", "ratchet.gateway:_quota"),
-    "NFR-6": ("ratchet.ledger:Ledger.log_request", "ratchet.ledger:Ledger.event", "ratchet.gateway:stats"),
+    "NFR-5": (
+        "ratchet.auth:KeyRing.identify",
+        "ratchet.gateway:_quota",
+        "ratchet.gateway:_access",
+        "ratchet.gateway:Runtime._set_access",
+        "ratchet.access:ROUTES",
+    ),
+    "NFR-6": (
+        "ratchet.ledger:Ledger.log_request",
+        "ratchet.ledger:Ledger.event",
+        "ratchet.ledger:Ledger.log_failure",
+        "ratchet.gateway:stats",
+        "ratchet.gateway:metrics_endpoint",
+        "ratchet.obs:log",
+    ),
     "NFR-7": ("ratchet.providers:OpenAICompatProvider", "ratchet.live:export"),
     "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval"),
     "NFR-9": ("ratchet.bom:manifest", "ratchet.nightschool.notices:render", "ratchet.live:publish_bom", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
     "NFR-70": ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "ratchet/web/landing.html"),
+    "NFR-35": ("ratchet.config:check", "ratchet.gateway:Runtime._check_config", "ratchet.readiness:Readiness.report"),
     # Invariants (CLAUDE.md)
     "INV-1": (
         "ratchet.licenses:require_distillable",
@@ -1040,6 +1162,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.feedback:held_out_ok",
         "ratchet.ledger:Ledger.prompt_status",
         "ratchet.ledger:seen_count",  # a label that is no occurrence counts 0
+        "ratchet.ledger:Ledger.add_example",  # a retry never counts as a repeat (FR-1.70)
     ),
     "INV-4": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-5": ("ratchet.nightschool.orchestrate:run_night",),
@@ -1072,6 +1195,8 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_admin",
         "ratchet.ledger:Ledger.save_task",
         "ratchet.auth:parse_key_limits",
+        "ratchet.gateway:_access",
+        "ratchet.access:pseudonyms",
     ),
     "INV-14": (
         "ratchet.bom:document",
@@ -1081,7 +1206,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.live:publish_bom",
         "ratchet.live:export",
     ),
-    "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
+    "INV-15": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._arbitrate",
+        "ratchet.router:Ratchet._audit",
+        "ratchet.router:Ratchet._shadow",
+    ),
     "INV-16": (
         "ratchet.router:Ratchet._store_example",
         "ratchet.router:answer_problem",
@@ -1486,8 +1616,8 @@ def rule_routes_documented(ctx: Context) -> list[str]:
     return [f"{m} {p}: not in {API_DOC}; add it to the endpoint table" for m, p in routes if (m, p) not in documented]
 
 
-# config.py readers: _env(name, default), _int(name, default), ..., _float_or_none(name)
-ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none"}
+# config.py readers: _env(name, default), _int(name, default), ..., _switch(name), _float_or_none(name), _int_or_none(name)
+ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_switch", "_float_or_none", "_int_or_none"}
 
 
 def _env_name(node: ast.AST) -> str | None:
@@ -1508,8 +1638,10 @@ def _env_name(node: ast.AST) -> str | None:
     return None
 
 
-def env_reads(root: Path = ROOT) -> dict[str, str]:
-    """Environment variable -> where it is read, for everything under ratchet/."""
+def env_reads(root: Path = ROOT, known: bool = True) -> dict[str, str]:
+    """Environment variable -> where it is read, for everything under ratchet/, and config.DEPLOY_ENV (the deploy scripts'
+    and the demo VM's). With `known` False, only the reads the source spells out (no config.KNOWN_ENV or DEPLOY_ENV, no
+    ReleasePolicy fields)."""
     found: dict[str, str] = {}
     for path in sorted((root / "ratchet").rglob("*.py")):
         rel = _rel(path, root)
@@ -1517,8 +1649,13 @@ def env_reads(root: Path = ROOT) -> dict[str, str]:
             name = _env_name(node)
             if name:
                 found.setdefault(name, f"{rel}:{node.lineno}")
-    for name in getattr(_import("ratchet.config"), "KNOWN_ENV", ()):
+    if not known:
+        return found
+    config = _import("ratchet.config")
+    for name in getattr(config, "KNOWN_ENV", ()):
         found.setdefault(name, "ratchet/config.py:KNOWN_ENV")
+    for name in sorted(getattr(config, "DEPLOY_ENV", ())):  # read by the deploy scripts and the demo VM: documented too
+        found.setdefault(name, "ratchet/config.py:DEPLOY_ENV")
     for f in dataclasses.fields(_import("ratchet.release").ReleasePolicy):  # read as RATCHET_<FIELD> by from_env()
         found.setdefault(f"RATCHET_{f.name.upper()}", "ratchet/release.py:ReleasePolicy.from_env")
     return found
@@ -1537,6 +1674,27 @@ def rule_env_documented(ctx: Context) -> list[str]:
     return [
         f"{name}: read at {where} but not documented in {CONFIG_DOC}" for name, where in reads.items() if name not in documented
     ]
+
+
+def rule_env_known(ctx: Context) -> list[str]:
+    """(i) config.KNOWN_ENV lists exactly the variables the package reads (ReleasePolicy's aside), so the startup check
+    (ADR 0070) never calls a real setting unknown, nor knows one nothing reads."""
+    try:
+        reads = env_reads(ctx.root, known=False)
+        config = _import("ratchet.config")
+        listed = set(getattr(config, "KNOWN_ENV", ()))
+        policy = {f"RATCHET_{f.name.upper()}" for f in dataclasses.fields(_import("ratchet.release").ReleasePolicy)}
+    except Exception as e:  # noqa: BLE001 - a syntax or import error is a finding, not a crash
+        return [f"cannot list the environment variables the package reads: {type(e).__name__}: {e}"]
+    if not reads:  # a tree without the package (the checker's own tests)
+        return []
+    errors = [
+        f"{name}: read at {where} but not in config.KNOWN_ENV; add it there"
+        for name, where in reads.items()
+        if name not in listed and name not in policy
+    ]
+    errors += [f"{name}: in config.KNOWN_ENV but nothing under ratchet/ reads it" for name in sorted(listed - set(reads))]
+    return errors
 
 
 def rule_test_counts(ctx: Context) -> list[str]:
@@ -1586,6 +1744,7 @@ CORE_RULES: tuple[Callable[[Context], list[str]], ...] = (
 DOC_RULES: tuple[Callable[[Context], list[str]], ...] = (
     rule_routes_documented,
     rule_env_documented,
+    rule_env_known,
     rule_test_counts,
 )
 RULES = CORE_RULES + (rule_generated,) + DOC_RULES

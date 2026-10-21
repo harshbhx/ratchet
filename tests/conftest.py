@@ -64,11 +64,31 @@ def builtin_licenses():
     licenses.reset_builtin()
 
 
+# Who may read what (ADR 0061), and the logs and the metrics token (ADR 0062): cleared before the gateway loads, so a
+# variable in the shell cannot open or close a route, stop startup or make the tests loud. A test that needs one passes
+# it to `gw_env`.
+ACCESS_ENV = (
+    "RATCHET_DASHBOARD_KEYS",
+    "RATCHET_PUBLIC_DASHBOARD",
+    "RATCHET_PUBLIC_BOM",
+    "RATCHET_SCRUB_STATS",
+    "RATCHET_OPENAPI",
+    "RATCHET_ALLOW_UNAUTHENTICATED",
+    "RATCHET_CSP",
+    "RATCHET_METRICS_TOKEN",
+    "RATCHET_LOG_FORMAT",
+    "RATCHET_LOG_LEVEL",
+    "RATCHET_STRICT_CONFIG",  # a shell's strict mode would turn its stray variables into startup errors (ADR 0070)
+)
+
+
 @pytest.fixture()
 def gw(monkeypatch):
     """The gateway reloaded in mock mode with no warm-up (Scout and page tests)."""
     monkeypatch.setenv("RATCHET_MODE", "mock")
     monkeypatch.setenv("RATCHET_MOCK_WARMUP_DAYS", "0")
+    for name in ACCESS_ENV:
+        monkeypatch.delenv(name, raising=False)
     import ratchet.gateway as gw
 
     importlib.reload(gw)
@@ -77,12 +97,15 @@ def gw(monkeypatch):
 
 @pytest.fixture()
 def gw_env(monkeypatch):
-    """A freshly loaded gateway in mock mode with extra settings; restores the default gateway afterwards."""
+    """A freshly loaded gateway in mock mode with extra settings; restores the default gateway afterwards. Live mode
+    (RATCHET_MODE="live") without RATCHET_API_KEYS needs RATCHET_ALLOW_UNAUTHENTICATED="1", as in production."""
     import ratchet.gateway as gw
 
     def load(**env):
         monkeypatch.setenv("RATCHET_MODE", "mock")
         monkeypatch.setenv("RATCHET_MOCK_WARMUP_DAYS", "0")
+        for name in ACCESS_ENV:
+            monkeypatch.delenv(name, raising=False)
         for k, v in env.items():
             monkeypatch.setenv(k, v)
         importlib.reload(gw)

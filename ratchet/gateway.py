@@ -1,11 +1,13 @@
 """OpenAI-compatible gateway, dashboard API, landing page and the Scout multi-agent demo.
 
     RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000     # offline demo, no keys
-    RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app  # real Token Factory teacher
+    RATCHET_MODE=live NEBIUS_API_KEY=... RATCHET_API_KEYS=... uvicorn ratchet.gateway:app  # real Token Factory teacher
 
 Point any OpenAI SDK at http://localhost:8000/v1. Choose the task with the
 `X-Ratchet-Task` header (or `metadata.ratchet_task` in the body; the header wins). With `RATCHET_API_KEYS`
-set, `/v1/*` needs `Authorization: Bearer <key>`. Errors on `/v1/*` use OpenAI's envelope
+set, `/v1/*` needs `Authorization: Bearer <key>`; live mode refuses to start without them unless told to. Each route has
+an access level (`ratchet/access.py`, ADR 0061): in live mode the dashboard API needs an admin or dashboard key unless
+RATCHET_PUBLIC_DASHBOARD=1. Errors on `/v1/*` use OpenAI's envelope
 (`ratchet/openai_compat.py`); every other route keeps FastAPI's `{"detail": ...}`.
 Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
 """
@@ -13,8 +15,11 @@ Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
 from __future__ import annotations
 
 import calendar
+import contextlib
 import functools
+import itertools
 import json
+import logging
 import math
 import queue
 import re
@@ -22,7 +27,7 @@ import threading
 import time
 import uuid
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,19 +40,40 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, certificate, feedback, licenses, live, merkle, privacy, proof, receipts, replay, tasks, taskspec
+from . import (
+    __version__,
+    certificate,
+    feedback,
+    idem,
+    licenses,
+    live,
+    merkle,
+    metrics,
+    obs,
+    privacy,
+    proof,
+    readiness,
+    receipts,
+    replay,
+    tasks,
+    taskspec,
+)
+from . import access as acl
 from . import bom as bomdoc
-from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
-from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
+from . import config as cfg
+from .auth import KeyLimits, KeyRing, Token, bearer, parse_key_limits
+from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, ConfigError, ConfigIssue, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .ledger import Ledger, NoTrainFull, Version
 from .merkle import KeySet, LogTree
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
+    INVALID_JSON,
     INVALID_REQUEST,
     INVALID_TYPE,
     INVALID_VALUE,
@@ -76,7 +102,7 @@ from .resilience import (
     as_upstream,
     describe_failure,
 )
-from .router import EVENT_ON_FAILURE, Choice, Ratchet, RequestMeta
+from .router import EVENT_ON_FAILURE, Choice, Ratchet, RequestMeta, task_label
 from .scout.agents import Call, Scout
 from .scout.credits import CreditMeter, MeteredSearch
 from .scout.guard import Guard
@@ -119,6 +145,43 @@ class ReceiptTree(NamedTuple):
 STUDENT_SERVING_KINDS = ("mock", "endpoint", "hosted_fallback", "none")
 
 
+class SnapshotCache:
+    """One computed value served for `ttl_s` seconds on `clock` (ADR 0060): /ratchet/stats, which every dashboard tab
+    polls, recomputes at most once per TTL however many read it. Single flight: while one caller recomputes, the others
+    get the previous value at once instead of queueing behind it (only the very first callers wait, having nothing to
+    serve). A failed recompute raises to its caller and keeps the previous value. `ttl_s` 0 computes on every call, as
+    before."""
+
+    def __init__(self, ttl_s: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self.ttl_s = ttl_s
+        self.clock = clock
+        self._lock = threading.Lock()  # held while computing
+        self._value: Any = None
+        self._at: float | None = None
+
+    def _fresh(self, now: float) -> bool:
+        return self._at is not None and 0 <= now - self._at < self.ttl_s
+
+    def get(self, compute: Callable[[], Any]) -> Any:
+        if self.ttl_s <= 0:
+            return compute()
+        if self._fresh(self.clock()):
+            return self._value
+        if self._at is not None:
+            if not self._lock.acquire(blocking=False):
+                return self._value  # another caller is recomputing: the previous value, now
+        else:
+            self._lock.acquire()  # nothing to serve yet: wait for the first value
+        try:
+            if self._fresh(self.clock()):  # computed while this caller waited for the lock
+                return self._value
+            value = compute()
+            self._value, self._at = value, self.clock()
+            return value
+        finally:
+            self._lock.release()
+
+
 class Runtime:
     """Wires settings, ledger, providers and the release gate together.
 
@@ -129,7 +192,11 @@ class Runtime:
     transport. `clock` times the breakers, adapter reloads and demo outages (tests pass a fake one); `wall_clock` is the
     time of day Scout's guard, credit meter and judge sessions count UTC days by (tests only).
 
-    `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None."""
+    `reloader` is the `live.AdapterReloader` in live mode with a student endpoint, else None.
+
+    The configuration is checked first, before anything is opened (`config.check`, ADR 0070): every error at once in one
+    ConfigError (also a LicenseError when a teacher is refused, INV-1). Warnings are kept in `config_warnings` and logged;
+    RATCHET_STRICT_CONFIG=1 makes them fatal too."""
 
     def __init__(
         self,
@@ -142,7 +209,11 @@ class Runtime:
         unknown = set(transports or {}) - set(TRANSPORT_KEYS)
         if unknown:
             raise ValueError(f"unknown transport keys {sorted(unknown)}; use {list(TRANSPORT_KEYS)}")
-        self.settings = settings or Settings()
+        parsed: list[ConfigIssue] = []
+        if settings is None:
+            settings, parsed = cfg.load()  # variables that do not parse are listed with the rest, not raised one by one
+        self.settings = settings
+        self.config_warnings: list[ConfigIssue] = self._check_config(parsed)
         self.transports = dict(transports or {})
         self.sleep = sleep
         self.clock = clock
@@ -156,12 +227,29 @@ class Runtime:
         self.purge_thread: threading.Thread | None = None
         self._last_purge: float | None = None
         self.reset()
+        for w in self.config_warnings:  # once per start, after reset() set up logging; names settings, never values
+            obs.log(logging.WARNING, "config_warning", var=w.var, detail=w.message)
+
+    def _check_config(self, parsed: list[ConfigIssue]) -> list[ConfigIssue]:
+        """Raise one ConfigError listing every configuration error (and every warning under RATCHET_STRICT_CONFIG=1);
+        return the warnings."""
+        issues = [*parsed, *cfg.check(self.settings)]
+        errors = [i for i in issues if i.level == cfg.ERROR]
+        warnings = [i for i in issues if i.level != cfg.ERROR]
+        strict = self.settings.strict_config is True
+        if errors or (strict and warnings):
+            raise ConfigError.of([*errors, *warnings] if strict else errors)
+        return warnings
 
     def reset(self) -> None:
         s = self.settings
         # The license registry (RATCHET_TEACHER_LICENSES, ADR 0090): a bad file stops startup here, before anything is
         # opened; `Ratchet.__init__` installs the same file again.
         licenses.install(s.teacher_licenses_file)
+        self._set_access(s)  # first, so a live gateway without keys stops before it opens anything (ADR 0061)
+        obs.configure(*s.log_settings())  # a bad RATCHET_LOG_FORMAT or RATCHET_LOG_LEVEL stops startup here (ADR 0062)
+        self.readiness = readiness.Readiness(self)  # /readyz's probes and their cache; a demo reset starts it afresh
+        self.failure_rows = FailureThrottle(clock=self.clock)
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         cert = s.cert_policy()  # a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA stops startup here (ADR 0026)
         self.retention = s.retention()  # a bad retention window or RATCHET_ERASURE_SHARED stops startup here (ADR 0081)
@@ -170,6 +258,11 @@ class Runtime:
         mean = s.checked_mock_reasoning_mean()
         scout = s.scout_policy()  # a bad judge or Tavily credit setting stops startup here, never echoing the code (ADR 0120)
         self.credits: CreditMeter | None = None
+        # The hot path (ADR 0060); a bad RATCHET_DB_SYNC, RATCHET_TICK_INTERVAL_S or RATCHET_STATS_TTL_S stops startup here.
+        sync = s.ledger_sync()
+        self.tick_interval_s = s.tick_interval()
+        self.stats_cache = SnapshotCache(s.stats_ttl(), clock=self.clock)
+        self._last_tick: float | None = None
         if s.mode == "mock":
             from sim.mock_models import DEFAULT_REASONING_CV, MockFleet, MockTeacher
             from sim.world import make_stream
@@ -200,7 +293,7 @@ class Runtime:
             )
             fallback_teacher: OpenAICompatProvider | None = None  # the mock teacher plays any fallback model too
         else:
-            self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True)
+            self.ledger = Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=sync)
             # Timeouts and retries per role (ADR 0014): the teacher is retried within a deadline; the student never is,
             # because the teacher is its retry. A bad setting raises here, at startup.
             teacher = OpenAICompatProvider(
@@ -278,18 +371,18 @@ class Runtime:
         self.search_errors = 0  # failed searches since the last reset (credit refusals are not failures)
         self.search_errors_today: tuple[str, int] = ("", 0)  # (UTC day, failures on it)
         self.search_last_error: str | None = None  # the most recent search's failure, None after a search that worked
-        self.keys = KeyRing(s.api_keys)
+        self.ledger.add_event_listener(obs.mirror_event)  # every release-log event also as a log line (ADR 0062)
         # Per-key settings by name (RATCHET_KEY_LIMITS; so far `store`); a bad value or an unknown name stops startup.
         self.key_limits: dict[str, KeyLimits] = parse_key_limits(s.key_limits, self.keys.names)
         # End users are hashed with this deployment's key (FR-13.2): RATCHET_END_USER_KEY, or one kept in the ledger.
         self.end_users = privacy.end_users(self.ledger, s.end_user_key)
         # No-train registrations scoped to a key name that is gone match nothing: say so (an event, once per change).
         privacy.check_no_train_scopes(self.ledger, self.known_clients())
-        # Admin keys for management writes (ADR 0022); never the same keys as an API client's.
-        self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
-        both = self.admin_keys.shared(self.keys)
-        if both:
-            raise ValueError(f"RATCHET_ADMIN_KEYS: the key for {both[0]!r} is also an API key; give admins their own keys")
+        # Retries (ADR 0071): answers kept by Idempotency-Key, and the window in which the same client's repeat of a
+        # stored example counts once. Both in memory, both new on a demo reset; a bad setting stops startup here.
+        self.idem = idem.IdemCache(*s.idempotency(), clock=self.clock)
+        window = s.seen_dedup()
+        self.ledger.seen_window = idem.SeenWindow(window, clock=self.clock) if window > 0 else None
         # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
         # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
         with self.tasks_lock:
@@ -312,6 +405,12 @@ class Runtime:
         self.receipt_trees: OrderedDict[tuple[int, str], ReceiptTree] = OrderedDict()
         self.receipt_integrity_reported: set[tuple[int, str]] = set()
         reload = self.reloader.request if self.reloader is not None else None
+        # Off-path checks (ADR 0072): how long shutdown waits for queued audits and shadows (a bad RATCHET_SIDECAR_* value
+        # stops startup here). A demo reset gives up on the old cascade's queued jobs, whose ledger is being replaced.
+        self.sidecar_drain_s = s.sidecar()[2]
+        old: Ratchet | None = getattr(self, "ratchet", None)
+        if old is not None:
+            old.close(0.0)
         self.ratchet = Ratchet(
             s,
             self.ledger,
@@ -326,6 +425,49 @@ class Runtime:
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
+
+    def shutdown(self) -> dict[str, Any]:
+        """The gateway's shutdown (the app's lifespan, ADR 0072): wait at most RATCHET_SIDECAR_DRAIN_S for the off-path
+        audits and shadows still queued, then give up on the rest, whose rows stay pending and are ignored by the release
+        gate. Returns the sidecar's report."""
+        return self.ratchet.close(self.sidecar_drain_s)
+
+    def _set_access(self, s: Settings) -> None:
+        """The key rings, the metrics token and who may read what (ADR 0061, ADR 0062). A bad key spec or switch, a key in
+        two rings, a metrics token that is short or also a key, or live mode without RATCHET_API_KEYS (unless
+        RATCHET_ALLOW_UNAUTHENTICATED=1) raises ValueError, so the gateway stops at startup."""
+        self.access = s.access()
+        self.keys = KeyRing(s.api_keys)
+        # Admin keys for management writes (ADR 0022) and read-only dashboard keys (ADR 0061). Each key has one role: an
+        # API client's key is neither, and a dashboard key is not an admin's, so it can never write.
+        self.admin_keys = KeyRing(s.admin_keys, env="RATCHET_ADMIN_KEYS")
+        self.dashboard_keys = KeyRing(s.dashboard_keys, env="RATCHET_DASHBOARD_KEYS")
+        for ring, other, fix in (
+            (self.admin_keys, self.keys, "an API key; give admins their own keys"),
+            (self.dashboard_keys, self.keys, "an API key; give dashboards their own keys"),
+            (self.dashboard_keys, self.admin_keys, "an admin key; give dashboards their own, read-only keys"),
+        ):
+            both = ring.shared(other)
+            if both:
+                raise ValueError(f"{ring.env}: the key for {both[0]!r} is also {fix}")
+        if s.mode != "mock" and not self.keys.enabled and not self.access.allow_unauthenticated:
+            raise ValueError(
+                "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
+                "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
+                "VM's Caddy guard) checks every caller"
+            )
+        csp = {"Content-Security-Policy": self.access.csp} if self.access.csp else {}
+        self.security_headers: dict[str, str] = {**SECURITY_HEADERS, **csp}
+        # A Prometheus scraper's bearer token for GET /metrics (ADR 0062): a role of its own, so never one of the keys.
+        self.metrics_token = Token(s.metrics_token, env="RATCHET_METRICS_TOKEN")
+        token = s.metrics_token.strip() if isinstance(s.metrics_token, str) else ""
+        for ring in (self.keys, self.admin_keys, self.dashboard_keys):
+            name = ring.identify(token) if token else None
+            if name is not None:
+                raise ValueError(
+                    f"RATCHET_METRICS_TOKEN is also the key for {name!r} in {ring.env}; give the scraper its own token"
+                )
+        metrics.set_clients(self.keys.names)  # a metric's client label is a key name, `none` or `other`
 
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
@@ -377,7 +519,7 @@ class Runtime:
             item = stream.sample(self.ledger.day)
             self.ratchet.handle(item.messages(), item.task)
             if (i + 1) % ticks == 0:
-                self.tick()
+                self.tick(force=True)  # simulated time: never throttled by the wall clock
         rep = run_night(
             self.ledger,
             self.fleet,
@@ -401,10 +543,30 @@ class Runtime:
             self.simulate_day(requests, "mixed")
         self.ledger.event("warmup", f"demo warm-up: {days} simulated days of mixed traffic ({requests} requests/day)")
 
-    def tick(self) -> None:
-        with self.gate_lock:
+    def tick(self, force: bool = False) -> bool:
+        """Run the release gate's tick; returns whether it ran. With RATCHET_TICK_INTERVAL_S above 0 (live mode: 5 s), a
+        tick less than that after the previous one is skipped, and so is one while another thread is ticking, so the
+        request path pays for a tick at most once per interval and never waits for one (ADR 0060). A rollback can wait
+        up to the interval. `force`, or an interval of 0 (mock mode), runs every call, waiting for a running tick, as
+        before. A tick that ran then starts the retention purge when one is due (`maybe_purge`, FR-13.4)."""
+        if force or self.tick_interval_s <= 0:
+            with self.gate_lock:
+                self._last_tick = self.clock()
+                self.gate.tick()
+            self.maybe_purge()
+            return True
+        if self._recent(self.clock()) or not self.gate_lock.acquire(blocking=False):
+            return False
+        try:
+            now = self.clock()
+            if self._recent(now):  # another thread ticked between the check and the lock
+                return False
+            self._last_tick = now  # before the tick, so a failing tick is not retried on every request
             self.gate.tick()
+        finally:
+            self.gate_lock.release()
         self.maybe_purge()
+        return True
 
     def maybe_purge(self) -> threading.Thread | None:
         """In live mode with a retention window set, apply the windows (`privacy.apply_retention`, FR-13.4) at most once
@@ -436,6 +598,13 @@ class Runtime:
                 self.ledger.event("purge_failed", f"retention: {describe_failure(e)}")
             except Exception:  # noqa: BLE001 - the ledger may be what failed
                 pass
+            return True
+        finally:
+            self.gate_lock.release()
+
+    def _recent(self, now: float) -> bool:
+        last = self._last_tick
+        return last is not None and 0 <= now - last < self.tick_interval_s
 
     def scout(self, pace: float = 0.0, judge: bool = False, run_id: str = "") -> Scout:
         """`pace` > 0 (mock streams only) sleeps for that share of each call's simulated latency. With a credit meter
@@ -512,10 +681,13 @@ class BodyTooLarge(HTTPException):
 
 
 def _http_error_response(path: str, method: str, exc: StarletteHTTPException) -> JSONResponse:
-    """The response for an HTTP error, in OpenAI's envelope on API paths and as `{"detail": ...}` elsewhere."""
+    """The response for an HTTP error, in OpenAI's envelope (with the request's id) on API paths and as
+    `{"detail": ...}` elsewhere."""
     if _api_path(path):
         err = http_error(exc.status_code, str(exc.detail), method=method, path=path, headers=exc.headers)
-        return JSONResponse(err.body(), status_code=err.status, headers=err.headers or None)
+        _note_error(exc, err.status, err.code)
+        return JSONResponse(_with_request_id(err.body()), status_code=err.status, headers=err.headers or None)
+    _note_error(exc, exc.status_code)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 
@@ -561,19 +733,301 @@ class BodyLimitMiddleware:
         await self.app(scope, counted, send)
 
 
+# ----- access and security headers (ADR 0061) -----
+# Headers every response carries: a browser never sniffs a JSON or text answer into a script or a page, and a page's URL
+# never leaks to the sites it links to. RATCHET_CSP adds a Content-Security-Policy (`Runtime.security_headers`).
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
+
+
+class SecurityHeadersMiddleware:
+    """Adds `headers()` (the runtime's `security_headers`) to every response, keeping any a route set itself. A plain
+    ASGI middleware, so streamed answers still stream. A 500 from an unhandled error is sent outside every middleware,
+    so `_unhandled_error` adds the same headers itself."""
+
+    def __init__(self, app: ASGIApp, headers: Callable[[], Mapping[str, str]]) -> None:
+        self.app = app
+        self.headers = headers
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        extra = self.headers()
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                headers = MutableHeaders(scope=message)
+                for name, value in extra.items():
+                    headers.setdefault(name, value)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+# ----- request ids, failures, logs and metrics (ADR 0062) -----
+CHAT_PATH = "/v1/chat/completions"
+CTX_KEY = "ratchet_request"  # where the request's context sits in `scope["state"]` (`request.state`)
+# Responses that get a failures row when no deeper code decided it: a key refused, a body too large, a limit hit, and
+# every server-side error. A validation 400 is only counted in the metrics, so a malformed client cannot drive writes.
+FAILURE_STATUSES = frozenset({401, 413, 429})
+# The stage of such a row when the code that answered named none (`RequestContext.stage`).
+DEFAULT_STAGES = {401: "auth", 413: "gateway", 429: "rate", 500: "gateway"}
+# Why a chat request was refused before the cascade (`ratchet_rejections_total`): by error code, then by status.
+REJECTION_CODES = {
+    "invalid_api_key": "auth",
+    "unknown_task": "unknown_task",
+    "task_not_allowed": "task_not_allowed",
+    "daily_quota_exceeded": "quota",
+    "request_too_large": "too_large",
+    "client_disconnected": "disconnected",
+    "invalid_idempotency_key": "idempotency",
+    "idempotency_key_reused": "idempotency",
+    "idempotency_key_in_use": "idempotency",
+}
+REJECTION_STATUSES = {400: "invalid_request", 401: "auth", 403: "forbidden", 413: "too_large", 429: "quota"}
+FAILURE_ROWS_PER_MINUTE = 120  # per stage, from the gateway; the router's rows that spent money are never held back
+
+
+class FailureThrottle:
+    """At most `per_minute` gateway-written failures rows per stage in each minute on `clock`: a key guessed in a loop or a
+    client hammering past its quota is counted in the metrics but cannot fill the disk with rows. Thread-safe."""
+
+    def __init__(self, per_minute: int = FAILURE_ROWS_PER_MINUTE, clock: Callable[[], float] = time.monotonic) -> None:
+        self.per_minute = per_minute
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._windows: dict[str, tuple[int, int]] = {}  # stage -> (minute, rows written in it)
+
+    def allow(self, stage: str) -> bool:
+        minute = int(self.clock() // 60)
+        with self._lock:
+            seen, n = self._windows.get(stage, (minute, 0))
+            if seen != minute:
+                n = 0
+            if n >= self.per_minute:
+                return False
+            self._windows[stage] = (minute, n + 1)
+            return True
+
+
+def _context(request: Request | None = None) -> obs.RequestContext | None:
+    """The request's context: from the running context variable, or from `scope["state"]` once the middleware has
+    reset it (the 500 handler runs outside every middleware)."""
+    ctx = obs.current()
+    if ctx is None and request is not None:
+        state = request.scope.get("state")
+        ctx = state.get(CTX_KEY) if isinstance(state, dict) else None
+    return ctx
+
+
+def _note_error(exc: Exception, status: int, code: str | None = None, request: Request | None = None) -> None:
+    """Record what refused or failed the request, for its failures row: the exception's class, the status and the error
+    code, never the message (which can quote request text)."""
+    ctx = _context(request)
+    if ctx is not None:
+        ctx.code = ctx.code or code
+        ctx.error = ctx.error or (f"{type(exc).__name__} {status} {code}" if code else f"{type(exc).__name__} {status}")
+
+
+def _with_request_id(body: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
+    """An OpenAI error envelope with the request's id beside `error` (the error object keeps OpenAI's four fields)."""
+    ctx = _context(request)
+    if ctx is not None:
+        body["request_id"] = ctx.request_id
+    return body
+
+
+def _rejection(ctx: obs.RequestContext, status: int) -> str:
+    return REJECTION_CODES.get(ctx.code or "") or REJECTION_STATUSES.get(status, "other")
+
+
+def _log_chat(ctx: obs.RequestContext, status: int) -> None:
+    """The chat request's one INFO line: ids, names, numbers and the status; never message or answer text, a URL or a
+    key (invariants 12 and 13)."""
+    if not obs.LOGGER.isEnabledFor(logging.INFO):
+        return
+    r = ctx.result or {}
+    # A retry's attempt number and a replay by Idempotency-Key with the id of the request it replays (ADR 0071), and
+    # checks that run after the answer (ADR 0072; the request's `offpath` line adds their cost), only when there is one.
+    retry = {k: r[k] for k in ("retry_count", "idempotent_replay", "replay_of", "overhead_pending") if r.get(k)}
+    obs.log(
+        logging.INFO,
+        "chat",
+        client_request_id=ctx.client_request_id,
+        client=ctx.client,
+        task=ctx.task,
+        served_by=r.get("served_by"),
+        route=r.get("route"),
+        version=r.get("version"),
+        confidence=r.get("confidence"),
+        escalated=r.get("escalated"),
+        audited=r.get("audited"),
+        latency_ms=r.get("latency_ms"),
+        wall_ms=r.get("wall_ms"),
+        cost_usd=r.get("cost_usd"),
+        status=status,
+        **retry,
+    )
+
+
+async def _after_response(ctx: obs.RequestContext, status: int) -> None:
+    """Once the response is sent: a chat request that ended in an error is counted (the cascade counted an answered
+    one), a refusal before the cascade is counted by reason, the chat request's log line is written, and a 401, 413, 429
+    or 5xx that no deeper code decided gets a failures row (throttled per stage, written in a worker thread so the event
+    loop never waits for the ledger lock). Nothing here may fail the request: its response is already out."""
+    try:
+        if ctx.path == CHAT_PATH:
+            if not ctx.counted:
+                metrics.REQUESTS.inc(task_label(ctx.task), "none", "none", str(status))
+                metrics.REQUEST_SECONDS.observe(ctx.elapsed_ms() / 1000, "none")
+                if 400 <= status < 500 and not ctx.failure_handled:  # the cascade's own failure is no refusal
+                    metrics.REJECTIONS.inc(_rejection(ctx, status))
+            _log_chat(ctx, status)
+        if (status in FAILURE_STATUSES or status >= 500) and not ctx.failure_handled:
+            stage = ctx.stage or DEFAULT_STAGES.get(status) or ("upstream" if status in (502, 503, 504) else "gateway")
+            metrics.FAILURES.inc(stage)  # every one, also when the row is throttled
+            if rt.failure_rows.allow(stage):
+                row = {
+                    "request_id": ctx.request_id,
+                    "client": ctx.client,
+                    "task": ctx.task,
+                    "stage": stage,
+                    "error": ctx.error or f"HTTP {status}",
+                    "status": status,
+                    "latency_ms": ctx.elapsed_ms(),
+                }
+                await anyio.to_thread.run_sync(functools.partial(rt.ledger.log_failure, **row))
+    except Exception:  # noqa: BLE001 - observability never fails a response that was already sent
+        pass
+
+
+class ObservabilityMiddleware:
+    """Gives every request its context (`obs.new_context`: the server's `req_<hex>` id, a valid client request id, a
+    valid W3C traceparent) in the `request_ctx` context variable and in `scope["state"]`, adds `x-request-id` and
+    `openai-processing-ms` to every response, and runs `_after_response` once the response is sent (also after an
+    unhandled error, before the 500 handler answers: that handler adds the same headers itself). Outermost of the
+    gateway's middlewares; plain ASGI, so streamed answers still stream."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers: dict[str, str] = {}
+        for name, value in scope.get("headers") or ():
+            headers.setdefault(name.decode("latin-1").lower(), value.decode("latin-1"))
+        ctx = obs.new_context(headers, scope.get("path", ""), scope.get("method", ""))
+        scope.setdefault("state", {})[CTX_KEY] = ctx
+        token = obs.request_ctx.set(ctx)
+        started: list[int] = []
+
+        async def send_with_ids(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                started.append(int(message["status"]))
+                out = MutableHeaders(scope=message)
+                out["x-request-id"] = ctx.request_id
+                out["openai-processing-ms"] = str(round(ctx.elapsed_ms()))
+            await send(message)
+
+        try:
+            try:
+                await self.app(scope, receive, send_with_ids)
+            except Exception as e:
+                if not started:  # the 500 handler answers it, outside this middleware
+                    ctx.error = ctx.error or type(e).__name__
+                await _after_response(ctx, started[0] if started else 500)
+                raise
+            await _after_response(ctx, started[0] if started else 500)
+        finally:
+            obs.request_ctx.reset(token)
+
+
+def _reader(key: str | None) -> tuple[str, str] | None:
+    """Whose key this is among the dashboard's readers: ("admin", name), ("dashboard", name) or None. Both rings are
+    checked every time, so the time taken does not say which one matched."""
+    if not key:
+        return None
+    admin, dashboard = rt.admin_keys.identify(key), rt.dashboard_keys.identify(key)
+    if admin is not None:
+        return ("admin", admin)
+    return None if dashboard is None else ("dashboard", dashboard)
+
+
+async def _access(request: Request) -> None:
+    """The dashboard API's gate, run before every route (ADR 0061). A route whose level (`access.route_access`; DASHBOARD
+    for a route nobody classified) is DASHBOARD or BOM needs an admin or dashboard key, from `Authorization: Bearer` or
+    `X-API-Key`, unless RATCHET_PUBLIC_DASHBOARD=1 (BOM: or RATCHET_PUBLIC_BOM=1): 401 for a missing or wrong key, 403
+    for an API key, and 403 when no admin or dashboard keys are set. METRICS (GET /metrics) also takes
+    RATCHET_METRICS_TOKEN (ADR 0062), and is closed to everyone only when that is unset too. The reader it found
+    (`request.state.reader`) decides whether a public read is scrubbed. Other levels check their callers themselves.
+    Async, so the chat path pays no thread hop for it."""
+    route = request.scope.get("route")
+    level = acl.route_access(request.method, getattr(route, "path", request.url.path)) or acl.DASHBOARD
+    if level not in acl.READER_LEVELS:
+        return
+    key = bearer(request.headers.get("authorization"), request.headers.get("x-api-key"))
+    reader = _reader(key)
+    token = level == acl.METRICS and rt.metrics_token.matches(key)  # checked whatever `_reader` found, like the rings
+    if reader is None and token:
+        reader = ("metrics", "token")  # a Prometheus scraper (RATCHET_METRICS_TOKEN, ADR 0062)
+    request.state.reader = reader
+    a = rt.access
+    if reader is not None or a.public_dashboard or (level == acl.BOM and a.public_bom):
+        return
+    if not (rt.admin_keys.enabled or rt.dashboard_keys.enabled or (level == acl.METRICS and rt.metrics_token.enabled)):
+        raise HTTPException(
+            403, "the dashboard API is private: set RATCHET_DASHBOARD_KEYS or RATCHET_ADMIN_KEYS, or RATCHET_PUBLIC_DASHBOARD=1"
+        )
+    if rt.keys.identify(key) is not None:
+        raise HTTPException(403, "this is an API key; the dashboard API needs a dashboard or admin key")
+    raise HTTPException(401, "invalid or missing dashboard key", headers={"WWW-Authenticate": "Bearer"})
+
+
+def _scrubbed(request: Request) -> bool:
+    """Whether this dashboard read is scrubbed (`Access.scrubs`): by default only an anonymous read of a public dashboard
+    in live mode."""
+    keyed = getattr(request.state, "reader", None) is not None
+    return rt.access.scrubs(live=rt.settings.mode != "mock", keyed=keyed)
+
+
+def _pseudonyms(*names: Iterable[str | None]) -> dict[str, str]:
+    """Client pseudonyms over every name a reader could meet: the configured API keys and `names` (the clients in the
+    ledger, the names in task allow-lists)."""
+    return acl.pseudonyms(itertools.chain(rt.keys.names, *names))
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """At shutdown, after the server stopped taking requests, the off-path queue drains for up to
+    RATCHET_SIDECAR_DRAIN_S on a worker thread (`Runtime.shutdown`, ADR 0072)."""
+    yield
+    await anyio.to_thread.run_sync(rt.shutdown)
+
+
 rt = Runtime()
-app = FastAPI(title="Ratchet", version=__version__)
+# /docs, /redoc and /openapi.json only with RATCHET_OPENAPI (default: mock mode only): in live mode the schema would show
+# anyone every management route.
+_DOCS: dict[str, Any] = {} if rt.access.openapi else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+app = FastAPI(title="Ratchet", version=__version__, dependencies=[Depends(_access)], lifespan=_lifespan, **_DOCS)
 app.add_middleware(BodyLimitMiddleware, max_bytes=rt.settings.max_body_bytes)
+app.add_middleware(SecurityHeadersMiddleware, headers=lambda: rt.security_headers)  # a 413 carries them too
+app.add_middleware(ObservabilityMiddleware)  # outermost: every response, a 413 included, carries x-request-id
 
 
 @app.exception_handler(APIError)
 async def _api_error(request: Request, exc: APIError) -> JSONResponse:
-    return JSONResponse(exc.body(), status_code=exc.status, headers=exc.headers or None)
+    """OpenAI's envelope, with the request's id beside `error` (ADR 0062)."""
+    _note_error(exc, exc.status, exc.code, request)
+    return JSONResponse(_with_request_id(exc.body(), request), status_code=exc.status, headers=exc.headers or None)
 
 
 @app.exception_handler(StarletteHTTPException)
 async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
     if not _api_path(request.url.path):
+        _note_error(exc, exc.status_code, request=request)
         return await http_exception_handler(request, exc)
     return _http_error_response(request.url.path, request.method, exc)
 
@@ -592,9 +1046,10 @@ def _power_of_ten(n: int) -> bool:
 
 @app.exception_handler(Exception)
 async def _unhandled_error(request: Request, exc: Exception) -> Response:
-    """A bug, not a client mistake: 500 (`api_error` on API paths). The server still logs the traceback. The ledger gets
-    a `gateway_error` event with the exception's class name only (a message could hold request text) at the 1st,
-    10th, 100th, ... occurrence, so a crash loop cannot flood it."""
+    """A bug, not a client mistake: 500 (`api_error` on API paths, with the request's id). The server still logs the
+    traceback. The ledger gets a `gateway_error` event with the exception's class name only (a message could hold request
+    text) at the 1st, 10th, 100th, ... occurrence, so a crash loop cannot flood it; every one gets a failures row
+    (`ObservabilityMiddleware`)."""
     rt.gateway_errors += 1  # handlers run on the event loop, one at a time
     if _power_of_ten(rt.gateway_errors):
         detail = f"{type(exc).__name__} (unhandled error {rt.gateway_errors})"
@@ -603,8 +1058,15 @@ async def _unhandled_error(request: Request, exc: Exception) -> Response:
         except Exception:  # noqa: BLE001 - the ledger may be what failed; the 500 must still go out
             pass
     if _api_path(request.url.path):
-        return await _api_error(request, APIError(500, "The server had an error while processing your request.", "api_error"))
-    return PlainTextResponse("Internal Server Error", status_code=500)
+        response = await _api_error(request, APIError(500, "The server had an error while processing your request.", "api_error"))
+    else:
+        response = PlainTextResponse("Internal Server Error", status_code=500)
+    response.headers.update(rt.security_headers)  # sent outside SecurityHeadersMiddleware
+    ctx = _context(request)  # and outside ObservabilityMiddleware, which already wrote its failures row
+    if ctx is not None:
+        response.headers["x-request-id"] = ctx.request_id
+        response.headers["openai-processing-ms"] = str(round(ctx.elapsed_ms()))
+    return response
 
 
 if (DIST / "assets").is_dir():
@@ -667,12 +1129,16 @@ def favicon() -> FileResponse:
 
 # ----- OpenAI-compatible API -----
 def _client(authorization: str | None, x_api_key: str | None) -> str | None:
-    """The API client's name, or None when keys are off. 401 when keys are on and this one is wrong."""
+    """The API client's name, or None when keys are off. 401 when keys are on and this one is wrong. The name (never the
+    key) goes on the request's context, for its log line and failures row."""
     if not rt.keys.enabled:
         return None
     name = rt.keys.identify(bearer(authorization, x_api_key))
     if name is None:
         raise HTTPException(401, "invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
+    ctx = obs.current()
+    if ctx is not None:
+        ctx.client = name
     return name
 
 
@@ -707,6 +1173,9 @@ def _quota(client: str | None) -> dict[str, str]:
             {"X-RateLimit-Remaining-Requests": "0", "Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
         )
         message = f"daily request quota of {limit} used up for {client!r}; resets at 00:00 UTC"
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.stage = "quota"
         raise APIError(429, message, "insufficient_quota", "daily_quota_exceeded", headers=headers)
     return {**headers, "X-RateLimit-Remaining-Requests": str(limit - used - 1)}
 
@@ -804,9 +1273,30 @@ def _stream_pieces(choice: Choice, asked: bool) -> list[tuple[str, dict[str, Any
 
 
 @app.get("/healthz")
-def healthz() -> dict[str, Any]:
-    """Liveness for Docker and load balancers. Public, even when API keys protect /v1/*."""
+async def healthz() -> dict[str, Any]:
+    """Liveness for Docker: the process answers. Public, even when API keys protect /v1/*. Async, so it answers while
+    every worker thread is busy (a full thread pool is not a dead process); readiness is /readyz."""
     return {"status": "ok", "version": __version__, "mode": rt.settings.mode}
+
+
+@app.get("/livez")
+async def livez() -> dict[str, Any]:
+    """Liveness under its Kubernetes name: the same answer as /healthz."""
+    return await healthz()
+
+
+@app.get("/readyz")
+async def readyz(request: Request) -> JSONResponse:
+    """Readiness for load balancers and deploy scripts (FR-12.30, ADR 0070): 200 `ready` or `degraded` while requests can
+    be answered, 503 `not_ready` when the ledger cannot be written or no teacher can answer. The probes run on their own
+    two threads, never the request pool, each awaited at most 2 s and reused for 15 s (`readiness.Readiness`). Public;
+    the answer names states, statuses and exception classes, never URLs, keys or messages. A 503 here is an answer, not a
+    failed request: it writes no failures row, however often a load balancer asks."""
+    status, body = await rt.readiness.report()
+    ctx = _context(request)
+    if ctx is not None:
+        ctx.failure_handled = True
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/v1/models")
@@ -826,15 +1316,23 @@ async def chat(
     x_ratchet_store: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
-) -> JSONResponse | StreamingResponse:
+    idempotency_key: str | None = Header(default=None),
+    x_stainless_retry_count: str | None = Header(default=None),
+) -> Response:
     """Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the body read and
-    counted (413 for a chunked body over the limit), JSON and request validation (400, including `X-Ratchet-Store`),
-    daily quota (429), then the cascade. A refused request writes no ledger row and uses no quota. Everything after
+    counted (413 for a chunked body over the limit), the Idempotency-Key and JSON (400), a stored answer for that key
+    (sent again at once, ADR 0071), request validation (400, including `X-Ratchet-Store`), daily quota (429), then the
+    cascade. A refused request writes no ledger row and uses no quota, and neither does a replay. Everything after
     reading the body runs in a worker thread (the default pool, as for sync routes), so neither a large body nor the
     ledger lock blocks the event loop."""
     client = _client(authorization, x_api_key)
     raw = await _body(request)
-    return await anyio.to_thread.run_sync(functools.partial(_complete, raw, x_ratchet_task, client, x_ratchet_store))
+    retries = idem.retry_count(x_stainless_retry_count)  # the SDK's attempt number: a retry is never a repeat (INV-3)
+    if idempotency_key is not None and rt.idem.enabled:
+        work = functools.partial(_complete_idempotent, raw, x_ratchet_task, client, idempotency_key, retries, x_ratchet_store)
+    else:
+        work = functools.partial(_complete, raw, x_ratchet_task, client, x_ratchet_store, retry_count=retries)
+    return await anyio.to_thread.run_sync(work)
 
 
 async def _body(request: Request) -> bytes:
@@ -842,7 +1340,16 @@ async def _body(request: Request) -> bytes:
     try:
         return await request.body()
     except ClientDisconnect as e:  # nobody is left to read the answer; not a server error either
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.code = "client_disconnected"
         raise APIError(400, "The client disconnected before the request body was complete.") from e
+
+
+# ----- retries and idempotency (ADR 0071) -----
+# The headers a replay sends again: what describes the answer, never the quota (a replay uses none) or a retry hint.
+REPLAY_HEADERS = frozenset({"x-ratchet-served-by", "x-ratchet-degraded", "cache-control", "x-accel-buffering"})
+REPLAYED = "Idempotent-Replayed"
 
 
 def _request_meta(req: Any, client: str | None, header_store: str | None) -> RequestMeta:
@@ -871,15 +1378,143 @@ def _request_meta(req: Any, client: str | None, header_store: str | None) -> Req
     return RequestMeta(**who)
 
 
+async def _sent(chunks: Iterable[Any]) -> AsyncIterator[Any]:
+    """Already rendered chunks as the async iterator a StreamingResponse sends without a thread hop per chunk."""
+    for chunk in chunks:
+        yield chunk
+
+
+class BufferedStream(StreamingResponse):
+    """A stream whose Server-Sent Events were all rendered before the first is sent (the cascade decides before
+    streaming, so nothing is lost by it), kept in `events` so the answer can be stored for an Idempotency-Key and sent
+    again event for event. Only a request with a key is rendered this way; a stream that is produced while it is sent
+    is never stored (`_cacheable`), so its key is released."""
+
+    def __init__(self, events: list[str], headers: Mapping[str, str] | None = None) -> None:
+        self.events: tuple[str, ...] = tuple(events)
+        super().__init__(_sent(self.events), media_type="text/event-stream", headers=headers)
+
+
+# The fields of the request's log line a replay's line repeats: what answered, never what it cost or how long it took,
+# so a sum over the chat log lines counts each cascade once.
+REPLAY_LOG_FIELDS = ("served_by", "route", "version")
+
+
+def _cacheable(response: Response, ctx: obs.RequestContext | None) -> idem.Cached | None:
+    """The answer to keep for an Idempotency-Key: a 200 JSON body or a buffered stream, with the headers in
+    REPLAY_HEADERS, the request's task and the log fields a replay repeats (REPLAY_LOG_FIELDS, and `replay_of`: the id of
+    the request that ran); None for anything else, which releases the key."""
+    if response.status_code != 200:
+        return None
+    if isinstance(response, BufferedStream):
+        body, media, stream = tuple(e.encode("utf-8") for e in response.events), "text/event-stream", True
+    elif isinstance(response, JSONResponse):
+        body, media, stream = (bytes(response.body),), "application/json", False
+    else:
+        return None
+    headers = tuple((k, v) for k, v in response.headers.items() if k.lower() in REPLAY_HEADERS)
+    task = ctx.task if ctx is not None else None
+    log: dict[str, Any] = {}
+    if ctx is not None:
+        result = ctx.result or {}
+        log = {k: result.get(k) for k in REPLAY_LOG_FIELDS} | {"replay_of": ctx.request_id}
+    return idem.Cached(body, media, stream, headers, task, log)
+
+
+def _replay(cached: idem.Cached, ctx: obs.RequestContext | None, retry_count: int = 0) -> Response:
+    """A stored answer sent again with `Idempotent-Replayed: true`: the same body (the same completion id, created time
+    and `ratchet` block, whose request_id names the request that ran) as JSON or as the same events. No cascade, ledger
+    row, quota or tick. Its own log line says what it replayed (`replay_of`) at a cost of 0, with this attempt's
+    `retry_count`; it is counted in ratchet_idempotent_requests_total, not in ratchet_requests_total, since no cascade
+    ran."""
+    if ctx is not None:
+        ctx.task = cached.task
+        ctx.result = {**cached.log, "cost_usd": 0.0, "retry_count": retry_count, "idempotent_replay": True}
+        ctx.counted = True
+    headers = {**dict(cached.headers), REPLAYED: "true"}
+    if cached.stream:
+        return StreamingResponse(_sent(cached.body), media_type=cached.media_type, headers=headers)
+    return Response(cached.body[0], media_type=cached.media_type, headers=headers)
+
+
+def _complete_idempotent(
+    raw: bytes, header_task: str | None, client: str | None, key: str, retry_count: int, header_store: str | None = None
+) -> Response:
+    """A chat request with an Idempotency-Key (FR-1.70, ADR 0071), keyed by the API key's name and the client's key. The
+    first runs the cascade (`_complete`) and its answer is kept for RATCHET_IDEMPOTENCY_TTL_S; the same key and body
+    while it runs waits for it (at most RATCHET_TEACHER_DEADLINE_S, and at most idem.MAX_WAITERS_PER_KEY at once; past
+    either, a 409 the SDKs retry) and gets the same answer; once it finished, the answer is sent again at once
+    (`_replay`). Another body with the key is a 400 no retry can fix. A failed first request releases the key, so the
+    client's retry runs again; an error is never kept."""
+    ctx = obs.current()
+    cache = rt.idem  # this runtime's, even if a demo reset replaces it while the cascade runs
+    try:
+        key = idem.check_key(key)
+    except ValueError as e:
+        metrics.IDEMPOTENT.inc("invalid")
+        message = f"Invalid Idempotency-Key header: {e}."
+        raise APIError(400, message, INVALID_REQUEST, "invalid_idempotency_key", headers=NO_RETRY) from e
+    body = parse_body(raw)  # bad JSON is a 400 before the key is claimed
+    try:  # a body nested just under what parse_body accepts can be too deep to encode again: the same 400, never a 500
+        fingerprint = idem.fingerprint(body, header_task)
+    except RecursionError as e:
+        raise APIError(400, "The request body is not valid JSON: it is nested too deeply.", code=INVALID_JSON) from e
+    except ValueError as e:
+        raise APIError(400, f"The request body is not valid JSON: {e}.", code=INVALID_JSON) from e
+    try:
+        claim = cache.begin(client or "", key, fingerprint, rt.settings.teacher_deadline_s)
+    except idem.KeyReused as e:
+        metrics.IDEMPOTENT.inc("reused")
+        message = "This Idempotency-Key was already used with a different request; send a new key for a new request."
+        raise APIError(400, message, INVALID_REQUEST, "idempotency_key_reused", headers=NO_RETRY) from e
+    except idem.InFlight as e:
+        metrics.IDEMPOTENT.inc("in_flight")
+        message = "The request with this Idempotency-Key is still being answered; retry shortly to get its answer."
+        raise APIError(409, message, INVALID_REQUEST, "idempotency_key_in_use", headers={"Retry-After": "1"}) from e
+    if claim.cached is not None:
+        metrics.IDEMPOTENT.inc("joined" if claim.joined else "replayed")
+        return _replay(claim.cached, ctx, retry_count)
+    cached: idem.Cached | None = None
+    try:
+        response = _complete(raw, header_task, client, header_store, retry_count=retry_count, body=body, idempotency_key=key)
+        cached = _cacheable(response, ctx)
+    except BaseException:
+        metrics.IDEMPOTENT.inc("failed")
+        raise
+    finally:
+        cache.finish(claim, cached)  # wakes every request waiting for it; None releases the key
+    metrics.IDEMPOTENT.inc("first" if cached is not None else "uncached")
+    return response
+
+
 def _complete(
-    raw: bytes, header_task: str | None, client: str | None, header_store: str | None = None
-) -> JSONResponse | StreamingResponse:
-    req = validate_chat_request(parse_body(raw), rt.limits)
+    raw: bytes,
+    header_task: str | None,
+    client: str | None,
+    header_store: str | None = None,
+    retry_count: int = 0,
+    body: Any = None,
+    idempotency_key: str | None = None,
+) -> Response:
+    """The chat request after its key and body were read: validation, the storage opt-outs and end user, task
+    admission, quota, the cascade and the response. `retry_count` is the SDK's attempt number; `body`, when given, is
+    `raw` already parsed (by `_complete_idempotent`)."""
+    ctx = obs.current()  # the request's context, copied into this worker thread (ADR 0062)
+    req = validate_chat_request(parse_body(raw) if body is None else body, rt.limits)
     meta_in = _request_meta(req, client, header_store)
-    # The request's id ('req_' + 32 hex), logged with its row and returned as `ratchet.request_id`; the completion id
-    # carries the same digits. Feedback names the request by either (FR-13.30).
-    digits = uuid.uuid4().hex
-    meta_in.request_id, cid = feedback.REQUEST_PREFIX + digits, feedback.COMPLETION_PREFIX + digits
+    # The request's id ('req_' + 32 hex), logged with its row and returned as `ratchet.request_id` and x-request-id; the
+    # completion id carries the same digits, so either finds the request (FR-13.30, ADR 0062). The request context's
+    # ids when there is one; the same format otherwise.
+    if ctx is not None:
+        meta_in.request_id, cid = ctx.request_id, ctx.completion_id
+    else:
+        digits = uuid.uuid4().hex
+        meta_in.request_id, cid = feedback.REQUEST_PREFIX + digits, feedback.COMPLETION_PREFIX + digits
+    # The client's own id and the SDK's attempt number go into the ledger row and failures rows too
+    # (requests.client_request_id, requests.retry_count; a retry never bumps an example's seen, ADR 0071).
+    meta_in.client_request_id = ctx.client_request_id if ctx is not None else None
+    meta_in.retry_count = retry_count
+    meta_in.idempotency_key = idempotency_key
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(header_task or req.task, client)
@@ -887,6 +1522,8 @@ def _complete(
         raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
+    if ctx is not None:
+        ctx.task = task.name
     headers = _quota(client)
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
@@ -911,12 +1548,31 @@ def _complete(
         "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
         "stored": r.stored,  # a teacher answer of this request became (or bumped) a training example
         "store_opt_out": r.store_opt_out,  # why it could not be stored (privacy.OPT_OUTS), or null (FR-13.1)
-        "request_id": meta_in.request_id,  # what POST /v1/ratchet/feedback names this request by (FR-13.30)
+        # What POST /v1/ratchet/feedback names this request by (FR-13.30); also x-request-id and
+        # GET /v1/ratchet/requests/{id} (ADR 0062).
+        "request_id": meta_in.request_id,
         # The request's ledger row, also X-Ratchet-Request-Id: what GET /ratchet/receipts/{day}/proof/{id} proves (FR-15.5)
         "row_id": r.request_id,
     }
     # OpenAI echoes `metadata`; never stored (FR-13.1).
     echo = {"metadata": req.metadata} if req.metadata is not None else {}
+    if r.overhead_pending:  # the audit or shadow runs after this response: cost_usd is what serving cost (ADR 0072)
+        meta["overhead_pending"] = True
+    if ctx is not None:  # the fields of the request's log line (`_log_chat`)
+        ctx.result = {
+            "served_by": r.served_by,
+            "route": r.route,
+            "version": r.version,
+            "confidence": r.confidence,
+            "escalated": r.escalated,
+            "audited": r.audited,
+            "latency_ms": r.latency_ms,
+            "wall_ms": r.wall_ms,
+            "cost_usd": r.cost_usd,
+            "retry_count": retry_count,
+        }
+        if r.overhead_pending:  # the request's `offpath` line adds the rest when its job ends (ADR 0072)
+            ctx.result["overhead_pending"] = True
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
@@ -976,6 +1632,8 @@ def _complete(
         yield "data: [DONE]\n\n"
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    if idempotency_key is not None:  # rendered at once, so the answer can be kept for the key and replayed (ADR 0071)
+        return BufferedStream(list(events()), headers=headers)
     return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
 
 
@@ -1282,7 +1940,18 @@ def _every_end_user_scope() -> list[str | None]:
 
 
 @app.get("/ratchet/stats")
-def stats() -> dict[str, Any]:
+def stats(request: Request) -> dict[str, Any]:
+    """Everything the dashboard shows. Computed at most once per RATCHET_STATS_TTL_S (live mode: 2 s) by one caller at a
+    time (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests. A
+    scrubbed read (`_scrubbed`: by default an anonymous reader of a public live dashboard) gets a scrubbed copy, with
+    client pseudonyms and no URLs or error messages in the events (ADR 0061)."""
+    payload = rt.stats_cache.get(_stats_payload)
+    if not _scrubbed(request):
+        return payload
+    return acl.scrub_stats(payload, _pseudonyms(c["client"] for c in payload["clients"]))
+
+
+def _stats_payload() -> dict[str, Any]:
     led = rt.ledger
     boms = led.bom_status()
     return {
@@ -1300,7 +1969,7 @@ def stats() -> dict[str, Any]:
             {**v.__dict__, "bom": boms.get(v.id), "evidence": rt.gate.evidence(v) if v.state in EVIDENCE_STATES else None}
             for v in led.versions()
         ],
-        "events": led.events()[-40:],
+        "events": led.events(last=40),
         # Every savings figure above and in `totals` prices the student per token; `cost` has the GPU-hour view (NFR-11).
         "totals": {**led.totals(), "cost_model": "per_token"},
         "bill_of_materials": led.bill_of_materials(),
@@ -1327,17 +1996,109 @@ def stats() -> dict[str, Any]:
             "daily_requests_per_key": rt.settings.api_key_daily_requests or None,
             "bom_signing": rt.signer is not None,
             "bom_key_id": rt.signer.key_id if rt.signer else None,
+            # Who may read this (ADR 0061); `scrubbed` is true in a scrubbed copy (`access.scrub_stats`).
+            "admin_keys": rt.admin_keys.enabled,
+            "dashboard_keys": rt.dashboard_keys.enabled,
+            "public_dashboard": rt.access.public_dashboard,
+            "scrubbed": False,
         },
         "cost": stats_block(cost_report(led, rt.settings)),
         # Human verdicts and labels (FR-13.30, FR-3.54): counts only. Human precision is reported and alerted on, never
         # used to promote or roll back.
         "feedback": {**led.feedback_stats(), "corrections": rt.settings.feedback_corrections},
+        # Failures of the last hour by stage (ADR 0062); what failed requests spent is in totals.failed_cost_usd.
+        "errors": {"last_hour": led.failure_counts(time.time() - ERRORS_WINDOW_S)},
+        # The off-path queue and, per version, what could not go through it (ADR 0072).
+        "sidecar": rt.ratchet.sidecar_report(),
     }
+
+
+ERRORS_WINDOW_S = 3600.0  # /ratchet/stats' errors.last_hour
+
+
+# ----- request lookups and metrics (ADR 0062) -----
+def _lookup(request_id: str, client: str | None = None, *, own: bool = False) -> dict[str, Any] | None:
+    """A request by the id the gateway gave it (`req_<hex>`, or its completion's `chatcmpl-<hex>`): its `requests` row
+    (metadata only; null when it failed before the cascade logged one) and its `failures` rows, or None when there are
+    neither. With `own`, only what `client` (the caller's key name, None when keys are off) sent."""
+    digits = obs.lookup_hex(request_id)
+    if digits is None:
+        return None
+    rid = obs.REQUEST_PREFIX + digits
+    row = rt.ledger.request_record(rid)
+    failures = rt.ledger.failures_for(rid)
+    if own:
+        row = row if row is not None and row["client"] == client else None
+        failures = [f for f in failures if f["client"] == client]
+    if row is None and not failures:
+        return None
+    return {"request_id": rid, "request": row, "failures": failures}
+
+
+@app.get("/ratchet/requests/{request_id}")
+def request_lookup(request_id: str, request: Request) -> dict[str, Any]:
+    """One request's metadata and failures (`_lookup`), whoever sent it. Read like /ratchet/stats; a scrubbed read gets
+    client pseudonyms (ADR 0061)."""
+    found = _lookup(request_id)
+    if found is None:
+        raise HTTPException(404, "no request has this id")
+    if not _scrubbed(request):
+        return found
+    names = _pseudonyms(c["client"] for c in rt.stats_cache.get(_stats_payload)["clients"])
+    scrub = acl.scrub_client
+    return {
+        **found,
+        "request": scrub(found["request"], names) if found["request"] is not None else None,
+        "failures": [scrub(f, names) for f in found["failures"]],
+    }
+
+
+@app.get("/v1/ratchet/requests/{request_id}")
+def own_request(
+    request_id: str, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """One request this API key sent (`_lookup` with `own`): 404 for an id it did not send, so a key cannot tell another
+    client's request from one that never existed."""
+    client = _client(authorization, x_api_key)
+    found = _lookup(request_id, client, own=True)
+    if found is None:
+        raise APIError(404, "No request with this id was sent with this key.", "not_found_error", "request_not_found")
+    return found
+
+
+def _collect_gauges() -> None:
+    """The scrape-time gauges, from the runtime as it is now: each breaker's state, the off-path jobs waiting and running,
+    the routed versions' traffic and today's spend per client (since 00:00 UTC, one indexed query per client and
+    table)."""
+    metrics.INFO.replace([((__version__, rt.settings.mode), 1.0)])
+    breakers = rt.ratchet.health()["breakers"]
+    metrics.CIRCUIT_OPEN.replace([((name,), 0.0 if snap["state"] == "closed" else 1.0) for name, snap in breakers.items()])
+    side = rt.ratchet.sidecar.snapshot()
+    metrics.SIDECAR_QUEUE.replace([(("queued",), float(side["queued"])), (("running",), float(side["running"]))])
+    led = rt.ledger
+    routed = [v for v in (led.live(), led.by_state("canary"), led.by_state("shadow")) if v is not None]
+    metrics.VERSION_TRAFFIC.replace([((f"v{v.id}", v.state), float(v.traffic_pct)) for v in routed])
+    spend = led.spend_since(_utc_midnight(time.time()), [*rt.keys.names, None])
+    metrics.SPEND_TODAY.replace([((metrics.client_label(c),), usd) for c, usd in spend.items()])
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics_endpoint(request: Request) -> Response:
+    """Prometheus metrics in the text format 0.0.4 (`ratchet/metrics.py`). Read with an admin or dashboard key or
+    RATCHET_METRICS_TOKEN, or by anyone when the dashboard is public; a scrubbed read (an anonymous reader of a public
+    live dashboard) gets client pseudonyms in the client labels."""
+    _collect_gauges()
+    relabel: metrics.Relabel | None = None
+    if _scrubbed(request):
+        names = _pseudonyms(c["client"] for c in rt.stats_cache.get(_stats_payload)["clients"])
+        relabel = {"client": lambda v: names.get(v, v if v in ("none", "other") else "client")}
+    return Response(metrics.REGISTRY.render(relabel), media_type=metrics.CONTENT_TYPE)
 
 
 @app.get("/ratchet/bom")
 def bom() -> dict[str, Any]:
-    """Model bill of materials: proof of which teachers and licenses produced the training data."""
+    """Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard
+    API, or by anyone with RATCHET_PUBLIC_BOM=1 (ADR 0061)."""
     return rt.ledger.bill_of_materials()
 
 
@@ -1355,7 +2116,7 @@ def redact_preview(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
 @app.get("/ratchet/bom/public-key")
 def bom_public_key() -> dict[str, Any]:
-    """The Ed25519 public key that verifies per-adapter BOMs (null when signing is off)."""
+    """The Ed25519 public key that verifies per-adapter BOMs (null when signing is off). Always public."""
     if rt.signer is None:
         return {"alg": bomdoc.ALG, "public_key": None, "key_id": None}
     return {"alg": bomdoc.ALG, "public_key": rt.signer.public_key, "key_id": rt.signer.key_id}
@@ -1363,7 +2124,8 @@ def bom_public_key() -> dict[str, Any]:
 
 @app.get("/ratchet/versions/{vid}/bom")
 def version_bom(vid: int) -> dict[str, Any]:
-    """One adapter's bill of materials, written when it was trained. Check it with `python -m ratchet.bom verify`."""
+    """One adapter's bill of materials, written when it was trained. Check it with `python -m ratchet.bom verify`. Read
+    like /ratchet/bom."""
     doc = rt.ledger.version_bom(vid)
     if doc is None:
         raise HTTPException(404, f"no bill of materials for version {vid}")
@@ -1406,9 +2168,9 @@ MOCK_MAX_API_TASKS = 50  # the shared mock demo holds at most this many API task
 
 def _admin(authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)) -> str:
     """The admin's name for a management call, from `Authorization: Bearer <key>` or `X-API-Key`. With
-    RATCHET_ADMIN_KEYS set: 401 for a missing or wrong key, 403 for a regular API key. Without them: 403 in live mode
-    (the admin API is off) and `mock-admin` in mock mode, whose demo has nothing to protect. Only the name is ever
-    stored or logged (INV-13)."""
+    RATCHET_ADMIN_KEYS set: 401 for a missing or wrong key, 403 for a regular API key or a (read-only) dashboard key.
+    Without them: 403 in live mode (the admin API is off) and `mock-admin` in mock mode, whose demo has nothing to
+    protect. Only the name is ever stored or logged (INV-13)."""
     key = bearer(authorization, x_api_key)
     if rt.admin_keys.enabled:
         name = rt.admin_keys.identify(key)
@@ -1416,6 +2178,8 @@ def _admin(authorization: str | None = Header(default=None), x_api_key: str | No
             return name
         if rt.keys.identify(key) is not None:
             raise HTTPException(403, "this is an API key; management calls need an admin key (RATCHET_ADMIN_KEYS)")
+        if rt.dashboard_keys.identify(key) is not None:
+            raise HTTPException(403, "this is a dashboard key, which only reads; management calls need an admin key")
         raise HTTPException(401, "invalid or missing admin key", headers={"WWW-Authenticate": "Bearer"})
     if rt.settings.mode != "mock":
         raise HTTPException(403, "admin API disabled: set RATCHET_ADMIN_KEYS")
@@ -1454,8 +2218,18 @@ def _not_yours(t: tasks.Task) -> HTTPException:
     return HTTPException(403, f"task {t.name!r} is an {t.source} task; only API tasks can be changed here")
 
 
+def _scrub_tasks(request: Request, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Task entries as this reader may see them: a scrubbed read (`_scrubbed`) gets the client allow-lists under the
+    same pseudonyms /ratchet/stats uses (ADR 0061)."""
+    if not _scrubbed(request):
+        return entries
+    clients = (c["client"] for c in rt.stats_cache.get(_stats_payload)["clients"])
+    names = _pseudonyms(clients, (c for e in entries for c in e.get("clients") or ()))
+    return [acl.scrub_task(e, names) for e in entries]
+
+
 @app.get("/ratchet/tasks")
-def list_tasks() -> dict[str, Any]:
+def list_tasks(request: Request) -> dict[str, Any]:
     """Every registered task (`_task_entry`), the unknown-task policy, the registry's cap, and the names requests used
     that are not registered (candidates to register or pin)."""
     stats = _task_stats()
@@ -1465,13 +2239,13 @@ def list_tasks() -> dict[str, Any]:
     return {
         "unknown_tasks": rt.ratchet.unknown_tasks,
         "max_tasks": tasks.MAX_TASKS,
-        "tasks": [_task_entry(t, stats.get(t.name), live_version) for t in registered],
+        "tasks": _scrub_tasks(request, [_task_entry(t, stats.get(t.name), live_version) for t in registered]),
         "unregistered": [{"name": n, "requests": int(r["requests"])} for n, r in stats.items() if n not in names],
     }
 
 
 @app.get("/ratchet/tasks/{name}")
-def get_task(name: str) -> dict[str, Any]:
+def get_task(name: str, request: Request) -> dict[str, Any]:
     """One registered task; an API task also says when it was written and by which admin (the key's name)."""
     t = tasks.lookup(name)
     if t is None:
@@ -1480,7 +2254,7 @@ def get_task(name: str) -> dict[str, Any]:
     saved = rt.ledger.saved_task(name) if t.source in ("api", "auto") else None
     if saved is not None:
         entry.update({k: saved[k] for k in ("created_ts", "updated_ts", "updated_by")})
-    return entry
+    return _scrub_tasks(request, [entry])[0]
 
 
 @app.post("/ratchet/tasks/validate")
@@ -1662,7 +2436,7 @@ MAX_NOTE_CHARS = 200
 def cost(days: int | None = None) -> dict[str, Any]:
     """The cost report (`ratchet.cost.cost_report`): savings per token and by GPU-hours paid, the break-even volume, the
     crossover with the hosted fallback, observed utilization and a recommendation, for every day or the last `days`
-    ledger days. Public, like /ratchet/stats."""
+    ledger days. Read like /ratchet/stats (ADR 0061)."""
     if days is not None and not (1 <= days <= MAX_COST_DAYS):
         raise HTTPException(400, f"days must be 1 to {MAX_COST_DAYS}")
     return cost_report(rt.ledger, rt.settings, days=days)
@@ -2222,6 +2996,9 @@ def _scout_precheck(question: str, ip: str, judge: bool = False, run_id: str | N
         return 503, "Live search is not configured (TAVILY_API_KEY is not set)."
     refused = rt.guard.admit(ip, judge=judge, run_id=run_id)
     if refused:
+        ctx = obs.current()
+        if ctx is not None:
+            ctx.stage = "budget"  # the Scout budget guard's refusal, for the failures row of /scout/run's 429
         return 429, refused
     return None
 
