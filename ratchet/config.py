@@ -509,8 +509,9 @@ class Settings:
 
     def checked_mock_reasoning_mean(self) -> float | None:
         """RATCHET_MOCK_TEACHER_REASONING_MEAN, checked: None (unset: the mock teacher bills the fixed
-        RATCHET_TEACHER_REASONING_TOKENS) or more than 0 and at most MAX_MOCK_REASONING_TOKENS. Mock mode only; the
-        gateway checks it at startup there."""
+        RATCHET_TEACHER_REASONING_TOKENS) or more than 0 and at most MAX_MOCK_REASONING_TOKENS. Only the mock teacher
+        reads it, but the gateway and `python -m ratchet.live` check it at startup in every mode, so a value out of range
+        always stops startup as CONFIGURATION.md says."""
         mean = self.mock_teacher_reasoning_mean
         if mean is None:
             return None

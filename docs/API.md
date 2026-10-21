@@ -906,8 +906,8 @@ The signed document of day `period`: the gateway's, or `client`'s for an admin; 
                                                 "cost_nusd": 262666960, "recorded_nusd": 1669513000, "x_total_nusd": 1606891000,
                                                 "ratio": "1.389882", "ratio_se": "0.029841",
                                                 "point_nusd": 2233388206, "se_nusd": 45502963}}},
-    "savings": {"recorded_nusd": 1406060880, "calibrated_nusd": 1969936086, "billable_nusd": 1969936086,
-                "margin_nusd": 74852375, "billable_lo_nusd": 1895083711, "spend_nusd": 0, "net_billable_lo_nusd": 1895083711},
+    "savings": {"recorded_nusd": 1406060880, "calibrated_nusd": 1969936086, "stand_in_loss_nusd": 0,
+                "billable_nusd": 1969936086, "margin_nusd": 74852375, "billable_lo_nusd": 1895083711, "spend_nusd": 0, "net_billable_lo_nusd": 1895083711},
     "billing": {"share": "0.25", "fee_nusd": 473770927, "basis": "one-sided 95% lower bound",
                 "billable": {"requests": 1500, "baseline_nusd": 2267342206, "cost_nusd": 297406120, "tasks": ["ticket-triage"]}},
     "cost_views": {"billed": "per_token",
@@ -923,10 +923,10 @@ The signed document of day `period`: the gateway's, or `client`'s for an admin; 
 }
 ```
 
-- Requests are **measured** (the primary teacher answered: its bill is the baseline), **served** (the student served on the audit design) or **unverified** (a stand-in answer: route `degraded` or `fallback_teacher`, outside the audit design; counted at its recorded baseline, never billed). `totals.teacher_served` counts the measured ones.
+- Requests are **measured** (the primary teacher answered: its bill is the baseline), **served** (the student served on the audit design) or **unverified** (a stand-in answer: route `degraded` or `fallback_teacher`, outside the audit design; counted at its recorded baseline, never billed, though what it lost counts: below). `totals.teacher_served` counts the measured ones.
 - `calibration.tasks`: per task with served answers, the ratio `R` of the audited answers' teacher bills to the token formula's estimates (weights 1 / `label_p`), the point estimate of the served answers' all-teacher cost (`point_nusd` = R × `x_total_nusd`) and its standard error (`se_nusd`, Cochran's variance with the finite population correction; normal approximation). `insufficient_audits` below `min_audits` (`RATCHET_RECEIPT_MIN_AUDITS`) and `unlogged` (a served answer written before the formula estimate was logged) have none and are not billed.
 - `totals.baseline_calibrated_nusd` = measured bills + each calibrated task's point + the recorded baseline of every other request. `savings.recorded_nusd` is the formula's savings, as `/ratchet/stats` reports them; `calibrated_nusd` uses the calibrated baseline.
-- `billing.billable`: the measured requests and the served answers of the calibrated tasks. `savings.billable_lo_nusd` = their baseline − their cost − `margin_nusd` (⌈1.645 √Σ se²⌉); `net_billable_lo_nusd` subtracts the day's spend outside requests (`spend_nusd`; a client's share by request count). `billing.fee_nusd` = ⌊`share` × max(0, net)⌋. With no calibrated task, `basis` is `formula` and the fee 0.
+- `billing.billable`: the measured requests and the served answers of the calibrated tasks. `savings.stand_in_loss_nusd` (0 or less) = Σ min(0, baseline − cost) over the unverified requests: a stand-in's gain is never billed, but its loss (a fallback teacher's answer after the student's samples were paid for) counts against the bill, like a measured request's. `savings.billable_nusd` = the billable baseline − the billable cost + `stand_in_loss_nusd`, and `billable_lo_nusd` = that − `margin_nusd` (⌈1.645 √Σ se²⌉); `net_billable_lo_nusd` subtracts the day's spend outside requests (`spend_nusd`; a client's share by request count). `billing.fee_nusd` = ⌊`share` × max(0, net)⌋. With no calibrated task, `basis` is `formula` and the fee 0.
 - `cost_views.gpu_hours` (the gateway's receipt only; `gpu_hours_note` says why a client's has none): the day's cost by GPU-hours paid (ADR 0023), informational.
 - `prev_sha256`: the `sha256` of the same client's previous receipt (64 zeros for its first).
 

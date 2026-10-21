@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (833 tests, ~75 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (844 tests, ~75 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -51,7 +51,7 @@ python -m ratchet.replay --db ratchet.db [--version 3] [--sweep 0.3:0.95:0.05]  
 python -m sim.simulate --db sim.db                                                        # keep a simulated run's ledger (for the replay)
 python -m ratchet.receipt verify r.json --public-key <key> [--prev p.json] [--proof x.json] [--rows leaves.jsonl]  # check a savings receipt
 python -m ratchet.receipt seal --db ratchet.db [--period N [--client NAME]]                # seal a ledger's receipts offline
-python -m ratchet.live seal                                                               # seal every day that ended (daily cron)
+python -m ratchet.live seal                                                               # seal every day that ended (hourly cron)
 python -m sim.simulate --receipts --teacher-reasoning-mean 420                            # receipts vs the true cost (simulation)
 pytest -q --cov=ratchet --cov=sim                                                        # coverage, as in CI
 python scripts/regen_sim_reference.py [--check]                                          # pinned reference simulation fixture

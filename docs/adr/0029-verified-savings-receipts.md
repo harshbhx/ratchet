@@ -46,7 +46,8 @@ A task with fewer than `RATCHET_RECEIPT_MIN_AUDITS` (30) audits is `insufficient
 
 - `baseline_calibrated` = measured bills + each calibrated task's Ŷ + the recorded baseline of every other task and of the unverified answers.
 - The **billable set** is the measured requests plus the served answers of the tasks with an interval. Measured requests are in it although their savings are negative (the student's samples were paid for too): the cascade's overhead counts against the vendor.
-- `billable_lo` = (billable baseline − billable cost) − ⌈1.645 √Σ V⌉. Only the served tasks' estimates are random; the tasks' rows and draws are separate, so their variances add.
+- Unverified answers are outside the billable set, but what they lost is not: `stand_in_loss` = Σ min(0, baseline − cost) over them is added to the billable savings. A fallback teacher's answer after the student answered cost the student's samples and the fallback's bill against the primary teacher's price on the same tokens, so with teachers priced alike it loses about the student's cost; leaving it out would drop that overhead and raise the fee. A stand-in's gain is never billed, because its baseline is not on the audit design. With the opt-in fallback teacher off and degraded mode off, the term is 0.
+- `billable_lo` = (billable baseline − billable cost + `stand_in_loss`) − ⌈1.645 √Σ V⌉. Only the served tasks' estimates are random; the tasks' rows and draws are separate, so their variances add.
 - `net_billable_lo` = `billable_lo` − the day's spend outside requests (the `spend` table: backfill labelling, FR-16.8). A client receipt nets its share of that spend by request count, rounded down.
 - `fee` = ⌊`RATCHET_TAKE_RATE` × max(0, `net_billable_lo`)⌋, computed with exact fractions.
 - With no calibrated task the basis is `formula` and the fee is 0, whatever the formula says. (Measured requests alone never save money, so this loses nothing.)
@@ -95,6 +96,7 @@ Sealing reads the ledger and writes receipts only: no model call and no random d
 - The interval is a normal approximation. On synthetic populations (y = 1.3 x (1 + 0.1 z), 300 served answers audited at 10% or 20%) the one-sided 95% bound covered the true total in 94% to 95% of 2,000 seeded trials; `test_ratio_estimator_recovers_the_ratio_and_its_lower_bound_covers` asserts at least 180 of 200. Heavier-tailed real bills may need more audits than 30.
 - The audit runs at temperature 0 with the audit's parameters, while an all-teacher world would use the client's. The measured ratio is the deterministic answer's.
 - The chain shows that a receipt was changed; it does not stop a vendor from withholding one. Clients should keep the receipts they receive.
+- Request ids are the ledger's global row ids (`requests.id`): the `X-Ratchet-Request-Id` header, `ratchet.request_id` and every leaf's `id`. A client that subtracts the ids of two of its own requests learns how many requests other clients sent in between, and its receipt's `first_id`, `last_id` and `n` show the same per day. That is the gateway's total volume over time, not any other client's identity, task or cost (a client's receipt and leaves hold its own rows only). A later item can serve a per-client counter or an HMAC of the row id as the public id and map it back for proofs; until then, an operator who must hide total volume from tenants should not hand out request ids or receipts.
 
 ## Alternatives considered
 

@@ -89,7 +89,7 @@ for v in led.versions():
 | Stop distilling task names nobody registered | `RATCHET_UNKNOWN_TASKS=teacher` (teacher only, nothing stored) or `reject` (a 400 that lists the registered tasks); `GET /ratchet/tasks` lists the unregistered names requests used |
 | Record the student endpoint going up or down | `python -m ratchet.cost endpoint up` / `down` where the ledger is (`--db`, default `RATCHET_DB`; `--at "2026-10-20T08:00:00Z"` for a time other than now, `--usd-per-hour`, `--gpus`), or `POST /ratchet/cost/endpoint` with an admin key. `deploy/student_endpoint.sh` and `... stop` do it for you when they run next to the ledger. `up` while up and `down` while down change nothing |
 | Close a training job whose end was lost (the night process died) | `python -m ratchet.cost close training_job --at <end time from the Nebius console>`; until then the report counts it up to now and warns |
-| Seal the savings receipts of every day that has ended | `python -m ratchet.live seal` (cron does it daily, below), or `python -m ratchet.receipt seal --db "$RATCHET_DB" --period <day>` to seal through a day and print its receipt. A sealed receipt is never changed or deleted (invariant 17); there is nothing to redo |
+| Seal the savings receipts of every day that has ended | `python -m ratchet.live seal` (cron does it hourly, below), or `python -m ratchet.receipt seal --db "$RATCHET_DB" --period <day>` to seal through a day and print its receipt. A sealed receipt is never changed or deleted (invariant 17); there is nothing to redo |
 | Rotate the BOM signing key | `python -m ratchet.bom keygen`, set the new `RATCHET_BOM_SIGNING_KEY`, restart, publish the new public key. Old BOMs keep their old key id and still verify against the old public key, so keep it listed |
 
 Never keep two versions in `live`. `Ledger.live()` returns the newest one, and the other would never be retired automatically.
@@ -259,9 +259,11 @@ python -m ratchet.replay --db "$RATCHET_DB" --version 3 --sweep 0.4:0.95:0.05 --
 Each ledger day gets a signed savings receipt for the gateway and one per API client ([ADR 0029](adr/0029-verified-savings-receipts.md), [API.md](API.md#savings-receipts)). They are what the fee is computed from, so seal them every day and keep them.
 
 ```cron
-# Seal yesterday's savings receipts (any day that ended at least 5 minutes ago) at 00:20 UTC
-20 0 * * *  cd /opt/ratchet && . ./.env && python -m ratchet.live seal >> /var/log/ratchet-seal.log 2>&1
+# Seal the savings receipts of every ledger day that ended at least 5 minutes ago, hourly
+20 * * * *  cd /opt/ratchet && . ./.env && python -m ratchet.live seal >> /var/log/ratchet-seal.log 2>&1
 ```
+
+A ledger day is not a UTC day: day 1 starts at the first request's time, and each day is 24 hours from there (`Ledger.day_of`), so with a first request at 15:00 UTC every day ends at 15:00 UTC. Run the command hourly, not once a day: a run with nothing due prints `nothing to seal` and writes nothing, and an hourly run seals each day within the hour after it ends.
 
 - `python -m ratchet.live seal` prints `sealed the receipt of day N (acme)` per receipt, or `nothing to seal`. It seals every day that ended and has no receipt yet, oldest first, so a missed run is caught up by the next. The gateway also seals when anyone asks for a receipt, so the two can run at once: each receipt is written once and the second writer keeps the first's.
 - A task shows `insufficient_audits` until it has `RATCHET_RECEIPT_MIN_AUDITS` (30) audits that day (in a client's receipt, that client's). Its savings are reported but not billed. To bill a small task sooner, raise `RATCHET_AUDIT_RATE` for it (more teacher spend), never lower the minimum below what the interval needs.

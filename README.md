@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 833 tests
+pytest -q                                                                # 844 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -102,7 +102,7 @@ export RATCHET_STUDENT_BASE=https://<endpoint>/v1
 RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000   # point your app at http://<host>:8000/v1
 python -m ratchet.live night                                # nightly (cron)
 python -m ratchet.live tick                                 # every few minutes (cron)
-python -m ratchet.live seal                                 # daily (cron): seal the savings receipts of days that ended
+python -m ratchet.live seal                                 # hourly (cron): seal the savings receipts of days that ended
 ```
 
 Use it from any OpenAI SDK:
