@@ -21,11 +21,13 @@ judge's browser ──HTTPS──▶ Caddy :443 ──▶ ratchet:8000 (gateway,
 1. **The Nebius CLI**, installed and logged in ([CLI quickstart](https://docs.nebius.com/cli/quickstart)):
 
    ```bash
-   curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+   curl -sSL https://artifacts.nebius.cloud/cli/install.sh | bash
    exec -l $SHELL && nebius version
    export NEBIUS_PROJECT_ID=<project ID from the console>
    nebius profile create --parent-id $NEBIUS_PROJECT_ID     # browser login
    ```
+
+   The installer runs on Ubuntu and macOS. On Windows, run it in WSL, or use Nebius Cloud Shell, which has the CLI already.
 
 2. **jq** on your laptop (the script reads the public IP with it).
 3. **An SSH key**, for example `~/.ssh/id_ed25519.pub` (`ssh-keygen -t ed25519`).
@@ -172,7 +174,7 @@ Usage costs in live mode (on top of the infrastructure):
 | Token Factory (Scout) | `RATCHET_SCOUT_DAILY_BUDGET_USD` per UTC day | A Scout run makes 1 planner + up to 12 triage + up to 6 reader + 1 writer call. With list prices in [CONFIGURATION.md](CONFIGURATION.md#prices-default_prices) that is roughly $0.02–0.03 per run before the student is trained, and under $0.01 after. 10–30 runs a day is about **$0.10–0.90/day** | cap × 48 days: $24 at 0.50, $144 at 3.00 |
 | Token Factory (`/v1/chat/completions`, `/openai/deployments/<task>/chat/completions`) | **Not covered by the Scout budget.** Gateway API keys with `RATCHET_API_KEY_DAILY_REQUESTS`, or the edge guard | $0 with `RATCHET_API_GUARD=guarded` or keys you do not share | Keys: the daily quota × your keys. Unbounded with both off |
 | Tavily search | 3 basic searches per run, 1 credit each ([Tavily credits](https://docs.tavily.com/documentation/api-credits)); `RATCHET_TAVILY_MONTHLY_CREDITS` with daily pacing | 1,000 free credits per month ≈ 330 runs a month | `RATCHET_TAVILY_MONTHLY_CREDITS` a cycle when set; otherwise `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (30) × 3 = 90 credits a day; beyond the free credits, $0.008 per credit on pay-as-you-go |
-| Student endpoint (L40S) | Only while running | $0 if you use the hosted fallback | ~$37 per full day if left on ([DEPLOYMENT.md](DEPLOYMENT.md#4-cost-estimates)) |
+| Student endpoint (L40S) | Only while running | $0 if you use the hosted fallback | ~$32 per full day if left on ([DEPLOYMENT.md](DEPLOYMENT.md#4-cost-estimates)) |
 
 To keep Tavily at $0, stay on the free plan without pay-as-you-go: once the 1,000 monthly credits are used, Tavily answers 432 and charges nothing. Scout then pauses searching for an hour (a `tavily_exhausted` event) and every run still finishes, labelled "search unavailable", with the planner's and the writer's Token Factory calls. With `RATCHET_TAVILY_MONTHLY_CREDITS` set, the meter usually stops before Tavily has to.
 
@@ -267,7 +269,8 @@ Confirmed in the Nebius docs on Oct 20, 2026:
 - Reading the public IP from `.status.network_interfaces[0].public_ip_address.address` with `nebius compute instance get --id` or `get-by-name` ([Compute quickstart](https://docs.nebius.com/compute/quickstart), [Connecting to VMs](https://docs.nebius.com/compute/virtual-machines/connect)).
 - `nebius compute instance delete <id>` (also deletes managed disks, not existing ones) and `nebius compute disk delete <id>` ([instance commands](https://docs.nebius.com/cli/reference/compute/instance), [Managing volumes](https://docs.nebius.com/compute/storage/manage)).
 - Platforms `cpu-e2` (eu-north1 only) and `cpu-d3`, preset `2vcpu-8gb` ([VM types](https://docs.nebius.com/compute/virtual-machines/types)); image family `ubuntu24.04-driverless` is the recommended image for both ([boot disk images](https://docs.nebius.com/compute/storage/boot-disk-images)).
-- The CLI installer URL and `nebius profile create --parent-id` ([CLI quickstart](https://docs.nebius.com/cli/quickstart)).
+- `nebius profile create --parent-id` ([CLI quickstart](https://docs.nebius.com/cli/quickstart)).
+- `nebius vpc subnet list --parent-id` ([CLI reference](https://docs.nebius.com/cli/reference)).
 
 Verify on day 1:
 
@@ -275,7 +278,6 @@ Verify on day 1:
 - The judge cookie through Caddy over HTTPS: `POST /scout/judge` from the Scout page, then `/scout/status` shows `"session": true` (FR-10.21).
 - `caddy validate` with the log filter for `X-Ratchet-Admin-Token`.
 
-- `nebius vpc subnet list --parent-id ...` (the quickstart runs it without `--parent-id`).
 - `nebius compute disk list --parent-id ...` in the teardown.
 - Public IP detection from inside the VM (`api.ipify.org`), used only for the sslip.io default.
 - Let's Encrypt issuing for `*.sslip.io` names on the first try.

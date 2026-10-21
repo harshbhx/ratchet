@@ -20,6 +20,13 @@ env_get() { grep -E "^$1=" "$HERE/.env" 2>/dev/null | tail -n1 | cut -d= -f2- ||
 echo "== git pull"
 git -C "$REPO" pull --ff-only
 
+# Settings the example lists and .env does not set (names only): the gateway's own default applies to each, which may not be
+# the example's. Not an error: copy the ones you want from .env.vm.example.
+missing="$(bash "$HERE/env_missing.sh" "$HERE/.env.vm.example" "$HERE/.env" | paste -sd ' ' -)"
+if [[ -n "${missing// /}" ]]; then
+  echo "note: .env does not set these settings from .env.vm.example (the defaults apply): ${missing% }" >&2
+fi
+
 echo "== docker compose build"
 cd "$HERE"
 docker compose pull caddy
