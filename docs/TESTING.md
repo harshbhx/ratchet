@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 784 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure), ~80 s
+pytest -q                     # 793 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_licensing), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -32,12 +32,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 52 (34 functions; one has 13 cases, one has 4, three have 2) |
-| **Total** | **784** |
+| `tests/test_licensing.py` | 9 |
+| **Total** | **793** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`, `tests/test_licensing.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -635,6 +636,22 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_admin_cli_erases_and_exports` | FR-13.3, FR-13.5: `python -m ratchet.admin erase` (a dry run, then `--apply` with the end user from stdin across every scope), its errors, and `export` to a file and to stdout, with a refused filter |
 | `test_admin_cli_erases_end_users_only_with_the_gateways_key_and_never_writes_otherwise` | FR-13.3: `python -m ratchet.admin erase --end-user` in a shell without the gateway's `RATCHET_END_USER_KEY`, with another key or a short one is refused (dry run and `--apply`) and the ledger's meta, events and erasures stay unchanged; with the right key and no `RATCHET_API_KEYS` it finds the end user in every scope the ledger holds (a removed key's too) and logs no key change; a gateway's generated key is used from the ledger; a ledger that never hashed an end user is refused; a free-text `--actor` is refused |
 | `test_a_ledger_from_before_retention_gains_its_columns_and_tables` | FR-13.3, FR-13.4: a file with the old `erasures` table gains the new columns and tables twice without change; `last_seen_ts` is backfilled from `ts`, and retention works on it |
+
+### `tests/test_licensing.py`
+
+Licenses that travel with the adapter and configured teachers (FR-3.50 to FR-3.53, NFR-7, NFR-9, INV-1, INV-14, [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)). The proposed changes to invariants 1 and 14 and their proving tests are listed in [docs/lanes/e2-invariants.md](lanes/e2-invariants.md). The live night runs through `live.main`'s seams (`run=`, `http=`, `provider_factory=`), offline.
+
+| Test | Covers |
+|---|---|
+| `test_write_notices_lists_base_and_teacher_licenses` | FR-3.51, NFR-9, INV-2: `notices.sources` (URL, origin, distill_ok and count per teacher); NOTICE.md names the base model's license and URL, each teacher with its license, URL and count, "(configured)" for a configured one, teacher outputs only and the Ratchet version; the same bytes whatever the order; a warning for an unknown base model; no sources; cells that cannot break the table; `train.write_metadata` writes `ratchet_manifest.json` and NOTICE.md from the container's built-in registry |
+| `test_base_model_licenses_cover_the_configured_base_models` | FR-3.50: the default student base model, the hosted fallback and the 30B checkpoints map to the NVIDIA Nemotron Open Model License, in any case; a local path, an unlisted id or a bare name do not; `base_license`'s warning |
+| `test_bom_v2_has_base_model_license_and_v1_still_verifies` | FR-3.50, FR-3.51, FR-3.6, NFR-9, INV-14: `base_model_license`, each source's `license_origin`, `notices` with the exact text and its SHA-256; a warning, not an error, for an unknown base; the signature covers the notice; v1 and early v2 documents still verify and get a rendered NOTICE; `run_night` writes it |
+| `test_live_night_puts_bom_and_notice_in_adapter_folder` | FR-3.51, FR-3.53, NFR-9, US-10, FR-3.6: `python -m ratchet.live night` syncs, trains, writes `data/adapters/student-v1/ratchet_bom.json` (the stored BOM's bytes, also in `data/boms/`) and the NOTICE.md the BOM signed, then syncs again (the second sync sees both files); it installs `RATCHET_TEACHER_LICENSES` itself, so the configured teacher is in the BOM and NOTICE; a night that does not train writes and syncs nothing |
+| `test_live_night_reports_a_failed_second_sync` | FR-3.51: a failed second sync leaves the files written, writes a `sync_failed` event with the class only, prints the report and exits non-zero; without `RATCHET_SYNC_CMD` the files are written and nothing runs after training |
+| `test_export_bundle` | FR-3.52, NFR-7, US-10, INV-14: `export` copies the adapter folder (nested files too), writes the verified BOM and the NOTICE it signed over the job's copy, prints the BOM's sha256 and returns a summary; `python -m ratchet.bom verify --notice` accepts the exported NOTICE.md and refuses an edited or missing one; refuses a non-empty folder or a file, a folder inside the adapter folder, an unknown version, a version without a BOM, a tampered BOM, an adapter name outside the adapters folder, a missing `--version`, writing nothing; without local weights it writes the licenses and says where the weights are; `python -m ratchet.live export` prints only the export's lines |
+| `test_config_teacher_license_allowed_and_closed_prefix_still_refused` | FR-3.53, INV-1, FR-3.1, FR-3.2: configured teachers are licensed with origin `config` and canonical license names; the built-in registry is a read-only copy source; thirteen closed-family ids claimed as Apache-2.0 are refused (`azure-gpt-4o`, `chatgpt-4o-latest`, `anthropic/next-model`, `openai/gpt-oss-120b`, `my_gemini_mirror`...) while open ids pass the family check; five license names outside the allowlist are refused; a built-in teacher cannot be relabelled; a closed id forced into the registry still raises; after a reset the teacher is unknown again |
+| `test_config_teacher_end_to_end` | FR-3.53, INV-1, FR-3.3: a configured teacher is refused without the file and licensed with it; its answer is stored with its license and URL; Night School trains on its rows and the BOM and NOTICE name it as configured; a cascade built without the file publishes the built-in registry, and the rows leave training |
+| `test_bad_teacher_license_file_fails_at_startup` | FR-3.53, INV-1: bad JSON, NaN, not a list, too many entries, and twelve entry errors in one file, each listed with its place; a missing file; the registry left as it was; `Ratchet`, the gateway's `Runtime` in both modes, `python -m ratchet.live` and `python -m ratchet.admin` stop before opening the ledger; the fixed file starts |
 
 ## Live-path tests
 

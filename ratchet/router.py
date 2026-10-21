@@ -323,6 +323,9 @@ class Ratchet:
         self.teacher = teacher
         self.resolve_student = student_resolver
         self.rng = random.Random(seed)
+        # The license registry for these settings: the built-in teachers plus RATCHET_TEACHER_LICENSES' (ADR 0090); a bad
+        # file stops startup here, every error listed. Night School and the BOM read the same registry.
+        licenses.install(settings.teacher_licenses_file)
         # INV-1: every teacher that may write an answer is licensed here, so a closed or unknown model stops startup. An
         # example records the license of the teacher that wrote it (`_store_example`), looked up by configured model.
         self.licenses: dict[str, licenses.TeacherLicense] = {

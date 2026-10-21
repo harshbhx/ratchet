@@ -637,7 +637,10 @@ The bill of materials of one adapter, written by Night School right after traini
     "golden": {"examples": 110, "sha256": "cbce0e…", "held_out": true},
     "sources": [{"teacher": "nvidia/Nemotron-3-Ultra-550b-a55b", "license": "OpenMDW-1.1",
                  "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
-                 "distill_ok": true, "examples": 1029}],
+                 "license_origin": "builtin", "distill_ok": true, "examples": 1029}],
+    "base_model_license": {"name": "NVIDIA Nemotron Open Model License",
+                           "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"},
+    "notices": [{"file": "NOTICE.md", "sha256": "5d0c3a…", "text": "# NOTICE\n\nThis folder holds a LoRA adapter…"}],
     "redactor": {"sha256": "e85726…", "rules": 9, "redact_pii": true},
     "eval": {"golden_n": 110, "golden_agreement": 0.89, "threshold": 0.65, "coverage": 0.96, "precision": 0.94, "test_n": 55}
   },
@@ -650,6 +653,7 @@ The bill of materials of one adapter, written by Night School right after traini
 - `signature` is `null` when `RATCHET_BOM_SIGNING_KEY` is not set; the `sha256` still detects edits.
 - `training.dataset_sha256` equals the version's `dataset_hash`; `golden.sha256` fingerprints the golden rows the evaluation used. The `eval` block is the evaluation at training time; later re-checks update `/ratchet/stats` but not the signed BOM.
 - Schema `ratchet.bom/v2` ([ADR 0024](adr/0024-evidence-foundations.md)) keeps every v1 field and adds `training.origins` (training rows by where they came from; `live` for rows that did not record it) and `redactor` (a SHA-256 over the redaction rules, the number of rules, and whether redaction was on; `null` when the writer did not say). Later features add optional sections: `training.commitment` and `golden.commitment` (`{"alg": "ratchet.smt/v1", "root", "size"}`), `teacher`, `backfill_jobs` and `erasures_honored`. Adapters trained before keep their v1 documents, which still verify; any other schema is refused as unknown.
+- The licenses travel with the adapter (NFR-9, [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)): `base_model_license` is the license of the base model the adapter runs on (`{name, url}` from `ratchet.licenses.BASE_MODELS`; for a base model Ratchet does not know, `name` and `url` are `null` and `warning` says to find and ship its license); `notices` holds the exact `NOTICE.md` that goes next to the adapter weights (the base model's license, each teacher's license and URL, teacher outputs only, the Ratchet version) with its SHA-256, so the file can be checked against the signed BOM; each source's `license_origin` is `builtin` (Ratchet's registry) or `config` (added by the operator in `RATCHET_TEACHER_LICENSES`). v2 documents written before these fields still verify. `python -m ratchet.live export --version N --out DIR` writes the adapter folder with this BOM and its `NOTICE.md` ([DEPLOYMENT.md](DEPLOYMENT.md#export-an-adapter-with-its-licenses)).
 
 Verify a downloaded BOM against the public key you published:
 
@@ -657,6 +661,8 @@ Verify a downloaded BOM against the public key you published:
 curl -s https://<gateway>/ratchet/versions/3/bom > bom.json
 python -m ratchet.bom verify bom.json --public-key "<base64 public key>"
 # OK: signature valid (Ed25519, key 6cf6bc1a39c4491d, trusted key)
+python -m ratchet.bom verify bom.json --public-key "<base64 public key>" --notice NOTICE.md   # also the adapter's NOTICE.md
+# OK: NOTICE.md matches the BOM
 ```
 
 Without `--public-key` the check uses the key embedded in the document, which only proves the document is consistent with itself.

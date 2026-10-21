@@ -6,6 +6,9 @@
                                         # also does this by itself when vLLM answers 404 for an adapter: AdapterReloader)
     python -m ratchet.live purge [--client NAME] [--older-than-days N] [--dry-run]
                                         # apply the retention windows now (FR-13.4); the gateway does it hourly
+    python -m ratchet.live export --version N --out DIR
+                                        # an adapter with its licenses: the adapter folder (when synced locally), its
+                                        # BOM and NOTICE.md in DIR; prints the BOM's sha256 (NFR-9)
 
 Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
@@ -14,15 +17,19 @@ Environment (in addition to ratchet.config):
     RATCHET_TRAIN_CMD     command that runs the training job and waits for it; {version} and {data}
                           are substituted, e.g. "bash deploy/train_job.sh {version}"
     RATCHET_ADAPTER_ROOT  where the endpoint sees adapters (default /data/adapters)
+
+After a night that trained, the adapter's BOM and NOTICE.md go to RATCHET_DATA_DIR/adapters/<name>/ (ratchet_bom.json,
+NOTICE.md) and RATCHET_SYNC_CMD runs again, so the bucket's adapter folder holds the weights and their licenses together.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import queue
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -33,10 +40,10 @@ from typing import Any
 
 import httpx
 
-from . import bom, privacy, taskspec
+from . import bom, licenses, privacy, taskspec
 from .config import Settings
 from .ledger import Ledger, Version
-from .nightschool import dataset
+from .nightschool import dataset, notices
 from .nightschool.evaluate import LiveEvaluator
 from .nightschool.orchestrate import run_night
 from .providers import OpenAICompatProvider, Provider
@@ -50,11 +57,25 @@ RunFn = Callable[..., Any]
 ProviderFactory = Callable[..., Provider]
 NO_STUDENT_BASE = "RATCHET_STUDENT_BASE is not set: no student endpoint to load adapters into"
 RELOAD_INTERVAL_S = 60.0  # the gateway reloads one adapter at most this often, however many requests hit its 404
+_ADAPTER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def adapter_root() -> str:
     """Where the endpoint sees adapters (`lora_path` = `<root>/<name>`)."""
     return os.environ.get("RATCHET_ADAPTER_ROOT", "/data/adapters")
+
+
+def data_dir() -> Path:
+    """The local folder synced to the bucket (RATCHET_DATA_DIR): `night/`, `boms/` and `adapters/<name>/`."""
+    return Path(os.environ.get("RATCHET_DATA_DIR", "data"))
+
+
+def adapter_dir(data: Path, name: str) -> Path:
+    """`<data>/adapters/<name>`, the local copy of the bucket folder the training job writes the adapter to. The name
+    must be one path segment (`student-v3`), so a version can never point outside the adapters folder."""
+    if not _ADAPTER_NAME.fullmatch(name) or ".." in name:
+        raise ValueError(f"adapter name {name!r} is not a single folder name")
+    return data / "adapters" / name
 
 
 def _run(cmd: str, run: RunFn = subprocess.run) -> None:
@@ -218,6 +239,86 @@ def adapter_reloader(
     return AdapterReloader(load, led, clock=clock)
 
 
+def publish_bom(led: Ledger, vid: int, data: Path) -> list[Path]:
+    """After a night that trained version `vid`: write its BOM to `<data>/boms/student-v<vid>.json` (beside the training
+    data, as since v0.4) and, with its NOTICE.md, into the adapter's folder `<data>/adapters/<name>/` (`ratchet_bom.json`,
+    `NOTICE.md`), so the next RATCHET_SYNC_CMD puts the licenses into the bucket folder that holds the weights (NFR-9).
+    Returns the files written; none for a version without a BOM."""
+    doc = led.version_bom(vid)
+    version = led.version(vid)
+    if doc is None or version is None:
+        return []
+    out = data / "boms" / f"student-v{vid}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(notices.bom_bytes(doc))
+    return [out, *notices.write_adapter_files(adapter_dir(data, version.adapter_uri), doc)]
+
+
+def export_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="python -m ratchet.live export",
+        description="Copy an adapter with its licenses into a folder: the adapter files (when RATCHET_DATA_DIR/adapters/"
+        "<name> holds them), its bill of materials (ratchet_bom.json) and NOTICE.md; prints the BOM's sha256.",
+    )
+    ap.add_argument("--version", type=int, required=True, help="the version id (as in /ratchet/versions/{id}/bom)")
+    ap.add_argument("--out", required=True, help="the folder to write; it must not exist yet or be empty")
+    return ap
+
+
+def export(led: Ledger, argv: list[str], data: Path | None = None) -> dict[str, Any]:
+    """`python -m ratchet.live export`: an adapter ready to hand over (US-10, NFR-7, NFR-9). The adapter folder is copied
+    when it is on this machine (a bucket mount, or synced down); the BOM is the one stored at training time (INV-14),
+    checked against its own sha256 and signature first; NOTICE.md is the text the BOM signed (`notices.bom_notice`), so it
+    replaces any copy in the folder. The output folder must be new or empty, so an export never mixes two adapters."""
+    args = export_parser().parse_args(argv)
+    data = data if data is not None else data_dir()
+    version = led.version(args.version)
+    if version is None:
+        raise SystemExit(f"export: no version {args.version}")
+    doc = led.version_bom(args.version)
+    if doc is None:
+        raise SystemExit(f"export: version {args.version} has no bill of materials (trained before v0.4), so no licenses to ship")
+    ok, reason = bom.verify(doc)
+    if not ok:
+        raise SystemExit(f"export: the stored bill of materials of version {args.version} does not verify: {reason}")
+    out = Path(args.out)
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise SystemExit(f"export: {out} exists and is not an empty folder; choose a new one")
+    try:
+        src = adapter_dir(data, version.adapter_uri)
+    except ValueError as e:
+        raise SystemExit(f"export: version {args.version}: {e}") from None
+    if out.resolve() == src.resolve() or src.resolve() in out.resolve().parents:
+        # Inside the adapter folder the bundle would be copied into itself, and the next sync would upload it there.
+        raise SystemExit(f"export: {out} is inside the adapter folder {src}; choose a folder outside it")
+    copied = 0
+    if src.is_dir():
+        shutil.copytree(src, out, dirs_exist_ok=True)
+        copied = sum(1 for p in out.rglob("*") if p.is_file())
+    bom_path, notice_path = notices.write_adapter_files(out, doc)
+    result = {
+        "version": version.id,
+        "adapter": version.adapter_uri,
+        "out": str(out),
+        "adapter_files": copied,
+        "bom": str(bom_path),
+        "notice": str(notice_path),
+        "bom_sha256": doc["sha256"],
+        "signed": bool(doc.get("signature")),
+    }
+    if copied:
+        print(f"exported {version.adapter_uri} (v{version.id}) from {src} to {out}")
+    else:
+        print(
+            f"exported the licenses of {version.adapter_uri} (v{version.id}) to {out}; the adapter weights are not at {src}: "
+            f"copy them from the bucket's adapters/{version.adapter_uri}/ into {out}"
+        )
+    print(f"bill of materials: {bom_path} ({reason})")
+    print(f"notice: {notice_path}")
+    print(f"bom sha256: {doc['sha256']}")
+    return result
+
+
 def purge_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m ratchet.live purge",
@@ -264,6 +365,9 @@ def main(
 ) -> None:
     s = Settings(mode="live")
     s.check_reserved()  # a setting reserved for a feature not built yet stops here (ADR 0024)
+    # The gateway's license registry (RATCHET_TEACHER_LICENSES, ADR 0090), so the night trains on the same teachers'
+    # rows and the BOM names their licenses; a bad file stops here, every error listed.
+    licenses.install(s.teacher_licenses_file)
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     retention = s.retention()  # a bad retention window stops here too, before anything is deleted or trained
     led, gate = build(s)
@@ -272,6 +376,10 @@ def main(
     for line in taskspec.install(led, s.tasks_file):
         print(f"task skipped: {line}", file=sys.stderr)
     cmd = argv[0] if argv else "night"
+    if cmd == "export":  # reads the ledger and writes files only: nothing else to report
+        export(led, argv[1:])
+        return
+    sync_failed: str | None = None
     if cmd == "tick":
         gate.tick()
     elif cmd == "purge":
@@ -285,10 +393,11 @@ def main(
         judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
         evaluator = LiveEvaluator(student, judge, s.judge_model, samples=s.samples, policy=s.gen_policy())
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
+        trainer = NebiusTrainer(s, run, http)
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
             led,
-            NebiusTrainer(s, run, http),
+            trainer,
             evaluator,
             gate,
             s.student_base_model,
@@ -298,17 +407,25 @@ def main(
             store_examples=s.store_examples,
             retention=retention,  # expired text is purged before the night reads the ledger (FR-13.4)
         )
-        if rep.version is not None:  # keep the adapter's BOM next to its training data in the bucket
-            doc = led.version_bom(rep.version)
-            out = Path(os.environ.get("RATCHET_DATA_DIR", "data")) / "boms" / f"student-v{rep.version}.json"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
-            print(f"bill of materials: {out}")
+        if rep.version is not None:
+            # The adapter's BOM and NOTICE.md beside the training data and in its folder, then a second sync, so the
+            # bucket's adapter folder holds the weights and their licenses together (NFR-9).
+            written = publish_bom(led, rep.version, trainer.data)
+            for path in written:
+                print(f"{'notice' if path.name == notices.NOTICE_FILE else 'bill of materials'}: {path}")
+            if written and trainer.sync_cmd:
+                try:
+                    _run(trainer.sync_cmd, run)
+                except (OSError, subprocess.SubprocessError) as e:  # the files are written; only the upload failed
+                    sync_failed = describe_failure(e)
+                    led.event("sync_failed", f"v{rep.version}: BOM and NOTICE.md written locally, not uploaded: {sync_failed}")
         print(rep)
     else:
-        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick', 'reload' or 'purge'")
+        raise SystemExit(f"unknown command {cmd!r}; use 'night', 'tick', 'reload', 'purge' or 'export'")
     for e in led.events()[-10:]:
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
+    if sync_failed:  # after the report, so the night's outcome is on screen; a non-zero exit for cron
+        raise SystemExit(f"RATCHET_SYNC_CMD failed after training ({sync_failed}): run it again to upload the BOM and NOTICE.md")
 
 
 if __name__ == "__main__":  # pragma: no cover

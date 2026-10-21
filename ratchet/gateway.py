@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, privacy, tasks, taskspec
+from . import __version__, licenses, live, privacy, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
 from .config import Settings
@@ -129,6 +129,9 @@ class Runtime:
 
     def reset(self) -> None:
         s = self.settings
+        # The license registry (RATCHET_TEACHER_LICENSES, ADR 0090): a bad file stops startup here, before anything is
+        # opened; `Ratchet.__init__` installs the same file again.
+        licenses.install(s.teacher_licenses_file)
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         self.retention = s.retention()  # a bad retention window or RATCHET_ERASURE_SHARED stops startup here (ADR 0081)
         if s.mode == "mock":

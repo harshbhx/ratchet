@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
-from . import privacy
+from . import licenses, privacy
 from .config import Settings
 from .ledger import EXPORT_KINDS, Ledger
 
@@ -101,6 +101,9 @@ def run_export(led: Ledger, args: argparse.Namespace, out: TextIO) -> int:
 def main(argv: list[str] | None = None, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
     args = parser().parse_args(argv)
     s = Settings(mode="live")
+    # The gateway's license registry (RATCHET_TEACHER_LICENSES), so an erasure counts a configured teacher's rows as
+    # training rows as Night School does; a bad file stops here.
+    licenses.install(s.teacher_licenses_file)
     led = Ledger(args.db or s.db_path, s.golden_fraction, auto_day=True)
     try:
         if args.cmd == "erase":
