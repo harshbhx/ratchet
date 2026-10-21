@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, certificate, live, merkle, proof, tasks, taskspec
+from . import __version__, certificate, live, merkle, proof, replay, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, Settings
@@ -1052,6 +1052,89 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
         led, rt.cost_policy, state, "api", rate, gpus, note=redact(note) if note else None, by=admin
     )
     return {"state": state, "changed": changed, "interval": interval, "summary": summary}
+
+
+# ----- ledger replay (FR-16.5, ADR 0028) -----
+MAX_REPLAY_DAY = 10_000_000  # a ledger day far beyond any real one: larger values are refused, not passed to SQLite
+
+
+def _replay_version(request: Request) -> Version:
+    """The one version a replay reads: `?version=` (default: the live version). 400 for no version and no live one, and
+    for a value that names several versions or none (`1,2`, `all`, `version` twice): confidence scales differ between
+    versions, so a replay never pools them. 404 for a version that does not exist."""
+    values = request.query_params.getlist("version")
+    if len(values) > 1:
+        raise HTTPException(400, "one version at a time: confidence scales differ between versions, so a replay never pools them")
+    if not values or values[0] == "":
+        v = rt.ledger.live()
+        if v is None:
+            raise HTTPException(400, "no live version: name one with ?version=")
+        return v
+    raw = values[0].strip()
+    if not raw.isdigit() or len(raw) > 18:
+        raise HTTPException(400, f"version must be one version id (a whole number), not {values[0]!r}; versions are never pooled")
+    v = rt.ledger.version(int(raw))
+    if v is None:
+        raise HTTPException(404, f"no version {int(raw)}")
+    return v
+
+
+def _replay_days(since_day: int | None, until_day: int | None) -> None:
+    for name, day in (("since_day", since_day), ("until_day", until_day)):
+        if day is not None and not 0 <= day <= MAX_REPLAY_DAY:
+            raise HTTPException(400, f"{name} must be a ledger day from 0 to {MAX_REPLAY_DAY:,}")
+    if since_day is not None and until_day is not None and since_day > until_day:
+        raise HTTPException(400, "since_day must not be after until_day")
+
+
+def _replay_label() -> str:
+    return replay.SIMULATION if rt.settings.mode == "mock" else "live traffic"
+
+
+@app.get("/ratchet/replay")
+def replay_version(
+    request: Request,
+    threshold: float | None = None,
+    audit_rate: float | None = None,
+    since_day: int | None = None,
+    until_day: int | None = None,
+) -> dict[str, Any]:
+    """Replay one version's logged traffic (FR-16.5, ADR 0028): what happened (`actual`), what would have happened at
+    `threshold` (default: the version's threshold now) and `audit_rate` (default: as logged), and the calibrated
+    baseline. Read-only and public, like /ratchet/stats: aggregates only, never request text."""
+    v = _replay_version(request)
+    _replay_days(since_day, until_day)
+    try:
+        t = None if threshold is None else replay.check_threshold(threshold)
+        a = None if audit_rate is None else replay.check_rate(audit_rate)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    history = replay.load(rt.ledger, v.id, since_day, until_day)
+    out = replay.report(history, t, a, current=rt.ratchet.threshold(v), fallback_rate=rt.settings.audit_rate)
+    return {**out, "state": v.state, "label": _replay_label()}
+
+
+@app.get("/ratchet/replay/frontier")
+def replay_frontier(
+    request: Request,
+    target: float = replay.DEFAULT_TARGET,
+    audit_rate: float | None = None,
+    since_day: int | None = None,
+    until_day: int | None = None,
+) -> dict[str, Any]:
+    """The cost-precision frontier of one version's logged traffic over thresholds 0.30 to 1.00, the suggested threshold
+    for `target` (advisory: an approximate interval, never applied by itself) and the money the current threshold leaves
+    on the table (FR-16.5, ADR 0028)."""
+    v = _replay_version(request)
+    _replay_days(since_day, until_day)
+    try:
+        target = replay.check_target(target)
+        a = None if audit_rate is None else replay.check_rate(audit_rate)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    history = replay.load(rt.ledger, v.id, since_day, until_day)
+    out = replay.frontier_report(history, rt.ratchet.threshold(v), target, audit_rate=a, fallback_rate=rt.settings.audit_rate)
+    return {**out, "state": v.state, "label": _replay_label()}
 
 
 # ----- committed training sets (FR-16.4, ADR 0027) -----

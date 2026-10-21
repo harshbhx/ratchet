@@ -922,6 +922,43 @@ class Ledger:
         return {int(r["v"]): int(r["n"]) for r in rows}
 
     @_locked
+    def replay_rows(
+        self, vid: int, since_day: int | None = None, until_day: int | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """What the ledger replay reads for version `vid` (FR-16.5, ADR 0028), on ledger days `since_day` to `until_day`
+        (both included; None: no bound): every request its student answered with the replay's columns written
+        (confidence, label_p and threshold not NULL), in id order, and how many of its other rows were left out:
+        `before_logging` (the student answered, but the row predates those columns) and `no_student_answer` (the call
+        failed or its breaker was open: no confidence to replay). `teacher_usd` is what the teacher alone cost when it
+        was called for the request (`baseline_cost_usd` of an escalation the teacher answered, or of an audit), else
+        NULL; `estimate_usd` is the token formula's estimate (`baseline_est_usd`). One version only: confidence scales
+        differ between versions, so the replay never pools them."""
+        where, args = "student_version=?", [vid]
+        if since_day is not None:
+            where += " AND day>=?"
+            args.append(since_day)
+        if until_day is not None:
+            where += " AND day<=?"
+            args.append(until_day)
+        rows = self.db.execute(
+            f"""SELECT id, day, task, confidence, threshold, label_p, student_agree, route, audited,
+                       COALESCE(student_cost_usd, 0.0) student_usd,
+                       CASE WHEN audited=1 OR (escalated=1 AND served_by='teacher') THEN baseline_cost_usd END teacher_usd,
+                       COALESCE(baseline_est_usd, baseline_cost_usd, 0.0) estimate_usd
+                FROM requests WHERE {where} AND confidence IS NOT NULL AND label_p IS NOT NULL AND threshold IS NOT NULL
+                ORDER BY id""",
+            args,
+        ).fetchall()
+        left = self.db.execute(
+            f"""SELECT COALESCE(SUM(confidence IS NOT NULL AND (label_p IS NULL OR threshold IS NULL)), 0) before_logging,
+                       COALESCE(SUM(confidence IS NULL), 0) no_student_answer
+                FROM requests WHERE {where}""",
+            args,
+        ).fetchone()
+        excluded = {"before_logging": int(left["before_logging"]), "no_student_answer": int(left["no_student_answer"])}
+        return [dict(r) for r in rows], excluded
+
+    @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:
         """How a shadow candidate would have done on real traffic, next to the live student.
 

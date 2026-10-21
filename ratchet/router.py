@@ -652,6 +652,15 @@ class Ratchet:
         """The price of one call that returned these choices: the prompt once, every choice's output."""
         return self.s.price(model).cost(choices[0].in_tokens, sum(c.out_tokens for c in choices))
 
+    def _formula_baseline(self, messages: list[dict[str, Any]], student_c: Completion, choices: list[Completion]) -> float:
+        """What the teacher alone would have cost for a student answer, by the token formula: the student's prompt
+        tokens (estimated from the messages when it reported none), and each choice's output tokens plus the assumed
+        RATCHET_TEACHER_REASONING_TOKENS, at the teacher's price. The baseline of a request the student served; the
+        replay calibrates it against audited rows (`requests.baseline_est_usd`, ADR 0028)."""
+        in_t = student_c.in_tokens or approx_tokens(str(messages))
+        out_t = sum(s.out_tokens for s in choices) + len(choices) * self.s.teacher_reasoning_tokens
+        return self.s.price(self.s.teacher_model).cost(in_t, out_t)
+
     def threshold(self, version: Version, model: str | None = None, task: tasks.Task | str | None = None) -> float:
         """Each version carries its own threshold, calibrated on the golden set at training time.
         The hosted untuned fallback model was never calibrated, so it uses the global default. For a `task` whose spec
@@ -888,6 +897,11 @@ class Ratchet:
         # The designed probability that a teacher label of the student's answer is observed (requests.label_p, FR-16.5):
         # the audit rate this request was drawn at when the student served, 1.0 when it escalated after answering.
         label_p: float | None = None
+        # What the ledger replay reads besides it (FR-16.5, ADR 0028): the threshold the student's answer was held to,
+        # and whether that answer agreed with the primary teacher's valid answer from this request's escalation or random
+        # audit. Never from a shadow arbitration (not a random draw) or a stand-in teacher. Logging only: no call, no draw.
+        threshold_used: float | None = None
+        student_agree: int | None = None
         picked: list[Completion] | None = None  # the student's n choices, when n of its samples agree
         served_choices: list[Completion] = []  # every choice the client gets; choice 0 is `served`
 
@@ -915,7 +929,7 @@ class Ratchet:
                 confidence = sc.confidence
                 student_c = sc.answer
         if version is not None and sc is not None:
-            threshold = self.threshold(version, model_used, task)
+            threshold = threshold_used = self.threshold(version, model_used, task)
             # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid).
             if sc.valid and sc.confidence >= threshold and picked is not None:
                 served, served_by, route, served_choices = sc.answer, "student", "student", picked
@@ -942,6 +956,7 @@ class Ratchet:
                         # A cut-off, empty or invalid teacher answer measures nothing: not an audit (INV-16).
                         if answer_problem(task, teacher_c) is None:
                             audited, audit_agree = 1, int(task.agree(sc.answer.text, teacher_c.text))
+                            student_agree = audit_agree
             elif sc.valid and sc.confidence >= threshold:  # confident, but fewer than n samples agree
                 escalated, route, label_p = True, "n_choices", 1.0
             else:
@@ -971,17 +986,25 @@ class Ratchet:
                 fp = fingerprint("teacher", answer.model)
                 if answer.fallback:
                     route = "fallback_teacher"
+                # The escalation labels the student's own answer (label_p 1.0): one comparison, string work only. Only a
+                # valid student answer and the primary teacher's valid answer count, as for an audit (INV-16).
+                elif sc is not None and sc.valid and answer_problem(task, teacher_c) is None:
+                    student_agree = int(task.agree(sc.answer.text, teacher_c.text))
 
+        # The all-teacher cost by the token formula (requests.baseline_est_usd, FR-16.5), for every student answer, also
+        # when the teacher was called: on audited rows the replay compares it with what the teacher really cost (ADR
+        # 0028). Over the choices the student serves, or would have served (its answer once per choice when fewer agree).
+        baseline_est: float | None = None
+        if student_c is not None:
+            baseline_est = self._formula_baseline(messages, student_c, picked if picked is not None else [student_c] * plan.n)
         # Baseline = what this request would have cost with the teacher alone, writing every choice the client got.
         if teacher_c is not None and served_by == "teacher":  # the teacher's call (or the fallback teacher's) itself
             baseline = self._call_cost(self.s.teacher_model, served_choices)
         elif teacher_c is not None:  # an audit: one answer; the teacher alone would have written one per choice
             baseline = self._cost(self.s.teacher_model, teacher_c, len(served_choices))
-        else:
-            assert student_c is not None
-            in_t = student_c.in_tokens or approx_tokens(str(messages))
-            out_t = sum(s.out_tokens for s in served_choices) + len(served_choices) * self.s.teacher_reasoning_tokens
-            baseline = self.s.price(self.s.teacher_model).cost(in_t, out_t)
+        else:  # the student served (also degraded): its choices are `picked`, so this is the formula above, to the bit
+            assert baseline_est is not None
+            baseline = baseline_est
 
         # Shadow: the candidate runs the same cascade silently. We record whether it would have
         # served, and if so whether it agrees with the best reference we have. When it disagrees
@@ -1051,6 +1074,9 @@ class Ratchet:
             route=route,
             stored=int(stored),
             label_p=label_p,
+            threshold=threshold_used,
+            student_agree=student_agree,
+            baseline_est_usd=baseline_est,
         )
         choices = _choices(task, served_choices, params)
         return Result(

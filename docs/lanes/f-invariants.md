@@ -71,3 +71,13 @@ Invariants lane F proposes for the numbered list in [CLAUDE.md](../../CLAUDE.md#
 **Enforcing code.** `ratchet/gateway.py`: `version_proof`, `version_heldout`, `demo_sample_example` (`_mock_only`); `ratchet/proof.py`: `request_key`, `resolve_key`.
 
 **Proving tests.** `tests/test_provenance.py::test_proof_endpoints_need_an_admin_key_in_live_mode`, `test_request_key_is_the_stored_hash`, `test_resolve_key_validates_like_the_gateway`; `tests/test_contract.py::test_demo_endpoints_are_403_in_live_mode`.
+
+## Ledger time machine (item ledger-time-machine, FR-16.5, ADR 0028)
+
+### Replay labels come only from designed draws, and a replay reads one version
+
+**Text.** `requests.student_agree` is set only from the primary teacher's valid answer to the request's own escalation (labelling probability 1) or random audit (the logged audit rate), compared with the student's valid answer; never from a shadow arbitration (it runs only on disagreements, so its probability is unknown and depends on correctness), a fallback-teacher or degraded answer, or any other teacher call that was not drawn by the design. `requests.threshold` is the exact value the answer was compared with. The request path only logs these (no model call, no random draw). The replay weights each label by 1 / `label_p`, reports a null precision with its reason (never an extrapolation) when a row it counts could never be labelled, never pools versions, and its suggested threshold is advice that nothing applies: thresholds change only through Night School. A new source of labels must come with its designed probability, or stay out of `student_agree`.
+
+**Enforcing code.** `ratchet/router.py`: `Ratchet.handle`, `Ratchet._formula_baseline`; `ratchet/ledger.py`: `Ledger.replay_rows`; `ratchet/replay.py`: `at`, `sweep`, `_Acc.add`, `suggest`; `ratchet/gateway.py`: `_replay_version`.
+
+**Proving tests.** `tests/test_contract.py::test_replay_columns_are_logged_without_extra_calls`; `tests/test_system.py::test_label_p_and_student_agree_follow_the_design`, `test_replay_reproduces_each_versions_logged_coverage_and_audits`; `tests/test_core.py::test_replay_precision_is_unbiased_under_the_designed_labelling`, `test_replay_without_positivity_gives_no_precision_above_the_live_threshold`, `test_replay_suggests_the_lowest_passing_grid_threshold_or_none`; `tests/test_hardening.py::test_replay_endpoint_refuses_to_mix_versions`.
