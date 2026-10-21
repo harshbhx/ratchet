@@ -17,7 +17,7 @@ from typing import Any, NamedTuple, NoReturn
 
 import httpx
 
-from . import calibration, licenses, metrics, obs, schema_tasks, tasks, taskspec
+from . import calibration, licenses, metrics, obs, reasoning, schema_tasks, tasks, taskspec
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .drift import boosted_rate
@@ -635,6 +635,9 @@ class Ratchet:
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
         self._plain = self.gen.plan(None)  # the plan of a request without parameters (Scout, the simulator)
+        self._reasoning = settings.reasoning_policy()
+        # The hosted fallback student has its own mode (ADR 0130); an adapter keeps GenPolicy.student's.
+        self.fallback_student_kwargs = reasoning.template_kwargs(self._reasoning.fallback_student)
         self.clock = clock
         self.timer = timer
         self.on_adapter_missing = on_adapter_missing
@@ -1716,6 +1719,10 @@ class Ratchet:
         compare."""
         return calibration.spec_changed(version.eval, _task(task))
 
+    def reasoning_snapshot(self) -> dict[str, str]:
+        """The thinking mode of each role and the body field, for /ratchet/stats."""
+        return self._reasoning.snapshot()
+
     def _sample(
         self,
         version: Version,
@@ -1731,6 +1738,8 @@ class Ratchet:
         version's adapter (an endpoint restart forgets runtime-loaded adapters; that 404 is the endpoint answering, so it
         does not count against it)."""
         provider, model = self.resolve_student(version)
+        if model == self.s.fallback_student_model:
+            gen = replace(self._plain.student if gen is None else gen, template_kwargs=self.fallback_student_kwargs)
         breaker = self._breaker(role, provider)
         if not breaker.allow():
             metrics.UPSTREAM.inc(role, "circuit_open")

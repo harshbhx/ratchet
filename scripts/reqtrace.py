@@ -536,6 +536,13 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_envelope",
         "sim.mock_models:MockTeacher",
     ),
+    "FR-1.90": (
+        "ratchet.reasoning:template_kwargs",
+        "ratchet.providers:GenPolicy.student",
+        "ratchet.providers:OpenAICompatProvider.complete",
+        "ratchet.config:Settings.reasoning_policy",
+        "ratchet.router:Ratchet._sample",
+    ),
     "FR-1.13": (
         "ratchet.providers:GenParams",
         "ratchet.providers:GenPolicy",
