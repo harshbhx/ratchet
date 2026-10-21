@@ -95,6 +95,8 @@ def _live(tmp_path: Path, **overrides: Any) -> Settings:
         "mock_warmup_days": 0,
         # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read the task list without a key.
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
@@ -589,9 +591,9 @@ def test_admin_keys_are_their_own(gw_env):
     gw = gw_env()
     with pytest.raises(ValueError, match="RATCHET_ADMIN_KEYS: the key for 'ops' is also an API key"):
         gw.Runtime(Settings(mode="mock", api_keys=f"acme:{ACME_KEY}", admin_keys=f"ops:{ACME_KEY}", mock_warmup_days=0))
-    with pytest.raises(ValueError, match="RATCHET_ADMIN_KEYS: the key for 'ops' is shorter than 16"):
+    with pytest.raises(ValueError, match="RATCHET_ADMIN_KEYS: the key in entry 1 is shorter than 16"):
         gw.Runtime(Settings(mode="mock", admin_keys="ops:short", mock_warmup_days=0))
-    with pytest.raises(ValueError, match="RATCHET_API_KEYS: name 'acme' appears twice"):
+    with pytest.raises(ValueError, match="RATCHET_API_KEYS: entry 2 has the same name as an earlier entry"):
         KeyRing(f"acme:{ACME_KEY},acme:{GLOBEX_KEY}")
     admins, clients = KeyRing(f"ops:{ADMIN_KEY},bot:{ACME_KEY}", env="RATCHET_ADMIN_KEYS"), KeyRing(f"acme:{ACME_KEY}")
     assert (admins.env, admins.shared(clients), clients.shared(admins)) == ("RATCHET_ADMIN_KEYS", ["bot"], ["acme"])

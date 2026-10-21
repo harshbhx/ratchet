@@ -726,6 +726,8 @@ def _live_runtime(gw: Any, tmp_path: Path, teacher: FakeOpenAIServer, **override
         "audit_rate": 1.0,
         "api_keys": "",
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,  # /ratchet/stats and /metrics without a key
         "api_key_daily_requests": 0,
         "bom_signing_key": "",

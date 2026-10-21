@@ -1625,7 +1625,9 @@ def test_replay_current_threshold_is_the_one_the_router_uses(gw_env, tmp_path, m
         bom_signing_key="",
         tavily_api_key="",
         mock_warmup_days=0,
-        allow_unauthenticated=True,  # no API keys (ADR 0061)
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",  # no API keys (ADR 0061)
         public_dashboard=True,
     )
     rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("ok").transport})

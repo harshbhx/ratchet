@@ -253,7 +253,9 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "NEBIUS_API_KEY",
             "RATCHET_ADAPTER_ROOT",
             "RATCHET_ADMIN_KEYS",
+            "RATCHET_ADMIN_TOKEN",
             "RATCHET_ALLOW_UNAUTHENTICATED",
+            "RATCHET_API_GUARD",
             "RATCHET_API_KEY",
             "RATCHET_API_KEYS",
             "RATCHET_API_KEY_DAILY_REQUESTS",
@@ -397,14 +399,13 @@ KNOWN_ENV: tuple[str, ...] = tuple(
         }
     )
 )
+GUARD_TOKEN_CHARS = 32  # RATCHET_ADMIN_TOKEN: what deploy/vm/Caddyfile requires before it lets a guarded path through
 # RATCHET_* variables only the deploy scripts and the demo VM read (deploy/student_endpoint.sh, deploy/train_job.sh,
 # deploy/vm/.env), never the package. Docker Compose hands the VM's whole .env to the gateway, so the startup check must
 # not call them unknown; the traceability check holds each to a row in docs/CONFIGURATION.md ("Deploy scripts"), and
 # tests/test_live.py checks the list against the Nebius scripts.
 DEPLOY_ENV: frozenset[str] = frozenset(
     {
-        "RATCHET_ADMIN_TOKEN",
-        "RATCHET_API_GUARD",
         "RATCHET_BACKUP_DIR",
         "RATCHET_BACKUP_KEEP",
         "RATCHET_BUCKET_ID",
@@ -894,6 +895,11 @@ class Settings:
     openapi: bool | None = field(default_factory=lambda: _switch("RATCHET_OPENAPI"))
     allow_unauthenticated: bool | None = field(default_factory=lambda: _switch("RATCHET_ALLOW_UNAUTHENTICATED"))
     csp: str = field(default_factory=lambda: _env("RATCHET_CSP", ""))
+    # The demo VM's edge guard, which the gateway cannot see: Caddy answers 403 on `/v1/*`, `/openai/*`, `/ratchet/demo/*`
+    # and `/ratchet/admin/*` unless a request carries `X-Ratchet-Admin-Token` (deploy/vm/Caddyfile). Compose hands both
+    # variables to the gateway, which refuses live mode without API keys unless they say the guard is on (`guard_problem`).
+    api_guard: str = field(default_factory=lambda: _env("RATCHET_API_GUARD", "open"))
+    admin_token: str = field(default_factory=lambda: _env("RATCHET_ADMIN_TOKEN", ""), repr=False)
 
     # Tasks (ratchet/taskspec.py, ADR 0022). A JSON (or YAML, with PyYAML) file of task specs registered at startup; a bad
     # file stops startup with every error listed. Empty = the built-in tasks and the ones the admin API stored.
@@ -1542,6 +1548,22 @@ class Settings:
             max_inflight=inflight,
         )
 
+    def guard_problem(self) -> str | None:
+        """Why a live gateway without API keys may not answer anyone even with RATCHET_ALLOW_UNAUTHENTICATED=1: the edge
+        guard it says it stands behind is not configured. `RATCHET_ALLOW_UNAUTHENTICATED=1` used to be enough, one typo or a
+        forgotten variable from an open, paid endpoint. It now needs `RATCHET_API_GUARD=guarded` and a
+        `RATCHET_ADMIN_TOKEN` of at least 32 characters (what the Caddyfile checks before it lets a request through), or
+        API keys. None when the guard is configured. Never quotes the token."""
+        guard = self.api_guard.strip().lower() if isinstance(self.api_guard, str) else ""
+        token = self.admin_token.strip() if isinstance(self.admin_token, str) else ""
+        if guard == "guarded" and len(token) >= GUARD_TOKEN_CHARS:
+            return None
+        return (
+            "RATCHET_ALLOW_UNAUTHENTICATED=1 needs the edge guard it relies on: set RATCHET_API_GUARD=guarded and a "
+            f"RATCHET_ADMIN_TOKEN of at least {GUARD_TOKEN_CHARS} characters (openssl rand -hex 32), or set RATCHET_API_KEYS; "
+            "otherwise /v1/* would answer anyone, on your teacher credits"
+        )
+
     def teacher_watch_limits(self) -> tuple[int, int]:
         """(RATCHET_TEACHER_PROBES, RATCHET_ADJUDICATE_MAX), checked: whole numbers from 0 to MAX_TEACHER_WATCH_CALLS,
         because each probe is one teacher call and each adjudication two, paid every night. A bad value raises ValueError,
@@ -1659,6 +1681,7 @@ class Settings:
             ("RATCHET_MODEL_POLICY", Settings.model_routing),
             ("RATCHET_MAX_AUTO_TASKS", Settings.auto_task_cap),
             ("RATCHET_MIN_TASK_GOLDEN", Settings.min_task_golden_rows),
+            ("RATCHET_TEACHER_PROBES", Settings.teacher_watch_limits),
             ("RATCHET_KPI_WINDOW_DAYS", Settings.kpi_window),
             ("RATCHET_REDACT_STYLE", Settings.redaction_style),
             ("RATCHET_REDACT_PLUGIN", Settings.redact_detector),
@@ -1727,13 +1750,17 @@ class Settings:
                     f"RATCHET_METRICS_TOKEN is also the key for {name!r} in {var}; give the scraper its own token",
                 )
         keyed = "RATCHET_API_KEYS" in rings and rings["RATCHET_API_KEYS"].enabled
-        if self.mode == "live" and not keyed and self.allow_unauthenticated is not True and "RATCHET_API_KEYS" in rings:
-            error(
-                "RATCHET_API_KEYS",
-                "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
-                "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
-                "VM's Caddy guard) checks every caller",
-            )
+        if self.mode == "live" and not keyed and "RATCHET_API_KEYS" in rings:
+            if self.allow_unauthenticated is not True:
+                error(
+                    "RATCHET_API_KEYS",
+                    "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
+                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
+                    "VM's Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
+                    "caller",
+                )
+            elif (problem := self.guard_problem()) is not None:
+                error("RATCHET_ALLOW_UNAUTHENTICATED", problem)
 
     def _check_live(self, error: Callable[[str, str], None], warning: Callable[[str, str], None]) -> None:
         """What only live mode needs: a teacher key, a ledger file it can write, a student key, enough audits."""

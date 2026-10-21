@@ -823,7 +823,15 @@ def test_per_ip_rate_on_a_gateway_without_keys(gw_env, tmp_path, monkeypatch):
     live, mock = (Settings(mode=mode, ip_rpm=None).limit_policy().ip_rpm for mode in ("live", "mock"))
     assert (live, mock) == (120, 0)
     clock = FakeClock()
-    settings = _live(tmp_path, api_keys="", allow_unauthenticated=True, ip_rpm=6, trust_proxy=True)
+    settings = _live(
+        tmp_path,
+        api_keys="",
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",
+        ip_rpm=6,
+        trust_proxy=True,
+    )
     gw, rt = _gateway(gw_env, monkeypatch, settings, clock=clock)
     c = TestClient(gw.app)
     one = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}
