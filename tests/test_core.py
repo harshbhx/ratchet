@@ -313,8 +313,10 @@ def test_audit_counts_and_served_counts():
     assert led.audit_counts(v, last - 1) == (1, 1) and led.audit_counts(v, last) == (0, 0) and led.audit_counts(w) == (0, 0)
     assert led.version_live_quality(v) == (11, 9 / 11) and led.version_live_quality(w) == (0, None)
     assert led.served_counts() == {v: 13}
-    led.log_request(served_by="student", audited=1, audit_agree=None, route="student", **row)  # never written by the router
-    assert led.audit_counts(v) == (12, 9)  # an audit without a verdict counts against the version
+    # An audited row without a verdict is an off-path audit still running (ADR 0072): it counts in neither number until
+    # its verdict is written.
+    led.log_request(served_by="student", audited=1, audit_agree=None, route="student", **row)
+    assert led.audit_counts(v) == (11, 9)
 
 
 # ---------- generation parameters (FR-1.13, ADR 0017) ----------

@@ -42,6 +42,9 @@ from typing import TYPE_CHECKING, Any
 from . import vocab
 from .compare import INVALID as NO_KEY
 from .compare import MAX_FIELDS, MAX_RECORDS, FieldSpec, Record, jsonable
+from .routing import DEFAULT as DEFAULT_ROUTING
+from .routing import Routing
+from .routing import parse as parse_routing
 
 if TYPE_CHECKING:  # pragma: no cover
     from .schema_tasks import Contract
@@ -55,7 +58,9 @@ RESERVED_FORMATS = frozenset({"tool_calls", "sql"})
 # task name (`get`, never stored in REGISTRY).
 SOURCES = ("builtin", "file", "api", "auto", "adhoc")
 TOOLS = ("teacher", "distill")  # who answers tool calls for this task (distill: opt-in for a later release)
-# A task's own release policy; later releases read it (samples, audit rate and precision targets per task).
+# A task's own release policy: `target_precision` and `min_precision` (per-task calibration, FR-14.1), `audit_rate` (the
+# share of its served student answers the teacher audits, in place of RATCHET_AUDIT_RATE; FR-2.50); `samples` is for a
+# later release.
 POLICY_KEYS = ("samples", "audit_rate", "target_precision", "min_precision")
 # How a request without a task name may be matched to this task (a later release reads them): its system message starts
 # with `system_prefix`, its `response_format.json_schema.name` is `schema_name`, or its tools are exactly `tools`. Plain
@@ -72,7 +77,8 @@ _TEXT_TRAILING = frozenset(".!,;:")
 @dataclass(frozen=True)
 class Task:
     """A task: its name, whether it is pinned to the teacher, and its spec (`format`, `fields`, `policy`, `routing`,
-    `store`, `tools`). `compare_keys` is the v0.4 shortcut: each key becomes an optional `exact` field, and such a task
+    `store`, `tools`; `routing` is checked against the fields and parsed once, `routing_rules`). `compare_keys` is the
+    v0.4 shortcut: each key becomes an optional `exact` field, and such a task
     compares, validates and canonicalises answers exactly as v0.4 did. `spec_hash` is derived from the spec (not from
     the name or `source`), so evaluations can tell when a task's rules changed; it cannot be set, so it never drifts
     from the rules (`dataclasses.replace` computes it again). Immutable: `policy`, `routing` and `match_rules` are
@@ -104,6 +110,7 @@ class Task:
     contract: Contract | None = field(default=None, compare=False, repr=False)  # one request's response_format (`bound`)
     spec_hash: str = field(init=False, default="")  # sha256 of `spec()`, 16 hex digits
     _root: bool = field(init=False, repr=False, compare=False, default=False)  # a field at '$'
+    _routing: Routing = field(init=False, repr=False, compare=False, default=DEFAULT_ROUTING)  # `routing`, parsed
 
     def __post_init__(self) -> None:
         def fail(message: str) -> None:
@@ -175,6 +182,10 @@ class Task:
         put("routing", MappingProxyType(dict(self.routing)))
         if self.contract is not None and not callable(getattr(self.contract, "problem", None)):
             fail("contract must be a schema_tasks.Contract")
+        parsed, problems = parse_routing(self.routing, specs)  # FR-2.50: conditions name this task's fields
+        if problems:
+            fail(f"routing.{problems[0]}")
+        put("_routing", parsed)
         try:
             text = json.dumps(self.spec(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         except (TypeError, ValueError, RecursionError):
@@ -194,6 +205,12 @@ class Task:
             "policy": dict(self.policy),
             "routing": dict(self.routing),
         }
+
+    @property
+    def routing_rules(self) -> Routing:
+        """The `routing` block, parsed when the task was defined (`ratchet.routing`, FR-2.50): eligibility, the
+        `escalate_when` rules and the critical classes the router, the golden eval and the release gate read."""
+        return self._routing
 
     @property
     def verifiable(self) -> bool:
@@ -616,6 +633,12 @@ _NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 def valid_name(name: str) -> bool:
     """1 to 64 letters, digits, '_', '.' or '-', matched in full (a trailing newline is not a valid name)."""
     return _NAME.fullmatch(name) is not None
+
+
+# Task names no spec, chat request or model alias may use (FR-1.51, ADR 0050): `embeddings` is the name the /v1/embeddings
+# pass-through logs its requests under, so that task's row in the stats is only ever those requests.
+EMBEDDINGS_TASK = "embeddings"
+RESERVED_NAMES = frozenset({EMBEDDINGS_TASK})
 
 
 # The tasks defined in code. `reset_builtin` puts REGISTRY back to exactly these.

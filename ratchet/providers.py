@@ -1,4 +1,5 @@
-"""Model providers. Everything speaks the OpenAI chat-completions format.
+"""Model providers. Everything speaks the OpenAI chat-completions format (and, for the `/v1/embeddings` pass-through,
+OpenAI's embeddings format: `OpenAICompatProvider.embed`).
 
 - Teacher and judge: Nebius Token Factory (OpenAI-compatible).
 - Student: a Nebius Serverless Endpoint running vLLM with LoRA adapters, where each
@@ -13,12 +14,15 @@ the live golden eval and the mock one apply the same rules (ADR 0017).
 
 from __future__ import annotations
 
+import base64
+import binascii
 import difflib
 import json
 import math
 import random
 import re
 import secrets
+import struct
 import time
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
@@ -33,6 +37,8 @@ from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_u
 __all__ = [
     "COMPLETE",
     "Completion",
+    "Embedder",
+    "Embeddings",
     "GenParams",
     "GenPlan",
     "GenPolicy",
@@ -85,6 +91,25 @@ class Completion:
         if not self.token_logprobs:
             return None
         return math.exp(sum(self.token_logprobs) / len(self.token_logprobs))
+
+
+@dataclass
+class Embeddings:
+    """One embeddings call's answer (FR-1.51): a vector of floats per input, in input order, all of one length. `model`
+    is the upstream's own name for the model (the configured one when it gives none); `prompt_tokens` is its
+    `usage.prompt_tokens` (0 when it does not say)."""
+
+    vectors: list[list[float]]
+    model: str
+    prompt_tokens: int = 0
+    latency_ms: float = 0.0
+
+
+class Embedder(Protocol):
+    """An OpenAI-compatible embeddings model (the `/v1/embeddings` pass-through, FR-1.51). `inputs` are strings or token
+    arrays, sent as they are; `dimensions` is the client's, when it set one. Raises `UpstreamError` on any failure."""
+
+    def embed(self, inputs: list[Any], model: str, dimensions: int | None = None) -> Embeddings: ...
 
 
 # ---------- generation parameters ----------
@@ -512,6 +537,35 @@ class OpenAICompatProvider:
             raise UpstreamError(502, "the upstream model's response is not JSON", code=BAD_RESPONSE) from e
         return _completions(data, model, latency)
 
+    def embed(self, inputs: list[Any], model: str, dimensions: int | None = None) -> Embeddings:
+        """One embeddings call (`POST {base}/embeddings`, FR-1.51), with the same timeouts, retries and errors as
+        `complete`. The vectors are always asked for as floats (no `encoding_format`, so a server that knows only the
+        default works too); the gateway encodes them as base64 itself for a client that asks for that."""
+        body: dict[str, Any] = {"model": model, "input": inputs}
+        if dimensions is not None:
+            body["dimensions"] = dimensions
+        url = f"{self.base_url}/embeddings"
+
+        def attempt(remaining: float) -> httpx.Response:
+            resp = self.client.post(url, json=body, timeout=self._within(remaining))
+            if not resp.is_success:
+                raise UpstreamError.from_response(resp)
+            return resp
+
+        t0 = time.perf_counter()
+        try:
+            resp = retry_call(attempt, self.retry, sleep=self.sleep, clock=self.clock, rng=self.rng)
+        except httpx.HTTPError as e:
+            if isinstance(e, UpstreamError):
+                raise
+            raise as_upstream(e) from e  # never httpx's message, which carries the URL
+        latency = (time.perf_counter() - t0) * 1000
+        try:
+            data = resp.json()
+        except (ValueError, RecursionError) as e:
+            raise UpstreamError(502, "the upstream model's response is not JSON", code=BAD_RESPONSE) from e
+        return _embeddings(data, model, len(inputs), latency)
+
 
 def _at_most(value: float | None, limit: float) -> float:
     return limit if value is None else min(value, limit)
@@ -707,6 +761,56 @@ def _completions(data: Any, model: str, latency: float) -> list[Completion]:
         )
         for ch, out, thought in zip(choices, out_tokens, reasoning, strict=True)
     ]
+
+
+FLOAT32_MAX = 3.4028234663852886e38  # an embedding value beyond this cannot be sent as base64 float32
+MAX_EMBEDDING_VALUES = 65_536  # per vector; more is not an embedding any client can use
+
+
+def _vector(value: Any) -> list[float] | None:
+    """One embedding as floats: a JSON array of finite numbers, or OpenAI's base64 of little-endian float32 values;
+    None when it is neither, is empty, is longer than MAX_EMBEDDING_VALUES or holds a value float32 cannot carry."""
+    if isinstance(value, str):
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+        if not raw or len(raw) % 4:
+            return None
+        floats = list(struct.unpack(f"<{len(raw) // 4}f", raw))
+    elif isinstance(value, list):
+        floats = []
+        for v in value:
+            f = _number(v)
+            if f is None:
+                return None
+            floats.append(f)
+    else:
+        return None
+    if not floats or len(floats) > MAX_EMBEDDING_VALUES:
+        return None
+    if not all(math.isfinite(f) and abs(f) <= FLOAT32_MAX for f in floats):
+        return None
+    return floats
+
+
+def _embeddings(data: Any, model: str, count: int, latency: float) -> Embeddings:
+    """Parse an embeddings body: `data` must hold one vector per input, all of one length, each found by its `index`
+    when every item has a distinct one in range (else in the order sent). Anything else is a 502 `bad_upstream_response`,
+    so a client never gets fewer vectors than inputs, or vectors it cannot put in one index. `usage.prompt_tokens` counts
+    as 0 when it is missing or malformed (the gateway then estimates it)."""
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list) or len(items) != count or not all(isinstance(it, dict) for it in items):
+        raise UpstreamError(502, f"the upstream model did not return {count} embedding(s)", code=BAD_RESPONSE)
+    indexes = [it.get("index") for it in items]
+    if all(isinstance(i, int) and not isinstance(i, bool) for i in indexes) and sorted(indexes) == list(range(count)):
+        items = sorted(items, key=lambda it: it["index"])
+    vectors = [_vector(it.get("embedding")) for it in items]
+    if any(v is None for v in vectors) or len({len(v) for v in vectors if v is not None}) != 1:
+        raise UpstreamError(502, "the upstream model returned malformed embeddings", code=BAD_RESPONSE)
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    served = data.get("model") if isinstance(data.get("model"), str) and data.get("model") else model
+    return Embeddings([v for v in vectors if v is not None], served, _count(usage.get("prompt_tokens")), latency)
 
 
 def approx_tokens(text: str) -> int:

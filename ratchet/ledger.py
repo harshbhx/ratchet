@@ -27,7 +27,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, day INTEGER, task TEXT,
-    served_by TEXT,            -- 'student' | 'teacher'
+    served_by TEXT,            -- 'student' | 'teacher' | 'upstream' (an embeddings pass-through, route 'passthrough')
     student_version INTEGER,   -- version id that answered or tried first (NULL on cold start)
     confidence REAL,
     escalated INTEGER,
@@ -454,6 +454,10 @@ INDEXES = [
     # The routing snapshot's rebuild reads only the live, canary and shadow rows (ADR 0060). SQLite ends every index with
     # the rowid, so requests_shadow_version already serves `shadow_version=? AND id>?` ranges.
     "CREATE INDEX IF NOT EXISTS versions_state ON versions (state)",
+    # The tasks requests named and when, of every client and of one (recent_tasks and task_seen, for GET /v1/models;
+    # FR-1.50): a few index probes per distinct task name instead of a scan of every request.
+    "CREATE INDEX IF NOT EXISTS requests_task_ts ON requests (task, ts)",
+    "CREATE INDEX IF NOT EXISTS requests_client_task_ts ON requests (client, task, ts)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
@@ -579,8 +583,14 @@ FAILURE_COLUMNS = frozenset({"ts", "day", "request_id", "client", "task", "stage
 # `stats_by_task`'s `compare_source` by a task's source: where its compared fields come from (FR-14.2). An unregistered
 # name (`adhoc`) compares whole answers: None.
 COMPARE_SOURCES = {"builtin": "registry", "file": "registry", "api": "registry", "auto": "schema"}
+# Distinct task names `recent_tasks` finds one index probe at a time; past this, one aggregate over the index is cheaper.
+RECENT_TASK_PROBES = 2000
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
+# Rows other than the /v1/embeddings pass-through's (route `router.PASSTHROUGH_ROUTE`, FR-1.51): the headline ratios
+# (student share, escalation rate, cost per 1k, latency, savings) describe the distillation, which embeddings are not
+# part of. A row without a route (older than the column) is never a pass-through.
+NOT_PASSTHROUGH = "route IS NOT 'passthrough'"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
 # (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
@@ -746,8 +756,9 @@ def _live_calibration(live: Version | None, task: tasks.Task) -> dict[str, Any]:
         return out
     rec = calibration.entry(live.eval, task.name)
     default = calibration.number(live.eval.get("threshold"))
-    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know.
-    if rec is not None or default is not None or calibration.spec_changed(live.eval, task):
+    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know;
+    # a task with critical classes and no measured record serves nothing whatever the global threshold (FR-2.50).
+    if rec is not None or default is not None or calibration.spec_changed(live.eval, task) or task.routing_rules.critical:
         out["threshold"] = calibration.threshold(live.eval, task, calibration.SERVE_NOTHING if default is None else default)
     if rec is not None:
         out["precision"] = calibration.number(rec.get("precision"))
@@ -1235,7 +1246,7 @@ class Ledger:
         ).fetchone()
         return {"rows": [dict(r) for r in rows], "other_clients": int(other["other"]), "no_client": int(other["none"])}
 
-    @_locked
+    @_reads
     def cost_by_day(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
         """Per ledger day from `since` to `until` (inclusive; None = unbounded), the sums the cost report needs, in one
         aggregate query (ratchet/cost.py). Rows from before v0.5 have no split (`split_unknown`): their whole `cost_usd`
@@ -1269,11 +1280,11 @@ class Ledger:
             q += " AND day <= ?"
             args.append(until)
         rows = [dict(r) for r in self._rdb.execute(q + " GROUP BY day ORDER BY day", args)]
-        if not self._has_rollup():
+        if not self._has_rollup(self._rdb):
             return rows
         where = " AND ".join(["1=1"] + (["day >= ?"] if since is not None else []) + (["day <= ?"] if until is not None else []))
         by_day = {r["day"]: r for r in rows}
-        for day, f in self._rollup_by("day", f"WHERE {where}", args).items():  # folded request rows (FR-13.4)
+        for day, f in self._rollup_by("day", f"WHERE {where}", args, con=self._rdb).items():  # folded rows (FR-13.4)
             r = by_day.setdefault(day, {"day": day, **{col: zero for col, (_, zero) in COST_COLUMNS.items()}})
             for col, (rolled, zero) in COST_COLUMNS.items():
                 r[col] = _add(r[col], f[rolled]) or zero
@@ -1310,6 +1321,53 @@ class Ledger:
             }
             for r in rows
         ]
+
+    @_locked
+    def recent_tasks(self, days: float, client: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        """The tasks requests named in the last `days` days of wall-clock time, most recently used first, at most `limit`:
+        each as {task, first_ts, last_ts}, `first_ts` being its first request ever. With `client` (an API key name) only
+        that key's requests count, so one client's ad hoc task names are never listed to another. For GET /v1/models
+        (FR-1.50), which holds the ledger's lock meanwhile: so the cost is three index probes per distinct task name
+        (`_task_spans`), not a pass over every request, up to RECENT_TASK_PROBES names; past them, one aggregate over the
+        covering index."""
+        if isinstance(days, bool) or not isinstance(days, (int, float)) or not 0 < days < math.inf:
+            raise ValueError(f"days must be a positive number, not {days!r}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError(f"limit must be a whole number, 1 or more, not {limit!r}")
+        cutoff = time.time() - days * DAY_SECONDS
+        spans = self._task_spans(client, RECENT_TASK_PROBES)
+        if spans is None:
+            where, args = ("task IS NOT NULL", []) if client is None else ("client = ? AND task IS NOT NULL", [client])
+            spans = self.db.execute(f"SELECT task, MIN(ts), MAX(ts) FROM requests WHERE {where} GROUP BY task", args).fetchall()
+        recent = sorted((r for r in spans if r[2] is not None and r[2] >= cutoff), key=lambda r: (-r[2], r[0]))
+        return [{"task": t, "first_ts": float(first), "last_ts": float(last)} for t, first, last in recent[:limit]]
+
+    def _task_spans(self, client: str | None, most: int) -> list[sqlite3.Row] | None:
+        """(task, first ts, last ts) for every distinct task name requests (of `client`, when given) named, found by
+        walking the (task, ts) or (client, task, ts) index one name at a time; None when there are more than `most`."""
+        who = "" if client is None else "client = :client AND "
+        rows = self.db.execute(
+            f"""WITH RECURSIVE names(task) AS (
+                    SELECT (SELECT MIN(task) FROM requests WHERE {who}task IS NOT NULL)
+                    UNION ALL
+                    SELECT (SELECT MIN(task) FROM requests WHERE {who}task > names.task) FROM names
+                    WHERE names.task IS NOT NULL LIMIT :cap)
+                SELECT task, (SELECT MIN(ts) FROM requests WHERE {who}task = names.task),
+                       (SELECT MAX(ts) FROM requests WHERE {who}task = names.task)
+                FROM names WHERE task IS NOT NULL""",
+            {"client": client, "cap": most + 2},
+        ).fetchall()
+        return rows if len(rows) <= most else None
+
+    @_locked
+    def task_seen(self, task: str, client: str | None = None) -> dict[str, float] | None:
+        """When requests (with `client`, that key's) first and last named `task`, as {first_ts, last_ts}; None when none
+        did. Two index probes, for GET /v1/models/{id}."""
+        who = "" if client is None else "client = :client AND "
+        probe = f"FROM requests WHERE {who}task = :task"
+        q = f"SELECT (SELECT MIN(ts) {probe}), (SELECT MAX(ts) {probe})"
+        first, last = self.db.execute(q, {"client": client, "task": task}).fetchone()
+        return None if last is None else {"first_ts": float(first), "last_ts": float(last)}
 
     # ---------- compute time (ADR 0023) ----------
     def now(self) -> float:
@@ -2115,7 +2173,7 @@ class Ledger:
         for r in (con or self.db).execute(f"SELECT {key} k, {sums} FROM daily_rollup {where} GROUP BY {key}", list(args)):
             out[r["k"]] = {c: r[c] for c in ROLLUP_SUMS}
         per_route = f"SELECT {key} k, route, store_opt_out, SUM(requests) n FROM daily_rollup {where}"
-        for r in self.db.execute(per_route + f" GROUP BY {key}, route, store_opt_out", list(args)):
+        for r in (con or self.db).execute(per_route + f" GROUP BY {key}, route, store_opt_out", list(args)):
             entry = out[r["k"]]
             route = f"route:{r['route'] or UNRECORDED_ROUTE}"
             entry[route] = entry.get(route, 0) + int(r["n"] or 0)
@@ -3427,7 +3485,9 @@ class Ledger:
         """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
         `fallback_teacher`: the fallback teacher; ADR 0019). Days whose request rows retention folded (FR-13.4) add
-        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before.
+        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before. Embeddings
+        pass-through rows (`NOT_PASSTHROUGH`) are left out: they are not part of the distillation these figures
+        describe; their spend is in `stats_by_task` and the cost report (`cost_by_day`).
         `p50_student_ms` and `p95_ms` are nearest-rank percentiles of `wall_ms` (the whole cascade on the gateway's clock)
         over the day's student-served and all requests that recorded it and are still kept (None without any). A day's
         percentiles are computed again only when its count or highest id moved (ids are never reused) or a request was
@@ -3436,7 +3496,7 @@ class Ledger:
         rows = [
             dict(r)
             for r in self._rdb.execute(
-                """SELECT day, COUNT(*) requests,
+                f"""SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
@@ -3449,11 +3509,12 @@ class Ledger:
                       COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n,
                       MAX(id) top, COUNT(wall_ms) timed,
                       COALESCE(SUM(served_by='student' AND wall_ms IS NOT NULL), 0) timed_student
-               FROM requests GROUP BY day ORDER BY day"""
+               FROM requests WHERE {NOT_PASSTHROUGH} GROUP BY day ORDER BY day"""
             )
         ]
         if self._has_rollup(self._rdb):
-            rows = sorted(_merge(rows, "day", self._rollup_by("day", con=self._rdb)).values(), key=lambda r: r["day"])
+            folded = self._rollup_by("day", f"WHERE {NOT_PASSTHROUGH}", con=self._rdb)
+            rows = sorted(_merge(rows, "day", folded).values(), key=lambda r: r["day"])
         out = []
         for r in rows:
             n = r["requests"] or 1
@@ -3621,19 +3682,21 @@ class Ledger:
         """Per API key: requests, cost and savings (the basis for per-client receipts); `end_users`, the distinct end
         users its requests named (FR-13.2); and `stored_share`, the share of its requests that stored or bumped a
         training example (None when no request recorded it, as before v0.5). Folded request rows (FR-13.4) count in
-        every figure but `end_users`: a fold keeps no end user, so that counts the rows still kept."""
+        every figure but `end_users`: a fold keeps no end user, so that counts the rows still kept. Embeddings
+        pass-through rows are left out, as in `stats_by_day`."""
         rows = [
             dict(r)
             for r in self._rdb.execute(
-                """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
+                f"""SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
                       COUNT(DISTINCT end_user) end_users, AVG(stored) stored_share,
                       SUM(stored) stored_sum, COUNT(stored) stored_n
-               FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
+               FROM requests WHERE client IS NOT NULL AND {NOT_PASSTHROUGH}
+               GROUP BY client ORDER BY COUNT(*) DESC"""
             )
         ]
         if self._has_rollup(self._rdb):
-            folded = self._rollup_by("client", "WHERE client IS NOT NULL", con=self._rdb)
+            folded = self._rollup_by("client", f"WHERE client IS NOT NULL AND {NOT_PASSTHROUGH}", con=self._rdb)
             rows = sorted(_merge(rows, "client", folded).values(), key=lambda r: -r["requests"])
         out = []
         for r in rows:
@@ -3654,13 +3717,16 @@ class Ledger:
 
     @_reads
     def totals(self) -> dict[str, float]:
-        """Requests, cost and baseline over the whole ledger, folded request rows included (FR-13.4). `failed_cost_usd` is
-        what failed requests spent without leaving a `requests` row (the student's samples before a teacher failure,
-        NFR-3); it counts against the savings: `saved_usd` = baseline - cost - failed cost, `savings_pct` = 1 - (cost +
-        failed cost) / baseline. A ledger without failures or folded rows gives exactly v0.4's numbers."""
-        r = dict(self._rdb.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone())
+        """Requests, cost and baseline over the whole ledger, folded request rows included (FR-13.4) and embeddings
+        pass-through rows left out, as in `stats_by_day`. `failed_cost_usd` is what failed requests spent without leaving
+        a `requests` row (the student's samples before a teacher failure, NFR-3); it counts against the savings:
+        `saved_usd` = baseline - cost - failed cost, `savings_pct` = 1 - (cost + failed cost) / baseline. A ledger without
+        failures, folded rows or embeddings gives exactly v0.4's numbers."""
+        q = f"SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests WHERE {NOT_PASSTHROUGH}"
+        r = dict(self._rdb.execute(q).fetchone())
         if self._has_rollup(self._rdb):
-            f = self._rdb.execute("SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup").fetchone()
+            q = f"SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup WHERE {NOT_PASSTHROUGH}"
+            f = self._rdb.execute(q).fetchone()
             r = {"n": r["n"] + int(f["n"] or 0), "c": _add(r["c"], f["c"]), "b": _add(r["b"], f["b"])}
         c, b = r["c"] or 0.0, r["b"] or 0.0
         failed = float(self._rdb.execute("SELECT COALESCE(SUM(cost_usd), 0.0) FROM failures").fetchone()[0])

@@ -390,7 +390,16 @@ def test_specs_round_trip_and_every_option_is_checked():
         "pinned": False,
         "store": False,
         "match": {"system_prefix": "You extract", "schema_name": "everything", "tools": ["lookup"]},
-        "routing": {"rules": [{"if": {"field": "n", "gt": 100}, "then": "teacher"}]},
+        "routing": {
+            "student_max_input_tokens": 1800,
+            "student_content_types": ["text"],
+            "store_ineligible": True,
+            "escalate_when": [
+                {"field": "b", "equals": True, "action": "teacher"},
+                {"field": "n", "in": [100, 200.5], "min_confidence": 0.9},
+            ],
+            "critical": [{"field": "l", "equals": "x", "max_miss_rate": 0.05}],  # 'x' is an alias of 'a'
+        },
         "policy": {"samples": 5, "audit_rate": 0.2},
         "tools": "teacher",
         "clients": ["acme"],

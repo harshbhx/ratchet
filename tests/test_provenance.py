@@ -824,6 +824,7 @@ def test_proof_endpoints_need_an_admin_key_in_live_mode(gw, tmp_path, monkeypatc
             bom_signing_key="",
             tavily_api_key="",
             mock_warmup_days=0,
+            allow_unauthenticated=True,  # the runtime without API keys below starts (ADR 0061)
             **{"admin_keys": "", "api_keys": "", **overrides},
         )
         rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("ok").transport})

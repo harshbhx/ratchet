@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .. import bom, calibration, certificate, privacy, tasks
+from ..confidence import SERVE_NOTHING
 from ..config import GpuRate, Retention
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
@@ -51,11 +52,23 @@ def stale_tasks(version: Version, hashes: dict[str, str]) -> list[str]:
     return sorted(t for t, h in hashes.items() if calibration.stale(version.eval, t, h))
 
 
-def rescore(ledger: Ledger, version: Version, recheck: dict[str, Any], hashes: dict[str, str]) -> None:
+def rescore(
+    ledger: Ledger, version: Version, recheck: dict[str, Any], hashes: dict[str, str], gate: ReleaseGate | None = None
+) -> None:
     """Store a re-score of `version` (the champion re-check, or a skip night's re-score after a spec change). The tasks
-    the release gate disabled on it stay disabled (`calibration.keep_disabled`): the re-score runs no gate."""
-    new = {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes}
-    ledger.update_eval(version.id, calibration.keep_disabled(version.eval, new))
+    the release gate disabled on it stay disabled (`calibration.keep_disabled`): the re-score runs no gate but one. With
+    `gate`, a task whose critical classes the re-score does not show safe (`ReleaseGate.critical_holds`, FR-2.50) is
+    disabled in the same write, with a `task_disabled` event, so the version never serves it on unchecked numbers."""
+    new = calibration.keep_disabled(version.eval, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
+    held = gate.critical_holds(new) if gate is not None else []
+    if held:
+        records = calibration.entries(new)
+        for name, why in held:
+            records[name] = {**records[name], "threshold": SERVE_NOTHING, "disabled": why}
+        new = {**new, "tasks": records}
+    ledger.update_eval(version.id, new)
+    for name, why in held:
+        ledger.event("task_disabled", f"v{version.id} {name}: {why}; the teacher answers it (re-scored)")
 
 
 def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: int) -> dict[str, Any] | None:
@@ -73,11 +86,17 @@ def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: in
 
 
 def _rescore_changed_specs(
-    ledger: Ledger, evaluator: Evaluator, live: Version | None, golden_rows: list[dict[str, Any]], hashes: dict[str, str]
+    ledger: Ledger,
+    evaluator: Evaluator,
+    live: Version | None,
+    golden_rows: list[dict[str, Any]],
+    hashes: dict[str, str],
+    gate: ReleaseGate | None = None,
 ) -> None:
     """A task whose spec changed is on the teacher until the live version is scored under the new spec; on a night that
-    does not train, score it now (the same re-score a training night starts with). It reads the stored golden rows and
-    writes only the version's eval, so it also runs under zero retention. A failure leaves the tasks on the teacher."""
+    does not train, score it now (the same re-score a training night starts with, `gate`'s critical check included). It
+    reads the stored golden rows and writes only the version's eval, so it also runs under zero retention. A failure
+    leaves the tasks on the teacher."""
     changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
     if live is None or not changed:
         return
@@ -86,7 +105,7 @@ def _rescore_changed_specs(
     except Exception as e:  # noqa: BLE001 - a skip night stays a skip night; the tasks stay on the teacher
         ledger.event("rescore_failed", f"v{live.id}: {describe_failure(e)}; spec changed for {', '.join(changed)}")
     else:
-        rescore(ledger, live, recheck, hashes)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
+        rescore(ledger, live, recheck, hashes, gate)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
         ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
 
 
@@ -138,7 +157,7 @@ def run_night(
         ledger.event("skip", "storage disabled (RATCHET_STORE_EXAMPLES=0): no new examples are stored; no training tonight")
         if not ledger.versions(["shadow", "canary"]):
             golden_rows = dataset.rows(ledger, "golden", task)
-            _rescore_changed_specs(ledger, evaluator, ledger.live(), golden_rows, spec_hashes(golden_rows))
+            _rescore_changed_specs(ledger, evaluator, ledger.live(), golden_rows, spec_hashes(golden_rows), gate)
         return NightReport(False, None, False, "storage disabled")
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
@@ -163,7 +182,7 @@ def run_night(
     if new < min_new_examples:
         ledger.event("skip", f"only {new} new examples (< {min_new_examples}){left_out}; no training tonight")
         # Without new data a changed spec would wait for a training night: re-score the live version now.
-        _rescore_changed_specs(ledger, evaluator, live, golden_rows, hashes)
+        _rescore_changed_specs(ledger, evaluator, live, golden_rows, hashes, gate)
         return NightReport(False, None, False, "not enough new data")
     if not golden_rows:
         ledger.event("skip", "no golden examples yet; no training tonight")
@@ -172,7 +191,7 @@ def run_night(
     # Champion vs challenger on the SAME golden set (and the same specs): re-score the live version first.
     if live is not None:
         recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
-        rescore(ledger, live, recheck, hashes)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
+        rescore(ledger, live, recheck, hashes, gate)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
 
     # The set commitments of tonight's rows, built before the paid training job so nothing can fail after it.
     commitments = {"training": dataset.commitment(train_rows), "golden": dataset.commitment(golden_rows)}

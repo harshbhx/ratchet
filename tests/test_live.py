@@ -13,6 +13,7 @@ none passed, the code talks to the real services. No test here opens a socket or
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -36,6 +37,7 @@ from fakes import (
     _examples,
     _version,
 )
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from ratchet import bom, licenses, live
@@ -104,6 +106,7 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
         "allow_unauthenticated": True,
         "public_dashboard": True,
+        "stats_ttl_s": 0.0,  # every /ratchet/stats read computed afresh (live mode caches it for 2 s, ADR 0060)
     }
     return Settings(**{**base, **overrides})
 
@@ -1126,10 +1129,16 @@ def test_lease_is_taken_in_the_lifespan_only(gw_env, tmp_path, monkeypatch):
     assert rt.ledger.lease_holder("gateway") is None
 
 
-@pytest.mark.req("FR-8.5", "INV-9")
+@pytest.mark.req("FR-8.5", "INV-9", "FR-1.51")
 def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch, capsys):
     want = list(day1_check.WANT)
     assert len(want) >= 4
+    embed = day1_check.WANT_EMBEDDINGS[0]
+    monkeypatch.setattr(day1_check, "EMBEDDINGS", embed)
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "")
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "")
+    vectors = {"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}], "usage": {"prompt_tokens": 6}}
+    embed_reply: list[httpx.Response] = [httpx.Response(200, json=vectors)]
     good = {
         "choices": [
             {
@@ -1152,6 +1161,8 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
                 ids = present + ["nvidia/Some-Other-Nemotron", "meta/llama-3.3-70b"]
                 return httpx.Response(200, json={"data": [{"id": m} for m in ids]})
             body = json.loads(request.content)
+            if request.url.path == "/v1/embeddings":
+                return embed_reply[0]
             if "seed" in body and gen is not None:  # the generation-parameter check
                 return gen
             return special.get(body["model"]) or httpx.Response(200, json=good)
@@ -1170,7 +1181,7 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     client, seen = serve(want[:-1], {want[1]: no_logprobs, want[2]: httpx.Response(500, text="upstream error")})
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
-    assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out
+    assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out and f"[MISSING] model {embed}" in out
     assert "'nvidia/Some-Other-Nemotron'" in out and "llama" not in out  # lists the NVIDIA models it does have
     assert f"[ok] {want[0]}: json ok, logprobs=yes, finish_reason=stop" in out  # INV-16 stores only these
     assert f"[ok] {want[1]}: json NOT parseable, logprobs=NO" in out  # reported; confidence falls back to agreement
@@ -1190,12 +1201,44 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     assert schema == {**probe, "response_format": day1_check.SCHEMA_FORMAT}
     assert f"[ok] {want[0]} accepts response_format json_schema (strict): the answer matches the schema" in out
 
-    client, _ = serve(want, {})
-    assert day1_check.main(client) == 0 and capsys.readouterr().out.rstrip().endswith("All good.")
+    client, seen = serve(want + [embed], {})
+    assert day1_check.main(client) == 0
+    out = capsys.readouterr().out
+    assert out.rstrip().endswith("All good.") and f"[ok] embeddings {embed}: 2 dimensions" in out
+    (sent,) = [json.loads(r.content) for r in seen if r.url.path == "/v1/embeddings"]
+    assert sent == {"model": embed, "input": ["Ratchet day-1 check", "refund"]}
+
+    # The embeddings model answering with an error, or with vectors of different lengths, fails the check; `off` skips it.
+    for reply in (
+        httpx.Response(500, text="down"),
+        httpx.Response(200, json={"data": [{"embedding": [1.0]}, {"embedding": []}]}),
+    ):
+        embed_reply[0] = reply
+        client, _ = serve(want + [embed], {})
+        assert day1_check.main(client) == 1 and f"[FAIL] embeddings {embed}" in capsys.readouterr().out
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "off")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0 and "[skip] embeddings" in capsys.readouterr().out
+    assert not any(r.url.path == "/v1/embeddings" for r in seen)
+    # Another provider's base: not looked up in Token Factory's list, and never sent the Token Factory key.
+    embed_reply[0] = httpx.Response(200, json=vectors)
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "https://tei.test/v1")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0
+    (call,) = [r for r in seen if r.url.path == "/v1/embeddings"]
+    assert call.url.host == "tei.test" and "authorization" not in call.headers
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "tei-key")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0
+    (call,) = [r for r in seen if r.url.path == "/v1/embeddings"]
+    assert call.headers["authorization"] == "Bearer tei-key"
+    capsys.readouterr()
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "")
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "")
 
     # A teacher that refuses the cap (above the model's output limit) fails the check: every escalation would get a 4xx.
     over = httpx.Response(400, json={"error": {"message": "max_tokens must be at most 4096"}})
-    client, _ = serve(want, {}, gen=over)
+    client, _ = serve(want + [embed], {}, gen=over)
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
     assert f"[FAIL] {want[0]} with max_tokens=8192, stop, seed: HTTP 400" in out and "RATCHET_TEACHER_MAX_TOKENS" in out
@@ -1868,6 +1911,10 @@ class LiveRunWorld:
             "RATCHET_TRAIN_CMD": "true {version}",
             "RATCHET_API_KEYS": f"liverun:{LR_KEY},other:{OTHER_KEY}",
             "RATCHET_LIVERUN_KEY": LR_KEY,
+            # Simulated time: the gate ticks after every request and audits run inline, as the run's pacing assumes
+            # (live mode's defaults throttle the tick to 5 s and run audits after the response; ADR 0060, ADR 0072).
+            "RATCHET_TICK_INTERVAL_S": "0",
+            "RATCHET_SIDECAR_WORKERS": "0",
             **(env or {}),
         }
         self.gateway_overrides = dict(gateway or {})
@@ -1899,10 +1946,14 @@ class LiveRunWorld:
         self.gw = importlib.import_module("ratchet.gateway")
         for name, value in self.env.items():
             self.mp.setenv(name, value)
-        if self.rt is None:
-            transports = {"teacher": self.tf.transport, "student": self.vllm.transport}
-            self.rt = self.gw.Runtime(Settings(**self.gateway_overrides), transports=transports)
-            self.client = _GatewayClient(self.gw.app, self.inject_before, self.canned)
+        try:
+            if self.rt is None:
+                transports = {"teacher": self.tf.transport, "student": self.vllm.transport}
+                self.rt = self.gw.Runtime(Settings(**self.gateway_overrides), transports=transports)
+                self.client = _GatewayClient(self.gw.app, self.inject_before, self.canned)
+        except BaseException:  # `__exit__` never runs then: the environment must not leak into later tests
+            self.mp.undo()
+            raise
         self.mp.setattr(self.gw, "rt", self.rt)
         return self
 
@@ -2020,7 +2071,7 @@ def test_liverun_refuses_mock_gateway_and_wrong_ledger(tmp_path, gw_env):
     assert len(world.client.calls) == 2  # /healthz and the probe
 
     # A gateway without RATCHET_API_KEYS: the row carries no key name.
-    world = LiveRunWorld(tmp_path / "open", gateway={"api_keys": ""})
+    world = LiveRunWorld(tmp_path / "open", gateway={"api_keys": "", "allow_unauthenticated": True})
     with world:
         code, out = world.main("smoke", "--base-url", LR_BASE, "--out", str(tmp_path / "open" / "run"))
     assert code == 2 and "add liverun:<key> to RATCHET_API_KEYS" in out
@@ -2096,8 +2147,9 @@ def test_liverun_end_to_end_offline(liverun_world):
     assert final["client"]["student_share"] > 0.8 and final["ledger"]["audits"]["n"] > 20
     assert res["values"]["live.final.audited_precision_pct"] == 100.0 and res["values"]["live.final.audits"] > 20
     assert res["values"]["live.final.student_p50_client_ms"] == pytest.approx(5.0)
-    assert "live.final.student_p50_wall_ms" not in res["values"]  # wall_ms comes with lane D
-    assert "OPS-PERF-HOTPATH" in res["sources"]["live.final.student_p50_wall_ms"]
+    # wall_ms is recorded (the hot path, ADR 0060): the server-side median of the last round's student answers.
+    assert res["values"]["live.final.student_p50_wall_ms"] >= 0
+    assert "median wall_ms" in res["sources"]["live.final.student_p50_wall_ms"]
     assert res["cost"]["endpoint_hours"] > 0 and res["values"]["live.run.endpoint_hours"] == res["cost"]["endpoint_hours"]
     assert res["cost"]["total_usd"] == pytest.approx(
         res["cost"]["teacher_usd"]
@@ -2810,3 +2862,20 @@ def test_liverun_repeat_run_and_report(tmp_path, monkeypatch):
     (tmp_path / "evidence" / "live" / "results.json").write_text(json.dumps(edited), encoding="utf-8")
     out = __import__("io").StringIO()
     assert liverun.main(["verify", "evidence/live"], out=out) == 1 and "repeat table" in out.getvalue()
+
+
+@pytest.mark.req("NFR-5", "FR-1.50")
+def test_caddy_guard_covers_every_paid_route(gw):
+    """RATCHET_API_GUARD=guarded is offered as the demo VM's alternative to API keys, so it must cover every route that
+    runs the paid cascade: each route under the gateway's OpenAI-compatible prefixes (/v1/ and the Azure-style
+    /openai/) and the mock demo controls match a path the Caddyfile's guarded block protects."""
+    text = (ROOT / "deploy" / "vm" / "Caddyfile").read_text(encoding="utf-8")
+    block = re.search(r"\(guarded\) \{\s*@protected \{\s*path ([^\n]+)\n", text)
+    assert block is not None, "the guarded block's path matcher moved; update this test"
+    guarded = block.group(1).split()
+    routes = [r.path for r in gw.app.routes if isinstance(r, APIRoute)]
+    paid = [p for p in routes if p.startswith(gw.API_PREFIXES) or p.startswith("/ratchet/demo/")]
+    assert {"/v1/chat/completions", "/openai/deployments/{deployment}/chat/completions"} <= set(paid)
+    for path in paid:
+        assert any(fnmatch.fnmatchcase(path, pattern) for pattern in guarded), f"{path} is not behind RATCHET_API_GUARD"
+    assert {f"{prefix}*" for prefix in gw.API_PREFIXES} <= set(guarded)  # a later route under a prefix is covered too

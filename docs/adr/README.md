@@ -53,5 +53,8 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
 | [0042](0042-auto-tasks-from-response-format-schemas.md) | Structured outputs: a response_format is a contract, and a json_schema names an auto task | Accepted | 2026-10-21 |
 | [0043](0043-tool-calls-teacher-only-by-default.md) | Tool calls: teacher-only by default, opt-in distillation later | Accepted | 2026-10-21 |
+| [0048](0048-model-field-routing.md) | The model field names a task, never an upstream model; `/v1/models` lists the tasks; an Azure-style route | Accepted | 2026-10-20 |
+| [0049](0049-risk-aware-routing.md) | Risk-aware routing: eligibility, escalation rules on the student's answer, a critical-class miss-rate gate, and a per-task audit rate | Accepted | 2026-10-21 |
+| [0050](0050-adjacent-openai-endpoints.md) | The other OpenAI endpoints: an embeddings pass-through, completions and stateless responses on the chat path, typed 404s | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

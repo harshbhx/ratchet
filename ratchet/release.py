@@ -35,6 +35,12 @@ live version on that task, is disabled on the candidate (`task_mode` 'disable': 
 it, the version ships for its other tasks) or rejects the candidate ('reject'). The live and canary
 versions get one `alert` per task whose audited precision is strongly below the floor. Rollback
 stays per version.
+
+A task with critical classes (FR-2.50, ADR 0049) must also show, on its held-out rows, that the
+student misses each class at most `max_miss_rate` of the time: the miss rate's 95% Wilson upper
+bound, on at least `min_task_test_n` rows of the class, is at or below it. Otherwise the task fails
+like any other (`task_mode`). The burden of proof is on the candidate, as for the per-task gate;
+a version re-scored by a night is held to the same check (`critical_holds`).
 """
 
 from __future__ import annotations
@@ -474,8 +480,14 @@ class ReleaseGate:
         out: list[tuple[str, str]] = []
         for name, rec in sorted(calibration.entries(v.eval).items()):
             task = tasks.get(name)
+            if task.pinned or not calibration.serves(rec):
+                continue
+            critical = self.critical_failure(task, rec)  # FR-2.50: whatever the task's other rows show
+            if critical is not None:
+                out.append((name, critical))
+                continue
             test_n, prec = calibration.number(rec.get("test_n")), calibration.number(rec.get("precision"))
-            if task.pinned or not calibration.serves(rec) or test_n is None or prec is None or test_n < p.min_task_test_n:
+            if test_n is None or prec is None or test_n < p.min_task_test_n:
                 continue
             served = calibration.served_rows(rec)
             if served == 0:
@@ -494,13 +506,74 @@ class ReleaseGate:
                 out.append((name, f"regresses vs live v{live.id} ({evidence}, vs {lp:.1%})"))
         return out
 
+    def critical_failure(self, task: tasks.Task, rec: Mapping[str, Any]) -> str | None:
+        """Why the version's record for `task` does not show its critical classes safe (FR-2.50), or None (also for a
+        task without critical classes). Each class needs at least `min_task_test_n` held-out rows whose teacher reference
+        is in it, and the 95% Wilson upper bound of the share the student would miss (`routing.Routing.misses`, recomputed
+        here from the two counts) at or below its `max_miss_rate`. Fewer rows, or a record that does not measure the
+        task's current classes (another spec, or written before them), fail: the student keeps a critical task only on
+        evidence. With no misses, n rows show a miss rate of at most 3.84 / (n + 3.84): 10 rows 28%, 35 rows 10%, 73
+        rows 5%, 381 rows 1%. The limit is the spec's `max_miss_rate`, not the one the record copied."""
+        classes = task.routing_rules.critical
+        if not classes:
+            return None
+
+        def count(value: object) -> bool:  # a whole number of rows: an int (not a bool), 0 or more
+            return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+        got = rec.get("critical")
+        if rec.get("spec_hash") != task.spec_hash or not isinstance(got, list) or len(got) != len(classes):
+            return "critical classes not measured under the current spec"
+        need = self.policy.min_task_test_n
+        for c, r in zip(classes, got, strict=True):
+            label = c.condition.label()
+            n = r.get("n") if isinstance(r, Mapping) else None
+            missed = r.get("misses") if isinstance(r, Mapping) else None
+            if not count(n) or not count(missed) or missed > n or r.get("field") != c.condition.field.path:
+                return f"critical {label}: not measured"
+            if n < need:
+                return (
+                    f"critical {label}: {n} held-out rows in the class, fewer than {need}, so its miss rate is not "
+                    f"shown to be at most {c.max_miss_rate:.1%}"
+                )
+            hi = wilson(missed, n)[1]
+            if hi > c.max_miss_rate:
+                return (
+                    f"critical {label}: missed {missed} of {n} held-out rows ({missed / n:.1%}, "
+                    f"upper bound {hi:.1%} > {c.max_miss_rate:.1%})"
+                )
+        return None
+
+    def critical_holds(self, ev: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+        """The tasks of a re-scored eval (`orchestrate.rescore`: the champion re-check, or a skip night's re-score after a
+        spec change) whose record fails `critical_failure`, with why: the re-score disables them in the same write. A
+        re-score runs no other gate, but the classes a task's spec declares hold for every version that serves it, so a
+        class added to a live task, or a re-score that finds more misses, takes the task off that version. Records that
+        serve nothing already, and pinned tasks, are left alone. Disabling only ever costs coverage. Pure: no I/O."""
+        out = []
+        for name, rec in sorted(calibration.entries(ev).items()):
+            task = tasks.get(name)
+            if task.pinned or not task.routing_rules.critical or not calibration.serves(rec):
+                continue
+            why = self.critical_failure(task, rec)
+            if why is not None:
+                out.append((name, why))
+        return out
+
     @staticmethod
     def _coverage_without(v: Version, disabled: set[str]) -> float:
         """The share of `v`'s held-out rows it would still answer with the tasks in `disabled` on the teacher, each other
-        task at its own threshold: what the coverage gate is held to once tasks are disabled."""
+        task at its own threshold: what the coverage gate is held to once tasks are disabled. With per-task calibration
+        off only the tasks with critical classes have records (FR-2.50), and the eval's `other_tasks` holds the other
+        tasks' held-out rows and how many the global threshold serves, which count here too: without them, disabling
+        one critical task would read as a version that serves nothing."""
         records = calibration.entries(v.eval)
+        rest = v.eval.get("other_tasks")
+        rest = rest if isinstance(rest, Mapping) else {}
         total = sum(calibration.number(r.get("test_n")) or 0 for r in records.values())
+        total += calibration.number(rest.get("test_n")) or 0
         served = sum(calibration.served_rows(r) for name, r in records.items() if name not in disabled)
+        served += calibration.number(rest.get("served")) or 0
         return served / total if total else 0.0
 
     # ---- steps 2-4: call periodically (e.g. every few minutes in production) ----

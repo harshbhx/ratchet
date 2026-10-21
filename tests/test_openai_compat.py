@@ -640,8 +640,14 @@ def test_multimodal_parts_go_to_the_teacher_only(gw_env):
     assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
     assert student.calls == [] and teacher.calls[0].messages == [image]  # the parts reach the teacher as sent
     assert led.examples() == []  # no image bytes in the ledger
-    (row,) = [dict(x) for x in led.db.execute("SELECT task, served_by, escalated, student_version FROM requests")]
-    assert row == {"task": "ticket-triage", "served_by": "teacher", "escalated": 0, "student_version": None}
+    (row,) = [dict(x) for x in led.db.execute("SELECT task, served_by, escalated, student_version, route FROM requests")]
+    assert row == {
+        "task": "ticket-triage",
+        "served_by": "teacher",
+        "escalated": 0,
+        "student_version": None,
+        "route": "ineligible:content_type",  # the student reads text only (FR-2.50)
+    }
     # The same gateway sends a text request through the cascade as usual: the student answers.
     assert c.post(CHAT, json={"messages": HI}).json()["ratchet"]["served_by"] == "student" and len(student.calls) == 1
     # Audio is still refused. The mock teacher answers the image request from its text part, and still nothing is stored.

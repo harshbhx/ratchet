@@ -50,6 +50,17 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/ratchet/kpis"): DASHBOARD,
     ("GET", "/metrics"): METRICS,
     ("GET", "/ratchet/cost"): DASHBOARD,
+    # The ledger replay reads like /ratchet/stats (FR-16.5); savings receipts check their callers themselves
+    # (`gateway._receipt_reader`: an API key reads its own, an admin key all; FR-15.5), as the API does.
+    ("GET", "/ratchet/replay"): DASHBOARD,
+    ("GET", "/ratchet/replay/frontier"): DASHBOARD,
+    ("GET", "/ratchet/receipts"): API,
+    ("GET", "/ratchet/receipts/{period}"): API,
+    ("GET", "/ratchet/receipts/{period}/proof/{request_id}"): API,
+    ("GET", "/ratchet/receipts/{period}/leaves"): API,
+    # Membership proofs are an oracle for guessable texts (FR-16.4, ADR 0027): an admin's, checked by `gateway._admin`.
+    ("POST", "/ratchet/versions/{vid}/proof"): ADMIN,
+    ("GET", "/ratchet/versions/{vid}/heldout"): ADMIN,
     ("POST", "/ratchet/redact"): DASHBOARD,
     ("GET", "/ratchet/tasks"): DASHBOARD,
     ("GET", "/ratchet/tasks/{name}"): DASHBOARD,
@@ -71,6 +82,7 @@ PREFIXES: tuple[tuple[str, str], ...] = (
     ("/ratchet/demo/", MOCK),
     ("/scout/", PUBLIC),
     ("/v1/", API),
+    ("/openai/", API),  # the Azure-style chat route (ADR 0048): an API client's, as /v1/
 )
 
 
