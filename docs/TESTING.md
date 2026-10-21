@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 819 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_licensing, test_feedback), ~80 s
+pytest -q                     # 823 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_licensing, test_feedback), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -33,8 +33,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 52 (34 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_licensing.py` | 10 |
-| `tests/test_feedback.py` | 25 |
-| **Total** | **819** |
+| `tests/test_feedback.py` | 29 |
+| **Total** | **823** |
 
 There are three layers:
 
@@ -669,21 +669,25 @@ Ground truth from people: request ids, verdicts and corrections, human labels as
 | `test_teacher_model_human_refused_at_startup` | FR-3.54, INV-1: `human` in any case as the teacher or fallback teacher stops `Ratchet`; never in the registry; a `RATCHET_TEACHER_LICENSES` entry named `Human` is refused; `lookup_source` |
 | `test_feedback_body_is_checked` | FR-13.30: eleven bad bodies, each a 400 with its `param` and `code` (missing fields, a bad verdict or id, an unknown key, a non-string or invalid correction, messages without a correction or a correction without messages, an image part); nothing recorded |
 | `test_correction_storage_rules_still_apply` | FR-13.30, FR-13.1, INV-10: the request's own opt-out, the key's `store=0`, a no-train end user registered after the request (the identifiers required and checked), a pinned task, `RATCHET_FEEDBACK_CORRECTIONS=0` and zero retention each keep the correction out with the reason, the verdict kept |
+| `test_correction_needs_every_end_user_identifier` | FR-13.30, FR-13.2: a request that sent `user` and `safety_identifier` logs both keyed hashes; a correction with one of them is a 400 (`end_user_required`), a wrong second one `end_user_mismatch`; with both, a no-train registration made with `user` (the client's, or an admin's for every client) keeps it out; one identifier on the request needs one; the second hash is never exported and an erasure by either identifier clears both |
 | `test_correction_conflicts_and_fixes` | FR-13.30: the same request's correction again replaces its own label (`seen` unchanged); other messages and a `correct` verdict after a stored correction are 409s |
 | `test_label_precedence_human_teacher_import` | FR-3.54, FR-13.30, FR-13.31: teacher < correction < import; another client's correction never replaces one; a later import replaces an import; a teacher import never replaces a label; a retention-purged human label comes back as the teacher's; an erased example refuses a correction |
-| `test_store_label_is_atomic_across_processes` | FR-3.54, FR-13.31: a second connection on the same file cannot write between `store_label`'s read and write (`Ledger.atomic`), so the import's label stands and the teacher's answer only bumps `seen`; a refused golden-only row leaves no transaction open; an error rolls back |
-| `test_human_precision_alerts_and_never_moves_a_release` | FR-13.30: one `human_alert` once `min_audits` verdicts put the Wilson upper bound below the floor, never again (meta row); the version stays live and the gate writes nothing; teacher-served answers count toward task agreement only |
+| `test_store_label_is_atomic_across_processes` | FR-3.54, FR-13.31: a second connection on the same file cannot write between `store_label`'s read and write (`Ledger.atomic`), so the import's label stands and the teacher's answer only bumps `seen` (from 0: the import was no occurrence); a refused golden-only row leaves no transaction open; an error rolls back |
+| `test_human_precision_alerts_and_never_moves_a_release` | FR-13.30: one `human_alert` once `min_audits` verdicts give anytime-valid evidence that precision is below the floor, never again (meta row); the version stays live and the gate writes nothing; teacher-served answers count toward task agreement only |
+| `test_human_alert_is_anytime_valid` | FR-13.30: the alert fires exactly when the mixture e-value against 'precision >= live_floor' reaches 1 / `ALERT_ALPHA`, checked after every verdict; 14 correct of 20 (Wilson upper bound under 0.92) does not alert |
 | `test_feedback_outlives_folded_request_rows` | FR-13.30, FR-13.4: after request retention folds the row, the version's human precision and the task's agreement keep the verdict, and a new verdict on that request is a 404 |
 | `test_concurrent_verdicts_keep_one_row_and_one_label` | FR-13.30: eight identical corrections at once: one feedback row, one example, `seen` 1 |
-| `test_old_ledger_file_gains_feedback_schema` | an old file gains `request_id`, `verified`, `golden_only`, the `feedback` table and both indexes |
-| `test_import_openai_finetune_jsonl` | FR-13.31, FR-3.54, INV-12: OpenAI rows, a multi-turn row with weights and content parts (earlier turns kept, address redacted), in-file duplicates and conflicts, six kinds of invalid rows with line numbers, tools hashing like a live request; the `import` event (counts, attestation, SHA-256, no row text); importing again counts nothing twice |
+| `test_old_ledger_file_gains_feedback_schema` | an old file gains `request_id`, `end_user_secondary`, `verified`, `golden_only`, the `feedback` table and its indexes |
+| `test_import_openai_finetune_jsonl` | FR-13.31, FR-3.54, INV-12: OpenAI rows, a multi-turn row with weights and content parts (earlier turns kept, address redacted), in-file duplicates and conflicts, six kinds of invalid rows with line numbers, tools hashing like a live request; imported rows start at `seen` 0; the `import` event (counts, attestation, SHA-256, no row text); importing again counts nothing twice |
 | `test_import_refuses_closed_model_source` | FR-13.31, INV-1: twelve closed-family ids and a router alias refused with the clause quoted, also by the CLI before reading the file; unknown teachers, `teacher:human` and malformed sources; an open teacher's rows keep its license, unverified |
 | `test_import_requires_attest_for_human` | FR-13.31: no, empty, multi-line or overlong attestation refused |
 | `test_import_refuses_pinned_task` | FR-13.31, INV-10, FR-13.1: pinned, no-store (spec and setting), zero retention and unregistered tasks refused before anything is stored; rows of a task pinned later leave Night School; `store_human_example` refuses a pinned task |
 | `test_golden_only_rows_never_trained` | FR-4.50, FR-13.31, INV-3, INV-6: golden-only rows whose hash says train stay golden, past FREQUENT and with every variant of the prompt; prompts already trained on are refused (`trained`); a real `run_night` trains on none and its BOM counts `golden.human_labels` |
+| `test_labels_that_are_no_occurrence_never_reach_frequent` | FR-13.31, FR-13.30, INV-3: an imported variant of a twice-seen golden prompt (and a non-bumping correction) starts at `seen` 0 and leaves the prompt golden; the third real request makes it frequent; an imported prompt needs FREQUENT real requests; the export reports 0 |
+| `test_golden_only_check_reads_the_ledger_at_each_row` | FR-4.50, FR-13.31, INV-3: a train-split row the gateway stores while an import runs keeps that golden-only row out (`trained`); the check is per row, in the transaction that writes it |
 | `test_bom_lists_human_source` | FR-3.54, FR-13.31, INV-14: `sources` lists teachers only, `label_sources` the human labels by origin, `training.targets` and the NOTICE's Human labels section; an adapter without them gets the earlier NOTICE text; the ledger's `/ratchet/bom` lists them apart |
 | `test_import_ratchet_train_jsonl_roundtrip` | FR-13.31: Ratchet's `train.jsonl` imports back with the same hashes; a teacher's rows cannot come in as human labels or under another task |
-| `test_import_cli_dry_run_and_apply` | FR-13.31: `python -m ratchet.importer` dry run (nothing written), apply (rows attributed to `--client`, one event), a missing file, a bad `--client`, a line over the body limit skipped |
+| `test_import_cli_dry_run_and_apply` | FR-13.31: `python -m ratchet.importer` dry run (refused for a ledger file that does not exist, which it does not create; an older file read without being migrated, byte for byte), apply (rows attributed to `--client`, one event), a missing file, a bad `--client`, a line over the body limit skipped |
 | `test_counts_as_train_reads_human_labels` | a human training row counts toward the new-data count, a golden-only row never |
 | `test_export_carries_label_flags` | the NDJSON export carries `verified`, `golden_only` and the provenance |
 

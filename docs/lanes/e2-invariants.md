@@ -83,6 +83,12 @@ collapse). A verdict is never a label: a `correct` verdict stores nothing. See
 - `tests/test_feedback.py::test_corrected_feedback_stored_with_human_provenance_redacted_and_verified`
 - `tests/test_nightschool.py::test_add_example_called_only_from_allowed_callers`
 
+**Residual risk (not enforced).** A client can paste the student's served answer into `corrected` with an `incorrect`
+verdict; it is stored as that client's human label, because the gateway keeps no digest of the served text to compare
+with (ADR 0091, threat model T23). The invariant is about the system never turning student output into a target; this
+is a client attesting a label, within T23's bounds (own requests only, one correction per request, the spec, the
+opt-outs, `RATCHET_FEEDBACK_CORRECTIONS=0`).
+
 ## Amendment to invariant 16: the second writer of examples (DATA-FEEDBACK-IMPORT)
 
 **Text (replace "`Ratchet._store_example` (the one caller of `Ledger.add_example`)" in invariant 16).**
@@ -106,16 +112,22 @@ nothing), `test_import_openai_finetune_jsonl` (invalid labels counted, not store
 split is not its hash's: it is golden for good, never trained on even past `FREQUENT`, and so is every other variant of
 its prompt (the same task and messages under other conditions), because the trainer sees only the messages. A
 golden-only row is refused for a prompt that may already have been trained on (a variant in the train split, or seen
-`FREQUENT` times), so a human-verified golden set is held-out evidence (invariant 6). Every other label, a human one
-included, keeps its hash's split.
+`FREQUENT` times), checked for that prompt inside the transaction that writes the row, so a human-verified golden set
+is held-out evidence (invariant 6). Every other label, a human one included, keeps its hash's split. A label that is no
+occurrence of its request (an import, or a correction of a request already counted) never counts toward `FREQUENT`: a
+new example starts at `seen` 0 and a stored one keeps its count, so only real requests move a prompt to training.
 
 **Enforcing code.** `ratchet.nightschool.dataset:rows` (prompts with a golden-only row are held out),
-`ratchet.nightschool.dataset:effective_split`, `ratchet.feedback:held_out_ok`, `ratchet.ledger:Ledger.prompt_index`,
-`ratchet.ledger:Ledger.add_example` (`golden_only`, sticky on a duplicate).
+`ratchet.nightschool.dataset:effective_split`, `ratchet.feedback:held_out_ok`, `ratchet.ledger:Ledger.prompt_status`,
+`ratchet.ledger:Ledger.add_example` (`golden_only`, sticky on a duplicate; `bump` False inserts `seen` 0),
+`ratchet.ledger:seen_count` (0 counts 0 in `count_prompts`, `dataset.rows` and the export).
 
 **Proving tests** (marked `INV-3`, `INV-6`). `tests/test_feedback.py::test_golden_only_rows_never_trained`: rows whose
 hash says train stay golden, seen `FREQUENT + 2` times and under other conditions too; a prompt already in train or seen
 `FREQUENT` times is refused (`trained`); a real night trains on none of them.
+`test_golden_only_check_reads_the_ledger_at_each_row`: a train-split row stored while an import runs keeps that
+golden-only row out. `test_labels_that_are_no_occurrence_never_reach_frequent`: an imported variant of a twice-seen
+golden prompt, and a non-bumping correction, leave it golden; the third real request moves it.
 
 ## Extension of invariant 10: no human label for a pinned task (DATA-FEEDBACK-IMPORT)
 
@@ -152,9 +164,28 @@ version); `ReleaseGate` never reads the `feedback` table, because clients report
 biased. The audited precision stays the release signal. An API key gives verdicts on its own requests only; any other
 request id is the same 404 as an unknown one.
 
+The alert is anytime-valid: it fires when the mixture e-value against "precision >= live_floor" reaches
+1 / `feedback.ALERT_ALPHA`, because it is checked after every verdict.
+
 **Enforcing code.** `ratchet.feedback:check_human_alert` (writes an event and a meta row, nothing else),
 `ratchet.feedback:submit` (`FeedbackNotFound` for another key's request), `ratchet.ledger:Ledger.human_precision`.
 
 **Proving tests.** `tests/test_feedback.py::test_human_precision_alerts_and_never_moves_a_release` (marked
 `FR-13.30`): verdicts below the floor write one `human_alert`, the version stays live and no `alert`, `rollback` or
-`retired` event is written; `test_feedback_only_on_own_requests` (marked `INV-13`).
+`retired` event is written; `test_human_alert_is_anytime_valid` (the e-value rule, not a Wilson bound looked at after
+every verdict); `test_feedback_only_on_own_requests` (marked `INV-13`).
+
+## Notes for the integrator (DATA-FEEDBACK-IMPORT review fixes)
+
+- **`examples.origin` on a retention restore.** `Ledger.add_example` now writes the caller's `origin` when a duplicate
+  restores the text of a row retention purged (with that answer's label, teacher and license), where it used to keep
+  the stored origin. From the router that is NULL in this lane; lane F's FR-16.8, which owns the column and passes an
+  origin from the router, should keep the rule "the restored label's own origin" when the branches merge. The column's
+  values now include `feedback` and `import` (`ledger.LABEL_ORIGINS`).
+- **`examples.seen` may be 0.** A label stored with `bump=False` is inserted with `seen` 0 (router writes still insert 1,
+  the column's default). Any reader added by another lane must count it with `ledger.seen_count` (or `seen` with NULL as
+  1), not `seen or 1`.
+- **`requests.end_user_secondary`.** A second end-user hash per request row, logged by the router from
+  `RequestMeta.end_user_secondary`. Every place that clears or exports `requests.end_user` must treat it the same way
+  (this lane: `Ledger.record_erasure`, `Ledger.requests_of_end_users`, `Ledger._export_requests`; the request fold
+  deletes rows, so it needs nothing).

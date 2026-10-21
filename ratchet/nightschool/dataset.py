@@ -24,6 +24,9 @@
 - A purged row (retention or erasure, FR-13.3, FR-13.4) has no text left and is in neither set; its
   `seen` still counts toward its request's frequency, so a purge never moves another variant of a
   frequent request back to golden (INV-3).
+- A label stored without an occurrence of its request (an import, or a correction of a request
+  already counted in another variant; ADR 0091) has `seen` 0, so it never pushes a prompt to
+  FREQUENT: only real requests do (INV-3).
 - A golden-only row (`examples.golden_only`, a human-verified golden set imported with
   `python -m ratchet.importer --golden-only`) is golden for good, even past FREQUENT, and so is every
   other variant of its prompt, whatever its own split: the trainer sees only the messages, so a variant
@@ -39,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import licenses, tasks
-from ..ledger import Ledger, prompt_key
+from ..ledger import Ledger, prompt_key, seen_count
 
 FREQUENT = 3
 
@@ -85,7 +88,7 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
     seen: Counter[str] = Counter()
     held: set[str] = set()  # prompts with a golden-only row: every variant stays golden (FR-4.50)
     for r, key in zip(examples, keys, strict=True):
-        seen[key] += int(r["seen"] or 1)  # purged rows count too (INV-3)
+        seen[key] += seen_count(r)  # purged rows count too (INV-3); a label that was no occurrence counts 0
         if _golden_only(r):
             held.add(key)
     for r, key in zip(examples, keys, strict=True):
@@ -118,7 +121,7 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
                 # The conditions the teacher answered under (ledger.STORED_PARAM_KEYS), or None: the golden eval samples
                 # the student under them, as production does (FR-5.1).
                 "params": params,
-                "seen": int(r["seen"] or 1),
+                "seen": seen_count(r),
                 "provenance": {
                     "teacher": r["teacher_model"],
                     "license": r["license"],

@@ -683,7 +683,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.nightschool.dataset:rows",
         "ratchet.nightschool.dataset:effective_split",
         "ratchet.feedback:held_out_ok",
-        "ratchet.ledger:Ledger.prompt_index",
+        "ratchet.ledger:Ledger.prompt_status",
     ),
     # 6.5 Evaluation
     "FR-5.1": (
