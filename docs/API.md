@@ -669,7 +669,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
   "tasks": [
     {"name": "invoice-extract", "description": "Vendor and total from an invoice", "format": "json",
      "fields": {"vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]}, "total": {"type": "number", "abs_tol": 0.01}},
-     "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
+     "sql": null, "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
      "source": "api", "spec_hash": "1c7e77bb7041b4d8", "verifiable": true,
      "requests": 420, "student_share": 0.81, "recalibrating": false}
   ],
@@ -677,7 +677,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
 }
 ```
 
-- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
+- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first twelve keys are the task's spec as a file would hold it (what `PUT` takes back); `sql` is null except for a text-to-SQL task, where it holds every option (`{"fixture": "shop.sql", "dialect": "sqlite", "ordered": "auto", "empty_result": "text", "max_rows": 1000, "max_steps": 200000}`, or `{"dialect": "postgres"}`; [CONFIGURATION.md](CONFIGURATION.md#text-to-sql-tasks)); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked, or runs its SQL answers on a fixture; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
 - `unknown_tasks`: the `RATCHET_UNKNOWN_TASKS` policy. `max_tasks`: how many tasks the registry holds at most, built-in ones included.
 - `unregistered`: names requests used that are not registered (a typo, or a task to register or pin), with their request counts.
 
@@ -707,11 +707,11 @@ curl -X PUT localhost:8000/ratchet/tasks/invoice-extract -H "Authorization: Bear
 
 | Status | When |
 |---|---|
-| 200 | `{"task": {...entry...}, "spec_hash": "...", "changed": true, "created": true}`. A spec identical to the stored one is a 200 with `changed: false` and changes nothing |
+| 200 | `{"task": {...entry...}, "spec_hash": "...", "changed": true, "created": true}`. A spec identical to the stored one is a 200 with `changed: false` and changes nothing; for a sql task the fixture is read again, so the same body after its text changed is a change (a new `spec_hash`) |
 | 401, 403 | No admin key, a wrong one or an API key; the admin API is off (live mode without `RATCHET_ADMIN_KEYS`) |
 | 403 | The name is a built-in task (`task 'x' is built in; use another name (a spec may extend it)`) or a file task (`task 'x' is defined in RATCHET_TASKS_FILE; edit the file`) |
 | 409 | The registry holds `max_tasks` tasks, or (mock mode) 50 API tasks already |
-| 422 | The body is not strict JSON (NaN is refused), names another task, or breaks a spec rule; `clients` names a key that is not in `RATCHET_API_KEYS` |
+| 422 | The body is not strict JSON (NaN is refused), names another task, or breaks a spec rule; `clients` names a key that is not in `RATCHET_API_KEYS`; a sql task's fixture is outside `RATCHET_FIXTURES_DIR`, missing, over 5 MB, not UTF-8 or does not load (`sql.fixture: fixture '../x.sql' is outside RATCHET_FIXTURES_DIR`), or (Python 3.10) needs Python 3.11 |
 
 The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients` or `match` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
 

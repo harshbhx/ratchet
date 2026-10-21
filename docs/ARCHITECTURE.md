@@ -39,6 +39,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/tasks.py` | `Task` definitions: which answer fields must match for two answers to "agree", which answers are valid (`Task.key`, `match`, `check`), answer cleaning, the built-in tasks (`BUILTIN`) and the registry (`REGISTRY`, `register`, `get`; [ADR 0022](adr/0022-task-registry.md)) |
 | `ratchet/taskspec.py` | Task specs as data: parses `RATCHET_TASKS_FILE` (JSON or YAML) and admin API bodies into `Task`s, listing every error with its path; `extends`; `install()` builds the registry at startup from the built-in, file and stored API tasks |
 | `ratchet/compare.py` | `FieldSpec`: typed field comparators (`label`, `number`, `date`, `set`, `records`, ...) that normalise a value once and compare two ([ADR 0021](adr/0021-field-comparators-and-task-specs.md)); standard library only |
+| `ratchet/sqlcheck.py` | Text-to-SQL tasks (format `sql`): `SqlSpec` (a fixture in `RATCHET_FIXTURES_DIR` and how results compare), `parse_query` (one statement), `Sandbox` (a private in-memory SQLite database per fixture text that runs read-only queries under an authorizer, step, time, memory and size limits) ([ADR 0055](adr/0055-sql-tasks-compared-by-execution.md)); standard library only |
 | `ratchet/vocab.py` | The built-in tasks' label vocabularies, shared with the prompts in `sim/tickets.py` and `ratchet/scout/prompts.py` |
 | `ratchet/confidence.py` | `score()` (confidence from samples, agreement counted pairwise) and `calibrate_threshold()` |
 | `ratchet/calibration.py` | Reads a version's per-task calibration records (`eval['tasks']`): the threshold rule the router applies per task, spec-change checks, records a re-score must keep disabled ([§6](#per-task-calibration), [ADR 0040](adr/0040-per-task-calibration.md)) |
@@ -458,6 +459,19 @@ FR-2.55, FR-14.40, [ADR 0054](adr/0054-free-text-similarity-and-a-judge-gate.md)
 
 The judge never runs on the request path. A task with a similarity field must set `policy.samples` to 2 or more, since one sample always agrees with itself.
 
+### Text-to-SQL tasks
+
+FR-2.56, [ADR 0055](adr/0055-sql-tasks-compared-by-execution.md). A task with format `sql` has a `sql` object instead of fields (`sqlcheck.SqlSpec`), and `Task.key` hands the cleaned answer to it:
+
+1. `clean_answer` strips reasoning and one code fence around the whole answer (served and stored without it too). `parse_query` tokenises the rest in one linear pass and keeps it only when it is one statement starting with SELECT, WITH or VALUES (a `;` may end it, comments anywhere) that does not read the clock; it also notes whether the outermost query (parenthesis depth 0) has ORDER BY, and the normalised text (words lower-cased, one space between tokens).
+2. For dialect `sqlite`, `Sandbox.run` executes it on the task's fixture under the sandbox's lock and returns the column count, the row count and two sha256 digests of the rows (floats to 9 significant digits, a whole float as the integer): in order and as a sorted multiset. Outcomes that do not depend on timing are cached by statement (256 per sandbox), so samples with the same text run once.
+3. The key is a `SqlKey`: the in-order digest when the outermost query has ORDER BY and there are two rows or more (`ordered: auto`), else the multiset digest, and the normalised text. Two keys match when their digests are equal, or, both empty under `empty_result: text`, when their texts are. Dialect `postgres` runs nothing and matches texts only.
+4. Anything else is `compare.INVALID` with a fixed reason (`not one query`, `reads the clock`, `sql error`, `sql denied`, `sql steps exceeded`, `sql time exceeded`, `sql memory exceeded`, `sql too many rows`, `sql result too large`), so the confidence score, `_store_example` (INV-16), the golden eval and `dataset.rows` treat it like any invalid answer, and `skip_example` events carry the reason only.
+
+The sandbox (one per fixture text, held through a weak map by every task that uses it): the fixture is read once per parse (at most 5 MB, inside `RATCHET_FIXTURES_DIR`, a regular file opened without blocking or following a symlink) and loaded with `executescript` under a load authorizer (no ATTACH, DETACH, `load_extension`, non-deterministic functions or PRAGMAs outside a short list), within 30 s and 64 MB, with `Connection.setlimit` capping a value at 100 KB and attached databases at 0. Then `PRAGMA query_only = ON`, a statement limit, and the query authorizer: SQLITE_SELECT, SQLITE_READ, SQLITE_RECURSIVE and SQLITE_FUNCTION for the deterministic functions in `sqlcheck.FUNCTIONS`; SQLITE_DENY for everything else. Each query gets a progress handler every 100 VM steps that stops it after `max_steps`, 1 s or 128 MB of resident-memory growth (Linux), and rows are fetched 100 at a time and hashed as they arrive, up to `max_rows` and 8 MB. No handler runs inside one step, so its work is bounded as well: LIKE and GLOB patterns are capped at 100 bytes (`SQLITE_LIMIT_LIKE_PATTERN_LENGTH`), and the built-ins SQLite runs in quadratic time (`instr`, `replace`, the two-argument `trim`, `ltrim` and `rtrim`) are replaced on the query connection by linear Python versions with the same results (`sqlcheck._GUARDED`; other type mixes go to SQLite's own function on a helper connection, bounded by `NATIVE_WORK`); `json_patch` and `unhex` are not allowed. `setlimit` needs Python 3.11, so on 3.10 a sqlite fixture is a spec error. A typical query on a small fixture takes about 0.1 ms.
+
+`Task.spec()` holds the `sql` options and the fixture's sha256 (only for sql tasks, so every other hash is unchanged), so an edited fixture sends the task to the teacher until a night re-scores the version; `taskspec.install` reads fixtures again at every start, and `PUT /ratchet/tasks/{name}` treats the same body over a changed fixture as a change. An executing sql task is `verifiable` and not `free_text` (its precision is exact, measured on the fixture); a postgres one is free text, so the judge grades it at night.
+
 ### Wilson score interval (`stats.wilson`, also `release.wilson`)
 
 For `s` successes out of `n` and `z = 1.96`:
@@ -551,6 +565,7 @@ Worked example with unverified list prices: an L40S at $1.55 per hour and about 
 | [0023](adr/0023-utilization-aware-cost-accounting.md) | Utilization-aware cost accounting: a split per request, a compute-time ledger, savings by GPU-hours and a self-host recommendation |
 | [0040](adr/0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate, per-task alerts |
 | [0054](adr/0054-free-text-similarity-and-a-judge-gate.md) | Free-text tasks: a similarity comparator, per-task sample counts and a judge gate; long-form stays pinned |
+| [0055](adr/0055-sql-tasks-compared-by-execution.md) | Text-to-SQL tasks compared by what their queries return, in a sandboxed in-memory SQLite fixture |
 
 ## 10. Scout (multi-agent demo)
 

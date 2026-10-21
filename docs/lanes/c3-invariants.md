@@ -41,3 +41,29 @@ Invariants proposed by lane C3 (free-text similarity, SQL execution comparator) 
 - `tests/test_live.py::test_live_evaluator_judge_pass_rate_covers_free_text_rows_only`
 
 **For `scripts/reqtrace.py`.** Once numbered (say INV-m), add `"INV-m": ("ratchet.tasks:samples_problem", "ratchet.tasks:Task.sample_count", "ratchet.router:Ratchet.handle", "ratchet.nightschool.evaluate:cascade_eval")` to `CODE` and mark the tests above with `@pytest.mark.req("INV-m")`.
+
+## Model-written SQL runs only in the sandbox (TASK-SQL-EXECUTION, FR-2.56)
+
+**Text.** SQL from a model answer (student or teacher, which a client's prompt can steer) is run only by `sqlcheck.Sandbox`, and only on the operator's fixture: a script inside `RATCHET_FIXTURES_DIR`, loaded into a private in-memory SQLite database. Never on a customer database, a file or any other connection. Every query runs with `PRAGMA query_only = ON`, the read-only authorizer (SQLITE_SELECT, SQLITE_READ, SQLITE_RECURSIVE and the deterministic functions in `sqlcheck.FUNCTIONS`; SQLITE_DENY for everything else), the progress handler (`max_steps`, `QUERY_SECONDS`, `QUERY_MEMORY_BYTES`) and the size limits (`Connection.setlimit`: values and LIKE patterns; `max_rows`, `RESULT_BYTES`), and with the built-ins SQLite runs in quadratic time inside one step replaced by linear versions (`_GUARDED`) or denied; a sqlite fixture is refused where a value's size cannot be capped (Python 3.10). An answer that is not one query, fails, is denied or hits a limit is invalid, with a fixed reason that never quotes the answer or SQLite's message, so it gets no vote and is never stored (INV-16). See [ADR 0055](../adr/0055-sql-tasks-compared-by-execution.md).
+
+**Enforcing code.**
+
+- `ratchet.sqlcheck:Sandbox` (`__init__`, `_load`, `run`, `_execute`), `ratchet.sqlcheck:_query_authorizer`, `ratchet.sqlcheck:_load_authorizer`, `ratchet.sqlcheck:_Budget`, `ratchet.sqlcheck:_guarded` and `_GUARDED`, `ratchet.sqlcheck:CAN_LIMIT`.
+- `ratchet.sqlcheck:read_fixture` and `ratchet.sqlcheck:resolve_fixture` (inside the directory, at most 5 MB, a regular file, no symlink), called by `ratchet.taskspec:_sql` through `SqlSpec.load`.
+- `ratchet.sqlcheck:parse_query` (one statement starting with SELECT, WITH or VALUES) and `ratchet.sqlcheck:SqlSpec.key`, the only path from `ratchet.tasks:Task.key` to SQL.
+
+**Proving tests.**
+
+- `tests/test_sqlcheck.py::test_sql_write_and_attach_denied_and_fixture_unchanged`
+- `tests/test_sqlcheck.py::test_sql_pragma_denied`
+- `tests/test_sqlcheck.py::test_sql_random_function_denied`
+- `tests/test_sqlcheck.py::test_sql_runaway_recursive_cte_interrupted_quickly`
+- `tests/test_sqlcheck.py::test_sql_rows_result_size_and_value_limits`
+- `tests/test_sqlcheck.py::test_sql_value_limit`
+- `tests/test_sqlcheck.py::test_sql_memory_guard`
+- `tests/test_sqlcheck.py::test_sql_quadratic_builtins_replaced_by_linear_ones`
+- `tests/test_sqlcheck.py::test_fixture_path_outside_dir_rejected`
+- `tests/test_sqlcheck.py::test_sql_execution_needs_python_311`
+- `tests/test_sqlcheck.py::test_sql_task_in_the_cascade`
+
+**For `scripts/reqtrace.py`.** Once numbered (say INV-p), add `"INV-p": ("ratchet/sqlcheck.py", "ratchet.sqlcheck:Sandbox", "ratchet.sqlcheck:_query_authorizer", "ratchet.sqlcheck:read_fixture", "ratchet.sqlcheck:SqlSpec.key")` to `CODE` and mark the tests above with `@pytest.mark.req("INV-p")`.

@@ -28,6 +28,12 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def default_fixtures_dir() -> str:
+    """RATCHET_FIXTURES_DIR (default `fixtures`, relative to the working directory): `Settings.fixtures_dir`, and what
+    `taskspec` reads when a caller parses a sql task's spec without naming a directory."""
+    return _env("RATCHET_FIXTURES_DIR", "fixtures")
+
+
 def _float(name: str, default: str) -> float:
     """A number from the environment; ValueError names the variable, so a typo stops startup with a message that says
     which setting is wrong."""
@@ -274,8 +280,8 @@ class Settings:
     # What a request naming an unregistered task gets: UNKNOWN_TASK_POLICIES.
     unknown_tasks: str = field(default_factory=lambda: _env("RATCHET_UNKNOWN_TASKS", "distill"))
     # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
-    # any other file on the host.
-    fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
+    # any other file on the host: the SQL scripts sql tasks run their answers on (FR-2.56, ratchet/sqlcheck.py).
+    fixtures_dir: str = field(default_factory=default_fixtures_dir)
 
     # Request limits on the OpenAI-compatible API (ratchet/openai_compat.py), checked before any model call. 0 = no limit.
     # The body limit applies to every POST, PUT and PATCH; the other two to /v1/chat/completions.
