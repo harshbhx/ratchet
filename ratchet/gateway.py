@@ -44,6 +44,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__, live, metrics, obs, tasks, taskspec
 from . import access as acl
+from . import admin as admin_ops
 from . import bom as bomdoc
 from .auth import KeyLimits, KeyRing, Token, bearer, parse_key_limits
 from .config import Settings
@@ -67,7 +68,15 @@ from .providers import GenParams, OpenAICompatProvider
 from .ratelimit import Decision, Limiter, Refused, Slot
 from .redact import redact
 from .release import ReleaseGate, ReleasePolicy
-from .resilience import CLIENT_CAUSED, RETRY_STATUSES, TEACHER_CIRCUIT_OPEN, TOOL_CALLS_UNSUPPORTED, CircuitOpen, as_upstream
+from .resilience import (
+    CLIENT_CAUSED,
+    RETRY_STATUSES,
+    TEACHER_CIRCUIT_OPEN,
+    TOOL_CALLS_UNSUPPORTED,
+    CircuitOpen,
+    as_upstream,
+    describe_failure,
+)
 from .router import Choice, Ratchet, RequestMeta, task_label
 from .scout.agents import Call, Scout
 from .scout.guard import Guard
@@ -175,6 +184,7 @@ class Runtime:
             self.ledger = Ledger(":memory:", s.golden_fraction)
             self.fleet = MockFleet(clock=self.clock, policy=s.gen_policy())
             self.reloader: live.AdapterReloader | None = None
+            self.student_http: httpx.Client | None = None  # the client that loads adapters into vLLM (live only)
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
             teacher = MockTeacher(s.teacher_reasoning_tokens)
@@ -210,6 +220,7 @@ class Runtime:
                     sleep=self.sleep,
                 )
             self.reloader = None
+            self.student_http = None
             if s.student_base:
                 student_transport = self.transports.get("student")
                 student = OpenAICompatProvider(
@@ -217,6 +228,7 @@ class Runtime:
                 )
                 # vLLM forgets runtime-loaded adapters when it restarts; a 404 for one queues its reload (ADR 0015).
                 http = httpx.Client(transport=student_transport) if student_transport is not None else None
+                self.student_http = http  # also an admin promote's `load_adapter` (ADR 0064)
                 self.reloader = live.adapter_reloader(s, self.ledger, http, clock=self.clock)
 
                 def resolver(v: Version):
@@ -233,6 +245,7 @@ class Runtime:
             self.search = TavilySearch(s.tavily_api_key) if s.tavily_api_key else None
             self.guard = Guard(s.scout_daily_budget_usd, s.scout_runs_per_hour, s.scout_max_runs_per_day)
         self.ledger.add_event_listener(obs.mirror_event)  # every release-log event also as a log line (ADR 0062)
+        self.ledger.flags()  # this ledger's runtime pins replace any an earlier ledger (a demo reset) published (ADR 0064)
         # The registry: the built-in tasks, RATCHET_TASKS_FILE's (a bad file stops startup here, every error listed) and
         # the API tasks this ledger stored (a fresh mock ledger has none, so a demo reset clears them).
         with self.tasks_lock:
@@ -1335,6 +1348,7 @@ def stats(request: Request) -> dict[str, Any]:
 
 def _stats_payload() -> dict[str, Any]:
     led = rt.ledger
+    controls = led.flags()  # first: it publishes the runtime pins `tasks` (by-task `pinned`) reads (ADR 0064)
     boms = led.bom_status()
     spend = rt.meter.snapshot()
     return {
@@ -1370,6 +1384,9 @@ def _stats_payload() -> dict[str, Any]:
         "cost": stats_block(cost_report(led, rt.settings)),
         # Failures of the last hour by stage (ADR 0062); what failed requests spent is in totals.failed_cost_usd.
         "errors": {"last_hour": led.failure_counts(time.time() - ERRORS_WINDOW_S)},
+        # The operator's runtime switches and task pins (the admin API and CLI, ADR 0064); `audit_rate` null is the
+        # configured rate.
+        "controls": controls.as_dict(),
     }
 
 
@@ -1555,6 +1572,8 @@ def _task_entry(t: tasks.Task, stats: Mapping[str, Any] | None, live_version: Ve
         "requests": int(stats["requests"]) if stats else 0,
         "student_share": float(stats["student_share"]) if stats else 0.0,
         "recalibrating": live_version is not None and rt.ratchet.spec_changed(live_version, t),
+        # An operator pinned it to the teacher at runtime (the admin API or CLI, ADR 0064), on top of its spec's `pinned`.
+        "runtime_pinned": t.name in rt.ledger.flags().pinned,
     }
 
 
@@ -1768,6 +1787,172 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
         led, rt.cost_policy, state, "api", rate, gpus, note=redact(note) if note else None, by=admin
     )
     return {"state": state, "changed": changed, "interval": interval, "summary": summary}
+
+
+# ----- the admin API (FR-12.1, ADR 0064) -----
+# Every route here needs an admin key (`_admin`; `/ratchet/admin/` is an `admin` prefix in access.py) and goes through
+# ratchet/admin.py, which the CLI (`python -m ratchet.admin`) shares: the change, an admin_actions row and an `admin`
+# event commit together, compare-and-set, and each response has the target's state before and after.
+ADMIN_LOG_LIMIT = 50
+_ADMIN_SWITCHES: dict[str, tuple[str, str, str]] = {  # path -> (flag, verb that turns it on, verb that turns it off)
+    "student": ("student_disabled", "disable", "enable"),
+    "releases": ("releases_frozen", "freeze", "unfreeze"),
+    "training": ("training_paused", "pause", "resume"),
+}
+
+
+def _admin_body(body: Any, allowed: frozenset[str]) -> Mapping[str, Any]:
+    """An admin call's JSON body: an object with only `allowed` keys (400 otherwise); an empty body is {}."""
+    if body is None:
+        return {}
+    if not isinstance(body, Mapping):
+        raise HTTPException(400, "the body must be a JSON object")
+    unknown = sorted(set(body) - allowed)
+    if unknown:
+        raise HTTPException(400, f"unknown keys {unknown}; use {sorted(allowed)}")
+    return body
+
+
+def _admin_call(fn: Callable[..., dict[str, Any]], *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Run an admin action with the caller's request id; its AdminError becomes the HTTP status it names."""
+    ctx = obs.current()
+    try:
+        return fn(*args, request_id=ctx.request_id if ctx is not None else None, **kwargs)
+    except admin_ops.AdminError as e:
+        raise HTTPException(e.status, str(e)) from e
+
+
+def _adapter_loader(wanted: Any) -> Callable[[Version], object] | None:
+    """`load_adapter: true` on a promote: load the version's LoRA adapter into the student endpoint before it takes
+    traffic. Mock mode has nothing to load (the mock fleet serves every version); live mode needs RATCHET_STUDENT_BASE
+    (409 without it), and a failed load is a 502 that changes nothing."""
+    if not isinstance(wanted, bool):
+        raise HTTPException(400, f"load_adapter must be true or false, not {wanted!r}")
+    s = rt.settings
+    if not wanted or s.mode == "mock":
+        return None
+    if not s.student_base:
+        raise HTTPException(409, "RATCHET_STUDENT_BASE is not set: no student endpoint to load the adapter into")
+
+    def load(v: Version) -> None:
+        try:
+            live.load_adapter(
+                s.student_base, s.student_api_key, v.adapter_uri, f"{live.adapter_root()}/{v.adapter_uri}", rt.student_http
+            )
+        except Exception as e:  # noqa: BLE001 - the class and status only: the message carries the endpoint URL
+            raise HTTPException(502, f"loading adapter {v.adapter_uri} failed: {describe_failure(e)}; nothing changed") from e
+
+    return load
+
+
+@app.get("/ratchet/admin/versions")
+def admin_versions(admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Every version (newest first) with its golden eval and its current stage's audits or shadow verdicts, and the
+    runtime switches (`controls`)."""
+    return {"versions": admin_ops.versions(rt.ledger), "controls": rt.ledger.flags().as_dict()}
+
+
+@app.get("/ratchet/admin/flags")
+def admin_flags(admin: str = Depends(_admin)) -> dict[str, Any]:
+    """The runtime switches with who set each one last, and the task pins with who set them and why."""
+    return admin_ops.flags(rt.ledger)
+
+
+@app.post("/ratchet/admin/versions/{vid}/rollback")
+def admin_rollback(vid: int, body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Roll a canary back (body `{reason}`): its traffic returns to the live version, or the teacher."""
+    b = _admin_body(body, frozenset({"reason"}))
+    return _admin_call(admin_ops.rollback, rt.ledger, vid, b.get("reason"), f"api:{admin}")
+
+
+@app.post("/ratchet/admin/versions/{vid}/retire")
+def admin_retire(vid: int, body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Retire a live, canary or shadow version (body `{reason}`)."""
+    b = _admin_body(body, frozenset({"reason"}))
+    return _admin_call(admin_ops.retire, rt.ledger, vid, b.get("reason"), f"api:{admin}")
+
+
+@app.post("/ratchet/admin/versions/{vid}/promote")
+def admin_promote(vid: int, body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Promote a version (body `{reason, to: canary|live, traffic_pct, force, load_adapter}`): to a canary stage, or to
+    live over the live version, which is retired in the same transaction."""
+    b = _admin_body(body, frozenset({"reason", "to", "traffic_pct", "force", "load_adapter"}))
+    load = _adapter_loader(b.get("load_adapter", False))
+    return _admin_call(
+        admin_ops.promote,
+        rt.ledger,
+        vid,
+        b.get("to"),
+        b.get("traffic_pct"),
+        b.get("force", False),
+        reason=b.get("reason"),
+        actor=f"api:{admin}",
+        load=load,
+    )
+
+
+def _switch_route(path: str, flag: str, verb: str, on: bool) -> None:
+    def route(body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+        b = _admin_body(body, frozenset({"reason"}))
+        return _admin_call(admin_ops.set_flag, rt.ledger, flag, on, reason=b.get("reason"), actor=f"api:{admin}")
+
+    route.__name__ = f"admin_{path}_{verb}"
+    route.__doc__ = f"Set `{flag}` to {str(on).lower()} (body `{{reason}}`)."
+    app.post(f"/ratchet/admin/{path}/{verb}")(route)
+
+
+for _path, (_flag, _on, _off) in _ADMIN_SWITCHES.items():
+    _switch_route(_path, _flag, _on, True)
+    _switch_route(_path, _flag, _off, False)
+
+
+@app.put("/ratchet/admin/settings")
+def admin_settings(body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Set the runtime audit rate (body `{audit_rate, reason, force}`; `audit_rate` 0 to 1, or null for
+    RATCHET_AUDIT_RATE). 0 while a canary is in flight needs `force`."""
+    b = _admin_body(body, frozenset({"audit_rate", "reason", "force"}))
+    if "audit_rate" not in b:
+        raise HTTPException(400, "audit_rate is required (a number from 0 to 1, or null for the configured rate)")
+    return _admin_call(
+        admin_ops.set_flag,
+        rt.ledger,
+        "audit_rate",
+        b["audit_rate"],
+        reason=b.get("reason"),
+        actor=f"api:{admin}",
+        force=b.get("force", False),
+    )
+
+
+@app.post("/ratchet/admin/tasks/{name}/pin")
+def admin_pin(name: str, body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Pin a registered task to the teacher at runtime (body `{reason}`): nothing of it is stored or trained on."""
+    b = _admin_body(body, frozenset({"reason"}))
+    return _admin_call(admin_ops.pin_task, rt.ledger, name, reason=b.get("reason"), actor=f"api:{admin}")
+
+
+@app.delete("/ratchet/admin/tasks/{name}/pin")
+def admin_unpin(name: str, body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Remove a task's runtime pin (body `{reason}`); a task its spec pins stays pinned."""
+    b = _admin_body(body, frozenset({"reason"}))
+    return _admin_call(admin_ops.unpin_task, rt.ledger, name, reason=b.get("reason"), actor=f"api:{admin}")
+
+
+@app.post("/ratchet/admin/tick")
+def admin_tick(body: Any = Body(default=None), admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Run the release gate now, as the cron tick does (body `{reason}`, optional), recorded as an admin action; the
+    routed versions before and after. The gate's own events say what it decided."""
+    b = _admin_body(body, frozenset({"reason"}))
+    return _admin_call(admin_ops.tick, rt.ledger, lambda: rt.tick(force=True), f"api:{admin}", b.get("reason"))
+
+
+@app.get("/ratchet/admin/audit-log")
+def admin_audit_log(limit: int = ADMIN_LOG_LIMIT, admin: str = Depends(_admin)) -> dict[str, Any]:
+    """The newest admin actions, newest first (`limit` 1 to 1000)."""
+    try:
+        return {"actions": admin_ops.audit_log(rt.ledger, limit)}
+    except admin_ops.AdminError as e:
+        raise HTTPException(e.status, str(e)) from e
 
 
 # ----- demo controls (mock mode only) -----

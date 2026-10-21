@@ -124,6 +124,13 @@
     },
     "errors": {
       "last_hour": "object"
+    },
+    "controls": {
+      "student_disabled": "bool",
+      "releases_frozen": "bool",
+      "training_paused": "bool",
+      "audit_rate": "number|null",
+      "pinned_tasks": "list"
     }
   }
 }

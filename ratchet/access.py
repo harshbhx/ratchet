@@ -62,7 +62,10 @@ ROUTES: dict[tuple[str, str], str] = {
 }
 # Path prefixes for any method, checked in order after ROUTES. The /ratchet/requests/ and /ratchet/versions/ rows cover
 # read endpoints under them (a request's record, a version's commitments); /v1/ covers an API client's own lookups.
+# Everything under /ratchet/admin/ (ADR 0064), its reads included, is an admin's: the version list and the audit log say
+# who changed what, and why.
 PREFIXES: tuple[tuple[str, str], ...] = (
+    ("/ratchet/admin/", ADMIN),
     ("/ratchet/requests/", DASHBOARD),
     ("/ratchet/versions/", DASHBOARD),
     ("/ratchet/demo/", MOCK),

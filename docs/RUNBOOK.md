@@ -31,7 +31,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | Kind | Written by | Meaning | Action |
 |---|---|---|---|
 | `trained` | `run_night` | A new version was trained and scored on the golden set | None |
-| `skip` | `run_night` | No training tonight: release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight |
+| `skip` | `run_night` | No training tonight: training paused by an admin (`training_paused`), release in flight, fewer than 50 new examples, or no golden set yet | None, unless it repeats for days with no release in flight and no pause |
 | `rejected` | `admit` / `tick` | Candidate failed the golden gate or shadow (reason in detail) | Repeated rejections: see [Persistent rejections](#persistent-rejections) |
 | `shadow` | `admit` | Candidate passed the golden gate and is running silently | None |
 | `canary` | `admit` / `tick` | Candidate serves 10% or 50% of traffic | Watch for `rollback` |
@@ -56,6 +56,8 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `rescore_failed` | `run_night` | That re-score failed (detail: the error class and status). The task stays on the teacher; the next night tries again | Check the student endpoint, as for a failed night |
 | `endpoint` | `python -m ratchet.cost endpoint`, `POST /ratchet/cost/endpoint`, `deploy/student_endpoint.sh` | The student endpoint was recorded as up (`student endpoint up: 1 GPU at $1.55 per GPU-hour (cli)`) or down (`... down after 9.5 h (api by ops)`), with the source and the admin's name for the API, never a key. Recording `up` while up, or `down` while down, writes nothing | None. An `up` with no `down` hours later while you thought the endpoint was stopped: check the Nebius console, then record `down` |
 | `budget` | the spend meter (`ratchet/spend.py`) | A key or the gateway reached a share of a US dollar cap for the first time in its UTC day or month (`acme reached 80% of $5.00 daily budget`, `the gateway reached 100% of $20.00 daily budget`; shares from `RATCHET_BUDGET_ALERT_PCT`). Written once per share and cap, also across restarts; a lower cap set at a restart writes the shares it already passed at once | At 80%: check who is spending (`clients[].spent_today_usd` in `/ratchet/stats`). At 100%: the key (or, in `block` mode, every chat request) is refused until the reset; see [Cost spike](#cost-spike) |
+| `admin` | the admin API and CLI (`ratchet/admin.py`) | An operator changed something: a version (`v7 rolled back from canary 50% by api:ops: <reason>`, `v5 promoted from canary 50% to live by cli:harsh; v4 retired: <reason>`), a switch (`releases_frozen set to true by ...`), a task pin, or ran the gate (`release gate run by ...`). The same change has an `admin_actions` row (`python -m ratchet.admin audit-log`) | Expected after an operator change; an unexpected one: check who (`audit-log`) and rotate admin keys if needed |
+| `conflict` | `admit` | The candidate trained tonight was moved by someone else (an admin) while it was scored, so the gate left it as it is (`v7 left as canary: changed by another process while the gate decided`) | None, if an admin did it on purpose |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -123,43 +125,47 @@ groups:
 
 ## Manual interventions
 
-All state lives in the SQLite ledger (`RATCHET_DB`). Stop the gateway or make sure no Night School run is in progress, take a backup, then use either the Python API or SQL. A running gateway picks up a version change made from another process (the Python API below, or `sqlite3`) on its next request: its routing snapshot checks the file's `PRAGMA data_version` ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). Open the file with the same `RATCHET_DB_SYNC` the gateway uses (`Ledger(path, sync=...)`; the default `NORMAL` is the WAL journal).
+Change versions, switches and task pins with `python -m ratchet.admin` (on the ledger file: `RATCHET_DB` or `--db`) or the admin API (`/ratchet/admin/*` with a key from `RATCHET_ADMIN_KEYS`; [API.md](API.md#admin)). Both go through `ratchet/admin.py` ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)): every change needs a reason (3 to 500 characters), is checked against the allowed moves, compares and sets (so it can never race the release gate's tick or another admin into two live versions), and writes the change, an `admin_actions` row (who, what, why, before and after) and an `admin` event in one transaction. A running gateway, and the cron tick, see a change on their next request or tick without a restart. No need to stop anything first; take a backup before large changes anyway. Never edit `versions`, `runtime_flags` or `task_overrides` with SQL: it skips the checks, the audit trail and `stage_since`.
 
-Python (preferred: it also updates `stage_since` and writes events):
-
-```python
-from ratchet.ledger import Ledger
-
-led = Ledger("ratchet.db")
-for v in led.versions():
-    print(v.id, v.state, v.traffic_pct, v.eval.get("precision"), v.eval.get("coverage"))
+```bash
+python -m ratchet.admin versions                 # states, traffic, golden numbers, this stage's audits, the switches
+python -m ratchet.admin audit-log --limit 20     # who changed what, and why
+curl -s -H "Authorization: Bearer $ADMIN_KEY" $GATEWAY/ratchet/admin/versions | jq
 ```
 
-| Goal | Python |
-|---|---|
-| Roll back the current canary | `led.set_version(<canary id>, "rolled_back", 0); led.event("rollback", "manual: <reason>")` |
-| Take the live version out (all traffic to teacher) | `led.set_version(<live id>, "retired", 0); led.event("retired", "manual: <reason>")` |
-| Restore a previous version as live | `led.set_version(<old id>, "live", 100); led.set_version(<bad id>, "retired", 0); led.event("live", "manual restore v<old id>")`. The old adapter must be loaded in vLLM: `ratchet.live.load_adapter(base, key, "student-v<old>", "/data/adapters/student-v<old>")` |
-| Force a candidate to canary (skip shadow) | `led.set_version(<id>, "canary", 10); led.event("canary", "manual")`. Only if you accept the risk |
-| Cancel an in-flight shadow so tonight's training runs | `led.set_version(<shadow id>, "retired", 0)` |
+| Goal | CLI | HTTP (admin key) |
+|---|---|---|
+| Roll back the current canary | `python -m ratchet.admin rollback <id> --reason "..."` | `POST /ratchet/admin/versions/<id>/rollback` `{"reason": "..."}` |
+| Take the live version out (the teacher answers what no canary takes) | `python -m ratchet.admin retire <live id> --reason "..."` | `POST /ratchet/admin/versions/<id>/retire` |
+| Stop using the student at once, whatever version is live (kill switch) | `python -m ratchet.admin flag student_disabled on --reason "..."` (`off` to undo) | `POST /ratchet/admin/student/disable` (`.../enable`) |
+| Restore a previous version | `promote <old id> --to canary --force --reason "..."`, watch its audits (`versions`), then `promote <old id> --to live --load-adapter --reason "..."` (retires the current live version in the same transaction) | `POST /ratchet/admin/versions/<id>/promote` `{"to": "canary", "force": true, ...}`, then `{"to": "live", "load_adapter": true, ...}` |
+| Promote a canary now (skip the remaining stages) | `promote <id> --to live --reason "..."` | `{"to": "live"}` |
+| Force a candidate to canary (skip the gate and the shadow) | `promote <id> --to canary --force --reason "..."`. Only if you accept the risk | `{"to": "canary", "force": true}` |
+| Cancel an in-flight shadow so tonight's training runs | `retire <shadow id> --reason "..."` | `POST /ratchet/admin/versions/<id>/retire` |
+| Hold every release (a demo, a holiday), keeping rollbacks and alerts | `flag releases_frozen on --reason "..."` | `POST /ratchet/admin/releases/freeze` (`.../unfreeze`) |
+| Stop training for a while (GPU quota, an incident) | `flag training_paused on --reason "..."` | `POST /ratchet/admin/training/pause` (`.../resume`) |
+| Audit more (a suspicious canary) or less | `flag audit_rate 0.3 --reason "..."` (`default` to go back to `RATCHET_AUDIT_RATE`; `--force` for 0 during a canary) | `PUT /ratchet/admin/settings` `{"audit_rate": 0.3, "reason": "..."}` |
+| Keep one task on the teacher now, without changing its spec | `pin <task> --reason "..."` (`unpin` to undo) | `POST /ratchet/admin/tasks/<task>/pin` (`DELETE` to undo) |
+| Run the release gate now | `python -m ratchet.live tick` | `POST /ratchet/admin/tick` |
 
+Other interventions:
+
+| Goal | How |
+|---|---|
 | Check an adapter's bill of materials | `curl -s $GATEWAY/ratchet/versions/<id>/bom > bom.json && python -m ratchet.bom verify bom.json --public-key <published key>` |
 | Add or rotate a client's API key | Edit `RATCHET_API_KEYS` (`name:key,...`) and restart the gateway. Keep the same name so per-client stats continue; the old key stops working at once |
 | Add, change or remove a task | Edit `RATCHET_TASKS_FILE` and restart, or use the admin API with a key from `RATCHET_ADMIN_KEYS`: `curl -X PUT $GATEWAY/ratchet/tasks/<name> -H "Authorization: Bearer $ADMIN_KEY" -d @spec.json` (check it first with `POST /ratchet/tasks/validate`). [CONFIGURATION.md](CONFIGURATION.md#adding-a-task) has the spec format |
-| Keep a task on the teacher | Set `"pinned": true` in its spec (file or API). Its stored examples stay in the ledger but leave training and the golden eval from the next night on (`excluded_pinned` in the manifest) |
+| Keep a task on the teacher for good | Set `"pinned": true` in its spec (file or API); a runtime pin (above) needs no spec change and no restart. Its stored examples stay in the ledger but leave training and the golden eval from the next night on (`excluded_pinned` in the manifest) |
 | Stop distilling task names nobody registered | `RATCHET_UNKNOWN_TASKS=teacher` (teacher only, nothing stored) or `reject` (a 400 that lists the registered tasks); `GET /ratchet/tasks` lists the unregistered names requests used |
 | Record the student endpoint going up or down | `python -m ratchet.cost endpoint up` / `down` where the ledger is (`--db`, default `RATCHET_DB`; `--at "2026-10-20T08:00:00Z"` for a time other than now, `--usd-per-hour`, `--gpus`), or `POST /ratchet/cost/endpoint` with an admin key. `deploy/student_endpoint.sh` and `... stop` do it for you when they run next to the ledger. `up` while up and `down` while down change nothing |
 | Close a training job whose end was lost (the night process died) | `python -m ratchet.cost close training_job --at <end time from the Nebius console>`; until then the report counts it up to now and warns |
 | Rotate the BOM signing key | `python -m ratchet.bom keygen`, set the new `RATCHET_BOM_SIGNING_KEY`, restart, publish the new public key. Old BOMs keep their old key id and still verify against the old public key, so keep it listed |
 
-Never keep two versions in `live`. `Ledger.live()` returns the newest one, and the other would never be retired automatically.
+The CLI exits 1 when a move is refused (`refused: v7 is rolled_back; only a canary is rolled back`: someone or the gate got there first, or the move is not allowed) and 2 on a bad input; the API answers 409 and 400. A call that changes nothing (a switch already on) writes nothing. Open the ledger with the same `RATCHET_DB_SYNC` the gateway uses (the CLI reads it from the environment, as the gateway does).
 
-SQL equivalents (no `stage_since` update, so prefer Python):
+What the switches do, in short: `student_disabled` sends every request to the teacher (route `student_disabled`; its answers are stored, no student or shadow call); `releases_frozen` stops every promotion (shadow to canary, canary stages, canary to live; a first student shadows the teacher instead of taking 10%) while rollbacks, rejections and the live alert keep running; `training_paused` makes every night `skip`; `audit_rate` replaces `RATCHET_AUDIT_RATE`, and at 0 the gate starts no new canary. Current values: `controls` in `/ratchet/stats`, `python -m ratchet.admin flag` (with who set each one).
 
-```sql
-UPDATE versions SET state='rolled_back', traffic_pct=0 WHERE id=7;
-INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rollback', 'manual: bad outputs');
-```
+Never keep two versions in `live`; the admin API cannot make two, and `promote --to live` retires the old one with it.
 
 ## Playbooks
 
@@ -231,7 +237,7 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 1. Check `GET /ratchet/stats` → `days[-1].audit_agreement` and whether escalations jumped (drift).
 2. If drift is the cause (a new product or new wording), the student's confidence usually drops and it escalates. The `alert` means it is confidently wrong on some slice, which is serious.
-3. Immediately take the live version out (manual intervention above) or restore the previous good version. All traffic then goes to the teacher, which costs more but is correct.
+3. Immediately take the live version out (`python -m ratchet.admin retire <id> --reason "..."`), turn the student off (`flag student_disabled on`), or restore the previous good version ([Manual interventions](#manual-interventions)). Traffic then goes to the teacher, which costs more but is correct. With `releases_frozen` on, nothing new is promoted meanwhile; rollbacks of a bad canary still happen.
 4. Inspect recent audited disagreements:
 
    ```sql

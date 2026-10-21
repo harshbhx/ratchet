@@ -37,6 +37,19 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/tasks/validate` | both | [admin](#access-levels) | Check a task spec or a tasks file without changing anything (admin key) |
 | PUT | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Create or replace an API task (admin key) |
 | DELETE | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Remove an API task; its stored examples stay (admin key) |
+| GET | `/ratchet/admin/versions` | both | [admin](#access-levels) | Every version with its golden eval and its current stage's evidence, and the runtime switches ([Admin](#admin)) |
+| GET | `/ratchet/admin/flags` | both | [admin](#access-levels) | The runtime switches and task pins, with who set each one last |
+| GET | `/ratchet/admin/audit-log?limit=50` | both | [admin](#access-levels) | The newest admin actions: who, what, why, state before and after |
+| POST | `/ratchet/admin/versions/{id}/rollback` | both | [admin](#access-levels) | Roll a canary back |
+| POST | `/ratchet/admin/versions/{id}/retire` | both | [admin](#access-levels) | Retire a live, canary or shadow version |
+| POST | `/ratchet/admin/versions/{id}/promote` | both | [admin](#access-levels) | Promote a version to a canary stage, or to live over the live version |
+| POST | `/ratchet/admin/student/disable`, `/ratchet/admin/student/enable` | both | [admin](#access-levels) | Turn the student off (the teacher answers everything) or back on |
+| POST | `/ratchet/admin/releases/freeze`, `/ratchet/admin/releases/unfreeze` | both | [admin](#access-levels) | Hold every promotion (rollbacks and alerts keep running), or lift the hold |
+| POST | `/ratchet/admin/training/pause`, `/ratchet/admin/training/resume` | both | [admin](#access-levels) | Skip Night School until resumed |
+| PUT | `/ratchet/admin/settings` | both | [admin](#access-levels) | Set the runtime audit rate |
+| POST | `/ratchet/admin/tasks/{name}/pin` | both | [admin](#access-levels) | Pin a registered task to the teacher at runtime |
+| DELETE | `/ratchet/admin/tasks/{name}/pin` | both | [admin](#access-levels) | Remove a task's runtime pin |
+| POST | `/ratchet/admin/tick` | both | [admin](#access-levels) | Run the release gate now, recorded as an admin action |
 | POST | `/ratchet/demo/day` | mock only | [mock](#access-levels) | Simulate one day of traffic and one night of training |
 | POST | `/ratchet/demo/break-next` | mock only | [mock](#access-levels) | Make the next trained student deploy corrupted |
 | POST | `/ratchet/demo/student-outage` | mock only | [mock](#access-levels) | Take the student endpoint down for a while, to show the circuit breaker |
@@ -61,7 +74,7 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
 - `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight. `RATCHET_KEY_LIMITS` gives a key its own quota, US dollar budgets, rates, task scope and storage switch ([Limits and headers](#limits-and-headers)).
-- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
+- **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)), `POST /ratchet/cost/endpoint` ([Cost](#cost)) and every route under `/ratchet/admin/`, its reads included ([Admin](#admin)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - **Dashboard keys** (`RATCHET_DASHBOARD_KEYS`, same syntax, never an API or admin key) read the dashboard API and write nothing. Who needs which key is the route's access level ([Access levels](#access-levels)): in live mode the dashboard API needs an admin or dashboard key by default.
 - Pages, `/healthz`, `/ratchet/bom/public-key` and Scout are always public. The mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
@@ -79,7 +92,7 @@ Every route has one access level (the Access column above; `ratchet/access.py`, 
 | `admin` | An admin key. Without `RATCHET_ADMIN_KEYS`: nobody in live mode, anyone in mock mode (as `mock-admin`) | **401** `invalid or missing admin key`; **403** for an API key or a dashboard key; **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys |
 | `mock` | Anyone, in mock mode only (invariant 8) | **403** `demo controls are only available in mock mode` in live mode |
 
-On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public) and `/ratchet/kpis` (dashboard).
+On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/admin/` (admin), `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public) and `/ratchet/kpis` (dashboard).
 
 **Scrubbed reads.** A dashboard shown to anyone should not show who your clients are or where your endpoints live. By default an anonymous read of a public dashboard in live mode is scrubbed (`RATCHET_SCRUB_STATS=1` scrubs every read, `0` none): in `/ratchet/stats` client names become `client-1`, `client-2`, ... (stable, by sorted name; the same pseudonyms replace the names in task allow-lists from `GET /ratchet/tasks`, in a request lookup and in the `client` labels of `/metrics`), every `http(s)://` URL in an event detail becomes `<url>`, and an error message after an exception's class is cut (`ConnectError: [Errno 111] ...` becomes `ConnectError`). `security.scrubbed` says whether a payload was scrubbed. A reader who sends an admin or dashboard key gets the full payload. Only names and pseudonyms ever appear, never keys (invariant 13).
 
@@ -527,7 +540,9 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
              "alert_pct": [50, 80, 100]},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
            "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
-  "errors": {"last_hour": {"student": 3, "auth": 1}}
+  "errors": {"last_hour": {"student": 3, "auth": 1}},
+  "controls": {"student_disabled": false, "releases_frozen": false, "training_paused": false, "audit_rate": null,
+               "pinned_tasks": []}
 }
 ```
 
@@ -539,13 +554,14 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `student` | student | Its confidence reached the version's threshold (and, for `n` > 1 choices, at least `n` samples agreed) |
   | `confidence` | teacher | The student was unsure (below the threshold) |
   | `cold_start` | teacher | No version serves yet (no live version, and the canary was not picked) |
-  | `pinned` | teacher | A pinned task, or a request with a part only the teacher reads (`RATCHET_TEACHER_MODALITIES`) |
+  | `pinned` | teacher | A pinned task (by its spec, or at runtime by an operator: [Admin](#admin)), or a request with a part only the teacher reads (`RATCHET_TEACHER_MODALITIES`) |
   | `student_error` | teacher | The student call failed (timeout, connection error, an error status, a lost adapter) |
   | `student_breaker` | teacher | The student's circuit breaker was open, so the student was not called ([ARCHITECTURE.md](ARCHITECTURE.md#student-circuit-breaker)) |
   | `degraded` | student | The student was unsure and the teacher unavailable, so its own answer was served (`RATCHET_ON_TEACHER_FAILURE=serve_student`, `ratchet.degraded`); not audited, stored or shadowed ([ARCHITECTURE.md](ARCHITECTURE.md#when-the-teacher-is-down)) |
   | `fallback_teacher` | teacher | The teacher was unavailable (its retries failed or its breaker was open), so the fallback teacher answered (`RATCHET_TEACHER_FALLBACK_MODEL`); an escalation, a cold start, a pinned task or a teacher-only request |
   | `n_choices` | teacher | The student was confident, but fewer than the request's `n` samples gave its answer, so it could not fill `n` choices ([Choices and logprobs](#choices-and-logprobs)) |
   | `unknown_task` | teacher | The task is not registered and `RATCHET_UNKNOWN_TASKS=teacher`: the student was not called and nothing was stored ([Tasks](#tasks)) |
+  | `student_disabled` | teacher | An operator turned the student off (`POST /ratchet/admin/student/disable`, [Admin](#admin)): no student or shadow call; the teacher's answer is stored as on a cold start |
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
   Later versions add routes; a client should show an unknown route as it is.
@@ -558,6 +574,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
 - `totals.failed_cost_usd` (v0.5): what requests that failed spent without leaving a request row, such as the student's samples of an escalation whose teacher call then failed (NFR-3). It counts against the savings: `saved_usd = baseline_usd − cost_usd − failed_cost_usd` and `savings_pct = 1 − (cost_usd + failed_cost_usd) / baseline_usd`. Without failures both are what they were before. `days`, `tasks` and `clients` leave it out.
 - `errors.last_hour` (v0.5): the failures of the last hour by stage (`failures.stage`: `teacher`, `student`, `audit`, `shadow`, `quota`, `auth`, `budget`, `rate`, `upstream`, `gateway`), busiest first; `{}` when nothing failed. A failed student call the teacher covered counts here too, although the client got its answer. [RUNBOOK.md](RUNBOOK.md#failures-and-request-ids) explains each stage.
+- `controls` (v0.5): the operator's runtime switches ([Admin](#admin)): whether the student is turned off (`student_disabled`), releases are frozen (`releases_frozen`) and training is paused (`training_paused`), the runtime audit rate (`audit_rate`, `null` while `RATCHET_AUDIT_RATE` applies) and the tasks pinned to the teacher at runtime (`pinned_tasks`, sorted; such a task also shows `pinned: true` under `tasks`).
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
@@ -808,13 +825,13 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
      "fields": {"vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]}, "total": {"type": "number", "abs_tol": 0.01}},
      "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
      "source": "api", "spec_hash": "1c7e77bb7041b4d8", "verifiable": true,
-     "requests": 420, "student_share": 0.81, "recalibrating": false}
+     "requests": 420, "student_share": 0.81, "recalibrating": false, "runtime_pinned": false}
   ],
   "unregistered": [{"name": "invoice-extrct", "requests": 3}]
 }
 ```
 
-- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version.
+- `tasks`: every registered task, the built-in ones first, then the file's, then the API's. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file` or `api`; `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version; `runtime_pinned` (v0.5) is true while an operator has pinned the task to the teacher at runtime ([Admin](#admin)), on top of its spec's `pinned`.
 - `unknown_tasks`: the `RATCHET_UNKNOWN_TASKS` policy. `max_tasks`: how many tasks the registry holds at most, built-in ones included.
 - `unregistered`: names requests used that are not registered (a typo, or a task to register or pin), with their request counts.
 
@@ -855,6 +872,124 @@ The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `ta
 ### DELETE `/ratchet/tasks/{name}`
 
 Remove an API task: `{"deleted": "invoice-extract", "spec_hash": "...", "examples_kept": 420}` and a `task_deleted` event. Its stored examples stay, for provenance (and stay trainable under the name's adhoc task unless it is registered again or pinned). Requests that name it then follow `RATCHET_UNKNOWN_TASKS`. **403** for a built-in or file task, **404** for a name that is not registered.
+
+## Admin
+
+Manual interventions with an audit trail ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)). Every route under `/ratchet/admin/`, its reads included, needs an admin key (`RATCHET_ADMIN_KEYS`; [Access levels](#access-levels)): **401** without a key or with a wrong one, **403** for an API key or a dashboard key, **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys; open in mock mode without them (as `mock-admin`). `python -m ratchet.admin` does the same on the ledger file (see [CLI](#cli)).
+
+Conventions:
+
+- **Body.** A JSON object with only the keys each route names (**400** `unknown keys [...]` otherwise); an empty body is `{}`. Every call that can change something takes `reason`: one line of 3 to 500 characters saying why (**400** without it). It is redacted like a training example (an e-mail address becomes `[EMAIL]`) before it is stored, because it lands in the release log. `POST /ratchet/admin/tick` is the one route where it is optional.
+- **Answer.** `{"action", "target", "changed", "before", "after", "action_id"}`: what was acted on (`v7`, a switch, a task, `gate`), its state before and after, and the `admin_actions` row written (`null` when the call changed nothing: a switch already set, a canary already at that share; nothing is then written).
+- **Record.** The change, its `admin_actions` row (time, actor `api:<admin key name>` or `cli:<OS user>`, action, target, reason, before, after, and the call's `x-request-id`) and an `admin` event (`v7 rolled back from canary 50% by api:ops: refund labels are wrong`) commit in one transaction. Keys are never stored, only names (invariant 13).
+- **Conflicts.** A move the table below does not allow, or a version that another admin or the release gate moved while the call ran (every move compares and sets, FR-12.9), is **409** with what the version is now; nothing is written. **404** for an unknown version or task.
+- **Effect.** Every process that shares the ledger sees a change on its next request, tick or night without a restart: the switches and pins are read through a snapshot that any write invalidates, also another process's (`PRAGMA data_version`).
+
+| From | To | How | Needs `force` |
+|---|---|---|---|
+| `canary` | `rolled_back` | `rollback`: its traffic returns to the live version, or the teacher | No |
+| `canary` | `retired` | `retire` | No |
+| `canary` | `canary` (another share) | `promote` with `to: canary` | No |
+| `canary` | `live` | `promote` with `to: live`: the live version is retired in the same transaction | No |
+| `live` | `retired` | `retire`: the teacher answers what the canary (if any) does not | No |
+| `shadow` | `retired` | `retire`: cancels the shadow, so tonight's training can run | No |
+| `shadow` | `canary` | `promote` with `to: canary`: ends the shadow early | No |
+| `rejected`, `rolled_back`, `retired`, `candidate` | `canary` | `promote` with `to: canary`: the golden gate or the canary did not pass it (or never saw it) | Yes |
+
+Nothing becomes live except a canary, a version without a golden eval (no calibrated threshold) is never promoted, force or not, and a move into canary is refused while another version is in shadow or canary (one in flight at a time). With the runtime audit rate at 0, a new canary needs `force` (it would get no audits, so it could neither advance nor be rolled back).
+
+### GET `/ratchet/admin/versions`
+
+```json
+{
+  "versions": [
+    {"id": 7, "day": 12, "state": "canary", "traffic_pct": 50, "adapter": "student-v7", "train_examples": 4210,
+     "golden": {"precision": 0.97, "coverage": 0.91, "threshold": 0.74, "golden_n": 412},
+     "stage_audits": {"n": 31, "precision": 0.968}},
+    {"id": 6, "day": 9, "state": "live", "traffic_pct": 100, "adapter": "student-v6", "train_examples": 3890,
+     "golden": {"precision": 0.96, "coverage": 0.9, "threshold": 0.76, "golden_n": 401},
+     "stage_audits": {"n": 640, "precision": 0.95}}
+  ],
+  "controls": {"student_disabled": false, "releases_frozen": false, "training_paused": false, "audit_rate": null,
+               "pinned_tasks": []}
+}
+```
+
+Newest first. `stage_audits` (live and canary) counts the teacher's audits of what the version served in its current stage; a shadow has `shadow` instead (`Ledger.shadow_quality`: would-serve answers, precision, coverage, the live student's coverage, unarbitrated disagreements).
+
+### GET `/ratchet/admin/flags`
+
+`controls` as above, plus `set_by` (each stored switch: its raw value, when and by whom it was last set) and `task_pins` (each runtime pin: task, when, by whom and why).
+
+### GET `/ratchet/admin/audit-log?limit=50`
+
+`{"actions": [...]}`: the newest `limit` (1 to 1000, **400** otherwise) `admin_actions` rows, newest first, with `before` and `after` parsed.
+
+### POST `/ratchet/admin/versions/{id}/rollback` and `.../retire`
+
+Body `{"reason": "..."}`. Roll a canary back, or retire a live, canary or shadow version.
+
+```bash
+curl -X POST $GATEWAY/ratchet/admin/versions/7/rollback -H "Authorization: Bearer $ADMIN_KEY" \
+  -d '{"reason": "refund labels are wrong since 09:00"}'
+```
+
+```json
+{"action": "rollback", "target": "v7", "changed": true, "action_id": 12,
+ "before": {"v7": {"state": "canary", "traffic_pct": 50}}, "after": {"v7": {"state": "rolled_back", "traffic_pct": 0}}}
+```
+
+### POST `/ratchet/admin/versions/{id}/promote`
+
+Body `{"reason", "to", "traffic_pct", "force", "load_adapter"}`:
+
+- `to`: `canary` or `live` (**400** otherwise).
+- `traffic_pct`: a canary's share, 1 to 99; by default the next stage (10% from outside canary, then 50%). Leave it out for `live` (100%).
+- `force`: allows the moves the table marks, and a canary while the audit rate is 0. The event says `(forced)`.
+- `load_adapter`: in live mode, first load the version's LoRA adapter into the student endpoint (`/v1/load_lora_adapter` at `RATCHET_STUDENT_BASE`, path `RATCHET_ADAPTER_ROOT/<adapter>`), after the checks and before the move, outside the ledger's transaction. **409** without `RATCHET_STUDENT_BASE`; a failed load is **502** (`loading adapter student-v5 failed: HTTPStatusError 500; nothing changed`). Ignored in mock mode, whose fleet serves every version.
+
+A promotion to live answers both versions: `before` `{"v7": canary 50, "v6": live 100}`, `after` `{"v7": live 100, "v6": retired 0}`.
+
+### POST `/ratchet/admin/student/disable`, `.../enable`
+
+Body `{"reason"}`. Sets `student_disabled`. While it is on, no request calls the student or the shadow candidate: the teacher answers (route `student_disabled`) and its answers are stored as on a cold start. A kill switch for a misbehaving endpoint or adapter that keeps every version's state as it is.
+
+### POST `/ratchet/admin/releases/freeze`, `.../unfreeze`
+
+Body `{"reason"}`. Sets `releases_frozen`. While it is on the release gate starts no version taking traffic and gives none more: no shadow is promoted to canary, no canary advances or becomes live, and a cold-start candidate shadows the teacher instead of taking 10%. Rollbacks, rejections and the live alert run as usual, so a bad canary is still rolled back. Lifted, the gate goes on from the evidence gathered meanwhile.
+
+### POST `/ratchet/admin/training/pause`, `.../resume`
+
+Body `{"reason"}`. Sets `training_paused`. While it is on, every night writes `skip` (`training paused by an admin; no training tonight`) and trains nothing.
+
+### PUT `/ratchet/admin/settings`
+
+Body `{"audit_rate", "reason", "force"}`. `audit_rate` is required: a number from 0 to 1 that replaces `RATCHET_AUDIT_RATE` (the share of student answers the teacher audits), or `null` to go back to it. 0 while a canary is in flight is **409** unless `force`: with no audits it could neither advance nor be rolled back. With the rate at 0 the gate also starts no new canary.
+
+### POST and DELETE `/ratchet/admin/tasks/{name}/pin`
+
+Body `{"reason"}`. Pin a registered task (built-in, file or API) to the teacher at runtime, or remove that pin. While pinned, its requests go to the teacher alone and nothing of them is stored (invariant 10), and Night School leaves its stored rows out of training and the golden eval from the next night on (`excluded_pinned`), as for a task its spec pins. The spec itself and its `spec_hash` do not change, so removing the pin needs no re-score. **404** for a name that is not registered; a task its spec pins answers `changed: false` to a pin and **409** to an unpin (change the spec instead).
+
+### POST `/ratchet/admin/tick`
+
+Body `{"reason"}`, optional. Runs the release gate now, as the cron tick does, and records it (action `tick`, target `gate`). `before` and `after` are the live, canary and shadow versions around it (a version that left them, such as a rolled-back canary, is in both), `moved` lists the versions whose state changed, and `changed` says whether any did. The gate's own events say why.
+
+### CLI
+
+`python -m ratchet.admin` works on `RATCHET_DB` (or `--db`; a missing file is an error, never created) with the actor `cli:<OS user>`, through the same functions. Exit 0 on success (`nothing changed` on stderr when nothing did), 1 for a refused move (a 409), 2 for a bad input or an unknown version or task.
+
+```bash
+python -m ratchet.admin versions [--json]
+python -m ratchet.admin rollback 7 --reason "refund labels are wrong since 09:00"
+python -m ratchet.admin retire 6 --reason "..."
+python -m ratchet.admin promote 5 --to canary [--traffic-pct 10] [--force] --reason "..."
+python -m ratchet.admin promote 5 --to live [--load-adapter] --reason "..."
+python -m ratchet.admin flag                                            # the switches, who set them, the task pins (JSON)
+python -m ratchet.admin flag student_disabled on --reason "..."         # on|off; also releases_frozen, training_paused
+python -m ratchet.admin flag audit_rate 0.2 --reason "..."              # or `default`; --force for 0 during a canary
+python -m ratchet.admin pin ticket-triage --reason "..."                # and unpin
+python -m ratchet.admin audit-log [--limit 50] [--json]
+```
 
 ## Demo controls (mock mode only)
 

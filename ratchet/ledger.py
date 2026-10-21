@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import json
@@ -10,7 +11,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,23 @@ CREATE TABLE IF NOT EXISTS tasks (
     source TEXT,               -- 'api' (the admin API) | 'auto' (derived from requests)
     created_ts REAL, updated_ts REAL,
     updated_by TEXT            -- the admin key's name (RATCHET_ADMIN_KEYS), never the key
+);
+-- The admin API and CLI (ratchet/admin.py, ADR 0064): every manual change, the runtime switches and the task pins.
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL,
+    actor TEXT,                -- 'api:<admin key name>' or 'cli:<OS user>'; never a key
+    action TEXT,               -- admin.ACTIONS: rollback | retire | promote | set_flag | pin_task | unpin_task
+    target TEXT,               -- 'v7', a flag name or a task name
+    reason TEXT,               -- the operator's reason, 3 to 500 characters, redacted
+    before TEXT, after TEXT,   -- JSON: the target's state before and after
+    request_id TEXT            -- the gateway's request id of the admin call; NULL from the CLI
+);
+CREATE TABLE IF NOT EXISTS runtime_flags (  -- FLAG_NAMES; a missing row means the default
+    name TEXT PRIMARY KEY, value TEXT, ts REAL, actor TEXT
+);
+CREATE TABLE IF NOT EXISTS task_overrides (  -- tasks an operator pinned to the teacher at runtime, on top of their spec
+    task TEXT PRIMARY KEY, pinned INTEGER, ts REAL, actor TEXT, reason TEXT
 );
 -- Evidence tables (ADR 0024). Each feature fills its own; an old file gains them on open.
 CREATE TABLE IF NOT EXISTS version_leaves (  -- each adapter's committed training and golden sets (FR-16.4)
@@ -222,6 +240,51 @@ class Version:
     stage_since: int = 0
 
 
+# Every state a version can be in (ARCHITECTURE §5). A release moves a version only through `transition` and
+# `promote_live` (compare-and-set, ADR 0064): at most one version is live, and at most one is in flight (shadow or
+# canary), across every process that shares the ledger file. `set_version` stays for tests and migrations.
+VERSION_STATES = ("candidate", "rejected", "shadow", "canary", "live", "retired", "rolled_back")
+IN_FLIGHT_STATES = ("shadow", "canary")
+# The runtime switches an operator sets with the admin API or CLI (ADR 0064), stored in `runtime_flags`. The booleans
+# default to off; `audit_rate` (0 to 1) replaces Settings.audit_rate while it is set.
+FLAG_NAMES = ("student_disabled", "releases_frozen", "training_paused", "audit_rate")
+BOOL_FLAGS = ("student_disabled", "releases_frozen", "training_paused")
+
+
+@dataclass(frozen=True)
+class RuntimeFlags:
+    """The operator's runtime switches and task pins (`Ledger.flags`), as one snapshot. `audit_rate` None means
+    Settings.audit_rate; `pinned` holds the names of the tasks pinned to the teacher at runtime (`task_overrides`)."""
+
+    student_disabled: bool = False
+    releases_frozen: bool = False
+    training_paused: bool = False
+    audit_rate: float | None = None
+    pinned: frozenset[str] = frozenset()
+
+    def as_dict(self) -> dict[str, Any]:
+        """JSON-ready, for the admin API, the CLI and `/ratchet/stats`' `controls`."""
+        return {
+            "student_disabled": self.student_disabled,
+            "releases_frozen": self.releases_frozen,
+            "training_paused": self.training_paused,
+            "audit_rate": self.audit_rate,
+            "pinned_tasks": sorted(self.pinned),
+        }
+
+
+def _flag_value(name: str, raw: Any) -> bool | float | None:
+    """A stored flag's value; None for an audit rate that is not a number from 0 to 1 (a row written by hand), which is
+    then ignored: a bad row never fails the request path."""
+    if name in BOOL_FLAGS:
+        return raw in ("1", 1)
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return rate if math.isfinite(rate) and 0.0 <= rate <= 1.0 else None
+
+
 # Columns added after v0.1's first schema; existing database files are migrated on open.
 MIGRATIONS: dict[str, dict[str, str]] = {
     "requests": {
@@ -307,11 +370,14 @@ ROUTED_STATES = ("live", "canary", "shadow")
 # Tables whose writes on this connection bump a generation (`_bump`, through TEMP triggers that live only on
 # the writer's connection): any write to `versions` invalidates the routing snapshot; a deleted or rewritten request or
 # example invalidates the incremental tallies built from them. Inserts into requests and examples are not watched (the
-# tallies read rows above the last id they saw), so the request path pays nothing for them.
+# tallies read rows above the last id they saw), so the request path pays nothing for them. Any write to the runtime
+# switches or the task pins invalidates the flags snapshot (`Ledger.flags`, ADR 0064).
 WATCHED = {
     "versions": ("INSERT", "UPDATE", "DELETE"),
     "requests": ("UPDATE", "DELETE"),
     "examples": ("UPDATE OF hash", "DELETE"),
+    "runtime_flags": ("INSERT", "UPDATE", "DELETE"),
+    "task_overrides": ("INSERT", "UPDATE", "DELETE"),
 }
 MAX_TALLIES = 64  # version_live_quality's incremental tallies kept, oldest dropped first (two are used per tick)
 
@@ -331,6 +397,14 @@ SHADOW_QUALITY_SQL = """SELECT COUNT(*) n, SUM(shadow_serve) served,
                FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL"""
 # The routing snapshot's rebuild (versions_state).
 ROUTED_SQL = f"SELECT * FROM versions WHERE state IN ({','.join('?' * len(ROUTED_STATES))}) ORDER BY id"
+# A release transition, compare-and-set (ADR 0064): it changes the row only while the version is still in the state and
+# stage the caller saw, and starts the new stage after the last request logged so far (`stage_since`).
+TRANSITION_SQL = (
+    "UPDATE versions SET state=?, traffic_pct=?, stage_since=(SELECT COALESCE(MAX(id), 0) FROM requests)"
+    " WHERE id=? AND state=? AND COALESCE(traffic_pct, 0)=?"
+)
+ADMIN_COLUMNS = ("id", "ts", "actor", "action", "target", "reason", "before", "after", "request_id")
+MAX_ADMIN_ACTIONS = 1000  # rows one admin_actions read returns at most
 
 
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
@@ -448,6 +522,13 @@ class Ledger:
         self._day_latency: dict[int | None, tuple[tuple[int, int, int | None], float | None, float | None]] = {}
         self._digest: tuple[tuple[int, int | None, int | None], str] | None = None  # bill_of_materials' sha
         self._listeners: list[Callable[[dict[str, Any]], object]] = []  # event listeners (add_event_listener)
+        # The runtime switches and task pins (`flags`, ADR 0064), cached like the routing snapshot.
+        self._flags_key: tuple[int, int, int] | None = None
+        self._flags = RuntimeFlags()
+        # `transaction()`: how deep the current thread's transaction is nested, and the events written in it, handed to
+        # the listeners once it commits. Only touched under `_lock`, which a transaction holds throughout.
+        self._txn_depth = 0
+        self._txn_events: list[dict[str, Any]] = []
         self._watch()
         self._ro, self._ro_lock = self._reader()
         self._rdb = self._ro if self._ro is not None else self.db
@@ -727,6 +808,44 @@ class Ledger:
         if not self.db.in_transaction:
             self.db.execute("BEGIN IMMEDIATE")
 
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[None]:
+        """One write transaction (BEGIN IMMEDIATE ... COMMIT) under the ledger's lock, so what it checks and what it writes
+        are atomic across threads and across processes on the same file (the gateway, the cron tick and the admin CLI).
+        Nested calls join the outermost one. Events written inside (`event`) are committed with it and handed to the
+        listeners after the commit; an exception rolls everything back, events included, and invalidates every cache a
+        write inside may have refreshed. Inside, call only reads, `event`, `transition`, `promote_live`, `record_admin`,
+        `set_flag` and the task-override writers: any other writer commits at once, which would split the transaction
+        (checked at the commit)."""
+        with self._lock:
+            if self._txn_depth:
+                self._txn_depth += 1
+                try:
+                    yield
+                finally:
+                    self._txn_depth -= 1
+                return
+            self._begin()
+            self._txn_depth, self._txn_events = 1, []
+            try:
+                yield
+                if not self.db.in_transaction:
+                    raise RuntimeError("a write inside Ledger.transaction() committed early; use the methods it names")
+                self.db.commit()
+            except BaseException:
+                if self.db.in_transaction:
+                    self.db.rollback()
+                for table in self._gen:  # a cache rebuilt inside saw rows that are gone now
+                    self._gen[table] += 1
+                self._txn_events = []
+                raise
+            finally:
+                self._txn_depth = 0
+            written, self._txn_events = self._txn_events, []
+            listeners = tuple(self._listeners)
+        for row in written:
+            self._announce(listeners, row)
+
     @_locked
     def compute_start(
         self,
@@ -953,6 +1072,9 @@ class Ledger:
 
     @_locked
     def set_version(self, vid: int, state: str, traffic_pct: int | None = None) -> None:
+        """Put a version in a state unconditionally. For tests and migrations only: a release moves versions with
+        `transition` and `promote_live`, which compare and set (ADR 0064), so two processes can never both act on one
+        decision."""
         since = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM requests").fetchone()[0]
         if traffic_pct is None:
             self.db.execute("UPDATE versions SET state=?, stage_since=? WHERE id=?", (state, since, vid))
@@ -961,6 +1083,93 @@ class Ledger:
                 "UPDATE versions SET state=?, traffic_pct=?, stage_since=? WHERE id=?", (state, traffic_pct, since, vid)
             )
         self.db.commit()
+
+    @staticmethod
+    def _check_move(state: str, pct: int, what: str) -> None:
+        if state not in VERSION_STATES:
+            raise ValueError(f"{what} state must be one of {', '.join(VERSION_STATES)}, not {state!r}")
+        if isinstance(pct, bool) or not isinstance(pct, int) or not 0 <= pct <= 100:
+            raise ValueError(f"{what} traffic_pct must be a whole number from 0 to 100, not {pct!r}")
+
+    def _cas(self, vid: int, from_state: str, from_pct: int, to_state: str, to_pct: int) -> bool:
+        """One compare-and-set on a version row (TRANSITION_SQL), inside a transaction the caller holds."""
+        cur = self.db.execute(TRANSITION_SQL, (to_state, to_pct, vid, from_state, from_pct))
+        return cur.rowcount == 1
+
+    @_locked
+    def transition(
+        self,
+        vid: int,
+        from_state: str,
+        from_pct: int | None,
+        to_state: str,
+        to_pct: int,
+        event: tuple[str, str] | None = None,
+    ) -> bool:
+        """Move version `vid` from (`from_state`, `from_pct`) to (`to_state`, `to_pct`) and start a new stage, only if it
+        is still where the caller saw it, and write `event` (kind, detail) in the same transaction, only when the move
+        happened. Returns whether it did: False means another process (the cron tick, the admin CLI) or thread moved it
+        first, and nothing was written. A move into shadow or canary is refused (False) while another version is in
+        flight, so at most one version is ever in flight. A move to live raises ValueError: `promote_live` retires the
+        old live version in the same transaction, so two versions are never live (ADR 0064). A `from_pct` of None (a row
+        written without one) matches 0, as the stored NULL does."""
+        from_pct = 0 if from_pct is None else from_pct
+        self._check_move(from_state, from_pct, "from")
+        self._check_move(to_state, to_pct, "to")
+        if to_state == "live":
+            raise ValueError("a version becomes live only through promote_live, which retires the old live version with it")
+        with self.transaction():
+            if to_state in IN_FLIGHT_STATES:
+                marks = ",".join("?" * len(IN_FLIGHT_STATES))
+                other = self.db.execute(
+                    f"SELECT 1 FROM versions WHERE state IN ({marks}) AND id<>? LIMIT 1", (*IN_FLIGHT_STATES, vid)
+                ).fetchone()
+                if other is not None:
+                    return False
+            if not self._cas(vid, from_state, from_pct, to_state, to_pct):
+                return False
+            if event is not None:
+                self.event(*event)
+        return True
+
+    @_locked
+    def promote_live(
+        self,
+        vid: int,
+        from_state: str,
+        from_pct: int | None,
+        event: tuple[str, str] | None = None,
+        *,
+        old_live: int | None,
+        retired_event: tuple[str, str] | None = None,
+    ) -> bool:
+        """Make version `vid` live at 100% and retire `old_live` (the live version the caller saw; None when it saw none)
+        in ONE transaction, both compare-and-set: nothing changes unless `vid` is still in (`from_state`, `from_pct`) and
+        the versions now live are exactly `old_live`. `retired_event` is written for the retirement, then `event` for the
+        promotion, only when both moves happened. Returns whether they did; so two versions are never live, and two
+        processes promoting at once promote once (ADR 0064)."""
+        from_pct = 0 if from_pct is None else from_pct
+        self._check_move(from_state, from_pct, "from")
+        if from_state == "live":
+            raise ValueError(f"v{vid} is live already")
+        with self.transaction():
+            live = [int(r[0]) for r in self.db.execute("SELECT id FROM versions WHERE state='live' ORDER BY id")]
+            if live != ([] if old_live is None else [old_live]):
+                return False
+            if not self._cas(vid, from_state, from_pct, "live", 100):
+                return False
+            if old_live is not None:
+                # Checked live above, inside this transaction, whatever its traffic says (a row written by hand).
+                self.db.execute(
+                    "UPDATE versions SET state='retired', traffic_pct=0,"
+                    " stage_since=(SELECT COALESCE(MAX(id), 0) FROM requests) WHERE id=? AND state='live'",
+                    (old_live,),
+                )
+                if retired_event is not None:
+                    self.event(*retired_event)
+            if event is not None:
+                self.event(*event)
+        return True
 
     @_locked
     def set_bom(self, vid: int, doc: dict[str, Any]) -> None:
@@ -1037,6 +1246,136 @@ class Ledger:
             r = self.db.execute("SELECT * FROM versions WHERE state=? ORDER BY id DESC LIMIT 1", (state,)).fetchone()
         return self._version(r) if r is not None else None
 
+    # ---------- runtime switches, task pins and the admin audit trail (ADR 0064) ----------
+    @_locked
+    def flags(self) -> RuntimeFlags:
+        """The operator's runtime switches and task pins, rebuilt only when one was written: on this connection (the
+        TEMP triggers' generations) or by another process, such as the admin CLI (PRAGMA data_version), so a change
+        applies on the next request without a restart. Each call also publishes the pins to `tasks`
+        (`tasks.set_overrides`), so `tasks.get` in this process sees a task pinned at runtime as pinned (INV-10)."""
+        key = (
+            self._gen["runtime_flags"],
+            self._gen["task_overrides"],
+            int(self.db.execute("PRAGMA data_version").fetchone()[0]),
+        )
+        if key != self._flags_key:
+            values: dict[str, Any] = {}
+            for r in self.db.execute("SELECT name, value FROM runtime_flags"):
+                if r["name"] in FLAG_NAMES:
+                    value = _flag_value(r["name"], r["value"])
+                    if value is not None:
+                        values[r["name"]] = value
+            pinned = frozenset(r[0] for r in self.db.execute("SELECT task FROM task_overrides WHERE pinned=1"))
+            self._flags, self._flags_key = RuntimeFlags(pinned=pinned, **values), key
+        flags = self._flags
+        if tasks.OVERRIDES != flags.pinned:
+            tasks.set_overrides(flags.pinned)
+        return flags
+
+    @_locked
+    def flag_rows(self) -> dict[str, dict[str, Any]]:
+        """Every stored runtime switch, by name: {value, ts, actor} as written (who changed it last, and when)."""
+        rows = self.db.execute("SELECT name, value, ts, actor FROM runtime_flags ORDER BY name")
+        return {r["name"]: {"value": r["value"], "ts": r["ts"], "actor": r["actor"]} for r in rows}
+
+    @_locked
+    def set_flag(self, name: str, value: bool | float | None, actor: str) -> None:
+        """Store a runtime switch (FLAG_NAMES): a boolean for the switches, a number from 0 to 1 for `audit_rate`, or None
+        to go back to the default (the row is deleted). `actor` is who did it ('api:<admin name>' or 'cli:<user>'),
+        never a key. Callers go through `ratchet.admin`, which also writes the audit trail in the same transaction."""
+        if name not in FLAG_NAMES:
+            raise ValueError(f"flag must be one of {', '.join(FLAG_NAMES)}, not {name!r}")
+        text: str | None = None
+        if value is not None and name in BOOL_FLAGS:
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be true or false, not {value!r}")
+            text = "1" if value else "0"
+        elif value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise ValueError(f"{name} must be a number from 0 to 1, not {value!r}")
+            text = repr(float(value))
+        with self.transaction():
+            if text is None:
+                self.db.execute("DELETE FROM runtime_flags WHERE name=?", (name,))
+                return
+            self.db.execute(
+                "INSERT INTO runtime_flags (name, value, ts, actor) VALUES (?,?,?,?)"
+                " ON CONFLICT(name) DO UPDATE SET value=excluded.value, ts=excluded.ts, actor=excluded.actor",
+                (name, text, time.time(), actor),
+            )
+
+    @_locked
+    def task_overrides(self) -> list[dict[str, Any]]:
+        """The tasks pinned at runtime, by name: task, pinned, ts, actor, reason."""
+        return [dict(r) for r in self.db.execute("SELECT * FROM task_overrides ORDER BY task")]
+
+    @_locked
+    def set_task_override(self, task: str, actor: str, reason: str) -> None:
+        """Pin `task` to the teacher at runtime (`task_overrides`); `ratchet.admin.pin_task` checks the task first."""
+        with self.transaction():
+            self.db.execute(
+                "INSERT INTO task_overrides (task, pinned, ts, actor, reason) VALUES (?,1,?,?,?)"
+                " ON CONFLICT(task) DO UPDATE SET pinned=1, ts=excluded.ts, actor=excluded.actor, reason=excluded.reason",
+                (task, time.time(), actor, reason),
+            )
+
+    @_locked
+    def clear_task_override(self, task: str) -> bool:
+        """Remove a runtime pin; False when the task had none."""
+        with self.transaction():
+            cur = self.db.execute("DELETE FROM task_overrides WHERE task=?", (task,))
+        return cur.rowcount > 0
+
+    @_locked
+    def record_admin(
+        self,
+        actor: str,
+        action: str,
+        target: str,
+        reason: str | None,
+        before: Mapping[str, Any] | None,
+        after: Mapping[str, Any] | None,
+        request_id: str | None = None,
+        event: str | None = None,
+    ) -> int:
+        """One `admin_actions` row and its `admin` event (`event`, or `<action> <target> by <actor>: <reason>`), in one
+        transaction (the caller's, when it holds one, so the change and its record commit together). `reason` arrives
+        checked and redacted (`ratchet.admin.check_reason`; None only for a tick, where it is optional); `actor` is a
+        name, never a key (INV-13). Returns the row id."""
+        with self.transaction():
+            cur = self.db.execute(
+                "INSERT INTO admin_actions (ts, actor, action, target, reason, before, after, request_id)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    time.time(),
+                    actor,
+                    action,
+                    target,
+                    reason,
+                    json.dumps(before, ensure_ascii=False, sort_keys=True) if before is not None else None,
+                    json.dumps(after, ensure_ascii=False, sort_keys=True) if after is not None else None,
+                    request_id,
+                ),
+            )
+            self.event("admin", event or f"{action} {target} by {actor}: {reason}")
+        return int(cur.lastrowid)
+
+    @_reads
+    def admin_actions(self, limit: int = 50) -> list[dict[str, Any]]:
+        """The newest `limit` admin actions (1 to MAX_ADMIN_ACTIONS), newest first, with `before` and `after` parsed."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_ADMIN_ACTIONS:
+            raise ValueError(f"limit must be a whole number from 1 to {MAX_ADMIN_ACTIONS}, not {limit!r}")
+        out = []
+        for r in self._rdb.execute(f"SELECT {', '.join(ADMIN_COLUMNS)} FROM admin_actions ORDER BY id DESC LIMIT ?", (limit,)):
+            row = dict(r)
+            for k in ("before", "after"):
+                try:
+                    row[k] = json.loads(row[k]) if row[k] else None
+                except ValueError:
+                    pass  # written by hand: shown as stored
+            out.append(row)
+        return out
+
     # ---------- tasks (the admin API's and auto tasks; built-in and file tasks are never stored) ----------
     @_locked
     def save_task(
@@ -1093,19 +1432,26 @@ class Ledger:
     def event(self, kind: str, detail: str) -> None:
         """Append to the release log, then hand the row ({id, ts, day, kind, detail}) to every listener
         (`add_event_listener`), outside the lock when the caller does not hold it. A failing listener is ignored: the
-        event is already stored, and a log handler must never fail what wrote it."""
+        event is already stored, and a log handler must never fail what wrote it. Inside `transaction()` the row commits
+        with the transaction, and the listeners get it after the commit (never for a transaction rolled back)."""
         with self._lock:
             ts, day = time.time(), self.day
             cur = self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (ts, day, kind, detail))
+            row = {"id": int(cur.lastrowid), "ts": ts, "day": day, "kind": kind, "detail": detail}
+            if self._txn_depth:
+                self._txn_events.append(row)
+                return
             self.db.commit()
             listeners = tuple(self._listeners)
-        if listeners:
-            row = {"id": int(cur.lastrowid), "ts": ts, "day": day, "kind": kind, "detail": detail}
-            for fn in listeners:
-                try:
-                    fn(row)
-                except Exception:  # noqa: BLE001 - the event is stored; a listener (the log) must not undo that
-                    pass
+        self._announce(listeners, row)
+
+    @staticmethod
+    def _announce(listeners: tuple[Callable[[dict[str, Any]], object], ...], row: dict[str, Any]) -> None:
+        for fn in listeners:
+            try:
+                fn(row)
+            except Exception:  # noqa: BLE001 - the event is stored; a listener (the log) must not undo that
+                pass
 
     def add_event_listener(self, fn: Callable[[dict[str, Any]], object]) -> None:
         """Call `fn(row)` after every event this ledger writes (the gateway mirrors them to the log, ADR 0062). Adding the
