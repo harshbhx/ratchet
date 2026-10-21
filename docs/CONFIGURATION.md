@@ -272,8 +272,8 @@ Tasks come from four places ([ADR 0022](adr/0022-task-registry.md)): the built-i
 |---|---|---|
 | `RATCHET_TASKS_FILE` | empty | A file of task specs ([Adding a task](#adding-a-task)), JSON, or YAML for a `.yaml` or `.yml` file (needs PyYAML: `pip install pyyaml`, or the `yaml` extra). Read when the gateway starts (and on a mock demo reset) and by `python -m ratchet.live`. A file task may replace a built-in one. A bad file stops startup with every error and its path (`tasks[2].fields.total.abs_tol: must be a number >= 0`); a YAML file without PyYAML is an error that says so |
 | `RATCHET_UNKNOWN_TASKS` | `distill` | What a request naming a task that is not registered gets. `distill` (v0.4): a task without fields made up for the name, distilled like any other. `teacher`: the teacher answers (route `unknown_task`), the student is not called and nothing is stored. `reject`: 400 `unknown_task`, listing the registered tasks the key may use. Under `teacher` and `reject` an `X-Ratchet-Task` header that is not a valid task name is a 400 `unknown_task` too (under `distill` it means `default`, as in v0.4). Case-insensitive; anything else stops startup |
-| `RATCHET_MAX_AUTO_TASKS` | `200` | Most auto tasks (derived from a request's `response_format` json_schema, [Structured outputs](#structured-outputs)) the registry holds, counted from the stored and new ones. Past it a request with a new schema gets an unregistered task of its auto name, which `RATCHET_UNKNOWN_TASKS` decides about, and one `auto_task_cap` event is written. `0` turns auto tasks off: a schema then only binds its request's answers to it. A whole number from 0 to 500 (the registry's size); anything else stops startup |
-| `RATCHET_SCHEMA_REPAIR` | `1` | `0`: no repair call. Otherwise a complete teacher answer that breaks its request's `response_format` gets one more call to the same teacher, shown its answer and the schema errors; the repaired answer is served and, when valid, stored with the request's own messages. Read in `ratchet/config.py`, used by `ratchet/router.py` (`Ratchet._repair`) |
+| `RATCHET_MAX_AUTO_TASKS` | `200` | Most auto tasks (derived from a request's `response_format` json_schema, [Structured outputs](#structured-outputs)) the registry holds, counted from the stored and new ones. Past it a request with a new schema gets an unregistered task of its auto name, which `RATCHET_UNKNOWN_TASKS` decides about (under `reject`, a 400 until an admin deletes auto tasks), and one `auto_task_cap` event is written. `0` turns auto tasks off: a json_schema request then keeps the task it names (an unregistered name follows `RATCHET_UNKNOWN_TASKS`), or `default` when it names none, and the schema only binds its answers, as before auto tasks; no request is refused for having a schema. A whole number from 0 to 500 (the registry's size); anything else stops startup |
+| `RATCHET_SCHEMA_REPAIR` | `1` | `0`: no repair call. Otherwise a complete teacher answer that breaks its request's `response_format` gets one more call to the same teacher, shown its answer and the schema errors; the repaired answer is served (unless it was cut off or is empty: the first answer is then kept) and, when valid, stored with the request's own messages. Both calls are paid for in `cost_usd`; the baseline and the client's `usage.prompt_tokens` count the request's own prompt, and `latency_ms` both calls. Read in `ratchet/config.py`, used by `ratchet/router.py` (`Ratchet._repair`) |
 | `RATCHET_FIXTURES_DIR` | `fixtures` | Where fixture files a task spec names must live (`taskspec.resolve_fixture`: a path that resolves outside it, through `..` or a symlink, is refused). For the reserved `sql` format |
 
 | Task | Fields | `pinned` | Agreement rule |
@@ -364,28 +364,33 @@ Which task a json_schema request gets:
 
 | The request names | It gets |
 |---|---|
-| A registered task (header or `metadata.ratchet_task`) | That task; the schema is forwarded and checked on top of its fields |
-| An unregistered name | Under `distill`, an auto task of that name derived from the schema; under `teacher` and `reject`, the unknown-task path for the name |
-| No name | The auto task `auto-<schema name as a slug>-<8 hex digits of SHA-256 over the canonical schema>`, registered on first use |
+| An operator's task (built-in, tasks file or admin API; header or `metadata.ratchet_task`) | That task; the schema is forwarded and checked on top of its fields |
+| An auto task's name | That auto task when the request's schema derives the same fields; otherwise the request's own auto task (an `auto_task_collision` event) |
+| An unregistered name | Under `distill`, an auto task of that name derived from the schema; under `teacher` and `reject`, the unknown-task path for the name. A name starting with `auto-` counts as no name |
+| No name | The auto task `auto-<schema name as a slug>-<16 hex digits of SHA-256 over the canonical schema>`, registered on first use |
+
+An auto task stands for the fields its schema derives, so one client cannot choose what another client's answers are compared on by naming that client's auto task first with a weaker schema. If an auto name is held by an auto task of other fields (two schemas with one 64-bit digest, or one derived differently by another release), the request gets an unregistered task of that name that stores nothing, which `RATCHET_UNKNOWN_TASKS` decides about; delete the stale auto task (`DELETE /ratchet/tasks/<name>`) to let the schema derive it again.
 
 An auto task's fields come from the schema (`ratchet/schema_tasks.py`, `derive`):
 
 | Schema | Field |
 |---|---|
-| `enum` | `label` over its values (`exact` when they collide once normalised, are not all strings or integers, or are more than a label takes) |
+| `enum` | `label` over its values (`number`, exact, when they are all numbers, since the schema takes `2.0` for `2`; `exact` when they collide once normalised, are not all strings or integers, or are more than a label takes) |
 | `boolean` | `bool` |
 | `integer` | `number`, exact |
 | `number` | `number`, relative tolerance 1e-6 |
 | `string` with `format` `date` / `date-time` | `date` (day / datetime granularity) |
 | `string` with `format` `email`, `uuid`, `uri`, `ipv4`, `hostname` | `text`, exact |
 | any other `string`, a `const` | not compared (free text) |
-| `array` of enums, booleans or those strings | `set` (`ranking` with `x-ratchet: {"compare": "ordered"}`) |
+| `array` of enums, booleans or those strings | `set` (`ranking` with `x-ratchet: {"compare": "ordered"}`); other numbers in an array are not compared |
 | `array` of objects | `records` over their comparable properties (skipped when there is none) |
 | nested `object` | its properties as dot paths, at most 4 levels deep; 64 fields in all |
 
 Local `$ref`s and `$defs` are resolved; `"type": ["x", "null"]` or an `anyOf` with `{"type": "null"}` makes a field nullable; a field is required when the schema requires it and every object above it. A property's `x-ratchet` annotation changes its field: `{"compare": "text"}` compares a free-text string (normalised text), `{"compare": "ignore"}` leaves a field out, `{"compare": "ordered"}` makes an array a `ranking` (or ordered `records`), and `{"abs_tol": n}` gives a number a tolerance. Every key starting with `x-ratchet` is stripped from the schema before any model sees it or an example stores it, and the auto task's name hashes the schema with its annotations, since they change the fields.
 
-Auto tasks have source `auto`, are never pinned and are stored in the ledger's `tasks` table, so they are registered again at every start and by `python -m ratchet.live`. An admin may replace one with an API spec (`PUT`) or delete it (its examples stay). A schema with no comparable field, one whose derived spec holds personal data (an enum of email addresses), or one past `RATCHET_MAX_AUTO_TASKS` gets an unregistered task of its auto name, which `RATCHET_UNKNOWN_TASKS` decides about. `json_object` without a schema keeps the named task, or `default`, which compares canonical JSON.
+Auto tasks have source `auto`, are never pinned and are stored in the ledger's `tasks` table, so they are registered again at every start and by `python -m ratchet.live`. An admin may replace one with an API spec (`PUT`) or delete it (its examples stay). A schema with no comparable field, one whose derived spec holds personal data (an enum of email addresses), or one past `RATCHET_MAX_AUTO_TASKS` gets an unregistered task of its auto name, which `RATCHET_UNKNOWN_TASKS` decides about. `json_object` without a schema, and every schema with `RATCHET_MAX_AUTO_TASKS=0`, keeps the named task, or `default`, which compares canonical JSON.
+
+A teacher that answers a json_schema request with a 400 about the format is asked again with `json_object` and the schema in its system message, and that schema goes that way from then on. A refusal may be about the client's schema (a keyword the endpoint's grammar engine cannot compile), so after 3 refused schemas the endpoint is asked once with the smallest strict schema, and only when it refuses that too does every schema go as `json_object` (`json_schema_fallback` events).
 
 ### Adding a task
 

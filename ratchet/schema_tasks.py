@@ -5,9 +5,10 @@ comparison fields come from a json_schema.
   JSON matching the schema for `json_schema` (`jsonschema_lite`). The router binds it to the request's task
   (`tasks.Task.bound`), so a student sample that breaks it gets no vote and a teacher answer that breaks it is repaired
   once and never stored (INV-16); `tasks.for_row` binds the stored conditions the same way in Night School (INV-6).
-- `derive(schema)` turns a json_schema into a task's fields: enums become labels, booleans `bool`, integers and numbers
-  `number`, date strings `date`, identifier strings (email, uuid, uri, ipv4, hostname) exact `text`, arrays of those a
-  `set`, arrays of objects `records`, nested objects dot paths (at most 4 levels and 64 fields); free text is ignored.
+- `derive(schema)` turns a json_schema into a task's fields: enums become labels (an enum of numbers an exact
+  `number`), booleans `bool`, integers and numbers `number`, date strings `date`, identifier strings (email, uuid, uri,
+  ipv4, hostname) exact `text`, arrays of those a `set`, arrays of objects `records`, nested objects dot paths (at most 4
+  levels and 64 fields); free text is ignored.
   A property's `x-ratchet` annotation (`{"compare": "text" | "ignore" | "ordered", "abs_tol": n}`) includes or
   excludes it. A pure function of the schema, so an auto task's name (`auto_name`, from a hash of the schema) always
   stands for the same fields.
@@ -40,6 +41,9 @@ ANNOTATION = "x-ratchet"  # a property's comparison hint; every key starting wit
 COMPARE_HINTS = ("text", "ignore", "ordered")
 AUTO_PREFIX = "auto-"
 SLUG_CHARS = 40  # characters of the schema name an auto task's name keeps
+# Hex digits of the schema's SHA-256 in an auto task's name: 64 bits, so no one can make another schema with the name
+# of someone else's (with 8 digits, 2**32 tries would find one); a name still fits a task name's 64 characters.
+NAME_DIGEST = 16
 MAX_DERIVE_DEPTH = 4  # levels of nested objects (and records) a derived field may sit at
 MAX_PATH = 256  # characters of a field path, as a tasks file allows (taskspec.MAX_PATH)
 NUMBER_REL_TOL = 1e-6  # a `number` field's relative tolerance: 0.1 + 0.2 agrees with 0.3
@@ -47,6 +51,23 @@ ID_FORMATS = frozenset({"email", "uuid", "uri", "ipv4", "hostname"})  # strings 
 REPAIR_ERRORS = 5  # schema errors a repair message lists
 REPAIR_NOTE = "Your previous answer did not match the schema: {errors}. Reply with JSON only."
 SCHEMA_NOTE = "Reply with JSON only. It must match this JSON schema:\n{schema}"
+# The call that asks a teacher endpoint whether it takes json_schema at all (`Ratchet._probe_json_schema`): the smallest
+# strict schema, which every endpoint that takes json_schema compiles.
+PROBE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "probe",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+    },
+}
+PROBE_MESSAGES: list[dict[str, Any]] = [{"role": "user", "content": 'Reply with {"ok": true}.'}]
+PROBE_MAX_TOKENS = 64
 CACHE_SIZE = 256  # schemas whose contract and derived task are kept
 MEMO_SIZE = 1024  # (contract, answer) checks remembered: one request checks an answer several times (votes, agreement)
 
@@ -406,6 +427,10 @@ class _Deriver:
             values = shape.values
             if not values:
                 return None
+            if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+                # A number, compared exactly: the schema takes 2.0 for an enum value 2, which a label '2' would refuse.
+                # Which values are allowed is the schema's check (the contract), as for any bound task.
+                return "number", {}
             if len(values) <= MAX_VALUES and all(isinstance(v, (str, int)) and not isinstance(v, bool) for v in values):
                 return "label", {"values": tuple(str(v) for v in values)}
             return "exact", {}
@@ -447,8 +472,8 @@ class _Deriver:
         if scalar is None:
             return []
         t, options = scalar
-        if t not in ("label", "bool", "date", "text"):
-            return []  # numbers and free text in a list: no comparison the schema implies
+        if t not in ("label", "bool", "date", "text") and not (t == "number" and item.values is not None):
+            return []  # numbers (but an enum's) and free text in a list: no comparison the schema implies
         kind = "ranking" if ordered else "set"
         try:
             if t == "label":
@@ -482,11 +507,12 @@ def derive(schema: Any) -> tuple[FieldSpec, ...]:
 
 def auto_name(json_schema: Mapping[str, Any]) -> str:
     """The name of the auto task for a json_schema `response_format`'s `json_schema` object: `auto-`, its `name` as a
-    slug (lower case; at most SLUG_CHARS characters), `-` and the first 8 hex digits of SHA-256 over the canonical JSON
-    of its schema (annotations included, since they change the fields). Key order does not change it."""
+    slug (lower case; at most SLUG_CHARS characters), `-` and the first NAME_DIGEST (16) hex digits of SHA-256 over the
+    canonical JSON of its schema (annotations included, since they change the fields). Key order does not change it.
+    The router uses the auto task under a name only for a schema that derives its rules (`Ratchet._derives`)."""
     raw = json_schema.get("name")
     slug = _SLUG.sub("-", raw.lower() if isinstance(raw, str) else "").strip("-")[:SLUG_CHARS].strip("-") or "schema"
-    digest = hashlib.sha256(canonical(json_schema.get("schema")).encode("utf-8", "surrogatepass")).hexdigest()[:8]
+    digest = hashlib.sha256(canonical(json_schema.get("schema")).encode("utf-8", "surrogatepass")).hexdigest()[:NAME_DIGEST]
     return f"{AUTO_PREFIX}{slug}-{digest}"
 
 

@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 794 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_structured), ~85 s
+pytest -q                     # 800 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_structured), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -33,8 +33,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 21 |
-| `tests/test_structured.py` | 39 |
-| **Total** | **794** |
+| `tests/test_structured.py` | 45 |
+| **Total** | **800** |
 
 There are three layers:
 
@@ -637,17 +637,20 @@ Structured outputs (FR-1.40, FR-14.2, [ADR 0042](adr/0042-auto-tasks-from-respon
 | `test_json_equal_is_json_equality` | FR-1.40: `1 == 1.0`, `true != 1`, nested values |
 | `test_derive_takes_enums_and_ignores_free_text` | FR-14.2, FR-2.14: the spec's example gives `category` and `priority` labels and ignores `reply`; required follows the schema; no object root, or nothing comparable, gives no fields |
 | `test_derive_resolves_refs_nullable_nested_records_and_formats` | FR-14.2, FR-2.14: a Pydantic-shaped schema: `bool`, nullable `date`, `date-time`, exact `text` for `email`, `number` with its relative tolerance, `records` through a `$ref` (free text left out), sets of labels, booleans and dates, a nullable parent's children not required, an integer enum with null; consts, integer lists, bad names and two-way `anyOf` left out; the task accepts what the schema accepts; key order changes nothing |
+| `test_an_enum_of_numbers_takes_what_the_schema_takes` | FR-14.2, FR-1.40: an enum of numbers (and an array of one) is an exact `number`, so `2.0` meets the field as it meets the schema; the schema still decides the allowed values; a mixed enum stays a label |
 | `test_derive_stops_at_four_levels_and_sixty_four_fields` | FR-14.2: four levels deep, 64 fields wide, a records field counted with its sub-fields |
 | `test_x_ratchet_annotations_include_exclude_and_are_stripped` | FR-14.2: `ignore`, `text`, `ordered` (a `ranking`, ordered `records`), `abs_tol`; unknown hints ignored; `strip_annotations` and `forwardable` remove every `x-ratchet` key at any depth but keep a property named that way, and copy nothing when there is none |
 | `test_derived_tasks_round_trip_through_a_spec` | FR-14.2: an auto task (source `auto`, never pinned) reads back from `taskspec.document` unchanged, for the test schemas, every mock-world schema and an annotated one; a pinned auto task is refused |
-| `test_auto_task_name_is_stable_across_key_order` | FR-14.2: `auto-<slug>-<8 hex>`, the same for a reordered schema, another for another schema, 40 slug characters at most, `schema` without a name |
+| `test_auto_task_name_is_stable_across_key_order` | FR-14.2: `auto-<slug>-<16 hex>` (at most 62 characters), the same for a reordered schema, another for another schema, 40 slug characters at most, `schema` without a name |
 | `test_contracts_and_bound_tasks` | FR-1.40: `contract_for` (cached per schema), `Task.bound` (same `spec_hash`, equal, not registrable), `check` reasons, `clean_answer` serving the JSON inside reasoning, a sentence and a fence, an array root |
 | `test_for_row_grades_a_stored_row_under_its_stored_format` | FR-1.40, INV-6: `tasks.for_row` from a dict, JSON text, none and bad JSON, and on a ledger row |
 | `test_auto_task_is_registered_persisted_and_never_pinned` | FR-14.2, FR-1.40: the first request registers and stores the auto task (`updated_by` null, the document and hash), one `task_registered` event, the example under its name with the client's format; a second request only looks it up |
 | `test_a_registered_task_beats_the_schema` | FR-1.3, FR-14.2: `ticket-triage` named with a schema stays itself, the schema forwarded and still checked (an answer outside it is served with `schema_valid` false and not stored) |
-| `test_a_name_the_client_makes_up_becomes_an_auto_task_under_distill_only` | FR-14.2, FR-2.15: an unregistered name becomes an auto task under `distill` (later schemas under it only checked), stays unknown under `teacher` (route `unknown_task`, nothing stored); no name gives the auto task under any policy |
+| `test_a_name_the_client_makes_up_becomes_an_auto_task_under_distill_only` | FR-14.2, FR-2.15: an unregistered name becomes an auto task under `distill` (a later schema with other fields gets its own auto task and an `auto_task_collision` event), stays unknown under `teacher` (route `unknown_task`, nothing stored); no name gives the auto task under any policy |
+| `test_a_client_cannot_choose_the_fields_another_clients_answers_are_compared_on` | FR-14.2: a client naming another client's computable auto name first with a weaker schema gets its own schema's task; the victim's auto task compares the refund; naming it later with another schema is a collision; a made-up name held by a weaker schema is not used for a stronger one |
+| `test_an_auto_name_held_by_other_fields_stores_nothing` | FR-14.2, INV-16: an auto name registered with other fields gives an unregistered task that stores nothing, an `auto_task_collision` event, and a 400 under `reject` |
 | `test_a_schema_without_comparable_fields_follows_the_unknown_task_policy` | FR-14.2, FR-2.15: a free-text schema is not registered; `distill` stores it, `teacher` routes it `unknown_task`, `reject` raises `UnknownTask` |
-| `test_auto_tasks_stop_at_the_cap_and_say_so_once` | FR-14.2: past `RATCHET_MAX_AUTO_TASKS` new schemas get unregistered tasks; one `auto_task_cap` event, also across two processes on one ledger; 0 turns them off; a bad cap stops startup |
+| `test_auto_tasks_stop_at_the_cap_and_say_so_once` | FR-14.2: past `RATCHET_MAX_AUTO_TASKS` new schemas get unregistered tasks; one `auto_task_cap` event, also across two processes on one ledger; 0 turns them off (`default` or the named task, held to the schema, never refused for it); a bad cap stops startup |
 | `test_an_auto_task_whose_schema_holds_personal_data_is_not_stored` | FR-14.2, INV-12: an enum of email addresses never reaches the `tasks` table; an `auto_task_skipped` event |
 | `test_auto_tasks_come_back_at_startup_and_night_school_grades_under_the_schema` | FR-14.2, INV-6, INV-16: `taskspec.install` registers a stored auto task again; `dataset.rows` and `cascade_eval` hold each row to its stored schema (the student sampled under it), so an answer whose fields agree but which lacks a required free-text key gets no vote and is no training target (`skipped_invalid`) |
 | `test_concurrent_requests_register_one_auto_task` | FR-14.2: 8 threads on a new schema register one task, store one row and write one event |
@@ -660,8 +663,11 @@ Structured outputs (FR-1.40, FR-14.2, [ADR 0042](adr/0042-auto-tasks-from-respon
 | `test_repair_can_be_switched_off_and_a_failed_repair_serves_the_first_answer` | FR-1.40, INV-15: `RATCHET_SCHEMA_REPAIR=0`; a repair call that raises serves the first answer, counts `repair_errors` and writes `schema_repair_error` with the class only |
 | `test_an_audit_answer_is_repaired_too` | FR-1.40: an audit's invalid answer is repaired, counted as an audit and stored |
 | `test_arbitration_and_pinned_answers_are_repaired_and_priced` | FR-1.40, INV-10, FR-15.1: an arbitration's repair settles the shadow disagreement and is priced; a pinned task's answer is repaired and priced (baseline one call) and never stored |
+| `test_after_a_repair_the_baseline_usage_and_latency_count_the_request_itself` | FR-1.40, FR-15.1, FR-1.12: with a teacher whose prompt tokens grow with what it is sent, the baseline, `usage.prompt_tokens` and `cached_tokens` count the request's own prompt on the escalation, pinned and audit paths; `cost_usd` and the breakdown pay both calls; `latency_ms` adds them |
+| `test_a_cut_off_or_empty_repair_answer_keeps_the_first_answer` | FR-1.40, INV-16: a repair answer that was cut off, empty or only reasoning keeps the first answer and its `finish_reason`; nothing stored; the repair call is paid for |
 | `test_a_teacher_that_refuses_json_schema_gets_json_object_and_the_schema` | FR-1.40, FR-1.11: a 400 naming `response_format` is retried once as json_object with the schema in the system message (added when there is none); the example keeps the client's format and messages; the schema goes straight to json_object afterwards, one event; another 400 is not retried |
-| `test_json_schema_is_turned_off_for_an_endpoint_only_after_several_schemas_are_refused` | FR-1.40, FR-1.11: one refused schema leaves the others on json_schema; `JSON_SCHEMA_STRIKES` refused schemas turn it off (`supports_json_schema` False); two events, not repeated by a second process; another endpoint unaffected |
+| `test_refused_client_schemas_never_turn_json_schema_off_for_the_others` | FR-1.40, FR-1.11: refused client schemas go as json_object one by one; after `JSON_SCHEMA_STRIKES` the endpoint is probed once with `schema_tasks.PROBE_FORMAT`, takes it, and json_schema stays on for every other schema; no second probe; an inconclusive probe (503) is asked again |
+| `test_json_schema_is_turned_off_for_an_endpoint_that_refuses_the_probe_too` | FR-1.40, FR-1.11: an endpoint that refuses every json_schema refuses the probe too: `supports_json_schema` False, every schema as json_object; two events, not repeated by a second process; another endpoint unaffected |
 | `test_annotations_never_reach_a_model_or_the_ledger` | FR-14.2, FR-1.13: the teacher's request body and the stored conditions hold the schema without `x-ratchet` keys; the annotation decided the fields; the name hashes the annotated schema |
 | `test_fenced_teacher_json_is_served_as_bare_json` | FR-1.40, FR-1.12: a live gateway serves bare JSON from a reasoning-and-fence answer (the SDK's `ChatCompletion` validates it), streamed too, with `task` and `schema_valid` in the `ratchet` block |
 | `test_responses_name_the_task_and_stats_name_the_compared_keys` | FR-1.40, FR-14.2, FR-2.15: `ratchet.task` and `schema_valid` for plain, named and schema requests; `compare_keys` and `compare_source` in `/ratchet/stats`; the auto task in `/ratchet/tasks` (`updated_by` null), deletable, a built-in one not; under `reject` a free-text schema is a 400 with `param` `response_format` |
