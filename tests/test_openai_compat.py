@@ -18,7 +18,7 @@ from typing import Any
 import anyio
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, _version
+from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, ToolCallingServer, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
@@ -234,9 +234,9 @@ FULL_REQUEST: dict[str, Any] = {
 @pytest.mark.req("FR-1.10")
 def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
     """Swap every value of a request that uses every field for junk, or delete it, and let validation judge it first.
-    One it refuses gets exactly that 400 (code and param) from the gateway; one it accepts is answered: 200 in live mode
-    (the teacher behind MockTransport), and in mock mode the mock's own 400, which only knows demo requests. Never a
-    500, and a refused request is never logged."""
+    One it refuses gets exactly that 400 (code and param) from the gateway; one it accepts is answered with a 200 in
+    live mode (the teacher behind MockTransport) and in mock mode (the generic mock world answers any request, FR-9.7).
+    Never a 500, and a refused request is never logged."""
     gw = _gateway(gw_env)
     mock = gw.rt
     live = gw.Runtime(
@@ -272,10 +272,10 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
         assert r.status_code == 200, (path, new, r.status_code, r.text[:200])
         monkeypatch.setattr(gw, "rt", mock)
         r = c.post(CHAT, content=raw, headers={"content-type": "application/json"})
-        assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"], (path, new)
+        assert r.status_code == 200, (path, new, r.status_code, r.text[:200])
     assert 0 < accepted < len(mutations) // 2  # both branches run; most junk is refused
     assert (mock.gateway_errors, live.gateway_errors) == (0, 0)
-    assert mock.ledger.totals()["requests"] == 0 and live.ledger.totals()["requests"] == accepted
+    assert mock.ledger.totals()["requests"] == live.ledger.totals()["requests"] == accepted
 
 
 @pytest.mark.req("FR-1.10")
@@ -376,21 +376,30 @@ def test_unhandled_error_is_a_500_envelope_and_an_event(gw_env, monkeypatch):
     assert r.status_code == 500 and _error(r)["type"] == "api_error" and gw.rt.gateway_errors == 100
 
 
-@pytest.mark.req("FR-1.8", "FR-1.10")
+@pytest.mark.req("FR-1.8", "FR-1.10", "FR-9.7")
 def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_path):
-    gw = _gateway(gw_env)
-    c = TestClient(gw.app, raise_server_exceptions=False)
+    """The strict mock (RATCHET_MOCK_STRICT=1) knows only demo requests, as v0.4 did: anything else is a 400. Without it
+    the generic mock world answers the same requests with a 200."""
     unknown = [
         HI,  # not a demo ticket
         [{"role": "system", "content": "only a system message"}],  # no user message at all
         [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "not JSON"}],  # Scout's writer
         [{"role": "system", "content": WRITE_SYSTEM}, {"role": "user", "content": "[" * 100_000}],  # too deep to parse
     ]
+    gw = _gateway(gw_env, RATCHET_MOCK_STRICT="1")
+    c = TestClient(gw.app, raise_server_exceptions=False)
     for messages in unknown:
         r = c.post(CHAT, json={"messages": messages})
         assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"], r.text
         assert _error(r)["type"] == "invalid_request_error"
-    assert gw.rt.gateway_errors == 0
+    assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == 0
+    gw = _gateway(gw_env, RATCHET_MOCK_STRICT="0")
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    for messages in unknown:
+        r = c.post(CHAT, json={"messages": messages})
+        assert r.status_code == 200, r.text[:200]
+        assert r.json()["choices"][0]["message"]["content"].startswith("[mock teacher] ")
+    assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == len(unknown)
 
     # In live mode a KeyError is a bug in the gateway, not a client mistake.
     live = _gateway(
@@ -549,7 +558,7 @@ def test_message_and_input_limits_come_from_settings(gw_env):
     # 0 means no limit.
     unlimited = TestClient(_gateway(gw_env, RATCHET_MAX_MESSAGES="0", RATCHET_MAX_INPUT_CHARS="0").app)
     r = unlimited.post(CHAT, json={"messages": HI * 300 + [{"role": "user", "content": "x" * 200_000}]})
-    assert r.status_code == 400 and "mock mode only answers" in r.json()["detail"]  # validated, then unknown to the mock
+    assert r.status_code == 200  # validated, then answered by the generic mock world
 
 
 # ---------- normalisation through the gateway ----------
@@ -572,10 +581,11 @@ def test_developer_role_reaches_the_teacher_as_system(gw_env):
     assert teacher.calls[0].messages == [{"role": "system", "content": "Reply with JSON.\n\nBe brief."}, *HI]
 
 
-@pytest.mark.req("FR-1.10", "INV-12")
-def test_dropped_keys_and_redacted_tool_calls_end_to_end(gw_env):
-    """Keys a message's role does not use reach neither the teacher nor the ledger. A tool call's arguments reach the
-    teacher as sent and are stored redacted, like content."""
+@pytest.mark.req("FR-1.10", "INV-12", "FR-1.41")
+def test_dropped_keys_reach_neither_the_teacher_nor_the_ledger(gw_env):
+    """Keys a message's role does not use reach neither the teacher nor the ledger. A conversation that carries tool
+    calls and results is a tool request (FR-1.41): its tool call's arguments reach the teacher as sent, and nothing of
+    it is stored (redact_messages covers stored tool calls: tests/test_tools.py)."""
     gw = _gateway(gw_env)
     teacher = gw.rt.ratchet.teacher = RecordingProvider(A)
     call = {"id": "c1", "type": "function", "function": {"name": "lookup", "arguments": '{"email": "bob@example.com"}'}}
@@ -584,13 +594,13 @@ def test_dropped_keys_and_redacted_tool_calls_end_to_end(gw_env):
         {"role": "assistant", "content": None, "tool_calls": [{**call, "index": 0}], "annotations": []},
         {"role": "tool", "tool_call_id": "c1", "content": "Order 7 ships today."},
     ]
-    assert TestClient(gw.app).post(CHAT, json={"messages": msgs}).status_code == 200
+    r = TestClient(gw.app).post(CHAT, json={"messages": msgs})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
     sent = [{"role": "user", "content": "Find my order."}, {"role": "assistant", "content": None, "tool_calls": [call]}, msgs[2]]
     assert teacher.calls[0].messages == sent
-    (example,) = gw.rt.ledger.examples()
-    stored = json.loads(example["messages"])
-    assert stored[1]["tool_calls"][0]["function"]["arguments"] == '{"email": "[EMAIL]"}'
-    assert "vendor_note" not in example["messages"] and "7946" not in example["messages"] and example["redactions"] == 1
+    assert gw.rt.ledger.examples() == []
+    (row,) = [dict(x) for x in gw.rt.ledger.db.execute("SELECT route, stored, uses_tools FROM requests")]
+    assert row == {"route": "tools", "stored": 0, "uses_tools": 1}
 
 
 @pytest.mark.req("FR-1.1", "FR-1.10", "US-1")
@@ -634,12 +644,13 @@ def test_multimodal_parts_go_to_the_teacher_only(gw_env):
     assert row == {"task": "ticket-triage", "served_by": "teacher", "escalated": 0, "student_version": None}
     # The same gateway sends a text request through the cascade as usual: the student answers.
     assert c.post(CHAT, json={"messages": HI}).json()["ratchet"]["served_by"] == "student" and len(student.calls) == 1
-    # Audio is still refused, and in mock mode the mock teacher does not know the image request (400, not 500).
+    # Audio is still refused. The mock teacher answers the image request from its text part, and still nothing is stored.
     audio = {"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": "", "format": "wav"}}]}
     assert _error(c.post(CHAT, json={"messages": [audio]}))["code"] == "unsupported_content_type"
     gw.rt.reset()
     r = c.post(CHAT, json={"messages": [image]})
-    assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"]
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    assert '"What is this?"' in r.json()["choices"][0]["message"]["content"] and gw.rt.ledger.examples() == []
 
 
 # ---------- generation parameters reach each model (FR-1.13, ADR 0017) ----------
@@ -796,13 +807,13 @@ def test_a_cut_off_teacher_answer_reaches_the_client_as_length(gw_env, tmp_path,
 WEATHER = [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}]
 
 
-@pytest.mark.req("FR-1.13", "FR-1.1", "FR-1.6")
-def test_finish_reason_is_never_tool_calls_without_tool_calls(gw_env, tmp_path, monkeypatch):
-    """Ratchet does not return `message.tool_calls` yet, so no response may say `finish_reason: "tool_calls"`: the OpenAI
-    SDK reads that as "the calls are in the message", and the usual agent loop over `message.tool_calls` (None) raises.
-    By default `tools` reach neither model, as in v0.4. A teacher that calls a tool anyway (an operator allowed `tools`)
-    is a 502 `tool_calls_unsupported` with nothing stored; a student sample that ended in a tool call is reported as
-    `stop`."""
+@pytest.mark.req("FR-1.13", "FR-1.1", "FR-1.6", "FR-1.41")
+def test_finish_reason_is_tool_calls_only_with_tool_calls(gw_env, tmp_path, monkeypatch):
+    """A response says `finish_reason: "tool_calls"` only when its message has `tool_calls`: the OpenAI SDK reads that
+    finish as "the calls are in the message", and the usual agent loop over `message.tool_calls` (None) raises. A
+    request with tools goes to the teacher alone, tools included (FR-1.41); a teacher that answers it in prose, or says
+    `tool_calls` but sends none, is reported as `stop`, streamed or not. A request without tools whose teacher answers
+    with a tool call anyway is a 502 `tool_calls_unsupported`, with nothing stored."""
     gw = _gateway(gw_env)
     c = TestClient(gw.app)
     ask = {"messages": [{"role": "user", "content": "Weather in Paris?"}], "tools": WEATHER, "tool_choice": "auto"}
@@ -813,30 +824,33 @@ def test_finish_reason_is_never_tool_calls_without_tool_calls(gw_env, tmp_path, 
     teacher = FakeOpenAIServer("I cannot look up the weather.")
     rt, student = _gen_runtime(gw, tmp_path, teacher)
     monkeypatch.setattr(gw, "rt", rt)
-    _version(rt.ledger, "live", {"threshold": 0.99})
+    _version(rt.ledger, "live", {"threshold": 0.0})  # the student would serve anything it is asked
     r = c.post(CHAT, json=ask)
     assert r.status_code == 200 and r.json()["choices"][0]["finish_reason"] == "stop" and not claims_calls_it_lacks(r.json())
-    assert not [b for b in _bodies(teacher) + _bodies(student) if "tools" in b or "tool_choice" in b]
+    assert r.json()["ratchet"]["served_by"] == "teacher" and _bodies(student) == [] and rt.ledger.examples() == []
+    assert (_bodies(teacher)[0]["tools"], _bodies(teacher)[0]["tool_choice"]) == (WEATHER, "auto")
 
-    for teacher_params in ("", "all"):  # the default, and an operator who allows tools
-        teacher = FakeOpenAIServer("", finish_reason="tool_calls")
+    teacher = FakeOpenAIServer("", finish_reason="tool_calls")  # says tool_calls, sends none
+    rt, _ = _gen_runtime(gw, tmp_path, teacher)
+    monkeypatch.setattr(gw, "rt", rt)
+    r = c.post(CHAT, json=ask)
+    assert r.status_code == 200 and r.json()["choices"][0]["finish_reason"] == "stop" and not claims_calls_it_lacks(r.json())
+    finishes = [ch["finish_reason"] for e in _stream(c, ask) for ch in e["choices"] if ch["finish_reason"]]
+    assert finishes == ["stop"]
+
+    call = {"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+    for teacher_params in ("", "all"):
+        teacher = ToolCallingServer([call])
         rt, _ = _gen_runtime(gw, tmp_path, teacher, teacher_params=teacher_params)
         monkeypatch.setattr(gw, "rt", rt)
-        r = c.post(CHAT, json=ask)
+        r = c.post(CHAT, json={"messages": [{"role": "user", "content": "Weather in Paris?"}]})  # no tools: the cascade
         assert r.status_code == 502 and _error(r)["code"] == "tool_calls_unsupported"
         assert r.headers["x-should-retry"] == "false" and rt.ledger.examples() == []
-        with c.stream("POST", CHAT, json={**ask, "stream": True}) as resp:
+        with c.stream("POST", CHAT, json={"messages": HI, "stream": True}) as resp:
             assert resp.status_code == 502
-    assert _bodies(teacher)[0]["tools"] == WEATHER
-
-    teacher = FakeOpenAIServer(A)
-    rt, student = _gen_runtime(gw, tmp_path, teacher, student_params="all")
-    monkeypatch.setattr(gw, "rt", rt)
-    _version(rt.ledger, "live", {"threshold": 0.5})
-    student.finish_reason = "tool_calls"
-    r = c.post(CHAT, json=ask)
-    assert r.json()["ratchet"]["served_by"] == "student" and r.json()["choices"][0]["finish_reason"] == "stop"
-    assert not claims_calls_it_lacks(r.json()) and _bodies(student)[0]["tools"] == WEATHER
+        r = c.post(CHAT, json=ask)  # the same answer to a request with tools is the answer
+        assert r.json()["choices"][0]["message"]["tool_calls"] == [call]
+        assert r.json()["choices"][0]["finish_reason"] == "tool_calls"
 
 
 @pytest.mark.req("FR-1.13", "FR-2.13", "FR-9.2")
@@ -918,7 +932,7 @@ def test_openai_sdk_auth_and_quota_errors(gw_env):
 # ---------- response parity: usage, system_fingerprint, the full choice, include_usage (FR-1.12) ----------
 FINGERPRINT = re.compile(r"fp_[0-9a-f]{12}")
 BODY_KEYS = {"id", "object", "created", "model", "system_fingerprint", "service_tier", "choices", "usage", "ratchet"}
-NO_CALL = {"audit": None, "shadow": None, "arbitration": None}
+NO_CALL = {"audit": None, "shadow": None, "arbitration": None, "repair": None}
 
 
 def _usage(prompt: int, completion: int, reasoning: int = 0, cached: int = 0) -> dict[str, Any]:

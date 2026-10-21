@@ -17,7 +17,9 @@
 - A train row whose answer is not valid under its task's current spec (`Task.valid`, FR-2.14) is
   left out and counted (`skipped_invalid` in manifest.json): the spec may have tightened since the
   answer was stored (a smaller vocabulary, a field that became required). Golden rows stay, and
-  `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`).
+  `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`). The spec is the task
+  held to the response_format stored with the row (`tasks.for_row`, FR-1.40), as the router held
+  the request: an answer that breaks its schema is never a target.
 - A row of a task that is pinned NOW is left out of both sets and counted (`excluded_pinned` in
   manifest.json; INV-10 at read time): pinning a task that already has data keeps that data from the
   student, and unpinning it brings the rows back, because the ledger keeps them.
@@ -127,7 +129,7 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
         lic = licenses.lookup_source(r["teacher_model"])  # a teacher in the registry, or a human label (FR-3.54)
         if lic is None or not lic.distill_ok:
             continue
-        if effective == "train" and not spec.valid(r["completion"]):
+        if effective == "train" and not tasks.for_row({"task": r["task"], "params": params}, spec).valid(r["completion"]):
             if counts is not None:
                 counts["skipped_invalid"] = counts.get("skipped_invalid", 0) + 1
             continue  # the spec tightened since it was stored: never a training target

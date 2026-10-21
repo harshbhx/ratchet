@@ -1,6 +1,8 @@
 """End-to-end tests with mock models: the full loop, the gateway API, and the provider client."""
 
 import json
+import os
+from typing import Any
 
 import httpx
 import pytest
@@ -199,9 +201,10 @@ def test_reference_simulation_unchanged(reference_run, sim_reference):
 
 
 def test_reference_workloads_reproduce_v040(reference_run, reference_check):
-    """scripts/reference_check.py pins three workloads captured from v0.4.0 (tickets, mixed, research). The tickets run
-    is the session's reference simulation, so it is checked here at no extra cost; CI and `make reference` run all
-    three. Every input the fixture pins is still the simulator's default, for all three."""
+    """scripts/reference_check.py pins three workloads captured from v0.4.0 (tickets, mixed, research), run with
+    per-task calibration off (`LEGACY_ENV`, ADR 0040). The tickets run is the session's reference simulation, which runs
+    with it on: one task gives the global numbers again, so it is checked here at no extra cost; CI and `make reference`
+    run all three. Every input the fixture pins is still the simulator's default, for all three."""
     doc = reference_check.load()
     assert doc["captured_from"].startswith("v0.4.0") and set(doc["configs"]) == set(reference_check.CONFIGS)
     fresh = reference_check.summarize("tickets-seed7", reference_run)
@@ -209,6 +212,28 @@ def test_reference_workloads_reproduce_v040(reference_run, reference_check):
     for name, entry in doc["configs"].items():
         assert entry["argv"] == list(reference_check.CONFIGS[name])
         assert reference_check.compare(name, entry, {**entry, "inputs": reference_check.inputs(name)}) == []
+
+
+def test_reference_check_runs_with_per_task_calibration_off(reference_check, monkeypatch):
+    """The pinned runs switch off per-task calibration, the one default-on feature that moves the multi-task workloads
+    by design (FR-14.1, ADR 0040), so the fixture stays v0.4.0's output; the caller's own RATCHET_* variables are put
+    back afterwards."""
+    seen: list[str | None] = []
+
+    def fake_run(args):
+        seen.append(os.environ.get("RATCHET_PER_TASK_CALIBRATION"))
+        return {"days": [], "totals": {}, "versions": [], "events": []}
+
+    monkeypatch.setattr(reference_check, "run", fake_run)
+    monkeypatch.setenv("RATCHET_PER_TASK_CALIBRATION", "1")
+    monkeypatch.setenv("RATCHET_TEACHER_REASONING_TOKENS", "999")
+    assert reference_check.LEGACY_ENV == {"RATCHET_PER_TASK_CALIBRATION": "0"}
+    assert reference_check.capture("mixed-seed1")["events"] == []
+    assert seen == ["0"]
+    assert os.environ["RATCHET_PER_TASK_CALIBRATION"] == "1" and os.environ["RATCHET_TEACHER_REASONING_TOKENS"] == "999"
+    monkeypatch.delenv("RATCHET_PER_TASK_CALIBRATION")
+    reference_check.capture("research-seed7")
+    assert seen == ["0", "0"] and "RATCHET_PER_TASK_CALIBRATION" not in os.environ
 
 
 def test_reference_check_rules(reference_check):
@@ -289,7 +314,11 @@ def test_certificates_move_no_simulation_number(cert_run, monkeypatch):
     )
     monkeypatch.setattr(evaluate, "certificate", stub)
     bare = sim(*CERT_RUN)
-    assert bare["days"] == res["days"] and bare["totals"] == res["totals"]
+
+    def untimed(days: list[dict[str, Any]]) -> list[dict[str, Any]]:  # wall-clock percentiles differ run to run (ADR 0060)
+        return [{k: v for k, v in d.items() if k not in ("p50_student_ms", "p95_ms")} for d in days]
+
+    assert untimed(bare["days"]) == untimed(res["days"]) and bare["totals"] == res["totals"]
     keys = ("id", "state", "traffic_pct", "train_examples", "dataset_hash")
     assert [{k: v[k] for k in keys} for v in bare["versions"]] == [{k: v[k] for k in keys} for v in res["versions"]]
     assert [v["eval"]["threshold"] for v in bare["versions"]] == [v["eval"]["threshold"] for v in res["versions"]]
@@ -397,9 +426,12 @@ def test_replay_endpoints_on_the_mock_gateway(gw_env):
 
 @pytest.mark.req("FR-1.5", "FR-1.6")
 def test_gateway_rejects_bad_requests(client):
-    c, _ = client
+    c, gw = client
     assert c.post("/v1/chat/completions", json={"messages": []}).status_code == 400
-    # Streaming is supported since v0.4, but errors still arrive as HTTP errors before the stream starts.
+    # Streaming is supported since v0.4, but errors still arrive as HTTP errors before the stream starts. The cascade's
+    # own refusal: a request the strict mock (RATCHET_MOCK_STRICT=1) does not know.
+    gw.rt.settings.mock_strict = True
+    gw.rt.reset()
     r = c.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "x"}], "stream": True})
     assert r.status_code == 400 and "mock mode only answers" in r.json()["detail"]
 

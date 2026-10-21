@@ -16,7 +16,6 @@ from ratchet.providers import (
     DEFAULT_STUDENT_PARAMS,
     DEFAULT_TEACHER_PARAMS,
     MIN_LOGPROB,
-    NOT_YET_FORWARDED,
     PARAM_FIELDS,
     Completion,
     GenParams,
@@ -406,10 +405,11 @@ def test_param_allowlists_parse_and_refuse_what_ratchet_never_forwards():
             parse_param_allowlist(f"seed,{typo}", default, "RATCHET_STUDENT_PARAMS")
     vendor = ("top_k", "min_p", "min_tokens", "repetition_penalty", "max_new_tokens", "guided_json")
     assert parse_param_allowlist(",".join(vendor), default) == frozenset(vendor)
-    # Tool calls are not forwarded by default: nothing reads them back yet. The teacher's logprobs are, since responses
-    # return them (FR-1.14); a client that does not ask sends none.
-    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS) - {"tools", "tool_choice", "parallel_tool_calls"}
-    assert {"logprobs", "top_logprobs"} <= DEFAULT_TEACHER_PARAMS
+    # The teacher gets every standard field: the tool fields since tool calls pass through (FR-1.41; only a tool request
+    # has them, and the teacher answers it alone), and its logprobs since responses return them (FR-1.14; a client that
+    # does not ask sends none). The student is never sent tools.
+    assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS)
+    assert {"logprobs", "top_logprobs", "tools", "tool_choice", "parallel_tool_calls"} <= DEFAULT_TEACHER_PARAMS
     assert DEFAULT_STUDENT_PARAMS == {"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"}
 
 
@@ -431,10 +431,10 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
     assert policy.student(None) == policy.student(GenParams()) == GenParams(max_tokens=1024)
     assert policy.student(GenParams(max_tokens=10**6)).max_tokens == 1024
 
-    # Teacher serving the answer: every standard field as sent but the tool-call fields (a vendor field only when listed),
-    # logprobs included; temperature 0 when the client set none.
+    # Teacher serving the answer: every standard field as sent (a vendor field only when listed), logprobs and the tool
+    # fields included; temperature 0 when the client set none.
     serve = policy.teacher(client, "serve")
-    assert serve.to_body() == {k: v for k, v in client.to_body().items() if k not in NOT_YET_FORWARDED | {"top_k"}}
+    assert serve.to_body() == {k: v for k, v in client.to_body().items() if k != "top_k"}
     everything = GenPolicy(teacher_allow=frozenset(PARAM_FIELDS))
     assert everything.teacher(client).to_body() == {k: v for k, v in client.to_body().items() if k != "top_k"}
     vendor = GenPolicy(teacher_allow=parse_param_allowlist("all,top_k", frozenset()))

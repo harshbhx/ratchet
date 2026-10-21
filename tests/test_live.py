@@ -782,6 +782,7 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     assert [ln.split()[0] for ln in lines[1:3]] == ["1", "2"]  # one table row per day
     assert f"total: 400 requests, ${res['totals']['cost_usd']:.2f} vs ${res['totals']['baseline_usd']:.2f}" in printed
     assert "events:" in printed and "[trained]" in printed and lines[-1] == f"wrote {out}"
+    assert lines[-3] == "simulation: mock models, workload mixed, seed 7; not a measure of real model quality"
     for e in res["events"]:
         assert f"  day {e['day']}: [{e['kind']}] {e['detail']}" in lines
 
@@ -1174,15 +1175,20 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     assert f"[ok] {want[0]}: json ok, logprobs=yes, finish_reason=stop" in out  # INV-16 stores only these
     assert f"[ok] {want[1]}: json NOT parseable, logprobs=NO" in out  # reported; confidence falls back to agreement
     assert f"[FAIL] {want[2]}: HTTP 500 upstream error" in out and "Some checks failed" in out
-    assert [(r.method, r.url.path) for r in seen] == [("GET", "/v1/models")] + [("POST", "/v1/chat/completions")] * len(want)
+    posts = [("POST", "/v1/chat/completions")] * (len(want) + 1)  # each present model, the parameters, json_schema
+    assert [(r.method, r.url.path) for r in seen] == [("GET", "/v1/models")] + posts
     assert all(r.headers["authorization"] == "Bearer tf-day1-key" for r in seen)
-    *bodies, gen = [json.loads(r.content) for r in seen[1:]]
+    *bodies, gen, schema = [json.loads(r.content) for r in seen[1:]]
     assert [b["model"] for b in bodies] == want[:-1]  # never asks for a missing model
     assert all(b["logprobs"] is True and b["response_format"] == {"type": "json_object"} for b in bodies)
     assert all(b["messages"] == day1_check.PROMPT and b["max_tokens"] == 400 for b in bodies)
     # Then the teacher with what every escalation sends: the output cap and a client's stop, seed and temperature.
     assert gen == {"model": want[0], "messages": day1_check.PROMPT, "max_tokens": 8192, **day1_check.GEN_PARAMS}
     assert f"[ok] {want[0]} accepts max_tokens=8192, stop, seed, temperature" in out
+    # Then structured outputs (ADR 0042): a strict json_schema, and the fenced answer checked as the gateway checks it.
+    probe = {"model": want[0], "messages": day1_check.PROMPT, "max_tokens": 400}
+    assert schema == {**probe, "response_format": day1_check.SCHEMA_FORMAT}
+    assert f"[ok] {want[0]} accepts response_format json_schema (strict): the answer matches the schema" in out
 
     client, _ = serve(want, {})
     assert day1_check.main(client) == 0 and capsys.readouterr().out.rstrip().endswith("All good.")
@@ -1193,6 +1199,41 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
     assert f"[FAIL] {want[0]} with max_tokens=8192, stop, seed: HTTP 400" in out and "RATCHET_TEACHER_MAX_TOKENS" in out
+
+
+@pytest.mark.req("FR-8.5", "FR-1.40")
+def test_day1_check_probes_json_schema(day1_check, monkeypatch, capsys):
+    """The json_schema probe: a teacher that refuses the format, or answers outside the schema, is a warning (the
+    gateway falls back to json_object, or repairs the answer); another status or a body without an answer fails."""
+    monkeypatch.setattr(day1_check, "BASE", "https://tf.test/v1")
+    monkeypatch.setattr(day1_check, "TEACHER", "teacher-model")
+    seen: list[dict[str, Any]] = []
+
+    def run(response: httpx.Response) -> tuple[bool, str]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return response
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as c:
+            ok = day1_check.check_json_schema(c, {"Authorization": "Bearer k"})
+        return ok, capsys.readouterr().out
+
+    def answer(content: str) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
+
+    ok, out = run(answer('{"category": "account", "priority": "low"}'))
+    assert ok and "[ok] teacher-model accepts response_format json_schema (strict)" in out
+    assert seen[-1]["response_format"] == day1_check.SCHEMA_FORMAT and seen[-1]["model"] == "teacher-model"
+    ok, out = run(httpx.Response(400, json={"error": {"message": "json_schema is not supported", "param": "response_format"}}))
+    assert ok and "[warn] teacher-model refused response_format json_schema: HTTP 400" in out and "json_object" in out
+    ok, out = run(answer('{"category": "refund", "priority": "low"}'))
+    assert ok and "[warn] teacher-model took json_schema, but its answer does not match: $.category" in out
+    ok, out = run(answer("Sure, it is billing."))
+    assert ok and "its answer does not match: $: the answer is not valid JSON" in out
+    ok, out = run(httpx.Response(500, text="boom"))
+    assert not ok and "[FAIL] teacher-model with response_format json_schema: HTTP 500 boom" in out
+    ok, out = run(httpx.Response(200, json={"choices": []}))
+    assert not ok and "no answer in the body" in out
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

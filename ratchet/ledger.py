@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import licenses, metrics, tasks
+from . import calibration, licenses, metrics, tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
 from .idem import SeenWindow
 from .stats import wilson
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS requests (
     route TEXT,                -- how it was served (router.ROUTES): student | confidence | cold_start | pinned | degraded | ...
     stored INTEGER,            -- 1: a teacher answer was stored as an example (inserted, or a duplicate's seen bumped)
     wall_ms REAL,              -- the whole cascade on the gateway's clock (perf_counter); latency_ms is the providers' part
+    uses_tools INTEGER,        -- 1: it offered tools or carried tool calls or results (FR-1.41); NULL before v0.5
     -- Evidence columns (ADR 0024), NULL until the feature that writes them lands, and in older rows:
     threshold REAL,            -- the confidence threshold the student was held to; NULL without a version (FR-16.5)
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
@@ -395,6 +396,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "client": "TEXT",
         "route": "TEXT",
         "stored": "INTEGER",
+        "uses_tools": "INTEGER",
         "student_cost_usd": "REAL",
         "teacher_cost_usd": "REAL",
         "student_in_tokens": "INTEGER",
@@ -574,6 +576,9 @@ WINDOW_COLUMNS = (
 # guard, a rate limit of the gateway's own, and the gateway itself (a 413, an unhandled error).
 FAILURE_STAGES = ("teacher", "student", "audit", "shadow", "quota", "auth", "budget", "rate", "upstream", "gateway")
 FAILURE_COLUMNS = frozenset({"ts", "day", "request_id", "client", "task", "stage", "error", "status", "latency_ms", "cost_usd"})
+# `stats_by_task`'s `compare_source` by a task's source: where its compared fields come from (FR-14.2). An unregistered
+# name (`adhoc`) compares whole answers: None.
+COMPARE_SOURCES = {"builtin": "registry", "file": "registry", "api": "registry", "auto": "schema"}
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -732,6 +737,24 @@ class NoTrainFull(Exception):
     def __init__(self, limit: int):
         super().__init__(f"at most {limit} no-train registrations")
         self.limit = limit
+
+
+def _live_calibration(live: Version | None, task: tasks.Task) -> dict[str, Any]:
+    """`stats_by_task`'s view of how the live version holds the student to `task` (FR-14.1)."""
+    out: dict[str, Any] = {"threshold": None, "precision": None, "coverage": None, "calibrated": None, "disabled": None}
+    if live is None or task.pinned:
+        return out
+    rec = calibration.entry(live.eval, task.name)
+    default = calibration.number(live.eval.get("threshold"))
+    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know.
+    if rec is not None or default is not None or calibration.spec_changed(live.eval, task):
+        out["threshold"] = calibration.threshold(live.eval, task, calibration.SERVE_NOTHING if default is None else default)
+    if rec is not None:
+        out["precision"] = calibration.number(rec.get("precision"))
+        out["coverage"] = calibration.number(rec.get("coverage"))
+        out["calibrated"] = rec.get("calibrated") if isinstance(rec.get("calibrated"), bool) else None
+        out["disabled"] = rec.get("disabled") if isinstance(rec.get("disabled"), str) else None
+    return out
 
 
 def _locked(fn):
@@ -2500,6 +2523,26 @@ class Ledger:
         self.db.commit()
 
     @_locked
+    def merge_task_eval(self, vid: int, task: str, changes: Mapping[str, Any]) -> None:
+        """Merge `changes` into version `vid`'s per-task record `eval['tasks'][task]` (FR-14.1), creating it if needed.
+        The read and the write are one transaction, so another process's eval write cannot be lost in between. KeyError
+        for a version that does not exist."""
+        self._begin()
+        try:
+            row = self.db.execute("SELECT eval FROM versions WHERE id=?", (vid,)).fetchone()
+            if row is None:
+                raise KeyError(f"no version {vid}")
+            ev = json.loads(row["eval"] or "{}")
+            records = ev.get("tasks") if isinstance(ev.get("tasks"), dict) else {}
+            current = records.get(task) if isinstance(records.get(task), dict) else {}
+            ev["tasks"] = {**records, task: {**current, **changes}}
+            self.db.execute("UPDATE versions SET eval=? WHERE id=?", (json.dumps(ev), vid))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    @_locked
     def set_version(self, vid: int, state: str, traffic_pct: int | None = None) -> None:
         """Put a version in a state unconditionally. For tests and migrations only: a release moves versions with
         `transition` and `promote_live`, which compare and set (ADR 0064), so two processes can never both act on one
@@ -2865,11 +2908,11 @@ class Ledger:
     # ---------- tasks (the admin API's and auto tasks; built-in and file tasks are never stored) ----------
     @_locked
     def save_task(
-        self, name: str, spec: Mapping[str, Any], spec_hash: str, source: str, updated_by: str
+        self, name: str, spec: Mapping[str, Any], spec_hash: str, source: str, updated_by: str | None
     ) -> tuple[bool, str | None]:
         """Insert or replace a stored task: `spec` as `taskspec.document` writes it, `updated_by` the admin's key name
-        (never the key, INV-13). Returns (created, the spec_hash it had before). The JSON keeps the order of `spec`,
-        because the order of `fields` is part of the task's spec_hash."""
+        (never the key, INV-13), or None for an auto task, which no admin wrote. Returns (created, the spec_hash it had
+        before). The JSON keeps the order of `spec`, because the order of `fields` is part of the task's spec_hash."""
         now = time.time()
         text = json.dumps(spec, ensure_ascii=False)
         row = self.db.execute("SELECT spec_hash FROM tasks WHERE name=?", (name,)).fetchone()
@@ -3188,16 +3231,24 @@ class Ledger:
         return tally.n, tally.agreed
 
     @_locked
-    def version_live_quality(self, vid: int, current_stage_only: bool = True) -> tuple[int, float | None]:
+    def version_live_quality(
+        self, vid: int, current_stage_only: bool = True, task: str | None = None
+    ) -> tuple[int, float | None]:
         """(audits, audited precision) for a version, from teacher audits of answers it served (`audit_counts`), in its
         current stage (by default: rows after `stage_since`) or over its whole life; precision is None without audits.
-        Only audits with a verdict count (ADR 0072): see `audit_counts`."""
-        since = 0
-        if current_stage_only:
-            v = self.version(vid)
-            since = v.stage_since if v else 0
-        n, s = self.audit_counts(vid, since)
-        return n, (s / n if n else None)
+        With `task`, of that task's answers only (FR-14.1, one query). Only audits with a verdict count (ADR 0072): see
+        `audit_counts`."""
+        since = self._stage_start(vid, current_stage_only)
+        if task is None:
+            n, s = self.audit_counts(vid, since)
+            return n, (s / n if n else None)
+        r = self.db.execute(
+            "SELECT COUNT(audit_agree) n, AVG(audit_agree) a FROM requests WHERE student_version=? AND audited=1"
+            " AND served_by='student' AND id>? AND task=?",
+            (vid, since, task),
+        ).fetchone()
+        n = int(r["n"])
+        return n, (float(r["a"]) if n else None)
 
     @_locked
     def served_counts(self) -> dict[int, int]:
@@ -3255,6 +3306,47 @@ class Ledger:
         return last, {"before_logging": int(left["before_logging"]), "no_student_answer": int(left["no_student_answer"])}
 
     @_locked
+    def has_event(self, kind: str, detail_prefix: str = "") -> bool:
+        """Whether an event of `kind` whose detail starts with `detail_prefix` was ever logged. A plain prefix
+        comparison, not LIKE: task names may hold '_'. A writer that must not repeat an event uses `event_once`, which
+        checks and writes in one transaction."""
+        row = self.db.execute(
+            "SELECT 1 FROM events WHERE kind=? AND substr(detail, 1, ?)=? LIMIT 1", (kind, len(detail_prefix), detail_prefix)
+        ).fetchone()
+        return row is not None
+
+    @_locked
+    def event_once(self, kind: str, detail_prefix: str, detail: str) -> bool:
+        """Log `detail` as a `kind` event unless an event of `kind` whose detail starts with `detail_prefix` was logged
+        already; True when it wrote one. The check and the write are one write transaction (`_begin`), so two processes
+        on one ledger file (the gateway's tick after a request and a `python -m ratchet.live tick` cron) cannot both
+        write it: what keeps a once-only event (a per-task alert, FR-14.1) once-only across processes and restarts.
+        ValueError when `detail` does not start with `detail_prefix`, since the event could never be found again."""
+        if not detail.startswith(detail_prefix):
+            raise ValueError(f"event detail {detail!r} does not start with {detail_prefix!r}")
+        self._begin()
+        try:
+            found = self.db.execute(
+                "SELECT 1 FROM events WHERE kind=? AND substr(detail, 1, ?)=? LIMIT 1",
+                (kind, len(detail_prefix), detail_prefix),
+            ).fetchone()
+            if found is None:
+                self.db.execute(
+                    "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail)
+                )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return found is None
+
+    def _stage_start(self, vid: int, current_stage_only: bool) -> int:
+        if not current_stage_only:
+            return 0
+        v = self.version(vid)
+        return v.stage_since if v else 0
+
+    @_locked
     def _replay_chunk(self, where: str, args: list[Any], after: int, last: int) -> list[dict[str, Any]]:
         """Up to REPLAY_CHUNK of `replay_rows`' rows with ids in (after, last], in id order."""
         rows = self.db.execute(
@@ -3287,6 +3379,23 @@ class Ledger:
                     tally.n += 1
                     tally.agreed += int(row["audit_agree"])
                     tally.pending.discard(rid)
+
+    @_locked
+    def last_audit_id(self, vid: int) -> int | None:
+        """The id of the newest audited request of version `vid`, or None: one seek on `requests_version_audited`, so a
+        gate step can tell cheaply whether a new audit arrived since it last looked."""
+        row = self.db.execute("SELECT MAX(id) FROM requests WHERE student_version=? AND audited=1", (vid,)).fetchone()
+        return None if row[0] is None else int(row[0])
+
+    @_locked
+    def task_live_quality(self, vid: int, current_stage_only: bool = True) -> dict[str, tuple[int, float | None]]:
+        """{task: (audits, audited precision)} for a version, `version_live_quality` per task in one query (FR-14.1)."""
+        rows = self.db.execute(
+            "SELECT task, COUNT(*) n, AVG(audit_agree) a FROM requests WHERE student_version=? AND audited=1"
+            " AND served_by='student' AND id>? GROUP BY task ORDER BY task",
+            (vid, self._stage_start(vid, current_stage_only)),
+        )
+        return {r["task"]: (int(r["n"]), None if r["a"] is None else float(r["a"])) for r in rows}
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:
@@ -3424,13 +3533,27 @@ class Ledger:
     def stats_by_task(self) -> list[dict[str, Any]]:
         """Per task: requests, student share, escalations, cost, savings, latency, and `routes`: how many requests took
         each route (`unrecorded` for rows older than the route column), most frequent first. Folded request rows
-        (FR-13.4) count too."""
+        (FR-13.4) count too (all but `tool_requests`, which a fold does not keep). Since FR-14.1 also the
+        teacher's audits of the task's student answers (`audits`, `audit_agreement`, over every version) and, from the
+        live version's eval, how the student is held to it: `threshold` as the router applies it
+        (`calibration.threshold`: 1.01 when disabled or when its spec changed since), its held-out `precision` and
+        `coverage`, whether its threshold is its own (`calibrated`) and why the release gate disabled it (`disabled`).
+        They are None without a live version, for a pinned task, and (all but `threshold`) when the live version has no
+        record for the task. `compare_keys` are the paths of the fields its answers are compared on, and
+        `compare_source` where they come from: `schema` for an auto task (derived from a response_format schema,
+        FR-14.2), `registry` for a built-in, file or API task, None for an unregistered name (whole answers compared).
+        `tool_requests` counts the requests that offered tools or carried tool calls or results, whatever their route
+        (FR-1.41; rows written before the column count as none)."""
         rows = [
             dict(r)
             for r in self._rdb.execute(
                 """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms,
-                      SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n
+                      SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n,
+                      SUM(audited=1) audits, AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
+                      SUM(CASE WHEN audited=1 THEN audit_agree END) audit_sum,
+                      COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n,
+                      SUM(uses_tools=1) tool_requests
                FROM requests GROUP BY task ORDER BY COUNT(*) DESC"""
             )
         ]
@@ -3449,6 +3572,10 @@ class Ledger:
                         per_task[k[6:]] = per_task.get(k[6:], 0) + v
                 routes[name] = dict(sorted(per_task.items(), key=lambda kv: (-kv[1], kv[0])))
             rows = sorted(_merge(rows, "task", folded).values(), key=lambda r: -r["requests"])  # stable: ties keep order
+            for r in rows:  # the audits a fold kept as sums (`_merge` recomputed audit_agree from them)
+                f = folded.get(r["task"])
+                if f is not None:
+                    r["audits"] = int(r.get("audits") or 0) + int(f.get("audited") or 0)
         # Human verdicts on the task's answers (FR-13.30), the latest per request; their rows outlive the requests'.
         human = {
             f["task"]: (int(f["n"]), int(f["ok"]))
@@ -3456,15 +3583,19 @@ class Ledger:
                 "SELECT task, COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback GROUP BY task"
             )
         }
+        # The live version from this snapshot: a `_reads` method never takes the writer's lock (`Ledger.live` does).
+        found = self._rdb.execute("SELECT * FROM versions WHERE state='live' ORDER BY id DESC LIMIT 1").fetchone()
+        live = self._version(found) if found is not None else None
         out = []
         for r in rows:
             n = r["requests"] or 1
             cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
             verdicts, correct = human.get(r["task"], (0, 0))
+            task = tasks.get(r["task"])
             out.append(
                 {
                     "task": r["task"],
-                    "pinned": tasks.get(r["task"]).pinned,
+                    "pinned": task.pinned,
                     "requests": r["requests"],
                     "student_share": (r["student_served"] or 0) / n,
                     "escalation_rate": (r["escalated"] or 0) / n,
@@ -3475,6 +3606,12 @@ class Ledger:
                     "routes": routes.get(r["task"], {}),
                     "human_feedback": verdicts,
                     "human_agreement": correct / verdicts if verdicts else None,
+                    "audits": int(r.get("audits") or 0),
+                    "audit_agreement": None if r.get("audit_agree") is None else float(r["audit_agree"]),
+                    **_live_calibration(live, task),
+                    "compare_keys": [f.path for f in task.fields],
+                    "compare_source": COMPARE_SOURCES.get(task.source),
+                    "tool_requests": int(r.get("tool_requests") or 0),
                 }
             )
         return out

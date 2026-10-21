@@ -32,7 +32,7 @@ As of 2026-10-20. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST
 
 ## Milestone 0.9: v0.5 backend completeness (in progress, from Oct 20)
 
-Built package by package. Every item gets offline tests and an adversarial review, and the reference simulation numbers must not change: since the evidence foundations, three workloads (tickets, mixed, research) must reproduce v0.4.0 exactly (`make reference`). The UI is out of scope for v0.5.
+Built package by package. Every item gets offline tests and an adversarial review, and the reference simulation numbers must not change: since the evidence foundations, three workloads (tickets, mixed, research) must reproduce v0.4.0 exactly (`make reference`; per-task calibration, on by default, is switched off for them, [ADR 0040](adr/0040-per-task-calibration.md)). The UI is out of scope for v0.5.
 
 | Package | Scope |
 |---|---|
@@ -70,7 +70,6 @@ Called "v0.2 hardening" in earlier drafts. Version numbers went to the demo laye
 | Signed model bill of materials stored with each adapter | Auditable provenance | Done (v0.4). Copy inside the adapter folder in the bucket: done (v0.5, with committed training sets, [ADR 0027](adr/0027-committed-training-sets.md)) |
 | GitHub Actions CI with coverage | Open-source adoption | Done (v0.4). PyPI package: planned |
 | Postgres ledger option | Concurrency, durability | Planned |
-| Multiple tasks per deployment with separate golden sets and thresholds | Real workloads mix tasks | Planned |
 | Batch API for backfill labelling (50% cheaper on Token Factory) | Cost | Planned |
 | Nemotron 3 Nano 30B student on H100/H200 | Harder tasks | Planned |
 

@@ -49,5 +49,9 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0072](0072-off-path-audits-and-shadow.md) | Off-path audits and shadow: a bounded sidecar, the same draws and calls, pending rows the gate ignores, and audits that are never dropped | Accepted | 2026-10-21 |
 | [0063](0063-spend-and-rate-limits.md) | Spend and rate limits: per-key budgets, a gateway budget with a student-only mode, and limits that refuse instead of queueing | Accepted | 2026-10-21 |
 | [0064](0064-admin-api-compare-and-set-and-audit-trail.md) | Admin API, compare-and-set transitions, audit trail: one module for manual changes (HTTP and CLI), runtime switches and pins, and release moves that two processes make once | Accepted | 2026-10-21 |
+| [0040](0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate, and per-task alerts | Accepted | 2026-10-20 |
+| [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
+| [0042](0042-auto-tasks-from-response-format-schemas.md) | Structured outputs: a response_format is a contract, and a json_schema names an auto task | Accepted | 2026-10-21 |
+| [0043](0043-tool-calls-teacher-only-by-default.md) | Tool calls: teacher-only by default, opt-in distillation later | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

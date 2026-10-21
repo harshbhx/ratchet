@@ -85,10 +85,13 @@ from .openai_compat import (
     Limits,
     from_validation_errors,
     http_error,
+    legacy_history,
     normalize_messages,
     parse_body,
     parse_modalities,
+    tool_params,
     usage_object,
+    uses_tools,
     validate_chat_request,
 )
 from .providers import GenParams, OpenAICompatProvider
@@ -121,7 +124,9 @@ SCOUT_PAGE = HERE / "web" / "scout.html"
 # without `npm run build`), the hand-written pages above are served instead.
 DIST = HERE / "web" / "dist"
 SPA_INDEX = DIST / "index.html"
-WORKLOADS = ("tickets", "research", "mixed")
+WORKLOADS = ("tickets", "research", "mixed", "schema", "tools")  # sim.world.WORKLOADS, for /ratchet/demo/day
+# Workloads the generic mock world answers (sim/generic.py), which RATCHET_MOCK_STRICT=1 turns off: refused before a day starts.
+GENERIC_WORKLOADS = ("schema", "tools")
 MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
 EVIDENCE_STATES = ("canary", "live")  # versions whose `/ratchet/stats` entry carries the release gate's evidence
@@ -267,26 +272,31 @@ class Runtime:
         self.tick_interval_s = s.tick_interval()
         self.stats_cache = SnapshotCache(s.stats_ttl(), clock=self.clock)
         self._last_tick: float | None = None
+        min_task_n = s.min_task_golden_rows()  # a bad RATCHET_MIN_TASK_GOLDEN stops startup here (FR-14.1)
         if s.mode == "mock":
             from sim.mock_models import DEFAULT_REASONING_CV, MockFleet, MockTeacher
             from sim.world import make_stream
 
             self.ledger = Ledger(":memory:", s.golden_fraction)
+            # RATCHET_MOCK_STRICT=1: the mock models answer only the demo's own requests (the 400 below otherwise).
             self.fleet = MockFleet(
                 clock=self.clock,
                 policy=s.gen_policy(),
                 calibration=cert.calibration,
                 cert_target=cert.target,
                 cert_delta=cert.delta,
+                min_task_n=min_task_n,
+                strict=s.mock_strict,
+                per_task=s.per_task_calibration,
             )
             self.reloader: live.AdapterReloader | None = None
             self.student_http: httpx.Client | None = None  # the client that loads adapters into vLLM (live only)
             self.stream = make_stream("tickets", seed=7, drift_day=5)
-            self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
+            self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in WORKLOADS[1:]}}
             # RATCHET_MOCK_TEACHER_REASONING_MEAN (checked above): the mock teacher's reasoning varies around that mean, so
             # the savings receipts measure and correct the formula's 300-token assumption (FR-15.5, simulation).
             cv = DEFAULT_REASONING_CV if mean is not None else 0.0
-            teacher = MockTeacher(s.teacher_reasoning_tokens, reasoning_mean=mean, reasoning_cv=cv)
+            teacher = MockTeacher(s.teacher_reasoning_tokens, reasoning_mean=mean, reasoning_cv=cv, strict=s.mock_strict)
             resolver = self.fleet.resolve
             s.audit_rate = max(s.audit_rate, 0.10)
             # RATCHET_<FIELD> works here too (RATCHET_SEQUENTIAL=1 shows the anytime-valid gate); min_audits is 15 unless set.
@@ -427,6 +437,7 @@ class Runtime:
             clock=self.clock,
             on_adapter_missing=reload,
             fallback_teacher=fallback_teacher,
+            tasks_lock=self.tasks_lock,  # auto tasks (ADR 0042) and admin writes never interleave
         )
         # An off-path audit's or shadow's spend counts against the budgets when its job ends (ADR 0063, ADR 0072).
         self.ratchet.on_offpath_spend = lambda client, usd: self.meter.add(client, usd, requests=0)
@@ -549,7 +560,7 @@ class Runtime:
         ticks = max(1, requests // 10)
         for i in range(requests):
             item = stream.sample(self.ledger.day)
-            self.ratchet.handle(item.messages(), item.task)
+            self.ratchet.handle(item.messages(), item.task, params=item.params)  # a schema or tools; None for tickets
             if (i + 1) % ticks == 0:
                 self.tick(force=True)  # simulated time: never throttled by the wall clock
         rep = run_night(
@@ -1377,8 +1388,8 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
     the teacher's wait; a timeout is a 504; everything else is a 502. `X-Should-Retry: false` marks the ones a retry
     cannot fix, so OpenAI SDKs do not repeat the request (and its student samples) for nothing. A 502 or 504 the client
     may retry carries the teacher's `Retry-After` when it sent one: the provider stops retrying at a wait over its cap,
-    so the client is the one that has to wait. A teacher answer that is a tool call (`router.Ratchet._ask_teacher`, only
-    when an operator allows `tools`) is a 502 `tool_calls_unsupported` no retry can change. The teacher's open breaker
+    so the client is the one that has to wait. A teacher tool call to a request that offers no tools
+    (`router.Ratchet._ask_teacher`) is a 502 `tool_calls_unsupported` no retry can change. The teacher's open breaker
     (`router.Ratchet._teacher_complete`, ADR 0019) is a 503 `teacher_circuit_open` at once, with the time until its next
     probe as `Retry-After` (1 to 60 s)."""
     u = as_upstream(e)
@@ -1387,7 +1398,7 @@ def _map_upstream(e: httpx.HTTPError) -> APIError:
         message = f"teacher circuit open: recent teacher calls failed, so the gateway is not calling it; retry after {wait} s"
         return APIError(503, message, "api_error", TEACHER_CIRCUIT_OPEN, headers={"Retry-After": str(wait)})
     if u.code == TOOL_CALLS_UNSUPPORTED:
-        message = "The teacher answered with a tool call, which this gateway cannot return yet; send the request without tools."
+        message = "The teacher answered with a tool call to a request that offers no tools."
         return APIError(502, message, "api_error", TOOL_CALLS_UNSUPPORTED, headers=NO_RETRY)
     if u.status in CLIENT_CAUSED:
         code = u.code or ("request_too_large" if u.status == 413 else None)
@@ -1439,6 +1450,43 @@ def _logprobs(asked: bool, content: list[dict[str, Any]] | None) -> dict[str, An
     """A choice's `logprobs`: null unless the client asked (`logprobs: true`); then `{content, refusal: null}`, with
     `content` null when the token logprobs cannot be given (FR-1.14)."""
     return {"content": content, "refusal": None} if asked else None
+
+
+def _call(call: Mapping[str, Any]) -> dict[str, Any]:
+    """A tool call as a response carries it: `{id, type, function: {name, arguments}}` (a copy, so the response never
+    shares the router's objects)."""
+    fn = call["function"]
+    return {"id": call["id"], "type": "function", "function": {"name": fn["name"], "arguments": fn["arguments"]}}
+
+
+def _message(ch: Choice, legacy: bool) -> dict[str, Any]:
+    """A choice's `message` (FR-1.41). With tool calls, `content` is the text the model wrote beside them or null, and
+    the calls are `tool_calls` with the upstream ids, or for a request that used the legacy `functions` (`legacy`)
+    `function_call`, the first call's name and arguments: the legacy form has one call per message."""
+    msg: dict[str, Any] = {"role": "assistant", "content": ch.text, "refusal": None, "annotations": []}
+    if ch.tool_calls:
+        msg["content"] = ch.text or None
+        if legacy:
+            msg["function_call"] = _call(ch.tool_calls[0])["function"]
+        else:
+            msg["tool_calls"] = [_call(c) for c in ch.tool_calls]
+    return msg
+
+
+def _finish(ch: Choice, legacy: bool) -> str:
+    """A choice's `finish_reason`: `function_call` in place of `tool_calls` for a legacy request."""
+    return "function_call" if legacy and ch.finish_reason == "tool_calls" else ch.finish_reason
+
+
+def _call_deltas(ch: Choice, legacy: bool) -> list[dict[str, Any]]:
+    """The stream deltas of a choice's tool calls: one per call, `{tool_calls: [{index, id, type, function: {name,
+    arguments}}]}` with the whole arguments string, which is what the OpenAI SDK's `ChatCompletionStreamState` and
+    LangChain's chunk accumulators merge by `index`; for a legacy request one `{function_call: {name, arguments}}`."""
+    if not ch.tool_calls:
+        return []
+    if legacy:
+        return [{"function_call": _call(ch.tool_calls[0])["function"]}]
+    return [{"tool_calls": [{"index": k, **_call(c)}]} for k, c in enumerate(ch.tool_calls)]
 
 
 def _stream_pieces(choice: Choice, asked: bool) -> list[tuple[str, dict[str, Any] | None]]:
@@ -1716,13 +1764,20 @@ def _complete(
     meta_in.idempotency_key = idempotency_key
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     limits = rt.limits_for(client)
-    try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
-        task = rt.ratchet.task_for(header_task or req.task, client)
+    params = GenParams.from_request(req)  # the legacy `functions` and `function_call` arrive as tools (FR-1.41)
+    legacy = tool_params(req).legacy  # answer tool calls as `function_call`, as the request asked
+    if uses_tools(req):  # the teacher answers alone; legacy turns go in the form open-model servers render
+        messages = legacy_history(messages)
+    # The header wins over metadata.ratchet_task, and either over a response_format schema's auto task (ADR 0042);
+    # refused before the quota, so a refusal costs nothing.
+    try:
+        task = rt.ratchet.task_for(header_task or req.task, client, params)
     except tasks.UnknownTask as e:  # RATCHET_UNKNOWN_TASKS=reject; or teacher/reject and a header that is not a task name
         if limits is not None and limits.tasks is not None:  # list only the tasks this key's scope allows
             allowed = [n for n in tasks.names_for(client) if limits.allows_task(n)]
             e = tasks.UnknownTask(e.name, allowed, invalid=not tasks.valid_name(e.name))
-        raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
+        param = None if header_task else "metadata.ratchet_task" if req.task else "response_format"
+        raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", param) from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
     if ctx is not None:
@@ -1734,14 +1789,15 @@ def _complete(
     student_only = _budget(client, limits, use)
     if rate is not None and "X-RateLimit-Limit-Requests" not in headers:  # the daily quota's headers win, as since v0.4
         headers.update(_rate_headers(rate))
-    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
-    serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
+    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task. A tool
+    # request takes the same path inside `handle` (route `tools`, FR-1.41).
+    serve = functools.partial(rt.ratchet.teacher_only, route="multimodal") if flags.multimodal else rt.ratchet.handle
     # A spent gateway budget in student_only mode keeps the request off the teacher (ADR 0063); a key with store=0
     # keeps it out of the training set through `_request_meta` (FR-13.1).
     meta_in.student_only = student_only
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
         try:
-            r = serve(messages, task, client=client, params=GenParams.from_request(req), meta=meta_in, n=req.n)
+            r = serve(messages, task, client=client, params=params, meta=meta_in, n=req.n)
         except BaseException:  # what the failed request spent (the student's samples) counts against the budgets
             if ctx is not None and ctx.spent_usd > 0:
                 rt.meter.add(client, ctx.spent_usd, requests=0)
@@ -1751,7 +1807,8 @@ def _complete(
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
-        raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e  # sim.world.lookup
+        # sim.world.lookup under RATCHET_MOCK_STRICT=1; without it the generic mock world answers every request.
+        raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e
     except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
         raise _map_upstream(e) from e
     headers.update(_spend_headers(limits, rt.meter.add(client, r.cost_usd)))
@@ -1773,6 +1830,8 @@ def _complete(
         "request_id": meta_in.request_id,
         # The request's ledger row, also X-Ratchet-Request-Id: what GET /ratchet/receipts/{day}/proof/{id} proves (FR-15.5)
         "row_id": r.request_id,
+        "task": r.task,  # the task the request was resolved to: named, an auto task from its schema, or default
+        "schema_valid": r.schema_valid,  # every choice meets the response_format; null without one (ADR 0042)
     }
     # OpenAI echoes `metadata`; never stored (FR-13.1).
     echo = {"metadata": req.metadata} if req.metadata is not None else {}
@@ -1807,9 +1866,9 @@ def _complete(
         choices = [
             {
                 "index": i,
-                "message": {"role": "assistant", "content": ch.text, "refusal": None, "annotations": []},
+                "message": _message(ch, legacy),
                 "logprobs": _logprobs(asked, ch.logprobs),
-                "finish_reason": ch.finish_reason,
+                "finish_reason": _finish(ch, legacy),
             }
             for i, ch in enumerate(r.choices)
         ]
@@ -1837,16 +1896,22 @@ def _complete(
         return sse({**ev, **extra})
 
     def events() -> Iterator[str]:
-        # One choice after the other: its role chunk, its content, its own finish chunk (FR-1.14).
+        # One choice after the other: its role chunk, its content, its tool calls (one delta each, FR-1.41), its own
+        # finish chunk (FR-1.14). A choice that is only tool calls has null content and no content chunks, as OpenAI's.
         last = len(r.choices) - 1
         for i, ch in enumerate(r.choices):
-            yield chunk(i, {"role": "assistant", "content": "", "refusal": None})
-            for piece, logprobs in _stream_pieces(ch, asked):
-                yield chunk(i, {"content": piece}, logprobs=logprobs)
+            text = bool(ch.text) or not ch.tool_calls
+            yield chunk(i, {"role": "assistant", "content": "" if text else None, "refusal": None})
+            if text:
+                for piece, logprobs in _stream_pieces(ch, asked):
+                    yield chunk(i, {"content": piece}, logprobs=logprobs)
+            for delta in _call_deltas(ch, legacy):
+                yield chunk(i, delta)
+            finish = _finish(ch, legacy)
             if include_usage or i < last:
-                yield chunk(i, {}, ch.finish_reason)
+                yield chunk(i, {}, finish)
             else:  # the ratchet block (and the echoed metadata) ride on the last finish chunk
-                yield chunk(i, {}, ch.finish_reason, **echo, ratchet=meta)
+                yield chunk(i, {}, finish, **echo, ratchet=meta)
         if include_usage:  # one more chunk with no choices, the usage, the echoed metadata and the ratchet block
             yield sse({**envelope, "choices": [], "usage": usage, **echo, "ratchet": meta})
         yield "data: [DONE]\n\n"
@@ -2607,13 +2672,14 @@ def _put_result(task: tasks.Task, changed: bool, created: bool) -> dict[str, Any
 
 @app.delete("/ratchet/tasks/{name}")
 def delete_task(name: str, admin: str = Depends(_admin)) -> dict[str, Any]:
-    """Remove an API task. Its stored examples stay, for provenance; requests that name it then get the unknown-task
-    policy (RATCHET_UNKNOWN_TASKS)."""
+    """Remove an API task or an auto task. Its stored examples stay, for provenance; requests that name it then get the
+    unknown-task policy (RATCHET_UNKNOWN_TASKS), and a request with a response_format schema registers its auto task
+    again, from that request's schema (ADR 0042)."""
     with rt.tasks_lock:
         current = tasks.lookup(name)
         if current is None:
             raise HTTPException(404, f"no registered task is named {name!r}")
-        if current.source != "api":
+        if current.source not in ("api", "auto"):
             raise _not_yours(current)
         tasks.unregister(name)
         try:
@@ -3334,17 +3400,20 @@ def _demo_busy() -> HTTPException:
 
 @app.post("/ratchet/demo/day")
 def demo_day(requests: int = 1500, workload: str = "tickets") -> dict[str, Any]:
-    """Simulate one day of traffic (support tickets, Scout research calls, or both), then one night of training."""
+    """Simulate one day of traffic (support tickets, Scout research calls, both, structured outputs or tool requests),
+    then one night of training. Mock models: `simulation` says so in the response."""
     _mock_only()
     if workload not in WORKLOADS:
         raise HTTPException(400, f"workload must be one of {list(WORKLOADS)}")
+    if workload in GENERIC_WORKLOADS and rt.settings.mock_strict:  # the strict mock would refuse its first request mid-day
+        raise HTTPException(400, f"workload {workload} needs the generic mock world, which RATCHET_MOCK_STRICT=1 turns off")
     if not _demo_lock.acquire(blocking=False):
         raise _demo_busy()
     try:
         rep = rt.simulate_day(max(100, min(requests, 5000)), workload)
     finally:
         _demo_lock.release()
-    return {"day": rt.ledger.day, "workload": workload, "night": rep.__dict__}
+    return {"day": rt.ledger.day, "workload": workload, "simulation": True, "night": rep.__dict__}
 
 
 @app.post("/ratchet/demo/break-next")
