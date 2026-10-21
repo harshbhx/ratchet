@@ -92,6 +92,7 @@ The file starts in `RATCHET_MODE=mock` with `RATCHET_MOCK_WARMUP_DAYS=4`, so the
 | `https://<domain>/dashboard` | Ratchet dashboard (simulation) |
 | `https://<domain>/ratchet/stats` | JSON stats |
 | `https://<domain>/healthz` | `{"status":"ok",...}` (always public) |
+| `https://<domain>/readyz` | 200 with `"status": "ready"` (or `degraded`, with the reason under `checks`); 503 `not_ready` when the ledger cannot be written or no teacher can answer (always public; see [API.md](API.md#get-readyz)) |
 | `https://<domain>/v1/models` | `{"object":"list","data":[{"id":"ratchet",...}]}` (403 if the Caddy guard is on, 401 if `RATCHET_API_KEYS` is set and you send no key; see Security) |
 
 ```bash
@@ -116,7 +117,7 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
    - `RATCHET_SCOUT_RUNS_PER_HOUR` (default 6) limits each client IP.
    - `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (default 30) caps runs per UTC day for everyone, and with it Tavily credits (about 3 per run). It is not in `.env.vm.example`; add the line if you want a different value.
    - `RATCHET_AUDIT_RATE` (default 0.05): each audit is an extra Ultra call. Keep it at 0.05 or lower.
-3. Apply: `sudo -u ratchet docker compose up -d`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
+3. Check, then apply: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check` lists every problem with `.env` at once (exit 2: the gateway would not start; it also warns that `RATCHET_MOCK_WARMUP_DAYS` does nothing in live mode, so remove that line), then `sudo -u ratchet docker compose up -d` (or `update.sh`, which runs the same check first) and `curl -s https://<domain>/readyz` should say `ready`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
 4. Watch the Token Factory usage page and the Tavily dashboard daily for the first week.
 
 ### Night School cron (off by default)
@@ -172,7 +173,7 @@ curl -s https://<domain>/scout/status                 # live mode: spend today v
 
 - The ratchet container has a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
-- For an outside check, point a free uptime monitor at `https://<domain>/healthz` (always public; `/ratchet/stats` needs a key when the dashboard is private).
+- For an outside check, point a free uptime monitor at `https://<domain>/readyz` (always public; 200 while requests can be answered, 503 when they cannot) and, for "is the process up", `https://<domain>/healthz`. A load balancer in front of the VM should use `/readyz` too; keep restarts on `/healthz`, so a teacher outage never becomes a restart loop. `/ratchet/stats` needs a key when the dashboard is private.
 
 ### Updating
 
@@ -180,7 +181,7 @@ curl -s https://<domain>/scout/status                 # live mode: spend today v
 sudo -u ratchet /opt/ratchet/deploy/vm/update.sh
 ```
 
-It runs `git pull --ff-only`, `docker compose up -d --build`, waits for the health check, then fetches `/`, `/healthz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public) and exits non-zero if any of them fail.
+It runs `git pull --ff-only` and builds the new image, then runs `python -m ratchet.config check` in it with your `.env` ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks)): on errors (exit 2) it stops and leaves the running gateway as it is, so a typo in `.env` never takes the demo down; warnings are printed and the update goes on. Then `docker compose up -d`, waits for the Docker health check (`/healthz`) and for `/readyz` to answer 200 inside the container (printing its checks), fetches `/`, `/healthz`, `/readyz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public) and exits non-zero if any of them fail. Run the check yourself after editing `.env`: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check`.
 
 ### Backups
 

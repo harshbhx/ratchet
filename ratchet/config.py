@@ -6,12 +6,24 @@ day 1 with `GET https://api.tokenfactory.nebius.com/v1/models?verbose=true`.
 
 from __future__ import annotations
 
+import argparse
+import contextvars
+import difflib
+import json
 import math
 import os
+import re
+import sys
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, TextIO
+from urllib.parse import urlsplit
 
 import httpx
 
+from . import licenses
+from .auth import KeyRing, Token
 from .openai_compat import DEFAULT_MAX_N, Limits
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
@@ -28,45 +40,116 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+# ---------- configuration problems (FR-12.30, ADR 0070) ----------
+ERROR, WARNING = "error", "warning"
+
+
+@dataclass(frozen=True)
+class ConfigIssue:
+    """One problem with the configuration: `level` ERROR (the gateway does not start) or WARNING (it starts;
+    RATCHET_STRICT_CONFIG=1 stops it too), the variable `var` it is about, and a `message` that names the variable and
+    never holds a key's or token's value. `license` marks a refused teacher (INV-1), so the ConfigError raised for it is
+    also a LicenseError."""
+
+    level: str
+    var: str
+    message: str
+    license: bool = False
+
+    def as_dict(self) -> dict[str, str]:
+        return {"level": self.level, "var": self.var, "message": self.message}
+
+
+def _render(issues: Sequence[ConfigIssue]) -> str:
+    def line(i: ConfigIssue) -> str:
+        return i.message if i.level == ERROR else f"{i.message} (a warning; RATCHET_STRICT_CONFIG=1 makes it fatal)"
+
+    if len(issues) == 1:
+        return line(issues[0])
+    return f"{len(issues)} configuration problems stop startup:\n" + "\n".join(f"  - {line(i)}" for i in issues)
+
+
+class ConfigError(ValueError):
+    """Settings Ratchet cannot start with. `issues` lists every problem found, and the message lists them, each naming
+    its variable; `var`, `value` and `expected` describe the first. A ValueError, so code that caught the old errors
+    still catches it. Build one from a single bad value, `ConfigError(var, value, expected)`, or from a list,
+    `ConfigError.of(issues)`."""
+
+    def __init__(self, var: str, value: object = None, expected: str = "", *, issues: Sequence[ConfigIssue] = ()) -> None:
+        if not issues:
+            issues = (ConfigIssue(ERROR, var, f"{var} must be {expected}, not {value!r}"),)
+        self.issues: tuple[ConfigIssue, ...] = tuple(issues)
+        self.var, self.value, self.expected = var, value, expected
+        super().__init__(_render(self.issues))
+
+    @classmethod
+    def of(cls, issues: Iterable[ConfigIssue]) -> ConfigError:
+        """One error for several problems; a ConfigLicenseError (also a LicenseError) when a teacher was refused."""
+        found = tuple(issues)
+        if not found:
+            raise ValueError("ConfigError.of needs at least one issue")
+        kind = ConfigLicenseError if any(i.license for i in found) else ConfigError
+        return kind(found[0].var, issues=found)
+
+
+class ConfigLicenseError(ConfigError, licenses.LicenseError):
+    """A ConfigError whose problems include a refused teacher (INV-1): `except LicenseError` still catches it."""
+
+
+# While `load()` reads the environment, a variable that does not parse is collected here instead of raised (its setting
+# keeps its default meanwhile), so one startup check lists every bad variable at once.
+_COLLECT: contextvars.ContextVar[list[ConfigIssue] | None] = contextvars.ContextVar("ratchet_config_collect", default=None)
+
+
+def _fail(var: str, raw: object, expected: str, fallback: Any) -> Any:
+    """Raise ConfigError for a variable that does not parse, or collect it during `load()` and return `fallback`."""
+    error = ConfigError(var, raw, expected)
+    sink = _COLLECT.get()
+    if sink is None:
+        raise error
+    sink.extend(error.issues)
+    return fallback
+
+
 def _float(name: str, default: str) -> float:
-    """A number from the environment; ValueError names the variable, so a typo stops startup with a message that says
+    """A number from the environment; ConfigError names the variable, so a typo stops startup with a message that says
     which setting is wrong."""
     raw = _env(name, default)
     try:
         return float(raw)
     except ValueError:
-        raise ValueError(f"{name} must be a number, not {raw!r}") from None
+        return _fail(name, raw, "a number", float(default))
 
 
 def _int(name: str, default: str) -> int:
-    """A whole number from the environment; ValueError names the variable."""
+    """A whole number from the environment; ConfigError names the variable."""
     raw = _env(name, default)
     try:
         return int(raw)
     except ValueError:
-        raise ValueError(f"{name} must be a whole number, not {raw!r}") from None
+        return _fail(name, raw, "a whole number", int(default))
 
 
 def _float_or_none(name: str) -> float | None:
-    """A number from the environment, or None when the variable is unset or empty; ValueError names the variable."""
+    """A number from the environment, or None when the variable is unset or empty; ConfigError names the variable."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return None
     try:
         return float(raw)
     except ValueError:
-        raise ValueError(f"{name} must be a number, not {raw!r}") from None
+        return _fail(name, raw, "a number", None)
 
 
 def _bool(name: str) -> bool | None:
     """A 0/1 switch from the environment, or None when the variable is unset or empty (the setting's default, which may
-    depend on the mode). Anything else raises ValueError naming the variable: a typo in a security switch must stop
+    depend on the mode). Anything else raises ConfigError naming the variable: a typo in a security switch must stop
     startup instead of quietly picking a side."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return None
     if raw not in ("0", "1"):
-        raise ValueError(f"{name} must be 0 or 1, not {raw!r}")
+        return _fail(name, raw, "0 or 1", None)
     return raw == "1"
 
 
@@ -109,9 +192,155 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
     "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
 }
-# Variables read through a helper the traceability check cannot see (scripts/reqtrace.py: every one needs a row in
-# docs/CONFIGURATION.md).
-KNOWN_ENV: tuple[str, ...] = tuple(env for env, _, _ in RESERVED_SETTINGS.values())
+# Every environment variable the package reads, but ReleasePolicy's RATCHET_<FIELD> (`known_env()` adds those). The
+# startup check calls any other RATCHET_* variable unknown (`Settings.validate`), so a variable a change starts reading
+# goes here: `python scripts/reqtrace.py --check` fails until it does, and until docs/CONFIGURATION.md documents it.
+KNOWN_ENV: tuple[str, ...] = tuple(
+    sorted(
+        {
+            "NEBIUS_API_KEY",
+            "RATCHET_ADAPTER_ROOT",
+            "RATCHET_ADMIN_KEYS",
+            "RATCHET_ALLOW_UNAUTHENTICATED",
+            "RATCHET_API_KEY",
+            "RATCHET_API_KEYS",
+            "RATCHET_API_KEY_DAILY_REQUESTS",
+            "RATCHET_AUDIT_RATE",
+            "RATCHET_BOM_SIGNING_KEY",
+            "RATCHET_CONFIDENCE_THRESHOLD",
+            "RATCHET_CSP",
+            "RATCHET_DASHBOARD_KEYS",
+            "RATCHET_DATA_DIR",
+            "RATCHET_DB",
+            "RATCHET_DB_SYNC",
+            "RATCHET_FALLBACK_STUDENT",
+            "RATCHET_FIXTURES_DIR",
+            "RATCHET_GOLDEN_FRACTION",
+            "RATCHET_JUDGE_MODEL",
+            "RATCHET_LOG_FORMAT",
+            "RATCHET_LOG_LEVEL",
+            "RATCHET_MAX_BODY_BYTES",
+            "RATCHET_MAX_INPUT_CHARS",
+            "RATCHET_MAX_MESSAGES",
+            "RATCHET_MAX_N",
+            "RATCHET_MERGE_SYSTEM",
+            "RATCHET_METRICS_TOKEN",
+            "RATCHET_MOCK_ENDPOINT_HOURS",
+            "RATCHET_MOCK_PACE",
+            "RATCHET_MOCK_WARMUP_DAYS",
+            "RATCHET_MOCK_WARMUP_REQUESTS",
+            "RATCHET_MODE",
+            "RATCHET_ON_TEACHER_FAILURE",
+            "RATCHET_OPENAPI",
+            "RATCHET_PRICES_VERIFIED",
+            "RATCHET_PUBLIC_BOM",
+            "RATCHET_PUBLIC_DASHBOARD",
+            "RATCHET_REDACT_PII",
+            "RATCHET_SAMPLES",
+            "RATCHET_SCOUT_DAILY_BUDGET_USD",
+            "RATCHET_SCOUT_MAX_RESULTS",
+            "RATCHET_SCOUT_MAX_RUNS_PER_DAY",
+            "RATCHET_SCOUT_RUNS_PER_HOUR",
+            "RATCHET_SCRUB_STATS",
+            "RATCHET_STATS_TTL_S",
+            "RATCHET_STORE_FALLBACK_TEACHER",
+            "RATCHET_STRICT_CONFIG",
+            "RATCHET_STUDENT_BASE",
+            "RATCHET_STUDENT_BASE_MODEL",
+            "RATCHET_STUDENT_BREAKER_COOLDOWN_S",
+            "RATCHET_STUDENT_BREAKER_FAILURES",
+            "RATCHET_STUDENT_CONNECT_TIMEOUT_S",
+            "RATCHET_STUDENT_COST_MODEL",
+            "RATCHET_STUDENT_GPUS",
+            "RATCHET_STUDENT_GPU_USD_PER_HOUR",
+            "RATCHET_STUDENT_KEY",
+            "RATCHET_STUDENT_MAX_TOKENS",
+            "RATCHET_STUDENT_PARAMS",
+            "RATCHET_STUDENT_TIMEOUT_S",
+            "RATCHET_SYNC_CMD",
+            "RATCHET_TASKS_FILE",
+            "RATCHET_TEACHER_BASE",
+            "RATCHET_TEACHER_BREAKER_COOLDOWN_S",
+            "RATCHET_TEACHER_BREAKER_FAILURES",
+            "RATCHET_TEACHER_DEADLINE_S",
+            "RATCHET_TEACHER_FALLBACK_BASE",
+            "RATCHET_TEACHER_FALLBACK_MODEL",
+            "RATCHET_TEACHER_MAX_TOKENS",
+            "RATCHET_TEACHER_MODALITIES",
+            "RATCHET_TEACHER_MODEL",
+            "RATCHET_TEACHER_PARAMS",
+            "RATCHET_TEACHER_REASONING_HEADROOM",
+            "RATCHET_TEACHER_REASONING_TOKENS",
+            "RATCHET_TEACHER_RETRIES",
+            "RATCHET_TEACHER_TIMEOUT_S",
+            "RATCHET_TICK_INTERVAL_S",
+            "RATCHET_TRAIN_CMD",
+            "RATCHET_TRAIN_GPUS",
+            "RATCHET_TRAIN_GPU_USD_PER_HOUR",
+            "RATCHET_TRUST_PROXY",
+            "RATCHET_UNKNOWN_TASKS",
+            "TAVILY_API_KEY",
+            *(env for env, _, _ in RESERVED_SETTINGS.values()),
+        }
+    )
+)
+# RATCHET_* variables the deploy scripts and the demo VM read (deploy/, deploy/vm/.env), not the package. Docker Compose
+# hands the VM's whole .env to the gateway, so the startup check must not call them unknown.
+DEPLOY_ENV: frozenset[str] = frozenset(
+    {
+        "RATCHET_ADMIN_TOKEN",
+        "RATCHET_API_GUARD",
+        "RATCHET_BACKUP_DIR",
+        "RATCHET_BACKUP_KEEP",
+        "RATCHET_BUCKET_ID",
+        "RATCHET_BUCKET_S3",
+        "RATCHET_DOMAIN",
+        "RATCHET_ENDPOINT_NAME",
+        "RATCHET_PYTHON",
+        "RATCHET_REPO_URL",
+        "RATCHET_S3_ENDPOINT",
+        "RATCHET_SERVE_PLATFORM",
+        "RATCHET_SERVE_PRESET",
+        "RATCHET_SSH_USER",
+        "RATCHET_TRAIN_IMAGE",
+        "RATCHET_TRAIN_PLATFORM",
+        "RATCHET_TRAIN_PRESET",
+        "RATCHET_VM_DISK_GB",
+        "RATCHET_VM_NAME",
+        "RATCHET_VM_PLATFORM",
+        "RATCHET_VM_PRESET",
+    }
+)
+# Variables only mock mode reads, with their defaults as the environment spells them: set to anything else in live mode,
+# they do nothing, which the startup check says (a warning).
+MOCK_ONLY_ENV: dict[str, str] = {
+    "RATCHET_MOCK_WARMUP_DAYS": "0",
+    "RATCHET_MOCK_WARMUP_REQUESTS": "1500",
+    "RATCHET_MOCK_PACE": "0.25",
+    "RATCHET_MOCK_ENDPOINT_HOURS": "24",
+    "RATCHET_MOCK_TEACHER_REASONING_MEAN": "",
+}
+# 0/1 switches read as `== "1"` (or `!= "0"` for RATCHET_REDACT_PII, on unless 0): another value is not an error, for
+# v0.4 compatibility, but it is a warning, because `true` reads as off (and `false` as on for redaction).
+LOOSE_SWITCHES: dict[str, bool] = {
+    "RATCHET_TRUST_PROXY": False,
+    "RATCHET_MERGE_SYSTEM": False,
+    "RATCHET_STORE_FALLBACK_TEACHER": False,
+    "RATCHET_PRICES_VERIFIED": False,
+    "RATCHET_REDACT_PII": True,
+}
+MODES = ("mock", "live")
+MAX_SAMPLES = 16  # RATCHET_SAMPLES, as a task's own `policy.samples`
+MAX_GOLDEN_FRACTION = 0.5  # RATCHET_GOLDEN_FRACTION: more would hold most examples out of training
+MIN_USEFUL_AUDIT_RATE = 0.01  # below it a canary may never collect RATCHET_MIN_AUDITS audits (a warning)
+_ENV_NAME = re.compile(r"\b(?:RATCHET|NEBIUS|TAVILY)_[A-Z0-9_]*[A-Z0-9]")
+
+
+def known_env() -> frozenset[str]:
+    """Every variable Ratchet reads or its deploy scripts set: KNOWN_ENV, DEPLOY_ENV and ReleasePolicy's RATCHET_<FIELD>."""
+    from .release import policy_env  # release imports config
+
+    return frozenset(KNOWN_ENV) | DEPLOY_ENV | policy_env()
 
 
 def _is_default(value: object, default: str) -> bool:
@@ -246,31 +475,31 @@ class Settings:
     )
 
     # Cascade.
-    confidence_threshold: float = field(default_factory=lambda: float(_env("RATCHET_CONFIDENCE_THRESHOLD", "0.80")))
-    samples: int = field(default_factory=lambda: int(_env("RATCHET_SAMPLES", "3")))
-    audit_rate: float = field(default_factory=lambda: float(_env("RATCHET_AUDIT_RATE", "0.05")))
-    golden_fraction: float = field(default_factory=lambda: float(_env("RATCHET_GOLDEN_FRACTION", "0.10")))
+    confidence_threshold: float = field(default_factory=lambda: _float("RATCHET_CONFIDENCE_THRESHOLD", "0.80"))
+    samples: int = field(default_factory=lambda: _int("RATCHET_SAMPLES", "3"))
+    audit_rate: float = field(default_factory=lambda: _float("RATCHET_AUDIT_RATE", "0.05"))
+    golden_fraction: float = field(default_factory=lambda: _float("RATCHET_GOLDEN_FRACTION", "0.10"))
 
     # Upstream timeouts and retries (ratchet/resilience.py, ADR 0014). The read timeout is how long a model may take to
     # answer; connect, write and pool timeouts are 5, 10 and 5 s (the student's connect timeout is its own). A failed
     # teacher call (the judge's too) is retried up to RATCHET_TEACHER_RETRIES times, within RATCHET_TEACHER_DEADLINE_S
     # seconds in all. A student call on the request path is never retried: the teacher is its retry.
-    teacher_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_TIMEOUT_S", "120")))
-    teacher_retries: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_RETRIES", "2")))
-    teacher_deadline_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_DEADLINE_S", "180")))
-    student_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_TIMEOUT_S", "15")))
-    student_connect_timeout_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_CONNECT_TIMEOUT_S", "2")))
+    teacher_timeout_s: float = field(default_factory=lambda: _float("RATCHET_TEACHER_TIMEOUT_S", "120"))
+    teacher_retries: int = field(default_factory=lambda: _int("RATCHET_TEACHER_RETRIES", "2"))
+    teacher_deadline_s: float = field(default_factory=lambda: _float("RATCHET_TEACHER_DEADLINE_S", "180"))
+    student_timeout_s: float = field(default_factory=lambda: _float("RATCHET_STUDENT_TIMEOUT_S", "15"))
+    student_connect_timeout_s: float = field(default_factory=lambda: _float("RATCHET_STUDENT_CONNECT_TIMEOUT_S", "2"))
     # Student circuit breaker (ADR 0015). After RATCHET_STUDENT_BREAKER_FAILURES endpoint failures in a row (timeouts,
     # connection errors, 5xx, 408, 429) the student is skipped for RATCHET_STUDENT_BREAKER_COOLDOWN_S seconds and the
     # teacher answers at once; then one probe decides, and each failed probe doubles the wait up to 300 s. 0 = no breaker.
-    student_breaker_failures: int = field(default_factory=lambda: int(_env("RATCHET_STUDENT_BREAKER_FAILURES", "5")))
-    student_breaker_cooldown_s: float = field(default_factory=lambda: float(_env("RATCHET_STUDENT_BREAKER_COOLDOWN_S", "30")))
+    student_breaker_failures: int = field(default_factory=lambda: _int("RATCHET_STUDENT_BREAKER_FAILURES", "5"))
+    student_breaker_cooldown_s: float = field(default_factory=lambda: _float("RATCHET_STUDENT_BREAKER_COOLDOWN_S", "30"))
 
     # When the teacher is down (ADR 0019). Its breaker opens after RATCHET_TEACHER_BREAKER_FAILURES failed calls in a row
     # (each after its retries), and requests that need its answer then get a 503 at once instead of waiting out the
     # deadline; the same waits as the student's breaker. 0 = no breaker.
-    teacher_breaker_failures: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_BREAKER_FAILURES", "5")))
-    teacher_breaker_cooldown_s: float = field(default_factory=lambda: float(_env("RATCHET_TEACHER_BREAKER_COOLDOWN_S", "30")))
+    teacher_breaker_failures: int = field(default_factory=lambda: _int("RATCHET_TEACHER_BREAKER_FAILURES", "5"))
+    teacher_breaker_cooldown_s: float = field(default_factory=lambda: _float("RATCHET_TEACHER_BREAKER_COOLDOWN_S", "30"))
     # 'error': a request whose teacher call failed gets the error. 'serve_student': an escalated request is answered with
     # the student's own (below-threshold) answer instead, marked degraded.
     on_teacher_failure: str = field(default_factory=lambda: _env("RATCHET_ON_TEACHER_FAILURE", "error"))
@@ -282,27 +511,23 @@ class Settings:
     store_fallback_teacher: bool = field(default_factory=lambda: _env("RATCHET_STORE_FALLBACK_TEACHER", "0") == "1")
 
     # Extra output tokens the teacher spends on reasoning (billed, not returned).
-    teacher_reasoning_tokens: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_TOKENS", "300")))
+    teacher_reasoning_tokens: int = field(default_factory=lambda: _int("RATCHET_TEACHER_REASONING_TOKENS", "300"))
 
     # Generation parameters (ADR 0017). Which of a client's request fields each role forwards (comma-separated; empty =
     # the default list, 'none' = nothing, 'all' = every standard field), and the token caps (0 = no cap). The teacher
     # serving an answer gets the client's max_tokens plus the headroom, for reasoning it writes before the answer.
     teacher_params: str = field(default_factory=lambda: _env("RATCHET_TEACHER_PARAMS", ""))
     student_params: str = field(default_factory=lambda: _env("RATCHET_STUDENT_PARAMS", ""))
-    teacher_max_tokens: int = field(
-        default_factory=lambda: int(_env("RATCHET_TEACHER_MAX_TOKENS", str(DEFAULT_TEACHER_MAX_TOKENS)))
-    )
-    student_max_tokens: int = field(
-        default_factory=lambda: int(_env("RATCHET_STUDENT_MAX_TOKENS", str(DEFAULT_STUDENT_MAX_TOKENS)))
-    )
-    teacher_reasoning_headroom: int = field(default_factory=lambda: int(_env("RATCHET_TEACHER_REASONING_HEADROOM", "0")))
+    teacher_max_tokens: int = field(default_factory=lambda: _int("RATCHET_TEACHER_MAX_TOKENS", str(DEFAULT_TEACHER_MAX_TOKENS)))
+    student_max_tokens: int = field(default_factory=lambda: _int("RATCHET_STUDENT_MAX_TOKENS", str(DEFAULT_STUDENT_MAX_TOKENS)))
+    teacher_reasoning_headroom: int = field(default_factory=lambda: _int("RATCHET_TEACHER_REASONING_HEADROOM", "0"))
 
     # Scout, the multi-agent research demo (docs/SCOUT.md).
     tavily_api_key: str = field(default_factory=lambda: _env("TAVILY_API_KEY", ""))
-    scout_daily_budget_usd: float = field(default_factory=lambda: float(_env("RATCHET_SCOUT_DAILY_BUDGET_USD", "3.00")))
-    scout_runs_per_hour: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_RUNS_PER_HOUR", "6")))
-    scout_max_runs_per_day: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_MAX_RUNS_PER_DAY", "30")))
-    scout_max_results: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_MAX_RESULTS", "4")))
+    scout_daily_budget_usd: float = field(default_factory=lambda: _float("RATCHET_SCOUT_DAILY_BUDGET_USD", "3.00"))
+    scout_runs_per_hour: int = field(default_factory=lambda: _int("RATCHET_SCOUT_RUNS_PER_HOUR", "6"))
+    scout_max_runs_per_day: int = field(default_factory=lambda: _int("RATCHET_SCOUT_MAX_RUNS_PER_DAY", "30"))
+    scout_max_results: int = field(default_factory=lambda: _int("RATCHET_SCOUT_MAX_RESULTS", "4"))
     # Behind a reverse proxy (Caddy on the demo VM), take the client IP from X-Forwarded-For.
     trust_proxy: bool = field(default_factory=lambda: _env("RATCHET_TRUST_PROXY", "0") == "1")
 
@@ -313,7 +538,7 @@ class Settings:
     # Gateway API keys for /v1/*: "name:key,name:key". Empty = no authentication (v0.3 behaviour).
     api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
     # Requests per key per UTC day on /v1/chat/completions. 0 = unlimited.
-    api_key_daily_requests: int = field(default_factory=lambda: int(_env("RATCHET_API_KEY_DAILY_REQUESTS", "0")))
+    api_key_daily_requests: int = field(default_factory=lambda: _int("RATCHET_API_KEY_DAILY_REQUESTS", "0"))
     # Admin keys for management writes (PUT and DELETE /ratchet/tasks/...): "name:key,name:key", like RATCHET_API_KEYS
     # and never the same keys. Empty: the admin API is off in live mode and open in mock mode (ADR 0022). Not the Caddy
     # edge guard's RATCHET_ADMIN_TOKEN.
@@ -342,12 +567,12 @@ class Settings:
 
     # Request limits on the OpenAI-compatible API (ratchet/openai_compat.py), checked before any model call. 0 = no limit.
     # The body limit applies to every POST, PUT and PATCH; the other two to /v1/chat/completions.
-    max_body_bytes: int = field(default_factory=lambda: int(_env("RATCHET_MAX_BODY_BYTES", "2097152")))
-    max_messages: int = field(default_factory=lambda: int(_env("RATCHET_MAX_MESSAGES", "256")))
-    max_input_chars: int = field(default_factory=lambda: int(_env("RATCHET_MAX_INPUT_CHARS", "120000")))
+    max_body_bytes: int = field(default_factory=lambda: _int("RATCHET_MAX_BODY_BYTES", "2097152"))
+    max_messages: int = field(default_factory=lambda: _int("RATCHET_MAX_MESSAGES", "256"))
+    max_input_chars: int = field(default_factory=lambda: _int("RATCHET_MAX_INPUT_CHARS", "120000"))
     # The most choices (`n`) a request may ask for, 1 to 128; more is a 400. Each choice past the student's own samples
     # is one more student sample, and an escalated request asks the teacher for n choices (FR-1.14).
-    max_n: int = field(default_factory=lambda: int(_env("RATCHET_MAX_N", str(DEFAULT_MAX_N))))
+    max_n: int = field(default_factory=lambda: _int("RATCHET_MAX_N", str(DEFAULT_MAX_N)))
     # Merge consecutive leading system (and developer) messages into one, for models that accept only one.
     merge_system: bool = field(default_factory=lambda: _env("RATCHET_MERGE_SYSTEM", "0") == "1")
     # Content part types besides text that the teacher accepts ("text,image_url"). Such requests go to the teacher
@@ -407,13 +632,16 @@ class Settings:
     log_level: str = field(default_factory=lambda: _env("RATCHET_LOG_LEVEL", ""))
     metrics_token: str = field(default_factory=lambda: _env("RATCHET_METRICS_TOKEN", ""))
 
+    # Configuration checks (ADR 0070). 1: a warning from the startup check (`validate`) stops startup like an error.
+    strict_config: bool | None = field(default_factory=lambda: _bool("RATCHET_STRICT_CONFIG"))
+
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
-    mock_warmup_days: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_DAYS", "0")))
-    mock_warmup_requests: int = field(default_factory=lambda: int(_env("RATCHET_MOCK_WARMUP_REQUESTS", "1500")))
+    mock_warmup_days: int = field(default_factory=lambda: _int("RATCHET_MOCK_WARMUP_DAYS", "0"))
+    mock_warmup_requests: int = field(default_factory=lambda: _int("RATCHET_MOCK_WARMUP_REQUESTS", "1500"))
     # Mock mode only: Scout's live stream waits this fraction of each call's simulated latency,
     # so the page shows agents working instead of finishing in 20 ms. 0 = no waiting.
-    mock_pace: float = field(default_factory=lambda: float(_env("RATCHET_MOCK_PACE", "0.25")))
+    mock_pace: float = field(default_factory=lambda: _float("RATCHET_MOCK_PACE", "0.25"))
 
     prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
 
@@ -602,3 +830,384 @@ class Settings:
         if model.startswith("student"):
             return self.prices["student"]
         return self.prices.get(self.teacher_model, Price(1.0, 3.0))
+
+    def validate(self, environ: Mapping[str, str] | None = None) -> list[ConfigIssue]:
+        """Every problem with these settings, errors and warnings, each naming its variable (FR-12.30, ADR 0070). Nothing
+        is opened or called: the gateway's Runtime runs it before anything else, and `python -m ratchet.config check`
+        prints it. `environ` (default os.environ) is where unknown, mock-only and loosely spelled variables are looked
+        for. Variables that did not parse are `load()`'s to report; ReleasePolicy's rules are `ReleasePolicy.validate`'s
+        (`check()` runs all three)."""
+        env = os.environ if environ is None else environ
+        issues: list[ConfigIssue] = []
+
+        def error(var: str, message: str, license: bool = False) -> None:
+            issues.append(ConfigIssue(ERROR, var, message, license))
+
+        def warning(var: str, message: str) -> None:
+            issues.append(ConfigIssue(WARNING, var, message))
+
+        live = self.mode == "live"
+        if self.mode not in MODES:
+            error("RATCHET_MODE", f"RATCHET_MODE must be mock or live, not {self.mode!r}")
+        for var, value, lo, hi, low_open in (
+            ("RATCHET_AUDIT_RATE", self.audit_rate, 0.0, 1.0, False),
+            ("RATCHET_CONFIDENCE_THRESHOLD", self.confidence_threshold, 0.0, 1.0, False),
+            ("RATCHET_GOLDEN_FRACTION", self.golden_fraction, 0.0, MAX_GOLDEN_FRACTION, True),
+        ):
+            if not _number_in(value, lo, hi, low_open):
+                span = f"more than {lo:g} and at most {hi:g}" if low_open else f"from {lo:g} to {hi:g}"
+                error(var, f"{var} must be a number {span}, not {value!r}")
+        if not _whole_in(self.samples, 1, MAX_SAMPLES):
+            error("RATCHET_SAMPLES", f"RATCHET_SAMPLES must be a whole number from 1 to {MAX_SAMPLES}, not {self.samples!r}")
+        for var, value in (
+            ("RATCHET_API_KEY_DAILY_REQUESTS", self.api_key_daily_requests),
+            ("RATCHET_MAX_BODY_BYTES", self.max_body_bytes),
+            ("RATCHET_TEACHER_REASONING_TOKENS", self.teacher_reasoning_tokens),
+            ("RATCHET_SCOUT_RUNS_PER_HOUR", self.scout_runs_per_hour),
+            ("RATCHET_SCOUT_MAX_RUNS_PER_DAY", self.scout_max_runs_per_day),
+            ("RATCHET_SCOUT_MAX_RESULTS", self.scout_max_results),
+            ("RATCHET_MOCK_WARMUP_DAYS", self.mock_warmup_days),
+            ("RATCHET_MOCK_WARMUP_REQUESTS", self.mock_warmup_requests),
+        ):
+            if not _whole_in(value, 0, None):
+                error(var, f"{var} must be a whole number, 0 or more, not {value!r}")
+        for var, number in (
+            ("RATCHET_SCOUT_DAILY_BUDGET_USD", self.scout_daily_budget_usd),
+            ("RATCHET_MOCK_PACE", self.mock_pace),
+        ):
+            if not _number_in(number, 0.0, math.inf, False):
+                error(var, f"{var} must be a number, 0 or more, not {number!r}")
+        for var, url, required in (
+            ("RATCHET_TEACHER_BASE", self.teacher_base, True),
+            ("RATCHET_STUDENT_BASE", self.student_base, False),
+            ("RATCHET_TEACHER_FALLBACK_BASE", self.teacher_fallback_base, False),
+        ):
+            problem = _url_problem(url, required)
+            if problem:
+                error(var, f"{var} {problem}")
+        # The checks each setting's own reader makes, collected instead of raised at the first. `var` is put in front
+        # of a message that names no variable (the timeouts' own messages do not).
+        readers: tuple[tuple[str, Callable[[], object]], ...] = (
+            ("RATCHET_TEACHER_TIMEOUT_S", self.teacher_timeout),
+            ("RATCHET_STUDENT_TIMEOUT_S", lambda: timeouts(self.student_timeout_s)),
+            ("RATCHET_STUDENT_CONNECT_TIMEOUT_S", lambda: timeouts(1.0, self.student_connect_timeout_s)),
+            ("RATCHET_TEACHER_RETRIES", self.teacher_retry),
+            ("RATCHET_STUDENT_BREAKER_FAILURES", self.student_breaker),
+            ("RATCHET_TEACHER_BREAKER_FAILURES", self.teacher_breaker),
+            ("RATCHET_ON_TEACHER_FAILURE", self.serve_student_on_teacher_failure),
+            ("RATCHET_UNKNOWN_TASKS", self.unknown_task_policy),
+            ("RATCHET_MAX_N", self.limits),
+            ("RATCHET_TEACHER_PARAMS", self.gen_policy),
+            ("RATCHET_STUDENT_COST_MODEL", self.cost_policy),
+            ("RATCHET_DB_SYNC", self.ledger_sync),
+            ("RATCHET_TICK_INTERVAL_S", self.tick_interval),
+            ("RATCHET_STATS_TTL_S", self.stats_ttl),
+            ("RATCHET_LOG_FORMAT", self.log_settings),
+            ("RATCHET_PUBLIC_DASHBOARD", self.access),
+            ("", self.check_reserved),
+        )
+        for var, read in readers:
+            try:
+                read()
+            except ValueError as e:
+                issues.extend(issues_from(e, var))
+        # INV-1: every model that writes or judges answers must be distillable; a refused one stops startup.
+        for var, model in (
+            ("RATCHET_TEACHER_MODEL", self.teacher_model),
+            ("RATCHET_JUDGE_MODEL", self.judge_model),
+            ("RATCHET_TEACHER_FALLBACK_MODEL", self.teacher_fallback_model),
+        ):
+            if var == "RATCHET_TEACHER_FALLBACK_MODEL" and not model:
+                continue
+            try:
+                licenses.require_distillable(model)
+            except licenses.LicenseError as e:
+                error(var, f"{var}: {e}", license=True)
+        self._check_keys(error)
+        if live:
+            self._check_live(error, warning)
+        self._check_prices(warning)
+        _check_environ(env, live, warning)
+        return issues
+
+    def _check_keys(self, error: Callable[[str, str], None]) -> None:
+        """The key rings and the metrics token, as the gateway reads them (`Runtime._set_access`), every problem listed:
+        a bad spec, a short key, a key in two roles, and live mode without API keys."""
+        rings: dict[str, KeyRing] = {}
+        for var, spec in (
+            ("RATCHET_API_KEYS", self.api_keys),
+            ("RATCHET_ADMIN_KEYS", self.admin_keys),
+            ("RATCHET_DASHBOARD_KEYS", self.dashboard_keys),
+        ):
+            try:
+                rings[var] = KeyRing(spec if isinstance(spec, str) else "", env=var)
+            except ValueError as e:
+                error(var, str(e))
+        for ring, other, fix in (
+            ("RATCHET_ADMIN_KEYS", "RATCHET_API_KEYS", "an API key; give admins their own keys"),
+            ("RATCHET_DASHBOARD_KEYS", "RATCHET_API_KEYS", "an API key; give dashboards their own keys"),
+            ("RATCHET_DASHBOARD_KEYS", "RATCHET_ADMIN_KEYS", "an admin key; give dashboards their own, read-only keys"),
+        ):
+            if ring in rings and other in rings:
+                both = rings[ring].shared(rings[other])
+                if both:
+                    error(ring, f"{ring}: the key for {both[0]!r} is also {fix}")
+        token = self.metrics_token.strip() if isinstance(self.metrics_token, str) else ""
+        try:
+            Token(token, env="RATCHET_METRICS_TOKEN")
+        except ValueError as e:
+            error("RATCHET_METRICS_TOKEN", str(e))
+        for var, ring in rings.items():
+            name = ring.identify(token) if token else None
+            if name is not None:
+                error(
+                    "RATCHET_METRICS_TOKEN",
+                    f"RATCHET_METRICS_TOKEN is also the key for {name!r} in {var}; give the scraper its own token",
+                )
+        keyed = "RATCHET_API_KEYS" in rings and rings["RATCHET_API_KEYS"].enabled
+        if self.mode == "live" and not keyed and self.allow_unauthenticated is not True and "RATCHET_API_KEYS" in rings:
+            error(
+                "RATCHET_API_KEYS",
+                "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
+                "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
+                "VM's Caddy guard) checks every caller",
+            )
+
+    def _check_live(self, error: Callable[[str, str], None], warning: Callable[[str, str], None]) -> None:
+        """What only live mode needs: a teacher key, a ledger file it can write, a student key, enough audits."""
+        if not (self.teacher_api_key.strip() if isinstance(self.teacher_api_key, str) else ""):
+            if _nebius(self.teacher_base):
+                error(
+                    "NEBIUS_API_KEY",
+                    "NEBIUS_API_KEY is empty: in live mode Token Factory refuses every teacher call without it. Set it, "
+                    "or run RATCHET_MODE=mock",
+                )
+            else:
+                warning(
+                    "NEBIUS_API_KEY",
+                    "NEBIUS_API_KEY is empty: teacher calls carry no Authorization header (fine only for an endpoint "
+                    "without authentication)",
+                )
+        problem = _db_problem(self.db_path)
+        if problem:
+            error("RATCHET_DB", f"RATCHET_DB={self.db_path!r}: {problem}, so the ledger cannot be written")
+        if self.student_base and not (self.student_api_key or "").strip():
+            warning(
+                "RATCHET_STUDENT_KEY",
+                "RATCHET_STUDENT_KEY is empty while RATCHET_STUDENT_BASE is set: student calls carry no token (fine only "
+                "for an endpoint without authentication)",
+            )
+        rate = self.audit_rate
+        if _number_in(rate, 0.0, 1.0, False) and rate < MIN_USEFUL_AUDIT_RATE:
+            warning(
+                "RATCHET_AUDIT_RATE",
+                f"RATCHET_AUDIT_RATE={rate:g} audits under 1% of student answers: a canary may never collect "
+                "RATCHET_MIN_AUDITS audits, so no release would be promoted or rolled back on evidence",
+            )
+
+    def _check_prices(self, warning: Callable[[str, str], None]) -> None:
+        """A model without a price is priced as another, silently: say so (INV-9: prices are checked on day 1)."""
+        models = [
+            ("RATCHET_TEACHER_MODEL", self.teacher_model),
+            ("RATCHET_JUDGE_MODEL", self.judge_model),
+            ("RATCHET_TEACHER_FALLBACK_MODEL", self.teacher_fallback_model),
+        ]
+        if self.mode == "live" and not self.student_base:
+            models.append(("RATCHET_FALLBACK_STUDENT", self.fallback_student_model))
+        for var, model in models:
+            if model and model not in self.prices:
+                p = self.price(model)
+                warning(
+                    var,
+                    f"{var}={model!r} has no price in config.DEFAULT_PRICES: its calls are costed at ${p.input:g} in and "
+                    f"${p.output:g} out per 1M tokens instead; add its price",
+                )
+
+
+def _number_in(value: object, lo: float, hi: float, low_open: bool) -> bool:
+    """A finite real number (not a bool) from `lo` (excluded when `low_open`) to `hi`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or math.isnan(value):
+        return False
+    return (lo < value if low_open else lo <= value) and value <= hi and math.isfinite(value)
+
+
+def _whole_in(value: object, lo: int, hi: int | None) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= lo and (hi is None or value <= hi)
+
+
+def _url_problem(url: object, required: bool) -> str | None:
+    """Why `url` is not an http(s) base URL, or None. The message never repeats the URL, which may hold a password."""
+    if not isinstance(url, str):
+        return f"must be an http(s) URL, not {type(url).__name__}"
+    if not url.strip():
+        return "is empty; it needs an http(s) base URL" if required else None
+    parts = urlsplit(url.strip())
+    if parts.scheme.lower() not in ("http", "https"):
+        shown = f" (it starts with {parts.scheme!r})" if parts.scheme else ""
+        return f"must start with http:// or https://{shown}"
+    if not parts.netloc:
+        return "must name a host after http(s)://"
+    return None
+
+
+def _nebius(url: object) -> bool:
+    """Whether a base URL is on Nebius (Token Factory), which needs a key for every call."""
+    host = (urlsplit(url.strip()).hostname or "") if isinstance(url, str) else ""
+    return host == "nebius.com" or host.endswith(".nebius.com")
+
+
+def _db_problem(path: object) -> str | None:
+    """Why the ledger file cannot be written, or None. An in-memory ledger has nothing to check. Nothing is created."""
+    if not isinstance(path, str) or not path.strip():
+        return "is empty"
+    if path == ":memory:" or path.startswith("file:"):
+        return None
+    p = Path(path)
+    if p.is_dir():
+        return "is a directory"
+    if p.exists() and not os.access(p, os.R_OK | os.W_OK):
+        return "is not writable"
+    parent = p.parent
+    if not parent.is_dir():
+        return "its directory does not exist"
+    if not os.access(parent, os.W_OK | os.X_OK):  # the journal (-wal, -shm or -journal) is written beside it
+        return "its directory is not writable"
+    return None
+
+
+def _check_environ(env: Mapping[str, str], live: bool, warning: Callable[[str, str], None]) -> None:
+    """Variables that do nothing as set: unknown RATCHET_* names (with the closest known name), mock-only ones in live
+    mode, and 0/1 switches spelled otherwise. Messages name variables, never their values."""
+    known = known_env()
+    names = sorted(n for n in known if n.startswith("RATCHET_"))
+    for name in sorted(env):
+        if name.startswith("RATCHET_") and name not in known:
+            close = difflib.get_close_matches(name, names, n=1, cutoff=0.8)
+            hint = f"; did you mean {close[0]}?" if close else ""
+            warning(name, f"{name} is set but Ratchet does not read it{hint}")
+    if live:
+        for name, default in MOCK_ONLY_ENV.items():
+            raw = env.get(name, "").strip()
+            if raw and not _same_number(raw, default):
+                warning(name, f"{name} is set but only mock mode reads it; live mode ignores it")
+    for name, on_unless_zero in LOOSE_SWITCHES.items():
+        raw = env.get(name, "").strip()
+        if raw and raw not in ("0", "1"):
+            reads = "1 (on)" if on_unless_zero else "0 (off)"
+            warning(name, f"{name} takes 0 or 1; this value reads as {reads}")
+
+
+def _same_number(raw: str, default: str) -> bool:
+    if raw == default:
+        return True
+    try:
+        return float(raw) == float(default)
+    except ValueError:
+        return False
+
+
+def issues_from(e: Exception, var: str = "") -> list[ConfigIssue]:
+    """The ConfigIssues for an error a setting's reader raised: a ConfigError's own, else one with the message and the
+    variable it names (or `var`, put in front when the message names none)."""
+    if isinstance(e, ConfigError):
+        return list(e.issues)
+    message = str(e)
+    found = _ENV_NAME.search(message)
+    if found is None and var:
+        message = f"{var}: {message}"
+    return [ConfigIssue(ERROR, found.group(0) if found else var, message, isinstance(e, licenses.LicenseError))]
+
+
+def load() -> tuple[Settings, list[ConfigIssue]]:
+    """Settings from the environment, with every variable that does not parse as an issue instead of an exception (its
+    setting keeps the default meanwhile), so one startup check lists them all."""
+    sink: list[ConfigIssue] = []
+    token = _COLLECT.set(sink)
+    try:
+        settings = Settings()
+    finally:
+        _COLLECT.reset(token)
+    return settings, sink
+
+
+def check(settings: Settings | None = None, environ: Mapping[str, str] | None = None) -> list[ConfigIssue]:
+    """Every problem the gateway's startup finds, errors first (FR-12.30): variables that do not parse (when `settings`
+    is None and the environment is read here), `Settings.validate`, and in live mode the release policy
+    (`ReleasePolicy.from_env` and `ReleasePolicy.validate`; mock mode's gateway uses its own policy)."""
+    issues: list[ConfigIssue] = []
+    if settings is None:
+        settings, issues = load()
+    issues.extend(settings.validate(environ))
+    if settings.mode == "live":
+        from .release import ReleasePolicy  # release imports config
+
+        try:
+            issues.extend(ReleasePolicy.from_env().validate())
+        except ValueError as e:  # a value that does not parse or is out of range: the policy cannot be built
+            issues.extend(issues_from(e))
+    return sorted(issues, key=lambda i: i.level != ERROR)
+
+
+def tasks_file_issues(settings: Settings) -> list[ConfigIssue]:
+    """A RATCHET_TASKS_FILE that would stop startup, as an error listing every spec error (`taskspec.load_file`, which
+    registers nothing). The gateway reports a bad file itself, as a SpecError, when it builds the registry; the CLI asks
+    here so `python -m ratchet.config check` catches it before a deploy."""
+    path = settings.tasks_file.strip() if isinstance(settings.tasks_file, str) else ""
+    if not path:
+        return []
+    from . import taskspec  # imports the task modules, which the settings themselves do not need
+
+    try:
+        ring = KeyRing(settings.api_keys if isinstance(settings.api_keys, str) else "")
+        known = ring.names if ring.enabled else None  # a task's `clients` must name API keys, as the gateway checks
+    except ValueError:  # a bad key spec is `validate`'s to report
+        known = None
+    try:
+        taskspec.load_file(path, known)
+    except taskspec.SpecError as e:
+        return [ConfigIssue(ERROR, "RATCHET_TASKS_FILE", str(e))]
+    return []
+
+
+EXIT_CLEAN, EXIT_WARNINGS, EXIT_ERRORS = 0, 1, 2
+
+
+def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
+    """`python -m ratchet.config check [--json]`: the gateway's startup check, without starting anything, plus the tasks
+    file (`tasks_file_issues`). Exit 0 when clean, 1 with warnings only, 2 with errors (or warnings under
+    RATCHET_STRICT_CONFIG=1, which would stop startup)."""
+    out = out or sys.stdout
+    parser = argparse.ArgumentParser(prog="python -m ratchet.config", description="Check Ratchet's settings.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    cmd = sub.add_parser("check", help="list every configuration error and warning; exit 0, 1 (warnings) or 2 (errors)")
+    cmd.add_argument("--json", action="store_true", help="print one JSON object")
+    args = parser.parse_args(argv)
+    settings, parsed = load()
+    issues = sorted([*parsed, *check(settings), *tasks_file_issues(settings)], key=lambda i: i.level != ERROR)
+    strict = settings.strict_config is True
+    errors = sum(i.level == ERROR for i in issues)
+    warnings = len(issues) - errors
+    code = EXIT_ERRORS if errors or (strict and warnings) else EXIT_WARNINGS if warnings else EXIT_CLEAN
+    if args.json:
+        doc = {"mode": settings.mode, "strict": strict, "exit": code, "issues": [i.as_dict() for i in issues]}
+        print(json.dumps(doc, indent=2), file=out)
+        return code
+    for i in issues:
+        print(f"{i.level:<8} {i.message}", file=out)
+    if code == EXIT_CLEAN:
+        print(f"ok: no configuration problems (mode {settings.mode})", file=out)
+    else:
+        fatal = "the gateway would not start" if code == EXIT_ERRORS else "the gateway would start"
+        strictly = " (RATCHET_STRICT_CONFIG=1 makes warnings fatal)" if strict and warnings and not errors else ""
+        print(f"{_count(errors, 'error')}, {_count(warnings, 'warning')}: {fatal}{strictly}", file=out)
+    return code
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+if __name__ == "__main__":  # pragma: no cover - `python -m ratchet.config`: one copy of the module, ratchet.config
+    from ratchet.config import main as _main
+
+    raise SystemExit(_main(sys.argv[1:]))

@@ -403,7 +403,7 @@ def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
         RATCHET_MODE="live",
         RATCHET_DB=str(tmp_path / "live.db"),
         RATCHET_STUDENT_BASE="",
-        NEBIUS_API_KEY="",
+        NEBIUS_API_KEY="tf-key",  # live mode needs a teacher key to start (ADR 0070)
         TAVILY_API_KEY="",
         RATCHET_ALLOW_UNAUTHENTICATED="1",
     )

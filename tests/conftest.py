@@ -68,6 +68,7 @@ ACCESS_ENV = (
     "RATCHET_METRICS_TOKEN",
     "RATCHET_LOG_FORMAT",
     "RATCHET_LOG_LEVEL",
+    "RATCHET_STRICT_CONFIG",  # a shell's strict mode would turn its stray variables into startup errors (ADR 0070)
 )
 
 

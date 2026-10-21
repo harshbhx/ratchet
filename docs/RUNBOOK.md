@@ -12,6 +12,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 3. **Failures:** `errors.last_hour` in `/ratchet/stats` should be empty or small, and `totals.failed_cost_usd` should not jump. With Prometheus, the [alerts](#alerts) do this for you.
 4. **Bills:** Token Factory usage page and the Nebius billing page. Check that the endpoint is stopped if you are not using it, and that `python -m ratchet.cost report` (or `GET /ratchet/cost`) shows the same endpoint hours as the bill (see [Cost and the self-host recommendation](#cost-and-the-self-host-recommendation)).
 5. **Ledger backup** exists for today (see [Backups](#backups)).
+6. **Readiness:** `curl -s .../readyz` answers 200 with `"status": "ready"`. `degraded` names what the gateway is working around under `checks` (the student endpoint, a missing adapter in `checks.student.missing_adapters`, which it has already queued for reload, or the teacher's model list); `checks.config.warnings` above 0 means a setting does nothing as set: run `python -m ratchet.config check` ([Startup refused: configuration errors](#startup-refused-configuration-errors)).
 
 ## Reading the dashboard
 
@@ -205,6 +206,8 @@ INSERT INTO events (ts, day, kind, detail) VALUES (strftime('%s','now'), 0, 'rol
 
 **What the gateway already does** ([ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)): opens the student breaker after `RATCHET_STUDENT_BREAKER_FAILURES` (5) endpoint failures in a row, probes again after `RATCHET_STUDENT_BREAKER_COOLDOWN_S` (30 s), and reloads lost adapters. A breaker that closes again and `adapter_reloaded` events need no action.
 
+`/readyz` shows it too, without waiting for traffic: `degraded` with `checks.student.breakers.student` `open`, or with the lost adapters in `checks.student.missing_adapters` (handed to the same reloader, `reload_queued`).
+
 **Steps:**
 
 1. The breaker stays `open` (probes keep failing): check the endpoint (`nebius ai endpoint` commands, or the console) and restart it if it is down. The next successful probe closes the breaker; nothing else needs restarting.
@@ -309,6 +312,10 @@ All request messages escalated or audited to the teacher are stored in `examples
 5. Follow your legal and notification duties.
 
 **Prevention:** keep `RATCHET_REDACT_PII=1`; add a pattern to `ratchet/redact.py` (with a test) for any identifier format you find leaking. Planned: NER-based detection for names and addresses, and Token Factory zero-data-retention settings. See [THREAT_MODEL.md](THREAT_MODEL.md) T4.
+
+### Startup refused: configuration errors
+
+The gateway stops with `ConfigError: N configuration problems stop startup:` and one line per problem, each naming its variable ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks), [ADR 0070](adr/0070-configuration-checks-and-readiness.md)). Fix them all, then check without starting anything: `python -m ratchet.config check` (on the demo VM, `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check` in `deploy/vm`). Exit 0 is clean, 1 warnings only (the gateway starts; each warning says what does nothing as set, such as a misspelled variable with the name it probably meant), 2 errors. Lines that end with "(a warning; RATCHET_STRICT_CONFIG=1 makes it fatal)" stop startup only in strict mode. `deploy/vm/update.sh` runs the same check in the new image and leaves the running gateway alone when it finds errors.
 
 ### Startup refused: a reserved setting
 

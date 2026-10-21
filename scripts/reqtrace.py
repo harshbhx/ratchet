@@ -739,6 +739,23 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.config:Settings.tick_interval",
         "ratchet.config:Settings.stats_ttl",
     ),
+    "FR-12.30": (
+        "ratchet.config:Settings.validate",
+        "ratchet.config:check",
+        "ratchet.config:load",
+        "ratchet.config:main",
+        "ratchet.config:tasks_file_issues",
+        "ratchet.config:KNOWN_ENV",
+        "ratchet.release:ReleasePolicy.validate",
+        "ratchet.gateway:Runtime._check_config",
+        "ratchet.gateway:healthz",
+        "ratchet.gateway:livez",
+        "ratchet.gateway:readyz",
+        "ratchet.readiness:Readiness",
+        "ratchet.readiness:ProbeCache",
+        "ratchet.ledger:Ledger.probe",
+        "deploy/vm/update.sh",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -775,6 +792,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.resilience:Breaker",
         "ratchet.live:AdapterReloader",
         "ratchet.live:reload_adapters",
+        "ratchet.readiness:Readiness.report",
     ),
     "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night", "ratchet.providers:GenPolicy"),
     "NFR-4": ("ratchet.redact:redact_messages",),
@@ -798,6 +816,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-9": ("ratchet.bom:manifest", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
+    "NFR-35": ("ratchet.config:check", "ratchet.gateway:Runtime._check_config", "ratchet.readiness:Readiness.report"),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
@@ -1180,8 +1199,9 @@ def _env_name(node: ast.AST) -> str | None:
     return None
 
 
-def env_reads(root: Path = ROOT) -> dict[str, str]:
-    """Environment variable -> where it is read, for everything under ratchet/."""
+def env_reads(root: Path = ROOT, known: bool = True) -> dict[str, str]:
+    """Environment variable -> where it is read, for everything under ratchet/. With `known` False, only the reads the
+    source spells out (no config.KNOWN_ENV, no ReleasePolicy fields)."""
     found: dict[str, str] = {}
     for path in sorted((root / "ratchet").rglob("*.py")):
         rel = _rel(path, root)
@@ -1189,6 +1209,8 @@ def env_reads(root: Path = ROOT) -> dict[str, str]:
             name = _env_name(node)
             if name:
                 found.setdefault(name, f"{rel}:{node.lineno}")
+    if not known:
+        return found
     for name in getattr(_import("ratchet.config"), "KNOWN_ENV", ()):
         found.setdefault(name, "ratchet/config.py:KNOWN_ENV")
     for f in dataclasses.fields(_import("ratchet.release").ReleasePolicy):  # read as RATCHET_<FIELD> by from_env()
@@ -1209,6 +1231,27 @@ def rule_env_documented(ctx: Context) -> list[str]:
     return [
         f"{name}: read at {where} but not documented in {CONFIG_DOC}" for name, where in reads.items() if name not in documented
     ]
+
+
+def rule_env_known(ctx: Context) -> list[str]:
+    """(i) config.KNOWN_ENV lists exactly the variables the package reads (ReleasePolicy's aside), so the startup check
+    (ADR 0070) never calls a real setting unknown, nor knows one nothing reads."""
+    try:
+        reads = env_reads(ctx.root, known=False)
+        config = _import("ratchet.config")
+        listed = set(getattr(config, "KNOWN_ENV", ()))
+        policy = {f"RATCHET_{f.name.upper()}" for f in dataclasses.fields(_import("ratchet.release").ReleasePolicy)}
+    except Exception as e:  # noqa: BLE001 - a syntax or import error is a finding, not a crash
+        return [f"cannot list the environment variables the package reads: {type(e).__name__}: {e}"]
+    if not reads:  # a tree without the package (the checker's own tests)
+        return []
+    errors = [
+        f"{name}: read at {where} but not in config.KNOWN_ENV; add it there"
+        for name, where in reads.items()
+        if name not in listed and name not in policy
+    ]
+    errors += [f"{name}: in config.KNOWN_ENV but nothing under ratchet/ reads it" for name in sorted(listed - set(reads))]
+    return errors
 
 
 def rule_test_counts(ctx: Context) -> list[str]:
@@ -1258,6 +1301,7 @@ CORE_RULES: tuple[Callable[[Context], list[str]], ...] = (
 DOC_RULES: tuple[Callable[[Context], list[str]], ...] = (
     rule_routes_documented,
     rule_env_documented,
+    rule_env_known,
     rule_test_counts,
 )
 RULES = CORE_RULES + (rule_generated,) + DOC_RULES

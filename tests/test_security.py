@@ -288,7 +288,7 @@ def test_live_mode_without_api_keys_does_not_start(gw_env, tmp_path):
     assert gw.Runtime(Settings(mode="mock", api_keys="", mock_warmup_days=0)).settings.mode == "mock"  # mock needs none
 
     # From the environment, as `uvicorn ratchet.gateway:app` starts it.
-    live_env = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "env.db"), "RATCHET_API_KEYS": "", "NEBIUS_API_KEY": ""}
+    live_env = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "env.db"), "RATCHET_API_KEYS": "", "NEBIUS_API_KEY": "tf"}
     with pytest.raises(ValueError, match="RATCHET_ALLOW_UNAUTHENTICATED=1"):
         gw_env(**live_env, RATCHET_STUDENT_BASE="")
     assert gw_env(**live_env, RATCHET_STUDENT_BASE="", RATCHET_ALLOW_UNAUTHENTICATED="1").rt.settings.mode == "live"
@@ -350,7 +350,7 @@ def test_openapi_is_off_in_live_mode(gw_env, tmp_path):
         "RATCHET_MODE": "live",
         "RATCHET_DB": str(tmp_path / "live.db"),
         "RATCHET_STUDENT_BASE": "",
-        "NEBIUS_API_KEY": "",
+        "NEBIUS_API_KEY": "tf-key",  # live mode needs a teacher key to start (ADR 0070)
         "RATCHET_API_KEYS": f"acme:{ACME_KEY}",
     }
     c = TestClient(gw_env(**live_env).app)

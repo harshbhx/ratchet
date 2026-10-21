@@ -215,6 +215,45 @@ Logs, metrics and request ids ([ADR 0062](adr/0062-request-ids-failures-logs-and
 
 Keep `RATCHET_METRICS_TOKEN` out of git, like the keys.
 
+## Configuration checks
+
+The gateway checks every setting before it opens the ledger or calls anything ([ADR 0070](adr/0070-configuration-checks-and-readiness.md)): `Runtime` stops with one `ConfigError` (a `ValueError`, also a `LicenseError` when a teacher is refused) that lists **every** problem, each naming its variable, never a key's value. `python -m ratchet.config check` runs the same check without starting anything (plus `RATCHET_TASKS_FILE`, which the gateway checks itself when it builds the registry) and exits **0** when clean, **1** with warnings only, **2** with errors (or with warnings under `RATCHET_STRICT_CONFIG=1`); `--json` prints `{"mode", "strict", "exit", "issues": [{"level", "var", "message"}]}`. `deploy/vm/update.sh` runs it in the new image before it replaces the running container, and CI runs it on the defaults.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_STRICT_CONFIG` | unset (off) | `1`: a warning stops startup like an error, and `python -m ratchet.config check` exits 2 on it. `0` or unset: warnings start the gateway; each is kept in `Runtime.config_warnings`, logged once as a `config_warning` line (the variable and the message, never the value) and counted under `checks.config` in `/readyz`. Anything but 0 or 1 is an error |
+
+Errors (the gateway does not start):
+
+| Rule | Variables |
+|---|---|
+| A number, whole number or 0/1 switch that does not parse (`5%`, `three`, `yes`) | every numeric setting and `RATCHET_PUBLIC_DASHBOARD`, `RATCHET_PUBLIC_BOM`, `RATCHET_SCRUB_STATS`, `RATCHET_OPENAPI`, `RATCHET_ALLOW_UNAUTHENTICATED`, `RATCHET_STRICT_CONFIG` |
+| `mock` or `live` (an empty or misspelled mode used to start live mode) | `RATCHET_MODE` |
+| From 0 to 1 | `RATCHET_AUDIT_RATE`, `RATCHET_CONFIDENCE_THRESHOLD` |
+| A whole number from 1 to 16 | `RATCHET_SAMPLES` |
+| More than 0 and at most 0.5 (more would hold most examples out of training) | `RATCHET_GOLDEN_FRACTION` |
+| 0 or more | `RATCHET_API_KEY_DAILY_REQUESTS`, `RATCHET_MAX_BODY_BYTES`, `RATCHET_TEACHER_REASONING_TOKENS`, the Scout limits and budget, `RATCHET_MOCK_WARMUP_DAYS`, `RATCHET_MOCK_WARMUP_REQUESTS`, `RATCHET_MOCK_PACE` |
+| An `http://` or `https://` URL with a host (the message never repeats the URL, which may hold a password) | `RATCHET_TEACHER_BASE` (required), `RATCHET_STUDENT_BASE`, `RATCHET_TEACHER_FALLBACK_BASE` (empty is fine) |
+| Distillable under the license registry (INV-1) | `RATCHET_TEACHER_MODEL`, `RATCHET_JUDGE_MODEL`, `RATCHET_TEACHER_FALLBACK_MODEL` |
+| Each setting's own rules, as before, now listed together | timeouts, retries, breakers, `RATCHET_ON_TEACHER_FAILURE`, `RATCHET_UNKNOWN_TASKS`, the request limits, the parameter allowlists and token caps, the cost settings, `RATCHET_DB_SYNC`, the intervals, the log settings, the access switches and `RATCHET_CSP`, the key rings and `RATCHET_METRICS_TOKEN`, the [reserved settings](#reserved-settings) |
+| Live mode: a key for a Token Factory teacher (a teacher on another host may run without one: a warning) | `NEBIUS_API_KEY` |
+| Live mode: API keys, unless something in front checks callers | `RATCHET_API_KEYS` (or `RATCHET_ALLOW_UNAUTHENTICATED=1`) |
+| Live mode: a ledger file that can be written (not a directory, its directory exists and is writable) | `RATCHET_DB` |
+| Live mode: 0 < `RATCHET_LIVE_FLOOR` <= `RATCHET_MIN_PRECISION` <= 1; `RATCHET_MIN_AUDITS` and `RATCHET_MIN_SHADOW` at least 1; `RATCHET_TOLERANCE` from 0 to 0.2 (`ReleasePolicy.validate`) | the [release policy](#release-policy-ratchetreleasepy) |
+
+Warnings (the gateway starts, unless `RATCHET_STRICT_CONFIG=1`):
+
+| Rule | Variables |
+|---|---|
+| A `RATCHET_*` variable Ratchet does not read, with the closest known name (`RATCHET_AUDIT_RAT`: did you mean `RATCHET_AUDIT_RATE`?). The deploy scripts' and the demo VM's own variables (`RATCHET_DOMAIN`, `RATCHET_API_GUARD`, `RATCHET_ADMIN_TOKEN`, ...) are known, because Docker Compose hands the VM's whole `.env` to the gateway | any |
+| A model without a price in `DEFAULT_PRICES`: its calls are costed as another model's | `RATCHET_TEACHER_MODEL`, `RATCHET_JUDGE_MODEL`, `RATCHET_TEACHER_FALLBACK_MODEL`, and `RATCHET_FALLBACK_STUDENT` in live mode without a student endpoint |
+| Live mode: a student endpoint without a token | `RATCHET_STUDENT_KEY` |
+| Live mode: an audit rate under 1%, at which a canary may never collect `RATCHET_MIN_AUDITS` audits | `RATCHET_AUDIT_RATE` |
+| Live mode: a variable only mock mode reads, set to anything but its default | `RATCHET_MOCK_WARMUP_DAYS`, `RATCHET_MOCK_WARMUP_REQUESTS`, `RATCHET_MOCK_PACE`, `RATCHET_MOCK_ENDPOINT_HOURS`, `RATCHET_MOCK_TEACHER_REASONING_MEAN` |
+| A 0/1 switch spelled otherwise (`true` reads as off, `false` as on for redaction) | `RATCHET_TRUST_PROXY`, `RATCHET_MERGE_SYSTEM`, `RATCHET_STORE_FALLBACK_TEACHER`, `RATCHET_PRICES_VERIFIED`, `RATCHET_REDACT_PII` |
+
+`config.KNOWN_ENV` lists every variable the package reads; `python scripts/reqtrace.py --check` fails when code reads one that is not listed (or lists one nothing reads), so a new variable goes in `KNOWN_ENV` and in this file. Variables the deploy scripts read go in `config.DEPLOY_ENV`.
+
 ## Release policy (`ratchet/release.py`)
 
 `ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode ignores them and uses `min_audits=15`.
@@ -228,7 +267,7 @@ Keep `RATCHET_METRICS_TOKEN` out of git, like the keys.
 | `min_audits` | `RATCHET_MIN_AUDITS` | 20 | Teacher audits needed (per stage) before a canary decision or a live alert |
 | `live_floor` | `RATCHET_LIVE_FLOOR` | 0.92 | Audited precision floor; rollback when the Wilson upper bound is below it. Strictly between 0 and 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1.
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage` and `tolerance` from 0 to 1, `live_floor` strictly between 0 and 1. The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and simulations may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features are in [Reserved settings](#reserved-settings).
 

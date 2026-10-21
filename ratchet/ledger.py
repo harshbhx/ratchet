@@ -518,6 +518,33 @@ class Ledger:
                 self._ro.close()
         self.db.close()
 
+    def probe(self, wait_s: float = 2.0) -> None:
+        """Readiness (FR-12.30, ADR 0070): raise unless this ledger can still be read and written. SELECT 1 on the
+        writer's connection, then a write that is rolled back: BEGIN IMMEDIATE takes the write lock (it fails while
+        another process holds it past `wait_s`) and re-setting `user_version` to its own value needs a writable file (a
+        read-only file or `query_only` connection refuses it, where BEGIN IMMEDIATE alone succeeds). Nothing is
+        committed, so no reader cache moves. Waits at most `wait_s` for the ledger's lock (TimeoutError), and lowers the
+        connection's busy timeout to `wait_s` meanwhile, so a probe never holds requests behind a stuck writer for
+        longer. A connection already inside a transaction (a write of this thread in progress) is only read."""
+        if not self._lock.acquire(timeout=max(0.0, wait_s)):
+            raise TimeoutError("the ledger's lock was held for longer than the probe waits")
+        try:
+            self.db.execute("SELECT 1").fetchone()
+            if self.db.in_transaction:
+                return
+            self.db.execute(f"PRAGMA busy_timeout={max(0, int(wait_s * 1000))}")
+            try:
+                self.db.execute("BEGIN IMMEDIATE")
+                try:
+                    version = int(self.db.execute("PRAGMA user_version").fetchone()[0])
+                    self.db.execute(f"PRAGMA user_version={version}")
+                finally:
+                    self.db.execute("ROLLBACK")
+            finally:
+                self.db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        finally:
+            self._lock.release()
+
     def _migrate(self) -> None:
         for table, cols in MIGRATIONS.items():
             have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}

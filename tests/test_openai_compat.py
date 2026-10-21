@@ -244,7 +244,7 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
             mode="live",
             db_path=str(tmp_path / "live.db"),
             student_base="",
-            teacher_api_key="",
+            teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
             audit_rate=0.0,
             allow_unauthenticated=True,
         ),
@@ -308,7 +308,7 @@ def test_unpaired_surrogate_is_a_400_in_both_modes(gw_env, tmp_path, monkeypatch
             mode="live",
             db_path=str(tmp_path / "live.db"),
             student_base="",
-            teacher_api_key="",
+            teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
             audit_rate=0.0,
             allow_unauthenticated=True,
         ),
@@ -397,7 +397,7 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
         RATCHET_MODE="live",
         RATCHET_DB=str(tmp_path / "live.db"),
         RATCHET_STUDENT_BASE="",
-        NEBIUS_API_KEY="",
+        NEBIUS_API_KEY="tf-key",  # live mode needs a teacher key to start (ADR 0070)
         RATCHET_ALLOW_UNAUTHENTICATED="1",
     )
 
