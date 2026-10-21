@@ -759,6 +759,19 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold"),
     "FR-8.4": ("ratchet.live:main",),
     "FR-8.5": ("scripts/day1_check.py",),
+    "FR-8.20": (
+        "ratchet.liverun:main",
+        "ratchet.liverun:plan_stage_requests",
+        "ratchet.liverun:profile_check",
+        "ratchet.ledger:Ledger.client_window",
+        "Makefile",
+    ),
+    "FR-8.21": (
+        "ratchet.liverun:control_estimate",
+        "ratchet.liverun:score",
+        "ratchet.liverun:repeat_values",
+        "ratchet.liverun:cmd_verify",
+    ),
     "FR-8.42": (
         "ratchet.nightschool.dataset:training_record",
         "ratchet.nightschool.dataset:TRAIN_TEMPLATE_KWARGS",
@@ -782,6 +795,9 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-10.4": ("ratchet.gateway:scout_stream", "ratchet.gateway:scout_run"),
     "FR-10.5": ("ratchet.scout.guard:Guard",),
     "FR-10.6": ("ratchet.scout.__main__:main",),
+    "FR-10.20": ("ratchet.scout.guard:Guard.restore", "ratchet.ledger:Ledger.spend_rows"),
+    "FR-10.21": ("ratchet.scout.judge:JudgeAccess", "ratchet.gateway:scout_judge"),
+    "FR-10.22": ("ratchet.scout.credits:CreditMeter", "ratchet.scout.credits:MeteredSearch", "ratchet.scout.agents:Scout.run"),
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
@@ -1039,7 +1055,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.feedback:store_label",  # no human or imported label for a pinned task (ADR 0091)
         "ratchet.importer:check_task",
     ),
-    "INV-11": ("ratchet.gateway:_scout_precheck", "ratchet.gateway:_run_scout", "ratchet.scout.guard:Guard.admit"),
+    "INV-11": (
+        "ratchet.gateway:_scout_precheck",
+        "ratchet.gateway:_run_scout",
+        "ratchet.scout.guard:Guard.admit",
+        "ratchet.scout.guard:Guard.restore",
+    ),
     "INV-12": (
         "ratchet.redact:redact_messages",
         "ratchet.redact:redact_json",
@@ -1129,11 +1150,23 @@ EXEMPT: dict[str, Exempt] = {
     "FR-8.2": Exempt("live", "deploy/student_endpoint.sh", "needs a vLLM Serverless Endpoint with runtime LoRA loading"),
     "FR-8.4": Exempt("live", "docs/RUNBOOK.md", "runs against the live ledger, a Serverless Job and the student endpoint"),
     "FR-8.5": Exempt("live", "docs/DAY1.md", "the script is the live check; it needs NEBIUS_API_KEY"),
+    "FR-8.20": Exempt(
+        "live", "docs/RUNBOOK.md", "make live-smoke, then make live-run, against the gateway on Nebius and Token Factory"
+    ),
+    "FR-8.21": Exempt("live", "docs/RUNBOOK.md", "the control arm calls Token Factory; a published live run's results.json"),
     "FR-8.42": Exempt(
         "live", "docs/DAY1.md", "the image builds and a 200-row job trains on a GPU (DAY1 row 4); the template is checked offline"
     ),
     "FR-10.3": Exempt(
         "live", "docs/DEPLOY_NEBIUS_VM.md", "Tavily needs TAVILY_API_KEY; checked when the demo VM switches to live"
+    ),
+    "FR-10.21": Exempt(
+        "live", "docs/DEPLOY_NEBIUS_VM.md", "the Secure judge cookie through Caddy over HTTPS is checked on the demo VM"
+    ),
+    "FR-10.22": Exempt(
+        "live",
+        "docs/DEPLOY_NEBIUS_VM.md",
+        "Tavily's usage.credits, 432 and 433 need TAVILY_API_KEY; checked when the VM goes live",
     ),
     "FR-11.1": Exempt("live", "deploy/vm/create_vm.sh", "needs a Nebius project; DRY_RUN=1 prints the commands"),
     "FR-11.2": Exempt("live", "deploy/vm/backup.sh", "runs on the demo VM"),
@@ -1147,7 +1180,9 @@ EXEMPT: dict[str, Exempt] = {
         "docs/RUNBOOK.md",
         "the hourly `python -m ratchet.live seal` cron and reconciling receipts with the Token Factory bill need a live run",
     ),
-    "NFR-1": Exempt("live", "docs/DEPLOYMENT.md", "p50 latency needs the real student endpoint"),
+    "NFR-1": Exempt(
+        "live", "ratchet/liverun.py", "p50 latency is measured by python -m ratchet.liverun against the real student endpoint"
+    ),
     "US-10": Exempt("live", "deploy/train_job.sh", "the adapter reaches the customer's bucket only in live mode"),
     "INV-9": Exempt("live", "scripts/day1_check.py", "model ids and prices are confirmed against Token Factory with a real key"),
 }

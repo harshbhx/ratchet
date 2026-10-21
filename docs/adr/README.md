@@ -39,5 +39,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0091](0091-human-labels-as-a-provenance-source.md) | Human labels as a provenance source: request ids, verdicts and corrections (`POST /v1/ratchet/feedback`), labelled-data import that refuses closed-model labels, golden-only rows | Accepted | 2026-10-21 |
 | [0100](0100-dashboard-task-writes-and-derived-breaker-state.md) | The dashboard writes API tasks with a key it holds in memory, and reads breaker states from the event log | Accepted | 2026-10-20 |
 | [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
+| [0120](0120-judge-access-and-a-persistent-scout-guard.md) | Judge access and a persistent Scout guard: spend rows restored at startup, a judges' reserve behind a POST-once code and a signed cookie, paced Tavily credits and a labelled search-unavailable path | Accepted | 2026-10-21 |
+| [0121](0121-live-measurement-method.md) | Live measurement method: synthetic traffic through the public API in rounds, a measured all-Ultra control arm and one results file behind every live number | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

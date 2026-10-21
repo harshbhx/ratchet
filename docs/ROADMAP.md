@@ -52,7 +52,7 @@ Built package by package. Every item gets offline tests and an adversarial revie
 | Oct 19–20 | Day-1 checks ([DAY1.md](DAY1.md)): Token Factory model IDs, logprobs, JSON mode; Nano 4B LoRA on a Serverless Job; vLLM endpoint with LoRA; Serverless pricing | `scripts/day1_check.py` passes, or config updated; one adapter trained and served, or fallback chosen |
 | Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs |
 | Oct 23–24 | Live Night School: dataset → Serverless Job → hot-load adapter → golden eval → release gate | At least one version trained and evaluated live |
-| Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" | At least 3 versions; real cost and precision numbers |
+| Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" (`make live-run`, [RUNBOOK](RUNBOOK.md#live-measurement-run)) | At least 3 versions; real cost and precision numbers |
 | Oct 26–27 | Public demo on the Nebius VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): mock first, then **live mode** (required for Stage One) with live Scout, Tavily and the budget guard, Token Factory fallback student | Demo URL works logged-out over HTTPS; `/`, `/scout`, `/dashboard` load; live Token Factory and Tavily calls succeed; stays up when the student endpoint is stopped; credits cover the demo until Dec 15 |
 | Oct 28 | README with live numbers, feedback section, video recorded ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) | Video under 3 minutes on YouTube (public) |
 | Oct 29 | Submit on Devpost ([HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md)) | Every checklist item ticked |

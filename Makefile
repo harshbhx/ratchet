@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt trace reference sim demo day1 docker clean web web-dev
+.PHONY: install test lint fmt trace reference sim demo day1 docker clean web web-dev live-plan live-smoke live-run
 
 install:
 	pip install -e ".[dev]" ruff
@@ -39,6 +39,23 @@ web-dev:
 
 day1:
 	python scripts/day1_check.py
+
+# The live-run harness (ratchet/liverun.py, docs/RUNBOOK.md#live-measurement-run): on the gateway's host, with its .env and
+# RATCHET_LIVERUN_KEY exported. Never part of test, lint or CI.
+ROUNDS ?= 4
+REQUESTS ?= 1500
+MAX_USD ?= 30
+WORKLOAD ?= tickets
+BASE_URL ?= http://localhost:8000/v1
+
+live-plan:   # free: prints the plan, no paid call
+	python -m ratchet.liverun plan --rounds $(ROUNDS) --requests $(REQUESTS) --max-usd $(MAX_USD) --workload $(WORKLOAD)
+
+live-smoke:  # 20 requests, about 5 control calls, no nights: cents
+	python -m ratchet.liverun smoke --base-url $(BASE_URL)
+
+live-run:
+	python -m ratchet.liverun run --base-url $(BASE_URL) --rounds $(ROUNDS) --requests $(REQUESTS) --max-usd $(MAX_USD) --workload $(WORKLOAD)
 
 docker:
 	docker build -t ratchet-gateway .

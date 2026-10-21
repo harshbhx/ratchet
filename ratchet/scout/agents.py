@@ -19,8 +19,9 @@ from typing import Any
 import httpx
 
 from .. import tasks
+from ..resilience import describe_failure
 from .prompts import plan_messages, read_messages, triage_messages, write_messages
-from .search import Hit, SearchTool
+from .search import Hit, SearchTool, SearchUnavailable
 
 Emit = Callable[[dict[str, Any]], None]
 
@@ -127,8 +128,9 @@ class Scout:
         self.workers = workers
 
     def run(self, question: str, emit: Emit, mode: str = "mock", run_id: str | None = None) -> dict[str, Any]:
-        """Run the team on one question. Emits events (docs/SCOUT.md) and returns the `done` event.
-        Exceptions propagate; the caller turns them into an `error` event."""
+        """Run the team on one question. Emits events (docs/SCOUT.md) and returns the `done` event. A search that fails
+        or is refused ends the searching and labels the run (`done.search`); every other exception propagates, and the
+        caller turns it into an `error` event."""
         run_id = run_id or uuid.uuid4().hex[:8]
         lock = threading.Lock()
         steps: list[dict[str, Any]] = []
@@ -148,12 +150,24 @@ class Scout:
         queries = [q for q in plan.get("queries", []) if isinstance(q, str) and q.strip()][: self.max_queries] or [question]
         send(_step("planner", "research-plan", c, {"queries": queries}))
 
-        # 2. Searcher (a tool, not an LLM).
+        # 2. Searcher (a tool, not an LLM). A failed or refused search ends the searching, not the run: the planner has
+        # already called the teacher, and the writer answers from what was found, or without sources (ADR 0120). The
+        # reason names a fixed refusal, or the error's class and status only: an httpx message carries the URL.
         hits: list[Hit] = []
         seen: set[str] = set()
+        unavailable: str | None = None
         for q in queries:
             s0 = time.time()
-            found = self.search.search(q, self.max_results)
+            try:
+                found = self.search.search(q, self.max_results)
+            except SearchUnavailable as e:
+                unavailable = e.reason
+            except httpx.HTTPError as e:
+                unavailable = describe_failure(e)
+            if unavailable is not None:
+                detail = {"query": q, "results": [], "unavailable": unavailable}
+                send(_step("searcher", None, None, detail, model=self.search.name, latency_ms=1000 * (time.time() - s0)))
+                break
             shown = []
             for h in found:
                 if h.url in seen or len(hits) >= self.max_triage:
@@ -227,7 +241,8 @@ class Scout:
         answer = str(out.get("answer") or tasks.strip_reasoning(c.text)).strip()
         used = {n for n in out.get("used", []) if isinstance(n, int)} or {f["n"] for f in facts}
         citations = [{"n": f["n"], "title": f["title"], "url": f["url"]} for f in facts if f["n"] in used]
-        send(_step("writer", "research-write", c, {"answer": answer, "citations": citations}))
+        detail = {"answer": answer, "citations": citations, "search_unavailable": unavailable is not None}
+        send(_step("writer", "research-write", c, detail))
 
         llm = [s for s in steps if s["served_by"] != "tool"]
         cost = sum(s["cost_usd"] for s in llm)
@@ -246,6 +261,12 @@ class Scout:
                 "baseline_usd": base,
                 "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                 "wall_ms": round(1000 * (time.time() - t0), 1),
+            },
+            # Whether every planned search ran; `partial`: some found results before one failed or was refused.
+            "search": {
+                "available": unavailable is None,
+                "partial": unavailable is not None and bool(hits),
+                "reason": unavailable,
             },
         }
         send(done)
