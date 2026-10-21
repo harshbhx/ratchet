@@ -193,13 +193,36 @@ curl -s https://<domain>/scout/status                 # live mode: spend today v
 
 - The ratchet container has a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
-- For an outside check, point a free uptime monitor at `https://<domain>/readyz` (always public; 200 while requests can be answered, 503 when they cannot) and, for "is the process up", `https://<domain>/healthz`. A load balancer in front of the VM should use `/readyz` too; keep restarts on `/healthz`, so a teacher outage never becomes a restart loop. `/ratchet/stats` needs a key when the dashboard is private.
+- For an outside check, point a free uptime monitor at `https://<domain>/healthz` ("is the process up"; always public) and, for "can it serve", `https://<domain>/readyz` (200 while requests can be answered, 503 when they cannot). A keyword monitor on `https://<domain>/scout/status` for `"state":"failing"` catches failing live model calls. `scripts/demo_check.py https://<domain>` (`make demo-check URL=https://<domain> ARGS=--chat`) checks what a judge sees from your laptop. A load balancer in front of the VM should use `/readyz` too; keep restarts on `/healthz`, so a teacher outage never becomes a restart loop. `/ratchet/stats` needs a key when the dashboard is private.
+
+### Watchdog
+
+Stage One needs a runtime Token Factory call from this VM until judging ends (Dec 15), so a hung gateway or exhausted credit must not go unnoticed. [`python3 -m ratchet.watch`](../ratchet/watch.py) runs on the VM host from `/etc/cron.d/ratchet-watch` (cloud-init installs it; on an older VM: `sudo install -m 0644 -o root -g root /opt/ratchet/deploy/vm/ratchet-watch.cron /etc/cron.d/ratchet-watch`). It uses the host's own Python 3 and no packages, so it is safe on a 1 GB VM. ADR: [0132](adr/0132-demo-watchdog-and-rollback-first-updates.md).
+
+- **`tick`, every 2 minutes.** Asks the container's `/healthz` (through `docker compose exec`, which works while uvicorn is hung) and `/readyz`'s `checks.ledger`. After 3 failed liveness checks, or 3 failed ledger checks, in a row it runs `docker compose restart ratchet` (a start grace of 240 s, a 10 minute cooldown, at most 2 restarts an hour, never while `update.sh` runs or after `pause`). **It never restarts for the teacher or the student:** `/readyz` answers 503 when Token Factory is down, and a restart would fix nothing and drop the breakers' state. It never starts a container you stopped on purpose; it alerts instead.
+- **`probe`, hourly (live mode only).** One 16-token completion through `https://<domain>/v1/chat/completions` with the `watchdog` key on the pinned task `watchdog-probe`: always the teacher, never stored (INV-10), about $0.0001 and at most 24 calls a day. It alerts on any non-200 answer, naming the gateway's error code and the upstream status (`upstream_402`, `upstream_auth` for a teacher 401 or 403, `upstream_rate_limited`, ...). **Which status Token Factory returns for exhausted credit is unverified**: the alert says "may be exhausted credit or a suspended account" and the Token Factory console decides. It sets the `live_check` flag on `/scout/status` and reads Scout's search state from it for free.
+- **Alerts** go to `RATCHET_ALERT_WEBHOOK_URL` as a signed JSON body (the gateway's own alerting is not built; this module sends its own). One alert when a check starts failing or changes code, a repeat every 6 h, one on recovery.
+
+Set up, once, on the VM:
+
+1. Add a `watchdog:<random key>` entry to `RATCHET_API_KEYS` (`openssl rand -hex 24`), and, to cap it, `RATCHET_KEY_LIMITS` (room for 24 calls a day).
+2. Set `RATCHET_TASKS_FILE=/config/tasks.json` in `.env` (compose mounts `deploy/vm/config` there read-only). It pins `watchdog-probe` for the `watchdog` client only; setting it without the `watchdog` key stops startup, by design.
+3. Set `RATCHET_ALERT_WEBHOOK_URL` (and `RATCHET_ALERT_WEBHOOK_SECRET`), then `cd /opt/ratchet && python3 -m ratchet.watch test-alert`. Slack takes the body's `text`; whether it ignores the other keys, and Discord with `/slack` appended, are unverified.
+4. Optionally set `RATCHET_WATCH_HEARTBEAT_URL` to a dead-man's-switch URL (period 1 h, grace 30 min): it alerts when the VM or cron is dead, which nothing on the VM can report.
+5. `python3 -m ratchet.watch probe --once --force` after `update.sh`, then read `python3 -m ratchet.watch status`. If the probe reports `unreachable` or `probe_timeout` from the VM while the site works from outside, the VM may not reach its own public IP (hairpin NAT, unverified on Nebius): set `RATCHET_WATCH_CONNECT=local`.
+
+Commands: `status`, `pause --minutes N` (no restarts for N minutes, up to 1,440), `resume`, `test-alert`, `probe --once --no-flag --no-alert`. Switch it all off with `RATCHET_WATCH=off`. Subtract the probe's tokens from your credit estimate: about 24 calls a day.
 
 ### Updating
 
 ```bash
-sudo -u ratchet /opt/ratchet/deploy/vm/update.sh
+sudo -u ratchet /opt/ratchet/deploy/vm/update.sh        # flags: --skip-backup  --no-rollback  --no-probe
+DRY_RUN=1 /opt/ratchet/deploy/vm/update.sh                # prints every command that changes something: rehearse it first
 ```
+
+`update.sh` first takes a lock (the watchdog never restarts while it is held), saves the running git SHA, makes a ledger backup tagged `pre-update` (live mode) and tags the running image `ratchet-gateway:previous` (a tagged image survives `docker image prune -f`). If the new version is unhealthy, answers `/readyz` with a broken ledger, reports the wrong mode, or fails the live probe on the gateway side, it moves the checkout (`git reset --hard` to the old SHA; your `.env` is untouched) and the image back and recreates the container, then alerts. If Token Factory is the problem, it does not roll back: an older image would not fix it. It restores the ledger from the pre-update backup (`restore.sh`; requests logged after the backup are lost; the replaced file stays as `ratchet.db.before-restore-<time>`) only when the old image also cannot open the ledger. Migrations only add columns and tables, so the previous image reads a migrated ledger.
+
+The rest, as before:
 
 It runs `git pull --ff-only` and builds the new image, then runs `python -m ratchet.config check` in it with your `.env` ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks)): on errors (exit 2) it stops and leaves the running gateway as it is, so a typo in `.env` never takes the demo down; warnings are printed and the update goes on. Then `docker compose up -d`, waits for the Docker health check (`/healthz`) and for `/readyz` to answer 200 inside the container (printing its checks), fetches `/`, `/healthz`, `/readyz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public) and exits non-zero if any of them fail. Run the check yourself after editing `.env`: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check`.
 
@@ -213,7 +236,7 @@ To also copy each backup to Nebius Object Storage:
 2. On the VM: `sudo snap install aws-cli --classic`, then `sudo -u ratchet -H aws configure` with that key.
 3. Set `RATCHET_BUCKET_S3=s3://<bucket>/ratchet` and `RATCHET_S3_ENDPOINT` in `.env`. Copy the endpoint URL from the console (verify on day 1).
 
-Restore: stop the gateway, remove the old WAL files, copy the file into the volume, start it again. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), so recent commits sit in `ratchet.db-wal` until a checkpoint: a stale `-wal` or `-shm` file left next to a restored copy would be replayed onto it. The backup script uses SQLite's backup API, which includes them; never copy the live file with `cp`.
+Restore with the script: `docker compose stop ratchet && deploy/vm/restore.sh /var/backups/ratchet/ratchet-<time>.db.gz && docker compose start ratchet` (it checks the backup, then moves the old `ratchet.db`, `-wal` and `-shm` aside together as `ratchet.db.before-restore-<time>`). By hand: stop the gateway, remove the old WAL files, copy the file into the volume, start it again. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), so recent commits sit in `ratchet.db-wal` until a checkpoint: a stale `-wal` or `-shm` file left next to a restored copy would be replayed onto it. The backup script uses SQLite's backup API, which includes them; never copy the live file with `cp`.
 
 ```bash
 cd /opt/ratchet/deploy/vm

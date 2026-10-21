@@ -980,6 +980,23 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
+    "FR-11.32": (
+        "ratchet.watch:tick",
+        "ratchet.watch:_maybe_restart",
+        "ratchet.watch:send_alert",
+        "ratchet.watch:alert_body",
+        "ratchet.watch:signature",
+        "deploy/vm/ratchet-watch.cron",
+    ),
+    "FR-11.33": (
+        "ratchet.watch:probe",
+        "ratchet.watch:classify",
+        "ratchet.watch:flag_view",
+        "ratchet.gateway:Runtime.live_check",
+        "ratchet.gateway:scout_status",
+        "deploy/vm/config/tasks.json",
+    ),
+    "FR-11.34": ("deploy/vm/update.sh", "deploy/vm/restore.sh", "deploy/vm/backup.sh", "scripts/demo_check.py"),
     # 6.13 Data governance
     "FR-13.1": (
         "ratchet.router:Ratchet.store_opt_out",
@@ -1418,6 +1435,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "SM-4": ("ratchet.kpis:bad_deploys", "ratchet.ledger:Ledger.events_of"),
     "SM-5": ("ratchet.kpis:drift_recovery", "ratchet.kpis:drift_episodes", "ratchet.kpis:escalation_rates"),
     "NFR-55": ("ratchet.release:ReleaseGate._tick_drift", "ratchet.drift:DriftMonitor._update", "ratchet.drift:Stream"),
+    "NFR-66": ("ratchet.watch:WatchConfig", "ratchet.watch:urllib_fetch", "ratchet.watch:PROBE_BODY"),
     "NFR-56": ("ratchet.drift:Ranks", "ratchet.drift:DriftMonitor._stream", "ratchet.drift:DriftMonitor.counts"),
     "NFR-57": (
         "ratchet.teacher_watch:Watch.refresh",
@@ -1589,6 +1607,15 @@ EXEMPT: dict[str, Exempt] = {
     ),
     "FR-11.1": Exempt("live", "deploy/vm/create_vm.sh", "needs a Nebius project; DRY_RUN=1 prints the commands"),
     "FR-11.2": Exempt("live", "deploy/vm/backup.sh", "runs on the demo VM"),
+    "FR-11.32": Exempt(
+        "live", "docs/DEPLOY_NEBIUS_VM.md", "the restart rule and the webhook run on the demo VM: step 5 of the watchdog setup"
+    ),
+    "FR-11.33": Exempt(
+        "live", "docs/DEPLOY_NEBIUS_VM.md", "the probe calls Token Factory through the VM: `probe --once --force` on day 1"
+    ),
+    "FR-11.34": Exempt(
+        "live", "scripts/demo_check.py", "`update.sh` needs Docker on the VM; the check runs against the public demo"
+    ),
     "FR-15.2": Exempt(
         "live",
         "deploy/student_endpoint.sh",
