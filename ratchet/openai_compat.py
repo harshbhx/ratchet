@@ -870,11 +870,21 @@ def check_model(model: str | None, routing: ModelRouting) -> str | None:
     return model
 
 
+# Characters a header value keeps as they are: visible ASCII but '%'. h11, the HTTP/1.1 server uvicorn runs here, refuses
+# a value that starts or ends with a space, so spaces are encoded too; '%' is, so every value decodes back to the id.
+_HEADER_SAFE = "".join(chr(c) for c in range(0x21, 0x7F) if chr(c) != "%")
+
+
 def header_value(text: str, limit: int = MAX_ALIAS_CHARS) -> str:
-    """`text` as an HTTP header value: as it is when it is printable ASCII, else percent-encoded UTF-8, so a model id in
-    any script cannot break the response; at most `limit` characters."""
-    out = text if text.isascii() and text.isprintable() else quote(text.encode("utf-8", "replace"), safe="/:@")
-    return out[:limit]
+    """`text` as an HTTP header value: UTF-8 percent-encoded except for visible ASCII, so a model id in any script, with
+    spaces around it or control characters in it, cannot break a response that was already served and billed; at most
+    `limit` characters, never cutting an escape in two."""
+    out = quote(text.encode("utf-8", "replace"), safe=_HEADER_SAFE)
+    if len(out) <= limit:
+        return out
+    cut = out[:limit]
+    broken = cut.rfind("%", limit - 2)  # a '%' among the last two characters starts an escape the cut broke
+    return cut[:broken] if broken != -1 else cut
 
 
 def system_text(messages: Iterable[Mapping[str, Any]]) -> str | None:

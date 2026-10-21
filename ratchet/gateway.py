@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Container, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +44,7 @@ from . import bom as bomdoc
 from .auth import KeyRing, bearer
 from .config import Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
-from .ledger import Ledger, Version
+from .ledger import DAY_SECONDS, Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
     INVALID_REQUEST,
@@ -212,7 +212,8 @@ class Runtime:
         self.limits: Limits = s.limits()  # a bad RATCHET_MAX_N stops startup here
         # How the model field and the system prompt pick a task (ADR 0048); a bad setting stops startup here.
         self.routing: ModelRouting = s.model_routing()
-        self.max_auto_tasks = s.auto_task_cap()
+        cap = s.auto_task_cap()  # the shared mock demo holds fewer, as it does API tasks; a reset clears them
+        self.max_auto_tasks = min(cap, MOCK_MAX_AUTO_TASKS) if s.mode == "mock" else cap
         self._auto_cap_logged = False
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
@@ -240,13 +241,12 @@ class Runtime:
     def auto_task(self, name: str) -> tasks.Task | None:
         """The task for an auto task name (`openai_compat.system_prompt_task`): the task registered under it, else a new
         auto task (whole answers compared, never pinned) for `keep_auto_task` to register once the request is admitted,
-        or None when RATCHET_MAX_AUTO_TASKS auto tasks exist already (the request then gets `default`). Lookups only, but
-        for the one `auto_task_cap` event."""
+        or None when there is no room for one (`_auto_room`; the request then gets `default`, and the caller reports it
+        with `auto_cap_reached` once the request is admitted). Lookups only."""
         current = tasks.lookup(name)
         if current is not None:
             return current
-        if _auto_count() >= self.max_auto_tasks:
-            self._auto_cap_reached()
+        if not self._auto_room():
             return None
         return tasks.Task(name, source="auto", description=AUTO_DESCRIPTION)
 
@@ -258,13 +258,13 @@ class Runtime:
             current = tasks.lookup(task.name)
             if current is not None:
                 return current
-            if _auto_count() >= self.max_auto_tasks:
-                self._auto_cap_reached()
+            if not self._auto_room():
+                self.auto_cap_reached()
                 return tasks.get("default")
             try:
                 tasks.register(task)
             except (tasks.RegistryFull, tasks.TaskConflict):
-                self._auto_cap_reached()
+                self.auto_cap_reached()
                 return tasks.get("default")
             try:
                 self.ledger.save_task(task.name, taskspec.document(task), task.spec_hash, "auto", AUTO_AUTHOR)
@@ -274,14 +274,21 @@ class Runtime:
             self.ledger.event("task_registered", f"{task.name} (spec {task.spec_hash}) auto: a new system prompt")
         return task
 
-    def _auto_cap_reached(self) -> None:
-        """Log once per ledger (and look once per process) that no more auto tasks can be made."""
-        if self._auto_cap_logged:
+    def _auto_room(self) -> bool:
+        """Whether one more auto task may be made: fewer than the cap (RATCHET_MAX_AUTO_TASKS, at most MOCK_MAX_AUTO_TASKS
+        in mock mode), and the registry keeps AUTO_FREE_SLOTS slots free after it, so request traffic can never fill the
+        registry and lock the admin API out (auto tasks are stored and come back at restart)."""
+        return _auto_count() < self.max_auto_tasks and len(tasks.REGISTRY) < tasks.MAX_TASKS - AUTO_FREE_SLOTS
+
+    def auto_cap_reached(self) -> None:
+        """Log once per ledger (and look once per process) that no more auto tasks can be made. Called only for an
+        admitted request, and never when RATCHET_MAX_AUTO_TASKS is 0 (no auto task is ever made, so nothing filled up)."""
+        if self._auto_cap_logged or self.max_auto_tasks == 0:
             return
         self._auto_cap_logged = True
-        cap = self.max_auto_tasks
-        prefix = f"RATCHET_MAX_AUTO_TASKS={cap}:"
-        detail = f"{prefix} no more auto tasks (or the registry is full); requests with a new system prompt get default"
+        prefix = f"RATCHET_MAX_AUTO_TASKS={self.max_auto_tasks}:"
+        room = f"the registry keeps its last {AUTO_FREE_SLOTS} slots for other tasks"
+        detail = f"{prefix} no more auto tasks (the cap is reached, or {room}); requests with a new system prompt get default"
         self.ledger.event_once("auto_task_cap", prefix, detail)
 
     # ----- mock-mode simulation helpers -----
@@ -335,6 +342,8 @@ class Runtime:
 
 
 AUTO_AUTHOR = "auto"  # `tasks.updated_by` of an auto task: no admin wrote it
+MOCK_MAX_AUTO_TASKS = 50  # the shared mock demo holds at most this many auto tasks; a reset clears them
+AUTO_FREE_SLOTS = 50  # registry slots auto tasks never take, so the admin API can always add a task
 AUTO_DESCRIPTION = "Made for requests whose first system message hashes to this name (RATCHET_AUTO_TASK=system_prompt)."
 
 
@@ -679,11 +688,25 @@ def _model_object(model_id: str, task: tasks.Task | None, created: float, live_i
     return {"id": model_id, "object": "model", "created": int(created), "owned_by": "ratchet", "ratchet": info}
 
 
+def _offered(name: str, task: tasks.Task | None, client: str | None, recent: Container[str]) -> tasks.Task | None:
+    """The task a model id naming `name` stands for, for this client, or None when the id is not offered to it. `task` is
+    the one registered under `name` (None: none is); `recent` holds the names this client's requests used in the last
+    30 days. A registered task its `clients` allow, but an auto task (named after a digest of some client's system
+    prompt, threat model T12) only to a key whose own recent requests used it; with keys off, to everyone. An
+    unregistered task name unless RATCHET_UNKNOWN_TASKS is `reject`, as chat completions admit it."""
+    if task is not None:
+        hidden = task.source == "auto" and client is not None and name not in recent
+        return None if hidden or not task.allows(client) else task
+    if rt.ratchet.unknown_tasks == "reject" or not tasks.valid_name(name):
+        return None
+    return tasks.get(name)
+
+
 def _models(client: str | None) -> list[dict[str, Any]]:
-    """Every model id this client may send: `ratchet`; `ratchet/<task>` for each registered task it may use and, unless
-    RATCHET_UNKNOWN_TASKS is `reject`, each unregistered task its requests named in the last 30 days; and each model
-    alias whose task it may use. `created` is when a request (this client's, with keys on) first named the task, else
-    when the process started."""
+    """Every model id this client may send: `ratchet`; `ratchet/<task>` for each registered task it may use (`_offered`)
+    and, unless RATCHET_UNKNOWN_TASKS is `reject`, each unregistered task its requests named in the last 30 days; and each
+    model alias whose task it may use. `created` is when a request (this client's, with keys on) first named the task,
+    for a task used in the last 30 days, else when the process started."""
     live = rt.ledger.live()
     live_id = live.id if live is not None else None
     recent = rt.ledger.recent_tasks(RECENT_TASK_DAYS, client=client, limit=MAX_RECENT_MODELS)
@@ -693,22 +716,42 @@ def _models(client: str | None) -> list[dict[str, Any]]:
     out += [
         _model_object(f"ratchet/{t.name}", t, first.get(t.name, PROCESS_START), live_id)
         for t in registry.values()
-        if t.allows(client)
+        if _offered(t.name, t, client, first) is not None
     ]
-    usable_unknown = rt.ratchet.unknown_tasks != "reject"
-    if usable_unknown:
-        out += [
-            _model_object(f"ratchet/{r['task']}", tasks.get(r["task"]), r["first_ts"], live_id)
-            for r in recent
-            if r["task"] not in registry and tasks.valid_name(r["task"])
-        ]
+    out += [
+        _model_object(f"ratchet/{r['task']}", t, r["first_ts"], live_id)
+        for r in recent
+        if r["task"] not in registry and (t := _offered(r["task"], None, client, first)) is not None
+    ]
     for alias, target in rt.routing.aliases.items():
-        t = registry.get(target)
-        if (t is not None and not t.allows(client)) or (t is None and not usable_unknown):
-            continue
-        created = first.get(target, PROCESS_START)
-        out.append(_model_object(alias, t or tasks.get(target), created, live_id, alias_of=f"ratchet/{target}"))
+        t = _offered(target, registry.get(target), client, first)
+        if t is not None:
+            out.append(_model_object(alias, t, first.get(target, PROCESS_START), live_id, alias_of=f"ratchet/{target}"))
     return out
+
+
+def _model(model_id: str, client: str | None) -> dict[str, Any] | None:
+    """The model object for one id, as `_models` would list it, or None when this client may not send it. It looks up
+    that one task (two index probes), not the whole list. Unlike the list it also finds `ratchet/<name>` for an
+    unregistered name no request used lately, which chat completions admit unless RATCHET_UNKNOWN_TASKS is `reject`, so
+    a client that retrieves its model before the first request gets the same answer as the request."""
+    live = rt.ledger.live()
+    live_id = live.id if live is not None else None
+    if model_id == RATCHET_MODEL:
+        return _model_object(RATCHET_MODEL, None, PROCESS_START, live_id)
+    m = MODEL_TASK.fullmatch(model_id)
+    name = m.group(1) if m else rt.routing.aliases.get(model_id)
+    if name is None:
+        return None
+    seen = rt.ledger.task_seen(name, client)
+    recent = {name} if seen is not None and seen["last_ts"] >= time.time() - RECENT_TASK_DAYS * DAY_SECONDS else set()
+    task = _offered(name, tasks.REGISTRY.get(name), client, recent)
+    if task is None:
+        return None
+    created = seen["first_ts"] if seen is not None and recent else PROCESS_START
+    if m:
+        return _model_object(f"ratchet/{name}", task, created, live_id)
+    return _model_object(model_id, task, created, live_id, alias_of=f"ratchet/{name}")
 
 
 @app.get("/v1/models")
@@ -729,12 +772,10 @@ def retrieve_model(
     x_api_key: str | None = Header(default=None),
     api_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """One model from the list (`ratchet:<task>` finds `ratchet/<task>`), or 404 `model_not_found`. The id may hold a
-    slash: the OpenAI SDK sends `ratchet/ticket-triage` as `ratchet%2Fticket-triage`, which arrives decoded."""
+    """One model (`_model`; `ratchet:<task>` finds `ratchet/<task>`), or 404 `model_not_found`. The id may hold a slash:
+    the OpenAI SDK sends `ratchet/ticket-triage` as `ratchet%2Fticket-triage`, which arrives decoded."""
     client = _client(authorization, x_api_key, api_key)
-    m = MODEL_TASK.fullmatch(model_id)
-    want = f"ratchet/{m.group(1)}" if m else model_id
-    found = next((obj for obj in _models(client) if obj["id"] == want), None)
+    found = _model(model_id, client)
     if found is None:
         raise model_not_found(model_id, param=None)
     return found
@@ -794,7 +835,8 @@ def _complete(
     model_alias = check_model(req.model, rt.routing) if deployment is None else None
     name, source = resolve_task(req, header_task, rt.routing, client=client, deployment=deployment)
     auto = rt.auto_task(name) if source == "auto_system" else None
-    if source == "auto_system" and auto is None:  # RATCHET_MAX_AUTO_TASKS reached: `default`, as without auto tasks
+    no_room = source == "auto_system" and auto is None
+    if no_room:  # RATCHET_MAX_AUTO_TASKS reached: `default`, as without auto tasks
         name, source = "default", "default"
     try:  # refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(auto if auto is not None else name, client)
@@ -803,6 +845,8 @@ def _complete(
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
     headers = _quota(client)
+    if no_room:
+        rt.auto_cap_reached()  # reported only now, so a refused request leaves no trace
     if auto is not None and task.source == "auto" and tasks.lookup(task.name) is not task:
         task = rt.keep_auto_task(task)  # a new auto task is registered and stored only for an admitted request
         if task.name != name:  # the cap filled meanwhile
@@ -1010,7 +1054,7 @@ def _not_yours(t: tasks.Task) -> HTTPException:
         return HTTPException(403, f"task {t.name!r} is defined in RATCHET_TASKS_FILE; edit the file")
     if t.source == "builtin":
         return HTTPException(403, f"task {t.name!r} is built in; use another name (a spec may extend it)")
-    return HTTPException(403, f"task {t.name!r} is an {t.source} task; only API tasks can be changed here")
+    return HTTPException(403, f"task {t.name!r} is an {t.source} task; only API and auto tasks can be changed here")
 
 
 @app.get("/ratchet/tasks")
@@ -1131,13 +1175,14 @@ def _put_result(task: tasks.Task, changed: bool, created: bool) -> dict[str, Any
 
 @app.delete("/ratchet/tasks/{name}")
 def delete_task(name: str, admin: str = Depends(_admin)) -> dict[str, Any]:
-    """Remove an API task. Its stored examples stay, for provenance; requests that name it then get the unknown-task
-    policy (RATCHET_UNKNOWN_TASKS)."""
+    """Remove an API task, or an auto task (RATCHET_AUTO_TASK=system_prompt), which frees its place under
+    RATCHET_MAX_AUTO_TASKS. Its stored examples stay, for provenance; requests that name it then get the unknown-task
+    policy (RATCHET_UNKNOWN_TASKS), and a request with an auto task's system prompt makes it again while there is room."""
     with rt.tasks_lock:
         current = tasks.lookup(name)
         if current is None:
             raise HTTPException(404, f"no registered task is named {name!r}")
-        if current.source != "api":
+        if current.source not in ("api", "auto"):
             raise _not_yours(current)
         tasks.unregister(name)
         try:

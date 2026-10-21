@@ -241,8 +241,10 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS requests_version_audited ON requests (student_version, audited, id)",
     "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
-    # The tasks requests named and when (recent_tasks, for GET /v1/models; FR-1.50): an index-only scan.
+    # The tasks requests named and when, of every client and of one (recent_tasks and task_seen, for GET /v1/models;
+    # FR-1.50): a few index probes per distinct task name instead of a scan of every request.
     "CREATE INDEX IF NOT EXISTS requests_task_ts ON requests (task, ts)",
+    "CREATE INDEX IF NOT EXISTS requests_client_task_ts ON requests (client, task, ts)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
@@ -254,6 +256,8 @@ EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spen
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 
 DAY_SECONDS = 86400
+# Distinct task names `recent_tasks` finds one index probe at a time; past this, one aggregate over the index is cheaper.
+RECENT_TASK_PROBES = 2000
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -407,18 +411,47 @@ class Ledger:
         """The tasks requests named in the last `days` days of wall-clock time, most recently used first, at most `limit`:
         each as {task, first_ts, last_ts}, `first_ts` being its first request ever. With `client` (an API key name) only
         that key's requests count, so one client's ad hoc task names are never listed to another. For GET /v1/models
-        (FR-1.50); one aggregate over the (task, ts) index."""
+        (FR-1.50), which holds the ledger's lock meanwhile: so the cost is three index probes per distinct task name
+        (`_task_spans`), not a pass over every request, up to RECENT_TASK_PROBES names; past them, one aggregate over the
+        covering index."""
         if isinstance(days, bool) or not isinstance(days, (int, float)) or not 0 < days < math.inf:
             raise ValueError(f"days must be a positive number, not {days!r}")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError(f"limit must be a whole number, 1 or more, not {limit!r}")
-        where, args = ("WHERE task IS NOT NULL", []) if client is None else ("WHERE task IS NOT NULL AND client=?", [client])
+        cutoff = time.time() - days * DAY_SECONDS
+        spans = self._task_spans(client, RECENT_TASK_PROBES)
+        if spans is None:
+            where, args = ("task IS NOT NULL", []) if client is None else ("client = ? AND task IS NOT NULL", [client])
+            spans = self.db.execute(f"SELECT task, MIN(ts), MAX(ts) FROM requests WHERE {where} GROUP BY task", args).fetchall()
+        recent = sorted((r for r in spans if r[2] is not None and r[2] >= cutoff), key=lambda r: (-r[2], r[0]))
+        return [{"task": t, "first_ts": float(first), "last_ts": float(last)} for t, first, last in recent[:limit]]
+
+    def _task_spans(self, client: str | None, most: int) -> list[sqlite3.Row] | None:
+        """(task, first ts, last ts) for every distinct task name requests (of `client`, when given) named, found by
+        walking the (task, ts) or (client, task, ts) index one name at a time; None when there are more than `most`."""
+        who = "" if client is None else "client = :client AND "
         rows = self.db.execute(
-            f"""SELECT task, MIN(ts) first_ts, MAX(ts) last_ts FROM requests {where}
-                GROUP BY task HAVING MAX(ts) >= ? ORDER BY last_ts DESC, task LIMIT ?""",
-            [*args, time.time() - days * DAY_SECONDS, limit],
-        )
-        return [{"task": r["task"], "first_ts": float(r["first_ts"]), "last_ts": float(r["last_ts"])} for r in rows]
+            f"""WITH RECURSIVE names(task) AS (
+                    SELECT (SELECT MIN(task) FROM requests WHERE {who}task IS NOT NULL)
+                    UNION ALL
+                    SELECT (SELECT MIN(task) FROM requests WHERE {who}task > names.task) FROM names
+                    WHERE names.task IS NOT NULL LIMIT :cap)
+                SELECT task, (SELECT MIN(ts) FROM requests WHERE {who}task = names.task),
+                       (SELECT MAX(ts) FROM requests WHERE {who}task = names.task)
+                FROM names WHERE task IS NOT NULL""",
+            {"client": client, "cap": most + 2},
+        ).fetchall()
+        return rows if len(rows) <= most else None
+
+    @_locked
+    def task_seen(self, task: str, client: str | None = None) -> dict[str, float] | None:
+        """When requests (with `client`, that key's) first and last named `task`, as {first_ts, last_ts}; None when none
+        did. Two index probes, for GET /v1/models/{id}."""
+        who = "" if client is None else "client = :client AND "
+        probe = f"FROM requests WHERE {who}task = :task"
+        q = f"SELECT (SELECT MIN(ts) {probe}), (SELECT MAX(ts) {probe})"
+        first, last = self.db.execute(q, {"client": client, "task": task}).fetchone()
+        return None if last is None else {"first_ts": float(first), "last_ts": float(last)}
 
     # ---------- compute time (ADR 0023) ----------
     def now(self) -> float:

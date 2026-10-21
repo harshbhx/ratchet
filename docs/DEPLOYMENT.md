@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 773 tests, ~80 s
+pytest -q                                                          # 778 tests, ~80 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -146,7 +146,7 @@ Use **one worker**. The ledger is a single SQLite connection inside the process,
 
 Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop is the biggest cost.
 
-**Recommended host: one Nebius CPU VM.** [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) sets up the gateway with Docker Compose and Caddy (automatic HTTPS) on a 2 vCPU / 8 GB VM, with the budget guard, an opt-in edge guard for `/v1/*`, backups, monitoring, updates and teardown. It starts in mock mode with a warmed-up student. The points below still apply to it.
+**Recommended host: one Nebius CPU VM.** [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) sets up the gateway with Docker Compose and Caddy (automatic HTTPS) on a 2 vCPU / 8 GB VM, with the budget guard, an opt-in edge guard for `/v1/*` and `/openai/*`, backups, monitoring, updates and teardown. It starts in mock mode with a warmed-up student. The points below still apply to it.
 
 1. **Host the gateway in mock mode as the public demo.** The dashboard with Run day, Break next deploy and Reset is safe, costs nothing and never breaks. Label it "simulation".
 2. **For the live path,** keep a second gateway in live mode with `RATCHET_STUDENT_BASE` **unset**. Student calls then go to the hosted, untuned `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on Token Factory, and you pay per token instead of per GPU-hour. Be honest that this is the fallback, not the tuned student. Note that a version's calibrated threshold was set for the tuned adapter, so precision on the fallback may be lower; audits will show it.

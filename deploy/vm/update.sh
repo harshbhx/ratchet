@@ -42,7 +42,7 @@ docker compose exec -T ratchet python -c \
 domain="$(env_get RATCHET_DOMAIN)"
 fail=0
 if [[ -n "$domain" ]]; then
-  # Public routes only: /v1/* may be blocked at the edge when RATCHET_API_GUARD=guarded.
+  # Public routes only: /v1/* and /openai/* may be blocked at the edge when RATCHET_API_GUARD=guarded.
   for path in / /ratchet/stats /dashboard /scout; do
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${domain}${path}" || echo 000)"
     echo "https://${domain}${path} -> ${code}"
