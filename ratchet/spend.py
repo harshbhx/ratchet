@@ -114,6 +114,20 @@ def _wall() -> float:
     return time.time()  # looked up on every call, so a test that replaces time.time moves this clock too
 
 
+class Hold:
+    """Room under a key's daily request quota kept for a request in flight (`SpendMeter.hold`). Released when the
+    request is counted (`SpendMeter.add(..., hold=...)`), or by `release()` when it ends without being counted (it
+    failed); either way once."""
+
+    __slots__ = ("meter", "client", "n")
+
+    def __init__(self, meter: SpendMeter, client: str | None, n: int) -> None:
+        self.meter, self.client, self.n = meter, client, n
+
+    def release(self) -> None:
+        self.meter.release(self)
+
+
 class SpendMeter:
     """Requests and US dollars per key and for the gateway, per UTC day and month (module docstring). `clock` is the
     wall clock in seconds since the epoch (default `time.time`, read at each call). The key None counts requests sent
@@ -126,6 +140,7 @@ class SpendMeter:
         self.months = bool(self.caps.monthly_usd)  # this month's spend is read from the ledger only when a cap needs it
         self._lock = threading.Lock()
         self._requests: dict[str | None, int] = {}
+        self._held: dict[str | None, int] = {}  # requests admitted under the daily quota that are not counted yet
         self._day_usd: dict[str | None, float] = {}
         self._month_usd: dict[str | None, float] = {}
         self._gateway_usd = 0.0
@@ -196,16 +211,50 @@ class SpendMeter:
             now,
         )
 
-    def add(self, client: str | None, usd: float, requests: int = 1) -> Usage:
+    def hold(self, client: str | None, need: int, limit: int) -> Hold | None:
+        """Admit `need` requests of `client`'s daily quota `limit` atomically: the answered requests so far plus those
+        other requests in flight hold, plus `need`, must fit in `limit`; then `need` more are held until the request is
+        counted or released. None when they do not fit. This closes the gap between the quota check and the row that
+        counts the request: N concurrent requests no longer all read the same count and all pass."""
+        with self._lock:
+            self._sync(self.clock())
+            if self._requests.get(client, 0) + self._held.get(client, 0) + need > limit:
+                return None
+            self._held[client] = self._held.get(client, 0) + need
+            return Hold(self, client, need)
+
+    def held(self, client: str | None) -> int:
+        """Requests of `client` admitted under its quota and still in flight."""
+        with self._lock:
+            return self._held.get(client, 0)
+
+    def release(self, hold: Hold) -> None:
+        """Give a hold's room back (idempotent)."""
+        with self._lock:
+            self._release(hold)
+
+    def _release(self, hold: Hold) -> None:
+        if hold.n:
+            left = self._held.get(hold.client, 0) - hold.n
+            if left > 0:
+                self._held[hold.client] = left
+            else:
+                self._held.pop(hold.client, None)
+            hold.n = 0
+
+    def add(self, client: str | None, usd: float, requests: int = 1, hold: Hold | None = None) -> Usage:
         """Count `requests` answered requests (0 for spend that lands later, or for a failed request's spend) and `usd`
         dollars for `client`, then write any budget alert this crossed. A negative, NaN or infinite cost (a misconfigured
-        price) counts as 0 and never raises on the request path. Returns the client's usage after it."""
+        price) counts as 0 and never raises on the request path. With `hold`, the request's held room is released in the same
+        step. Returns the client's usage after it."""
         usd = float(usd) if isinstance(usd, (int, float)) and math.isfinite(usd) and usd > 0 else 0.0
         with self._lock:
             now = self.clock()
             self._sync(now)
             if requests:
                 self._requests[client] = self._requests.get(client, 0) + requests
+            if hold is not None:  # counted now: its room is no longer held, in the same step as the count
+                self._release(hold)
             if usd:
                 self._day_usd[client] = self._day_usd.get(client, 0.0) + usd
                 self._month_usd[client] = self._month_usd.get(client, 0.0) + usd

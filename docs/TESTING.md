@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1766 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1768 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -50,7 +50,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
 | `tests/test_idempotency.py` | 25 |
 | `tests/test_offpath.py` | 31 |
-| `tests/test_limits.py` | 27 |
+| `tests/test_limits.py` | 29 |
 | `tests/test_admin.py` | 38 (26 functions; one has 13 cases) |
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 21 |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1766** |
+| **Total** | **1768** |
 
 There are three layers:
 
@@ -1148,6 +1148,8 @@ Spend and rate limits ([ADR 0063](adr/0063-spend-and-rate-limits.md), FR-12.2, F
 | `test_limit_settings_are_checked_at_startup` | `limit_policy` reads the mode in any case and the shares sorted, once; thirteen bad values (a dollar default past a billion and a NaN gateway budget among them) each name their variable |
 | `test_stats_report_each_keys_spend_and_cap_and_the_security_switches` | `clients[].spent_today_usd` and `daily_cap_usd`, the three `security` keys and the `budget` block; key names only, never keys |
 | `test_router_refuses_teacher_work_under_student_only_without_a_gateway` | `RequestMeta(student_only=True)` on `Ratchet` itself: a pinned task raises `BudgetExceeded` (`pinned`) before any call and writes nothing; an unsure student raises it (`escalation`) after its samples with a `budget` row (429, the samples' cost) |
+| `test_daily_quota_holds_room_for_requests_in_flight` | FR-12.2, NFR-5: a quota of 3 with three requests held inside the teacher (none counted yet, `meter.held` 3): a fourth is 429 `daily_quota_exceeded` at once, another key still answers; when the three finish the count is 3, nothing is held and the next is refused |
+| `test_a_failed_request_gives_its_quota_room_back` | FR-12.2: a teacher error leaves nothing held and nothing counted, so a quota of 1 still admits the next request |
 
 ### `tests/test_admin.py`
 
