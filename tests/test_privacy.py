@@ -62,6 +62,17 @@ PINNED_ENV = {
 }
 
 
+# A live gateway these tests start: a teacher key (startup checks it, ADR 0070), no API keys allowed, the dashboard API
+# and /ratchet/stats readable without a key and computed afresh, no per-IP rate (ADR 0061, ADR 0060, ADR 0063).
+LIVE_ACCESS = {
+    "NEBIUS_API_KEY": "tf-test-key",
+    "RATCHET_ALLOW_UNAUTHENTICATED": "1",
+    "RATCHET_PUBLIC_DASHBOARD": "1",
+    "RATCHET_STATS_TTL_S": "0",
+    "RATCHET_IP_RPM": "0",
+}
+
+
 # ---------- helpers ----------
 def _settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = {
@@ -574,7 +585,7 @@ def test_no_train_requests_are_validated(gw_env):
 def test_removing_a_registration_needs_a_key_in_live_mode(gw_env, tmp_path):
     """Opting out is open wherever chat completions are; opting someone back in is not: without API keys, a live
     gateway removes a registration only for an admin key."""
-    live = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "live.db"), "RATCHET_STUDENT_BASE": "", "NEBIUS_API_KEY": ""}
+    live = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "live.db"), "RATCHET_STUDENT_BASE": "", **LIVE_ACCESS}
     gw = _gateway(gw_env, **live, RATCHET_ADMIN_KEYS=f"ops:{ADMIN_KEY}")
     c = TestClient(gw.app)
     assert c.post(NO_TRAIN, json={"end_user": "bob"}).status_code == 200
@@ -628,7 +639,7 @@ def test_no_train_registrations_across_key_renames_and_keys_added_later(gw_env, 
     scope, so a key added later is covered; a client's own registration lapses when its key is renamed, and the gateway
     says so at startup (a `no_train_unmatched` event, once per change, and a count in /ratchet/stats) until the name is
     back. Keyless registrations lapse the same way once keys are on."""
-    live = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "live.db"), "RATCHET_STUDENT_BASE": "", "NEBIUS_API_KEY": ""}
+    live = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "live.db"), "RATCHET_STUDENT_BASE": "", **LIVE_ACCESS}
     admin = {"RATCHET_ADMIN_KEYS": f"ops:{ADMIN_KEY}"}
 
     def load(keys: str) -> tuple[Any, TestClient]:

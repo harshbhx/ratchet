@@ -747,6 +747,9 @@ def test_old_ledger_file_gains_feedback_schema(tmp_path):
 
 
 # ---------- import ----------
+LOOKUP_TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+
+
 @pytest.mark.req("FR-13.31", "FR-3.54", "INV-12", "INV-16")
 def test_import_openai_finetune_jsonl():
     led = Ledger(":memory:")
@@ -779,7 +782,7 @@ def test_import_openai_finetune_jsonl():
         {"messages": [*_msgs("weightless"), {"role": "assistant", "content": A, "weight": 0}]},
         {"messages": [{"role": "user", "content": "no answer"}]},
         b"{not json",
-        _ft("Locked out", C, tools=[{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]),
+        _ft("Locked out", C, tools=LOOKUP_TOOLS),
     ]
     rep = _import(led, *rows)
     assert (rep.rows, rep.inserted, rep.in_file_duplicates, rep.in_file_conflicts) == (11, 3, 1, 1)
@@ -802,10 +805,11 @@ def test_import_openai_finetune_jsonl():
     assert mt["completion"] == A and "jane.roe@example.com" not in mt["messages"] and mt["redactions"] == 1
     assert [m["role"] for m in json.loads(mt["messages"])] == ["system", "user", "assistant", "user"]
     assert "weight" not in mt["messages"]
-    # The default teacher allowlist forwards no tools, so a live request's teacher answer would have no tools condition:
-    # the imported row hashes like it, and dedupes against it.
+    # The default teacher allowlist forwards tools (FR-1.41), so the imported row keeps its tools as a stored condition,
+    # as the serving teacher's parameters would (`feedback.conditions`), and hashes with them.
     locked = next(r for r in stored if "Locked out" in r["messages"])
-    assert locked["params"] is None and locked["hash"] == example_hash(TRIAGE, _msgs("Locked out"))
+    assert json.loads(locked["params"]) == {"tools": LOOKUP_TOOLS}
+    assert locked["hash"] == example_hash(TRIAGE, _msgs("Locked out"), {"tools": LOOKUP_TOOLS})
     (event,) = [e for e in led.events() if e["kind"] == "import"]
     assert event["detail"].startswith("3 of 11 rows imported into ticket-triage as human labels: 3 new")
     assert "attested: 'written by our support leads'" in event["detail"] and f"sha256 {rep.sha256[:16]}" in event["detail"]

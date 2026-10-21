@@ -711,7 +711,9 @@ def _sim_args(*extra: str) -> Any:
 
 def _decisions(res: dict[str, Any]) -> tuple[Any, ...]:
     events = [(e["day"], e["kind"], e["detail"]) for e in res["events"]]
-    return res["days"], res["totals"], res["versions"], res["nights"], events, res["served"]
+    # The latency percentiles are wall-clock time of this machine (ADR 0060), not simulation numbers.
+    days = [{k: v for k, v in d.items() if k not in ("p50_student_ms", "p95_ms")} for d in res["days"]]
+    return days, res["totals"], res["versions"], res["nights"], events, res["served"]
 
 
 def test_sealing_moves_no_simulation_number(monkeypatch):

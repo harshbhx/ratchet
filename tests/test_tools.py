@@ -1,7 +1,8 @@
 """Tool and function calling (FR-1.41, ADR 0043): a tool request (tools offered, or tool calls or results in its
 messages) goes to the teacher alone with its tools, its tool calls come back exactly as the teacher made them (also in
 the legacy `function_call` form, and as stream deltas the OpenAI SDK rebuilds), and nothing of it is stored; a request
-with a part only the teacher reads takes the same path (route `multimodal`). Models are `RecordingProvider`s, small
+with a part only the teacher reads goes to the teacher alone too, through the task's routing block (route
+`ineligible:content_type`, FR-2.50), or with tools as a tool request. Models are `RecordingProvider`s, small
 providers below, or `FakeOpenAIServer`s behind `httpx.MockTransport`; nothing calls a real API.
 """
 
@@ -633,7 +634,8 @@ def test_streamed_tool_calls_rebuild_with_the_sdks_accumulator(gw_env, tmp_path,
 @pytest.mark.req("FR-1.41", "FR-1.10", "INV-12")
 def test_multimodal_requests_are_teacher_only_with_their_own_route(gw_env):
     """With RATCHET_TEACHER_MODALITIES=text,image_url an image request skips the student and is never stored, logged
-    with route `multimodal`; no image bytes reach the ledger. A pinned task keeps its own route."""
+    with route `ineligible:content_type` (the task's routing block, FR-2.50); no image bytes reach the ledger. A pinned
+    task keeps its own route, and an image request with tools is a tool request."""
     gw = gw_env(RATCHET_TEACHER_MODALITIES="text,image_url", RATCHET_REDACT_PII="1")
     led = gw.rt.ledger
     _version(led, "live", {"threshold": 0.0})
@@ -652,13 +654,13 @@ def test_multimodal_requests_are_teacher_only_with_their_own_route(gw_env):
     r = c.post(CHAT, json={"messages": [image]}, headers={"X-Ratchet-Task": "research-plan"})
     assert r.status_code == 200
     assert [(row["task"], row["route"], row["stored"]) for row in _rows(led)] == [
-        (TRIAGE, "multimodal", 0),
+        (TRIAGE, "ineligible:content_type", 0),
         ("research-plan", "pinned", 0),
     ]
     assert "iVBORw0KGgo" not in "\n".join(led.db.iterdump())  # no image bytes anywhere in the ledger
     # An image and tools: still the teacher alone, counted as a tool request.
     r = c.post(CHAT, json={"messages": [image], "tools": WEATHER})
-    assert r.status_code == 200 and _rows(led)[-1]["route"] == "multimodal" and _rows(led)[-1]["uses_tools"] == 1
+    assert r.status_code == 200 and _rows(led)[-1]["route"] == "tools" and _rows(led)[-1]["uses_tools"] == 1
     assert student.calls == [] and led.examples() == []
 
 

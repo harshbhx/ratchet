@@ -34,10 +34,14 @@ SERVE_NOTHING = 1.01
 
 @dataclass
 class Scored:
+    """`key` is the answer's `Task.key` as `score` computed it (`INVALID` when no sample was valid; None when built
+    elsewhere), so the router's escalation rules (FR-2.50) need not parse the answer again."""
+
     answer: Completion
     confidence: float
     agreement: float
     token_prob: float | None
+    key: Any = None
 
     @property
     def valid(self) -> bool:
@@ -72,7 +76,7 @@ def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: f
     keys = [_key(task, s) for s in samples]
     valid = [i for i, k in enumerate(keys) if k is not INVALID]
     if not valid:
-        return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob)
+        return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob, INVALID)
     pairs = {(i, j): task.match(keys[i], keys[j]) for x, i in enumerate(valid) for j in valid[x:]}
 
     def agree(i: int, j: int) -> bool:
@@ -81,14 +85,15 @@ def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: f
     votes = {i: sum(1 for j in valid if agree(i, j)) for i in valid}
     top = max(votes.values())
     if top == 0:  # no key matched even itself (a comparator that is not reflexive): nothing can be served
-        return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob)
+        return Scored(samples[0], 0.0, 0.0, samples[0].mean_prob, INVALID)
     m = next(i for i in valid if votes[i] == top)
     agreement = top / len(samples)
     # The members with the top count; m is one of them even if it did not match itself.
-    best = max((samples[j] for j in valid if votes[j] == top and (j == m or agree(m, j))), key=_prob)  # first on ties
+    b = max((j for j in valid if votes[j] == top and (j == m or agree(m, j))), key=lambda j: _prob(samples[j]))  # first on ties
+    best = samples[b]
     p = best.mean_prob
     conf = agreement if p is None else w_prob * p + w_agree * agreement
-    return Scored(best, conf, agreement, p)
+    return Scored(best, conf, agreement, p, keys[b])
 
 
 def majority(task: Task, scored: Scored, samples: list[Completion], n: int) -> list[Completion] | None:

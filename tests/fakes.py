@@ -233,7 +233,8 @@ class FakeOpenAIServer:
     asks for them (`out_tokens` tokens that spell the text, `token_entries`, with the body's `top_logprobs` alternatives;
     `logprob=None` plays a server that never returns them), and usage of `in_tokens` and `out_tokens` per choice.
     `POST .../load_lora_adapter` answers `load(body)` as `(status, text)`, 200 by default. `GET .../models` lists
-    `models`. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
+    `models`. `POST .../embeddings` returns one vector of `embedding_dims` floats per input (`embeddings(body)`) with
+    `in_tokens` prompt tokens. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
     it keeps vLLM's adapter state: a chat request for a model not in it is vLLM's 404 (`The model `x` does not
     exist.`), a successful load adds the adapter, and `restart()` forgets them all. Every request is recorded as an
     `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
@@ -255,8 +256,10 @@ class FakeOpenAIServer:
         finish_reason: str | None = "stop",
         reasoning_tokens: int = 0,
         cached_tokens: int = 0,
+        embedding_dims: int = 4,
     ) -> None:
         self.text = text
+        self.embedding_dims = embedding_dims
         self.logprob = logprob
         self.in_tokens = in_tokens
         self.out_tokens = out_tokens
@@ -302,6 +305,8 @@ class FakeOpenAIServer:
                     if self.loaded is not None:
                         self.loaded.add(body["lora_name"])
             return httpx.Response(status, text=text)
+        if request.method == "POST" and path.endswith("/embeddings"):
+            return httpx.Response(200, json=self.embeddings(body))
         if request.method == "GET" and path.endswith("/models"):
             return httpx.Response(200, json={"object": "list", "data": [{"id": m, "object": "model"} for m in self.models]})
         return httpx.Response(404, json={"detail": "Not Found"})
@@ -326,6 +331,21 @@ class FakeOpenAIServer:
             "model": body["model"],
             "choices": [{"index": i, **choice} for i in range(n)],
             "usage": usage,
+        }
+
+    def embeddings(self, body: dict[str, Any]) -> dict[str, Any]:
+        """An OpenAI embeddings body: input i's vector is `[i + 1, len(str(input)), 0.5, ...]` (`embedding_dims` long)."""
+        inputs = body["input"] if isinstance(body["input"], list) and not isinstance(body["input"][0], int) else [body["input"]]
+        dims = int(body.get("dimensions") or self.embedding_dims)
+        data = [
+            {"object": "embedding", "index": i, "embedding": ([float(i + 1), float(len(str(x)))] + [0.5] * dims)[:dims]}
+            for i, x in enumerate(inputs)
+        ]
+        return {
+            "object": "list",
+            "data": data,
+            "model": body["model"],
+            "usage": {"prompt_tokens": self.in_tokens, "total_tokens": self.in_tokens},
         }
 
 

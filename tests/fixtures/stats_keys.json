@@ -55,7 +55,7 @@
       "avg_latency_ms": "number",
       "routes": "object",
       "human_feedback": "number",
-      "human_agreement": "number|null"
+      "human_agreement": "number|null",
       "audits": "number",
       "audit_agreement": "number|null",
       "threshold": "number|null",
