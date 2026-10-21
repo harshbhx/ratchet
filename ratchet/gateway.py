@@ -830,7 +830,7 @@ def _complete(
     raw: bytes, header_task: str | None, client: str | None, deployment: str | None = None
 ) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
-    messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
+    messages, _flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     # The model field names a task (or, under the strict policy, is refused); it never picks an upstream model (ADR 0048).
     model_alias = check_model(req.model, rt.routing) if deployment is None else None
     name, source = resolve_task(req, header_task, rt.routing, client=client, deployment=deployment)
@@ -851,10 +851,10 @@ def _complete(
         task = rt.keep_auto_task(task)  # a new auto task is registered and stored only for an admitted request
         if task.name != name:  # the cap filled meanwhile
             source = "default"
-    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
-    serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
+    # A part only the teacher reads (RATCHET_TEACHER_MODALITIES, `_flags.multimodal`) makes the request ineligible for
+    # the student (FR-2.50): the cascade sends it to the teacher (route `ineligible:content_type`) and stores nothing.
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
-        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n)
+        r = rt.ratchet.handle(messages, task, client=client, params=GenParams.from_request(req), n=req.n)
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise

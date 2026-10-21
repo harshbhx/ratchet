@@ -289,8 +289,9 @@ def _live_calibration(live: Version | None, task: tasks.Task) -> dict[str, Any]:
         return out
     rec = calibration.entry(live.eval, task.name)
     default = calibration.number(live.eval.get("threshold"))
-    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know.
-    if rec is not None or default is not None or calibration.spec_changed(live.eval, task):
+    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know;
+    # a task with critical classes and no measured record serves nothing whatever the global threshold (FR-2.50).
+    if rec is not None or default is not None or calibration.spec_changed(live.eval, task) or task.routing_rules.critical:
         out["threshold"] = calibration.threshold(live.eval, task, calibration.SERVE_NOTHING if default is None else default)
     if rec is not None:
         out["precision"] = calibration.number(rec.get("precision"))
