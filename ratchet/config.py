@@ -303,6 +303,9 @@ class Settings:
     # End-user attribution (FR-13.2): the HMAC key `user` and `safety_identifier` are hashed with (at least 16
     # characters). Empty = 32 random bytes generated once and kept in the ledger's meta table.
     end_user_key: str = field(default_factory=lambda: _env("RATCHET_END_USER_KEY", ""))
+    # Human feedback (FR-13.30, ADR 0091): whether a correction sent with an 'incorrect' verdict may be stored as a
+    # human-labelled training example. 0 keeps the verdicts (statistics and alerts) and stores no correction.
+    feedback_corrections: bool = field(default_factory=lambda: _bool("RATCHET_FEEDBACK_CORRECTIONS", "1"))
     # Per-key settings for API keys: "name:field=value,...;name:field=value". Only `store` (1 or 0) is built so far.
     key_limits: str = field(default_factory=lambda: _env("RATCHET_KEY_LIMITS", ""))
     # Retention and erasure (FR-13.3, FR-13.4, ADR 0081): whole days a stored example is kept after it was last seen, and a

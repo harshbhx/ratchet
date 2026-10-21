@@ -656,6 +656,16 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:Runtime.reset",
         "ratchet.router:Ratchet.__init__",
     ),
+    "FR-3.54": (
+        "ratchet.licenses:SOURCES",
+        "ratchet.licenses:lookup_source",
+        "ratchet.licenses:require_distillable",
+        "ratchet.feedback:store_label",
+        "ratchet.ledger:Ledger.add_example",
+        "ratchet.nightschool.notices:label_sources",
+        "ratchet.bom:manifest",
+        "ratchet.ledger:Ledger.bill_of_materials",
+    ),
     # 6.4 Night School
     "FR-4.1": ("ratchet.nightschool.dataset:rows", "ratchet.nightschool.dataset:build"),
     "FR-4.2": ("ratchet.nightschool.orchestrate:run_night",),
@@ -669,6 +679,12 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "FR-4.6": ("ratchet.live:NebiusTrainer", "deploy/train_job.sh"),
     "FR-4.7": ("ratchet.redact:redact", "ratchet.redact:redact_messages", "ratchet.router:Ratchet._store_example"),
+    "FR-4.50": (
+        "ratchet.nightschool.dataset:rows",
+        "ratchet.nightschool.dataset:effective_split",
+        "ratchet.feedback:held_out_ok",
+        "ratchet.ledger:Ledger.prompt_index",
+    ),
     # 6.5 Evaluation
     "FR-5.1": (
         "ratchet.nightschool.evaluate:cascade_eval",
@@ -783,6 +799,22 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:admin_export",
         "ratchet.admin:run_export",
     ),
+    "FR-13.30": (
+        "ratchet.gateway:feedback_post",
+        "ratchet.gateway:_complete",
+        "ratchet.feedback:submit",
+        "ratchet.feedback:store_human_example",
+        "ratchet.feedback:check_human_alert",
+        "ratchet.ledger:Ledger.record_feedback",
+        "ratchet.ledger:Ledger.feedback_stats",
+    ),
+    "FR-13.31": (
+        "ratchet.importer:main",
+        "ratchet.importer:run_import",
+        "ratchet.importer:parse_source",
+        "ratchet.importer:parse_row",
+        "ratchet.feedback:prepare",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -837,7 +869,12 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable", "ratchet.licenses:closed_family"),
-    "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
+    "INV-2": (
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.nightschool.dataset:rows",
+        "ratchet.feedback:store_label",  # human labels (ADR 0091): a correction or an attested import, never a verdict
+        "ratchet.feedback:submit",
+    ),
     "INV-3": ("ratchet.nightschool.dataset:rows", "ratchet.nightschool.dataset:FREQUENT", "ratchet.ledger:count_prompts"),
     "INV-4": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-5": ("ratchet.nightschool.orchestrate:run_night",),

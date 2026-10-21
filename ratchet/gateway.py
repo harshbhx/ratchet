@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, licenses, live, privacy, tasks, taskspec
+from . import __version__, feedback, licenses, live, privacy, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
 from .config import Settings
@@ -50,6 +50,7 @@ from .openai_compat import (
     INVALID_VALUE,
     MISSING,
     SERVICE_TIER,
+    TEXT_MODALITY,
     APIError,
     Limits,
     from_validation_errors,
@@ -697,6 +698,10 @@ def _complete(
 ) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
     meta_in = _request_meta(req, client, header_store)
+    # The request's id ('req_' + 32 hex), logged with its row and returned as `ratchet.request_id`; the completion id
+    # carries the same digits. Feedback names the request by either (FR-13.30).
+    digits = uuid.uuid4().hex
+    meta_in.request_id, cid = feedback.REQUEST_PREFIX + digits, feedback.COMPLETION_PREFIX + digits
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
     try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
         task = rt.ratchet.task_for(header_task or req.task, client)
@@ -728,13 +733,14 @@ def _complete(
         "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
         "stored": r.stored,  # a teacher answer of this request became (or bumped) a training example
         "store_opt_out": r.store_opt_out,  # why it could not be stored (privacy.OPT_OUTS), or null (FR-13.1)
+        "request_id": meta_in.request_id,  # what POST /v1/ratchet/feedback names this request by (FR-13.30)
     }
     # OpenAI echoes `metadata`; never stored (FR-13.1).
     echo = {"metadata": req.metadata} if req.metadata is not None else {}
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
-    cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
+    created = int(time.time())
     headers["X-Ratchet-Served-By"] = r.served_by
     if r.degraded:
         headers["X-Ratchet-Degraded"] = r.degraded
@@ -789,6 +795,107 @@ def _complete(
 
     headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
+
+
+# ----- human feedback (FR-13.30, ADR 0091) -----
+FEEDBACK_KEYS = ("request_id", "verdict", "corrected")
+# What a correction carries of the request it corrects: its messages (request rows hold no text), the conditions that
+# give it the same example hash as the teacher's answer, and the end user it named (hashed only).
+CORRECTION_KEYS = ("messages", "response_format", "tools", "tool_choice", "stop", "user", "safety_identifier")
+
+
+@app.post("/v1/ratchet/feedback")
+async def feedback_post(
+    request: Request, authorization: str | None = Header(default=None), x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """A verdict on an answer this gateway served: `{"request_id", "verdict": "correct"|"incorrect"}`, the request id
+    from the response's `ratchet.request_id` (or its completion id). With `incorrect`, `corrected` (the right answer)
+    and the request's `messages` (and the conditions and end user it carried) store a human-labelled training example,
+    unless a storage opt-out or the task's pinning keeps it out; a `correct` verdict never stores anything. An API key
+    reaches its own requests only (any other request id is a 404); open where chat completions are."""
+    client = _client(authorization, x_api_key)
+    raw = await _body(request)
+    return await anyio.to_thread.run_sync(functools.partial(_feedback, raw, client))
+
+
+def _feedback_body(raw: bytes) -> tuple[str, str, str | None, dict[str, Any]]:
+    """(request id, verdict, corrected, the correction's request fields) from a feedback body, or a 400."""
+    body = parse_body(raw)
+    if not isinstance(body, dict):
+        raise APIError(400, "The request body must be a JSON object.", INVALID_REQUEST, INVALID_TYPE)
+    unknown = sorted(set(body) - set(FEEDBACK_KEYS) - set(CORRECTION_KEYS))
+    if unknown:
+        message = f"Unknown parameter {_short_name(unknown[0])}; use {', '.join(map(repr, FEEDBACK_KEYS + CORRECTION_KEYS))}."
+        raise APIError(400, message, INVALID_REQUEST, "unknown_parameter", param=_short_name(unknown[0]))
+    for key in ("request_id", "verdict"):
+        if body.get(key) is None:
+            raise APIError(400, f"Missing required parameter: '{key}'.", INVALID_REQUEST, MISSING, key)
+    rid = feedback.parse_request_id(body["request_id"])
+    if rid is None:  # never quoted back
+        message = "Invalid value for 'request_id': use the response's ratchet.request_id (req_...) or its id (chatcmpl-...)."
+        raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, "request_id")
+    verdict = body["verdict"]
+    if verdict not in feedback.VERDICTS:
+        message = f"Invalid value for 'verdict': use one of {list(feedback.VERDICTS)}."
+        raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, "verdict")
+    corrected = body.get("corrected")
+    if corrected is not None and not isinstance(corrected, str):
+        raise APIError(400, "Invalid type for 'corrected': expected a string.", INVALID_REQUEST, INVALID_TYPE, "corrected")
+    fields = {k: body[k] for k in CORRECTION_KEYS if k in body}
+    if corrected is None:
+        if fields:
+            key = next(iter(fields))
+            message = f"'{key}' describes the request a correction is for: send it with 'corrected', or leave it out."
+            raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, key)
+        return rid, verdict, None, {}
+    if verdict != "incorrect":
+        message = "A correction goes with the verdict 'incorrect' only; a 'correct' verdict stores nothing."
+        raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, "corrected")
+    if "messages" not in fields:
+        message = "Missing required parameter: 'messages'. A correction needs the request's messages (no text is logged)."
+        raise APIError(400, message, INVALID_REQUEST, MISSING, "messages")
+    limit = rt.limits.max_input_chars
+    if limit > 0 and len(corrected) > limit:
+        message = f"The correction holds {len(corrected)} characters; this gateway accepts at most {limit}."
+        raise APIError(400, message, INVALID_REQUEST, INVALID_VALUE, "corrected")
+    return rid, verdict, corrected, fields
+
+
+def _feedback(raw: bytes, client: str | None) -> dict[str, Any]:
+    rid, verdict, corrected, fields = _feedback_body(raw)
+    correction = None
+    if corrected is not None:
+        # The request's fields go through the chat route's own validation and normalisation, so a correction of the same
+        # request has the same messages, conditions and example hash as the teacher's answer. Text parts only: a request
+        # with an image part was the teacher's alone and is never stored.
+        req = validate_chat_request(fields, rt.limits)
+        messages, _ = normalize_messages(req.messages, frozenset({TEXT_MODALITY}), rt.settings.merge_system)
+        correction = feedback.Correction(
+            messages,
+            corrected,
+            feedback.conditions(rt.ratchet.gen, GenParams.from_request(req)),
+            privacy.end_user_ids(req.user, req.safety_identifier),
+        )
+    limits = rt.key_limits.get(client) if client is not None else None
+    try:
+        return feedback.submit(
+            rt.ledger,
+            rt.ratchet,
+            rid,
+            client,
+            verdict,
+            correction,
+            end_users=rt.end_users,
+            key_store=limits is None or limits.store,
+            policy=rt.gate.policy,
+        )
+    except feedback.FeedbackNotFound as e:  # unknown, folded by retention, or another key's: one answer for all three
+        message = "No request with that id for this API key."
+        raise APIError(404, message, INVALID_REQUEST, "request_not_found", "request_id") from e
+    except feedback.FeedbackError as e:
+        raise APIError(400, str(e), INVALID_REQUEST, e.code, e.param) from e
+    except feedback.FeedbackConflict as e:
+        raise APIError(409, str(e), INVALID_REQUEST, e.code, "verdict") from e
 
 
 # ----- end users who opt out of training (FR-13.2, ADR 0080) -----
@@ -1033,6 +1140,9 @@ def stats() -> dict[str, Any]:
             "bom_key_id": rt.signer.key_id if rt.signer else None,
         },
         "cost": stats_block(cost_report(led, rt.settings)),
+        # Human verdicts and labels (FR-13.30, FR-3.54): counts only. Human precision is reported and alerted on, never
+        # used to promote or roll back.
+        "feedback": {**led.feedback_stats(), "corrections": rt.settings.feedback_corrections},
     }
 
 

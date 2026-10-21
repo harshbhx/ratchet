@@ -24,6 +24,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/v1/ratchet/no-train` | both | Register an end user whose requests are never stored as training examples ([End users and storage](#end-users-and-storage)) |
 | DELETE | `/v1/ratchet/no-train` | both | Remove a no-train registration (API key, or admin key) |
 | DELETE | `/v1/ratchet/examples` | both | Erase the stored examples of one of the caller's end users ([Erasure and export](#erasure-and-export)) |
+| POST | `/v1/ratchet/feedback` | both | A verdict on a served answer, optionally with a correction stored as a human label ([Feedback](#feedback)) |
 | GET | `/ratchet/stats` | both | Everything the dashboard shows |
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
@@ -178,7 +179,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 
 ```json
 {
-  "id": "chatcmpl-3f1c0a9b8e7d6c5b4a3f2e1d",
+  "id": "chatcmpl-3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
   "object": "chat.completion",
   "created": 1792400000,
   "model": "student-v5",
@@ -213,7 +214,8 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
     },
     "degraded": null,
     "stored": false,
-    "store_opt_out": null
+    "store_opt_out": null,
+    "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79"
   }
 }
 ```
@@ -230,6 +232,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `degraded` | `null`, or `"teacher_unavailable"` when the teacher (and the fallback teacher, if set) could not answer an escalated request and, with `RATCHET_ON_TEACHER_FAILURE=serve_student`, the student's own answer was served although it was below the version's threshold ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)). Such an answer is never stored, audited or shadowed; `served_by` is `student` and `escalated` is `true` |
 | `stored` | `true` when a teacher answer of this request was stored as a training example, or matched one already stored (its repeat count went up); `false` otherwise, including every student answer that was not audited |
 | `store_opt_out` | `null`, or why this request's teacher answers could not be stored: `global` (`RATCHET_STORE_EXAMPLES=0`), `task` (a no-store task), `key` (the API key has `store=0`), `request` (`store: false`, `X-Ratchet-Store` or `metadata.ratchet_store`) or `end_user` (a no-train end user) ([End users and storage](#end-users-and-storage)) |
+| `request_id` | The request's id, `req_` and 32 hex digits; the response's `id` is `chatcmpl-` and the same digits. It is logged with the request's row (never its text) and names the request in [`POST /v1/ratchet/feedback`](#feedback) |
 | `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call; every choice, for `n` > 1), `audit`, `shadow` (the candidate's samples) and `arbitration` ([Usage](#usage)) |
 
 A request that sent `metadata` gets it back as a top-level `metadata` field, as OpenAI echoes it (in a stream, on the chunk that carries the `ratchet` block). It is never stored.
@@ -452,6 +455,60 @@ From then on, requests from that end user are answered as usual but never stored
 
 The same JSON body as `POST`, never a query string (access logs keep URLs). Removes the registration, so that end user's requests are stored again. The response lists each client scope with a `status`: `removed`, `kept` (the end user is still no-train there: an admin registered it in that scope, which an API key cannot remove, or an admin's registration for every client still covers it) or `absent`. An API key removes its own end users' registrations; an admin key removes any, for a named `client`, or with none in every scope: each configured key, the keyless scope, every scope a registration is stored in (also a renamed key's) and `"*"`. Without API keys, a live gateway answers 403 unless an admin key is sent, so nobody can switch storage back on for someone else's end users; the mock demo stays open, and its keyless callers get `status: null`, as they get `created: null` from `POST`.
 
+## Feedback
+
+People who use the answers know when one is wrong. `POST /v1/ratchet/feedback` records their verdict on an answer the gateway served and, with a correction, stores the right answer as a training example whose provenance is `human` ([ADR 0091](adr/0091-human-labels-as-a-provenance-source.md)). The student's own text never becomes one (invariant 2): the gateway never kept it, and a `correct` verdict stores nothing.
+
+### POST `/v1/ratchet/feedback`
+
+```bash
+# A verdict only: counts toward the task's human agreement and the version's human precision.
+curl -X POST localhost:8000/v1/ratchet/feedback -H "Authorization: Bearer $KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79", "verdict": "correct"}'
+
+# A correction: the right answer and the request's messages, exactly as the chat request sent them.
+curl -X POST localhost:8000/v1/ratchet/feedback -H "Authorization: Bearer $KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79", "verdict": "incorrect",
+          "corrected": "{\"category\": \"refund\", \"priority\": \"low\"}",
+          "messages": [{"role": "user", "content": "Where is my refund for order 1234?"}]}'
+```
+
+| Field | Meaning |
+|---|---|
+| `request_id` | Required. The response's `ratchet.request_id` (`req_…`), or its `id` (`chatcmpl-…`) |
+| `verdict` | Required. `correct` or `incorrect` |
+| `corrected` | The right answer, with `incorrect` only. It is cleaned as an answer is served (`tasks.clean_answer`) and must be valid under the task's spec: JSON that parses, every required field, labels in their vocabulary (else **400** `invalid_correction`); at most `RATCHET_MAX_INPUT_CHARS` characters |
+| `messages` | Required with `corrected`, and only with it: the request's messages, because request rows hold no text. They are validated and normalised exactly as the chat route does (`developer` becomes `system`, text parts are joined), text parts only |
+| `response_format`, `tools`, `tool_choice`, `stop` | The request's conditions, when it sent any, so the correction has the same example hash as the teacher's answer to that request and replaces it. Without them, a correction of a request that had conditions is another variant of the prompt, in the same split |
+| `user`, `safety_identifier` | The end user the request named. Required with a correction when the request named one (**400** `end_user_required`), and it must be the same (**400** `end_user_mismatch`): only with the value can every no-train registration of that end user, the admin's every-client one included, keep the correction out. Hashed only, never stored |
+
+The response:
+
+```json
+{"object": "ratchet.feedback", "request_id": "req_3f1c…", "verdict": "incorrect", "updated": false,
+ "correction": {"stored": true, "not_stored": null, "split": "train", "replaced": "teacher"}}
+```
+
+`updated` is `true` when an earlier verdict on the same request was replaced: there is one verdict per request, the latest. `correction` is `null` without one; otherwise `stored`, with `split` (the split the example's hash gives, invariant 3) and `replaced` (`teacher` when the correction replaced the teacher's stored answer to the same request, `human` when it replaced an earlier correction of the same request, else `null`), or `not_stored` saying why not:
+
+| `not_stored` | Why |
+|---|---|
+| `global`, `task`, `key`, `request`, `end_user` | A storage opt-out: the request's own (as it was recorded), or one in force now (zero retention, a no-store task, the key's `store=0`, an end user registered as no-train since) ([End users and storage](#end-users-and-storage)) |
+| `corrections_off` | `RATCHET_FEEDBACK_CORRECTIONS=0`: verdicts are kept, corrections are not |
+| `pinned` | The task is pinned: its answers are never training examples (invariant 10) |
+| `unknown_task`, `teacher_only` | The request was answered by the teacher alone and is never distilled: an unregistered task under `RATCHET_UNKNOWN_TASKS` `teacher` or `reject`, or a request with a part only the teacher reads |
+| `invalid after redaction` | A redaction placeholder breaks the structured answer (as for a teacher answer) |
+| `human_label_exists` | The example already has an equal or stronger human label: another client's correction, or an operator's import (`python -m ratchet.importer`). The first client's correction stands, and an import beats any correction |
+| `erased` | The example was erased (FR-13.3) and is never stored again |
+
+A correction that is stored becomes a training example like a teacher's, with `teacher_model` `human`, license `customer-provided labels` and `verified` 1, redacted when `RATCHET_REDACT_PII` is on, attributed to the API key (and the end user's hash). It replaces the teacher's answer on the same example hash (a human label beats a teacher's; a later teacher answer only bumps `seen`). A request is corrected once: the same messages and conditions again replace that correction (a fix); other messages are **409** `correction_exists`, and so is a `correct` verdict after a stored correction (erase the example to withdraw it).
+
+Rules: an API key reaches its own requests only; another key's request id, an unknown one and one whose row request retention folded are the same **404** `request_not_found`. With API keys off it is open, like chat completions, and reaches requests sent without a key. The volume is bounded by the requests a key may send: one verdict row and at most one stored correction per request. Errors use OpenAI's envelope (400, 401, 404, 409); a refused call records nothing.
+
+Human precision, the share of `correct` verdicts on the answers a version served itself (route `student`), is reported in `/ratchet/stats` → `feedback.by_version` with its 95% Wilson bounds. It is never used to promote or roll back a version, because clients report what they notice; the audited precision stays the release signal. Once a version has at least `RATCHET_MIN_AUDITS` verdicts and the upper bound is below `RATCHET_LIVE_FLOOR`, one `human_alert` event says so (see the runbook).
+
 ## Erasure and export
 
 [ADR 0081](adr/0081-retention-tombstones-erasure-and-export.md), FR-13.3 to FR-13.5. An opt-out keeps new data out; these remove what was stored, and hand it over.
@@ -550,15 +607,16 @@ Needs a key when `RATCHET_API_KEYS` is set.
   "tasks": [
     {"task": "ticket-triage", "pinned": false, "requests": 12000, "student_share": 0.84, "escalation_rate": 0.06,
      "cost_usd": 3.21, "baseline_usd": 13.1, "savings_pct": 0.75, "avg_latency_ms": 640.0,
-     "routes": {"student": 10080, "cold_start": 1100, "confidence": 720, "student_error": 60, "student_breaker": 40}},
+     "routes": {"student": 10080, "cold_start": 1100, "confidence": 720, "student_error": 60, "student_breaker": 40},
+     "human_feedback": 40, "human_agreement": 0.925},
     {"task": "research-plan", "pinned": true, "requests": 3, "student_share": 0.0, "escalation_rate": 0.0,
      "cost_usd": 0.0039, "baseline_usd": 0.0039, "savings_pct": 0.0, "avg_latency_ms": 2400.0,
-     "routes": {"pinned": 3}}
+     "routes": {"pinned": 3}, "human_feedback": 0, "human_agreement": null}
   ],
   "events": [{"id": 57, "ts": 1792400000.0, "day": 9, "kind": "live", "detail": "v5 promoted to 100% (audited precision 94.1%, n=17)"}],
   "totals": {"requests": 13500, "cost_usd": 5.21, "baseline_usd": 14.58, "saved_usd": 9.37, "savings_pct": 0.64,
              "cost_model": "per_token"},
-  "bill_of_materials": {"generated_at": 1792400000.0, "examples_sha256": "07ac2c…", "sources": [ … ]},
+  "bill_of_materials": {"generated_at": 1792400000.0, "examples_sha256": "07ac2c…", "sources": [ … ], "label_sources": [ … ]},
   "clients": [
     {"client": "acme", "requests": 40, "student_share": 0.95, "cost_usd": 0.0044, "baseline_usd": 0.044, "savings_pct": 0.9,
      "end_users": 12, "stored_share": 0.05}
@@ -572,7 +630,10 @@ Needs a key when `RATCHET_API_KEYS` is set.
               "rolled_up_requests": 120400},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
-           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"}
+           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
+  "feedback": {"verdicts": 40, "correct": 37, "incorrect": 3, "corrections_sent": 3, "corrections_stored": 2,
+               "human_examples": 152, "golden_only_examples": 120, "corrections": true,
+               "by_version": [{"version": 5, "verdicts": 31, "correct": 29, "precision": 0.935, "lower": 0.793, "upper": 0.982}]}
 }
 ```
 
@@ -593,13 +654,14 @@ Needs a key when `RATCHET_API_KEYS` is set.
   | `unknown_task` | teacher | The task is not registered and `RATCHET_UNKNOWN_TASKS=teacher`: the student was not called and nothing was stored ([Tasks](#tasks)) |
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
-  Later versions add routes; a client should show an unknown route as it is.
+  Later versions add routes; a client should show an unknown route as it is. `human_feedback` counts the task's requests that got a verdict ([Feedback](#feedback)), the latest per request, and `human_agreement` is the share of them judged `correct` (`null` without any).
 - `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash; only rows still kept count, since folded rows keep no end user); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5).
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256).
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
+- `feedback`: human verdicts and labels ([Feedback](#feedback), `Ledger.feedback_stats`): verdicts in all, `correct` and `incorrect`, corrections sent and stored, examples that still have their text whose label a person wrote (`human_examples`, `verified` = 1: corrections and human imports) and golden-only examples (`golden_only_examples`), whether corrections may be stored (`corrections`, `RATCHET_FEEDBACK_CORRECTIONS`), and per version the human precision of the answers it served itself (route `student`) with its 95% Wilson bounds (`by_version`). Reported and alerted on (`human_alert`), never used to promote or roll back. Counts only, never a request id.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
@@ -615,11 +677,14 @@ Compatibility: the keys the dashboard reads are listed with their JSON types in 
      "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
      "split": "train", "n": 2085}
   ],
+  "label_sources": [
+    {"teacher_model": "human", "license": "customer-provided labels", "license_url": "", "split": "golden", "n": 120}
+  ],
   "purged_examples": 61
 }
 ```
 
-`examples_sha256` is a SHA-256 over the hashes of the examples that still have their text, in sorted order, and `sources` counts those; `purged_examples` counts the ones whose text a retention window or an erasure removed ([Erasure and export](#erasure-and-export)), so a purge changes the fingerprint. Two ledgers with the same kept examples give the same fingerprint. Each adapter's own BOM (below) is never changed.
+`examples_sha256` is a SHA-256 over the hashes of the examples that still have their text, in sorted order, and `sources` counts those written by a teacher; `label_sources` counts those whose label a person wrote (provenance `human`: feedback corrections and imports, [ADR 0091](adr/0091-human-labels-as-a-provenance-source.md)), listed apart because they are not a teacher's; `purged_examples` counts the ones whose text a retention window or an erasure removed ([Erasure and export](#erasure-and-export)), so a purge changes the fingerprint. Two ledgers with the same kept examples give the same fingerprint. Each adapter's own BOM (below) is never changed.
 
 ## GET `/ratchet/versions/{id}/bom`
 
@@ -634,10 +699,11 @@ The bill of materials of one adapter, written by Night School right after traini
     "adapter": {"version": 1, "name": "student-v1", "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "day": 1},
     "training": {"examples": 1029, "dataset_sha256": "478eef…", "tasks": {"ticket-triage": 420, "source-triage": 362, "page-read": 247},
                  "targets": "teacher answers only", "examples_with_pii_redacted": 0, "origins": {"live": 1029}},
-    "golden": {"examples": 110, "sha256": "cbce0e…", "held_out": true},
+    "golden": {"examples": 110, "sha256": "cbce0e…", "held_out": true, "human_labels": 0},
     "sources": [{"teacher": "nvidia/Nemotron-3-Ultra-550b-a55b", "license": "OpenMDW-1.1",
                  "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
                  "license_origin": "builtin", "distill_ok": true, "examples": 1029}],
+    "label_sources": [],
     "base_model_license": {"name": "NVIDIA Nemotron Open Model License",
                            "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"},
     "notices": [{"file": "NOTICE.md", "sha256": "5d0c3a…", "text": "# NOTICE\n\nThis folder holds a LoRA adapter…"}],
@@ -654,6 +720,7 @@ The bill of materials of one adapter, written by Night School right after traini
 - `training.dataset_sha256` equals the version's `dataset_hash`; `golden.sha256` fingerprints the golden rows the evaluation used. The `eval` block is the evaluation at training time; later re-checks update `/ratchet/stats` but not the signed BOM.
 - Schema `ratchet.bom/v2` ([ADR 0024](adr/0024-evidence-foundations.md)) keeps every v1 field and adds `training.origins` (training rows by where they came from; `live` for rows that did not record it) and `redactor` (a SHA-256 over the redaction rules, the number of rules, and whether redaction was on; `null` when the writer did not say). Later features add optional sections: `training.commitment` and `golden.commitment` (`{"alg": "ratchet.smt/v1", "root", "size"}`), `teacher`, `backfill_jobs` and `erasures_honored`. Adapters trained before keep their v1 documents, which still verify; any other schema is refused as unknown.
 - The licenses travel with the adapter (NFR-9, [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)): `base_model_license` is the license of the base model the adapter runs on (`{name, url}` from `ratchet.licenses.BASE_MODELS`; for a base model Ratchet does not know, `name` and `url` are `null` and `warning` says to find and ship its license); `notices` holds the exact `NOTICE.md` that goes next to the adapter weights (the base model's license, each teacher's license and URL, teacher outputs only, the Ratchet version) with its SHA-256, so the file can be checked against the signed BOM; each source's `license_origin` is `builtin` (Ratchet's registry) or `config` (added by the operator in `RATCHET_TEACHER_LICENSES`). v2 documents written before these fields still verify. `python -m ratchet.live export --version N --out DIR` writes the adapter folder with this BOM and its `NOTICE.md` ([DEPLOYMENT.md](DEPLOYMENT.md#export-an-adapter-with-its-licenses)).
+- Human labels are not teachers ([ADR 0091](adr/0091-human-labels-as-a-provenance-source.md)): `sources` lists teachers only, and `label_sources` lists the training rows whose label a person wrote (`[{"source": "human", "license": "customer-provided labels", "note", "distill_ok": true, "examples", "origins": {"feedback": n, "import": n}}]`; empty without any). With human labels among the targets, `training.targets` is `teacher answers and customer-attested human labels` and the NOTICE gets a **Human labels** section; an adapter without them gets the same text as before. `golden.human_labels` counts golden rows whose reference a person wrote (a human-verified golden set). v2 documents written before these fields still verify.
 
 Verify a downloaded BOM against the public key you published:
 

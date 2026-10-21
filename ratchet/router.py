@@ -171,7 +171,8 @@ class Result:
     equals their sum up to float rounding.
 
     `request_id` is the id of the request's row in the ledger (`Ledger.log_request`'s return value): what a receipt
-    or a replay names the request by. It is not `RequestMeta.request_id`, the caller's own id for the request."""
+    or a replay names the request by. It is not `RequestMeta.request_id`, the gateway's `req_...` id for the request,
+    which the row records in `requests.request_id` (what feedback names the request by, FR-13.30)."""
 
     text: str
     served_by: str
@@ -831,6 +832,7 @@ class Ratchet:
             stored=0,
             end_user=meta.end_user if meta is not None else None,
             store_opt_out=opt_out,
+            request_id=meta.request_id if meta is not None else None,
         )
         choices = _choices(task, served, params)
         return Result(
@@ -1123,6 +1125,7 @@ class Ratchet:
             stored=int(stored),
             end_user=meta.end_user,
             store_opt_out=opt_out,
+            request_id=meta.request_id if meta is not None else None,
         )
         choices = _choices(task, served_choices, params)
         return Result(

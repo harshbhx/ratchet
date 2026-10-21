@@ -86,6 +86,17 @@ def request_opts_out(store: bool | None, metadata: Mapping[str, str] | None, hea
     return store is False or header is False or (meta is not None and STORE_METADATA.get(meta.strip().lower()) is False)
 
 
+def store_opt_out(settings: Any, task: Any) -> str | None:
+    """Why no label of `task` may be stored, whatever request or file it came from: `global` (RATCHET_STORE_EXAMPLES=0,
+    zero retention) or `task` (its spec's `store: false`, or RATCHET_NO_STORE_TASKS), else None. The checks of
+    `Ratchet.store_opt_out` that need no request, for writers without one: human corrections and imports (ADR 0091)."""
+    if not settings.store_examples:
+        return "global"
+    if not task.store or task.name in settings.no_store_task_names():
+        return "task"
+    return None
+
+
 def end_user_of(user: str | None, safety_identifier: str | None) -> str | None:
     """The request's end user: `safety_identifier`, else `user` (OpenAI's newer field wins). An empty string is no end
     user. The value is only ever hashed (`EndUsers.hash`), whole, whatever its length."""

@@ -15,7 +15,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .notices import sources, write_notices
+from .notices import label_sources, sources, write_notices
 
 
 def load_rows(path: str) -> list[dict]:
@@ -41,7 +41,7 @@ def write_metadata(out: str | Path, base: str, rows: list[dict]) -> list[Path]:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "ratchet_manifest.json"
     path.write_text(json.dumps(manifest(base, rows), indent=2, default=list))
-    return [path, write_notices(folder, base, sources(rows))]
+    return [path, write_notices(folder, base, sources(rows), label_sources=label_sources(rows))]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

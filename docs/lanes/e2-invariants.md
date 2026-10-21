@@ -57,3 +57,104 @@ a NOTICE rendered from what it records.
   `verify`); v1 and early v2 documents still verify and get a rendered NOTICE.
 - `test_export_bundle`: the exported `NOTICE.md` is the BOM's text, replacing the training job's copy; a stored BOM
   that does not verify is refused.
+
+## Amendment to invariant 2: human labels are targets, student outputs never (DATA-FEEDBACK-IMPORT)
+
+**Text (already applied to invariant 2 in CLAUDE.md on this branch, because its old wording, "teacher answers only", is
+no longer true here).** **Never train on student outputs.** Training targets are teacher answers or customer-attested
+human labels (provenance `human`: feedback corrections and attested imports), never student outputs (avoids model
+collapse). A verdict is never a label: a `correct` verdict stores nothing. See
+[ADR 0091](../adr/0091-human-labels-as-a-provenance-source.md).
+
+**Enforcing code.**
+
+- `ratchet.feedback:submit` (a correction goes with `incorrect` only; a `correct` verdict writes the `feedback` row and
+  nothing else) and `ratchet.gateway:_feedback_body` (the same rule at the edge, before anything is read)
+- `ratchet.feedback:store_label`, the only caller of `Ledger.add_example` besides `Ratchet._store_example`
+  (`ALLOWED_ADD_EXAMPLE_CALLERS` in `tests/test_nightschool.py`): its source is `licenses.HUMAN` or an open teacher that
+  passes `licenses.require_distillable`
+- `ratchet.nightschool.dataset:rows` (`licenses.lookup_source`: a teacher in the registry, or `human`; anything else is
+  dropped)
+
+**Proving tests** (marked `INV-2`).
+
+- `tests/test_feedback.py::test_correct_verdict_never_creates_example`: a `correct` verdict on a student answer stores
+  no example and calls no model; a `correct` verdict with the student's own text as `corrected` is a 400.
+- `tests/test_feedback.py::test_corrected_feedback_stored_with_human_provenance_redacted_and_verified`
+- `tests/test_nightschool.py::test_add_example_called_only_from_allowed_callers`
+
+## Amendment to invariant 16: the second writer of examples (DATA-FEEDBACK-IMPORT)
+
+**Text (replace "`Ratchet._store_example` (the one caller of `Ledger.add_example`)" in invariant 16).**
+`Ratchet._store_example` and `feedback.store_label` (human and imported labels, ADR 0091) are the only callers of
+`Ledger.add_example`. `store_label` stores a label only when it is valid under the task's spec after
+`tasks.clean_answer` (`Task.check`, also after redaction; `feedback.prepare`); a correction the spec refuses is a 400,
+an imported row the spec refuses is counted as invalid. On an existing example a label replaces the stored one only
+when it is stronger (teacher < a client's correction < an operator's import) or as strong and from the same writer,
+decided and written in one write transaction (`Ledger.atomic`).
+
+**Enforcing code.** `ratchet.feedback:prepare`, `ratchet.feedback:store_label`, `ratchet.ledger:Ledger.atomic`,
+`ratchet.ledger:Ledger.add_example` (`replace`, `bump`).
+
+**Proving tests.** `tests/test_feedback.py::test_feedback_body_is_checked` (an invalid correction is a 400 and records
+nothing), `test_import_openai_finetune_jsonl` (invalid labels counted, not stored),
+`test_label_precedence_human_teacher_import`, `test_store_label_is_atomic_across_processes`.
+
+## Extension of invariant 3: golden-only rows (DATA-FEEDBACK-IMPORT)
+
+**Text (append to invariant 3).** A row imported with `--golden-only` (`examples.golden_only`) is the one example whose
+split is not its hash's: it is golden for good, never trained on even past `FREQUENT`, and so is every other variant of
+its prompt (the same task and messages under other conditions), because the trainer sees only the messages. A
+golden-only row is refused for a prompt that may already have been trained on (a variant in the train split, or seen
+`FREQUENT` times), so a human-verified golden set is held-out evidence (invariant 6). Every other label, a human one
+included, keeps its hash's split.
+
+**Enforcing code.** `ratchet.nightschool.dataset:rows` (prompts with a golden-only row are held out),
+`ratchet.nightschool.dataset:effective_split`, `ratchet.feedback:held_out_ok`, `ratchet.ledger:Ledger.prompt_index`,
+`ratchet.ledger:Ledger.add_example` (`golden_only`, sticky on a duplicate).
+
+**Proving tests** (marked `INV-3`, `INV-6`). `tests/test_feedback.py::test_golden_only_rows_never_trained`: rows whose
+hash says train stay golden, seen `FREQUENT + 2` times and under other conditions too; a prompt already in train or seen
+`FREQUENT` times is refused (`trained`); a real night trains on none of them.
+
+## Extension of invariant 10: no human label for a pinned task (DATA-FEEDBACK-IMPORT)
+
+**Text (append to invariant 10).** A pinned task takes no human or imported label either: `feedback.store_label`
+refuses one (`not_stored: pinned`), and `python -m ratchet.importer` refuses a pinned task before it reads a row; a task
+pinned after rows were imported keeps them out of Night School like any other rows.
+
+**Enforcing code.** `ratchet.feedback:store_label`, `ratchet.feedback:_policy_reason`, `ratchet.importer:check_task`,
+`ratchet.nightschool.dataset:rows`.
+
+**Proving tests** (marked `INV-10`). `tests/test_feedback.py::test_import_refuses_pinned_task`,
+`test_correction_storage_rules_still_apply`.
+
+## Extension of invariant 1: `human` is never a teacher (DATA-FEEDBACK-IMPORT)
+
+**Text (append to invariant 1).** Provenance that is not a model (`licenses.SOURCES`: `human`) is kept out of the
+teacher registry: `require_distillable` refuses a `SOURCES` name in any case (`RATCHET_TEACHER_MODEL=human` stops
+startup), a `RATCHET_TEACHER_LICENSES` entry may not use one, and readers of stored rows ask `licenses.lookup_source`.
+An import of a teacher's outputs (`--source teacher:<model>`) passes `require_distillable` and the closed-family check
+(`licenses.closed_family`, router aliases included), with the clause of the closed terms quoted.
+
+**Enforcing code.** `ratchet.licenses:require_distillable`, `ratchet.licenses:is_source`,
+`ratchet.licenses:lookup_source`, `ratchet.licenses:parse_entries`, `ratchet.importer:parse_source`.
+
+**Proving tests** (marked `INV-1`). `tests/test_feedback.py::test_teacher_model_human_refused_at_startup`,
+`test_import_refuses_closed_model_source`.
+
+## New invariant: human verdicts never decide a release (DATA-FEEDBACK-IMPORT)
+
+**Text (a new invariant, next free number).** **Human verdicts never promote or roll back a version.** Feedback
+(`POST /v1/ratchet/feedback`) feeds each task's `human_agreement` and each version's human precision on the answers it
+served itself, which `/ratchet/stats` reports and `feedback.check_human_alert` alerts on (one `human_alert` event per
+version); `ReleaseGate` never reads the `feedback` table, because clients report what they notice and the sample is
+biased. The audited precision stays the release signal. An API key gives verdicts on its own requests only; any other
+request id is the same 404 as an unknown one.
+
+**Enforcing code.** `ratchet.feedback:check_human_alert` (writes an event and a meta row, nothing else),
+`ratchet.feedback:submit` (`FeedbackNotFound` for another key's request), `ratchet.ledger:Ledger.human_precision`.
+
+**Proving tests.** `tests/test_feedback.py::test_human_precision_alerts_and_never_moves_a_release` (marked
+`FR-13.30`): verdicts below the floor write one `human_alert`, the version stays live and no `alert`, `rollback` or
+`retired` event is written; `test_feedback_only_on_own_requests` (marked `INV-13`).
