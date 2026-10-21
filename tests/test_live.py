@@ -19,12 +19,23 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, AppTransport, FakeClock, FakeOpenAIServer, RecordingProvider, RecordingRun, _examples, _version
+from fakes import (
+    OPEN_TEACHER,
+    AppTransport,
+    FakeClock,
+    FakeNebius,
+    FakeOpenAIServer,
+    RecordingProvider,
+    RecordingRun,
+    _examples,
+    _version,
+)
 from fastapi.testclient import TestClient
 
 from ratchet import bom, licenses, live
@@ -963,3 +974,402 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     backup = ROOT / "deploy" / "vm" / "backup.sh"
     r = subprocess.run([BASH, str(backup)], env={**env, "RATCHET_MODE": "mock"}, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
+
+
+# ---------- deploy scripts against a fake `nebius` (W0: the documented CLI commands) ----------
+STUDENT_ID = "aiendpoint-e00fixturestudent00"  # `ratchet-student` in tests/fixtures/nebius_endpoint_list.json (STOPPED)
+OTHER_ID = "aiendpoint-e00fixtureother0000"  # `another-endpoint` there (RUNNING)
+LIST = ["ai", "endpoint", "list", "--format", "json"]
+TRAIN_IMAGE = "cr.eu-north1.nebius.cloud/e00test/ratchet-train:0.1"
+
+
+def _deploy_env(tmp_path: Path, nebius: FakeNebius, **extra: str) -> dict[str, str]:
+    """Only these variables, with the fake `nebius` first on PATH: nothing from the shell can move a result or reach
+    Nebius. The scripts run in `tmp_path`, where a stub `ratchet.cost` logs each uptime record (`_recorded`) instead of
+    writing a ledger; tests/test_cost.py records into a real one."""
+    stub = tmp_path / "ratchet"
+    stub.mkdir(exist_ok=True)
+    (stub / "__init__.py").write_text("", encoding="utf-8")
+    log = tmp_path / "cost-calls.jsonl"
+    code = f"import json, sys\nwith open({str(log)!r}, 'a', encoding='utf-8') as f:\n"
+    code += "    f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+    (stub / "cost.py").write_text(code, encoding="utf-8")
+    base = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(tmp_path),
+        "RATCHET_PYTHON": sys.executable,
+        "RATCHET_BUCKET_ID": "bucket-e00test",
+        "RATCHET_STUDENT_KEY": STUDENT_KEY,
+        "RATCHET_TRAIN_IMAGE": TRAIN_IMAGE,
+    }
+    return nebius.env({**base, **extra})
+
+
+def _recorded(tmp_path: Path) -> list[str]:
+    """The uptime records (`up`, `down`) the scripts made since the last call, each as `ratchet.cost endpoint X
+    --source deploy`."""
+    log = tmp_path / "cost-calls.jsonl"
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    log.unlink(missing_ok=True)
+    assert all(c[0] == "endpoint" and c[2:] == ["--source", "deploy"] for c in calls), calls
+    return [c[1] for c in calls]
+
+
+def _deploy(tmp_path: Path, script: str, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    assert BASH is not None
+    cmd = [BASH, str(ROOT / "deploy" / script), *args]
+    return subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+
+
+def _opt(argv: list[str], flag: str) -> str | None:
+    """The value after `flag` in a CLI call (None when absent); a flag given twice is a bug in the script."""
+    assert argv.count(flag) <= 1, (flag, argv)
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-4.6")
+def test_train_job_uses_job_create(tmp_path):
+    """The training job is submitted with `nebius ai job create` and the flags the CLI reference documents (auto
+    generated 19-Oct-2026), never the interactive `nebius ai create --type job`; the optional subnet and registry
+    secret appear only when set, and `DRY_RUN=1` has nebius validate the request without submitting or waiting."""
+    nebius = FakeNebius(tmp_path / "nebius")
+    env = _deploy_env(tmp_path, nebius)
+
+    def run(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        nebius.clear()
+        return _deploy(tmp_path, "train_job.sh", *args, env={**env, **extra})
+
+    r = run("student-v3")
+    assert r.returncode == 0, r.stderr
+    (argv,) = nebius.calls
+    assert argv[:3] == ["ai", "job", "create"]
+    expected = {
+        "--name": "ratchet-student-v3",
+        "--image": TRAIN_IMAGE,
+        "--platform": "gpu-l40s-a",
+        "--preset": "1gpu-8vcpu-32gb",
+        "--volume": "bucket-e00test:/data",
+        "--disk-size": "200Gi",
+        "--timeout": "2h",
+        "--container-command": "bash",
+    }
+    assert {flag: _opt(argv, flag) for flag in expected} == expected
+    # The container splits --args as a shell would (Nebius's own fine-tuning tutorial relies on it): bash gets -c and
+    # one command line, with the paths ratchet.live writes the dataset to and loads the adapter from.
+    base = Settings().student_base_model
+    assert shlex.split(_opt(argv, "--args") or "") == [
+        "-c",
+        f"python -m ratchet.nightschool.train --data /data/night/train.jsonl --base {base} --out /data/adapters/student-v3",
+    ]
+    assert not {"--subnet-id", "--registry-secret", "--dry-run"} & set(argv)
+    assert "Submitted ratchet-student-v3" in r.stdout and "+ nebius ai job create" in r.stderr
+
+    r = run("student-v3", RATCHET_SUBNET_ID="vpcsubnet-e00test", RATCHET_REGISTRY_SECRET="mbsec-e00registry")
+    assert r.returncode == 0, r.stderr
+    (argv,) = nebius.calls
+    assert (_opt(argv, "--subnet-id"), _opt(argv, "--registry-secret")) == ("vpcsubnet-e00test", "mbsec-e00registry")
+
+    # A dry run asks nebius to validate the request and returns: no job, and no wait for an adapter that never comes.
+    r = run("student-v3", DRY_RUN="1", RATCHET_BUCKET_S3="s3://bucket-e00test")
+    assert r.returncode == 0, r.stderr
+    (argv,) = nebius.calls
+    assert argv[:3] == ["ai", "job", "create"] and argv[-1] == "--dry-run"
+    assert "nothing was submitted" in r.stdout and "Waiting for" not in r.stdout
+
+    # Refused before any call: a DRY_RUN that is not 0 or 1 (DRY_RUN=true must not submit a paid job), a version or
+    # base model that would break out of the job's `bash -c '...'` line, a missing image.
+    for args, extra, message in (
+        (("student-v3",), {"DRY_RUN": "true"}, "DRY_RUN must be 0 or 1"),
+        (("v3'; rm -rf /data; '",), {}, "bad version name"),
+        (("student-v3",), {"RATCHET_STUDENT_BASE_MODEL": "nvidia/x --out /tmp"}, "bad RATCHET_STUDENT_BASE_MODEL"),
+        (("student-v3",), {"RATCHET_TRAIN_IMAGE": ""}, "set RATCHET_TRAIN_IMAGE"),
+    ):
+        r = run(*args, **extra)
+        assert r.returncode != 0 and message in r.stderr and nebius.calls == [], (args, extra, r.stderr)
+
+    # A refused job fails the script, so `RATCHET_TRAIN_CMD` (and the night) stops instead of waiting for nothing.
+    nebius.fail(["ai", "job", "create"])
+    r = run("student-v3", RATCHET_BUCKET_S3="s3://bucket-e00test")
+    assert r.returncode != 0 and "Submitted" not in r.stdout and "Waiting for" not in r.stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-8.2", "FR-15.2")
+def test_endpoint_stop_and_start_use_the_id(tmp_path):
+    """`nebius ai endpoint start|stop` take the endpoint's id (`--id`), not its name: the script finds the id by name
+    in `nebius ai endpoint list --format json`, or takes RATCHET_ENDPOINT_ID and skips the lookup. `start` reuses the
+    stopped endpoint (same URL and token) and creates one only when none has the name; `status` prints id and state."""
+    nebius = FakeNebius(tmp_path / "nebius")
+    env = _deploy_env(tmp_path, nebius)
+
+    def run(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        nebius.clear()
+        return _deploy(tmp_path, "student_endpoint.sh", *args, env={**env, **extra})
+
+    running = nebius.fixture()
+    running["items"][1]["status"]["state"] = "RUNNING"
+    nebius.listing(running)
+    r = run("stop")
+    assert r.returncode == 0, r.stderr
+    assert nebius.calls == [LIST, ["ai", "endpoint", "stop", "--id", STUDENT_ID]] and _recorded(tmp_path) == ["down"]
+
+    nebius.listing(nebius.fixture())  # ratchet-student is STOPPED
+    for args in (("start",), ()):  # start is the default action
+        r = run(*args)
+        assert r.returncode == 0, r.stderr
+        assert nebius.calls == [LIST, ["ai", "endpoint", "start", "--id", STUDENT_ID]] and _recorded(tmp_path) == ["up"]
+
+    for action in ("start", "stop"):  # a given id needs no lookup
+        r = run(action, RATCHET_ENDPOINT_ID="aiendpoint-e00given")
+        assert r.returncode == 0, r.stderr
+        assert nebius.calls == [["ai", "endpoint", action, "--id", "aiendpoint-e00given"]]
+        assert _recorded(tmp_path) == ["up" if action == "start" else "down"]
+
+    # No endpoint with the name: start creates it (once, with the full create command); stop has nothing to stop.
+    r = run("start", RATCHET_ENDPOINT_NAME="ratchet-student-2")
+    assert r.returncode == 0, r.stderr
+    assert [c[:3] for c in nebius.calls] == [LIST[:3], ["ai", "endpoint", "create"]]
+    assert _opt(nebius.calls[1], "--name") == "ratchet-student-2" and "creating it" in r.stderr
+    assert _recorded(tmp_path) == ["up"]  # once, by create
+    r = run("stop", RATCHET_ENDPOINT_NAME="ratchet-student-2")
+    assert r.returncode == 1 and "no endpoint named ratchet-student-2" in r.stderr and nebius.calls == [LIST]
+    assert _recorded(tmp_path) == []
+
+    # Already in the state asked for: no start or stop call, and the uptime record (idempotent) still runs.
+    r = run("stop")
+    assert r.returncode == 0 and nebius.calls == [LIST] and "is already STOPPED" in r.stderr
+    assert _recorded(tmp_path) == ["down"]
+    nebius.listing(running)
+    r = run("start")
+    assert r.returncode == 0 and nebius.calls == [LIST] and "is already RUNNING" in r.stderr
+    assert _recorded(tmp_path) == ["up"]
+
+    nebius.listing(nebius.fixture())
+    r = run("status")
+    assert r.returncode == 0 and r.stdout == f"{STUDENT_ID} STOPPED\n"
+    r = run("status", RATCHET_ENDPOINT_ID=OTHER_ID)
+    assert r.returncode == 0 and r.stdout == f"{OTHER_ID} RUNNING\n"
+    for extra in ({"RATCHET_ENDPOINT_NAME": "nope"}, {"RATCHET_ENDPOINT_ID": "aiendpoint-e00gone"}):
+        r = run("status", **extra)
+        assert r.returncode == 1 and r.stdout == "" and nebius.calls == [LIST], extra
+
+    # DRY_RUN=1: the read-only lookup runs; start and stop have no --dry-run, so they are printed, not run, and
+    # nothing is recorded.
+    r = run("start", DRY_RUN="1")
+    assert r.returncode == 0, r.stderr
+    assert nebius.calls == [LIST] and f"+ nebius ai endpoint start --id {STUDENT_ID}" in r.stderr
+    assert "DRY_RUN=1: not run" in r.stderr and "DRY_RUN=1: endpoint up not recorded" in r.stderr
+    nebius.listing(running)
+    r = run("stop", DRY_RUN="1")
+    assert r.returncode == 0 and nebius.calls == [LIST] and f"+ nebius ai endpoint stop --id {STUDENT_ID}" in r.stderr
+    assert _recorded(tmp_path) == []  # status and dry runs record nothing
+
+    # A stop or start that nebius refuses fails the script and records nothing: a `down` the endpoint never reached
+    # would hide hours it still bills.
+    nebius.fail(["ai", "endpoint", "stop"], ["ai", "endpoint", "start"])
+    r = run("stop")
+    assert r.returncode != 0 and nebius.calls == [LIST, ["ai", "endpoint", "stop", "--id", STUDENT_ID]]
+    nebius.listing(nebius.fixture())
+    r = run("start")
+    assert r.returncode != 0 and nebius.calls == [LIST, ["ai", "endpoint", "start", "--id", STUDENT_ID]]
+    assert _recorded(tmp_path) == []
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-8.2")
+def test_endpoint_lookup_never_guesses(tmp_path):
+    """When the list cannot say which endpoint is meant, the script stops before any start, stop or create: a second
+    endpoint would bill a second GPU, and stopping the wrong one would leave the right one billing."""
+    nebius = FakeNebius(tmp_path / "nebius")
+    env = _deploy_env(tmp_path, nebius)
+
+    def run(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        nebius.clear()
+        return _deploy(tmp_path, "student_endpoint.sh", *args, env={**env, **extra})
+
+    def student(state: Any = "STOPPED", **metadata: str) -> dict[str, Any]:
+        return {"metadata": {"id": STUDENT_ID, "name": "ratchet-student", **metadata}, "status": {"state": state}}
+
+    # create runs once: an endpoint with the name exists already.
+    r = run("create")
+    assert r.returncode == 1 and "already exists" in r.stderr and STUDENT_ID in r.stderr and nebius.calls == [LIST]
+
+    every = ("start", "stop", "create")
+    cases: list[tuple[Any, str, tuple[str, ...]]] = [
+        ("not json", "did not print JSON", ("start",)),
+        ({"items": {"id": STUDENT_ID}}, "no items list", ("start",)),
+        ({"items": [student(), student(id="aiendpoint-e00twin")]}, "set RATCHET_ENDPOINT_ID", every),  # two with the name
+        ({"items": [student(id="")]}, "no usable metadata.id", ("start",)),
+        ({"items": [student(id="a b")]}, "no usable metadata.id", ("start",)),
+        # The name is not on this page but more pages exist: not proof that there is no such endpoint.
+        ({"items": [], "next_page_token": "page-2"}, "first page of the list", every),
+    ]
+    for listing, message, actions in cases:
+        nebius.listing(listing)
+        for action in actions:
+            r = run(action)
+            assert r.returncode == 1 and message in r.stderr and nebius.calls == [LIST], (listing, action, r.stderr)
+    assert _recorded(tmp_path) == []
+    nebius.listing(None)
+    nebius.fail(LIST)
+    r = run("start")
+    assert r.returncode == 1 and "nebius ai endpoint list failed" in r.stderr and nebius.calls == [LIST]
+    nebius.fail()
+
+    # An empty list, however printed, means no endpoint: start creates one.
+    for listing in (None, "", "{}", {"items": []}, {"items": None}, {"items": [], "next_page_token": ""}, []):
+        nebius.listing(listing)
+        r = run("start")
+        assert r.returncode == 0, (listing, r.stderr)
+        assert [c[:3] for c in nebius.calls] == [LIST[:3], ["ai", "endpoint", "create"]], listing
+
+    # States: in transition (refused, run again later), lower case, unknown or missing (Nebius decides).
+    for state, code, call in (
+        ("STOPPING", 1, None),
+        ("DELETING", 1, None),
+        ("stopped", 0, ["ai", "endpoint", "start", "--id", STUDENT_ID]),
+        ("ERROR", 0, ["ai", "endpoint", "start", "--id", STUDENT_ID]),
+        (6, 0, ["ai", "endpoint", "start", "--id", STUDENT_ID]),  # an enum printed as a number
+        (None, 0, ["ai", "endpoint", "start", "--id", STUDENT_ID]),
+        ("PROVISIONING", 0, None),
+        ("IMAGE_PULLING", 0, None),
+    ):
+        nebius.listing({"items": [student(state)], "next_page_token": "page-2"})  # found on the first page
+        r = run("start")
+        assert r.returncode == code and nebius.calls == [LIST] + ([call] if call else []), (state, r.stderr)
+
+    # Refused before anything runs: an unknown action or DRY_RUN value, a lookup with no Python to read the list.
+    for args, extra, code, message in (
+        (("restart",), {}, 2, "usage:"),
+        (("start",), {"DRY_RUN": "yes"}, 2, "DRY_RUN must be 0 or 1"),
+        (("start",), {"RATCHET_PYTHON": str(tmp_path / "no-python")}, 1, "set RATCHET_PYTHON"),
+    ):
+        r = run(*args, **extra)
+        assert r.returncode == code and message in r.stderr and not any(c[2] != "list" for c in nebius.calls), args
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-8.2", "NFR-5")
+def test_endpoint_args_carry_the_model_card_flags(tmp_path):
+    """`create` serves the base model with the model card's flags (`--mamba_ssm_cache_dtype float32`), a context and
+    batch cap sized for ticket prompts on one L40S, thinking off by default and the optional nano_v3 reasoning parser;
+    the image is RATCHET_VLLM_IMAGE (default v0.18.0-cu130). The endpoint's token is passed but never printed."""
+    nebius = FakeNebius(tmp_path / "nebius")
+    nebius.listing(None)  # no endpoint yet
+    env = _deploy_env(tmp_path, nebius)
+
+    def create(**extra: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        nebius.clear()
+        r = _deploy(tmp_path, "student_endpoint.sh", "create", env={**env, **extra})
+        assert r.returncode == 0, r.stderr
+        lookup, argv = nebius.calls
+        assert lookup == LIST and argv[:3] == ["ai", "endpoint", "create"]
+        return r, argv
+
+    r, argv = create()
+    expected = {
+        "--name": "ratchet-student",
+        "--image": "vllm/vllm-openai:v0.18.0-cu130",
+        "--platform": "gpu-l40s-a",
+        "--preset": "1gpu-8vcpu-32gb",
+        "--container-port": "8000",
+        "--shm-size": "16Gi",
+        "--volume": "bucket-e00test:/data",
+        "--auth": "token",
+        "--token": STUDENT_KEY,
+        "--env": "VLLM_ALLOW_RUNTIME_LORA_UPDATING=True",
+    }
+    assert {flag: _opt(argv, flag) for flag in expected} == expected
+    assert not {"--subnet-id", "--dry-run"} & set(argv)
+    base = Settings().student_base_model
+    args = shlex.split(_opt(argv, "--args") or "")  # split as the container does (see test_train_job_uses_job_create)
+    assert args[:-1] == [
+        "--model",
+        base,
+        "--trust-remote-code",
+        "--enable-lora",
+        "--max-lora-rank",
+        "16",
+        "--max-loras",
+        "4",
+        "--mamba_ssm_cache_dtype",
+        "float32",
+        "--max-model-len",
+        "8192",
+        "--max-num-seqs",
+        "64",
+        "--default-chat-template-kwargs",
+    ]
+    assert json.loads(args[-1]) == {"enable_thinking": False}  # vLLM parses it with json.loads
+    assert STUDENT_KEY not in r.stdout + r.stderr and "--token <RATCHET_STUDENT_KEY>" in r.stderr
+    assert _recorded(tmp_path) == ["up"]
+
+    r, argv = create(
+        RATCHET_VLLM_IMAGE="vllm/vllm-openai:v0.18.0",
+        RATCHET_SERVE_MAX_LEN="4096",
+        RATCHET_SERVE_MAX_SEQS="16",
+        RATCHET_REASONING_PARSER_PLUGIN="/data/nano_v3_reasoning_parser.py",
+        RATCHET_SUBNET_ID="vpcsubnet-e00test",
+        RATCHET_SERVE_TEMPLATE_KWARGS="",  # set but empty: no server default (requests carry their own)
+        RATCHET_ENDPOINT_NAME="ratchet-student-b",
+    )
+    args = shlex.split(_opt(argv, "--args") or "")
+    assert (_opt(argv, "--image"), _opt(argv, "--subnet-id"), _opt(argv, "--name")) == (
+        "vllm/vllm-openai:v0.18.0",
+        "vpcsubnet-e00test",
+        "ratchet-student-b",
+    )
+    assert (_opt(args, "--max-model-len"), _opt(args, "--max-num-seqs")) == ("4096", "16")
+    assert args[-4:] == ["--reasoning-parser-plugin", "/data/nano_v3_reasoning_parser.py", "--reasoning-parser", "nano_v3"]
+    assert "--default-chat-template-kwargs" not in args and _recorded(tmp_path) == ["up"]
+
+    # A dry run: nebius validates the create request (--dry-run) and nothing is recorded.
+    r, argv = create(DRY_RUN="1")
+    assert argv[-1] == "--dry-run" and "nothing was created" in r.stderr and _recorded(tmp_path) == []
+
+    # Values that would break the one --args string, or that vLLM would refuse after the GPU is provisioned, are
+    # refused first (the JSON check runs after the lookup, which proves a Python is there).
+    for extra, message, calls in (
+        ({"RATCHET_SERVE_MAX_LEN": "8k"}, "RATCHET_SERVE_MAX_LEN must be a positive whole number", []),
+        ({"RATCHET_SERVE_MAX_SEQS": "0"}, "RATCHET_SERVE_MAX_SEQS must be a positive whole number", []),
+        ({"RATCHET_STUDENT_BASE_MODEL": "nvidia/x --enforce-eager"}, "bad RATCHET_STUDENT_BASE_MODEL", []),
+        ({"RATCHET_REASONING_PARSER_PLUGIN": "nano_v3_reasoning_parser.py"}, "must be an absolute path", []),
+        ({"RATCHET_SERVE_TEMPLATE_KWARGS": "{'enable_thinking': False}"}, "must not contain a single quote", []),
+        ({"RATCHET_SERVE_TEMPLATE_KWARGS": '{"enable_thinking":'}, "must be a JSON object", [LIST]),
+        ({"RATCHET_SERVE_TEMPLATE_KWARGS": "[false]"}, "must be a JSON object", [LIST]),
+        ({"RATCHET_STUDENT_KEY": ""}, "set RATCHET_STUDENT_KEY", []),
+        ({"RATCHET_BUCKET_ID": ""}, "set RATCHET_BUCKET_ID", []),
+    ):
+        nebius.clear()
+        r = _deploy(tmp_path, "student_endpoint.sh", "create", env={**env, **extra})
+        assert r.returncode != 0 and message in r.stderr and nebius.calls == calls, (extra, r.stderr)
+
+
+@pytest.mark.req("FR-15.2")
+def test_deploy_scripts_never_say_cost_nothing():
+    """A stopped endpoint is not billed for compute or its own storage, but a mounted bucket is, also while it is
+    stopped (docs.nebius.com/serverless/overview, read Oct 21, 2026): no deploy script or deploy doc says otherwise."""
+    for rel in ("deploy/student_endpoint.sh", "deploy/train_job.sh", "deploy/CLAUDE.md", "docs/DEPLOYMENT.md"):
+        text = " ".join((ROOT / rel).read_text(encoding="utf-8").lower().split())
+        assert "cost nothing" not in text and "costs nothing" not in text, rel
+    script = " ".join((ROOT / "deploy" / "student_endpoint.sh").read_text(encoding="utf-8").split())
+    assert "not billed for compute or its own storage; the mounted bucket still is" in script
+
+
+@pytest.mark.req("NFR-10")
+def test_deploy_variables_are_listed_and_documented():
+    """Every RATCHET_* variable the two Nebius scripts read is either read by the package (config.py) or listed in
+    `config.DEPLOY_ENV`, which the traceability check holds to a row in docs/CONFIGURATION.md; no name is stale."""
+    from ratchet.config import DEPLOY_ENV, KNOWN_ENV
+
+    read: set[str] = set()
+    for script in ("student_endpoint.sh", "train_job.sh"):
+        read |= set(re.findall(r"\$\{(RATCHET_[A-Z0-9_]+)", (ROOT / "deploy" / script).read_text(encoding="utf-8")))
+    head, rest = (ROOT / "ratchet" / "config.py").read_text(encoding="utf-8").split("DEPLOY_ENV: tuple[str, ...] = (", 1)
+    config = head + rest.split("\n)\n", 1)[1]  # config.py without the DEPLOY_ENV list itself
+    by_package = {name for name in read if f'"{name}"' in config}
+    assert read - by_package == set(DEPLOY_ENV), "add the deploy script's new variable to config.DEPLOY_ENV"
+    assert len(DEPLOY_ENV) == len(set(DEPLOY_ENV)) and set(DEPLOY_ENV) <= set(KNOWN_ENV)
+    documented = set(re.findall(r"`([A-Z][A-Z0-9_]*)`", (ROOT / "docs" / "CONFIGURATION.md").read_text(encoding="utf-8")))
+    assert read | {"DRY_RUN"} <= documented
