@@ -685,6 +685,19 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold"),
     "FR-8.4": ("ratchet.live:main",),
     "FR-8.5": ("scripts/day1_check.py",),
+    "FR-8.20": (
+        "ratchet.liverun:main",
+        "ratchet.liverun:plan_stage_requests",
+        "ratchet.liverun:profile_check",
+        "ratchet.ledger:Ledger.client_window",
+        "Makefile",
+    ),
+    "FR-8.21": (
+        "ratchet.liverun:control_estimate",
+        "ratchet.liverun:score",
+        "ratchet.liverun:repeat_values",
+        "ratchet.liverun:cmd_verify",
+    ),
     # 6.9 Simulation
     "FR-9.1": ("sim.tickets:TicketStream",),
     "FR-9.2": ("sim.mock_models:MockTeacher", "sim.mock_models:MockStudent"),
@@ -858,6 +871,10 @@ EXEMPT: dict[str, Exempt] = {
     "FR-8.2": Exempt("live", "deploy/student_endpoint.sh", "needs a vLLM Serverless Endpoint with runtime LoRA loading"),
     "FR-8.4": Exempt("live", "docs/RUNBOOK.md", "runs against the live ledger, a Serverless Job and the student endpoint"),
     "FR-8.5": Exempt("live", "docs/DAY1.md", "the script is the live check; it needs NEBIUS_API_KEY"),
+    "FR-8.20": Exempt(
+        "live", "docs/RUNBOOK.md", "make live-smoke, then make live-run, against the gateway on Nebius and Token Factory"
+    ),
+    "FR-8.21": Exempt("live", "docs/RUNBOOK.md", "the control arm calls Token Factory; a published live run's results.json"),
     "FR-10.3": Exempt(
         "live", "docs/DEPLOY_NEBIUS_VM.md", "Tavily needs TAVILY_API_KEY; checked when the demo VM switches to live"
     ),
@@ -876,7 +893,9 @@ EXEMPT: dict[str, Exempt] = {
         "deploy/student_endpoint.sh",
         "real endpoint uptime and the `nebius ai endpoint` flags need a Nebius project; recording is tested with a stub",
     ),
-    "NFR-1": Exempt("live", "docs/DEPLOYMENT.md", "p50 latency needs the real student endpoint"),
+    "NFR-1": Exempt(
+        "live", "ratchet/liverun.py", "p50 latency is measured by python -m ratchet.liverun against the real student endpoint"
+    ),
     "US-10": Exempt("live", "deploy/train_job.sh", "the adapter reaches the customer's bucket only in live mode"),
     "INV-9": Exempt("live", "scripts/day1_check.py", "model ids and prices are confirmed against Token Factory with a real key"),
 }

@@ -1,6 +1,6 @@
 # Devpost submission: Nebius x NVIDIA Global AI Hackathon
 
-Ready to paste. Replace every `[LIVE NUMBER]` with results from the live run before submitting. Keep simulation results labelled as simulation.
+Ready to paste. Fill each `[LIVE NUMBER]` from `evidence/live/results.json` using the placeholder map in `docs/LIVE_RESULTS.md`, and put its `<!-- claim:live.* -->` anchor right after the number. Keep simulation results labelled as simulation.
 
 - **Deadline:** Oct 30, 2026, 10:00 AM PDT (10:30 PM IST). Target: submit Oct 29.
 - **Track:** Best Apps and Agents ("Useful applications and agents powered by Nemotron models through Token Factory").
@@ -129,7 +129,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 821 tests (97% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 844 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 96% of them by day 8 and that day cost 85% less than all-Ultra (63% over all 8 days, including the cold start).
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -178,6 +178,15 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 
 ---
 
+## How to verify our claims
+
+### Live numbers (after the live run)
+
+| What | How |
+|---|---|
+| Every live number, with how it was computed and the run that measured it | `evidence/live/results.json` (`values` and `sources`, one `live.*` id per number; `docs/LIVE_RESULTS.md` is its readable form) |
+| The client-side numbers, recomputed from the per-request records | `python -m ratchet.liverun verify evidence/live` |
+
 ## Submission checklist
 
 - [ ] Working project uses NVIDIA Nemotron on Token Factory and Nebius AI Cloud
@@ -191,6 +200,8 @@ python, fastapi, httpx, sqlite, vllm, unsloth, trl, peft, nvidia-nemotron, nemot
 - [ ] Working demo URL, tested logged-out, stays live through Dec 15, 2026
 - [ ] Demo VM on Nebius up and checked ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#4-check-it-works)): `/`, `/scout`, `/dashboard` load over HTTPS; budget guard set; `/v1/*` protected (`RATCHET_API_KEYS` or `RATCHET_API_GUARD=guarded`) in live mode
 - [ ] Real numbers from the live run in the description and video, including the total Nebius bill (failed jobs included) and the cost report's break-even line
+- [ ] `make live-run` published (`python -m ratchet.liverun report <run dir> --publish`), and `python -m ratchet.liverun verify evidence/live` exits 0
+- [ ] Nebius bill entered (`python -m ratchet.liverun report <run dir> --bill-usd X --bill-note "..."`)
 - [ ] Best Use of Tavily: prize confirmed on Devpost, selected if it needs opting in, and Tavily use described (Scout's searcher)
 - [ ] Demo video under 3 minutes, public on YouTube, no unlicensed music or third-party trademarks ([DEMO_SCRIPT.md](DEMO_SCRIPT.md))
 - [ ] Public GitHub repo with Apache-2.0 license visible at the top of the repo page

@@ -156,6 +156,18 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 
 Commands are split with `shlex.split` and run without a shell, so pipes and `&&` do not work. Wrap them in a script.
 
+## Live-run harness
+
+`python -m ratchet.liverun` ([ADR 0121](adr/0121-live-measurement-method.md), [RUNBOOK](RUNBOOK.md#live-measurement-run)) runs on the gateway's host with the gateway's `.env` (it reads the same `RATCHET_DB`, task registry, audit rates, release policy and prices), plus these variables, which only the harness reads. Its budget is a flag (`--max-usd`), never a variable.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_LIVERUN_KEY` | empty (required) | The harness's gateway API key: the key of the `liverun:<key>` entry in `RATCHET_API_KEYS` (`--client` names another entry). Export it in the harness's shell only; never a flag, so it stays out of shell history and the process list, and it is never written or printed (results carry the name) |
+| `NEBIUS_API_KEY_LIVERUN` | empty (`NEBIUS_API_KEY`) | A separate Token Factory key for the harness's own arms (the control arm and the untuned-Nano arm), so a runaway run cannot drain the key the gateway and the judge demo serve with. The gateway's own teacher calls keep `NEBIUS_API_KEY`. Results record which variable was used, never its value |
+| `RATCHET_GIT_SHA` | empty | The code's commit when the image has no `.git` (`git rev-parse HEAD` comes first). 40 or 64 hex characters; anything else is ignored. Results carry a SHA-256 over the `ratchet` and `sim` sources either way |
+
+The run's planned gate profile is set on the gateway, not here: `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5` ([Release policy](#release-policy-ratchetreleasepy)). `python -m ratchet.liverun run` refuses to start without them unless `--gate-profile as-set` is passed.
+
 ## Deploy scripts (`deploy/`)
 
 | Variable | Used by | Default | Meaning |
