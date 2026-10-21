@@ -140,6 +140,7 @@ from .resilience import (
     describe_failure,
 )
 from .router import EVENT_ON_FAILURE, PASSTHROUGH_ROUTE, Choice, Ratchet, RequestMeta, Result, task_label
+from .scout import record as scout_record
 from .scout.agents import Call, Scout
 from .scout.credits import CreditMeter, MeteredSearch
 from .scout.guard import Guard
@@ -4604,6 +4605,20 @@ def _judge_status(request: Request) -> dict[str, Any]:
 @app.get("/scout/examples")
 def scout_examples() -> dict[str, Any]:
     return {"mode": rt.settings.mode, "examples": EXAMPLE_QUESTIONS, "free_text": rt.settings.mode == "live"}
+
+
+@app.get("/scout/recorded")
+def scout_recorded() -> dict[str, Any]:
+    """Recorded live runs, newest first (FR-10.40): read-only, no model call, no guard budget, no ledger row."""
+    return {"recordings": scout_record.listing(rt.settings.scout_recordings_dir)}
+
+
+@app.get("/scout/recorded/{rid}")
+def scout_recorded_one(rid: str) -> dict[str, Any]:
+    rec = scout_record.get(rt.settings.scout_recordings_dir, rid)
+    if rec is None:
+        raise HTTPException(404, "No such recording.")
+    return {"id": rid, **rec}
 
 
 @app.get("/scout/status")

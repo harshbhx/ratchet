@@ -146,6 +146,17 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
 4. Check, then apply: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check` lists every problem with `.env` at once (exit 2: the gateway would not start; it also warns that `RATCHET_MOCK_WARMUP_DAYS` does nothing in live mode, so remove that line), then `sudo -u ratchet docker compose up -d` (or `update.sh`, which runs the same check first) and `curl -s https://<domain>/readyz` should say `ready`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
 5. Watch the Token Factory usage page and the Tavily dashboard daily for the first week, and check `curl -s https://<domain>/scout/status | jq .search` shows `"available": true`.
 
+### Record one Scout run after each deploy
+
+The compose file mounts `evidence/scout` read-only and sets `RATCHET_SCOUT_RECORDINGS_DIR`, so a recorded run plays when the guard refuses live runs ([ADR 0140](adr/0140-recorded-scout-run.md)). After the VM is live (and after each deploy that changes a model, a prompt or a price), record one run, commit it and run `update.sh`:
+
+```bash
+python -m ratchet.scout record "What is LoRA fine-tuning?" --base-url https://<domain> --judge-code <code>
+git add evidence/scout && git commit -m "Record a live Scout run"
+```
+
+The command refuses a run that errors, does not finish or comes from a mock-mode gateway. The judge code is sent once in a POST body and is not written to the file.
+
 ### Night School cron (off by default)
 
 `/etc/cron.d/ratchet` contains two commented lines: `python -m ratchet.live night` at 02:30 UTC and `... tick` every 5 minutes, both through `docker compose exec -T ratchet`. Leave them off for the judging period unless all of these hold:

@@ -62,8 +62,11 @@ services:
       # The header switch's link to the simulation host. Unset in .env: https://<RATCHET_SIM_DOMAIN>.
       # Set to empty in .env: no link (use that with RATCHET_SIM=off).
       RATCHET_SIM_URL: ${RATCHET_SIM_URL-https://${RATCHET_SIM_DOMAIN:-sim.${RATCHET_DOMAIN}}}
+      # Recorded live Scout runs (FR-10.40, ADR 0140): committed in evidence/scout, read-only inside the container.
+      RATCHET_SCOUT_RECORDINGS_DIR: /evidence/scout
     volumes:
       - ratchet-data:/data
+      - ../../evidence/scout:/evidence/scout:ro
       # A directory, so a `git pull` that replaces config/tasks.json is seen on the next start. The watchdog's pinned probe
       # task lives there; set RATCHET_TASKS_FILE=/config/tasks.json in .env once a `watchdog` key is in RATCHET_API_KEYS.
       - ./config:/config:ro

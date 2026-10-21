@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { FlaskConical, Info, LoaderCircle, Radio } from "lucide-react";
+import { FastForward, FlaskConical, Info, LoaderCircle, Play, Radio, Video } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { WhoProvider } from "@/components/ui/who";
 import { Container, Eyebrow } from "@/components/ui/section";
+import { Button } from "@/components/ui/button";
+import { recordingLabel, watchLabel } from "@/lib/recording-model";
 import { cn, fmtUsd } from "@/lib/utils";
 import { AgentGraph, GraphLegend } from "./agent-graph";
 import { AskBar } from "./ask-bar";
@@ -71,7 +73,7 @@ export default function ScoutPage() {
 }
 
 function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
-  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples } = scout;
+  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples, recording, playing, liveRecording, play, skip } = scout;
   const [hint, setHint] = useState<string | null>(null);
   const graphRef = useRef<HTMLDivElement | null>(null);
   const running = run.status === "running";
@@ -113,12 +115,21 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
             <h1 id="h-scout" className="text-[2.75rem] font-semibold leading-none tracking-[-0.035em] text-ink sm:text-[3.5rem]">
               Scout
             </h1>
-            {mode === "mock" && (
+            {recording && (
+              <Badge
+                tone={recording.mode === "mock" ? "warn" : "neutral"}
+                className="text-[12.5px]"
+                title="Played back from a file, at the pace it ran. No model or search call is made now."
+              >
+                <Video aria-hidden /> {recordingLabel(recording)}
+              </Badge>
+            )}
+            {!recording && mode === "mock" && (
               <Badge tone="warn" className="text-[12.5px]" title="Mock models and simulated search results">
                 <FlaskConical aria-hidden /> Simulation
               </Badge>
             )}
-            {mode === "live" && (
+            {!recording && mode === "live" && (
               <Badge tone="good" className="text-[12.5px]">
                 <Radio aria-hidden /> Live: real web search and models
               </Badge>
@@ -148,6 +159,20 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
               onRetryExamples={() => void reloadExamples()}
               hint={setHint}
             />
+            {(liveRecording || playing) && (
+              <div className="mt-3 flex flex-wrap gap-2 sm:justify-center">
+                {liveRecording && !playing && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => void play(liveRecording)}>
+                    <Play aria-hidden /> {watchLabel(liveRecording)}
+                  </Button>
+                )}
+                {playing && (
+                  <Button type="button" variant="outline" size="sm" onClick={skip}>
+                    <FastForward aria-hidden /> Skip to the end
+                  </Button>
+                )}
+              </div>
+            )}
             {hint && (
               <p className="mt-2 inline-flex items-center gap-1.5 text-[13.5px] font-medium text-warn" role="alert">
                 <Info className="size-4" aria-hidden /> {hint}
@@ -167,7 +192,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
       <Container className={cn("space-y-6", started ? "pt-2" : "pt-8")}>
         {/* ---------------- agent graph (errors show right above it, where the eye is during a run) */}
         <div ref={graphRef} className="scroll-mt-[200px] space-y-6 sm:scroll-mt-[192px]">
-          {run.status === "error" && run.error && <ErrorAlert message={run.error} onRetry={() => go(run.question)} />}
+          {run.status === "error" && run.error && <ErrorAlert message={run.error} onRetry={() => go(run.question)} onWatch={liveRecording ? () => void play(liveRecording) : undefined} />}
           <Card className="overflow-hidden">
             <section aria-labelledby="h-graph">
               <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-line px-4 py-3.5 sm:px-6">
