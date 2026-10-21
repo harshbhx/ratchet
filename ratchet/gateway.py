@@ -595,7 +595,9 @@ def _quota(client: str | None, need: int = 1) -> dict[str, str]:
     `insufficient_quota` when its daily quota is used up. The 429 says when to come back (`Retry-After`, seconds to
     00:00 UTC) and tells OpenAI SDKs not to retry (they retry 429s by default, which cannot help before midnight).
     `need` is how many requests of the quota the call will log: more than 1 for a batch of prompts (/v1/completions),
-    refused whole when the quota cannot take it all, so it never stops halfway."""
+    refused whole when the quota cannot take it all. That check holds only against this key's requests logged so far: a
+    concurrent request can still use up the quota before a batch's later prompt runs, which then stops the batch
+    (`_batch_stopped`)."""
     limit = rt.settings.api_key_daily_requests
     if client is None or limit <= 0:
         return {}
@@ -1179,15 +1181,51 @@ async def completions(
     """The legacy completions API: each prompt runs the chat path as one user message (`_serve`), with the same checks,
     task resolution, cascade, quota and storage as /v1/chat/completions; `n`, `stream`, `stop`, `max_tokens` and the rest
     are the chat fields of the same name. A batch of prompts needs that many requests of the daily quota, checked before
-    the first runs. A `suffix`, `echo` or `best_of` that would change the answer, and token-array prompts, are a 400."""
+    the first runs; a batch that stops after its first prompt is an error that names the prompts already answered and
+    carries `X-Should-Retry: false` (`_batch_stopped`). A `suffix`, `echo` or `best_of` that would change the answer,
+    and token-array prompts, are a 400."""
     return await _read_then(request, _legacy_complete, x_ratchet_task, _client(authorization, x_api_key, api_key))
 
 
 def _legacy_complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
+    """Run the prompts one after another. A prompt starts only while the batch has used less than the teacher's deadline
+    (RATCHET_TEACHER_DEADLINE_S, on `rt.clock`), so one batch holds its worker thread for about two deadlines at most,
+    not one per prompt. The first prompt's error is the request's, as a chat request's would be; a later one's (or the
+    deadline) is `_batch_stopped`, since the prompts before it are already answered, logged and billed."""
     creq = validate_completion_request(parse_body(raw), rt.limits)
     reqs = creq.requests()
-    served = [_serve(req, header_task, client, need=len(reqs) if i == 0 else 1) for i, req in enumerate(reqs)]
+    served: list[Served] = []
+    started = rt.clock()
+    for i, req in enumerate(reqs):
+        if i and rt.clock() - started >= rt.settings.teacher_deadline_s:
+            raise _batch_stopped(i, len(reqs), None)
+        try:
+            served.append(_serve(req, header_task, client, need=len(reqs) if i == 0 else 1))
+        except (APIError, StarletteHTTPException) as e:
+            if not i:
+                raise
+            raise _batch_stopped(i, len(reqs), e) from e
     return _completion_response(creq, served)
+
+
+def _batch_stopped(i: int, total: int, cause: APIError | StarletteHTTPException | None) -> APIError:
+    """The error for a completions batch that stopped at prompt `i` > 0: the cause's status, type, code and param (a 504
+    `batch_deadline_exceeded` when the batch ran out of time), with a message that says which prompts were answered,
+    logged and billed, and `X-Should-Retry: false` in place of any `Retry-After`. OpenAI SDKs resend a 429 or 5xx by
+    default, and each resend would run, bill and store the earlier prompts again: their examples' `seen` count would
+    reach FREQUENT and move golden rows into training (INV-3). The client resends only the prompts that did not run."""
+    done, them = ("prompt[0] was", "its answer") if i == 1 else (f"prompt[0] to prompt[{i - 1}] were", "their answers")
+    after = f"{done} answered, logged and billed, but this error does not return {them}; resend only the prompts from"
+    after += f" prompt[{i}] on."
+    if cause is None:
+        deadline = rt.settings.teacher_deadline_s
+        message = f"The batch stopped before prompt[{i}] of {total}: it ran past RATCHET_TEACHER_DEADLINE_S ({deadline:g} s)."
+        return APIError(504, f"{message} {after}", "api_error", "batch_deadline_exceeded", headers=NO_RETRY)
+    if isinstance(cause, StarletteHTTPException):
+        cause = http_error(cause.status_code, str(cause.detail), headers=cause.headers)
+    headers = {k: v for k, v in cause.headers.items() if k.lower() not in ("retry-after", "x-should-retry")}
+    message = f"The batch stopped at prompt[{i}] of {total}: {cause.message.rstrip('. ')}. {after}"
+    return APIError(cause.status, message, cause.type, cause.code, cause.param, headers={**headers, **NO_RETRY})
 
 
 def _completion_response(creq: CompletionRequest, served: list[Served]) -> JSONResponse | StreamingResponse:

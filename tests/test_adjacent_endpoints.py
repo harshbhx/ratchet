@@ -10,6 +10,7 @@ import base64
 import json
 import math
 import struct
+import typing
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +20,14 @@ from fakes import OPEN_TEACHER, FakeOpenAIServer, _version
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
+from ratchet import ledger as ledger_module
 from ratchet import licenses, tasks, taskspec
 from ratchet.config import DEFAULT_EMBEDDINGS_MODEL, DEFAULT_PRICES, EMBEDDING_PRICES, Settings
-from ratchet.ledger import example_hash
+from ratchet.ledger import Ledger, example_hash
 from ratchet.openai_compat import (
     MAX_EMBEDDING_INPUTS,
     MAX_PROMPTS,
+    REASONING_EFFORTS,
     APIError,
     ModelRouting,
     check_embeddings_model,
@@ -165,9 +168,10 @@ def test_mock_embeddings_validate_with_the_sdk(gw_env):
     tok = c.post(EMBED, json={"input": [[11, 22, 33], [44]]}).json()
     assert len(tok["data"]) == 2 and tok["usage"]["prompt_tokens"] == 4
 
-    # The shared mock demo returns at most a million floats per request.
-    r = c.post(EMBED, json={"input": ["a"] * 200, "dimensions": 8192})
-    assert _error(r) == (400, "unsupported_value", "input") and "at most 1048576" in r.json()["error"]["message"]
+    # The shared mock demo returns at most 2^17 floats per request (about 3 MB of JSON): 512 inputs at 256 dimensions.
+    r = c.post(EMBED, json={"input": ["a"] * 17, "dimensions": 8192})
+    assert _error(r) == (400, "unsupported_value", "input") and "at most 131072" in r.json()["error"]["message"]
+    assert _error(c.post(EMBED, json={"input": ["a"] * 513}))[0] == 400
 
     rows = _rows(gw)
     assert len(rows) == 6 and gw.rt.ledger.examples() == []
@@ -185,6 +189,46 @@ def test_mock_embeddings_validate_with_the_sdk(gw_env):
     assert c.get(f"/v1/models/{DEFAULT_EMBEDDINGS_MODEL}").json() == listed[DEFAULT_EMBEDDINGS_MODEL]
     assert client.models.retrieve(DEFAULT_EMBEDDINGS_MODEL).model_extra["ratchet"]["task"] is None
     assert "embeddings" not in {t["name"] for t in c.get("/ratchet/tasks").json()["unregistered"]}
+
+
+@pytest.mark.req("FR-1.51", "FR-15.1")
+def test_embeddings_stay_out_of_the_headline_figures(gw_env):
+    """The per-day figures, the totals and the per-client rows describe the distillation, so embeddings calls (route
+    `passthrough`) are left out of them: a client that embeds once per chat request does not halve the student share,
+    pull the latency toward the embedder's or the savings toward 0. Their spend still adds up in the `embeddings` task
+    row and the cost report, and they still count against the key's quota."""
+    led = Ledger(":memory:")
+
+    def log(task: str, served_by: str, cost: float, baseline: float, latency: float, route: str | None) -> None:
+        row = {"cost_usd": cost, "baseline_cost_usd": baseline, "latency_ms": latency, "route": route}
+        led.log_request(task=task, served_by=served_by, escalated=0, client="acme", **row)
+
+    log("t", "student", 1.0, 4.0, 10.0, "student")
+    log("t", "teacher", 4.0, 4.0, 30.0, None)  # a row older than the route column is counted
+    alone = (led.stats_by_day(), led.totals(), led.stats_by_client())
+    for _ in range(4):
+        log("embeddings", "upstream", 2.0, 2.0, 500.0, PASSTHROUGH_ROUTE)
+    assert (led.stats_by_day(), led.totals(), led.stats_by_client()) == alone
+    (day,) = alone[0]
+    assert (day["requests"], day["student_share"], day["avg_latency_ms"], day["savings_pct"]) == (2, 0.5, 20.0, 0.375)
+    assert ledger_module.NOT_PASSTHROUGH == f"route IS NOT '{PASSTHROUGH_ROUTE}'"
+    by_task = {t["task"]: t for t in led.stats_by_task()}
+    assert (by_task["embeddings"]["requests"], by_task["embeddings"]["cost_usd"]) == (4, 8.0)
+    (spend,) = led.cost_by_day()
+    assert (spend["requests"], spend["cost_usd"], spend["teacher_usd"]) == (6, 13.0, 13.0)
+    assert led.client_requests_since("acme", 0) == 6
+
+    # Through the gateway: the same /ratchet/stats headline before and after embeddings calls.
+    gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{KEY}")
+    c = TestClient(gw.app)
+    assert c.post(CHAT, json={"messages": [{"role": "user", "content": "hi"}]}, headers=ACME).status_code == 200
+    before = c.get("/ratchet/stats").json()
+    for _ in range(3):
+        assert c.post(EMBED, json={"input": "refund my order"}, headers=ACME).status_code == 200
+    after = c.get("/ratchet/stats").json()
+    assert [after[k] == before[k] for k in ("days", "totals", "clients")] == [True] * 3
+    assert {t["task"]: t["requests"] for t in after["tasks"]}["embeddings"] == 3
+    assert gw.rt.ledger.client_requests_since("acme", 0) == 4
 
 
 @pytest.mark.req("FR-1.51")
@@ -582,6 +626,82 @@ def test_completions_batches_and_streams(gw_env):
     assert last["choices"][0]["finish_reason"] == "stop" and last["ratchet"]["task"] == "default" and "usage" not in last
 
 
+@pytest.mark.req("FR-1.51", "INV-3", "INV-7")
+def test_completions_batch_that_stops_after_its_first_prompt_is_not_retried(gw_env, tmp_path, monkeypatch):
+    """A later prompt that fails leaves the earlier ones answered, logged, billed and stored, so the error says which and
+    carries `X-Should-Retry: false` (no `Retry-After`): the OpenAI SDK, which resends a 5xx twice by default, sends the
+    batch once, and the first prompt's example is seen once, not three times (seen >= FREQUENT would move a golden row
+    into training, INV-3). The same holds for a later prompt refused by the quota a concurrent request used up, for a
+    plain HTTP error, and for a batch that runs past the teacher's deadline, which stops before its next prompt. The
+    first prompt's own error is the request's, retryable as a chat request's would be."""
+    openai, _ = sdk()
+    from ratchet.nightschool.dataset import FREQUENT
+
+    gw = _gateway(gw_env)
+    teacher = FakeOpenAIServer("ok")
+    concurrent = [0]  # requests a concurrent client logs for the same key while the batch runs
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        text = json.dumps(json.loads(request.content).get("messages"))
+        if "FAIL" in text:
+            return httpx.Response(503, json={"error": {"message": "down"}}, headers={"Retry-After": "2"})
+        if "RACE" in text:
+            concurrent[0] = 1
+        return teacher(request)
+
+    rt = _live(
+        gw,
+        tmp_path,
+        monkeypatch,
+        teacher,
+        api_keys=f"acme:{KEY}",
+        api_key_daily_requests=4,
+        transports={"teacher": httpx.MockTransport(handler)},
+    )
+    calls: list[Any] = []
+    client = make_openai_client(gw.app, calls=calls, max_retries=2, api_key=KEY)
+    with pytest.raises(openai.APIStatusError) as caught:
+        client.completions.create(model="ratchet", prompt=["good prompt", "FAIL prompt"])
+    e = caught.value
+    assert len(calls) == 1  # not resent
+    assert (e.status_code, e.code) == (502, "teacher_unavailable")
+    assert e.response.headers["x-should-retry"] == "false" and "retry-after" not in e.response.headers
+    assert "stopped at prompt[1] of 2" in e.message and "prompt[0] was answered, logged and billed" in e.message
+    (ex,) = _examples(gw)
+    assert ex["seen"] == 1 < FREQUENT
+    assert [(row["client"], row["served_by"], row["stored"]) for row in _rows(gw)] == [("acme", "teacher", 1)]
+    assert rt.ledger.client_requests_since("acme", 0) == 1
+
+    c = TestClient(gw.app)
+    r = c.post(COMPLETE, json={"prompt": ["FAIL prompt", "good prompt"]}, headers=ACME)  # the first prompt: as chat
+    assert _error(r) == (502, "teacher_unavailable", None) and "x-should-retry" not in r.headers
+    assert r.headers["retry-after"] == "2" and "batch" not in r.json()["error"]["message"] and len(_rows(gw)) == 1
+
+    # The quota had room for the whole batch when it started; a concurrent request used it up before prompt[2] ran.
+    real = rt.ledger.client_requests_since
+    monkeypatch.setattr(rt.ledger, "client_requests_since", lambda client, ts: real(client, ts) + concurrent[0])
+    r = c.post(COMPLETE, json={"prompt": ["RACE prompt", "second prompt", "third prompt"]}, headers=ACME)
+    assert _error(r) == (429, "daily_quota_exceeded", None) and r.headers["x-should-retry"] == "false"
+    assert "retry-after" not in r.headers and r.headers["x-ratelimit-limit-requests"] == "4"
+    message = r.json()["error"]["message"]
+    assert "stopped at prompt[2] of 3" in message and "prompt[0] to prompt[1] were answered" in message
+    assert len(_rows(gw)) == 3
+
+    # A batch past the teacher's deadline starts no further prompt.
+    monkeypatch.setattr(rt.ledger, "client_requests_since", lambda client, ts: 0)  # a new day's quota
+    ticks = iter([0.0, rt.settings.teacher_deadline_s])
+    monkeypatch.setattr(rt, "clock", lambda: next(ticks))
+    r = c.post(COMPLETE, json={"prompt": ["slow prompt", "never run"]}, headers=ACME)
+    assert _error(r) == (504, "batch_deadline_exceeded", None) and r.headers["x-should-retry"] == "false"
+    assert "before prompt[1] of 2" in r.json()["error"]["message"] and len(_rows(gw)) == 4
+
+    # A plain HTTP error from a later prompt (mock mode's 400 for a request it cannot answer) stops the batch the same way.
+    gw = _gateway(gw_env, RATCHET_MOCK_STRICT="1")
+    r = TestClient(gw.app).post(COMPLETE, json={"model": f"ratchet/{TRIAGE}", "prompt": [TICKET, "not a demo request"]})
+    assert r.status_code == 400 and r.headers["x-should-retry"] == "false", r.text
+    assert "stopped at prompt[1] of 2" in r.json()["error"]["message"] and len(_rows(gw)) == 1
+
+
 @pytest.mark.req("FR-1.51", "FR-1.14")
 def test_completions_with_the_openai_sdk_and_legacy_logprobs(gw_env, tmp_path, monkeypatch):
     """The SDK's completions client end to end, streamed and not; `logprobs: k` returns the legacy shape, tokens that
@@ -714,6 +834,7 @@ def test_responses_refuse_what_needs_state(gw_env):
         ({"input": "hi", "tool_choice": {"type": "function"}}, "missing_required_parameter", "tool_choice.name"),
         ({"input": "hi", "reasoning": "high"}, "invalid_type", "reasoning"),
         ({"input": "hi", "reasoning": {"effort": 3}}, "invalid_type", "reasoning.effort"),
+        ({"input": "hi", "reasoning": {"effort": "extreme"}}, "invalid_value", "reasoning.effort"),  # the SDK refuses it
         ({"input": "hi", "temperature": 5}, "invalid_value", "temperature"),
     ]
     for body, code, param in cases:
@@ -725,6 +846,19 @@ def test_responses_refuse_what_needs_state(gw_env):
     # What changes nothing is accepted: false flags, and the fields that have no effect here.
     ok = {"input": "hi", "stream": False, "background": False, "store": True, "include": ["reasoning.encrypted_content"]}
     assert c.post(RESPOND, json={**ok, "truncation": "auto", "service_tier": "auto"}).status_code == 200
+    # An accepted effort is echoed, and the installed SDK's model parses the response for every effort it knows.
+    sdk()
+    from openai.types.responses import Response
+    from openai.types.shared.reasoning_effort import ReasoningEffort
+
+    def literals(t: Any) -> set[str]:
+        return {a for a in typing.get_args(t) if isinstance(a, str)} | {x for a in typing.get_args(t) for x in literals(a)}
+
+    known = literals(ReasoningEffort) & set(REASONING_EFFORTS)
+    assert {"low", "medium", "high"} <= known
+    for effort in sorted(known):
+        r = c.post(RESPOND, json={"input": "hi", "reasoning": {"effort": effort}})
+        assert Response.model_validate(r.json()).reasoning.effort == effort
     # No response is kept to retrieve, delete, cancel or list.
     for method, path in (
         ("GET", "/v1/responses/resp_1"),

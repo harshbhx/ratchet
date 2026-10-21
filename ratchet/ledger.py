@@ -260,6 +260,10 @@ DAY_SECONDS = 86400
 RECENT_TASK_PROBES = 2000
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
+# Rows other than the /v1/embeddings pass-through's (route `router.PASSTHROUGH_ROUTE`, FR-1.51): the headline ratios
+# (student share, escalation rate, cost per 1k, latency, savings) describe the distillation, which embeddings are not
+# part of. A row without a route (older than the column) is never a pass-through.
+NOT_PASSTHROUGH = "route IS NOT 'passthrough'"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
 # (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
@@ -966,9 +970,11 @@ class Ledger:
     def stats_by_day(self) -> list[dict[str, Any]]:
         """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
-        `fallback_teacher`: the fallback teacher; ADR 0019)."""
+        `fallback_teacher`: the fallback teacher; ADR 0019). Embeddings pass-through rows (`NOT_PASSTHROUGH`) are left
+        out: they are not part of the distillation these figures describe; their spend is in `stats_by_task` and the
+        cost report (`cost_by_day`)."""
         rows = self.db.execute(
-            """SELECT day, COUNT(*) requests,
+            f"""SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
@@ -976,7 +982,7 @@ class Ledger:
                       AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
                       SUM(route='degraded') degraded,
                       SUM(route='fallback_teacher') fallback_teacher
-               FROM requests GROUP BY day ORDER BY day"""
+               FROM requests WHERE {NOT_PASSTHROUGH} GROUP BY day ORDER BY day"""
         ).fetchall()
         out = []
         for r in rows:
@@ -1048,11 +1054,13 @@ class Ledger:
 
     @_locked
     def stats_by_client(self) -> list[dict[str, Any]]:
-        """Per API key: requests, cost and savings (the basis for per-client receipts)."""
+        """Per API key: requests, cost and savings (the basis for per-client receipts), without embeddings pass-through
+        rows, as `stats_by_day`."""
         rows = self.db.execute(
-            """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
+            f"""SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline
-               FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
+               FROM requests WHERE client IS NOT NULL AND {NOT_PASSTHROUGH}
+               GROUP BY client ORDER BY COUNT(*) DESC"""
         ).fetchall()
         out = []
         for r in rows:
@@ -1071,7 +1079,9 @@ class Ledger:
 
     @_locked
     def totals(self) -> dict[str, float]:
-        r = self.db.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone()
+        """Requests, cost and savings over the whole ledger, without embeddings pass-through rows, as `stats_by_day`."""
+        q = f"SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests WHERE {NOT_PASSTHROUGH}"
+        r = self.db.execute(q).fetchone()
         c, b = r["c"] or 0.0, r["b"] or 0.0
         return {
             "requests": r["n"],
