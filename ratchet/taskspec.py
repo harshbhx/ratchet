@@ -31,7 +31,7 @@ from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import compare, tasks
+from . import compare, similarity, tasks
 from .compare import FieldSpec
 from .openai_compat import MAYBE_SURROGATE, lone_surrogate
 
@@ -127,6 +127,14 @@ def _split(v: Any, t: str) -> str | None:
     return None if isinstance(v, str) and v else "must be a non-empty string"
 
 
+def _score(v: Any, t: str) -> str | None:
+    return None if _is_number(v) and 0 < v <= 1 else "must be a number more than 0 and at most 1"
+
+
+def _ratio(v: Any, t: str) -> str | None:
+    return None if _is_number(v) and v >= 1 else "must be a number >= 1"
+
+
 # option -> how its value is checked. `item` and `fields` hold field specs and are parsed by `_item` and `_fields`.
 _CHECKS: Mapping[str, Callable[[Any, str], str | None] | None] = {
     "required": _bool,
@@ -151,6 +159,9 @@ _CHECKS: Mapping[str, Callable[[Any, str], str | None] | None] = {
     "key": _strings,
     "ordered": _bool,
     "k": _count,
+    "metric": _one_of(*similarity.METRICS),
+    "threshold": _score,
+    "max_len_ratio": _ratio,
 }
 # option -> (check, the types that take it: `compare.OPTION_TYPES`, the table FieldSpec itself enforces).
 OPTIONS: Mapping[str, tuple[Callable[[Any, str], str | None] | None, frozenset[str]]] = {
@@ -333,10 +344,16 @@ def _build(
     if not isinstance(policy, Mapping):
         errs.append(f"{_at(where, 'policy')}: must be an object")
     else:
+        bad = False
         for key, value in policy.items():
             problem = tasks.policy_problem(key, value)
             if problem is not None:
+                bad = True
                 errs.append(f"{_at(where, 'policy')}.{key}: {problem}")
+        # A similarity field needs two samples or more (FR-2.55); a samples value that is wrong anyway is reported once.
+        problem = None if bad and "samples" in policy else tasks.samples_problem(fields, policy)
+        if problem is not None:
+            errs.append(f"{_at(where, 'policy')}.samples: {problem}")
     match = spec.get("match", {})
     if not isinstance(match, Mapping):
         errs.append(f"{_at(where, 'match')}: must be an object")

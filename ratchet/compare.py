@@ -10,7 +10,8 @@ Standard library only, no I/O: every student sample is normalised here on the re
 the size of its value and one answer may hold at most `MAX_RECORDS` records at any depth. Records pair by key or by
 position in linear time; without either, by their fields without a tolerance in linear time, and by the fields with one
 through a maximum bipartite matching, which is quadratic in the records of a group (give records a `key` when they
-have one).
+have one). `similarity` compares free text by a score (`ratchet/similarity.py`, FR-2.55) from features each answer
+builds once, on its first comparison; it cannot sit inside records.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from dataclasses import dataclass, field, fields
 from datetime import date, datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Any
+
+from . import similarity as _similarity
 
 
 class _Sentinel:
@@ -43,8 +46,8 @@ class _Sentinel:
 MISSING: Any = _Sentinel("MISSING")  # a path the answer does not have
 INVALID: Any = _Sentinel("INVALID")  # a value, or a whole answer, that cannot be compared
 
-# Field types. `similarity` and `tool_calls` are reserved for later releases: a spec that names them is refused, so no
-# task silently compares free text or tool calls with the wrong rule.
+# Field types. `tool_calls` is reserved for a later release: a spec that names it is refused, so no task silently
+# compares tool calls with the wrong rule. `similarity` compares free text by a score (FR-2.55, ADR 0054).
 TYPES = (
     "exact",
     "label",
@@ -60,7 +63,7 @@ TYPES = (
     "similarity",
     "tool_calls",
 )
-RESERVED_TYPES = frozenset({"similarity", "tool_calls"})
+RESERVED_TYPES = frozenset({"tool_calls"})
 # Types whose normalised value compares by equality (no tolerance), so it can be a set element or a record key.
 SCALAR_TYPES = frozenset({"exact", "label", "bool", "number", "ordinal", "text", "date", "language"})
 
@@ -429,6 +432,20 @@ def loose_text(text: str) -> str:
     return " ".join(words)
 
 
+class SimilarityText(str):
+    """A `similarity` field's normalised value (`similarity.normal`: NFKC, case-folded, whitespace collapsed): a str, so
+    it compares, hashes and serialises as its text (`Task.canonical`), that keeps each metric's features once they are
+    built (`features`). A sample is compared with every other one, so they are built at most once per answer, and only
+    when it is compared: `Task.check` on a stored answer never pays for them."""
+
+    def features(self, metric: str) -> Any:
+        cache = self.__dict__.setdefault("_features", {})
+        found = cache.get(metric)
+        if found is None:  # two threads may both build it: the same value, so the race is harmless
+            found = cache[metric] = _similarity.features(metric, str(self))
+        return found
+
+
 class Record(dict):  # type: ignore[type-arg]
     """One normalised record (path -> value): a dict marked as Ratchet's own, so `jsonable` recurses into it but never
     into a raw JSON value an `exact` field kept (which can be nested as deep as the parser allowed)."""
@@ -489,6 +506,9 @@ OPTION_TYPES: Mapping[str, frozenset[str]] = MappingProxyType(
         "key": frozenset({"records"}),
         "ordered": frozenset({"records"}),
         "k": frozenset({"ranking"}),
+        "metric": frozenset({"similarity"}),
+        "threshold": frozenset({"similarity"}),
+        "max_len_ratio": frozenset({"similarity"}),
     }
 )
 
@@ -530,6 +550,9 @@ class FieldSpec:
     key: tuple[str, ...] = ()  # records: the fields that pair records (else in any order, or by position if `ordered`)
     ordered: bool = False  # records: pair by position
     k: int = 0  # ranking: how many leading ids are compared (0: all)
+    metric: str = "chrf"  # similarity: 'chrf', 'token_f1' or 'rouge_l' (ratchet/similarity.py)
+    threshold: float = 0.7  # similarity: the score at which two answers agree, more than 0 and at most 1
+    max_len_ratio: float = 2.0  # similarity: answers whose lengths differ by a larger factor never agree (1 or more)
 
     # Derived in __post_init__.
     _segments: tuple[str, ...] = field(init=False, repr=False, compare=False, default=())
@@ -598,6 +621,12 @@ class FieldSpec:
             self._fail("granularity must be 'date' or 'datetime'")
         if self.split is not None and (not isinstance(self.split, str) or not self.split):
             self._fail("split must be a non-empty string")
+        if self.metric not in _similarity.METRICS:
+            self._fail(f"metric must be one of {', '.join(repr(m) for m in _similarity.METRICS)}")
+        if not _is_number(self.threshold) or not 0 < self.threshold <= 1:
+            self._fail("threshold must be a number more than 0 and at most 1")
+        if not _is_number(self.max_len_ratio) or not math.isfinite(self.max_len_ratio) or self.max_len_ratio < 1:
+            self._fail("max_len_ratio must be a finite number >= 1")
         self._set("_segments", () if self.path == "$" else tuple(self.path.split(".")))
 
         t = self.type
@@ -640,6 +669,8 @@ class FieldSpec:
             self._set("_by_equality", not self.tolerance)
         elif t == "set":
             self._set("_by_equality", self.min_jaccard >= 1)
+        elif t == "similarity":
+            self._set("_by_equality", False)  # a score, not equality: never a set element or a record key
         elif t == "records":
             self._set("_eq_fields", tuple(f for f in self.fields if f._by_equality))
             self._set("_tol_fields", tuple(f for f in self.fields if not f._by_equality))
@@ -705,6 +736,10 @@ class FieldSpec:
         paths = [f.path for f in self.fields]
         if "$" in paths:
             self._fail("a record field needs a key path, not '$'")
+        if any(f.type == "similarity" for f in self.fields):
+            # Pairing records by a score would be quadratic in the records times the length of their text, on every pair
+            # of samples: free text belongs in a field of its own.
+            self._fail("a record field cannot be similarity; give the free text a field of its own")
         if len(set(paths)) != len(paths):
             self._fail("two record fields have the same path")
         by_path = {f.path: f for f in self.fields}
@@ -957,6 +992,14 @@ def _n_records(spec: FieldSpec, raw: Any, budget: list[int]) -> Any:
     return tuple(out)
 
 
+def _n_similarity(spec: FieldSpec, raw: Any, budget: list[int]) -> Any:
+    """Free text: a string, normalised (`similarity.normal`); an empty one, or anything but a string, cannot be compared."""
+    if not isinstance(raw, str):
+        return INVALID
+    text = _similarity.normal(raw)
+    return SimilarityText(text) if text else INVALID
+
+
 _NORMALIZE: dict[str, Callable[[FieldSpec, Any, list[int]], Any]] = {
     "exact": _n_exact,
     "label": _n_label,
@@ -969,6 +1012,7 @@ _NORMALIZE: dict[str, Callable[[FieldSpec, Any, list[int]], Any]] = {
     "set": _n_set,
     "records": _n_records,
     "ranking": _n_ranking,
+    "similarity": _n_similarity,
 }
 
 
@@ -1138,6 +1182,23 @@ def _m_ranking(spec: FieldSpec, a: tuple[Any, ...], b: tuple[Any, ...]) -> bool:
     return top_a == top_b if spec.mode == "prefix" else set(top_a) == set(top_b)
 
 
+def _features(spec: FieldSpec, v: Any) -> Any:
+    """The metric's features of a normalised value, kept on it when it is a `SimilarityText` (always, from `normalize`)."""
+    return v.features(spec.metric) if isinstance(v, SimilarityText) else _similarity.features(spec.metric, str(v))
+
+
+def _m_similarity(spec: FieldSpec, a: str, b: str) -> bool:
+    """Equal texts agree. Otherwise the longer may be at most `max_len_ratio` times the shorter (a one-line answer is not
+    a summary of a page, however many of its words it shares), and the metric's score must reach `threshold`. Symmetric,
+    as the pairwise confidence score needs."""
+    if a == b:
+        return True
+    short, long = sorted((len(a), len(b)))
+    if long > spec.max_len_ratio * short:
+        return False
+    return _similarity.compare_features(spec.metric, _features(spec, a), _features(spec, b)) >= spec.threshold - 1e-9
+
+
 _MATCH: dict[str, Callable[[FieldSpec, Any, Any], bool]] = {
     "exact": _m_exact,
     "label": _m_equal,
@@ -1150,4 +1211,5 @@ _MATCH: dict[str, Callable[[FieldSpec, Any, Any], bool]] = {
     "set": _m_set,
     "records": _m_records,
     "ranking": _m_ranking,
+    "similarity": _m_similarity,
 }
