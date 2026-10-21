@@ -9,6 +9,27 @@
   "keys": {
     "mode": "string",
     "day": "number",
+    "links": {
+      "live": "string|null",
+      "sim": "string|null"
+    },
+    "demo": {
+      "surface": "string",
+      "controls": "bool",
+      "shared": "bool",
+      "max_days": "number|null",
+      "max_requests": "number|null",
+      "idle_reset_s": "number|null",
+      "actions_per_minute": "number|null",
+      "auto_resets": "number",
+      "last_reset_at": "number|null"
+    },
+    "upstream": {
+      "recording": "bool",
+      "since": "number|null",
+      "token_factory": "bool",
+      "calls": "list"
+    },
     "teacher": "string",
     "student_base": "string",
     "fallback_student": "string",

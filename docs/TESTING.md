@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1867 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1887 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -29,10 +29,11 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 88 (50 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 40 |
-| `tests/test_contract.py` | 56 (45 functions; one has 9 cases, one has 4) |
+| `tests/test_contract.py` | 57 (46 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
-| `tests/test_live.py` | 76 (3 of them strict xfails for NFR-60) |
+| `tests/test_live.py` | 78 (3 of them strict xfails for NFR-60) |
+| `tests/test_livesim.py` | 17 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
@@ -63,8 +64,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| `tests/test_watch.py` | 69 (37 functions; one has 26 cases, one 8) |
-| **Total** | **1867** |
+| **Total** | **1887** |
 
 There are three layers:
 
@@ -592,6 +592,20 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_metric_targets_match_the_prd` | FR-7.9: rule (j) on the repo: every SM row's Target equals `ratchet.kpis.SM_TARGETS` |
 | `test_metric_target_rule_catches_drift` | FR-7.9: with a swapped target table, a changed number, operator or unit, a missing entry, an extra entry, an unparseable PRD cell and a broken import each give exactly one error; `parse_target` reads `≥ 70%`, `0`, `≤ 3 nights` and `< 1 s` |
 | `test_clip_keeps_table_cells_valid` | Matrix text is at most 100 characters, ends in an ellipsis, never leaves an open code span or half an escaped pipe |
+
+### `tests/test_livesim.py`
+
+Live and simulation side by side (FR-11.30, FR-11.31, NFR-67, [ADR 0133](adr/0133-live-and-simulation-hosts.md)), offline: live mode runs over `httpx.MockTransport` and the janitor over a `FakeClock`, with no thread and no server. The compose file, the Caddyfile and `update.sh` are checked in `tests/test_live.py` (`test_compose_and_caddy_run_a_keyless_simulation_beside_the_live_gateway`, `test_update_script_checks_both_hosts` with stub `git`, `docker` and `curl`), and INV-8 with the limits set in `tests/test_contract.py` (`test_demo_limits_never_answer_before_the_mode_check`).
+
+| Test | Covers |
+|---|---|
+| `test_upstream_recorder_is_content_free` | FR-11.31, INV-12, INV-13, INV-15: a sentinel in the prompt, in an upstream 400's message and code and in a URL-shaped `model` reaches nothing in `/ratchet/stats` `upstream`, read as an admin and as the scrubbed anonymous reader; the 400 is `UpstreamError`, `http`, 400; the URL-shaped model id becomes `null` |
+| `test_upstream_calls_shape_and_roles` | The call items' exact keys; teacher, endpoint student (`student_endpoint`), hosted Nano (`token_factory`, the fallback model's id) and the fallback teacher by role; `token_factory` false for another base |
+| `test_upstream_failures_record_class_status_and_last_success`, `test_classify_never_returns_a_message`, `test_age_grows_with_the_clock` | 429, timeout, connect error and a non-JSON body classified; the first success kept; an observer that raises and junk records change no call; ages follow the clock |
+| `test_tavily_calls_are_recorded_without_content`, `test_providers_take_observe_as_keyword_only` | The Tavily hook (200 and 432) holds no query, URL or key; `observe` is keyword-only and changes no request body or completion |
+| `test_demo_actions_are_limited_per_ip`, `test_demo_limit_off_by_default` | A second action from one IP is a 429 with `Retry-After` and writes no event; another IP passes; reads are never limited |
+| `test_demo_caps_reset_on_click`, `test_janitor_resets_when_idle_and_dirty_only`, `test_janitor_thread_starts_once_and_only_when_asked`, `test_janitor_thread_starts_in_mock_mode_on_a_demo_action_only`, `test_demo_lock_held_blocks_the_janitor_reset` | The day and request caps reset on a click with `auto_reset` and one `demo_reset` event; the idle reset runs once, only when dirty, and never while a demo action holds the lock; the thread starts once, in mock mode, on a demo action |
+| `test_link_and_demo_settings_are_checked`, `test_token_factory_host_is_the_default_teacher_base`, `test_stats_links_demo_and_upstream_blocks` | Bad URLs and `RATCHET_DEMO_*` values name their variable; the deploy variables are known; the stats blocks |
 
 ### `tests/test_live.py`
 

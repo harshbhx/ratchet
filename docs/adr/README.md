@@ -66,5 +66,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0131](0131-golden-prompts-are-golden-in-every-task.md) | A prompt that is golden under one task is golden under every task, and occurrences count across tasks | Accepted | 2026-10-22 |
 | [0073](0073-fallback-attribution.md) | Fallback attribution: an answer is a version's only when its own adapter wrote it; the hosted fallback is served, recorded and never counted toward a release | Accepted | 2026-10-21 |
 | [0132](0132-demo-watchdog-and-rollback-first-updates.md) | A host watchdog (restart rule that ignores teacher outages), an hourly live probe on a pinned task with a signed webhook and a content-free flag, and updates that back up first and roll back | Accepted | 2026-10-22 |
+| [0133](0133-live-and-simulation-hosts.md) | Live and simulation hosts: a keyless mock gateway beside the live one, limits for the shared simulation, and a content-free last-call record per role | Accepted | 2026-10-22 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

@@ -216,6 +216,12 @@ The admin API (FR-12.1, [ADR 0064](../docs/adr/0064-admin-api-compare-and-set-an
 
 `/ratchet/stats` only gains keys: every key the dashboard reads is listed with its JSON type in `tests/fixtures/stats_keys.json` and checked by `test_stats_contract`. Add new keys there too; never remove or retype one. The other client-facing behaviour (status codes, task selection, sampling parameters, the confidence formula, the threshold boundary, audits, cost to the token) is pinned in `tests/test_contract.py`.
 
+## Simulation host and upstream calls (`demo.py`, `upstream.py`)
+
+FR-11.30, FR-11.31, ADR 0133. `gateway._demo_limit` is an app-level dependency after `_access`: it acts only in mock mode, with `RATCHET_DEMO_RPM` set, on non-GET calls to a route whose path starts `/ratchet/demo/` (so demo routes other items add are covered without editing it); it never runs before `_mock_only()` answers in live mode (INV-8, `test_demo_limits_never_answer_before_the_mode_check`). `demo.DemoJanitor` is module-level in `gateway.py` (`_janitor`, beside `_last_reset`) so it survives `rt.reset()`; the day and request caps are enforced when a visitor clicks `/ratchet/demo/day` (`_reset_locked`, inside the lock it already holds), the idle and request caps also by one daemon thread started on the first mock demo action, never at import, in live mode or with the defaults. Every `RATCHET_DEMO_*` value is checked by `Settings.demo_policy()`, the URLs by `config.public_url` through `Settings.links()`.
+
+`upstream.UpstreamRecorder` is the only record of the last real upstream call per role. `OpenAICompatProvider(observe=...)` and `TavilySearch(observe=...)` are keyword-only and call the observer in one `finally`, suppressing every exception; a new upstream client takes `observe=` the same way and never passes it a message, a body, a URL, a header or a key. The recorder keeps a model id only when `MODEL_ID` matches in full (a response's `model` is upstream-controlled text), an exception's class name and a fixed reason, never `str(e)` or the upstream's own error code. It is created once in `Runtime.__init__` (it survives resets) and bound in live mode only; mock mode records nothing. `TOKEN_FACTORY_HOST` is tied to `config.py`'s default `RATCHET_TEACHER_BASE` by a test.
+
 ## Scout (`scout/`)
 
 Multi-agent research demo ([docs/SCOUT.md](../docs/SCOUT.md)).

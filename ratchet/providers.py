@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import difflib
 import json
 import math
@@ -488,12 +489,14 @@ class OpenAICompatProvider:
         rng: Callable[[], float] = random.random,
         allow: frozenset[str] | None = None,
         reasoning_field: str = "chat_template_kwargs",
+        observe: Callable[..., None] | None = None,
     ):
         if reasoning_field not in reasoning.FIELDS:
             raise ValueError(f"reasoning_field must be one of {', '.join(reasoning.FIELDS)}, not {reasoning_field!r}")
         self.base_url = base_url.rstrip("/")
         self.allow = allow
         self.reasoning_field = reasoning_field
+        self.observe = observe  # `UpstreamRecorder.bind(...)`: told each `complete` call's outcome, never its content
         self.timeout = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout)
         self.retry = retry or NO_RETRY
         self.sleep = sleep
@@ -557,23 +560,40 @@ class OpenAICompatProvider:
                 raise UpstreamError.from_response(resp)
             return resp
 
+        seen: dict[str, Any] = {"status": None, "served": None, "error": None}
         t0 = time.perf_counter()
         retry = self.retry
         if deadline_s is not None and deadline_s < retry.deadline_s:
             retry = replace(retry, deadline_s=deadline_s)
         try:
-            resp = retry_call(attempt, retry, sleep=self.sleep, clock=self.clock, rng=self.rng)
-        except httpx.HTTPError as e:
-            if isinstance(e, UpstreamError):
-                raise
-            raise as_upstream(e) from e  # a timeout is 504, an unreachable endpoint 502; never httpx's message
-        latency = (time.perf_counter() - t0) * 1000  # what the caller waited, retries included
-        # A 2xx body is read once and never retried: the model answered, and the tokens are billed.
-        try:
-            data = resp.json()
-        except (ValueError, RecursionError) as e:  # RecursionError: JSON nested too deeply for the parser
-            raise UpstreamError(502, "the upstream model's response is not JSON", code=BAD_RESPONSE) from e
-        return _completions(data, model, latency)
+            try:
+                resp = retry_call(attempt, retry, sleep=self.sleep, clock=self.clock, rng=self.rng)
+            except httpx.HTTPError as e:
+                if isinstance(e, UpstreamError):
+                    raise
+                raise as_upstream(e) from e  # a timeout is 504, an unreachable endpoint 502; never httpx's message
+            latency = (time.perf_counter() - t0) * 1000  # what the caller waited, retries included
+            seen["status"] = resp.status_code
+            # A 2xx body is read once and never retried: the model answered, and the tokens are billed.
+            try:
+                data = resp.json()
+            except (ValueError, RecursionError) as e:  # RecursionError: JSON nested too deeply for the parser
+                raise UpstreamError(502, "the upstream model's response is not JSON", code=BAD_RESPONSE) from e
+            seen["served"] = data.get("model") if isinstance(data, dict) else None  # as sent, before _completions echoes
+            return _completions(data, model, latency)
+        except BaseException as e:
+            seen["error"] = e
+            raise
+        finally:
+            if self.observe is not None:
+                with contextlib.suppress(Exception):  # the record is never worth a failed call (INV-7, INV-15)
+                    self.observe(
+                        model,
+                        served_model=seen["served"],
+                        status=seen["status"],
+                        error=seen["error"],
+                        latency_ms=(time.perf_counter() - t0) * 1000,
+                    )
 
     def embed(self, inputs: list[Any], model: str, dimensions: int | None = None) -> Embeddings:
         """One embeddings call (`POST {base}/embeddings`, FR-1.51), with the same timeouts, retries and errors as

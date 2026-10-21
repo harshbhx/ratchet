@@ -988,3 +988,14 @@ Which answers a version's release statistics count ([ADR 0073](adr/0073-fallback
 **The ledger.** `OWN_STUDENT` and `OWN_SHADOW` (`student_model IS NULL OR student_model = (SELECT adapter_uri FROM versions WHERE id=?1)`) are part of `AUDIT_TALLY_SQL`, `AUDIT_PENDING_SQL` and `SHADOW_QUALITY_SQL`: the adapter is read once per query by primary key, and the requests indexes are searched as before. `stats_by_day` adds `fallback_served`.
 
 **What follows.** While the fallback serves, no version gets evidence: the canary and the shadow hold, the live alert stays quiet, and Night School skips while that release is in flight (INV-5). Rows from before v0.5 have no model and count as they did; the reference runs are unchanged.
+## Demo hosting: live and simulation
+
+The demo VM serves two gateways from one image behind one Caddy: the live one at the root domain, and `ratchet-sim` (mock mode, in-memory ledger, no keys, 1 vCPU and 1 GiB) at `sim.<domain>`. INV-8 stays in the app, so the live host answers every demo route 403 whatever Caddy does ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
+
+```
+Caddy ─┬─ <domain>      ─▶ ratchet      (live; Token Factory, student endpoint, Tavily)
+       └─ sim.<domain>  ─▶ ratchet-sim  (mock; demo controls open, per-IP limit, self-reset)
+```
+
+- `ratchet/demo.py` (mock mode only): `DemoPolicy`, and the `DemoJanitor` that resets the shared simulation after N simulated days or requests (on a click) or idle time (a daemon thread). `gateway._demo_limit` is an app-level dependency after `_access`: a per-IP bucket (`ratelimit.RateLimiter`) on non-GET `/ratchet/demo/*` calls.
+- `ratchet/upstream.py`: the last real upstream call per role, content-free. The provider and the Tavily client report to an `observe` callback in a `finally`; the recorder sits beside the metrics (`ratchet_upstream_*`, counters by purpose) and keeps a model id, status, latency and time instead. `/ratchet/stats` carries it as `upstream`, with `links` and `demo`.

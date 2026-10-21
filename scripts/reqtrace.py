@@ -1004,6 +1004,19 @@ CODE: dict[str, tuple[str, ...]] = {
         "deploy/vm/config/tasks.json",
     ),
     "FR-11.34": ("deploy/vm/update.sh", "deploy/vm/restore.sh", "deploy/vm/backup.sh", "scripts/demo_check.py"),
+    "FR-11.30": (
+        "deploy/vm/docker-compose.yml",
+        "deploy/vm/Caddyfile",
+        "deploy/vm/update.sh",
+        "ratchet.demo:DemoJanitor",
+        "ratchet.gateway:_demo_limit",
+        "ratchet.config:public_url",
+    ),
+    "FR-11.31": (
+        "ratchet.upstream:UpstreamRecorder",
+        "ratchet.upstream:classify",
+        "ratchet.providers:OpenAICompatProvider.complete",
+    ),
     # 6.13 Data governance
     "FR-13.1": (
         "ratchet.router:Ratchet.store_opt_out",
@@ -1456,6 +1469,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "SM-3": ("ratchet.kpis:student_share",),
     "SM-4": ("ratchet.kpis:bad_deploys", "ratchet.ledger:Ledger.events_of"),
     "SM-5": ("ratchet.kpis:drift_recovery", "ratchet.kpis:drift_episodes", "ratchet.kpis:escalation_rates"),
+    "NFR-67": ("deploy/vm/docker-compose.yml", "deploy/vm/update.sh"),
     "NFR-55": ("ratchet.release:ReleaseGate._tick_drift", "ratchet.drift:DriftMonitor._update", "ratchet.drift:Stream"),
     "NFR-66": ("ratchet.watch:WatchConfig", "ratchet.watch:urllib_fetch", "ratchet.watch:PROBE_BODY"),
     "NFR-56": ("ratchet.drift:Ranks", "ratchet.drift:DriftMonitor._stream", "ratchet.drift:DriftMonitor.counts"),
@@ -1638,6 +1652,13 @@ EXEMPT: dict[str, Exempt] = {
     "FR-11.34": Exempt(
         "live", "scripts/demo_check.py", "`update.sh` needs Docker on the VM; the check runs against the public demo"
     ),
+    "FR-11.30": Exempt("live", "docs/DEPLOY_NEBIUS_VM.md", "two gateways and two certificates on one VM run only on the demo VM"),
+    "FR-11.31": Exempt(
+        "live",
+        "docs/DEPLOY_NEBIUS_VM.md",
+        "real Token Factory and Tavily calls need keys; recording is tested with fake transports",
+    ),
+    "NFR-67": Exempt("live", "docs/DEPLOY_NEBIUS_VM.md", "the caps and the fit in 2 vCPU / 8 GB are measured on the demo VM"),
     "FR-15.2": Exempt(
         "live",
         "deploy/student_endpoint.sh",

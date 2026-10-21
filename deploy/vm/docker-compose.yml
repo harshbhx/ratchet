@@ -7,62 +7,97 @@
 
 name: ratchet
 
+# The settings both gateways share, so the two services cannot drift (YAML merge key below).
+x-gateway: &gateway
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  image: ratchet-gateway:local
+  # One worker only: the ledger is a single SQLite connection (ADR 0006).
+  # --proxy-headers lets the per-IP Scout rate limit see the real client IP that Caddy sends in
+  # X-Forwarded-For. Trusting every forwarder is safe here only because port 8000 is not
+  # published: the only thing that can reach it is Caddy on the internal network.
+  command:
+    - uvicorn
+    - ratchet.gateway:app
+    - --host
+    - 0.0.0.0
+    - --port
+    - "8000"
+    - --workers
+    - "1"
+    - --proxy-headers
+    - --forwarded-allow-ips
+    - "*"
+  expose:
+    - "8000"
+  restart: unless-stopped
+  # On a stop, the gateway finishes its requests, then waits up to RATCHET_SIDECAR_DRAIN_S (10 s) for audits and
+  # shadows still queued (live mode, ADR 0072); Docker's default 10 s before SIGKILL would cut that wait short.
+  stop_grace_period: 20s
+  healthcheck:
+    # python:3.12-slim has no curl, so use the standard library.
+    test:
+      - CMD
+      - python
+      - -c
+      - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    # Mock warm-up (RATCHET_MOCK_WARMUP_DAYS) runs simulated days before the app answers.
+    start_period: 180s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
 services:
+  # The live gateway at RATCHET_DOMAIN: the URL for the hackathon's Stage One. Its mode comes from .env.
   ratchet:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    image: ratchet-gateway:local
+    <<: *gateway
     env_file: .env
-    # One worker only: the ledger is a single SQLite connection (ADR 0006).
-    # --proxy-headers lets the per-IP Scout rate limit see the real client IP that Caddy sends in
-    # X-Forwarded-For. Trusting every forwarder is safe here only because port 8000 is not
-    # published: the only thing that can reach it is Caddy on the internal network.
-    command:
-      - uvicorn
-      - ratchet.gateway:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --workers
-      - "1"
-      - --proxy-headers
-      - --forwarded-allow-ips
-      - "*"
-    expose:
-      - "8000"
+    environment:
+      # The header switch's link to the simulation host. Unset in .env: https://<RATCHET_SIM_DOMAIN>.
+      # Set to empty in .env: no link (use that with RATCHET_SIM=off).
+      RATCHET_SIM_URL: ${RATCHET_SIM_URL-https://${RATCHET_SIM_DOMAIN:-sim.${RATCHET_DOMAIN}}}
     volumes:
       - ratchet-data:/data
       # A directory, so a `git pull` that replaces config/tasks.json is seen on the next start. The watchdog's pinned probe
       # task lives there; set RATCHET_TASKS_FILE=/config/tasks.json in .env once a `watchdog` key is in RATCHET_API_KEYS.
       - ./config:/config:ro
-    restart: unless-stopped
-    # On a stop, the gateway finishes its requests, then waits up to RATCHET_SIDECAR_DRAIN_S (10 s) for audits and
-    # shadows still queued (live mode, ADR 0072); Docker's default 10 s before SIGKILL would cut that wait short.
-    stop_grace_period: 20s
-    healthcheck:
-      # python:3.12-slim has no curl, so use the standard library.
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      # Mock warm-up (RATCHET_MOCK_WARMUP_DAYS) runs simulated days before the app answers.
-      start_period: 180s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+
+  # The simulation at RATCHET_SIM_DOMAIN (default sim.<RATCHET_DOMAIN>): the same image in mock mode with an in-memory
+  # ledger, where the demo controls work and the live host's INV-8 stays untouched (FR-11.30, ADR 0133).
+  # Its own environment and NO env_file: this container never holds NEBIUS_API_KEY, TAVILY_API_KEY, RATCHET_STUDENT_KEY,
+  # RATCHET_BOM_SIGNING_KEY, API, admin or dashboard keys, the edge token or the judge code. It also has no volume.
+  ratchet-sim:
+    <<: *gateway
+    environment:
+      RATCHET_MODE: mock
+      RATCHET_MOCK_WARMUP_DAYS: "4"
+      RATCHET_LIVE_URL: https://${RATCHET_DOMAIN}
+      RATCHET_DEMO_RPM: "30"             # demo actions a minute per client IP
+      RATCHET_DEMO_MAX_DAYS: "30"        # reset at the 31st simulated day
+      RATCHET_DEMO_MAX_REQUESTS: "200000"
+      RATCHET_DEMO_IDLE_RESET_S: "7200"  # reset after 2 h with no visitor activity
+      RATCHET_IP_RPM: "60"               # keyless /v1 requests a minute per client IP
+      RATCHET_MAX_INFLIGHT: "8"          # chat requests in flight
+      RATCHET_STATS_TTL_S: "2"           # one stats computation per 2 s, however many visitors poll
+      # Optional: signs the simulation's BOMs. Never RATCHET_BOM_SIGNING_KEY, so a simulated BOM cannot verify against
+      # the live public key.
+      RATCHET_BOM_SIGNING_KEY: ${RATCHET_SIM_BOM_SIGNING_KEY:-}
+    # Nobody hammering the simulation can starve the live gateway. Whether both fit in 2 vCPU / 8 GB under judging load
+    # is unverified (docs/DEPLOY_NEBIUS_VM.md, "Cost").
+    cpus: "1.0"
+    mem_limit: 1g
 
   caddy:
     image: caddy:2.11.7-alpine
     depends_on:
       - ratchet
+      - ratchet-sim
     ports:
       - "80:80"
       - "443:443"
@@ -73,6 +108,9 @@ services:
       # X-Ratchet-Admin-Token header matches RATCHET_ADMIN_TOKEN. See the Caddyfile.
       RATCHET_API_GUARD: ${RATCHET_API_GUARD:-open}
       RATCHET_ADMIN_TOKEN: ${RATCHET_ADMIN_TOKEN:-}
+      # The simulation host (the Caddyfile's sim-on / sim-off snippets): on or off, and its name.
+      RATCHET_SIM: ${RATCHET_SIM:-on}
+      RATCHET_SIM_DOMAIN: ${RATCHET_SIM_DOMAIN:-sim.${RATCHET_DOMAIN}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data      # certificates and ACME account: keep it, or you hit Let's Encrypt rate limits

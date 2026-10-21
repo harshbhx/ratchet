@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -56,6 +59,8 @@ class TavilySearch:
         url: str = TAVILY_URL,
         timeout: float = 30.0,
         depth: str = "basic",
+        *,
+        observe: Callable[..., None] | None = None,
     ):
         if not api_key:
             raise ValueError("TAVILY_API_KEY is not set")
@@ -64,6 +69,7 @@ class TavilySearch:
         self.api_key = api_key
         self.url = url
         self.depth = depth
+        self.observe = observe  # `UpstreamRecorder.bind("tavily", "tavily")`: outcome only, never the query or the hits
         self.client = client or httpx.Client(timeout=timeout)
 
     @property
@@ -78,22 +84,33 @@ class TavilySearch:
         """(hits, credits, counted): the credits Tavily reports in `usage.credits` (counted "usage"), or the table amount
         for this depth when it reports none or an implausible one ("table"). A failed call raises an `httpx.HTTPError`:
         `HTTPStatusError` for a status other than 2xx, `DecodingError` for a body that is not JSON."""
-        r = self.client.post(
-            self.url,
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "query": query,
-                "search_depth": self.depth,
-                "max_results": max_results,
-                "topic": "general",
-                "include_usage": True,
-            },
-        )
-        r.raise_for_status()
+        seen: dict[str, Any] = {"status": None, "error": None}
+        t0 = time.perf_counter()
         try:
-            data: Any = r.json()
-        except ValueError:
-            raise httpx.DecodingError("the search response is not JSON", request=r.request) from None
+            r = self.client.post(
+                self.url,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "query": query,
+                    "search_depth": self.depth,
+                    "max_results": max_results,
+                    "topic": "general",
+                    "include_usage": True,
+                },
+            )
+            seen["status"] = r.status_code
+            r.raise_for_status()
+            try:
+                data: Any = r.json()
+            except ValueError:
+                raise httpx.DecodingError("the search response is not JSON", request=r.request) from None
+        except BaseException as e:
+            seen["error"] = e
+            raise
+        finally:
+            if self.observe is not None:
+                with contextlib.suppress(Exception):  # the query, the result URLs and the key never reach the observer
+                    self.observe(None, status=seen["status"], error=seen["error"], latency_ms=(time.perf_counter() - t0) * 1000)
         data = data if isinstance(data, dict) else {}
         results = data.get("results")
         hits = []

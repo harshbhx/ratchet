@@ -228,6 +228,20 @@ Never keep two versions in `live`; the admin API cannot make two, and `promote -
 
 ## Playbooks
 
+### Simulation host
+
+`ratchet-sim` is a mock gateway at `sim.<domain>` (FR-11.30, [ADR 0133](adr/0133-live-and-simulation-hosts.md)). It holds no key and no data worth keeping.
+
+- **Reset by hand:** `POST https://sim.<domain>/ratchet/demo/reset` (30 s cooldown), or `docker compose restart ratchet-sim`. It also resets itself after `RATCHET_DEMO_MAX_DAYS` simulated days, `RATCHET_DEMO_MAX_REQUESTS` requests or `RATCHET_DEMO_IDLE_RESET_S` idle seconds; each writes a `demo_reset` event.
+- **Turn it off:** `RATCHET_SIM=off` and an empty `RATCHET_SIM_URL=` in `.env`, then `update.sh`. The container still runs, unreachable.
+- **Logs:** `docker compose logs -f --tail=100 ratchet-sim`. A 429 on a demo click is the per-IP limit, not an outage.
+- **The day-1 measurement** (the fit of both gateways is unverified): after `update.sh`, run `docker stats --no-stream`; then do 20 "Run 1 day + night" clicks and 5 mock Scout runs on the simulation host while timing `curl https://<domain>/healthz` and one live `/v1` request every 10 s. Live latencies must not move by more than 20% against a quiet minute. If they do, lower `cpus` and `mem_limit` of `ratchet-sim`, pick `RATCHET_VM_PRESET=4vcpu-16gb`, or set `RATCHET_SIM=off`.
+- **An OOM kill** restarts the simulation through `restart: unless-stopped` and runs a fresh warm-up.
+
+### Reading the last-call strip
+
+The landing page's strip and the dashboard header show "Last Token Factory call: 3 min ago · model id · 4.2 s" and the same for Tavily, from `/ratchet/stats` `upstream`. It is the newest real call per role, never content. An old age means no traffic since, or no watchdog probe. "failed 3 min ago (timeout)" or "(HTTP 429)" is the last call's outcome, followed by "last success 40 min ago" when there was one: see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) and [Rate limited](#rate-limited). "No Token Factory call since the gateway started" is normal on a fresh start. The record resets on a restart and covers the gateway process only.
+
 ### Teacher API down (Token Factory errors or timeouts)
 
 **Symptoms:** `/v1/chat/completions` returns **502** `teacher_unavailable` (`teacher unavailable: upstream 503`, or `upstream 502 upstream_unreachable` when Token Factory cannot be reached) or **504** `teacher_timeout` for cold-start, escalated and pinned requests, which need the teacher's answer. After 5 such failures in a row a `circuit` event `teacher: closed->open after 5 failures (...)`, and from then on those requests get **503** `teacher_circuit_open` at once, with `Retry-After` until the breaker's next probe. `audit_error` events in the release log, and `shadow_error` events (`arbitration`) while a shadow runs, each logged on the 1st, 10th, 100th and 1000th failure; the detail names the status and code (`ticket-triage: UpstreamError 504 upstream_timeout`). With the opt-in options below, `fallback_teacher` or `degraded` events and the same routes in `/ratchet/stats`. A **502** `upstream_auth_error` or `upstream_not_found` is not an outage: see step 1.
