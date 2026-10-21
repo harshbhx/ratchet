@@ -99,8 +99,9 @@ def _effective(params: GenParams | None, response_format: dict[str, Any] | None)
 
 def _pinned_answer(messages: list[dict[str, Any]], strict: bool = False) -> str | None:
     """Scout's planner and writer prompts (pinned to the teacher). A writer request whose facts the mock cannot read
-    (not JSON, nested too deeply to parse, or the wrong shape) gets the generic world's answer, or with `strict` raises
-    KeyError, like any request the mock world does not know (the gateway's 400 in mock mode)."""
+    (not JSON, nested too deeply to parse, the wrong shape, or a fact without its source number `n`) gets the generic
+    world's answer, or with `strict` raises KeyError, like any request the mock world does not know (the gateway's 400 in
+    mock mode)."""
     system = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
     user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
     if not isinstance(user, str):
@@ -110,7 +111,7 @@ def _pinned_answer(messages: list[dict[str, Any]], strict: bool = False) -> str 
     if system == WRITE_SYSTEM:
         try:
             return research.write_answer(json.loads(user).get("facts", []))
-        except (ValueError, AttributeError, TypeError, RecursionError) as e:
+        except (ValueError, AttributeError, TypeError, KeyError, RecursionError) as e:
             if strict:
                 raise KeyError("writer request without readable facts") from e
     return None
@@ -271,13 +272,14 @@ class MockFleet:
 
     # Trainer
     def train(self, train_rows: list[dict[str, Any]], base_model: str, name: str) -> str:
-        """Counts each row's template, found as a model would see the request: its messages and its stored conditions
-        (`row["params"]`: a schema or tools put a generic row in that sub-world). Never raises on a row the demo did not
-        write; it lands in the generic world."""
+        """Counts each row's template, found as the student will see the request: its messages and the stored
+        conditions (`row["params"]`) its allowlist passes (`policy.student`, as `evaluate` and the router send it), so a
+        schema the student is sent puts a generic row in that sub-world, and tools it is not sent do not. Never raises on
+        a row the demo did not write; it lands in the generic world."""
         counts: Counter[str] = Counter()
         texts: set[str] = set()
         for row in train_rows:
-            t = lookup(row["messages"][:-1], GenParams.from_stored(row.get("params")))
+            t = lookup(row["messages"][:-1], self.policy.student(GenParams.from_stored(row.get("params"))))
             counts[t.template] += 1
             texts.add(t.text)
         self.knowledge[name] = {"templates": dict(counts), "texts": texts}

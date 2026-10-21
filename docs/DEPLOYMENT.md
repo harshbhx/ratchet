@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 751 tests, ~80 s
+pytest -q                                                          # 754 tests, ~80 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```

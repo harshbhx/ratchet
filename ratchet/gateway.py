@@ -76,6 +76,8 @@ SCOUT_PAGE = HERE / "web" / "scout.html"
 DIST = HERE / "web" / "dist"
 SPA_INDEX = DIST / "index.html"
 WORKLOADS = ("tickets", "research", "mixed", "schema", "tools")  # sim.world.WORKLOADS, for /ratchet/demo/day
+# Workloads the generic mock world answers (sim/generic.py), which RATCHET_MOCK_STRICT=1 turns off: refused before a day starts.
+GENERIC_WORKLOADS = ("schema", "tools")
 MAX_QUESTION_CHARS = 300
 MAX_REDACT_CHARS = 5000
 
@@ -1034,6 +1036,8 @@ def demo_day(requests: int = 1500, workload: str = "tickets") -> dict[str, Any]:
     _mock_only()
     if workload not in WORKLOADS:
         raise HTTPException(400, f"workload must be one of {list(WORKLOADS)}")
+    if workload in GENERIC_WORKLOADS and rt.settings.mock_strict:  # the strict mock would refuse its first request mid-day
+        raise HTTPException(400, f"workload {workload} needs the generic mock world, which RATCHET_MOCK_STRICT=1 turns off")
     if not _demo_lock.acquire(blocking=False):
         raise _demo_busy()
     try:
