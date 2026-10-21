@@ -120,6 +120,12 @@ def _fail(var: str, raw: object, expected: str, fallback: Any) -> Any:
     return fallback
 
 
+def default_fixtures_dir() -> str:
+    """RATCHET_FIXTURES_DIR (default `fixtures`, relative to the working directory): `Settings.fixtures_dir`, and what
+    `taskspec` reads when a caller parses a sql task's spec without naming a directory."""
+    return _env("RATCHET_FIXTURES_DIR", "fixtures")
+
+
 def _float(name: str, default: str) -> float:
     """A number from the environment; ConfigError names the variable, so a typo stops startup with a message that says
     which setting is wrong."""
@@ -886,8 +892,8 @@ class Settings:
     model_aliases: str = field(default_factory=lambda: _env("RATCHET_MODEL_ALIASES", ""))
     auto_task: str = field(default_factory=lambda: _env("RATCHET_AUTO_TASK", "off"))
     # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
-    # any other file on the host.
-    fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
+    # any other file on the host: the SQL scripts sql tasks run their answers on (FR-2.56, ratchet/sqlcheck.py).
+    fixtures_dir: str = field(default_factory=default_fixtures_dir)
     # The most auto tasks the registry holds (ADR 0042, ADR 0048): those derived from a response_format json_schema
     # (ratchet/schema_tasks.py; past the cap a new schema gets the unknown-task path) and those made per system prompt
     # (RATCHET_AUTO_TASK=system_prompt; past the cap `default`) count together. 0 turns auto tasks off.

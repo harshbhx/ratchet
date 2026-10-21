@@ -40,7 +40,8 @@ from fakes import (
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from ratchet import bom, licenses, live
+from ratchet import bom, licenses, live, tasks
+from ratchet.compare import FieldSpec
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
@@ -335,11 +336,13 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert [c.json["lora_name"] for c in vllm.calls_to("/load_lora_adapter")] == ["student-v1"]
     sampled = [c.json for c in vllm.calls_to("/chat/completions") if c.json.get("logprobs")]
     assert len(sampled) == 6 and all(b["model"] == "student-v1" and b["n"] == 3 and b["temperature"] == 0.7 for b in sampled)
+    # The judge grades the answers the student would serve on the held-out half (3 of the 6 rows), from those samples.
     judged = token_factory.calls_to("/chat/completions")
-    assert len(judged) == 6 and all(c.json["model"] == JUDGE for c in judged)
+    assert len(judged) == 3 and all(c.json["model"] == JUDGE for c in judged)
     assert all(c.json["response_format"] == {"type": "json_object"} for c in judged)
     assert all(c.headers["authorization"] == f"Bearer {TEACHER_KEY}" for c in judged)
-    assert led.version(1).eval["judge_pass_rate"] == 1.0 and led.version(1).eval["precision"] == 1.0
+    ev = led.version(1).eval
+    assert (ev["judge_pass_rate"], ev["judge_n"], ev["precision"]) == (1.0, 3, 1.0)
     # The certificate (FR-16.3) is signed with the BOM, at the settings' level (RATCHET_CERT_DELTA).
     cert = doc["manifest"]["eval"]["certificate"]
     assert (cert["calibration"], cert["delta"], cert["target"], cert["served"]) == ("point", 0.1, 0.95, 3), doc["manifest"][
@@ -599,23 +602,22 @@ def test_live_evaluator_uses_production_sampling():
     judge = RecordingProvider(judge_says)
     res = LiveEvaluator(student, judge, JUDGE, samples=4).evaluate("student-v7", rows)
 
-    sampled = [c for c in student.calls if c.kwargs.get("logprobs")]
-    assert [c.messages for c in sampled] == [r["messages"][:-1] for r in rows]  # one cascade call per golden row
+    # One cascade call per golden row, and nothing else: the judge's candidate is the answer chosen from those samples.
+    assert [c.messages for c in student.calls] == [r["messages"][:-1] for r in rows]
     # The router's student parameters for a row stored without conditions: the student's token cap only (FR-5.1).
     plain = {"n": 4, **STUDENT_SAMPLING, "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS)}
-    assert all(c.model == "student-v7" and c.kwargs == plain for c in sampled)
-    candidates = [c for c in student.calls if not c.kwargs.get("logprobs")]  # the judge's candidates (free text only)
-    assert [c.messages for c in candidates] == [r["messages"][:-1] for r in rows[4:]]
-    assert all(c.model == "student-v7" and c.kwargs["params"] == plain["params"] for c in candidates)
+    assert all(c.model == "student-v7" and c.kwargs == plain for c in student.calls)
 
-    # FR-5.5: the judge sees request, reference and candidate in JSON mode, and grades free-text rows only.
-    assert len(judge.calls) == 2
-    for call, row in zip(judge.calls, rows[4:], strict=True):
-        assert call.model == JUDGE and call.kwargs == {"response_format": {"type": "json_object"}}
-        assert call.messages[0] == {"role": "system", "content": JUDGE_PROMPT}
-        sent = json.loads(call.messages[1]["content"])
-        assert sent == {"request": row["messages"][:-1], "reference": row["messages"][-1]["content"], "candidate": "yes"}
-    assert res["judge_pass_rate"] == 0.5 and res["golden_n"] == 6  # "yes" passes, the "no" row gets "{}" and scores 0
+    # FR-5.5: the judge sees request, reference and candidate in JSON mode, and grades the free-text answers the student
+    # would serve on the held-out half only: the "say no" row (row 5, odd), whose served answer "yes" gets "{}".
+    (call,) = judge.calls
+    assert call.model == JUDGE and call.kwargs == {"response_format": {"type": "json_object"}}
+    assert call.messages[0] == {"role": "system", "content": JUDGE_PROMPT}
+    sent = json.loads(call.messages[1]["content"])
+    assert sent == {"request": rows[5]["messages"][:-1], "reference": "no", "candidate": "yes"}
+    assert (res["judge_pass_rate"], res["judge_n"], res["golden_n"]) == (0.0, 1, 6)
+    assert (res["tasks"]["default"]["judge_n"], res["tasks"]["default"]["judge_pass_rate"]) == (1, 0.0)
+    assert "judge_n" not in res["tasks"][TRIAGE]  # labels are checked by their comparators, never judged
 
     # A judge answer that is not a clear {"score": 1} scores 0; fences and reasoning around valid JSON are fine.
     ev = LiveEvaluator(student, RecordingProvider("x"), JUDGE)
@@ -637,6 +639,72 @@ def test_live_evaluator_uses_production_sampling():
     judge = RecordingProvider('{"score": 1}')
     assert "judge_pass_rate" not in LiveEvaluator(student, judge, JUDGE).evaluate("student-v7", rows[:4])
     assert judge.calls == []
+
+
+@pytest.mark.req("FR-5.5", "FR-14.40", "FR-5.1", "INV-10")
+def test_live_evaluator_judge_pass_rate_covers_free_text_rows_only():
+    """The judge grades free-text tasks only (no fields, or a similarity field), never labels and never a pinned task,
+    and only the answers the student would serve on the held-out half: each the answer chosen from the samples drawn
+    with STUDENT_SAMPLING, cleaned as it would be served. Rows are sampled as often as their task's policy says. It
+    reports judge_n and judge_pass_rate overall and per free-text task."""
+    tasks.register(
+        tasks.Task("short-summary", format="text", fields=(FieldSpec("$", "similarity"),), policy={"samples": 5}, source="file")
+    )
+
+    def row(task: str, ask: str, ref: str) -> dict[str, Any]:
+        return {"task": task, "messages": [{"role": "user", "content": ask}, {"role": "assistant", "content": ref}]}
+
+    summary = "The refund was sent."
+    rows = []
+    for i in range(4):
+        rows += [
+            row(TRIAGE, f"ticket {i}", LABELS),
+            row("short-summary", f"summary {i}", summary),
+            row("default", f"say {'no' if i == 3 else 'yes'} {i}", "no" if i == 3 else "yes"),
+        ]
+        if i < 2:
+            rows.append(row("research-plan", f"plan {i}", "a plan"))  # pinned: never sampled, never judged
+
+    def answers(m: list[dict[str, Any]], model: str) -> str:
+        ask = m[-1]["content"]
+        return LABELS if ask.startswith("ticket") else f"<think>short</think>{summary}" if ask.startswith("summary") else "yes"
+
+    student = RecordingProvider(answers)
+
+    def judge_says(messages: list[dict[str, Any]], model: str) -> str:
+        sent = json.loads(messages[-1]["content"])
+        return '{"score": 1}' if sent["candidate"] == sent["reference"] else '{"score": 0}'
+
+    judge = RecordingProvider(judge_says)
+    res = LiveEvaluator(student, judge, JUDGE, samples=3).evaluate("student-v2", rows)
+
+    # One cascade call per row the student may answer, as many samples as its task's score rests on.
+    assert [(c.messages[-1]["content"].split()[0], c.kwargs["n"]) for c in student.calls] == [
+        ("ticket", 3),
+        ("summary", 5),
+        ("say", 3),
+    ] * 4
+    assert all({k: c.kwargs[k] for k in STUDENT_SAMPLING} == dict(STUDENT_SAMPLING) for c in student.calls)
+    # Scored rows alternate calibration / held-out: ticket 0, summary 0, say 0, ticket 1, ... The held-out free-text rows
+    # are summary 0, say 1, summary 2 and say 3; every one is served, and the judge sees each once, in row order.
+    sent = [json.loads(c.messages[-1]["content"]) for c in judge.calls]
+    assert [(x["request"][-1]["content"], x["candidate"], x["reference"]) for x in sent] == [
+        ("summary 0", summary, summary),  # the reasoning is stripped, as it would be served
+        ("say yes 1", "yes", "yes"),
+        ("summary 2", summary, summary),
+        ("say no 3", "yes", "no"),
+    ]
+    assert all(c.model == JUDGE and c.kwargs == {"response_format": {"type": "json_object"}} for c in judge.calls)
+    assert (res["judge_n"], res["judge_pass_rate"], res["excluded_pinned"], res["precision_kind"]) == (4, 0.75, 2, "proxy")
+    per_task = res["tasks"]
+    assert (per_task["short-summary"]["judge_n"], per_task["short-summary"]["judge_pass_rate"]) == (2, 1.0)
+    assert (per_task["default"]["judge_n"], per_task["default"]["judge_pass_rate"]) == (2, 0.5)
+    assert "judge_n" not in per_task[TRIAGE] and "research-plan" not in per_task
+    assert (per_task["short-summary"]["precision_kind"], per_task["default"]["precision_kind"]) == ("proxy", "exact")
+    # Without per-task records the same rows are judged at the global threshold.
+    judge.calls.clear()
+    flat = LiveEvaluator(student, judge, JUDGE, samples=3, per_task=False).evaluate("student-v2", rows)
+    assert (flat["judge_n"], flat["judge_pass_rate"], len(judge.calls)) == (4, 0.75, 4) and "tasks" not in flat
 
 
 @pytest.mark.req("FR-5.1", "FR-2.1")

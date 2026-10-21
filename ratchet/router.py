@@ -1386,7 +1386,9 @@ class Ratchet:
         leaves `shadow_agree` None, which the release gate counts as a disagreement (`Ledger.shadow_quality`).
         `deadline_s` bounds the arbitration, retries included."""
         try:
-            s_samples, c, s_model = self._sample(shadow, messages, role="shadow", gen=plan.student)
+            # The task's own sample count, as the live student's (FR-2.55).
+            n = task.sample_count(self.s.samples)
+            s_samples, c, s_model = self._sample(shadow, messages, role="shadow", gen=plan.student, n=n)
         except CircuitOpen as e:  # the shadow's breaker is open: no shadow record, nothing counted again
             self._record_failure("shadow", e, task, client, meta, t0, call="sampling")
             return _NO_SHADOW
@@ -1661,11 +1663,11 @@ class Ratchet:
         n: int | None = None,
     ) -> tuple[list[Completion], float, str]:
         """The student's samples under `gen` (the plan's `student` parameters), `n` of them (`Settings.samples` when
-        None; more only to fill a client's n choices), through the `role` breaker of its endpoint (`role`, student or
-        shadow, also names the call in the metrics and the log). Raises `CircuitOpen`
-        without calling when that breaker is open, and `AdapterMissing` when vLLM answers 404 naming the version's adapter
-        (an endpoint restart forgets runtime-loaded adapters; that 404 is the endpoint answering, so it does not count
-        against it)."""
+        None; `handle` and the shadow pass the task's own count, and more only to fill a client's n choices), through the
+        `role` breaker of its endpoint (`role`, student or shadow, also names the call in the metrics and the log). Raises
+        `CircuitOpen` without calling when that breaker is open, and `AdapterMissing` when vLLM answers 404 naming the
+        version's adapter (an endpoint restart forgets runtime-loaded adapters; that 404 is the endpoint answering, so it
+        does not count against it)."""
         provider, model = self.resolve_student(version)
         breaker = self._breaker(role, provider)
         if not breaker.allow():
@@ -2131,12 +2133,13 @@ class Ratchet:
         its role allows (`GenPolicy`, ADR 0017); `meta` is what else the caller knows (`RequestMeta`); `n` is how many
         choices the client wants (FR-1.14, ADR 0020). Scout and the simulator pass only messages and a task name.
 
-        For `n` > 1 the student draws `max(Settings.samples, n)` samples. Its confidence is scored on the first
-        `Settings.samples` of them, exactly as calibrated, and it serves only when that is at or above the threshold and
-        at least `n` samples share the majority answer (`confidence.majority`); choice 0 is then the sample a one-choice
-        request would serve. A confident student that cannot fill `n` choices escalates (route `n_choices`). The teacher
-        writes `n` choices (at `CHOICES_TEMPERATURE` when the client set no temperature), and only choice 0 can become a
-        training example. Audits, arbitrations and the shadow judge choice 0, so release statistics do not depend on `n`.
+        The student draws the task's `policy.samples`, else `Settings.samples` (FR-2.55; the shadow too), and for `n` > 1
+        at least `n`. Its confidence is scored on the first of them, as many as the golden eval scored for the task
+        (exactly as calibrated), and it serves only when that is at or above the threshold and at least `n` samples share
+        the majority answer (`confidence.majority`); choice 0 is then the sample a one-choice request would serve. A
+        confident student that cannot fill `n` choices escalates (route `n_choices`). The teacher writes `n` choices (at
+        `CHOICES_TEMPERATURE` when the client set no temperature), and only choice 0 can become a training example.
+        Audits, arbitrations and the shadow judge choice 0, so release statistics do not depend on `n`.
 
         When the teacher answer an escalation needs cannot be had (ADR 0019), the fallback teacher answers if one is set
         (route `fallback_teacher`), else, with RATCHET_ON_TEACHER_FAILURE=serve_student, the student's own valid answer
@@ -2250,13 +2253,16 @@ class Ratchet:
         audit_first: Completion | None = None  # the same for the audit
 
         sc = None
+        # The samples one confidence score of this task rests on: its policy's, else RATCHET_SAMPLES (FR-2.55), as the
+        # golden eval calibrated it.
+        k = task.sample_count(self.s.samples)
         if version is not None and self._held_back(version, task):
             # The version's record for the task serves nothing: its samples could never be served, so the student is not
             # called, and with no student answer nothing below the task's floor can stand in for the teacher (FR-14.1).
             escalated, route = True, "task_disabled"
         elif version is not None:
             try:
-                samples, c, model_used = self._sample(version, messages, gen=plan.student, n=max(self.s.samples, plan.n))
+                samples, c, model_used = self._sample(version, messages, gen=plan.student, n=max(k, plan.n))
             except CircuitOpen as e:  # the endpoint failed too often lately: not called, not counted again
                 escalated, route = True, "student_breaker"
                 self._record_failure("student", e, task, client, meta, t0)
@@ -2274,7 +2280,7 @@ class Ratchet:
                 student_in += samples[0].in_tokens
                 student_out += sum(s.out_tokens for s in samples)
                 # Scored on the calibrated number of samples; the rest are drawn only to fill n choices (ADR 0020).
-                sc = score(task, samples[: max(1, self.s.samples)])
+                sc = score(task, samples[: max(1, k)])
                 picked = majority(task, sc, samples, plan.n)
                 confidence = sc.confidence
                 student_c = sc.answer

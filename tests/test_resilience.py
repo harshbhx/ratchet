@@ -2398,13 +2398,16 @@ def test_a_golden_row_the_student_refuses_never_stops_night_school():
     res = LiveEvaluator(student, None, policy=GenPolicy()).evaluate("student-v1", golden)
     assert res["refused_n"] == 0 and not any("tools" in c.json for c in inner.calls_to("/chat/completions"))
 
-    # The judge's candidate call for a free-text row is refused the same way: that row does not pass.
+    # A free-text row refused the same way escalates in production, so nobody gets a student answer to judge: it is
+    # neither judged nor passed, and the night goes on (the bare row calibrates, the refused one is held out).
     free = Ledger(":memory:", golden_fraction=1.0)
     free.add_example("default", _ask("bare"), "an answer", OPEN_TEACHER, "l", "u")
     free.add_example("default", _ask("tools"), "an answer", OPEN_TEACHER, "l", "u", params={"tools": TOOLS})
     judge = RecordingProvider('{"score": 1, "reason": "same"}')
-    res = LiveEvaluator(student, judge, "judge", policy=forwards_tools).evaluate("student-v1", dataset.rows(free, "golden"))
-    assert (res["refused_n"], res["judge_pass_rate"], len(judge.calls)) == (1, 0.5, 1)
+    free_rows = dataset.rows(free, "golden")
+    assert [bool(r["params"]) for r in free_rows] == [False, True]
+    res = LiveEvaluator(student, judge, "judge", policy=forwards_tools).evaluate("student-v1", free_rows)
+    assert (res["refused_n"], res["judge_n"], res["judge_pass_rate"], len(judge.calls)) == (1, 0, None, 0)
 
     denied = OpenAICompatProvider("https://student.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(401)))
     with pytest.raises(UpstreamError) as stopped:

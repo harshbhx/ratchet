@@ -41,6 +41,12 @@ student misses each class at most `max_miss_rate` of the time: the miss rate's 9
 bound, on at least `min_task_test_n` rows of the class, is at or below it. Otherwise the task fails
 like any other (`task_mode`). The burden of proof is on the candidate, as for the per-task gate;
 a version re-scored by a night is held to the same check (`critical_holds`).
+
+Free text (FR-14.40, ADR 0054): agreement on a similarity field is a proxy, so with
+RATCHET_MIN_JUDGE_PASS above 0 the golden gate also reads the judge's verdict on the answers the
+candidate would serve: an overall `judge_pass_rate` below it rejects the candidate, and a task whose
+own rate is below it fails like a task below its precision floor (`task_mode`). The judge runs in
+the golden eval at night, never on the request path (ADR 0008).
 """
 
 from __future__ import annotations
@@ -94,6 +100,9 @@ class ReleasePolicy:
     # fails does (TASK_MODES).
     min_task_test_n: int = 10
     task_mode: str = "disable"
+    # The judge gate (FR-14.40): the golden judge pass rate the answers a candidate would serve on free-text tasks need,
+    # overall and per task; 0 turns it off.
+    min_judge_pass: float = 0.0
     # The anytime-valid gate (FR-16.1, FR-16.2, ADR 0025): the opt-in sequential canary (rollback by an e-process over the
     # canary's life at alpha_rollback; promotion on evidence at alpha_promote, also opt-in; a canary stage with
     # max_stage_audits audits and no decision retired, 0 = never), and the live alert's rule (1 = the e-process, the
@@ -135,7 +144,7 @@ class ReleasePolicy:
                     raise bad(f.name, value, "a whole number, 0 or more")
             elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise bad(f.name, value, "a finite number")
-        for name in ("min_precision", "min_coverage", "tolerance", "min_certified_precision"):
+        for name in ("min_precision", "min_coverage", "tolerance", "min_certified_precision", "min_judge_pass"):
             if not 0 <= getattr(self, name) <= 1:
                 raise bad(name, getattr(self, name), "from 0 to 1")
         for name in ("live_floor", "alpha_rollback", "alpha_promote", "alpha_alert", "regression_alpha", "teacher_noise_max"):
@@ -353,7 +362,12 @@ class ReleaseGate:
                             v,
                             f"regresses vs live v{live.id} (precision {prec:.1%} vs {lp:.1%}, coverage {cov:.1%} vs {lc:.1%})",
                         )
+            judged = self.judge_problem(v)
+            if judged is not None:
+                return self._reject(v, judged)
             failed = self.task_failures(v, live)
+            seen = {name for name, _ in failed}
+            failed = sorted(failed + [(name, why) for name, why in self.judge_failures(v) if name not in seen])
             if failed and p.task_mode == "reject":
                 return self._reject(v, "; ".join(f"task {name}: {why}" for name, why in failed))
             if calibration.entries(v.eval):
@@ -559,6 +573,61 @@ class ReleaseGate:
             if why is not None:
                 out.append((name, why))
         return out
+
+    def judge_problem(self, v: Version) -> str | None:
+        """Why candidate `v` fails the judge gate as a whole (FR-14.40), or None: with `min_judge_pass` above 0, its
+        golden `judge_pass_rate` (over the answers it would serve on free-text tasks' held-out rows) is below it; or no
+        judge graded it although it would answer a free-text task (a task with no fields or a similarity field), so the
+        gate cannot be met. A rate over no answers (it would serve none) has nothing to fail."""
+        p = self.policy
+        if p.min_judge_pass <= 0:
+            return None
+        if "judge_n" in v.eval:
+            n, rate = calibration.number(v.eval.get("judge_n")), calibration.number(v.eval.get("judge_pass_rate"))
+            if n and rate is not None and rate < p.min_judge_pass:
+                return f"golden judge pass rate {rate:.1%} on {n:.0f} answers < {p.min_judge_pass:.0%}"
+            return None
+        unjudged = self._free_text_served(v)
+        if unjudged:
+            return f"free-text tasks {', '.join(unjudged)} were not judged; RATCHET_MIN_JUDGE_PASS needs a judge"
+        return None
+
+    def judge_failures(self, v: Version) -> list[tuple[str, str]]:
+        """The free-text tasks of candidate `v` that fail the judge gate on their own (FR-14.40), with why: with
+        `min_judge_pass` above 0, a task the candidate would answer, with at least `min_task_test_n` held-out rows (as
+        `task_failures` checks), whose record's `judge_pass_rate` is below it, or that the judge did not grade at all. A
+        version without per-task records has none; the overall rate still applies (`judge_problem`)."""
+        p = self.policy
+        if p.min_judge_pass <= 0:
+            return []
+        out: list[tuple[str, str]] = []
+        for name, rec in sorted(calibration.entries(v.eval).items()):
+            task = tasks.get(name)
+            test_n = calibration.number(rec.get("test_n"))
+            if task.pinned or not task.free_text or not calibration.serves(rec) or test_n is None:
+                continue
+            if test_n < p.min_task_test_n:
+                continue
+            n, rate = calibration.number(rec.get("judge_n")), calibration.number(rec.get("judge_pass_rate"))
+            if n is None:
+                out.append((name, "golden: its answers were not judged; RATCHET_MIN_JUDGE_PASS needs a judge"))
+            elif n and rate is not None and rate < p.min_judge_pass:
+                out.append((name, f"golden judge pass rate {rate:.1%} on {n:.0f} answers < {p.min_judge_pass:.0%}"))
+        return out
+
+    @staticmethod
+    def _free_text_served(v: Version) -> list[str]:
+        """The free-text tasks `v` would answer: from its per-task records (those that serve), else from the golden
+        tasks its eval names (`spec_hashes`) when its global threshold serves anything."""
+        records = calibration.entries(v.eval)
+        if records:
+            names = [name for name, rec in records.items() if calibration.serves(rec)]
+        else:
+            thr = calibration.number(v.eval.get("threshold"))
+            hashes = v.eval.get("spec_hashes")
+            serves = thr is None or thr < SERVE_NOTHING
+            names = [name for name in hashes if isinstance(name, str)] if isinstance(hashes, dict) and serves else []
+        return sorted(name for name in names if not tasks.get(name).pinned and tasks.get(name).free_text)
 
     @staticmethod
     def _coverage_without(v: Version, disabled: set[str]) -> float:

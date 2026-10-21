@@ -65,7 +65,9 @@
       "disabled": "string|null",
       "compare_keys": "list",
       "compare_source": "string|null",
-      "tool_requests": "number"
+      "tool_requests": "number",
+      "precision_kind": "string|null",
+      "judge_pass_rate": "number|null"
     },
     "versions[]": {
       "id": "number",
