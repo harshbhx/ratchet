@@ -133,6 +133,9 @@ class Runtime:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         cert = s.cert_policy()  # a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA stops startup here (ADR 0026)
+        # RATCHET_MOCK_TEACHER_REASONING_MEAN out of range stops startup in either mode, as documented; only the mock
+        # teacher reads it.
+        mean = s.checked_mock_reasoning_mean()
         if s.mode == "mock":
             from sim.mock_models import DEFAULT_REASONING_CV, MockFleet, MockTeacher
             from sim.world import make_stream
@@ -148,9 +151,8 @@ class Runtime:
             self.reloader: live.AdapterReloader | None = None
             self.stream = make_stream("tickets", seed=7, drift_day=5)
             self.streams = {"tickets": self.stream, **{w: make_stream(w, seed=7, drift_day=5) for w in ("research", "mixed")}}
-            # RATCHET_MOCK_TEACHER_REASONING_MEAN (checked here): the mock teacher's reasoning varies around that mean, so
+            # RATCHET_MOCK_TEACHER_REASONING_MEAN (checked above): the mock teacher's reasoning varies around that mean, so
             # the savings receipts measure and correct the formula's 300-token assumption (FR-15.5, simulation).
-            mean = s.checked_mock_reasoning_mean()
             cv = DEFAULT_REASONING_CV if mean is not None else 0.0
             teacher = MockTeacher(s.teacher_reasoning_tokens, reasoning_mean=mean, reasoning_cv=cv)
             resolver = self.fleet.resolve

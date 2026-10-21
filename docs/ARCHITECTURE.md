@@ -570,7 +570,8 @@ leaves      = canonical JSON of each request's LEAF_KEYS (metadata, whole nano-U
 per task    R = Σ w·y / Σ w·x over its audited served answers (x = baseline_est, y = the audit's teacher bill, w = 1/label_p)
             point = R · Σ x over its N served answers;  V = N² (1 − n/N) s_r² / n_eff;  needs n ≥ RATCHET_RECEIPT_MIN_AUDITS
 billable    = teacher-served requests + served answers of calibrated tasks (stand-ins, routes degraded and fallback_teacher, never)
-billable_lo = (billable baseline − billable cost) − ⌈1.645 √Σ V⌉ − the day's spend outside requests
+stand-ins   = Σ min(0, baseline − cost) over the stand-ins: their losses count, a gain never does
+billable_lo = (billable baseline − billable cost + stand-ins) − ⌈1.645 √Σ V⌉ − the day's spend outside requests
 fee         = ⌊RATCHET_TAKE_RATE × max(0, billable_lo)⌋   (0, basis "formula", when no task is calibrated)
 ```
 

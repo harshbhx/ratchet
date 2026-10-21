@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 833 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts), ~75 s
+pytest -q                     # 844 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -23,7 +23,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_nightschool.py` | 23 (19 functions; one has 5 cases) |
 | `tests/test_release.py` | 37 (28 functions; one has 8 cases, two have 2) |
 | `tests/test_system.py` | 18 |
-| `tests/test_hardening.py` | 91 (64 functions; one has 11 cases, one has 8, one has 6, one has 4, two have 2) |
+| `tests/test_hardening.py` | 102 (68 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 46 (35 functions; one has 9 cases, one has 4) |
@@ -34,7 +34,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 41 (30 functions; one has 8 cases, one has 5) |
-| **Total** | **833** |
+| **Total** | **844** |
 
 There are three layers:
 
@@ -320,6 +320,10 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_replay_endpoints_run_one_at_a_time` | FR-16.5: while a replay holds `rt.replay_lock`, both replay endpoints answer 429 with `Retry-After: 1`; afterwards 200 |
 | `test_replay_leaves_rows_held_by_a_changed_spec_unservable` | FR-16.5, FR-2.15: rows logged at `SERVE_NOTHING` while the task's spec is changed for the version are never served at any replayed threshold, rows logged before the change are, and after a re-score under the new spec the held rows are servable again |
 | `test_replay_current_threshold_is_the_one_the_router_uses` | FR-16.5: the replay's `current_threshold` is the version's own in mock mode and the configured default (0.7, not the version's 0.9) for the hosted fallback student in live mode without a student endpoint, on both endpoints |
+| `test_receipt_verifiers_never_raise_on_nested_junk` | FR-15.5 (8 cases): a receipt, or the previous receipt, whose `period` is a string, a number, a list or `{day: true}`, or whose `merkle` is a list or a string: `verify_chain` (both ways round), `verify_proof`, `verify_rows`, `recheck`, `check_manifest` and `verify_receipt` answer FAIL (they raised `AttributeError` before), and `python -m ratchet.receipt verify` with `--prev`, `--proof` and `--rows` exits 1 instead of printing a traceback |
+| `test_receipt_verifiers_never_raise_on_seeded_nested_mutations` | FR-15.5: 300 seeded trials, each replacing up to three fields anywhere in a receipt, the previous receipt, a proof or the leaves with junk of another type (or removing them): no verifier raises (72 raises in 2,000 trials before the fix) |
+| `test_a_stand_in_that_loses_money_lowers_the_fee` | FR-15.5: a fallback teacher's answer that cost $0.0002 more than its baseline adds -200,000 nano-USD to `savings.stand_in_loss_nusd`, the billable savings and the net bound, and lowers the fee to a quarter of the lower net; a cheaper fallback answer and a degraded answer add nothing (gains are never billed); the billable set is unchanged and the sealed receipt rechecks from its leaves |
+| `test_mock_reasoning_mean_out_of_range_stops_live_startup_too` | FR-15.5: `RATCHET_MOCK_TEACHER_REASONING_MEAN` of -5 stops a live `Runtime`, and 1e9 stops `python -m ratchet.live`, before the ledger is opened (it was checked in mock mode only); 420 is accepted |
 ### `tests/test_resilience.py`
 
 Upstream failures: around a request the student already answered (FR-2.10, INV-15, [ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)), the provider's retries and the client statuses they end in (FR-1.11, FR-1.8, INV-7, [ADR 0014](adr/0014-upstream-failure-semantics.md)), the student circuit breaker with automatic adapter reloads (FR-2.11, NFR-2, [ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)), and the teacher's breaker, degraded mode and the fallback teacher (FR-2.12, [ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)); the student falling back to the teacher is in `test_hardening.py`. Breaker tests run on a `FakeClock` (`Ratchet(clock=...)`, `Runtime(clock=...)`), so no test waits out a cooldown. The failing teacher puts its URL, with a query token, in each message, and every test checks the events, errors and responses never repeat it. Retry tests use the local `Upstream` fake (a scripted endpoint behind `httpx.MockTransport` that records each attempt's timeouts) and inject `sleep`, `clock` and `rng`, so nothing really waits.

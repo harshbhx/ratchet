@@ -301,6 +301,19 @@ def billable(lf: Mapping[str, Any], tasks: Mapping[str, Mapping[str, Any]]) -> b
     return c == MEASURED or (c == SERVED and tasks.get(str(lf.get("task")), {}).get("status") == OK)
 
 
+def stand_in_losses(leaves: Iterable[Mapping[str, Any]]) -> int:
+    """What the stand-in answers lost, in nano-USD (0 or less): the sum of min(0, baseline - cost) over them. Their
+    baselines are never billed, but a stand-in can still cost more than its baseline (the student's samples were spent
+    before the fallback teacher answered), and the cascade's overhead counts against the vendor, as on measured
+    requests; leaving it out would raise the fee. A gain is never billed, so only losses count."""
+    total = 0
+    for lf in leaves:
+        cost, base = lf.get("cost_nusd"), lf.get("baseline_nusd")
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in (cost, base)):
+            total += min(0, base - cost)
+    return total
+
+
 def margin(se_nusd: Iterable[int]) -> int:
     """The bound's distance below the billable savings, in nano-USD: ceil(1.645 sqrt(sum se^2)) over the calibrated
     tasks' standard errors (the tasks' estimates are independent: separate rows, separate draws)."""
@@ -317,9 +330,10 @@ def compute(
 ) -> dict[str, Any]:
     """A receipt's `totals`, `calibration`, `savings` and `billing`, from its leaves alone, so anyone holding them can
     recompute every number (`recheck`). The billable savings are the billable set's baseline (measured bills plus each
-    calibrated task's point) less its cost; the bound subtracts `margin`; the period's spend outside requests
-    (`spend_nusd`, backfill labelling) comes off next; the fee is `share` of what is left, floored at 0 and rounded
-    down to a nano-USD. With no calibrated task the basis is `formula` and the fee 0."""
+    calibrated task's point) less its cost, plus what the stand-in answers lost (`stand_in_losses`, never a gain); the
+    bound subtracts `margin`; the period's spend outside requests (`spend_nusd`, backfill labelling) comes off next; the
+    fee is `share` of what is left, floored at 0 and rounded down to a nano-USD. With no calibrated task the basis is
+    `formula` and the fee 0."""
     share_s = share_text(share)
     if isinstance(spend_nusd, bool) or not isinstance(spend_nusd, int) or spend_nusd < 0:
         raise ValueError(f"spend_nusd must be a whole number of nano-USD, 0 or more, not {spend_nusd!r}")
@@ -336,7 +350,8 @@ def compute(
     calibrated = baseline_measured + served_part + _sum(unverified, "baseline_nusd")
     bill_baseline = baseline_measured + sum(c["point_nusd"] for c in ok.values())
     bill_cost = _sum(measured, "cost_nusd") + sum(c["cost_nusd"] for c in ok.values())
-    bill_savings = bill_baseline - bill_cost
+    stand_in_loss = stand_in_losses(unverified)
+    bill_savings = bill_baseline - bill_cost + stand_in_loss
     lo_margin = margin(c["se_nusd"] for c in ok.values())
     lower = bill_savings - lo_margin
     net = lower - spend_nusd
@@ -362,6 +377,7 @@ def compute(
         "savings": {
             "recorded_nusd": recorded - cost,
             "calibrated_nusd": calibrated - cost,
+            "stand_in_loss_nusd": stand_in_loss,
             "billable_nusd": bill_savings,
             "margin_nusd": lo_margin,
             "billable_lo_nusd": lower,
@@ -563,6 +579,14 @@ def _manifest(doc: object) -> dict[str, Any] | None:
     return m if isinstance(m, dict) else None
 
 
+def _day(m: Mapping[str, Any]) -> int | None:
+    """A manifest's `period.day` when `period` is an object and `day` a whole number, else None: the verifiers read it
+    from untrusted files, where `period` can be a string, a list or a number."""
+    period = m.get("period")
+    day = period.get("day") if isinstance(period, dict) else None
+    return day if isinstance(day, int) and not isinstance(day, bool) else None
+
+
 def check_manifest(doc: object) -> list[str]:
     """What is malformed in a receipt document's shape (schema, tree, chain, amounts), as readable lines; empty when the
     shape is right. Floats are refused anywhere in the manifest."""
@@ -614,6 +638,13 @@ def verify_receipt(doc: object, public_key: str | None = None) -> tuple[bool, li
 def verify_chain(doc: object, prev: object) -> tuple[bool, str]:
     """Whether `prev` is the receipt `doc` chains to: same client, an earlier day, and the sha256 of its manifest equal
     to `doc`'s `prev_sha256` (recomputed, never read from `prev`). (ok, line)."""
+    try:
+        return _chain(doc, prev)
+    except Exception as e:  # noqa: BLE001 - untrusted input must never crash a verifier
+        return False, f"FAIL: chain: cannot check the receipts ({type(e).__name__})"
+
+
+def _chain(doc: object, prev: object) -> tuple[bool, str]:
     m, pm = _manifest(doc), _manifest(prev)
     if m is None or pm is None:
         return False, "FAIL: chain: not a receipt document"
@@ -624,8 +655,8 @@ def verify_chain(doc: object, prev: object) -> tuple[bool, str]:
     if pm.get("client") != m.get("client"):
         theirs, ours = pm.get("client") or "the gateway", m.get("client") or "the gateway"
         return False, f"FAIL: chain: the previous receipt is {theirs}'s, not {ours}'s"
-    day, pday = (m.get("period") or {}).get("day"), (pm.get("period") or {}).get("day")
-    if not isinstance(day, int) or not isinstance(pday, int) or pday >= day:
+    day, pday = _day(m), _day(pm)
+    if day is None or pday is None or pday >= day:
         return False, f"FAIL: chain: the previous receipt (day {pday}) is not from before day {day}"
     if digest != m.get("prev_sha256"):
         return False, f"FAIL: chain: prev_sha256 is not the sha256 of day {pday}'s receipt (one of them was changed)"
@@ -639,9 +670,16 @@ def _leaf_ok(lf: object) -> bool:
 def verify_proof(doc: object, proof: object) -> tuple[bool, str]:
     """Whether `proof` (`GET /ratchet/receipts/{period}/proof/{id}`) shows its leaf in the receipt: RFC 9162 inclusion
     against the root and size the receipt signs, never the ones the proof states. (ok, line)."""
+    try:
+        return _proof(doc, proof)
+    except Exception as e:  # noqa: BLE001 - untrusted input must never crash a verifier
+        return False, f"FAIL: proof: cannot check the proof ({type(e).__name__})"
+
+
+def _proof(doc: object, proof: object) -> tuple[bool, str]:
     m = _manifest(doc)
     tr = m.get("merkle") if m is not None else None
-    if not isinstance(tr, dict) or not _hex64(tr.get("root")) or not _count(tr.get("size")):
+    if m is None or not isinstance(tr, dict) or not _hex64(tr.get("root")) or not _count(tr.get("size")):
         return False, "FAIL: proof: the receipt has no well-formed merkle section"
     if not isinstance(proof, dict) or not _leaf_ok(proof.get("leaf")):
         return False, f"FAIL: proof: the leaf must be an object with exactly {', '.join(LEAF_KEYS)}"
@@ -649,7 +687,8 @@ def verify_proof(doc: object, proof: object) -> tuple[bool, str]:
     if not _count(index) or not isinstance(path, list):
         return False, "FAIL: proof: index must be a count and path a list of hex hashes"
     other_client = m.get("client") is not None and lf.get("client") != m.get("client")
-    if lf.get("day") != (m.get("period") or {}).get("day") or other_client:
+    day = _day(m)
+    if day is None or lf.get("day") != day or other_client:
         return False, "FAIL: proof: the leaf is from another day or client than the receipt"
     try:
         included = verify_inclusion(leaf_bytes(lf), index, tr["size"], path, tr["root"])
@@ -729,7 +768,7 @@ def recheck(doc: object, leaves: Sequence[Any]) -> list[str]:
         problems.append(f"the {len(leaves)} leaves rebuild root {root[:16]}..., not the signed {signed}... of {tr.get('size')}")
     if (m.get("first_id"), m.get("last_id"), m.get("n")) != ((ids[0], ids[-1], len(ids)) if ids else (None, None, 0)):
         problems.append("first_id, last_id or n do not match the leaves")
-    day, client = (m.get("period") or {}).get("day"), m.get("client")
+    day, client = _day(m), m.get("client")
     if any(lf["day"] != day or (client is not None and lf["client"] != client) for lf in leaves):
         problems.append("a leaf is from another day or client than the receipt")
     try:

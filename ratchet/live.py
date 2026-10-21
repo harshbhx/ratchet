@@ -4,8 +4,9 @@
     python -m ratchet.live tick         # advance the release gate (run every few minutes via cron)
     python -m ratchet.live reload       # re-load live/canary/shadow adapters after an endpoint restart (the gateway
                                         # also does this by itself when vLLM answers 404 for an adapter: AdapterReloader)
-    python -m ratchet.live seal         # seal the savings receipts of every day that has ended (run daily via cron;
-                                        # the gateway also seals when a receipt is asked for)
+    python -m ratchet.live seal         # seal the savings receipts of every day that has ended (run hourly via cron:
+                                        # a ledger day starts at the first request's time of day, not 00:00 UTC; the
+                                        # gateway also seals when a receipt is asked for)
 
 Environment (in addition to ratchet.config):
     RATCHET_DATA_DIR      local folder synced to the bucket mounted in jobs/endpoints (default ./data)
@@ -265,6 +266,7 @@ def main(
     policy = s.cost_policy()  # a bad GPU rate stops here, before any paid work
     cert = s.cert_policy()  # so does a bad RATCHET_CALIBRATION, _CERT_TARGET or _CERT_DELTA (ADR 0026)
     s.receipt_policy()  # and a bad RATCHET_TAKE_RATE or RATCHET_RECEIPT_MIN_AUDITS (ADR 0029)
+    s.checked_mock_reasoning_mean()  # and RATCHET_MOCK_TEACHER_REASONING_MEAN out of range, as in the gateway
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.

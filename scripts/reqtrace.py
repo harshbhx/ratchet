@@ -886,7 +886,7 @@ EXEMPT: dict[str, Exempt] = {
     "FR-15.5": Exempt(
         "live",
         "docs/RUNBOOK.md",
-        "the daily `python -m ratchet.live seal` cron and reconciling receipts with the Token Factory bill need a live run",
+        "the hourly `python -m ratchet.live seal` cron and reconciling receipts with the Token Factory bill need a live run",
     ),
     "NFR-1": Exempt("live", "docs/DEPLOYMENT.md", "p50 latency needs the real student endpoint"),
     "US-10": Exempt("live", "deploy/train_job.sh", "the adapter reaches the customer's bucket only in live mode"),
