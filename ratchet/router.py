@@ -37,9 +37,9 @@ from .resilience import (
     AdapterMissing,
     Breaker,
     CircuitOpen,
+    adapter_missing,
     describe_failure,
     endpoint_down,
-    names_model,
     teacher_unavailable,
 )
 
@@ -798,12 +798,7 @@ class Ratchet:
                 breaker.release()
             else:
                 breaker.record(not down, describe_failure(e))
-            if (
-                isinstance(e, UpstreamError)
-                and e.status == 404
-                and model == version.adapter_uri
-                and names_model(e.message, model)
-            ):
+            if model == version.adapter_uri and adapter_missing(e, model):
                 raise AdapterMissing(model, e.message) from e
             raise
         breaker.record(True)

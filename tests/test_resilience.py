@@ -58,6 +58,7 @@ from ratchet.resilience import (
     BreakerPolicy,
     CircuitOpen,
     RetryPolicy,
+    adapter_missing,
     as_upstream,
     endpoint_down,
     parse_retry_after,
@@ -1554,6 +1555,45 @@ def test_adapter_reloader_rate_limits_and_reports():
     assert not reloader.request(v3) and loads[-1] == "student-v3" and len(loads) == 4
     with pytest.raises(RuntimeError, match="RATCHET_STUDENT_BASE"):  # no endpoint, nothing to load into
         adapter_reloader(Settings(student_base=""), led)
+
+
+@pytest.mark.req("FR-2.11")
+def test_adapter_missing_is_the_routers_predicate(gw_env, tmp_path, monkeypatch):
+    """The router's lost-adapter test, shared with scripts/day1_check.py: a 404 whose message names the adapter as a
+    whole name, in vLLM v0.18.0's OpenAI-shaped body and in the older top-level one."""
+
+    def error(status: int, body: Any) -> UpstreamError:
+        return UpstreamError.from_response(httpx.Response(status, json=body))
+
+    v018 = {
+        "error": {"message": "The model `student-v3` does not exist.", "type": "NotFoundError", "param": "model", "code": 404}
+    }
+    legacy = {"object": "error", "message": "The model `student-v3` does not exist.", "type": "NotFoundError", "code": 404}
+    assert adapter_missing(error(404, v018), "student-v3") and adapter_missing(error(404, legacy), "student-v3")
+    assert not adapter_missing(error(404, v018), "student-v30") and not adapter_missing(error(404, v018), "student-v3.1")
+    for other in ("student-v30", "student-v3.1"):
+        assert not adapter_missing(error(404, {"error": {"message": f"The model `{other}` does not exist."}}), "student-v3")
+    assert not adapter_missing(error(400, v018), "student-v3")  # the right text, the wrong status
+    assert not adapter_missing(httpx.ConnectError("refused"), "student-v3") and not adapter_missing(error(404, v018), "")
+
+    # Through a live Runtime on v0.18.0's bodies: a request for the live adapter still queues exactly one reload.
+    gw = gw_env()
+    for name in [n for n in os.environ if n.startswith("RATCHET_")]:
+        monkeypatch.delenv(name)
+    student = FakeOpenAIServer(A, loaded=set(), errors="v0.18.0")
+    teacher = FakeOpenAIServer(B)
+    rt = gw.Runtime(
+        _live_settings(tmp_path, audit_rate=0.0),
+        transports={"teacher": teacher.transport, "student": student.transport},
+        clock=FakeClock(),
+    )
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.5}, adapter_uri="student-v3")
+    r = TestClient(gw.app).post(CHAT, json={"messages": _ask(0)})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    assert rt.reloader.join(5)
+    (load,) = student.calls_to("/load_lora_adapter")
+    assert load.json == {"lora_name": "student-v3", "lora_path": "/data/adapters/student-v3"}
 
 
 @pytest.mark.req("FR-2.11", "FR-8.2", "NFR-2", "INV-7")
