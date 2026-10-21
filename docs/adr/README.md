@@ -31,5 +31,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0080](0080-storage-opt-outs-and-pseudonymous-end-users.md) | Storage opt-outs at every level, and end users kept only as scoped keyed hashes | Accepted | 2026-10-20 |
 | [0081](0081-retention-tombstones-erasure-and-export.md) | Retention: tombstones, erasure and export | Accepted | 2026-10-20 |
 | [0090](0090-licenses-travel-with-the-adapter.md) | Licenses travel with the adapter (base-model license in the BOM, NOTICE.md, export), and open teachers addable by configuration without weakening invariant 1 | Accepted | 2026-10-20 |
+| [0091](0091-human-labels-as-a-provenance-source.md) | Human labels as a provenance source: request ids, verdicts and corrections (`POST /v1/ratchet/feedback`), labelled-data import that refuses closed-model labels, golden-only rows | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

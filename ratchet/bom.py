@@ -15,8 +15,11 @@ went through), `training.origins` (examples by where they came from) and optiona
 commitment per split (`training.commitment`, `golden.commitment`) and the `EXTRA_KEYS`. The licenses travel with the
 adapter (NFR-9, ADR 0090): `base_model_license` ({name, url} of the base model, or a `warning` for one Ratchet does not
 know), `notices` (the exact NOTICE.md that goes next to the adapter weights, with its SHA-256) and each source's
-`license_origin` ('builtin', or 'config' for a teacher added in RATCHET_TEACHER_LICENSES). Stored v1 documents, and v2
-documents written before those fields, are never rewritten (invariant 14), and `verify` accepts them all.
+`license_origin` ('builtin', or 'config' for a teacher added in RATCHET_TEACHER_LICENSES). Labels a person wrote are
+not teachers: `label_sources` lists them apart (source `human`, its license, examples by origin), `training.targets`
+says when they are among the targets, and `golden.human_labels` counts golden rows with a human reference (ADR 0091).
+Stored v1 documents, and v2 documents written before those fields, are never rewritten (invariant 14), and `verify`
+accepts them all.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from . import redact
+from . import licenses, redact
 from .ledger import Version
 from .merkle import SMT_ALG
 from .nightschool import notices
@@ -44,6 +47,9 @@ ALG = "Ed25519"
 # refuses any other key, so the shape changes only with a new schema version.
 EXTRA_KEYS = ("teacher", "backfill_jobs", "erasures_honored")
 COMMITMENT_SPLITS = {"training": "train", "golden": "golden"}  # manifest section -> example split
+# `training.targets`: what the training targets were (invariant 2, as amended by ADR 0091).
+TARGETS = "teacher answers only"
+TARGETS_WITH_LABELS = "teacher answers and customer-attested human labels"
 
 
 def canonical(obj: Any) -> bytes:
@@ -97,19 +103,27 @@ def manifest(
     unknown = sorted(set(commitments or {}) - set(COMMITMENT_SPLITS))
     if unknown:
         raise ValueError(f"unknown commitments {unknown}; use {list(COMMITMENT_SPLITS)}")
-    # One entry per (teacher, license), with the URL, distill_ok and license_origin from the registry in force.
+    # One entry per (teacher, license), with the URL, distill_ok and license_origin from the registry in force; labels a
+    # person wrote (licenses.SOURCES) are not teachers and are listed apart (FR-3.54, ADR 0091).
     out_sources = notices.sources(train_rows)
+    labels = notices.label_sources(train_rows)
     generator = notices.generator()  # "ratchet <version>", also named in the NOTICE
     training: dict[str, Any] = {
         "examples": len(train_rows),
         "dataset_sha256": version.dataset_hash,
         "tasks": dict(sorted(Counter(r["task"] for r in train_rows).items())),
-        "targets": "teacher answers only",
+        "targets": TARGETS_WITH_LABELS if labels else TARGETS,
         "examples_with_pii_redacted": sum(1 for r in train_rows if r["provenance"].get("redactions")),
         # Where the training examples came from (`examples.origin`; 'live' for rows that did not record one).
         "origins": dict(sorted(Counter(r["provenance"].get("origin") or "live" for r in train_rows).items())),
     }
-    golden: dict[str, Any] = {"examples": len(golden_rows), "sha256": _rows_hash(golden_rows), "held_out": True}
+    golden: dict[str, Any] = {
+        "examples": len(golden_rows),
+        "sha256": _rows_hash(golden_rows),
+        "held_out": True,
+        # Golden rows whose reference a person wrote (a human-verified golden set, FR-4.50).
+        "human_labels": sum(1 for r in golden_rows if r["provenance"]["teacher"] in licenses.SOURCES),
+    }
     for section, value in (commitments or {}).items():
         target = training if section == "training" else golden
         target["commitment"] = _commitment(section, value, train_rows if section == "training" else golden_rows)
@@ -126,9 +140,12 @@ def manifest(
         "training": training,
         "golden": golden,
         "sources": out_sources,
+        "label_sources": labels,
         # The licenses that travel with the adapter (NFR-9): its base model's, and the NOTICE.md written next to it.
         "base_model_license": notices.base_license(version.base_model),
-        "notices": [notices.notice_entry(notices.render(version.base_model, out_sources, version=generator))],
+        "notices": [
+            notices.notice_entry(notices.render(version.base_model, out_sources, version=generator, label_sources=labels))
+        ],
         "redactor": redactor(redact_pii),
         "eval": version.eval,
         **(extra or {}),

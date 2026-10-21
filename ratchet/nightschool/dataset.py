@@ -1,6 +1,8 @@
 """Build the nightly training set from the ledger.
 
-- Only teacher-written examples whose license allows distillation are used.
+- Only examples whose provenance allows distillation are used: a teacher's answer under a license that allows it, or
+  a label a person wrote (`licenses.SOURCES`: `human`, from a correction or an attested import; ADR 0091), read with
+  `licenses.lookup_source`.
 - Retrain from the base model on the cumulative dataset every night (replay is built in),
   instead of stacking adapters, which limits forgetting.
 - The student's own answers are never used as training targets (avoids model collapse).
@@ -22,6 +24,10 @@
 - A purged row (retention or erasure, FR-13.3, FR-13.4) has no text left and is in neither set; its
   `seen` still counts toward its request's frequency, so a purge never moves another variant of a
   frequent request back to golden (INV-3).
+- A golden-only row (`examples.golden_only`, a human-verified golden set imported with
+  `python -m ratchet.importer --golden-only`) is golden for good, even past FREQUENT, and so is every
+  other variant of its prompt, whatever its own split: the trainer sees only the messages, so a variant
+  in train would teach the held-out prompt (INV-3, INV-6; FR-4.50).
 """
 
 from __future__ import annotations
@@ -38,9 +44,17 @@ from ..ledger import Ledger, prompt_key
 FREQUENT = 3
 
 
+def _golden_only(r: Any) -> bool:
+    """Whether a row is golden-only (FR-4.50). A row read before the column existed has no such key."""
+    keys = r.keys() if hasattr(r, "keys") else ()
+    return "golden_only" in keys and bool(r["golden_only"])
+
+
 def effective_split(r: Any, seen: Counter[str]) -> str:
     """'train' for a train-split row or one whose request was seen FREQUENT times or more (over every variant, purged
-    ones included: `ledger.count_prompts`), else 'golden' (INV-3)."""
+    ones included: `ledger.count_prompts`), else 'golden' (INV-3). A golden-only row is always 'golden' (FR-4.50)."""
+    if _golden_only(r):
+        return "golden"
     return "train" if (r["split"] == "train" or seen[prompt_key(r)] >= FREQUENT) else "golden"
 
 
@@ -49,10 +63,11 @@ def counts_as_train(r: Any, seen: Counter[str]) -> bool:
     teacher's license allows distillation, and it was not cut at a client's stop. A purge records this
     (`examples.purged_train`) while the text is still there: Night School's new-data count and an erasure's affected
     versions read it after the text is gone. It leaves out the spec and pin checks, which may have changed since a
-    version trained, so it errs toward counting a row."""
+    version trained, so it errs toward counting a row (and a variant of a golden-only prompt, which `rows` holds out,
+    counts here when its own split says train)."""
     if effective_split(r, seen) != "train":
         return False
-    lic = licenses.lookup(r["teacher_model"])
+    lic = licenses.lookup_source(r["teacher_model"])
     if lic is None or not lic.distill_ok:
         return False
     params = json.loads(r["params"]) if r["params"] else None
@@ -68,13 +83,16 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
     examples = ledger.examples(task=task)
     keys = [prompt_key(r) for r in examples]
     seen: Counter[str] = Counter()
+    held: set[str] = set()  # prompts with a golden-only row: every variant stays golden (FR-4.50)
     for r, key in zip(examples, keys, strict=True):
         seen[key] += int(r["seen"] or 1)  # purged rows count too (INV-3)
+        if _golden_only(r):
+            held.add(key)
     for r, key in zip(examples, keys, strict=True):
         if r["purged_ts"] is not None or r["messages"] is None:
             continue  # purged (FR-13.3, FR-13.4): no text to train or grade on
         frequent = seen[key] >= FREQUENT
-        effective = "train" if (r["split"] == "train" or frequent) else "golden"
+        effective = "golden" if key in held else ("train" if (r["split"] == "train" or frequent) else "golden")
         if effective != split:
             continue
         spec = specs.get(r["task"]) or specs.setdefault(r["task"], tasks.get(r["task"]))
@@ -85,7 +103,7 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
         params = json.loads(r["params"]) if r["params"] else None
         if effective == "train" and params and "stop" in params:
             continue  # train.py ignores the stop, so the cut answer would teach the bare prompt to stop there
-        lic = licenses.lookup(r["teacher_model"])
+        lic = licenses.lookup_source(r["teacher_model"])  # a teacher in the registry, or a human label (FR-3.54)
         if lic is None or not lic.distill_ok:
             continue
         if effective == "train" and not spec.valid(r["completion"]):

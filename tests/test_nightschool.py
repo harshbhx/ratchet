@@ -103,7 +103,7 @@ def test_training_targets_are_teacher_answers_only():
 # must store teacher answers only (INV-2) and never a pinned task (INV-10). The set must match the code exactly, so
 # moving a call site means replacing its old entry, not adding the new one beside it (as when storing moved from
 # Ratchet._call_teacher into Ratchet._store_example, which _call_teacher calls and which also enforces INV-16).
-ALLOWED_ADD_EXAMPLE_CALLERS = {"ratchet.router:Ratchet._store_example"}
+ALLOWED_ADD_EXAMPLE_CALLERS = {"ratchet.router:Ratchet._store_example", "ratchet.feedback:store_label"}
 
 
 class _AddExampleSites(ast.NodeVisitor):

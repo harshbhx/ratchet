@@ -42,7 +42,9 @@
       "baseline_usd": "number",
       "savings_pct": "number",
       "avg_latency_ms": "number",
-      "routes": "object"
+      "routes": "object",
+      "human_feedback": "number",
+      "human_agreement": "number|null"
     },
     "versions[]": {
       "id": "number",
@@ -74,7 +76,14 @@
         "split": "string",
         "n": "number"
       },
-      "purged_examples": "number"
+      "purged_examples": "number",
+      "label_sources[]": {
+        "teacher_model": "string",
+        "license": "string",
+        "license_url": "string",
+        "split": "string",
+        "n": "number"
+      }
     },
     "clients[]": {
       "client": "string",
@@ -120,6 +129,24 @@
       "gpu_hours_savings_pct": "number|null",
       "break_even_student_requests_per_gpu_hour": "number|null",
       "recommendation": "string"
+    },
+    "feedback": {
+      "verdicts": "number",
+      "correct": "number",
+      "incorrect": "number",
+      "corrections_sent": "number",
+      "corrections_stored": "number",
+      "human_examples": "number",
+      "golden_only_examples": "number",
+      "corrections": "bool",
+      "by_version[]": {
+        "version": "number",
+        "verdicts": "number",
+        "correct": "number",
+        "precision": "number",
+        "lower": "number",
+        "upper": "number"
+      }
     }
   }
 }

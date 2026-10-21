@@ -59,6 +59,8 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 | `purge` | retention (`privacy.apply_retention`: the live gateway hourly, a live night, `python -m ratchet.live purge`) | Examples not seen within `RATCHET_EXAMPLE_RETENTION_DAYS` lost their text, and request rows older than `RATCHET_REQUEST_RETENTION_DAYS` were folded into daily sums; counts, and the client for a `--client` run | None |
 | `purge_failed` | the live gateway's hourly retention | A scheduled purge raised (detail: the exception's class). Nothing was half-done: each purge and each fold chunk is one transaction. The next hour tries again | Run `python -m ratchet.live purge --dry-run`, then without `--dry-run`, and read the error |
 | `sync_failed` | `python -m ratchet.live night` | After a night that trained, the adapter's `ratchet_bom.json` and `NOTICE.md` were written to `RATCHET_DATA_DIR/adapters/<name>/`, but the second `RATCHET_SYNC_CMD` failed (detail: the version and the exception's class), so the bucket's adapter folder has the weights without their licenses. The night itself stands: the version exists and is in the release gate. The command exits non-zero | Run `RATCHET_SYNC_CMD` by hand (it only uploads), then check that the bucket's `adapters/<name>/` holds `NOTICE.md` and `ratchet_bom.json`. `python -m ratchet.live export --version N --out DIR` bundles the adapter with its licenses at any time |
+| `human_alert` | `POST /v1/ratchet/feedback` (`feedback.check_human_alert`) | A version's human precision on the answers it served itself has at least `RATCHET_MIN_AUDITS` verdicts and a 95% Wilson upper bound below `RATCHET_LIVE_FLOOR`: the people using it judge it worse than the floor. Once per version (kept across restarts). It never promotes or rolls back anything | See [Human feedback alert](#human-feedback-alert) |
+| `import` | `python -m ratchet.importer` | Labelled rows were imported: how many of how many were stored, as human labels or an open teacher's answers, golden only or not, new, replaced, duplicates, invalid and refused, the file's name and SHA-256 and the attestation (redacted). Never row text | Keep the file and the attestation with your records; see [Importing labelled data](#importing-labelled-data) |
 | `fault` | demo only | Fault injection via `/ratchet/demo/break-next` or `/ratchet/demo/student-outage` | Mock mode only |
 | `warmup` | mock startup | `RATCHET_MOCK_WARMUP_DAYS` simulated days ran before the demo opened | Mock mode only |
 
@@ -264,6 +266,36 @@ Check `/ratchet/stats` → `privacy.not_stored_by_reason` and the response's `ra
 | A client leaving | `python -m ratchet.admin export examples --client <name> --out <file>` if the contract says so, then `python -m ratchet.admin erase --reason "<why>" --client <name> --apply`. `RATCHET_ERASURE_SHARED=keep` keeps examples another client sent too |
 
 Keep `RATCHET_END_USER_KEY` stable: changing it unlinks every no-train registration (an `end_user_key` event) and every end user's stored examples, which an erasure by end user then cannot find.
+
+### Importing labelled data
+
+Labels you already own (a fine-tuning dataset written by your team, a golden set your reviewers checked) or outputs of an open teacher you ran yourself can go straight into the ledger ([ADR 0091](adr/0091-human-labels-as-a-provenance-source.md)). Run the importer with the gateway's environment (`RATCHET_DB`, `RATCHET_TASKS_FILE`, `RATCHET_TEACHER_LICENSES`, `RATCHET_REDACT_PII`); it may run while the gateway serves.
+
+```bash
+# 1. Dry run: an in-memory copy of the ledger, nothing written. Read the counts and the first problems.
+python -m ratchet.importer labels.jsonl --task ticket-triage --source human \
+    --attest "Written by the support leads, Q3 2026; owned by Acme" --dry-run
+# 2. Import. --client attributes the rows to an API key name (for erasure and export by client).
+python -m ratchet.importer labels.jsonl --task ticket-triage --source human --attest "..." --client acme
+# A human-verified golden set: never trained on, even past the frequent-request rule.
+python -m ratchet.importer golden.jsonl --task ticket-triage --source human --attest "..." --golden-only
+# An open teacher's outputs (must be in the registry; closed models are refused with their terms quoted).
+python -m ratchet.importer outputs.jsonl --task ticket-triage --source teacher:nvidia/nemotron-3-super-120b-a12b
+```
+
+- The format is OpenAI's chat fine-tuning JSONL (`{"messages": [..., {"role": "assistant", "content": "..."}]}`, the answer last) or Ratchet's own `train.jsonl`. Every label must be valid under the task's spec; an invalid row is counted (`invalid_by_reason`) and listed with its line number, the rest import.
+- `refused_by_reason: {"trained": n}` on a golden-only import: those prompts (or a variant of them) are already training rows, so they cannot be held-out evidence. Use other prompts for the golden set.
+- `duplicates`: the ledger already had the example with an equal or stronger label. An import replaces teacher answers and client corrections (human labels beat teacher answers; an operator's import beats a client's correction) and earlier imports of the same rows.
+- The task must be registered (`RATCHET_TASKS_FILE` or the admin API), and neither pinned nor no-store; zero retention refuses every import.
+- To undo an import, erase its rows: `python -m ratchet.admin erase --reason "..." --client <name> --apply` when you passed `--client`, else by `--hash` from `python -m ratchet.admin export examples --task <task>` (rows with `"origin": "import"`).
+
+### Human feedback alert
+
+A `human_alert` event means the clients' verdicts (`POST /v1/ratchet/feedback`) on a version's own answers are well below the floor. It is a second opinion, biased toward what people notice, and never moves a release.
+
+1. Compare with the audited precision: `/ratchet/stats` → `feedback.by_version` (human) next to the version's audits (`alert` and `rollback` events, the dashboard's audit agreement). If the audits agree, follow [Precision alert on live](#precision-alert-on-live).
+2. If only humans disagree, the teacher may be wrong on those requests (the audits grade against the teacher): read the stored corrections (`python -m ratchet.admin export examples --task <task>` and look for `"provenance": {"teacher": "human", ...}`) and the task's spec. Corrections are training data for the next night, which re-scores the live version on a golden set that now includes any human labels in it.
+3. One client sending most of the `incorrect` verdicts: check that client's use of the task (`/ratchet/stats` → `clients`). If its clients should not write labels, set `RATCHET_FEEDBACK_CORRECTIONS=0` (verdicts are still kept) or erase its corrections by client.
 
 ### PII leak
 

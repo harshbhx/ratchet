@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import contextlib
 import functools
 import hashlib
 import json
@@ -16,7 +17,8 @@ from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from . import tasks
+from . import licenses, tasks
+from .stats import wilson
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -45,7 +47,10 @@ CREATE TABLE IF NOT EXISTS requests (
     optional_failed INTEGER,   -- 1: an optional teacher call of this request (audit, arbitration) failed
     -- Data governance (FR-13.1, FR-13.2, ADR 0080):
     end_user TEXT,             -- HMAC of the request's safety_identifier or user (privacy.EndUsers), never the value
-    store_opt_out TEXT         -- why its teacher answers could not be stored (privacy.OPT_OUTS); NULL: no opt-out
+    store_opt_out TEXT,        -- why its teacher answers could not be stored (privacy.OPT_OUTS); NULL: no opt-out
+    -- The gateway's request id ('req_' + 32 hex; the completion id is 'chatcmpl-' + the same digits), which feedback
+    -- names the request by (FR-13.30); NULL for internal calls (Scout, the simulator) and older rows.
+    request_id TEXT
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +76,10 @@ CREATE TABLE IF NOT EXISTS examples (
     purged_ts REAL,            -- when its text was removed; NULL while it is kept
     purge_reason TEXT,         -- 'retention' (a storable duplicate restores it) | 'erasure' (never stored again)
     purged_train INTEGER,      -- 1: it counted as a training row when purged (dataset.counts_as_train)
-    prompt_hash TEXT           -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
+    prompt_hash TEXT,          -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
+    -- Human labels (FR-3.54, FR-4.50, ADR 0091):
+    verified INTEGER DEFAULT 0,       -- 1: a person wrote the label (teacher_model 'human': a correction or an import)
+    golden_only INTEGER DEFAULT 0     -- 1: held out for good, even past FREQUENT, with every variant of its prompt
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,6 +181,18 @@ CREATE TABLE IF NOT EXISTS no_train (         -- end users whose requests are ne
 CREATE TABLE IF NOT EXISTS erasure_items (    -- the examples each erasure purged: hashes, never text (FR-13.3)
     erasure_id INTEGER NOT NULL, hash TEXT NOT NULL, task TEXT, split TEXT,
     PRIMARY KEY (erasure_id, hash)
+);
+CREATE TABLE IF NOT EXISTS feedback (          -- human verdicts on served answers (FR-13.30): ids and names, never text
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER,      -- when the verdict was last given; a later verdict on the same request replaces it
+    request_id TEXT NOT NULL UNIQUE,  -- requests.request_id: one row per request
+    client TEXT,               -- the API key name that sent the request (and the feedback); NULL when keys are off
+    verdict TEXT,              -- 'correct' | 'incorrect' (feedback.VERDICTS)
+    corrected_present INTEGER DEFAULT 0,  -- 1: a correction came with a verdict on this request
+    -- Copied from the request row, so the statistics outlive it (request retention folds request rows):
+    task TEXT, version INTEGER, served_by TEXT, route TEXT,
+    stored INTEGER DEFAULT 0,  -- 1: a correction was stored as a human-labelled example
+    example_hash TEXT          -- the example that correction is (examples.hash); NULL otherwise
 );
 CREATE TABLE IF NOT EXISTS daily_rollup (     -- request rows folded by retention (FR-13.4): sums only, no row or end user
     day INTEGER, task TEXT, client TEXT, route TEXT, store_opt_out TEXT,
@@ -291,6 +311,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "optional_failed": "INTEGER",
         "end_user": "TEXT",
         "store_opt_out": "TEXT",
+        "request_id": "TEXT",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -307,6 +328,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "purge_reason": "TEXT",
         "purged_train": "INTEGER",
         "prompt_hash": "TEXT",
+        "verified": "INTEGER DEFAULT 0",
+        "golden_only": "INTEGER DEFAULT 0",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
     "erasures": {"actor": "TEXT", "reason": "TEXT", "scope": "TEXT", "purged": "INTEGER", "kept": "INTEGER"},
@@ -337,6 +360,9 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS examples_end_user ON examples (end_user)",
     "CREATE INDEX IF NOT EXISTS example_clients_client ON example_clients (client)",
     "CREATE INDEX IF NOT EXISTS daily_rollup_day ON daily_rollup (day)",
+    # Feedback (FR-13.30): a request by the gateway's id, and one version's verdicts (its human precision).
+    "CREATE INDEX IF NOT EXISTS requests_request_id ON requests (request_id)",
+    "CREATE INDEX IF NOT EXISTS feedback_version ON feedback (version)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -345,6 +371,10 @@ EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spen
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 # Tables created by SCHEMA for data governance (FR-13.2, ADR 0080); the migration test checks an old file gains them.
 GOVERNANCE_TABLES = ("example_clients", "no_train", "erasure_items", "daily_rollup")
+# Created by SCHEMA for human feedback (FR-13.30, ADR 0091); the migration test checks an old file gains it.
+FEEDBACK_TABLES = ("feedback",)
+# examples.origin of a human or imported label (ADR 0091); live teacher answers leave it NULL ('live').
+LABEL_ORIGINS = ("feedback", "import")
 
 DAY_SECONDS = 86400
 DAY_ORIGIN_META = "day_origin"  # meta row: when day 1 started on a live ledger, kept once request retention deletes rows
@@ -526,6 +556,23 @@ class Ledger:
         retention purge): holding it, no other thread of this process writes in between. Re-entrant, so the ledger's
         own methods still work inside."""
         return self._lock
+
+    @contextlib.contextmanager
+    def atomic(self) -> Iterator[None]:
+        """The ledger's lock and a write transaction (`BEGIN IMMEDIATE`), for a caller whose reads, decision and write
+        must not interleave with another process's writes either: the importer CLI and the gateway may share the file
+        (`feedback.store_label`). A method that commits ends the transaction early; anything left is committed on exit,
+        or rolled back when the block raises."""
+        with self._lock:
+            self._begin()
+            try:
+                yield
+            except BaseException:
+                if self.db.in_transaction:
+                    self.db.rollback()
+                raise
+            if self.db.in_transaction:
+                self.db.commit()
 
     def _migrate(self) -> None:
         for table, cols in MIGRATIONS.items():
@@ -761,10 +808,22 @@ class Ledger:
         params: Mapping[str, Any] | None = None,
         client: str | None = None,
         end_user: str | None = None,
+        *,
+        verified: bool = False,
+        golden_only: bool = False,
+        origin: str | None = None,
+        replace: bool = False,
+        bump: bool = True,
     ) -> bool | None:
         """Store a teacher-labelled example. Returns True when it was inserted, False when it was a duplicate, and None
         when it was refused because an erasure tombstoned its hash (FR-13.3): nothing is stored or bumped, and only the
         tombstone's `suppressed` count grows.
+        Human and imported labels (ADR 0091, `feedback.store_label`, the only caller that passes these) set `verified`
+        (a person wrote the label), `golden_only` (the row goes to the golden split whatever its hash says, and stays
+        held out even past FREQUENT; sticky on a duplicate) and `origin` (`LABEL_ORIGINS`). With `replace`, a duplicate's
+        label (completion, teacher, license, redactions, verified, origin) becomes this one: how a human label beats a
+        teacher's on the same hash. Without it a duplicate keeps its label, so a teacher answer never overwrites a human
+        one. `bump` False leaves `seen` alone on a duplicate, for a label that is not a new occurrence of the request.
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
         under other conditions are another example, in the same split (`_split`). `client` (the API key name) and
@@ -774,16 +833,19 @@ class Ledger:
         the text, with this answer's teacher and license (FR-13.4)."""
         target = target_params(params)
         h = example_hash(task, messages, target)
-        split = self._split(example_hash(task, messages) if target else h)  # without conditions, h is the split key
+        # Without conditions, h is the split key. A golden-only label is golden whatever its hash says (ADR 0091).
+        split = "golden" if golden_only else self._split(example_hash(task, messages) if target else h)
         text = json.dumps(messages, ensure_ascii=False)
         stored_params = json.dumps(target, ensure_ascii=False) if target else None
         now = time.time()
         if self.db.execute("SELECT 1 FROM tombstones WHERE key=?", (h,)).fetchone() is not None:
             return self._refuse_erased(h, now)
+        label = (completion, teacher_model, license_name, license_url, redactions, int(verified), origin)
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
-                " split, redactions, params, client, end_user, last_seen_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     now,
                     self.day,
@@ -800,6 +862,9 @@ class Ledger:
                     client,
                     end_user,
                     now,
+                    int(verified),
+                    int(golden_only),
+                    origin,
                 ),
             )
             self.db.commit()
@@ -810,15 +875,27 @@ class Ledger:
         reason = row["purge_reason"] if row is not None else None
         if reason == "erasure":  # every erasure writes a tombstone; a row purged without one is refused all the same
             return self._refuse_erased(h, now)
+        more = int(bump)
         if reason == "retention":
             self.db.execute(
                 "UPDATE examples SET messages=?, completion=?, params=?, teacher_model=?, license=?, license_url=?,"
-                " redactions=?, seen = seen + 1, last_seen_ts=?, purged_ts=NULL, purge_reason=NULL, purged_train=NULL"
-                " WHERE hash=?",
-                (text, completion, stored_params, teacher_model, license_name, license_url, redactions, now, h),
+                " redactions=?, verified=?, origin=?, seen = seen + ?, last_seen_ts=?, purged_ts=NULL, purge_reason=NULL,"
+                " purged_train=NULL, golden_only = MAX(COALESCE(golden_only, 0), ?) WHERE hash=?",
+                (text, completion, stored_params, teacher_model, license_name, license_url, redactions, int(verified), origin)
+                + (more, now, int(golden_only), h),
+            )
+        elif replace:  # a human label beats the stored one (`feedback.store_label` decides when)
+            self.db.execute(
+                "UPDATE examples SET completion=?, teacher_model=?, license=?, license_url=?, redactions=?, verified=?,"
+                " origin=?, seen = seen + ?, last_seen_ts=?, golden_only = MAX(COALESCE(golden_only, 0), ?) WHERE hash=?",
+                (*label, more, now, int(golden_only), h),
             )
         else:
-            self.db.execute("UPDATE examples SET seen = seen + 1, last_seen_ts=? WHERE hash=?", (now, h))
+            self.db.execute(
+                "UPDATE examples SET seen = seen + ?, last_seen_ts=?, golden_only = MAX(COALESCE(golden_only, 0), ?)"
+                " WHERE hash=?",
+                (more, now, int(golden_only), h),
+            )
         if client is not None:  # `IS NOT` so an example first stored without a client records this one
             self.db.execute(
                 "INSERT OR IGNORE INTO example_clients (hash, client) SELECT hash, ? FROM examples"
@@ -866,6 +943,24 @@ class Ledger:
         return first + [c for c in others if c not in first]
 
     @_locked
+    def example(self, h: str) -> sqlite3.Row | None:
+        """The stored example with hash `h` (purged or not), or None."""
+        return self.db.execute("SELECT * FROM examples WHERE hash=?", (h,)).fetchone()
+
+    @_locked
+    def prompt_index(self, task: str) -> tuple[Counter[str], set[str]]:
+        """For one task's stored examples, purged ones included: how often each prompt was seen (`count_prompts`, over
+        every variant) and the prompt keys (`prompt_key`) that have a row in the train split. What a golden-only import
+        checks before it holds a prompt out for good: a prompt that may already have been trained on cannot be held-out
+        evidence (ADR 0091). Messages are read only for rows with stored conditions."""
+        rows = self.db.execute(
+            "SELECT hash, task, CASE WHEN params IS NOT NULL THEN messages END messages, params, prompt_hash, seen, split"
+            " FROM examples WHERE task=?",
+            (task,),
+        ).fetchall()
+        return count_prompts(rows), {prompt_key(r) for r in rows if r["split"] == "train"}
+
+    @_locked
     def example_count(self, task: str) -> int:
         """Stored examples of one task (what deleting the task keeps, for provenance)."""
         return int(self.db.execute("SELECT COUNT(*) FROM examples WHERE task=?", (task,)).fetchone()[0])
@@ -874,11 +969,15 @@ class Ledger:
     def bill_of_materials(self) -> dict[str, Any]:
         """Model bill of materials: which teachers and licenses produced the training data. Only examples that still
         have their text count in `sources` and the fingerprint; purged ones (FR-13.3, FR-13.4) are counted in
-        `purged_examples`, so a purge changes the fingerprint. Each adapter's own signed BOM is never touched (INV-14)."""
-        rows = self.db.execute(
+        `purged_examples`, so a purge changes the fingerprint. Labels from a provenance source that is not a teacher
+        (`licenses.SOURCES`: `human`) are listed apart, in `label_sources`, and count in the fingerprint like the rest
+        (FR-3.54). Each adapter's own signed BOM is never touched (INV-14)."""
+        grouped = self.db.execute(
             "SELECT teacher_model, license, license_url, split, COUNT(*) n FROM examples WHERE purged_ts IS NULL"
             " GROUP BY teacher_model, license, license_url, split"
         ).fetchall()
+        rows = [r for r in grouped if r["teacher_model"] not in licenses.SOURCES]
+        labels = [r for r in grouped if r["teacher_model"] in licenses.SOURCES]
         digest = hashlib.sha256()
         for r in self.db.execute("SELECT hash FROM examples WHERE purged_ts IS NULL ORDER BY hash"):
             digest.update(r["hash"].encode())
@@ -887,6 +986,7 @@ class Ledger:
             "generated_at": time.time(),
             "examples_sha256": digest.hexdigest(),
             "sources": [dict(r) for r in rows],
+            "label_sources": [dict(r) for r in labels],
             "purged_examples": purged,
         }
 
@@ -1340,6 +1440,8 @@ class Ledger:
                     "client": r["client"],
                     "clients": first + [c for c in others.get(r["hash"], []) if c not in first],
                     "last_seen_ts": r["last_seen_ts"],
+                    "verified": bool(r["verified"]),  # a person wrote the label (ADR 0091)
+                    "golden_only": bool(r["golden_only"]),
                 }
             )
         return out
@@ -1514,6 +1616,108 @@ class Ledger:
         self.db.commit()
         row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return str(row["value"])
+
+    # ---------- human feedback (FR-13.30, ADR 0091) ----------
+    @_locked
+    def feedback_request(self, request_id: str) -> sqlite3.Row | None:
+        """The metadata a verdict needs of the request the gateway logged under `request_id`: who sent it, its task,
+        version, how it was served, its storage opt-out, end user and whether a teacher answer of it was stored. None
+        when no row has that id (never logged, or folded by request retention)."""
+        return self.db.execute(
+            "SELECT id, client, task, served_by, route, student_version, store_opt_out, end_user, stored FROM requests"
+            " WHERE request_id=? ORDER BY id LIMIT 1",
+            (request_id,),
+        ).fetchone()
+
+    @_locked
+    def feedback_row(self, request_id: str) -> sqlite3.Row | None:
+        """The verdict recorded for a request, or None."""
+        return self.db.execute("SELECT * FROM feedback WHERE request_id=?", (request_id,)).fetchone()
+
+    @_locked
+    def record_feedback(
+        self,
+        request_id: str,
+        client: str | None,
+        verdict: str,
+        request: Mapping[str, Any],
+        *,
+        corrected: bool = False,
+        stored_hash: str | None = None,
+    ) -> bool:
+        """Record a verdict on a request (`request`: its `feedback_request` row), one row per request: a later verdict
+        replaces the earlier one, `corrected_present` and `stored` only ever go from 0 to 1, and the stored example's
+        hash is kept from the first correction that was stored. Returns True when an earlier verdict was replaced."""
+        now = time.time()
+        updated = self.db.execute("SELECT 1 FROM feedback WHERE request_id=?", (request_id,)).fetchone() is not None
+        self.db.execute(
+            "INSERT INTO feedback (ts, day, request_id, client, verdict, corrected_present, task, version, served_by, route,"
+            " stored, example_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(request_id) DO UPDATE SET ts=excluded.ts, day=excluded.day, verdict=excluded.verdict,"
+            " corrected_present = MAX(corrected_present, excluded.corrected_present),"
+            " stored = MAX(stored, excluded.stored), example_hash = COALESCE(example_hash, excluded.example_hash)",
+            (
+                now,
+                self.day,
+                request_id,
+                client,
+                verdict,
+                int(corrected),
+                request["task"],
+                request["student_version"],
+                request["served_by"],
+                request["route"],
+                int(stored_hash is not None),
+                stored_hash,
+            ),
+        )
+        self.db.commit()
+        return updated
+
+    @_locked
+    def human_precision(self, version: int) -> tuple[int, int]:
+        """(verdicts, correct ones) on the answers `version` served by itself (route `student`: not degraded stand-ins),
+        the latest verdict per request."""
+        r = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback"
+            " WHERE version=? AND served_by='student' AND route='student'",
+            (version,),
+        ).fetchone()
+        return int(r["n"]), int(r["ok"])
+
+    @_locked
+    def feedback_stats(self) -> dict[str, Any]:
+        """Counts for /ratchet/stats: verdicts by kind, corrections sent and stored, the human-labelled and golden-only
+        examples that still have their text, and per version the human precision of the answers it served itself, with
+        its 95% Wilson bounds. Never a request id or text: the stats are public."""
+        r = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok, COALESCE(SUM(corrected_present), 0) sent,"
+            " COALESCE(SUM(stored), 0) stored FROM feedback"
+        ).fetchone()
+        e = self.db.execute(
+            "SELECT COALESCE(SUM(verified = 1), 0) human, COALESCE(SUM(golden_only = 1), 0) golden_only FROM examples"
+            " WHERE purged_ts IS NULL"
+        ).fetchone()
+        by_version = []
+        for v in self.db.execute(
+            "SELECT version, COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback"
+            " WHERE version IS NOT NULL AND served_by='student' AND route='student' GROUP BY version ORDER BY version"
+        ):
+            n, ok = int(v["n"]), int(v["ok"])
+            lo, hi = wilson(ok, n)
+            by_version.append(
+                {"version": v["version"], "verdicts": n, "correct": ok, "precision": ok / n, "lower": lo, "upper": hi}
+            )
+        return {
+            "verdicts": int(r["n"]),
+            "correct": int(r["ok"]),
+            "incorrect": int(r["n"]) - int(r["ok"]),
+            "corrections_sent": int(r["sent"]),
+            "corrections_stored": int(r["stored"]),
+            "human_examples": int(e["human"]),
+            "golden_only_examples": int(e["golden_only"]),
+            "by_version": by_version,
+        }
 
     # ---------- versions ----------
     @_locked
@@ -1793,10 +1997,18 @@ class Ledger:
                         per_task[k[6:]] = per_task.get(k[6:], 0) + v
                 routes[name] = dict(sorted(per_task.items(), key=lambda kv: (-kv[1], kv[0])))
             rows = sorted(_merge(rows, "task", folded).values(), key=lambda r: -r["requests"])  # stable: ties keep order
+        # Human verdicts on the task's answers (FR-13.30), the latest per request; their rows outlive the requests'.
+        human = {
+            f["task"]: (int(f["n"]), int(f["ok"]))
+            for f in self.db.execute(
+                "SELECT task, COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback GROUP BY task"
+            )
+        }
         out = []
         for r in rows:
             n = r["requests"] or 1
             cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
+            verdicts, correct = human.get(r["task"], (0, 0))
             out.append(
                 {
                     "task": r["task"],
@@ -1809,6 +2021,8 @@ class Ledger:
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                     "avg_latency_ms": r["latency_ms"],
                     "routes": routes.get(r["task"], {}),
+                    "human_feedback": verdicts,
+                    "human_agreement": correct / verdicts if verdicts else None,
                 }
             )
         return out

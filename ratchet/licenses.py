@@ -15,6 +15,10 @@ the operator's claim, which every BOM and NOTICE marks `config` (ADR 0090).
 `BASE_MODELS` names the license of each known student base model: it travels with every
 adapter in its BOM and its NOTICE.md (NFR-9).
 
+`SOURCES` names provenance that is not a teacher model: `human`, labels a customer wrote or approved (feedback
+corrections and imports, ADR 0091). `lookup_source` reads the teacher registry, then `SOURCES`; `require_distillable`
+never reads `SOURCES`, so `human` can never be configured as a teacher (invariant 1).
+
 Not legal advice: check each license yourself before relying on it.
 """
 
@@ -71,17 +75,19 @@ BUILTIN: Mapping[str, TeacherLicense] = MappingProxyType(
 # `licenses.REGISTRY`, never `from .licenses import REGISTRY`.
 REGISTRY: dict[str, TeacherLicense] = dict(BUILTIN)
 
-# Terms that forbid using outputs to build or train competing models.
+# Terms that forbid using outputs to build or train competing models. Every OpenAI family carries the clause, so a
+# refusal (`require_distillable`, the importer) can quote it whichever family a model id names.
+OPENAI_TERMS = TeacherLicense(
+    "OpenAI Business Terms",
+    False,
+    "https://openai.com/policies/business-terms/",
+    "Section 3.3(e) forbids using Output to develop competing AI models.",
+)
 CLOSED: dict[str, TeacherLicense] = {
-    "gpt": TeacherLicense(
-        "OpenAI Business Terms",
-        False,
-        "https://openai.com/policies/business-terms/",
-        "Section 3.3(e) forbids using Output to develop competing AI models.",
-    ),
-    "o1": TeacherLicense("OpenAI Business Terms", False, "https://openai.com/policies/business-terms/"),
-    "o3": TeacherLicense("OpenAI Business Terms", False, "https://openai.com/policies/business-terms/"),
-    "o4": TeacherLicense("OpenAI Business Terms", False, "https://openai.com/policies/business-terms/"),
+    "gpt": OPENAI_TERMS,
+    "o1": OPENAI_TERMS,
+    "o3": OPENAI_TERMS,
+    "o4": OPENAI_TERMS,
     "claude": TeacherLicense(
         "Anthropic Commercial Terms",
         False,
@@ -95,6 +101,22 @@ CLOSED: dict[str, TeacherLicense] = {
         "Restricts using the API to develop competing models. Verify current clause.",
     ),
 }
+
+# Provenance that is not a teacher model (ADR 0091): `human` marks a label a customer wrote or approved, from a feedback
+# correction (`POST /v1/ratchet/feedback`) or an attested import (`python -m ratchet.importer --source human`). Kept out
+# of `REGISTRY` on purpose: `require_distillable` never reads it, so no teacher can be called `human`, and every reader
+# that must accept human labels asks `lookup_source` instead of `lookup`.
+HUMAN = "human"
+SOURCES: Mapping[str, TeacherLicense] = MappingProxyType(
+    {
+        HUMAN: TeacherLicense(
+            "customer-provided labels",
+            True,
+            "",
+            "Written or approved by the customer; the customer attests ownership.",
+        ),
+    }
+)
 
 # The student base models whose license is known: it travels with every adapter trained on them (the BOM's
 # `base_model_license` and NOTICE.md). Hugging Face ids, matched in any case. Any other base model is not an error: the
@@ -191,8 +213,26 @@ def lookup(model: str) -> TeacherLicense | None:
     return None
 
 
+def lookup_source(model: str) -> TeacherLicense | None:
+    """The license of an example's provenance: a teacher in the registry (`lookup`), else a non-teacher source such as
+    `human` (`SOURCES`), else None. For readers of stored examples (Night School, the BOM); never for a teacher that is
+    about to be called, which goes through `require_distillable`."""
+    return lookup(model) or SOURCES.get(model)
+
+
+def is_source(model: str) -> bool:
+    """Whether `model` names a non-teacher provenance source (`SOURCES`), in any case."""
+    folded = model.casefold()
+    return any(name.casefold() == folded for name in SOURCES)
+
+
 def require_distillable(model: str) -> TeacherLicense:
-    """Return the license for `model`, or raise if training on its outputs is not allowed."""
+    """Return the license for `model`, or raise if training on its outputs is not allowed. Only the teacher registry is
+    read: a `SOURCES` name such as `human` is never a teacher (invariant 1)."""
+    if is_source(model):
+        raise LicenseError(
+            f"'{model}' names a provenance source (customer-provided labels), not a teacher model; set an open teacher"
+        )
     lic = lookup(model)
     if lic is None:
         raise LicenseError(
@@ -274,6 +314,8 @@ def _entry_problems(model: str | None, name: str | None, url: str | None, where:
             )
         elif (builtin := _builtin_name(model)) is not None:
             errors.append(f"{where}.model: {model!r} is a built-in teacher ({BUILTIN[builtin].name}); edit ratchet/licenses.py")
+        elif is_source(model):
+            errors.append(f"{where}.model: {model!r} is reserved for customer-provided labels (licenses.SOURCES), not a teacher")
         elif model in seen:
             errors.append(f"{where}.model: {model!r} is listed twice")
     if name is not None and _canonical_license(name) is None:
