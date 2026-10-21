@@ -52,7 +52,7 @@ from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NamedTuple
 
 from .. import bom, licenses, tasks
 from ..ledger import Ledger, prompt_key, seen_count
@@ -231,11 +231,38 @@ def write_training(items: list[dict[str, Any]], path: str | Path) -> Path:
     return write_jsonl([training_record(it) for it in items], path)
 
 
-def build(ledger: Ledger, out_dir: str | Path, task: str | None = None, *, exclude_contested: bool = True) -> dict[str, Any]:
+class Snapshot(NamedTuple):
+    """Both splits of one read of the ledger, and what `rows` left out of each (`counts`)."""
+
+    train: list[dict[str, Any]]
+    golden: list[dict[str, Any]]
+    counts: dict[str, int]
+    golden_counts: dict[str, int]
+
+
+def read_snapshot(ledger: Ledger, task: str | None = None, *, exclude_contested: bool = True) -> Snapshot:
+    """The train and golden rows now, read once. A night builds its manifest from the same rows it trains on: reading
+    again for the trainer would train on an example stored in between that the version's example count and signed
+    dataset hash (`dataset_hash`) do not know."""
     counts: dict[str, int] = {}
     golden_counts: dict[str, int] = {}
     train = rows(ledger, "train", task, counts, exclude_contested=exclude_contested)
     golden = rows(ledger, "golden", task, golden_counts, exclude_contested=exclude_contested)
+    return Snapshot(train, golden, counts, golden_counts)
+
+
+def build(
+    ledger: Ledger,
+    out_dir: str | Path,
+    task: str | None = None,
+    *,
+    exclude_contested: bool = True,
+    snapshot: Snapshot | None = None,
+) -> dict[str, Any]:
+    """Write the training and golden files and the manifest of one snapshot (`snapshot`, else a fresh read)."""
+    train, golden, counts, golden_counts = (
+        snapshot if snapshot is not None else read_snapshot(ledger, task, exclude_contested=exclude_contested)
+    )
     out = Path(out_dir)
     write_training(train, out / "train.jsonl")
     write_jsonl(golden, out / "golden.jsonl")  # the eval's rows (messages and stored conditions): never trained on

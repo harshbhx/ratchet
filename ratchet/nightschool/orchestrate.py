@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -109,6 +110,15 @@ def _rescore_changed_specs(
         ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
 
 
+def _without_erased(ledger: Ledger, train_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """`train_rows` without the examples an erasure tombstoned since they were read, and how many that was (FR-13.3)."""
+    gone = ledger.tombstoned(r["provenance"]["hash"] for r in train_rows)
+    if not gone:
+        return train_rows, 0
+    kept = [r for r in train_rows if r["provenance"]["hash"] not in gone]
+    return kept, len(train_rows) - len(kept)
+
+
 def early_night(ledger: Ledger, gate: ReleaseGate, min_new_examples: int) -> tuple[int, str]:
     """The new examples tonight needs, and the note a skip event adds (FR-6.41, ADR 0032). With drift_early_night=1,
     when a drift alarm came from a request logged after the last `trained` event, half of `min_new_examples` (at least
@@ -199,10 +209,13 @@ def run_night(
         v = in_flight[-1]
         ledger.event("skip", f"v{v.id} still in {v.state}; no training tonight (saves GPU time)")
         return NightReport(False, None, False, "release in flight")
+    # One read of the ledger: the manifest (the version's example count and signed dataset hash), the trainer's rows and the
+    # commitments all come from it, so an example stored while the files are written cannot be trained on unrecorded.
+    read_at = time.time()  # an erasure recorded from now on may postdate the rows read below (`Ledger.taint_late_erasures`)
+    snap = dataset.read_snapshot(ledger, task, exclude_contested=watching)
     with tempfile.TemporaryDirectory() as tmp:
-        manifest = dataset.build(ledger, tmp, task, exclude_contested=watching)
-    train_rows = dataset.rows(ledger, "train", task, exclude_contested=watching)
-    golden_rows = dataset.rows(ledger, "golden", task, exclude_contested=watching)
+        manifest = dataset.build(ledger, tmp, task, exclude_contested=watching, snapshot=snap)
+    train_rows, golden_rows = snap.train, snap.golden
 
     new = manifest["train_examples"] - ledger.train_rows_kept(task)
     hashes = spec_hashes(golden_rows)
@@ -229,6 +242,12 @@ def run_night(
         recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
         rescore(ledger, live, recheck, hashes, gate)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
 
+    # An erasure that landed since the rows were read (the champion re-score takes minutes) is honoured now: its examples
+    # are dropped from the training set, and the version's count and dataset hash follow the rows it is trained on.
+    train_rows, dropped = _without_erased(ledger, train_rows)
+    if dropped:
+        manifest = {**manifest, "train_examples": len(train_rows), "dataset_sha256": dataset.dataset_hash(train_rows)}
+        ledger.event("erasure_honoured", f"{dropped} examples erased during the night were left out of training")
     # The set commitments of tonight's rows, built before the paid training job so nothing can fail after it.
     commitments = {"training": dataset.commitment(train_rows), "golden": dataset.commitment(golden_rows)}
     name = f"student-v{len(ledger.versions()) + 1}"
@@ -254,6 +273,16 @@ def run_night(
     # once, before the eval and the BOM, so every signed root has its leaves in the ledger.
     for section, (_, _, leaves) in commitments.items():
         ledger.set_version_leaves(vid, bom.COMMITMENT_SPLITS[section], leaves)
+    # An erasure recorded while the adapter trained could not drop its rows, and its own list of affected versions could not
+    # name this one (no committed leaves yet): it is pending again, with this version tainted, until a version without the
+    # data replaces it.
+    late = ledger.taint_late_erasures(vid, read_at)
+    if late:
+        ledger.event(
+            "erasure_tainted",
+            f"v{vid} was trained while erasure {', '.join(f'#{i}' for i in late)} ran and holds erased examples: "
+            "the erasure is pending until a version trained without them replaces it",
+        )
     result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
     if live is not None:  # paired evidence, before the eval is stored and the BOM signed, so the BOM carries it
         pair = paired_evidence(recheck, result, live.id)

@@ -3114,6 +3114,38 @@ class Ledger:
         return [(r["key"], r["value"]) for r in self.db.execute(q, (vid, split))]
 
     @_locked
+    def tombstoned(self, keys: Iterable[str]) -> set[str]:
+        """The keys among `keys` that an erasure tombstoned (FR-13.3): the examples that may no longer be trained on."""
+        wanted = sorted(set(keys))
+        out: set[str] = set()
+        for part in _chunks(wanted):
+            marks = ",".join("?" * len(part))
+            out.update(r["key"] for r in self.db.execute(f"SELECT key FROM tombstones WHERE key IN ({marks})", part))
+        return out
+
+    @_locked
+    def taint_late_erasures(self, vid: int, since: float) -> list[int]:
+        """Version `vid` was trained on rows read at `since` (a wall-clock time) or later; an erasure recorded since then
+        may have purged some of them after the read, and the erasure's own list of affected versions could not name `vid`,
+        which had no committed leaves yet. Every erasure with `ts >= since` that purged an example in `vid`'s committed
+        train leaves gains `vid` in `tainted` and is `pending` again (its replacement, if any, is no longer the answer:
+        a version still holds the data). Returns those erasure ids, oldest first. Call once the leaves are written."""
+        rows = self.db.execute(
+            "SELECT DISTINCT e.id, e.tainted FROM erasures e JOIN erasure_items i ON i.erasure_id = e.id"
+            " JOIN version_leaves l ON l.key = i.hash AND l.split = 'train' AND l.version_id = ?"
+            " WHERE e.ts >= ? ORDER BY e.id",
+            (vid, since),
+        ).fetchall()
+        done = []
+        for r in rows:
+            tainted = sorted({*(json.loads(r["tainted"]) if r["tainted"] else []), int(vid)})
+            self.db.execute("UPDATE erasures SET tainted=?, status='pending' WHERE id=?", (json.dumps(tainted), r["id"]))
+            done.append(int(r["id"]))
+        if done:
+            self.db.commit()
+        return done
+
+    @_locked
     def versions_containing(self, key: str, split: str = "train") -> list[int]:
         """The ids of the versions whose committed `split` set holds the example `key` (hex), oldest first: the adapters
         trained on it (split 'train'), on the `version_leaves_key` index."""
