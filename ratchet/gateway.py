@@ -52,6 +52,7 @@ from .cost import cost_report, record_endpoint, record_simulated_day, stats_bloc
 from .ledger import Ledger, Version
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
+    INVALID_JSON,
     INVALID_REQUEST,
     SERVICE_TIER,
     APIError,
@@ -1145,8 +1146,14 @@ def _complete_idempotent(raw: bytes, header_task: str | None, client: str | None
         message = f"Invalid Idempotency-Key header: {e}."
         raise APIError(400, message, INVALID_REQUEST, "invalid_idempotency_key", headers=NO_RETRY) from e
     body = parse_body(raw)  # bad JSON is a 400 before the key is claimed
+    try:  # a body nested just under what parse_body accepts can be too deep to encode again: the same 400, never a 500
+        fingerprint = idem.fingerprint(body, header_task)
+    except RecursionError as e:
+        raise APIError(400, "The request body is not valid JSON: it is nested too deeply.", code=INVALID_JSON) from e
+    except ValueError as e:
+        raise APIError(400, f"The request body is not valid JSON: {e}.", code=INVALID_JSON) from e
     try:
-        claim = cache.begin(client or "", key, idem.fingerprint(body, header_task), rt.settings.teacher_deadline_s)
+        claim = cache.begin(client or "", key, fingerprint, rt.settings.teacher_deadline_s)
     except idem.KeyReused as e:
         metrics.IDEMPOTENT.inc("reused")
         message = "This Idempotency-Key was already used with a different request; send a new key for a new request."

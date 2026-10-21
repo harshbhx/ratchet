@@ -33,6 +33,10 @@ KEY = re.compile(rf"[\x20-\x7e]{{1,{MAX_KEY_CHARS}}}")
 # of kilobytes (n choices of a long answer), and a full cache must not be what runs a small VM out of memory. The least
 # recently used answers go first; one larger than this is shared with the requests waiting for it, then dropped.
 MAX_CACHE_BYTES = 64 * 1024 * 1024
+# What a finished entry holds besides its body, counted against MAX_CACHE_BYTES: the entry, its Event (a Condition and a
+# lock), the key, the headers and the log fields, about 1.9 KB measured with tracemalloc. Without it the byte budget
+# would bound only the bodies, and RATCHET_IDEMPOTENCY_CACHE's largest value of tiny answers would hold about 2 GB.
+ENTRY_OVERHEAD = 2048
 # Requests that may wait at once for one running first request with their key. A waiter holds a worker thread and uses no
 # quota, so without a bound one client could hold the whole thread pool with copies of one request; past it a duplicate
 # gets InFlight at once (a 409 the SDKs retry). OpenAI's SDKs make at most 2 retries by default.
@@ -126,11 +130,12 @@ class Claim:
 
 class IdemCache:
     """Answers by (scope, Idempotency-Key): an OrderedDict kept in least-recently-used order under one lock, with at most
-    `max_entries` entries and MAX_CACHE_BYTES of bodies. A finished answer is kept `ttl_s` seconds on `clock` from when
-    it finished (0: none is kept, so only a request that arrives while the first runs shares its answer). `max_entries`
-    0 turns the cache off (`enabled`): the gateway then ignores Idempotency-Key. Only successful answers are stored: a
-    request that failed releases its key, so the client's retry runs again (that is what a retry is for). At most
-    `max_waiters` requests wait for one running entry at a time."""
+    `max_entries` entries and `max_bytes` (MAX_CACHE_BYTES) of finished answers, each counted as its body plus
+    `entry_overhead` (ENTRY_OVERHEAD) for what the entry itself holds. A finished answer is kept `ttl_s` seconds on
+    `clock` from when it finished (0: none is kept, so only a request that arrives while the first runs shares its
+    answer). `max_entries` 0 turns the cache off (`enabled`): the gateway then ignores Idempotency-Key. Only successful
+    answers are stored: a request that failed releases its key, so the client's retry runs again (that is what a retry
+    is for). At most `max_waiters` requests wait for one running entry at a time."""
 
     def __init__(
         self,
@@ -139,6 +144,7 @@ class IdemCache:
         clock: Callable[[], float] = time.monotonic,
         max_bytes: int = MAX_CACHE_BYTES,
         max_waiters: int = MAX_WAITERS_PER_KEY,
+        entry_overhead: int = ENTRY_OVERHEAD,
     ) -> None:
         if isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries < 0:
             raise ValueError(f"max_entries must be a whole number, 0 or more, not {max_entries!r}")
@@ -149,6 +155,7 @@ class IdemCache:
         self.clock = clock
         self.max_bytes = max_bytes
         self.max_waiters = max_waiters
+        self.entry_overhead = entry_overhead
         self._lock = threading.Lock()
         self._entries: OrderedDict[tuple[str, str], _Entry] = OrderedDict()
         self._bytes = 0
@@ -165,7 +172,7 @@ class IdemCache:
 
     def stats(self) -> dict[str, int]:
         """Entries kept, how many of them are still running, the requests waiting for one, and the bytes of stored
-        answers."""
+        answers (bodies plus `entry_overhead` each)."""
         with self._lock:
             running = sum(1 for e in self._entries.values() if e.response is None)
             return {"entries": len(self._entries), "in_flight": running, "waiting": self._waiting, "bytes": self._bytes}
@@ -227,11 +234,11 @@ class IdemCache:
                 return
             e.response = response
             current = self._entries.get(k) is e
-            keep = response is not None and self.ttl_s > 0 and response.size <= self.max_bytes
+            size = (response.size + self.entry_overhead) if response is not None else 0
+            keep = response is not None and self.ttl_s > 0 and size <= self.max_bytes
             if current and keep:
-                assert response is not None
                 e.finished_at = self.clock()
-                e.size = response.size
+                e.size = size
                 self._bytes += e.size
                 self._entries.move_to_end(k)
                 self._evict()

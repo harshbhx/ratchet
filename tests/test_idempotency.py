@@ -122,7 +122,7 @@ def _cached(text: str = "x", size: int = 1) -> idem.Cached:
 @pytest.mark.req("FR-1.70")
 def test_idem_cache_keeps_expires_evicts_and_releases():
     clock = FakeClock()
-    cache = idem.IdemCache(max_entries=2, ttl_s=600, clock=clock, max_bytes=10)
+    cache = idem.IdemCache(max_entries=2, ttl_s=600, clock=clock, entry_overhead=0, max_bytes=10)
     first = cache.begin("acme", "k1", "fp1", wait_s=1)
     assert first.owner and first.cached is None and not first.joined
     cache.finish(first, _cached("a"))
@@ -144,7 +144,7 @@ def test_idem_cache_keeps_expires_evicts_and_releases():
     assert cache.begin("acme", "k1", "fp1", wait_s=1).owner
 
     # Entries: the least recently used finished answer goes first; a running entry is never dropped.
-    cache = idem.IdemCache(max_entries=2, ttl_s=600, clock=clock, max_bytes=100)
+    cache = idem.IdemCache(max_entries=2, ttl_s=600, clock=clock, entry_overhead=0, max_bytes=100)
     for k in ("a", "b"):
         cache.finish(cache.begin("s", k, "fp", wait_s=1), _cached(k))
     assert cache.begin("s", "a", "fp", wait_s=1).cached is not None  # 'a' used last now
@@ -154,7 +154,7 @@ def test_idem_cache_keeps_expires_evicts_and_releases():
     cache.finish(running, _cached("c"))
 
     # Bytes: an answer larger than the budget is not kept; smaller ones push the oldest out.
-    cache = idem.IdemCache(max_entries=10, ttl_s=600, clock=clock, max_bytes=10)
+    cache = idem.IdemCache(max_entries=10, ttl_s=600, clock=clock, entry_overhead=0, max_bytes=10)
     cache.finish(cache.begin("s", "big", "fp", wait_s=1), _cached("x", 11))
     assert cache.begin("s", "big", "fp", wait_s=1).owner
     for k in ("p", "q"):
@@ -173,6 +173,27 @@ def test_idem_cache_keeps_expires_evicts_and_releases():
     with pytest.raises(ValueError, match="ttl_s"):
         idem.IdemCache(ttl_s=float("nan"))
     assert not idem.IdemCache(max_entries=0).enabled
+
+
+@pytest.mark.req("FR-1.70")
+def test_idem_cache_byte_budget_counts_each_entry_not_only_its_body():
+    """Each finished answer counts its body plus ENTRY_OVERHEAD (the entry, its Event, headers and log fields), so the
+    byte budget bounds the cache's memory even at RATCHET_IDEMPOTENCY_CACHE's largest value: tiny answers are capped by
+    max_bytes / ENTRY_OVERHEAD, not by the entry count alone."""
+    assert idem.IdemCache().entry_overhead == idem.ENTRY_OVERHEAD == 2048
+    assert idem.MAX_CACHE_BYTES // idem.ENTRY_OVERHEAD == 32_768  # what the default budget allows of empty answers
+    clock = FakeClock()
+    cache = idem.IdemCache(max_entries=1_000_000, ttl_s=600, clock=clock, max_bytes=3 * idem.ENTRY_OVERHEAD + 10)
+    for k in ("a", "b", "c", "d"):
+        cache.finish(cache.begin("s", k, "fp", wait_s=1), _cached(k, 2))
+    assert cache.stats() == {"entries": 3, "in_flight": 0, "waiting": 0, "bytes": 3 * (idem.ENTRY_OVERHEAD + 2)}
+    assert cache.begin("s", "a", "fp", wait_s=1).owner  # the oldest went for the fourth, whatever max_entries says
+    assert all(cache.begin("s", k, "fp", wait_s=1).cached is not None for k in ("b", "c", "d"))
+    # One whose body fits but whose entry does not is shared with its waiters, never kept.
+    cache = idem.IdemCache(max_entries=10, ttl_s=600, clock=clock, max_bytes=idem.ENTRY_OVERHEAD + 5)
+    cache.finish(cache.begin("s", "fits", "fp", wait_s=1), _cached("x", 5))
+    cache.finish(cache.begin("s", "over", "fp", wait_s=1), _cached("x", 6))
+    assert cache.begin("s", "fits", "fp", wait_s=1).cached is not None and cache.begin("s", "over", "fp", wait_s=1).owner
 
 
 @pytest.mark.req("FR-1.70")
@@ -393,6 +414,54 @@ def test_key_reused_with_another_body_or_malformed_is_a_400(gw_env, monkeypatch)
     assert len(gw.rt.ratchet.teacher.calls) == 1 and gw.rt.ledger.totals()["requests"] == 1
     assert _delta(rejections, metrics.REJECTIONS) == {"idempotency": 4}
     assert gw.rt.idem.begin("", "k2", "anything", 0).owner  # bad JSON never claimed its key
+
+
+@pytest.mark.req("FR-1.70", "FR-1.10")
+def test_a_body_too_deep_to_fingerprint_is_a_400_and_claims_nothing(gw_env, monkeypatch):
+    """Regression: a body nested just under what parse_body accepts parsed on the key path but could not be encoded again
+    for its fingerprint (json.dumps adds a level), so adding an Idempotency-Key turned the 400 into a 500 (RecursionError).
+    It is now the same 400 `invalid_json` as without a key, before the key is claimed."""
+    gw = _gateway(gw_env, monkeypatch)
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    led = gw.rt.ledger
+
+    def boom(*_: Any, **__: Any) -> str:
+        raise RecursionError("maximum recursion depth exceeded while encoding a JSON object")
+
+    monkeypatch.setattr(idem, "fingerprint", boom)
+    r = c.post(CHAT, json={"messages": _msgs()}, headers={"Idempotency-Key": "deep"})
+    assert r.status_code == 400
+    assert (r.json()["error"]["type"], r.json()["error"]["code"]) == ("invalid_request_error", "invalid_json")
+    assert "nested too deeply" in r.json()["error"]["message"]
+    assert gw.rt.idem.stats()["entries"] == 0 and not gw.rt.ratchet.teacher.calls
+    assert led.totals()["requests"] == 0 and _rows(led, "SELECT COUNT(*) AS n FROM failures") == [{"n": 0}]
+    monkeypatch.undo()
+    _gateway(gw_env, monkeypatch)  # the real fingerprint again, on a fresh runtime
+    c = TestClient(gw.app, raise_server_exceptions=False)
+
+    # The real boundary, wherever this Python's recursion limit puts it: the first depth that parse_body refuses without
+    # a key (bisection), and the depths around it with a key, are 400s, never 500s, and leave no key claimed.
+    def post(depth: int, key: str | None = None) -> Any:
+        raw = ('{"messages":' + "[" * depth + "]" * depth + "}").encode()
+        headers = {"Content-Type": "application/json", **({"Idempotency-Key": key} if key else {})}
+        return c.post(CHAT, content=raw, headers=headers)
+
+    def too_deep(depth: int) -> bool:
+        r = post(depth)
+        assert r.status_code == 400, (depth, r.status_code)
+        return r.json()["error"]["code"] == "invalid_json"
+
+    lo, hi = 1, 100_000
+    assert not too_deep(lo) and too_deep(hi)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        lo, hi = (lo, mid) if too_deep(mid) else (mid, hi)
+    for depth in range(hi - 3, hi + 4):
+        r = post(depth, key=f"deep-{depth}")
+        assert r.status_code == 400, (depth, r.status_code, r.text[:200])
+        assert r.json()["error"]["type"] == "invalid_request_error"
+    assert gw.rt.idem.stats()["entries"] == 0 and not gw.rt.ratchet.teacher.calls
+    assert _rows(gw.rt.ledger, "SELECT COUNT(*) AS n FROM failures") == [{"n": 0}]
 
 
 @pytest.mark.req("FR-1.70")
