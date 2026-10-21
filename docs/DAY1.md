@@ -31,4 +31,4 @@ After `scripts/day1_check.py` passes and the student endpoint is up, run `make l
 
 Rows 13 to 18 take the next free numbers when other items add rows here.
 
-Budget guess: about $40–80 total, assuming L40S at about $1.55/hour (training runs under an hour, endpoint only while testing and recording, $20–30 of Ultra calls). The Builder Program gives $25 of Token Factory credit; ask in Discord for more.
+Budget guess (an estimate): about $35–75 total, assuming an L40S at $1.35 per GPU-hour on demand ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; confirm it on the bill) (training runs under an hour, endpoint only while testing and recording, $20–30 of Ultra calls). The Builder Program gives $25 of Token Factory credit; ask in Discord for more.
