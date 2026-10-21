@@ -854,6 +854,10 @@ case "$1 $2" in
     if [[ "$*" == *"--status running"* ]]; then [[ -n "${FAKE_DOCKER_RUNNING:-}" ]] && echo cid1; exit 0; fi
     echo cid1 ;;
   "compose exec")
+    if [[ "$*" == *ratchet-sim* ]]; then  # the simulation container (ADR 0133): mock mode, ledger-only readiness
+      if [[ "$*" == *readyz* ]]; then echo "${FAKE_DOCKER_SIM_READY:-200 ledger_ok}"; exit 0; fi
+      if [[ "$*" == *healthz* ]]; then echo "${FAKE_DOCKER_SIM_MODE:-mock}"; exit 0; fi
+    fi
     if [[ "$*" == *readyz* ]]; then echo "${FAKE_DOCKER_READY:-200 ledger_ok}"; exit 0; fi
     if [[ "$*" == *healthz* ]]; then echo "${FAKE_DOCKER_MODE:-live}"; exit 0; fi ;;
   "compose run") [[ "$*" == *ratchet.config* ]] && exit "${FAKE_DOCKER_CHECK_RC:-0}"; exit 0 ;;
@@ -912,7 +916,8 @@ def test_update_dry_run_prints_every_change_and_runs_none(tmp_path):
         "RATCHET_BACKUP_TAG=pre-update",
         "+ docker tag ratchet-gateway:local ratchet-gateway:previous",
         "+ git -C",
-        "+ docker compose build ratchet",
+        "+ docker compose build ratchet ratchet-sim",
+        "+ docker compose run --rm --no-deps -T ratchet-sim python -m ratchet.config check",
         "+ docker compose up -d --remove-orphans",
     ):
         assert step in r.stdout, step
@@ -989,3 +994,14 @@ def test_a_refused_config_check_puts_the_old_image_back_and_changes_nothing_else
     assert not [ln for ln in log if "compose up" in ln]
     r, log = run_update(tmp_path / "s", update_repo(tmp_path / "s"), "--skip-backup")
     assert r.returncode == 0 and "without a backup" in r.stderr and not [ln for ln in log if "compose cp" in ln]
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-11.34", "FR-11.30")
+def test_update_rolls_back_when_the_simulation_container_is_not_ready_or_not_mock(tmp_path):
+    """The simulation host is the same image: if it cannot come up healthy, ready and in mock mode, the update is rolled back."""
+    for i, env in enumerate(({"FAKE_DOCKER_SIM_READY": "503 ledger_bad"}, {"FAKE_DOCKER_SIM_MODE": "live"})):
+        t = tmp_path / str(i)
+        r, log = run_update(t, update_repo(t), **env)
+        assert r.returncode == 1 and "rolling back" in r.stderr, r.stdout + r.stderr
+        assert [ln for ln in log if "force-recreate" in ln]
