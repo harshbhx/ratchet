@@ -169,6 +169,8 @@ def test_readme_names_prior_art_and_limits():
     prior = sections["Prior art and what is new"]
     for name in (
         "LiteLLM",
+        "OpenPipe",
+        "Inference.net",
         "FrugalGPT",
         "Cache & Distil",
         "Online Cascade Learning",
@@ -179,7 +181,7 @@ def test_readme_names_prior_art_and_limits():
         "Netflix",
     ):
         assert name in prior, name
-    assert len(re.findall(r"\]\(https://", prior)) >= 10, "the known ideas need their sources"
+    assert len(re.findall(r"\]\(https://", prior)) >= 14, "the known ideas need their sources"
     assert re.search(r"^- \*\*New in Ratchet, together:\*\*", prior, re.M)
 
     limits = sections["Limitations"]
