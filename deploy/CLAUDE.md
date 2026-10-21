@@ -15,7 +15,7 @@
 Rules:
 
 - **All `nebius` CLI flags here are unverified.** They follow the Nebius Serverless quickstart and tutorials as of Oct 2026. Check `nebius ai create --help` and `nebius ai endpoint create --help` on day 1 and fix them here, not in docs only.
-- Stop the endpoint when idle; stopped endpoints cost nothing.
+- Stop the endpoint when idle: a stopped endpoint is not billed for compute or its own storage; a mounted Object Storage bucket still is (docs.nebius.com/serverless/overview, read Oct 21, 2026).
 - Never put keys in these scripts; read them from env vars. On the VM, keys live only in `deploy/vm/.env` (mode 0600, git-ignored).
 - In live mode on the VM, keep the Scout budget guard on and set `RATCHET_API_GUARD=guarded` with a 32+ character hex token; otherwise `/v1/chat/completions` is an open, paid endpoint.
 - Port 8000 must stay unpublished (`expose`, not `ports`): `--forwarded-allow-ips "*"` is safe only because Caddy is the only thing that can reach the gateway.

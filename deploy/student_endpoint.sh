@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Serve the student on a Nebius Serverless Endpoint with vLLM + LoRA hot-loading.
 #   bash deploy/student_endpoint.sh          # create (start) the endpoint
-#   bash deploy/student_endpoint.sh stop     # stop it: stopped endpoints cost nothing
+#   bash deploy/student_endpoint.sh stop     # stop it: no compute billed while stopped (a mounted bucket still is)
 #
 # New adapters are loaded at runtime by ratchet.live (POST /v1/load_lora_adapter),
 # so promotions need no restart. Stop the endpoint when idle.

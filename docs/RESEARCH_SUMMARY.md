@@ -32,7 +32,7 @@ Closest: Orchestra/Understudy and Experiential Labs (both YC S26), Inference.net
 
 ## Stress test: top findings
 
-1. **Token Factory cannot fine-tune or serve a tuned Nemotron.** Its fine-tuning list has no Nemotron; serverless LoRA serving is Llama-only ([models](https://docs.tokenfactory.nebius.com/post-training/models.md), [LoRA models](https://docs.tokenfactory.nebius.com/fine-tuning/models.md)). Train on Serverless Jobs, serve on Serverless Endpoints with vLLM.
+1. **Token Factory cannot fine-tune or serve a tuned Nemotron.** Its post-training list has 49 models and no Nemotron ([models](https://docs.tokenfactory.nebius.com/post-training/models.md), read Oct 21, 2026); custom weights on dedicated endpoints are "currently in beta and available on request" ([custom weights](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026). Train on Serverless Jobs, serve on Serverless Endpoints with vLLM.
 2. **Nano 30B needs about 60GB VRAM for LoRA** ([Unsloth](https://unsloth.ai/docs/models/tutorials/nemotron-3)). Use [Nemotron 3 Nano 4B](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16) on L40S.
 3. **Budget.** Builder Program: $25 Token Factory credit, no GPU credit ([terms](https://nebius.com/builders-terms-and-conditions)). L40S from about $1.55/hour on-demand ([prices](https://nebius.com/prices)); Serverless rates unconfirmed.
 4. **Token Factory ToS 5(f)** bans using the service to build a competing service ([ToS](https://docs.tokenfactory.nebius.com/legal/terms-of-service)). Email sent to tokenfactory-support@nebius.com on Oct 19, 2026.

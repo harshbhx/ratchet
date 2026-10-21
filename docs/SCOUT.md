@@ -14,7 +14,7 @@ It exists to show Ratchet on real agent traffic: the case NVIDIA Research estima
 | Reader | `page-read` | 1 per relevant result (up to 6) | **distillable** | `{"answers_question": bool, "fact_type": "definition\|number\|date\|name\|none", "key_fact": str}` |
 | Writer | `research-write` | 1 | **pinned** to the teacher | `{"answer": str (markdown, cites [n]), "used": [int]}` |
 
-- **Distillable** tasks compare only their label fields: `relevant` + `source_type`, and `answers_question` + `fact_type`. Free text (`reason`, `key_fact`) is ignored when deciding agreement, as with `ticket-triage`.
+- **Distillable** tasks compare only their label fields: `relevant` + `source_type`, and `answers_question` + `fact_type`. Free text (`reason`, `key_fact`) is ignored when deciding agreement, as with `ticket-triage`. So page-read's precision covers its `answers_question` and `fact_type` fields only; the free-text `key_fact` the writer cites is not checked.
 - **Pinned** tasks (`Task.pinned = True`) always go to the teacher and are never stored as training examples. Open-ended planning and writing are where the big model earns its price.
 - Triage and Reader calls run in parallel (thread pool). The ledger is guarded by a lock.
 

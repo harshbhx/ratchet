@@ -153,7 +153,7 @@ function Clients({ clients, keys }: { clients: ClientStats[]; keys: boolean }) {
           <tr>
             <th className={th}>Client</th>
             <th className={thNum}>Requests</th>
-            <th className={thNum} title="Share of requests answered by the student you own">
+            <th className={thNum} title="Share of requests answered by the student (Nano with your adapter)">
               Your model
             </th>
             <th className={thNum}>Cost reduction</th>

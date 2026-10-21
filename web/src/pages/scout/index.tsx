@@ -116,7 +116,7 @@ export default function ScoutPage() {
           </div>
           <p className="mt-4 max-w-[64ch] text-pretty sm:mx-auto sm:text-balance text-[17px] leading-relaxed text-ink-2 sm:text-lg">
             Five research agents answer a question from the web. Every call goes through Ratchet: the narrow, repetitive ones move from Nemotron 3
-            Ultra, which you rent, to a small model you own.
+            Ultra, which you rent, to Nano 4B with an adapter you own.
           </p>
           <div className="mt-3 flex min-h-5 flex-col gap-1.5 sm:items-center">
             {mode === "mock" && (

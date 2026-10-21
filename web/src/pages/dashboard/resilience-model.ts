@@ -32,7 +32,7 @@ const META: Record<string, BreakerMeta> = {
   student: {
     label: "Student endpoint",
     who: "student",
-    guards: "Live and canary traffic to the student you own.",
+    guards: "Live and canary traffic to the student (Nano with your adapter).",
     open: "Requests skip the student and go straight to the teacher, without waiting on the endpoint.",
   },
   shadow: {

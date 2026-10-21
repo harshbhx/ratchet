@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ratchet-distill"
 version = "0.4.0"
-description = "License-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a cheaper model you own."
+description = "License-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
