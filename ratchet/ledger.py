@@ -11,7 +11,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -315,12 +315,24 @@ WATCHED = {
     "examples": ("UPDATE OF hash", "DELETE"),
 }
 MAX_TALLIES = 64  # version_live_quality's incremental tallies kept, oldest dropped first (two are used per tick)
+# What `update_request` may write (ADR 0072): a pending audit's verdict, a pending shadow's, whether the request stored an
+# example, its all-teacher baseline, and the cost and token columns the off-path calls add to. Never a column a cache or
+# the routing keys on (`ts`, `day`, `served_by`, `route`, `student_version`, `wall_ms`, ...).
+AUDIT_VERDICT = ("audited", "audit_agree")
+SHADOW_VERDICT = ("shadow_version", "shadow_serve", "shadow_agree")
+ADDABLE_COLUMNS = ("cost_usd", "student_cost_usd", "teacher_cost_usd", "student_in_tokens", "student_out_tokens")
+_IN_CHUNK = 500  # ids per `IN (...)` when the tally checks its pending audits
 
 # The release gate's queries, named so tests can check their plans (each must search an index, never scan requests).
 # A version's audits of answers it served, above a request id (requests_version_audited): version_live_quality's tally.
 AUDIT_TALLY_SQL = (
     "SELECT COUNT(*) n, COUNT(audit_agree) k, COALESCE(SUM(audit_agree), 0) s, MAX(id) top FROM requests"
     " WHERE student_version=? AND audited=1 AND served_by='student' AND id>?"
+)
+# A version's audits still pending (an off-path audit not done yet, ADR 0072) in the id range the tally just read.
+AUDIT_PENDING_SQL = (
+    "SELECT id FROM requests WHERE student_version=? AND audited=1 AND served_by='student' AND id>? AND id<=?"
+    " AND audit_agree IS NULL"
 )
 # A shadow candidate's verdicts (requests_shadow_version): shadow_quality.
 SHADOW_QUALITY_SQL = """SELECT COUNT(*) n, SUM(shadow_serve) served,
@@ -393,9 +405,9 @@ class _Tally:
 
     gen: tuple[int, int]
     last_id: int
-    n: int = 0
-    agreed_n: int = 0  # rows with audit_agree set (AVG's denominator)
+    n: int = 0  # audits with a verdict (audit_agree set): the count and AVG's denominator
     agreed: int = 0  # their sum
+    pending: set[int] = field(default_factory=set)  # ids at or below last_id whose off-path audit had no verdict yet
 
 
 def _bump(gen: dict[str, int], table: str) -> None:
@@ -442,6 +454,11 @@ class Ledger:
         # Hot-path caches (ADR 0060). Generations count this connection's writes to WATCHED tables; PRAGMA data_version
         # changes when another connection (the cron tick, the cost CLI) commits.
         self._gen = dict.fromkeys(WATCHED, 0)
+        # The `requests` bumps `update_request` caused (ADR 0072): it rewrites no column a cache keys on, and the audit
+        # tallies follow pending rows themselves, so those rewrites are left out of the generation the caches compare
+        # (`_requests_gen`). `_gen_lock` makes a reader's (bumps, generation) pair consistent.
+        self._offpath_bumps = 0
+        self._gen_lock = threading.Lock()
         self._routing_key: tuple[int, int] | None = None
         self._routing: dict[str, sqlite3.Row] = {}
         self._tallies: dict[tuple[int, int], _Tally] = {}
@@ -494,8 +511,13 @@ class Ledger:
         a transaction, because a write it counted may not be committed yet (the TEMP trigger fires before the commit),
         and caching what a snapshot without it shows would outlive the commit. Read it before the snapshot's first
         statement: once the writer is outside a transaction, every counted write has ended and the snapshot sees it."""
-        gen = self._gen[table]
+        gen = self._requests_gen() if table == "requests" else self._gen[table]
         return None if self.db.in_transaction else gen
+
+    def _requests_gen(self) -> int:
+        """The `requests` generation without `update_request`'s finishing writes (`_offpath_bumps`)."""
+        with self._gen_lock:
+            return self._gen["requests"] - self._offpath_bumps
 
     def _reader(self) -> tuple[sqlite3.Connection | None, threading.RLock]:
         """A read-only connection for `_reads` methods, on a file ledger in WAL mode (where readers never block the
@@ -587,6 +609,69 @@ class Ledger:
         cur = self.db.execute(f"INSERT INTO requests ({cols}) VALUES ({qs})", list(row.values()))
         self.db.commit()
         return int(cur.lastrowid)
+
+    @_locked
+    def update_request(self, request_id: int, **cols: Any) -> bool:
+        """Finish a logged request's off-path checks (ADR 0072) in one transaction; True when the row exists.
+
+        `audited` and `audit_agree` are written only while the row's audit is pending (`audited=1`, `audit_agree` NULL),
+        and `shadow_version`, `shadow_serve` and `shadow_agree` only while its shadow is (`shadow_version` set,
+        `shadow_serve` NULL), so a verdict is written once and never rewritten. `stored` only goes up; `baseline_cost_usd`
+        is set. `add_<column>` adds to a cost or token column (ADDABLE_COLUMNS) a number, or a sequence of numbers one
+        after the other, so the total is the float the request path would have summed call by call. Any other column
+        raises ValueError before anything is written.
+
+        None of these is a column a cache keys on, and a verdict only leaves pending, which the audit tallies follow
+        themselves (`version_live_quality`), so these writes do not count in the `requests` generation the caches compare
+        (`_offpath_bumps`): finishing a request's checks never makes a tick recount a stage or a dashboard re-sort a day."""
+        audit = {k: cols.pop(k) for k in AUDIT_VERDICT if k in cols}
+        shadow = {k: cols.pop(k) for k in SHADOW_VERDICT if k in cols}
+        sets: list[str] = []
+        args: list[Any] = []
+        if "stored" in cols:
+            sets.append("stored=MAX(COALESCE(stored, 0), ?)")
+            args.append(int(bool(cols.pop("stored"))))
+        if "baseline_cost_usd" in cols:
+            sets.append("baseline_cost_usd=?")
+            args.append(cols.pop("baseline_cost_usd"))
+        for key in [k for k in cols if k.startswith("add_") and k[4:] in ADDABLE_COLUMNS]:
+            value = cols.pop(key)
+            terms = list(value) if isinstance(value, (list, tuple)) else [value]
+            for v in terms:
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    raise ValueError(f"{key} takes finite numbers, not {v!r}")
+            if terms:
+                expr = f"COALESCE({key[4:]}, 0)"
+                for _ in terms:
+                    expr = f"({expr} + ?)"
+                sets.append(f"{key[4:]}={expr}")
+                args.extend(terms)
+        if cols:
+            raise ValueError(f"update_request cannot write {sorted(cols)}")
+        if self.db.execute("SELECT 1 FROM requests WHERE id=?", (request_id,)).fetchone() is None:
+            return False
+        statements: list[tuple[str, list[Any]]] = []
+        if audit:
+            assigned = ", ".join(f"{k}=?" for k in audit)
+            where = "id=? AND audited=1 AND audit_agree IS NULL"
+            statements.append((f"UPDATE requests SET {assigned} WHERE {where}", [*audit.values(), request_id]))
+        if shadow:
+            assigned = ", ".join(f"{k}=?" for k in shadow)
+            where = "id=? AND shadow_version IS NOT NULL AND shadow_serve IS NULL"
+            statements.append((f"UPDATE requests SET {assigned} WHERE {where}", [*shadow.values(), request_id]))
+        if sets:
+            statements.append((f"UPDATE requests SET {', '.join(sets)} WHERE id=?", [*args, request_id]))
+        try:
+            with self._gen_lock:
+                before = self._gen["requests"]
+                for sql, values in statements:
+                    self.db.execute(sql, values)
+                self._offpath_bumps += self._gen["requests"] - before
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return True
 
     @_locked
     def log_failure(self, **row: Any) -> int:
@@ -1142,16 +1227,22 @@ class Ledger:
         """(audits, audited precision) for a version, from teacher audits of answers it served (in its current stage,
         by default: rows after `stage_since`).
 
+        Only audits with a verdict count: a row whose off-path audit is still pending (`audited=1`, `audit_agree` NULL,
+        ADR 0072) counts in neither number until its verdict is written, so the count and the precision always describe
+        the same rows (a Wilson bound over a count that included pending rows would claim evidence it does not have).
+
         Incremental (ADR 0060): a tally per (version, stage) keeps the count and sum up to the last id it read, and each
         call reads only rows above it, through `requests_version_audited`. SQLite assigns ids in commit order, so no row
-        can appear below a tally later. A deleted or rewritten request on this connection (the `requests` generation) or
-        any commit by another connection (PRAGMA data_version) starts the tally again from the stage's first row. The
-        numbers are exactly what one `COUNT(*)`, `AVG(audit_agree)` over the stage gives."""
+        can appear below a tally later. Pending audits it read are kept by id and checked again on each call, so a
+        verdict `update_request` writes later is counted then (a failed or invalid audit leaves as `audited=0`). Any
+        other rewrite or deletion of a request on this connection (the `requests` generation) or any commit by another
+        connection (PRAGMA data_version) starts the tally again from the stage's first row. The numbers are exactly what
+        one `COUNT(audit_agree)`, `AVG(audit_agree)` over the stage gives."""
         since = 0
         if current_stage_only:
             v = self.version(vid)
             since = v.stage_since if v else 0
-        gen = (self._gen["requests"], int(self.db.execute("PRAGMA data_version").fetchone()[0]))
+        gen = (self._requests_gen(), int(self.db.execute("PRAGMA data_version").fetchone()[0]))
         key = (vid, since)
         tally = self._tallies.get(key)
         if tally is None or tally.gen != gen:
@@ -1162,11 +1253,34 @@ class Ledger:
                 self._tallies.pop(next(iter(self._tallies)))
         r = self.db.execute(AUDIT_TALLY_SQL, (vid, tally.last_id)).fetchone()
         if r["top"] is not None:
-            tally.n += int(r["n"])
-            tally.agreed_n += int(r["k"])
+            top = int(r["top"])
+            tally.n += int(r["k"])
             tally.agreed += int(r["s"])
-            tally.last_id = int(r["top"])
-        return tally.n, (tally.agreed / tally.agreed_n if tally.agreed_n else None)
+            if int(r["n"]) > int(r["k"]):  # audits in this range without a verdict yet
+                tally.pending.update(int(row[0]) for row in self.db.execute(AUDIT_PENDING_SQL, (vid, tally.last_id, top)))
+            tally.last_id = top
+        if tally.pending:
+            self._settle_pending(tally)
+        return tally.n, (tally.agreed / tally.n if tally.n else None)
+
+    def _settle_pending(self, tally: _Tally) -> None:
+        """Count the tally's pending audits that have a verdict now and forget those that are no audit any more
+        (`audited` 0: the off-path audit failed or measured nothing). One primary-key lookup per id."""
+        ids = sorted(tally.pending)
+        for i in range(0, len(ids), _IN_CHUNK):
+            chunk = ids[i : i + _IN_CHUNK]
+            rows = self.db.execute(
+                f"SELECT id, audited, audit_agree FROM requests WHERE id IN ({','.join('?' * len(chunk))})", chunk
+            ).fetchall()
+            found = {int(row["id"]): row for row in rows}
+            for rid in chunk:
+                row = found.get(rid)
+                if row is None or row["audited"] != 1:
+                    tally.pending.discard(rid)
+                elif row["audit_agree"] is not None:
+                    tally.n += 1
+                    tally.agreed += int(row["audit_agree"])
+                    tally.pending.discard(rid)
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:

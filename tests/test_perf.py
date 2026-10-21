@@ -53,9 +53,11 @@ def _ask(tag: object = 0) -> list[dict[str, Any]]:
 
 
 def _full_quality(led: Ledger, vid: int, since: int) -> tuple[int, float | None]:
-    """version_live_quality as one aggregate over the stage, the way it was computed before the tallies."""
+    """version_live_quality as one aggregate over the stage, the way it was computed before the tallies. Only audits
+    with a verdict count (`COUNT(audit_agree)`): a pending off-path audit is no evidence yet (ADR 0072)."""
     r = led.db.execute(
-        "SELECT COUNT(*), AVG(audit_agree) FROM requests WHERE student_version=? AND audited=1 AND served_by='student' AND id>?",
+        "SELECT COUNT(audit_agree), AVG(audit_agree) FROM requests"
+        " WHERE student_version=? AND audited=1 AND served_by='student' AND id>?",
         (vid, since),
     ).fetchone()
     return int(r[0]), (None if r[1] is None else float(r[1]))
@@ -244,8 +246,8 @@ def test_routing_reads_no_version_rows_until_a_version_changes():
 @pytest.mark.req("FR-12.8")
 def test_live_quality_tally_matches_a_full_count(tmp_path):
     """version_live_quality equals one COUNT and AVG over the stage at every step: new audits (read above the last
-    id only), audits without a verdict (AVG skips them), other versions' rows, a new stage, a deleted row on this
-    connection, and rows another connection commits."""
+    id only), audits without a verdict (pending off-path audits: counted in neither number, ADR 0072), other versions'
+    rows, a new stage, a deleted row on this connection, and rows another connection commits."""
     path = str(tmp_path / "tally.db")
     led = Ledger(path)
     vid = _version(led, "live", {"threshold": 0.5})
@@ -265,7 +267,7 @@ def test_live_quality_tally_matches_a_full_count(tmp_path):
     led.log_request(task="t", served_by="student", student_version=vid, audited=1, audit_agree=None, cost_usd=0.0)
     led.log_request(task="t", served_by="teacher", student_version=vid, audited=1, audit_agree=0, cost_usd=0.0)
     _audit(led, other, 5)
-    assert check() == (8, 4 / 7)
+    assert check() == (7, 4 / 7)  # the pending audit counts once it has a verdict
     led.set_version(vid, "live", 100)  # a new stage starts after the last request
     assert check() == (0, None)
     _audit(led, vid, 4, 2)

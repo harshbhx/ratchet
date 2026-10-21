@@ -146,6 +146,17 @@ def _float_or_none(name: str) -> float | None:
         return _fail(name, raw, "a number", None)
 
 
+def _int_or_none(name: str) -> int | None:
+    """A whole number from the environment, or None when the variable is unset or empty; ConfigError names the variable."""
+    raw = _env(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return _fail(name, raw, "a whole number", None)
+
+
 def _bool(name: str) -> bool | None:
     """A 0/1 switch from the environment, or None when the variable is unset or empty (the setting's default, which may
     depend on the mode). Anything else raises ConfigError naming the variable: a typo in a security switch must stop
@@ -250,6 +261,9 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SCOUT_RUNS_PER_HOUR",
             "RATCHET_SCRUB_STATS",
             "RATCHET_SEEN_DEDUP_S",
+            "RATCHET_SIDECAR_DRAIN_S",
+            "RATCHET_SIDECAR_QUEUE",
+            "RATCHET_SIDECAR_WORKERS",
             "RATCHET_STATS_TTL_S",
             "RATCHET_STORE_FALLBACK_TEACHER",
             "RATCHET_STRICT_CONFIG",
@@ -344,6 +358,11 @@ MIN_USEFUL_AUDIT_RATE = 0.01  # below it a canary may never collect RATCHET_MIN_
 MAX_IDEMPOTENCY_CACHE = 1_000_000  # RATCHET_IDEMPOTENCY_CACHE: answers kept by Idempotency-Key (ADR 0071)
 MAX_RETRY_WINDOW_S = 86_400.0  # RATCHET_IDEMPOTENCY_TTL_S and RATCHET_SEEN_DEDUP_S: a day at most
 DEFAULT_SEEN_DEDUP_S = 300.0  # RATCHET_SEEN_DEDUP_S unset in live mode
+# The off-path sidecar (ADR 0072; `sidecar.MAX_WORKERS` and `sidecar.MAX_QUEUE` repeat the bounds, config imports nothing
+# from the router's side).
+DEFAULT_SIDECAR_WORKERS = 4  # RATCHET_SIDECAR_WORKERS unset in live mode
+MAX_SIDECAR_WORKERS = 64
+MAX_SIDECAR_QUEUE = 100_000
 _ENV_NAME = re.compile(r"\b(?:RATCHET|NEBIUS|TAVILY)_[A-Z0-9_]*[A-Z0-9]")
 
 
@@ -643,6 +662,12 @@ class Settings:
     db_sync: str = field(default_factory=lambda: _env("RATCHET_DB_SYNC", "NORMAL"))
     tick_interval_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_TICK_INTERVAL_S"))
     stats_ttl_s: float | None = field(default_factory=lambda: _float_or_none("RATCHET_STATS_TTL_S"))
+    # The off-path sidecar (ADR 0072): threads that run a request's audit, shadow samples and arbitration after its answer
+    # is sent (unset: 4 in live mode, 0 in mock mode, where every check stays on the request path and simulations are
+    # unchanged), the jobs that may wait for them, and how long the gateway's shutdown waits for the queue to empty.
+    sidecar_workers: int | None = field(default_factory=lambda: _int_or_none("RATCHET_SIDECAR_WORKERS"))
+    sidecar_queue: int = field(default_factory=lambda: _int("RATCHET_SIDECAR_QUEUE", "1000"))
+    sidecar_drain_s: float = field(default_factory=lambda: _float("RATCHET_SIDECAR_DRAIN_S", "10"))
 
     # Observability (ADR 0062). Log lines on stderr as JSON objects or key=value text, at a level (unset: text and WARNING
     # in mock mode, so tests and the demo stay quiet; JSON and INFO in live mode, one line per chat request). A bearer
@@ -807,6 +832,23 @@ class Settings:
         mode, a fresh payload per read)."""
         return _seconds("RATCHET_STATS_TTL_S", self.stats_ttl_s, 0.0 if self.mode == "mock" else 2.0)
 
+    def sidecar(self) -> tuple[int, int, float]:
+        """(RATCHET_SIDECAR_WORKERS, RATCHET_SIDECAR_QUEUE, RATCHET_SIDECAR_DRAIN_S), checked: 0 to MAX_SIDECAR_WORKERS
+        threads (unset: 4 in live mode, 0 in mock mode), 1 to MAX_SIDECAR_QUEUE waiting jobs, 0 to MAX_INTERVAL_S seconds.
+        Anything else raises ValueError naming the variable, so the gateway stops at startup."""
+        workers = self.sidecar_workers
+        if workers is None:
+            workers = 0 if self.mode == "mock" else DEFAULT_SIDECAR_WORKERS
+        if not _whole_in(workers, 0, MAX_SIDECAR_WORKERS):
+            raise ValueError(f"RATCHET_SIDECAR_WORKERS must be a whole number from 0 to {MAX_SIDECAR_WORKERS}, not {workers!r}")
+        if not _whole_in(self.sidecar_queue, 1, MAX_SIDECAR_QUEUE):
+            raise ValueError(
+                f"RATCHET_SIDECAR_QUEUE must be a whole number from 1 to {MAX_SIDECAR_QUEUE}, not {self.sidecar_queue!r}"
+            )
+        if not _number_in(self.sidecar_drain_s, 0.0, MAX_INTERVAL_S, False):
+            raise ValueError(f"RATCHET_SIDECAR_DRAIN_S must be 0 to {MAX_INTERVAL_S:.0f} seconds, not {self.sidecar_drain_s!r}")
+        return workers, self.sidecar_queue, float(self.sidecar_drain_s)
+
     def log_settings(self) -> tuple[str, str]:
         """(RATCHET_LOG_FORMAT, RATCHET_LOG_LEVEL), checked: `json` or `text` and DEBUG, INFO, WARNING or ERROR, in any
         case; unset (or set but empty) means text and WARNING in mock mode, json and INFO in live mode. Anything else raises
@@ -946,6 +988,7 @@ class Settings:
             ("RATCHET_DB_SYNC", Settings.ledger_sync),
             ("RATCHET_TICK_INTERVAL_S", Settings.tick_interval),
             ("RATCHET_STATS_TTL_S", Settings.stats_ttl),
+            ("RATCHET_SIDECAR_WORKERS", Settings.sidecar),
             ("RATCHET_LOG_FORMAT", Settings.log_settings),
             ("RATCHET_PUBLIC_DASHBOARD", Settings.access),
             ("RATCHET_BOM_SIGNING_KEY", _bom_signer),

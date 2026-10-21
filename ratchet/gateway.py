@@ -15,6 +15,7 @@ Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
 from __future__ import annotations
 
 import calendar
+import contextlib
 import functools
 import itertools
 import json
@@ -270,6 +271,12 @@ class Runtime:
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
         reload = self.reloader.request if self.reloader is not None else None
+        # Off-path checks (ADR 0072): how long shutdown waits for queued audits and shadows (a bad RATCHET_SIDECAR_* value
+        # stops startup here). A demo reset gives up on the old cascade's queued jobs, whose ledger is being replaced.
+        self.sidecar_drain_s = s.sidecar()[2]
+        old: Ratchet | None = getattr(self, "ratchet", None)
+        if old is not None:
+            old.close(0.0)
         self.ratchet = Ratchet(
             s,
             self.ledger,
@@ -284,6 +291,12 @@ class Runtime:
         self.gate_lock = threading.Lock()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
+
+    def shutdown(self) -> dict[str, Any]:
+        """The gateway's shutdown (the app's lifespan, ADR 0072): wait at most RATCHET_SIDECAR_DRAIN_S for the off-path
+        audits and shadows still queued, then give up on the rest, whose rows stay pending and are ignored by the release
+        gate. Returns the sidecar's report."""
+        return self.ratchet.close(self.sidecar_drain_s)
 
     def _set_access(self, s: Settings) -> None:
         """The key rings, the metrics token and who may read what (ADR 0061, ADR 0062). A bad key spec or switch, a key in
@@ -582,9 +595,9 @@ def _log_chat(ctx: obs.RequestContext, status: int) -> None:
     if not obs.LOGGER.isEnabledFor(logging.INFO):
         return
     r = ctx.result or {}
-    # A retry's attempt number and a replay by Idempotency-Key with the id of the request it replays (ADR 0071), only
-    # when there is one.
-    retry = {k: r[k] for k in ("retry_count", "idempotent_replay", "replay_of") if r.get(k)}
+    # A retry's attempt number and a replay by Idempotency-Key with the id of the request it replays (ADR 0071), and
+    # checks that run after the answer (ADR 0072; the request's `offpath` line adds their cost), only when there is one.
+    retry = {k: r[k] for k in ("retry_count", "idempotent_replay", "replay_of", "overhead_pending") if r.get(k)}
     obs.log(
         logging.INFO,
         "chat",
@@ -733,11 +746,19 @@ def _pseudonyms(*names: Iterable[str | None]) -> dict[str, str]:
     return acl.pseudonyms(itertools.chain(rt.keys.names, *names))
 
 
+@contextlib.asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """At shutdown, after the server stopped taking requests, the off-path queue drains for up to
+    RATCHET_SIDECAR_DRAIN_S on a worker thread (`Runtime.shutdown`, ADR 0072)."""
+    yield
+    await anyio.to_thread.run_sync(rt.shutdown)
+
+
 rt = Runtime()
 # /docs, /redoc and /openapi.json only with RATCHET_OPENAPI (default: mock mode only): in live mode the schema would show
 # anyone every management route.
 _DOCS: dict[str, Any] = {} if rt.access.openapi else {"docs_url": None, "redoc_url": None, "openapi_url": None}
-app = FastAPI(title="Ratchet", version=__version__, dependencies=[Depends(_access)], **_DOCS)
+app = FastAPI(title="Ratchet", version=__version__, dependencies=[Depends(_access)], lifespan=_lifespan, **_DOCS)
 app.add_middleware(BodyLimitMiddleware, max_bytes=rt.settings.max_body_bytes)
 app.add_middleware(SecurityHeadersMiddleware, headers=lambda: rt.security_headers)  # a 413 carries them too
 app.add_middleware(ObservabilityMiddleware)  # outermost: every response, a 413 included, carries x-request-id
@@ -1236,6 +1257,8 @@ def _complete(
         "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
         "request_id": ctx.request_id if ctx is not None else None,  # also x-request-id; GET /v1/ratchet/requests/{id}
     }
+    if r.overhead_pending:  # the audit or shadow runs after this response: cost_usd is what serving cost (ADR 0072)
+        meta["overhead_pending"] = True
     if ctx is not None:  # the fields of the request's log line (`_log_chat`)
         ctx.result = {
             "served_by": r.served_by,
@@ -1249,6 +1272,8 @@ def _complete(
             "cost_usd": r.cost_usd,
             "retry_count": retry_count,
         }
+        if r.overhead_pending:  # the request's `offpath` line adds the rest when its job ends (ADR 0072)
+            ctx.result["overhead_pending"] = True
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
     usage = usage_object(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
@@ -1355,6 +1380,8 @@ def _stats_payload() -> dict[str, Any]:
         "cost": stats_block(cost_report(led, rt.settings)),
         # Failures of the last hour by stage (ADR 0062); what failed requests spent is in totals.failed_cost_usd.
         "errors": {"last_hour": led.failure_counts(time.time() - ERRORS_WINDOW_S)},
+        # The off-path queue and, per version, what could not go through it (ADR 0072).
+        "sidecar": rt.ratchet.sidecar_report(),
     }
 
 
@@ -1412,11 +1439,14 @@ def own_request(
 
 
 def _collect_gauges() -> None:
-    """The scrape-time gauges, from the runtime as it is now: each breaker's state, the routed versions' traffic and
-    today's spend per client (since 00:00 UTC, one indexed query per client and table)."""
+    """The scrape-time gauges, from the runtime as it is now: each breaker's state, the off-path jobs waiting and running,
+    the routed versions' traffic and today's spend per client (since 00:00 UTC, one indexed query per client and
+    table)."""
     metrics.INFO.replace([((__version__, rt.settings.mode), 1.0)])
     breakers = rt.ratchet.health()["breakers"]
     metrics.CIRCUIT_OPEN.replace([((name,), 0.0 if snap["state"] == "closed" else 1.0) for name, snap in breakers.items()])
+    side = rt.ratchet.sidecar.snapshot()
+    metrics.SIDECAR_QUEUE.replace([(("queued",), float(side["queued"])), (("running",), float(side["running"]))])
     led = rt.ledger
     routed = [v for v in (led.live(), led.by_state("canary"), led.by_state("shadow")) if v is not None]
     metrics.VERSION_TRAFFIC.replace([((f"v{v.id}", v.state), float(v.traffic_pct)) for v in routed])
