@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1768 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1769 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -26,7 +26,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_nightschool.py` | 29 (25 functions; one has 5 cases) |
 | `tests/test_release.py` | 41 (32 functions; one has 8 cases, two have 2) |
 | `tests/test_system.py` | 21 |
-| `tests/test_hardening.py` | 104 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
+| `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 88 (50 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 40 |
 | `tests/test_contract.py` | 56 (45 functions; one has 9 cases, one has 4) |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1768** |
+| **Total** | **1769** |
 
 There are three layers:
 
@@ -381,6 +381,8 @@ The v0.4 hardening tests (privacy, API keys, streaming, signed BOMs) are in the 
 | `test_receipt_verifiers_never_raise_on_seeded_nested_mutations` | FR-15.5: 300 seeded trials, each replacing up to three fields anywhere in a receipt, the previous receipt, a proof or the leaves with junk of another type (or removing them): no verifier raises (72 raises in 2,000 trials before the fix) |
 | `test_a_stand_in_that_loses_money_lowers_the_fee` | FR-15.5: a fallback teacher's answer that cost $0.0002 more than its baseline adds -200,000 nano-USD to `savings.stand_in_loss_nusd`, the billable savings and the net bound, and lowers the fee to a quarter of the lower net; a cheaper fallback answer and a degraded answer add nothing (gains are never billed); the billable set is unchanged and the sealed receipt rechecks from its leaves |
 | `test_mock_reasoning_mean_out_of_range_stops_live_startup_too` | FR-15.5: `RATCHET_MOCK_TEACHER_REASONING_MEAN` of -5 stops a live `Runtime`, and 1e9 stops `python -m ratchet.live`, before the ledger is opened (it was checked in mock mode only); 420 is accepted |
+| `test_keyring_errors_name_the_entry_never_the_name_or_the_key` | NFR-5, INV-13: a pasted key that holds a ':' (the text before it is read as the name) is not quoted by any of the three errors; each says `entry N` |
+
 ### `tests/test_resilience.py`
 
 Upstream failures: around a request the student already answered (FR-2.10, INV-15, [ADR 0013](adr/0013-optional-teacher-calls-fail-open.md)), the provider's retries and the client statuses they end in (FR-1.11, FR-1.8, INV-7, [ADR 0014](adr/0014-upstream-failure-semantics.md)), the student circuit breaker with automatic adapter reloads (FR-2.11, NFR-2, [ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)), and the teacher's breaker, degraded mode and the fallback teacher (FR-2.12, [ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)); the student falling back to the teacher is in `test_hardening.py`. Breaker tests run on a `FakeClock` (`Ratchet(clock=...)`, `Runtime(clock=...)`), so no test waits out a cooldown. The failing teacher puts its URL, with a query token, in each message, and every test checks the events, errors and responses never repeat it. Retry tests use the local `Upstream` fake (a scripted endpoint behind `httpx.MockTransport` that records each attempt's timeouts) and inject `sleep`, `clock` and `rng`, so nothing really waits.

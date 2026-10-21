@@ -302,7 +302,7 @@ def test_each_key_has_one_role(gw_env, tmp_path):
     for overrides, message in (
         ({"dashboard_keys": f"screen:{ACME_KEY}"}, "RATCHET_DASHBOARD_KEYS: the key for 'screen' is also an API key"),
         ({"dashboard_keys": f"screen:{ADMIN_KEY}"}, "RATCHET_DASHBOARD_KEYS: the key for 'screen' is also an admin key"),
-        ({"dashboard_keys": "screen:short"}, "RATCHET_DASHBOARD_KEYS: the key for 'screen' is shorter than 16"),
+        ({"dashboard_keys": "screen:short"}, "RATCHET_DASHBOARD_KEYS: the key in entry 1 is shorter than 16"),
         ({"admin_keys": f"ops:{GLOBEX_KEY}"}, "RATCHET_ADMIN_KEYS: the key for 'ops' is also an API key"),
     ):
         with pytest.raises(ValueError, match=message):
