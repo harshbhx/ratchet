@@ -1512,6 +1512,61 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
 
 
+@pytest.mark.req("NFR-5", "FR-11.1")
+def test_cloud_init_takes_an_ssh_key_with_quotes_and_waits_for_the_apt_lock():
+    """`create_vm.sh` puts the public key into the cloud-init YAML: the placeholder is single-quoted and a quote in the key's
+    comment is doubled (YAML's escape), so no key line can end the string or add a key of its own. The two apt calls wait
+    for the dpkg lock the first boot's unattended upgrades hold."""
+    yaml = pytest.importorskip("yaml")
+    vm = ROOT / "deploy" / "vm"
+    script = (vm / "create_vm.sh").read_text(encoding="utf-8")
+    lines = [ln for ln in script.splitlines() if ln.startswith("SSH_KEY_YAML=") or "__SSH_PUBLIC_KEY__/$SSH_KEY_YAML" in ln]
+    assert len(lines) == 2
+    cloud = (vm / "cloud-init.yaml").read_text(encoding="utf-8")
+    assert "'__SSH_PUBLIC_KEY__'" in cloud and cloud.count("DPkg::Lock::Timeout=600") == 2
+    for comment in ("it's me", 'a "quoted" one', "x'' y", "plain"):
+        key = f"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyForTests {comment}"
+        program = chr(10).join(
+            [
+                "shopt -u patsub_replacement 2>/dev/null || true",
+                f'USER_DATA="$(<"{vm / "cloud-init.yaml"}")"',
+                f"SSH_KEY={shlex.quote(key)}",
+                *lines,
+                'printf "%s" "$USER_DATA"',
+            ]
+        )
+        r = subprocess.run([BASH, "-c", program], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+        doc = yaml.safe_load(r.stdout)
+        assert doc["users"][0]["ssh_authorized_keys"] == [key], comment
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-11.1", "FR-12.30")
+def test_update_names_the_settings_the_env_file_lacks_and_the_example_sets_prices_verified(tmp_path):
+    """`update.sh` prints the names (never values) of the settings `.env.vm.example` lists that `.env` does not set, so a
+    setting a release added is not missed; the example lists RATCHET_PRICES_VERIFIED."""
+    assert BASH is not None
+    vm = ROOT / "deploy" / "vm"
+    example = vm / ".env.vm.example"
+    assert "RATCHET_PRICES_VERIFIED=0" in example.read_text(encoding="utf-8").splitlines()
+    mine = tmp_path / ".env"
+    lines = ["RATCHET_DOMAIN=x.example", "NEBIUS_API_KEY=sk-secret-value-123", "# RATCHET_MODE=live is commented out"]
+    mine.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+    r = subprocess.run([BASH, str(vm / "env_missing.sh"), str(example), str(mine)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    names = r.stdout.split()
+    assert "RATCHET_PRICES_VERIFIED" in names and "RATCHET_MODE" in names  # a commented-out line is not a setting
+    assert "RATCHET_DOMAIN" not in names and "NEBIUS_API_KEY" not in names and "sk-secret-value-123" not in r.stdout
+    every = [ln.split("=")[0] for ln in example.read_text(encoding="utf-8").splitlines() if re.match(r"^[A-Z][A-Z0-9_]*=", ln)]
+    assert set(names) == set(every) - {"RATCHET_DOMAIN", "NEBIUS_API_KEY"}
+    full = tmp_path / "full.env"
+    full.write_text(chr(10).join(f"{name}=1" for name in every) + chr(10), encoding="utf-8")
+    r = subprocess.run([BASH, str(vm / "env_missing.sh"), str(example), str(full)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and r.stdout == ""
+    assert "env_missing.sh" in (vm / "update.sh").read_text(encoding="utf-8")
+
+
 # ---------- deploy scripts against a fake `nebius` (W0: the documented CLI commands) ----------
 STUDENT_ID = "aiendpoint-e00fixturestudent00"  # `ratchet-student` in tests/fixtures/nebius_endpoint_list.json (STOPPED)
 OTHER_ID = "aiendpoint-e00fixtureother0000"  # `another-endpoint` there (RUNNING)

@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (1779 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (1781 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
