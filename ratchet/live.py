@@ -446,7 +446,13 @@ def purge(led: Ledger, s: Settings, argv: list[str]) -> dict[str, Any]:
         seal_receipts(led, s)
     try:
         out = privacy.apply_retention(
-            led, s.retention(), client=args.client, example_days=days, request_days=days, dry_run=args.dry_run
+            led,
+            s.retention(),
+            client=args.client,
+            example_days=days,
+            request_days=days,
+            dry_run=args.dry_run,
+            fold_before=receipts.fold_floor(led),
         )
     except ValueError as e:  # a bad --client or window: a message, not a traceback
         raise SystemExit(f"purge: {e}") from None
