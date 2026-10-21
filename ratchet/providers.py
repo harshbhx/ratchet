@@ -30,6 +30,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from . import reasoning
 from .obs import upstream_headers
 from .openai_compat import tool_params
 from .resilience import BAD_RESPONSE, NO_RETRY, RetryPolicy, UpstreamError, as_upstream, retry_call
@@ -149,6 +150,8 @@ NEVER_FORWARDED = frozenset(
         "service_tier",
         "functions",
         "function_call",
+        "chat_template_kwargs",  # reasoning is the operator's: RATCHET_*_REASONING (ADR 0130)
+        "extra_body",
     }
 )
 # RATCHET_TEACHER_PARAMS and RATCHET_STUDENT_PARAMS when unset. The teacher gets every standard field: since tool calls
@@ -197,6 +200,9 @@ class GenParams:
     top_logprobs: int | None = None
     reasoning_effort: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Chat template kwargs (Nemotron's thinking switch, ADR 0130). Operator-set only, by role (`GenPolicy`): never from
+    # a client, never stored, never hashed, so it is not in PARAM_FIELDS; the provider places it in the body.
+    template_kwargs: Mapping[str, Any] | None = None
 
     @classmethod
     def from_request(cls, req: Any) -> GenParams:
@@ -365,8 +371,14 @@ class GenPolicy:
     teacher_max_tokens: int = DEFAULT_TEACHER_MAX_TOKENS
     student_max_tokens: int = DEFAULT_STUDENT_MAX_TOKENS
     reasoning_headroom: int = 0
+    student_reasoning: str = "off"  # ADR 0130: the trained student is served as it was trained, thinking off
+    serve_reasoning: str = "default"
+    check_reasoning: str = "default"
 
     def __post_init__(self) -> None:
+        reasoning.parse(self.student_reasoning, "student_reasoning", reasoning.STUDENT_MODES)
+        reasoning.parse(self.serve_reasoning, "serve_reasoning")
+        reasoning.parse(self.check_reasoning, "check_reasoning")
         for name in ("teacher_max_tokens", "student_max_tokens", "reasoning_headroom"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -374,7 +386,13 @@ class GenPolicy:
 
     def student(self, params: GenParams | None) -> GenParams:
         p = (params or _NONE).only(self.student_allow)
-        return replace(p, max_tokens=_capped(p.max_tokens, self.student_max_tokens), temperature=None, logprobs=None)
+        return replace(
+            p,
+            max_tokens=_capped(p.max_tokens, self.student_max_tokens),
+            temperature=None,
+            logprobs=None,
+            template_kwargs=reasoning.template_kwargs(self.student_reasoning),
+        )
 
     def _teacher_max(self, requested: int | None) -> int | None:
         if requested is None:
@@ -390,8 +408,19 @@ class GenPolicy:
         max_tokens = self._teacher_max(p.max_tokens)
         if role == "serve":
             default = CHOICES_TEMPERATURE if n > 1 else 0.0
-            return replace(p, max_tokens=max_tokens, temperature=default if p.temperature is None else p.temperature)
-        return replace(p, max_tokens=max_tokens, temperature=0.0, **dict.fromkeys(CHECK_DROPS))
+            return replace(
+                p,
+                max_tokens=max_tokens,
+                temperature=default if p.temperature is None else p.temperature,
+                template_kwargs=reasoning.template_kwargs(self.serve_reasoning),
+            )
+        return replace(
+            p,
+            max_tokens=max_tokens,
+            temperature=0.0,
+            template_kwargs=reasoning.template_kwargs(self.check_reasoning),
+            **dict.fromkeys(CHECK_DROPS),
+        )
 
     def visible_limit(self, params: GenParams | None) -> int | None:
         """The client's `max_tokens` when the teacher may write more than it (headroom), else None."""
@@ -458,9 +487,13 @@ class OpenAICompatProvider:
         clock: Callable[[], float] = time.monotonic,
         rng: Callable[[], float] = random.random,
         allow: frozenset[str] | None = None,
+        reasoning_field: str = "chat_template_kwargs",
     ):
+        if reasoning_field not in reasoning.FIELDS:
+            raise ValueError(f"reasoning_field must be one of {', '.join(reasoning.FIELDS)}, not {reasoning_field!r}")
         self.base_url = base_url.rstrip("/")
         self.allow = allow
+        self.reasoning_field = reasoning_field
         self.timeout = timeout if isinstance(timeout, httpx.Timeout) else httpx.Timeout(timeout)
         self.retry = retry or NO_RETRY
         self.sleep = sleep
@@ -505,6 +538,8 @@ class OpenAICompatProvider:
         `deadline_s` shortens this call's retry deadline (never lengthens it): an off-path arbitration gives up sooner
         than a served answer would (ADR 0072)."""
         body: dict[str, Any] = params.to_body(self.allow) if params is not None else {}
+        if params is not None and params.template_kwargs:
+            body.update(reasoning.body_fields(params.template_kwargs, self.reasoning_field))
         body.update(model=model, messages=messages, n=n, temperature=temperature)
         if logprobs:
             body["logprobs"] = True

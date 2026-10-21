@@ -1554,7 +1554,14 @@ CLIENT = GenParams(
     top_logprobs=3,
 )
 # What each call gets of CLIENT under the default policy.
-STUDENT_GETS = GenParams(max_tokens=50, stop=("\n\n",), seed=7, response_format={"type": "json_object"}, top_logprobs=3)
+STUDENT_GETS = GenParams(
+    max_tokens=50,
+    stop=("\n\n",),
+    seed=7,
+    response_format={"type": "json_object"},
+    top_logprobs=3,
+    template_kwargs={"enable_thinking": False},  # ADR 0130: the student is served with thinking off
+)
 # Every standard field as sent (max_tokens already under the 8,192 cap), the logprobs included: the response returns them
 # (FR-1.14). Only the tool-call fields stay off by default.
 SERVE_GETS = CLIENT
@@ -1606,7 +1613,7 @@ def test_each_call_gets_the_parameters_its_role_allows():
     student = RecordingProvider(A)
     _, _, r, teacher = _cascade(student, threshold=0.99)
     r.handle(_ask(), tasks.get(TRIAGE))  # a Task object works as well as its name
-    assert student.calls[0].kwargs["params"] == GenParams(max_tokens=1024)
+    assert student.calls[0].kwargs["params"] == GenParams(max_tokens=1024, template_kwargs={"enable_thinking": False})
     assert _teacher_calls(teacher) == [(0.0, False, GenParams(max_tokens=8192, temperature=0.0))]
 
 
