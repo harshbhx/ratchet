@@ -142,9 +142,11 @@ These are not invariants; they are listed here so the merge does not miss them.
 **Text (for CLAUDE.md, appended to invariant 12).** Redaction maps values to placeholders per example only: one
 `redact.Pseudonymizer` per stored example, made in `Ratchet._store_example`, used for its messages, then its stored
 conditions, then its answer, and dropped. Never keep a mapping across examples, never store an original value or a
-mapping to reverse one, and never share a `Pseudonymizer` between requests or threads. The redactor's first pass finds
-exactly what v0.4 found; later passes only add spans. A detector plugin (`RATCHET_REDACT_PLUGIN`) that fails at store
-time stores nothing, never an unredacted example. See
+mapping to reverse one, and never share a `Pseudonymizer` between requests or threads. In `label` style the redactor
+writes exactly what v0.4 wrote, apart from new rules and a card or IBAN typed with a short tail; never add a retry that
+tries more windows of a digit run. A detector plugin (`RATCHET_REDACT_PLUGIN`) that fails at store time stores
+nothing, never an unredacted example. An example stored in another style or with the plugin records its key under the
+default redaction (`canon_hash`), which an erasure tombstones too. See
 [ADR 0082](../adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md).
 
 This amends invariant 12 rather than adding a number: it is the same rule ("redact before storing"), now with
@@ -154,8 +156,9 @@ placeholders that carry a number.
 
 - `ratchet.router:Ratchet._store_example` (one `Pseudonymizer` per call; messages, conditions, answer; `RedactionError`
   skips the example as `redaction failed`)
-- `ratchet.redact:Pseudonymizer` (the per-example mapping) and `ratchet.redact:_pattern_spans` (the v0.4 first pass,
-  then the additive passes)
+- `ratchet.redact:Pseudonymizer` (the per-example mapping), `ratchet.redact:_pattern_spans` and
+  `ratchet.redact:_matches` (v0.4's pass, with the short-tail retry for cards and IBANs only)
+- `ratchet.ledger:Ledger.add_example` and `ratchet.ledger:Ledger.record_erasure` (`canon_hash` checked and tombstoned)
 - `ratchet.redact:load_detector` (startup import and probe) and `ratchet.redact:_detected` (spans checked; errors carry
   neither the text nor the plugin's message)
 
@@ -164,7 +167,10 @@ placeholders that carry a number.
 - `test_original_values_never_stored` (each style, with the plugin and a stop string): no original in any table
 - `test_concurrent_examples_never_share_placeholders`: 16 threads, every example starts at `[EMAIL_1]`
 - `test_the_example_hash_never_depends_on_the_answer`: one request, three answers, one example
-- `test_label_style_matches_v04`: v0.4's spans are a subset of today's on 4,500 fuzzed texts
+- `test_label_style_matches_v04`: v0.4's spans and output on 4,500 fuzzed texts and 8,000 long reference numbers
+- `test_a_refused_match_no_longer_hides_a_card`: the short-tail rule is the only other difference, on 3,000 fuzzed texts
+- `test_long_reference_numbers_store_as_in_v04`: a tracking number in the prompt and the answer stored as in v0.4
+- `test_an_erasure_holds_under_every_style_and_plugin`: erased under any of five settings, refused under all five
 - `test_a_failing_detector_stores_nothing_and_never_leaks_the_text` (7 kinds of failure)
 
 ## For the integrator: notes from PRIV-REDACTION-EXT
@@ -177,3 +183,9 @@ placeholders that carry a number.
   task's style, and skip the example on `RedactionError`.
 - `taskspec.SPEC_KEYS` gains `privacy` (after `store`), so `GET /ratchet/tasks` entries and stored API task documents
   have twelve spec keys; other lanes that add spec keys merge next to it.
+- `tombstones` now holds `examples.canon_hash` keys too (an example's key under the default redaction, written when it
+  was stored in another style or with the plugin). They are no example's hash: provable erasure (FR-16.9) takes the
+  erased hashes from `erasure_items`, not from `tombstones`. A backfill that redacts in a task's non-default style must
+  pass `canon_hash` to `add_example` the way `_store_example` does.
+- `POST /ratchet/redact` runs the detector plugin only for a caller with a valid API or admin key and adds
+  `plugin_skipped` to its response.

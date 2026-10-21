@@ -1046,9 +1046,16 @@ def bom() -> dict[str, Any]:
 
 
 @app.post("/ratchet/redact")
-def redact_preview(body: dict[str, Any] = Body(...), style: str | None = None) -> dict[str, Any]:
+def redact_preview(
+    body: dict[str, Any] = Body(...),
+    style: str | None = None,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Show what the redactor would store for a piece of text: in the gateway's style (RATCHET_REDACT_STYLE) or
-    `?style=`, with the detector plugin when one is configured (ADR 0082). Nothing is logged or stored."""
+    `?style=` (ADR 0082). Nothing is logged or stored. The endpoint is public, so the detector plugin, which may be an
+    NER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key; anyone else
+    gets the patterns alone (`plugin_skipped`)."""
     text = body.get("text")
     if not isinstance(text, str):
         raise HTTPException(400, "text is required")
@@ -1057,9 +1064,12 @@ def redact_preview(body: dict[str, Any] = Body(...), style: str | None = None) -
     chosen = rt.ratchet.redact_style if style is None else style.strip().lower()
     if chosen not in REDACT_STYLES:
         raise HTTPException(400, f"style must be one of {', '.join(REDACT_STYLES)}")
+    key = bearer(authorization, x_api_key)
+    keyed = rt.keys.identify(key) is not None or rt.admin_keys.identify(key) is not None  # a wrong key is no key here
+    detector = rt.ratchet.detector if keyed else None
     found: Counter[str] = Counter()
     try:
-        out = redact(text, found, Pseudonymizer(chosen, rt.ratchet.detector))
+        out = redact(text, found, Pseudonymizer(chosen, detector))
     except RedactionError as e:  # names the plugin's exception class only, never the text
         raise HTTPException(500, str(e)) from None
     return {
@@ -1067,7 +1077,8 @@ def redact_preview(body: dict[str, Any] = Body(...), style: str | None = None) -
         "found": dict(found),
         "enabled": rt.settings.redact_pii,
         "style": chosen,
-        "plugin": rt.ratchet.detector is not None,
+        "plugin": detector is not None,
+        "plugin_skipped": rt.ratchet.detector is not None and detector is None,
     }
 
 

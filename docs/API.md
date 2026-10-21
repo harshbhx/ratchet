@@ -672,7 +672,7 @@ Without `--public-key` the check uses the key embedded in the document, which on
 
 ## POST `/ratchet/redact?style=`
 
-Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored: in the gateway's style (`RATCHET_REDACT_STYLE`) or the one `style` names (`label`, `numbered` or `surrogate`, any case), with the detector plugin when one is configured ([ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Nothing is logged or stored. Backs the dashboard's **Try the redactor** box.
+Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored: in the gateway's style (`RATCHET_REDACT_STYLE`) or the one `style` names (`label`, `numbered` or `surrogate`, any case) ([ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Nothing is logged or stored. Backs the dashboard's **Try the redactor** box. No key is needed; the detector plugin (`RATCHET_REDACT_PLUGIN`), which may be an NER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key (`Authorization: Bearer <key>` or `X-API-Key`). Anyone else, or a wrong key, gets the patterns alone.
 
 ```bash
 curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
@@ -680,7 +680,7 @@ curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
 ```
 
 ```json
-{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true, "style": "label", "plugin": false}
+{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true, "style": "label", "plugin": false, "plugin_skipped": false}
 ```
 
 ```bash
@@ -689,12 +689,12 @@ curl -s 'localhost:8000/ratchet/redact?style=numbered' -H 'content-type: applica
 ```
 
 ```json
-{"text": "Sales: [EMAIL_1]. Billing: [EMAIL_2], cc [EMAIL_1]", "found": {"EMAIL": 3}, "enabled": true, "style": "numbered", "plugin": false}
+{"text": "Sales: [EMAIL_1]. Billing: [EMAIL_2], cc [EMAIL_1]", "found": {"EMAIL": 3}, "enabled": true, "style": "numbered", "plugin": false, "plugin_skipped": false}
 ```
 
-- `found` counts placeholders by label, every occurrence; `style` is the style used; `plugin` says whether a detector plugin ran.
+- `found` counts placeholders by label, every occurrence; `style` is the style used; `plugin` says whether the detector plugin ran; `plugin_skipped` is true when one is configured but did not run, because the caller sent no valid key.
 - `enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. A task whose spec sets `privacy.redact_style` stores in that style; preview it with `?style=`.
-- **400** when `text` is missing or longer than 5,000 characters, or `style` is not one of the three (`style must be one of label, numbered, surrogate`). **500** when the detector plugin fails, with a message that names the problem or the exception's class and never the text (`the redaction plugin raised RuntimeError`).
+- **400** when `text` is missing or longer than 5,000 characters, or `style` is not one of the three (`style must be one of label, numbered, surrogate`). **500** when the detector plugin fails (only callers with a key reach it), with a message that names the problem or the exception's class and never the text (`the redaction plugin raised RuntimeError`).
 
 ---
 

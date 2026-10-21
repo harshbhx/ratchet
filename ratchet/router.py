@@ -18,7 +18,7 @@ import httpx
 from . import licenses, tasks
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
-from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
+from .ledger import STORED_PARAM_KEYS, Ledger, Version, example_hash, target_params
 from .providers import (
     COMPLETE,
     Completion,
@@ -639,9 +639,10 @@ class Ratchet:
         teacher's), and then with its own model and license (INV-1). An answer that is not valid under the task's spec
         (`Task.check`: a required field missing, a label outside its vocabulary) is served but skipped, with the field's
         path as the reason (FR-2.14). The example records `client` (the API key name) and the end user's hash. An example
-        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3). An opt-out that arrived while
-        the request ran (an end user registered as no-train meanwhile) is written onto `meta`, the request's own copy
-        (`_opted_out`), so the row and the Result report it like one found at the start."""
+        an erasure tombstoned is refused by the ledger and skipped as `erased` (FR-13.3), also when it was erased under
+        another redaction style or plugin setting (its key under the default redaction, `canon_hash`). An opt-out that
+        arrived while the request ran (an end user registered as no-train meanwhile) is written onto `meta`, the
+        request's own copy (`_opted_out`), so the row and the Result report it like one found at the start."""
         late = self.store_opt_out(task, meta)
         if late is not None:
             if meta is not None and meta.storable:
@@ -655,12 +656,13 @@ class Ratchet:
             return False
         clean = tasks.clean_answer(task, c.text)
         conditions = target_params({k: getattr(gen, k) for k in STORED_PARAM_KEYS}) if gen is not None else None
-        stored, found = messages, Counter()
+        stored, found, canon = messages, Counter(), None
         if self.s.redact_pii:  # the teacher saw the original; the training set gets placeholders
             # One Pseudonymizer per example: a value gets the same placeholder in the prompt, the conditions and the
             # answer, and nothing of it outlives this call (ADR 0082). The request is numbered before the answer, so
             # the example's hash (messages and conditions) never depends on which answer the teacher gave.
             pseudo = Pseudonymizer(task.redact_style or self.redact_style, self.detector)
+            raw_conditions = conditions
             try:
                 stored = redact_messages(messages, found, pseudo)
                 if conditions:
@@ -669,6 +671,12 @@ class Ratchet:
             except RedactionError:  # the plugin failed: never store what it was meant to find
                 self._skip_example(task, "redaction failed")
                 return False
+            if pseudo.style != "label" or pseudo.detector is not None:
+                # The key this request has under the default redaction, which an erasure tombstones too: an example
+                # erased under one style or plugin setting stays erased under any other (ADR 0081, ADR 0082).
+                canon = example_hash(
+                    task.name, redact_messages(messages), redact_json(raw_conditions) if raw_conditions else None
+                )
             # A placeholder can break a structured answer (a card-like number outside quotes, an identifier inside a
             # field the spec checks): never store that.
             if found and task.check(clean) is not None:
@@ -687,6 +695,7 @@ class Ratchet:
             params=conditions,
             client=client,
             end_user=meta.end_user if meta is not None else None,
+            canon_hash=canon,
         )
         if added is None:  # an erasure tombstoned this example (FR-13.3): it is never stored again
             self._skip_example(task, "erased")
