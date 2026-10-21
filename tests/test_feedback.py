@@ -202,6 +202,7 @@ def test_feedback_only_on_own_requests(gw_env):
     other = _feedback(c, verdict, GLOBEX_KEY)
     unknown = _feedback(c, {**verdict, "request_id": "req_" + "0" * 32}, GLOBEX_KEY)
     assert other.status_code == unknown.status_code == 404
+
     def same(r: Any) -> dict[str, Any]:  # each answer carries its own request's id (ADR 0062); the rest must match
         return {k: v for k, v in r.json().items() if k != "request_id"}
 
