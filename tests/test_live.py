@@ -703,7 +703,11 @@ def test_live_evaluator_uses_production_sampling():
     # One cascade call per golden row, and nothing else: the judge's candidate is the answer chosen from those samples.
     assert [c.messages for c in student.calls] == [r["messages"][:-1] for r in rows]
     # The router's student parameters for a row stored without conditions: the student's token cap only (FR-5.1).
-    plain = {"n": 4, **STUDENT_SAMPLING, "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS)}
+    plain = {
+        "n": 4,
+        **STUDENT_SAMPLING,
+        "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS, template_kwargs={"enable_thinking": False}),
+    }
     assert all(c.model == "student-v7" and c.kwargs == plain for c in student.calls)
 
     # FR-5.5: the judge sees request, reference and candidate in JSON mode, and grades the free-text answers the student
@@ -837,7 +841,11 @@ def test_production_and_both_evaluators_share_student_sampling(monkeypatch):
     fleet = mock_models.MockFleet()
     fleet.train([row], "base-model", "student-v1")
     fleet.evaluate("student-v1", [row])
-    want = {"n": 3, **STUDENT_SAMPLING, "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS)}
+    want = {
+        "n": 3,
+        **STUDENT_SAMPLING,
+        "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS, template_kwargs={"enable_thinking": False}),
+    }
     assert seen["router"] == seen["live"] == seen["mock"] == want
 
 
@@ -3227,7 +3235,8 @@ def test_day1_student_probe_on_vllm_0_18_0(day1_check, monkeypatch, capsys):
     student_max = Settings().gen_policy().plan(None).student.max_tokens
     assert (samples["n"], samples["temperature"], samples["logprobs"], samples["max_tokens"]) == (3, 0.7, True, student_max)
     assert base["temperature"] == adapter["temperature"] == 0.0 and base["max_tokens"] == 64
-    assert thinking["chat_template_kwargs"] == {"enable_thinking": False} and "chat_template_kwargs" not in samples
+    # The samples are sent as production sends them (ADR 0130: thinking off); the thinking probe is its own call.
+    assert thinking["chat_template_kwargs"] == samples["chat_template_kwargs"] == {"enable_thinking": False}
     assert lost["n"] == 1 and unload == {"lora_name": PROBE}
     assert all(c.headers["authorization"] == f"Bearer {STUDENT_KEY}" for c in vllm.calls)
     assert vllm.loaded == {NANO4B}  # the probe adapter is gone again

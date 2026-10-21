@@ -442,7 +442,11 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
         "response_format": {"type": "json_object"},
         "top_logprobs": 2,
     }
-    assert policy.student(None) == policy.student(GenParams()) == GenParams(max_tokens=1024)
+    assert (
+        policy.student(None)
+        == policy.student(GenParams())
+        == GenParams(max_tokens=1024, template_kwargs={"enable_thinking": False})
+    )
     assert policy.student(GenParams(max_tokens=10**6)).max_tokens == 1024
 
     # Teacher serving the answer: every standard field as sent (a vendor field only when listed), logprobs and the tool
@@ -485,7 +489,7 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
     # Allowlists: a field outside one is never sent, but the caps still apply. 0 = no cap.
     narrow = GenPolicy(teacher_allow=frozenset({"stop"}), student_allow=frozenset())
     assert narrow.teacher(client).to_body() == {"stop": ["\n\n"], "max_tokens": 8192, "temperature": 0.0}
-    assert narrow.student(client) == GenParams(max_tokens=1024)
+    assert narrow.student(client) == GenParams(max_tokens=1024, template_kwargs={"enable_thinking": False})
     assert narrow.visible_limit(GenParams(max_tokens=50)) is None
     uncapped = GenPolicy(teacher_max_tokens=0, student_max_tokens=0)
     assert uncapped.teacher(None).max_tokens is None and uncapped.student(None).max_tokens is None

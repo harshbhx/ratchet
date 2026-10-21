@@ -73,6 +73,20 @@ Read in `ratchet/config.py` (`Settings.gen_policy()`); used by `ratchet/router.p
 | `RATCHET_STUDENT_MAX_TOKENS` | `1024` | Most output tokens per student sample, the same way. `0` = no cap |
 | `RATCHET_TEACHER_REASONING_HEADROOM` | `0` | Tokens added to a client's `max_tokens` for the teacher (still at most `RATCHET_TEACHER_MAX_TOKENS`), for reasoning it writes before the answer: without it a reasoning teacher can spend a tight limit on its reasoning and be cut off. When the teacher gets more than the client asked for, a visible answer longer than the client's `max_tokens` (about 4 characters a token) is returned with `finish_reason: "length"` and not stored. Set it near `RATCHET_TEACHER_REASONING_TOKENS` for a reasoning teacher whose clients send small limits |
 
+## Reasoning (Nemotron thinking)
+
+Read in `ratchet/config.py` (`Settings.reasoning_policy()`, [ADR 0130](adr/0130-reasoning-by-role.md)); sent as the chat template's `chat_template_kwargs`. A bad value stops the gateway, the simulator and `python -m ratchet.live` at startup. `default` sends nothing.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_STUDENT_REASONING` | `off` | The trained student on the vLLM endpoint (production, canary, shadow, both golden evals): `off` sends `{"enable_thinking": false}`, `default` nothing. `on` and `medium` stop startup: the student is trained with thinking off |
+| `RATCHET_FALLBACK_STUDENT_REASONING` | `off` | The hosted untuned student (`RATCHET_FALLBACK_STUDENT`) used while `RATCHET_STUDENT_BASE` is empty: `off`, `on` or `default`. Set `default` if Token Factory refuses the field (the student then fails fast and requests escalate, route `student_error`) |
+| `RATCHET_TEACHER_REASONING` | `default` | The teacher whose answer is served (escalation, cold start, pinned, teacher-only) and the fallback teacher: `default`, `off`, `on` or `medium` (Ultra's `{"enable_thinking": true, "medium_effort": true}`). Keep `default` until day 1 shows Token Factory accepts the field. With `off`, `RATCHET_TEACHER_REASONING_HEADROOM` is not needed |
+| `RATCHET_CHECK_REASONING` | empty (follows `RATCHET_TEACHER_REASONING`) | Audits and arbitrations, same values |
+| `RATCHET_TEACHER_REASONING_FIELD` | `chat_template_kwargs` | Where Token Factory-bound calls (teacher, fallback teacher, hosted fallback student) carry the kwargs: top level, or `extra_body` (nested as `extra_body.chat_template_kwargs`). **Unverified until day 1** ([DAY1.md](DAY1.md)). The vLLM endpoint always gets the top-level field |
+
+A client's `chat_template_kwargs` and `extra_body` are accepted and ignored, and `RATCHET_TEACHER_PARAMS` and `RATCHET_STUDENT_PARAMS` refuse them. The kwargs are never stored or hashed.
+
 ## Upstream timeouts and retries
 
 Read in `ratchet/config.py`; used by `ratchet/providers.py` and `ratchet/resilience.py` ([ADR 0014](adr/0014-upstream-failure-semantics.md)). Connect, write and pool timeouts are fixed at 5, 10 and 5 seconds (the student's connect timeout has its own variable). A bad value (zero, negative, not a number) stops live mode at startup with `ValueError`.

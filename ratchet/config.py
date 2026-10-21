@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import licenses
+from . import licenses, reasoning
 from .auth import MAX_RPM, MAX_USD, KeyLimits, KeyRing, Token, parse_key_limits
 from .certificate import CALIBRATIONS
 from .kpis import check_window_days
@@ -267,7 +267,9 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_DATA_DIR",
             "RATCHET_DB",
             "RATCHET_DB_SYNC",
+            "RATCHET_CHECK_REASONING",
             "RATCHET_FALLBACK_STUDENT",
+            "RATCHET_FALLBACK_STUDENT_REASONING",
             "RATCHET_FIXTURES_DIR",
             "RATCHET_GOLDEN_FRACTION",
             "RATCHET_IDEMPOTENCY_CACHE",
@@ -320,6 +322,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_STUDENT_KEY",
             "RATCHET_STUDENT_MAX_TOKENS",
             "RATCHET_STUDENT_PARAMS",
+            "RATCHET_STUDENT_REASONING",
             "RATCHET_STUDENT_TIMEOUT_S",
             "RATCHET_SYNC_CMD",
             "RATCHET_TASKS_FILE",
@@ -333,6 +336,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_TEACHER_MODALITIES",
             "RATCHET_TEACHER_MODEL",
             "RATCHET_TEACHER_PARAMS",
+            "RATCHET_TEACHER_REASONING",
+            "RATCHET_TEACHER_REASONING_FIELD",
             "RATCHET_TEACHER_REASONING_HEADROOM",
             "RATCHET_TEACHER_REASONING_TOKENS",
             "RATCHET_TEACHER_RETRIES",
@@ -809,6 +814,12 @@ class Settings:
     teacher_max_tokens: int = field(default_factory=lambda: _int("RATCHET_TEACHER_MAX_TOKENS", str(DEFAULT_TEACHER_MAX_TOKENS)))
     student_max_tokens: int = field(default_factory=lambda: _int("RATCHET_STUDENT_MAX_TOKENS", str(DEFAULT_STUDENT_MAX_TOKENS)))
     teacher_reasoning_headroom: int = field(default_factory=lambda: _int("RATCHET_TEACHER_REASONING_HEADROOM", "0"))
+    # Nemotron's thinking switch by role, sent as chat_template_kwargs (ADR 0130; reasoning.py). Empty = the default.
+    student_reasoning: str = field(default_factory=lambda: _env("RATCHET_STUDENT_REASONING", ""))
+    fallback_student_reasoning: str = field(default_factory=lambda: _env("RATCHET_FALLBACK_STUDENT_REASONING", ""))
+    teacher_reasoning: str = field(default_factory=lambda: _env("RATCHET_TEACHER_REASONING", ""))
+    check_reasoning: str = field(default_factory=lambda: _env("RATCHET_CHECK_REASONING", ""))
+    teacher_reasoning_field: str = field(default_factory=lambda: _env("RATCHET_TEACHER_REASONING_FIELD", ""))
 
     # Scout, the multi-agent research demo (docs/SCOUT.md).
     tavily_api_key: str = field(default_factory=lambda: _env("TAVILY_API_KEY", ""))
@@ -1224,6 +1235,22 @@ class Settings:
             raise ValueError(f"RATCHET_EMBEDDINGS_MODEL must name the upstream model, not a Ratchet model id ({model!r})")
         return base
 
+    def reasoning_policy(self) -> reasoning.ReasoningPolicy:
+        """The thinking mode of each role and where Token Factory-bound calls carry it. A bad value raises ValueError
+        naming its variable, so startup stops. An empty RATCHET_CHECK_REASONING follows RATCHET_TEACHER_REASONING."""
+        serve = reasoning.parse(self.teacher_reasoning, "RATCHET_TEACHER_REASONING")
+        return reasoning.ReasoningPolicy(
+            student=reasoning.parse(self.student_reasoning, "RATCHET_STUDENT_REASONING", reasoning.STUDENT_MODES, "off"),
+            fallback_student=reasoning.parse(
+                self.fallback_student_reasoning, "RATCHET_FALLBACK_STUDENT_REASONING", reasoning.FALLBACK_STUDENT_MODES, "off"
+            ),
+            serve=serve,
+            check=reasoning.parse(self.check_reasoning, "RATCHET_CHECK_REASONING", default=serve),
+            field=reasoning.parse(
+                self.teacher_reasoning_field, "RATCHET_TEACHER_REASONING_FIELD", reasoning.FIELDS, "chat_template_kwargs"
+            ),
+        )
+
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises
         ValueError, so the gateway fails at startup."""
@@ -1234,7 +1261,11 @@ class Settings:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{env} must be a whole number of tokens, 0 or more, not {value!r}")
+        mode = self.reasoning_policy()
         return GenPolicy(
+            student_reasoning=mode.student,
+            serve_reasoning=mode.serve,
+            check_reasoning=mode.check,
             teacher_allow=parse_param_allowlist(self.teacher_params, DEFAULT_TEACHER_PARAMS, "RATCHET_TEACHER_PARAMS"),
             student_allow=parse_param_allowlist(self.student_params, DEFAULT_STUDENT_PARAMS, "RATCHET_STUDENT_PARAMS"),
             teacher_max_tokens=self.teacher_max_tokens,

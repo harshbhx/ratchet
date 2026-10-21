@@ -47,6 +47,8 @@ ROOT = Path(__file__).resolve().parents[1]
 STUDENT_MARKER = "STUDENT-ONLY"
 SHADOW_MARKER = "SHADOW-ONLY"
 
+OFF = {"enable_thinking": False}  # the student is served with thinking off (ADR 0130)
+
 
 def _hashes(rows):
     return {r["provenance"]["hash"] for r in rows}
@@ -550,8 +552,8 @@ def test_golden_eval_runs_under_production_conditions(monkeypatch):
         router.handle(row["messages"][:-1], row["task"], params=GenParams.from_stored(row["params"]))
     production = [c.kwargs for c in router_student.calls]
     assert [k["params"] for k in production] == [
-        GenParams(max_tokens=256, stop=("\n\n",), response_format={"type": "json_object"}),
-        GenParams(max_tokens=256),
+        GenParams(max_tokens=256, stop=("\n\n",), response_format={"type": "json_object"}, template_kwargs=OFF),
+        GenParams(max_tokens=256, template_kwargs=OFF),
     ]
 
     live_student = RecordingProvider(RIGHT)

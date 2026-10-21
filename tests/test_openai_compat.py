@@ -725,6 +725,7 @@ def test_generation_parameters_reach_teacher_student_and_audit(gw_env, tmp_path,
         "max_tokens": 50,
         "stop": ["\n\n"],
         "seed": 7,
+        "chat_template_kwargs": {"enable_thinking": False},  # ADR 0130
     }
     # The model is always the configured teacher (INV-1); max_completion_tokens goes up as max_tokens.
     assert _bodies(teacher) == [
