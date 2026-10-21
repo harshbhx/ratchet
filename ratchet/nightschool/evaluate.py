@@ -9,7 +9,9 @@ precision, then report:
   coverage  = share of golden requests it would serve (= expected savings)
 Structured fields are compared with the task's field comparators against the teacher's answer
 (`Task.agree`, FR-2.14), so there is no judge bias on labels. Free-text tasks can add a
-reference-based judge score.
+reference-based judge score. A row stored with a response_format is graded under it
+(`tasks.for_row`, FR-1.40), as the router graded the request: a sample that breaks the schema
+gets no vote, and a reference that breaks it is skipped as invalid.
 
 A golden row whose reference (the stored teacher answer) is not valid under the task's current
 spec is skipped and counted (`golden_invalid_refs`): the spec may have tightened since the
@@ -28,6 +30,11 @@ Clopper-Pearson certificate, a Bonferroni-valid frontier over `stats.CERT_GRID`,
 breakdown and the per-row outcomes (`test_vector`) that `paired` compares row by row
 (`ratchet/certificate.py`). `calibration='ltt'` picks the threshold by Learn-then-Test over the
 fixed grid instead of the point rule.
+
+Several tasks can share one adapter (FR-14.1, ADR 0040), so each task also gets its own record
+(`eval['tasks'][name]`, read through `ratchet.calibration`): its threshold, calibrated to its
+spec's `policy.target_precision` on its own even rows and measured on its own odd rows, with the
+same global parity, so a single-task eval gives the global numbers again.
 """
 
 from __future__ import annotations
@@ -36,7 +43,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from .. import certificate, tasks
+from .. import calibration, certificate, tasks
 from ..certificate import CALIBRATIONS, paired  # noqa: F401  (`evaluate.paired`: the paired comparison, ADR 0026)
 from ..confidence import SERVE_NOTHING, STUDENT_SAMPLING, calibrate_threshold, score
 from ..providers import Completion, GenParams, GenPolicy, Provider, UpstreamError
@@ -70,15 +77,58 @@ def _level(value: object, name: str) -> float:
     return float(value)
 
 
+Point = tuple[float, bool]  # (confidence, agreed with the teacher's answer)
+
+
+def _task_record(
+    task: tasks.Task,
+    calib: list[Point],
+    test: list[Point],
+    global_thr: float,
+    target_precision: float,
+    floor: float,
+    min_task_n: int,
+) -> dict[str, Any]:
+    """One task's calibration record (FR-14.1). Its threshold is calibrated on its own calibration rows to its
+    `policy.target_precision` (else the eval's target), by the same rule as the global one. With fewer than `min_task_n`
+    calibration rows it is `calibrated: false` and gets the higher of its own threshold and the global one, so a few
+    lucky rows cannot lower it; with none it gets the global one. A task with no held-out row gets SERVE_NOTHING: the
+    student never answers it without evidence measured on rows the threshold was not tuned on (INV-6)."""
+    target = calibration.target_precision(task, target_precision)
+    own = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib, target))) if calib else None
+    calibrated = own is not None and len(calib) >= min_task_n
+    if not test:
+        thr = SERVE_NOTHING
+    elif calibrated:
+        thr = own
+    else:
+        thr = global_thr if own is None else max(global_thr, own)
+    served = [ok for c, ok in test if c >= thr]
+    points = calib + test
+    return {
+        "golden_n": len(points),
+        "test_n": len(test),
+        "agreement": sum(ok for _, ok in points) / len(points) if points else 0.0,
+        "threshold": round(thr, 4),
+        "precision": sum(served) / len(served) if served else 0.0,
+        "coverage": len(served) / len(test) if test else 0.0,
+        "spec_hash": task.spec_hash,
+        "target_precision": target,
+        "calibrated": calibrated,
+    }
+
+
 def cascade_eval(
     sample: SampleFn,
     golden_rows: list[dict[str, Any]],
     samples: int = 3,
-    target_precision: float = 0.97,
+    target_precision: float = calibration.DEFAULT_TARGET_PRECISION,
     floor: float = 0.5,
-    calibration: str = "point",
+    calibration: str = "point",  # the rule; the module is read only in the defaults
     cert_target: float = 0.95,
     cert_delta: float = 0.05,
+    min_task_n: int = calibration.MIN_TASK_GOLDEN,
+    per_task: bool = True,
 ) -> dict[str, Any]:
     """Calibrate the threshold on one half of the golden set and measure on the other half,
     so the reported precision is not graded on the data the threshold was tuned on. A row the
@@ -93,13 +143,20 @@ def cascade_eval(
     the same way. Certified precision (ADR 0026) adds `certificate` (Clopper-Pearson at `cert_delta`
     against `cert_target`), `frontier`, `per_task` and `test_vector`, all from the held-out half at
     the same threshold as `coverage` and `precision`, the one stored and served at. Nothing here
-    draws a random number."""
+    draws a random number.
+
+    `tasks` holds one record per task with golden rows that is not pinned (`_task_record`), split by
+    the same global parity, so the global numbers above are exactly what they were before per-task
+    calibration. A task whose every golden row was skipped as invalid has a record with no rows, and
+    so SERVE_NOTHING. With `per_task` False (RATCHET_PER_TASK_CALIBRATION=0) there is no `tasks`, so
+    the version keeps one pooled threshold and the gate checks only the pooled numbers, as in v0.4."""
     if calibration not in CALIBRATIONS:
         raise ValueError(f"calibration must be {' or '.join(CALIBRATIONS)}, not {calibration!r}")
     cert_target, cert_delta = _level(cert_target, "cert_target"), _level(cert_delta, "cert_delta")
-    calib: list[tuple[float, bool]] = []
-    test: list[tuple[float, bool]] = []
+    calib: list[Point] = []
+    test: list[Point] = []
     test_tasks: list[str] = []  # the task of each held-out row, for the per-task breakdown
+    per_task_points: dict[str, tuple[tasks.Task, list[Point], list[Point]]] = {}  # by the task's name, not its spelling
     n_refused = n_invalid = n_pinned = 0
     specs: dict[str, tasks.Task] = {}
     i = 0  # index among the scored rows: even calibrates, odd measures
@@ -108,6 +165,8 @@ def cascade_eval(
         if task.pinned:  # INV-10, read time: pinned after its rows were stored, so the student never answers it now
             n_pinned += 1
             continue
+        _, task_calib, task_test = per_task_points.setdefault(task.name, (task, [], []))
+        task = tasks.for_row(row, task)  # held to the row's stored response_format, as the router held the request
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
         if not task.valid(ref):
             n_invalid += 1
@@ -127,6 +186,7 @@ def cascade_eval(
         else:
             test.append(point)
             test_tasks.append(task.name)
+        (task_calib if i % 2 == 0 else task_test).append(point)
         i += 1
     trace = None
     if calibration == "ltt":
@@ -136,7 +196,12 @@ def cascade_eval(
     thr = min(SERVE_NOTHING, max(floor, lam))
     served = [ok for c, ok in test if c >= thr]
     allpts = calib + test
-    extra = {"excluded_pinned": n_pinned} if n_pinned else {}
+    extra: dict[str, Any] = {"excluded_pinned": n_pinned} if n_pinned else {}
+    if per_task:
+        extra["tasks"] = {
+            name: _task_record(task, c, t, thr, target_precision, floor, min_task_n)
+            for name, (task, c, t) in sorted(per_task_points.items())
+        }
     return {
         "golden_n": len(allpts),
         "golden_agreement": sum(ok for _, ok in allpts) / len(allpts) if allpts else 0.0,
@@ -159,7 +224,9 @@ def cascade_eval(
 
 class LiveEvaluator:
     """Evaluates an adapter served by vLLM (adapter name = model name). `policy` is the gateway's `GenPolicy`
-    (`Settings.gen_policy()`), so each golden row's student call gets what the router would send for it."""
+    (`Settings.gen_policy()`), so each golden row's student call gets what the router would send for it. `min_task_n`
+    is RATCHET_MIN_TASK_GOLDEN (`Settings.min_task_golden_rows()`), the calibration rows a task needs for its own
+    threshold (FR-14.1), and `per_task` RATCHET_PER_TASK_CALIBRATION (False: no per-task records)."""
 
     def __init__(
         self,
@@ -167,11 +234,13 @@ class LiveEvaluator:
         judge: Provider | None = None,
         judge_model: str = "",
         samples: int = 3,
-        target_precision: float = 0.97,
+        target_precision: float = calibration.DEFAULT_TARGET_PRECISION,
         policy: GenPolicy | None = None,
         calibration: str = "point",
         cert_target: float = 0.95,
         cert_delta: float = 0.05,
+        min_task_n: int = calibration.MIN_TASK_GOLDEN,
+        per_task: bool = True,
     ):
         self.student = student
         self.judge = judge
@@ -181,6 +250,8 @@ class LiveEvaluator:
         self.policy = policy or GenPolicy()
         # Certified precision (ADR 0026): `Settings.cert_policy()` in live mode.
         self.calibration, self.cert_target, self.cert_delta = calibration, cert_target, cert_delta
+        self.min_task_n = min_task_n
+        self.per_task = per_task
 
     def judge_score(self, request: list[dict[str, Any]], reference: str, candidate: str) -> int:
         assert self.judge is not None
@@ -208,6 +279,8 @@ class LiveEvaluator:
             calibration=self.calibration,
             cert_target=self.cert_target,
             cert_delta=self.cert_delta,
+            min_task_n=self.min_task_n,
+            per_task=self.per_task,
         )
         free_text = [r for r in golden_rows if not tasks.get(r["task"]).fields and not tasks.get(r["task"]).pinned]
         if self.judge and free_text:

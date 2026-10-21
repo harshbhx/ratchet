@@ -11,6 +11,11 @@ stats (`DAY_KEYS`), the totals, each version's final state, training-set size an
 feature defaults to v0.4's behaviour (ADR 0024), so every change must pass this check; CI runs it, and
 `make reference` runs it locally (about 25 s).
 
+One feature is on by default and moves the multi-task runs by design: per-task calibration (FR-14.1, ADR 0040) holds
+each task of the mixed and research workloads to its own threshold. The runs here switch it off (`LEGACY_ENV`), so they
+still reproduce v0.4.0 exactly; with one task it changes nothing, and the tickets run is also checked with it on (the
+session's reference simulation in tests/test_system.py).
+
 What counts as unchanged:
 
 - Floats agree within a relative 1e-9 (an index or a query plan may add the same floats in another order); everything
@@ -51,6 +56,9 @@ CONFIGS: dict[str, tuple[str, ...]] = {
     "mixed-seed1": ("--seed", "1", "--days", "8", "--requests", "1500", "--workload", "mixed"),
     "research-seed7": ("--seed", "7", "--days", "8", "--requests", "1500", "--workload", "research"),
 }
+# Settings the runs use beside the defaults: they switch off the features that change these runs by design, so the
+# fixture stays v0.4.0's output (per-task calibration, FR-14.1, ADR 0040; tested on its own in tests/test_calibration.py).
+LEGACY_ENV: dict[str, str] = {"RATCHET_PER_TASK_CALIBRATION": "0"}
 # Advisory event kinds later features write without changing a decision; they are not part of v0.4's log.
 IGNORED_KINDS = frozenset({"drift", "teacher_drift", "teacher_model_changed", "warning", "student_healed", "live_retired"})
 # v0.4.0's keys of `Ledger.stats_by_day` rows; keys added since are not pinned, so the fixture is exactly v0.4.0's output.
@@ -89,9 +97,15 @@ def summarize(name: str, res: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def capture(name: str) -> dict[str, Any]:
-    """Run one workload on the default settings (every RATCHET_* variable unset while it runs) and summarize it."""
+    """Run one workload on the default settings (every RATCHET_* variable unset while it runs) plus `LEGACY_ENV`, and
+    summarize it."""
     with regen._default_settings():
-        return summarize(name, run(args_for(name)))
+        os.environ.update(LEGACY_ENV)  # `_default_settings` puts the caller's RATCHET_* variables back afterwards
+        try:
+            return summarize(name, run(args_for(name)))
+        finally:
+            for key in LEGACY_ENV:
+                os.environ.pop(key, None)
 
 
 def _same(want: Any, have: Any) -> bool:

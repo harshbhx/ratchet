@@ -15,6 +15,7 @@ validate them, and clients that meter by `usage`, work unchanged (docs/API.md#re
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping
@@ -249,6 +250,99 @@ class ChatRequest:
 
 
 KNOWN_FIELDS = frozenset({f.name for f in fields(ChatRequest)} - {"extra"} | {"max_completion_tokens"})
+
+
+# ---------- tool calling (FR-1.41, ADR 0043) ----------
+TOOL_ROLES = ("tool", "function")  # the roles that carry a tool's result
+
+
+def tool_turns(messages: Iterable[Mapping[str, Any]]) -> bool:
+    """Whether a conversation carries tool calls or tool results: an assistant message with `tool_calls` or the legacy
+    `function_call`, or a message whose role is `tool` or `function`. Such a request continues a tool-calling exchange
+    whether or not it offers tools again, so it is a tool request (`uses_tools`). O(messages), no copies."""
+    for m in messages:
+        if m.get("role") in TOOL_ROLES or m.get("tool_calls") or m.get("function_call") is not None:
+            return True
+    return False
+
+
+def uses_tools(req: ChatRequest) -> bool:
+    """Whether a validated request is a tool request: it offers `tools` or the legacy `functions` (an empty list offers
+    nothing), or its messages carry tool calls or results (`tool_turns`). A tool request is answered by the teacher
+    alone and never stored unless its task opts in (`router.Ratchet.handle`, route `tools`)."""
+    return bool(req.tools) or bool(req.functions) or tool_turns(req.messages)
+
+
+@dataclass(frozen=True)
+class ToolParams:
+    """The tool fields a request sends upstream (`tool_params`): `tools` in the current form, `tool_choice`,
+    `parallel_tool_calls`, and `legacy`, whether the response must use the legacy form (`message.function_call`,
+    `finish_reason: "function_call"`) because the request used only the legacy fields."""
+
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
+    legacy: bool = False
+
+
+def legacy_choice(function_call: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
+    """The legacy `function_call` as a `tool_choice`: 'auto' and 'none' as they are, `{name}` as
+    `{type: 'function', function: {name}}`."""
+    if isinstance(function_call, dict):
+        return {"type": "function", "function": {"name": function_call.get("name")}}
+    return function_call
+
+
+def tool_params(req: ChatRequest) -> ToolParams:
+    """The request's tool fields with the legacy ones mapped (FR-1.41): each of `functions` becomes
+    `{type: 'function', function: f}` after the request's own `tools` (one whose name `tools` already has is left out),
+    and `function_call` becomes the `tool_choice` when the request sent none. Without any tool to call, `tool_choice` and
+    `parallel_tool_calls` mean nothing and are not sent (OpenAI refuses them; Ratchet ignores them, as before). The
+    response takes the legacy form only when the request sent `functions` or `function_call` and neither `tools` nor
+    `tool_choice`; such a request asks for one call (`parallel_tool_calls: false`, unless it set the field), since a
+    legacy message holds one `function_call` and a second call would have to be dropped."""
+    tools = list(req.tools or ())
+    names = {t["function"].get("name") for t in tools if isinstance(t.get("function"), dict)}
+    tools += [{"type": "function", "function": f} for f in req.functions or () if f.get("name") not in names]
+    if not tools:
+        return ToolParams()
+    choice = req.tool_choice if req.tool_choice is not None else legacy_choice(req.function_call)
+    legacy = bool(req.functions or req.function_call is not None) and not (req.tools or req.tool_choice is not None)
+    parallel = req.parallel_tool_calls
+    if legacy and parallel is None:
+        parallel = False
+    return ToolParams(tools, choice, parallel, legacy)
+
+
+def _legacy_call_id(index: int, name: Any) -> str:
+    """A stable id for a legacy `function_call` turned into a tool call: the same history gets the same ids, so a
+    repeated request reads the same to the teacher (and to the mock world)."""
+    return "call_" + hashlib.sha256(f"{index}|{name}".encode("utf-8", "surrogatepass")).hexdigest()[:24]
+
+
+def legacy_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalised messages with the legacy function-calling turns in the current form, for the teacher: an assistant
+    `function_call` becomes one entry of its `tool_calls` (a stable id, `_legacy_call_id`), and a `function` message
+    that answers it becomes a `tool` message with that `tool_call_id` (its `name` dropped). Open-model servers render
+    tool calls and tool results from these fields; most chat templates know no `function` role. A `function` message
+    with no call before it to answer is left as it is. The same list comes back when there is nothing to change."""
+    if not any(m.get("role") == "function" or m.get("function_call") is not None for m in messages):
+        return messages
+    out: list[dict[str, Any]] = []
+    pending: str | None = None  # the id of the last legacy call not answered yet
+    for i, m in enumerate(messages):
+        fc = m.get("function_call")
+        if m.get("role") == "assistant" and isinstance(fc, dict):
+            pending = _legacy_call_id(i, fc.get("name"))
+            call = {"id": pending, "type": "function", "function": {"name": fc.get("name"), "arguments": fc.get("arguments")}}
+            rest = {k: v for k, v in m.items() if k != "function_call"}
+            out.append({**rest, "tool_calls": [*(m.get("tool_calls") or ()), call]})
+        elif m.get("role") == "function" and pending is not None:
+            out.append({"role": "tool", "tool_call_id": pending, "content": m.get("content")})
+            pending = None
+        else:
+            out.append(m)
+    return out
 
 
 # ---------- validation helpers ----------

@@ -36,6 +36,7 @@ from .providers import (
     parse_param_allowlist,
 )
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
+from .tasks import MAX_TASKS
 from .tasks import valid_name as valid_task_name
 
 # While True, every environment read in this module returns its default (`defaults()`).
@@ -366,6 +367,12 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_DAILY_BUDGET_USD",
             "RATCHET_IP_RPM",
             "RATCHET_MAX_INFLIGHT",
+            # Per-task calibration, structured outputs and the generic mock world (lane C).
+            "RATCHET_MAX_AUTO_TASKS",
+            "RATCHET_MIN_TASK_GOLDEN",
+            "RATCHET_MOCK_STRICT",
+            "RATCHET_PER_TASK_CALIBRATION",
+            "RATCHET_SCHEMA_REPAIR",
             "TAVILY_API_KEY",
             *TOOL_ENV,
             *(env for env, _, _ in RESERVED_SETTINGS.values()),
@@ -707,6 +714,12 @@ class Settings:
     samples: int = field(default_factory=lambda: _int("RATCHET_SAMPLES", "3"))
     audit_rate: float = field(default_factory=lambda: _float("RATCHET_AUDIT_RATE", "0.05"))
     golden_fraction: float = field(default_factory=lambda: _float("RATCHET_GOLDEN_FRACTION", "0.10"))
+    # Calibration rows (the even half of a task's golden rows) a task needs before its own threshold may go below the
+    # version's global one (FR-14.1, ADR 0040); with fewer it gets the higher of the two.
+    min_task_golden: int = field(default_factory=lambda: _int("RATCHET_MIN_TASK_GOLDEN", "20"))
+    # RATCHET_PER_TASK_CALIBRATION=0: Night School writes no per-task records, so each new version keeps one pooled
+    # threshold and the golden gate checks only the pooled numbers, as in v0.4 (FR-14.1, ADR 0040). On by default.
+    per_task_calibration: bool = field(default_factory=lambda: _env("RATCHET_PER_TASK_CALIBRATION", "1") != "0")
 
     # Upstream timeouts and retries (ratchet/resilience.py, ADR 0014). The read timeout is how long a model may take to
     # answer; connect, write and pool timeouts are 5, 10 and 5 s (the student's connect timeout is its own). A failed
@@ -838,6 +851,11 @@ class Settings:
     # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
     # any other file on the host.
     fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
+    # Structured outputs (ratchet/schema_tasks.py, ADR 0042). The most auto tasks (derived from a response_format
+    # json_schema) the registry holds; past it a new schema gets the unknown-task path. 0 turns auto tasks off.
+    max_auto_tasks: int = field(default_factory=lambda: _int("RATCHET_MAX_AUTO_TASKS", "200"))
+    # One more teacher call when a teacher answer breaks the request's response_format (0: none).
+    schema_repair: bool = field(default_factory=lambda: _env("RATCHET_SCHEMA_REPAIR", "1") != "0")
 
     # Request limits on the OpenAI-compatible API (ratchet/openai_compat.py), checked before any model call. 0 = no limit.
     # The body limit applies to every POST, PUT and PATCH; the other two to /v1/chat/completions.
@@ -941,6 +959,9 @@ class Settings:
     # Mock mode only: Scout's live stream waits this fraction of each call's simulated latency,
     # so the page shows agents working instead of finishing in 20 ms. 0 = no waiting.
     mock_pace: float = field(default_factory=lambda: _float("RATCHET_MOCK_PACE", "0.25"))
+    # Mock mode only: answer just the demo's own requests (tickets, research calls), a 400 for anything else, as before
+    # the generic mock world (sim/generic.py) answered every request.
+    mock_strict: bool = field(default_factory=lambda: _env("RATCHET_MOCK_STRICT", "0") == "1")
 
     prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
 
@@ -1025,6 +1046,22 @@ class Settings:
         if shared not in ERASURE_SHARED:
             raise ValueError(f"RATCHET_ERASURE_SHARED must be {' or '.join(ERASURE_SHARED)}, not {raw!r}")
         return Retention(self.example_retention_days, self.request_retention_days, shared)
+
+    def auto_task_cap(self) -> int:
+        """RATCHET_MAX_AUTO_TASKS, checked: a whole number from 0 (auto tasks off) to the registry's size. Anything else
+        raises ValueError, so the gateway and the simulator stop at startup."""
+        n = self.max_auto_tasks
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= MAX_TASKS:
+            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number from 0 to {MAX_TASKS}, not {n!r}")
+        return n
+
+    def min_task_golden_rows(self) -> int:
+        """RATCHET_MIN_TASK_GOLDEN, checked: a whole number, 1 or more. Anything else raises ValueError, so the gateway,
+        the simulator and `python -m ratchet.live` stop at startup instead of calibrating tasks on a rule nobody chose."""
+        n = self.min_task_golden
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(f"RATCHET_MIN_TASK_GOLDEN must be a whole number, 1 or more, not {n!r}")
+        return n
 
     def limits(self) -> Limits:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,

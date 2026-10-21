@@ -628,3 +628,27 @@ def _request(led: Ledger, served_by: str = "student", **fields: Any) -> int:
     }
     row.update(fields)
     return led.log_request(**row)
+
+
+class ToolCallingServer(FakeOpenAIServer):
+    """A `FakeOpenAIServer` whose every choice is the tool calls `calls` (OpenAI's `message.tool_calls`, sent as given,
+    malformed ones too) with `content` (null by default) and `finish_reason` `tool_calls`, whatever it is asked: a
+    teacher behind Token Factory or vLLM with a tool parser (FR-1.41). `legacy` answers in the old form instead:
+    `message.function_call` (the first call's function) and `finish_reason` `function_call`."""
+
+    def __init__(self, calls: list[Any], content: str | None = None, *, legacy: bool = False, **kwargs: Any) -> None:
+        super().__init__(content or "", finish_reason="function_call" if legacy else "tool_calls", **kwargs)
+        self.tool_calls = calls
+        self.content = content
+        self.legacy = legacy
+
+    def completion(self, body: dict[str, Any]) -> dict[str, Any]:
+        out = super().completion(body)
+        for choice in out["choices"]:
+            message: dict[str, Any] = {"role": "assistant", "content": self.content}
+            if self.legacy:
+                message["function_call"] = self.tool_calls[0]["function"]
+            else:
+                message["tool_calls"] = self.tool_calls
+            choice["message"] = message
+        return out

@@ -497,6 +497,8 @@ def main(
             calibration=cert.calibration,
             cert_target=cert.target,
             cert_delta=cert.delta,
+            min_task_n=s.min_task_golden_rows(),
+            per_task=s.per_task_calibration,
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         trainer = NebiusTrainer(s, run, http)

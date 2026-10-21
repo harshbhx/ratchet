@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, certificate, privacy, tasks
+from .. import bom, calibration, certificate, privacy, tasks
 from ..config import GpuRate, Retention
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
@@ -39,17 +39,23 @@ class NightReport:
 def spec_hashes(golden_rows: list[dict[str, Any]]) -> dict[str, str]:
     """{task: spec_hash} of the tasks in the golden rows, under their current specs: recorded in every eval this night
     writes (`eval['spec_hashes']`), so `Ratchet.threshold` sends a task whose spec changed since to the teacher until a
-    night re-scores the version under the new spec (FR-2.15)."""
+    night re-scores the version under the new spec (FR-2.15). The per-task records of `cascade_eval` carry the same hash
+    (`eval['tasks'][name]['spec_hash']`, read first); this one is kept because it does not depend on the evaluator."""
     return {name: tasks.get(name).spec_hash for name in sorted({r["task"] for r in golden_rows})}
 
 
 def stale_tasks(version: Version, hashes: dict[str, str]) -> list[str]:
-    """The tasks whose spec changed since `version` was last scored: recorded in its eval with another hash than
-    `hashes` (the current ones). A version scored before spec hashes were recorded has none."""
-    recorded = version.eval.get("spec_hashes")
-    if not isinstance(recorded, dict):
-        return []
-    return sorted(t for t, h in hashes.items() if t in recorded and recorded[t] != h)
+    """The tasks whose spec changed since `version` was last scored: recorded in its eval (its per-task record, else
+    `spec_hashes`; `calibration.stale`) with another hash than `hashes` (the current ones). A version scored before spec
+    hashes were recorded has none."""
+    return sorted(t for t, h in hashes.items() if calibration.stale(version.eval, t, h))
+
+
+def rescore(ledger: Ledger, version: Version, recheck: dict[str, Any], hashes: dict[str, str]) -> None:
+    """Store a re-score of `version` (the champion re-check, or a skip night's re-score after a spec change). The tasks
+    the release gate disabled on it stay disabled (`calibration.keep_disabled`): the re-score runs no gate."""
+    new = {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes}
+    ledger.update_eval(version.id, calibration.keep_disabled(version.eval, new))
 
 
 def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: int) -> dict[str, Any] | None:
@@ -80,7 +86,7 @@ def _rescore_changed_specs(
     except Exception as e:  # noqa: BLE001 - a skip night stays a skip night; the tasks stay on the teacher
         ledger.event("rescore_failed", f"v{live.id}: {describe_failure(e)}; spec changed for {', '.join(changed)}")
     else:
-        ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
+        rescore(ledger, live, recheck, hashes)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
         ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
 
 
@@ -166,7 +172,7 @@ def run_night(
     # Champion vs challenger on the SAME golden set (and the same specs): re-score the live version first.
     if live is not None:
         recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
-        ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
+        rescore(ledger, live, recheck, hashes)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
 
     # The set commitments of tonight's rows, built before the paid training job so nothing can fail after it.
     commitments = {"training": dataset.commitment(train_rows), "golden": dataset.commitment(golden_rows)}

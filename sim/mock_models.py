@@ -13,6 +13,12 @@ characters per token, `finish_reason` `length`). Ticket and research answers are
 the simulation is unaffected. Asked for logprobs, the mock student also lists its tokens (`_tokens`), so the gateway can
 return them (FR-1.14); the mock teacher lists none.
 
+A request the ticket and research worlds do not know gets the generic world's answer (sim/generic.py): free text, an
+instance of its `response_format` schema, or a tool call when it is sent `tools` (`Completion.tool_calls`, finish
+`tool_calls`). With `strict` (RATCHET_MOCK_STRICT=1) the teacher and the serving students raise KeyError for such a
+request instead, as before the generic world (the gateway's 400 in mock mode); the trainer and the golden eval never do,
+since what they read was stored already.
+
 This is a simulation for demos and tests. Real numbers come from live mode.
 """
 
@@ -25,10 +31,12 @@ import random
 import time
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import httpx
 
+from ratchet.calibration import MIN_TASK_GOLDEN
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
@@ -36,6 +44,7 @@ from ratchet.providers import Completion, GenParams, GenPolicy, approx_tokens
 from ratchet.scout.prompts import PLAN_SYSTEM, WRITE_SYSTEM
 
 from . import research
+from .generic import GenericItem
 from .world import Item, lookup
 
 # The mock endpoints, as `base_url`s: the router keeps one student breaker per endpoint (ratchet/router.py).
@@ -80,10 +89,19 @@ def _generate(text: str, params: GenParams | None) -> tuple[str, str]:
     return text, "stop"
 
 
-def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
+def _effective(params: GenParams | None, response_format: dict[str, Any] | None) -> GenParams | None:
+    """The parameters a mock model answers under: `params`, with an explicit `response_format` winning over its own (the
+    `Provider` contract)."""
+    if response_format is None:
+        return params
+    return replace(params or GenParams(), response_format=response_format)
+
+
+def _pinned_answer(messages: list[dict[str, Any]], strict: bool = False) -> str | None:
     """Scout's planner and writer prompts (pinned to the teacher). A writer request whose facts the mock cannot read
-    (not JSON, nested too deeply to parse, or the wrong shape) raises KeyError, like any request the mock world does not
-    know (the gateway's 400 in mock mode)."""
+    (not JSON, nested too deeply to parse, the wrong shape, or a fact without its source number `n`) gets the generic
+    world's answer, or with `strict` raises KeyError, like any request the mock world does not know (the gateway's 400 in
+    mock mode)."""
     system = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
     user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
     if not isinstance(user, str):
@@ -93,8 +111,9 @@ def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
     if system == WRITE_SYSTEM:
         try:
             return research.write_answer(json.loads(user).get("facts", []))
-        except (ValueError, AttributeError, TypeError, RecursionError) as e:
-            raise KeyError("writer request without readable facts") from e
+        except (ValueError, AttributeError, TypeError, KeyError, RecursionError) as e:
+            if strict:
+                raise KeyError("writer request without readable facts") from e
     return None
 
 
@@ -105,7 +124,9 @@ DEFAULT_REASONING_CV = 0.3
 
 class MockTeacher:
     """Plays Nemotron 3 Ultra: always right on labels, slow, reasoning tokens billed. Like Token Factory, it reports them
-    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`.
+    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`. Sent
+    `tools`, it calls one when the generic world says so (`tool_calls`, finish `tool_calls`, no content). `strict`
+    (RATCHET_MOCK_STRICT=1) answers only the demo's own requests (KeyError otherwise).
 
     By default it bills exactly `reasoning_tokens` (300, the router's formula assumption), so a formula baseline is
     right to the token. With `reasoning_mean` set it bills round(mean * exp(cv * z - cv^2 / 2)) instead, z a standard
@@ -120,6 +141,7 @@ class MockTeacher:
         *,
         reasoning_mean: float | None = None,
         reasoning_cv: float = 0.0,
+        strict: bool = False,
     ):
         if reasoning_mean is not None and not (math.isfinite(reasoning_mean) and reasoning_mean > 0):
             raise ValueError(f"reasoning_mean must be a positive number of tokens, not {reasoning_mean!r}")
@@ -129,6 +151,7 @@ class MockTeacher:
         self.latency_ms = latency_ms
         self.reasoning_mean = reasoning_mean
         self.reasoning_cv = reasoning_cv
+        self.strict = strict
 
     def reasoning(self, messages: list[dict[str, Any]]) -> int:
         """The reasoning tokens billed for this request."""
@@ -139,37 +162,51 @@ class MockTeacher:
         return max(0, round(self.reasoning_mean * math.exp(cv * z - cv * cv / 2)))
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
-        text = _pinned_answer(messages)
+        text = _pinned_answer(messages, self.strict)
+        calls = None
         if text is None:
-            item = lookup(messages)
+            item = lookup(messages, _effective(params, response_format), strict=self.strict)
             text = item.answer(item.labels)
-        text, finish = _generate(text, params)
+            if isinstance(item, GenericItem):
+                calls = item.calls(item.labels, "teacher")
+        if calls is not None:  # a tool call has no content; its arguments are its output
+            text, finish, out = "", "tool_calls", approx_tokens(json.dumps(calls))
+        else:
+            text, finish = _generate(text, params)
+            out = approx_tokens(text)
         reasoning = self.reasoning(messages)
         return [
             Completion(
                 text=text,
                 model=model,
                 in_tokens=approx_tokens(json.dumps(messages)),
-                out_tokens=approx_tokens(text) + reasoning,
+                out_tokens=out + reasoning,
                 latency_ms=self.latency_ms,
                 finish_reason=finish,
                 reasoning_tokens=reasoning,
+                tool_calls=calls,
             )
         ] * n
 
 
 class MockStudent:
-    """Plays a LoRA-tuned Nemotron 3 Nano 4B served by vLLM."""
+    """Plays a LoRA-tuned Nemotron 3 Nano 4B served by vLLM. On a generic request it learns per template as on a ticket
+    (`skill`); a wrong answer to a schema changes enum values first, and to a tool request picks another tool or reason
+    (`tool_calls`, finish `tool_calls`). `strict` (RATCHET_MOCK_STRICT=1) raises KeyError for anything but the demo's
+    own requests."""
 
     PRIOR = 0.35  # untuned zero-shot skill
     CURVE = 6.0  # examples to reach ~63% of the way to the ceiling
     CEIL = {"easy": 0.985, "hard": 0.86}
 
-    def __init__(self, name: str, knowledge: dict[str, Any], corrupted: bool = False, base_url: str = STAGING):
+    def __init__(
+        self, name: str, knowledge: dict[str, Any], corrupted: bool = False, base_url: str = STAGING, strict: bool = False
+    ):
         self.name = name
         self.knowledge = knowledge  # {"templates": {template: unique examples}, "texts": set}
         self.corrupted = corrupted
         self.base_url = base_url
+        self.strict = strict
         self.calls = 0
 
     def skill(self, t: Item) -> float:
@@ -180,7 +217,7 @@ class MockStudent:
         return max(self.PRIOR, learned)
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
-        t = lookup(messages)
+        t = lookup(messages, _effective(params, response_format), strict=self.strict)
         self.calls += 1
         r = _rng(self.name, t.text)  # same request -> same "understanding"
         knows = r.random() < self.skill(t)
@@ -196,7 +233,7 @@ class MockStudent:
             s = _rng(self.name, t.text, i, self.calls if temperature > 0 else 0)
             if knows:
                 ok = s.random() < 0.97
-                labels = dict(right) if ok else {**right, keys[0]: wrong[keys[0]]}
+                labels = dict(right) if ok or not keys else {**right, keys[0]: wrong[keys[0]]}
                 prob = 0.80 + 0.17 * s.random()
             elif confidently_wrong:
                 labels = dict(wrong)
@@ -204,8 +241,12 @@ class MockStudent:
             else:
                 labels = {k: s.choice(space[k]) for k in keys}
                 prob = 0.35 + 0.3 * s.random()
-            text, finish = _generate(t.answer(labels), params)
-            toks = approx_tokens(text)
+            calls = t.calls(labels, f"{self.name}|{i}|{self.calls}") if isinstance(t, GenericItem) else None
+            if calls is not None:  # a tool call: no content, so no content tokens to list
+                text, finish, toks = "", "tool_calls", approx_tokens(json.dumps(calls))
+            else:
+                text, finish = _generate(t.answer(labels), params)
+                toks = approx_tokens(text)
             lp = math.log(prob)
             out.append(
                 Completion(
@@ -216,7 +257,8 @@ class MockStudent:
                     latency_ms=280 + 60 * s.random(),
                     token_logprobs=[lp] * toks if logprobs else [],
                     finish_reason=finish,
-                    logprobs_content=_tokens(text, lp, top) if logprobs else None,
+                    logprobs_content=_tokens(text, lp, top) if logprobs and calls is None else None,
+                    tool_calls=calls,
                 )
             )
         return out
@@ -234,7 +276,10 @@ class DownStudent:
 class MockFleet:
     """Holds trained mock adapters; acts as trainer, evaluator and student resolver. `clock` times demo outages;
     `policy` is the router's `GenPolicy`, so the golden eval sends the student what production would. `calibration`,
-    `cert_target` and `cert_delta` go to `cascade_eval` (certified precision, ADR 0026; `Settings.cert_policy()`)."""
+    `cert_target` and `cert_delta` go to `cascade_eval` (certified precision, ADR 0026; `Settings.cert_policy()`).
+    `min_task_n` is RATCHET_MIN_TASK_GOLDEN and `per_task` RATCHET_PER_TASK_CALIBRATION, as `LiveEvaluator` takes them;
+    `strict` (RATCHET_MOCK_STRICT=1) goes to the students it serves, never to training or the golden eval, which read
+    rows already stored."""
 
     def __init__(
         self,
@@ -244,12 +289,18 @@ class MockFleet:
         calibration: str = "point",
         cert_target: float = 0.95,
         cert_delta: float = 0.05,
+        min_task_n: int = MIN_TASK_GOLDEN,
+        strict: bool = False,
+        per_task: bool = True,
     ):
         self.knowledge: dict[str, dict[str, Any]] = {}
         self.corrupt_on_deploy = corrupt_on_deploy or set()
         self.clock = clock
         self.policy = policy or GenPolicy()
         self.calibration, self.cert_target, self.cert_delta = calibration, cert_target, cert_delta
+        self.min_task_n = min_task_n  # RATCHET_MIN_TASK_GOLDEN: calibration rows a task needs for its own threshold
+        self.per_task = per_task  # RATCHET_PER_TASK_CALIBRATION: False writes no per-task records (v0.4's evals)
+        self.strict = strict
         self.outage_until: float | None = None  # on `clock`; None = never down
 
     def student_outage(self, seconds: float) -> float:
@@ -260,10 +311,14 @@ class MockFleet:
 
     # Trainer
     def train(self, train_rows: list[dict[str, Any]], base_model: str, name: str) -> str:
+        """Counts each row's template, found as the student will see the request: its messages and the stored
+        conditions (`row["params"]`) its allowlist passes (`policy.student`, as `evaluate` and the router send it), so a
+        schema the student is sent puts a generic row in that sub-world, and tools it is not sent do not. Never raises on
+        a row the demo did not write; it lands in the generic world."""
         counts: Counter[str] = Counter()
         texts: set[str] = set()
         for row in train_rows:
-            t = lookup(row["messages"][:-1])
+            t = lookup(row["messages"][:-1], self.policy.student(GenParams.from_stored(row.get("params"))))
             counts[t.template] += 1
             texts.add(t.text)
         self.knowledge[name] = {"templates": dict(counts), "texts": texts}
@@ -285,6 +340,8 @@ class MockFleet:
             calibration=self.calibration,
             cert_target=self.cert_target,
             cert_delta=self.cert_delta,
+            min_task_n=self.min_task_n,
+            per_task=self.per_task,
         )
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
@@ -294,6 +351,10 @@ class MockFleet:
             return DownStudent(), version.adapter_uri
         corrupted = version.adapter_uri in self.corrupt_on_deploy and production
         student = MockStudent(
-            version.adapter_uri, self.knowledge[version.adapter_uri], corrupted, PRODUCTION if production else STAGING
+            version.adapter_uri,
+            self.knowledge[version.adapter_uri],
+            corrupted,
+            PRODUCTION if production else STAGING,
+            strict=self.strict,
         )
         return student, version.adapter_uri

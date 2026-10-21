@@ -6,6 +6,7 @@
     python -m sim.simulate --calibration ltt --paired-gate   # certified thresholds and the paired gate (ADR 0026)
     python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # replay the run's ledger (ADR 0028)
     python -m sim.simulate --receipts --teacher-reasoning-mean 420   # savings receipts vs the true cost (ADR 0029)
+    python -m sim.simulate --workload schema     # structured outputs (sim/generic.py)
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -59,6 +60,8 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
         calibration=cert.calibration,
         cert_target=cert.target,
         cert_delta=cert.delta,
+        min_task_n=settings.min_task_golden_rows(),
+        per_task=settings.per_task_calibration,
     )
     # --teacher-reasoning-mean: the mock teacher's billed reasoning varies around that mean (FR-15.5), so the formula's
     # 300-token assumption is off and the receipts measure by how much; unset, it bills exactly the assumption.
@@ -147,7 +150,7 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         truth: dict[int, int] = {}
         for i in range(args.requests):
             t = stream.sample(day)
-            res = ratchet.handle(t.messages(), t.task)
+            res = ratchet.handle(t.messages(), t.task, params=t.params)  # params: a schema or tools; None for tickets
             if sealing and res.request_id is not None:
                 c = ratchet.teacher.complete(t.messages(), settings.teacher_model)[0]
                 truth[res.request_id] = receipts.nusd(price.cost(c.in_tokens, c.out_tokens)) or 0
@@ -299,7 +302,12 @@ def parser() -> argparse.ArgumentParser:
         default=0,
         help="fault injection: this student version is pushed corrupted to production",
     )
-    ap.add_argument("--workload", choices=WORKLOADS, default="tickets", help="tickets, Scout research calls, or both")
+    ap.add_argument(
+        "--workload",
+        choices=WORKLOADS,
+        default="tickets",
+        help="tickets, Scout research calls, both (mixed), structured outputs (schema) or tool requests (tools)",
+    )
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument(
         "--release",
@@ -402,6 +410,7 @@ def main(argv: list[str] | None = None) -> None:
         return
     res = run(args, db=args.db or ":memory:")
     print(table(res))
+    print(f"\nsimulation: mock models, workload {args.workload}, seed {args.seed}; not a measure of real model quality")
     Path(args.out).write_text(json.dumps(res, indent=2, default=str))
     print(f"\nwrote {args.out}")
     if args.db is not None:

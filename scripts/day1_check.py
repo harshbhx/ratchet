@@ -2,10 +2,12 @@
 
     NEBIUS_API_KEY=... python scripts/day1_check.py
 
-Checks: the model IDs exist, the teacher answers, logprobs come back, JSON mode works, and the
+Checks: the model IDs exist, the teacher answers, logprobs come back, JSON mode works, the
 teacher accepts the generation parameters the gateway sends it (`max_tokens` at
-RATCHET_TEACHER_MAX_TOKENS, `stop`, `seed`, `temperature`, `response_format`; ADR 0017).
-Costs a few cents.
+RATCHET_TEACHER_MAX_TOKENS, `stop`, `seed`, `temperature`, `response_format`; ADR 0017), and
+whether it takes `response_format` json_schema (strict) with an answer that matches the schema
+(ADR 0042). A teacher that refuses json_schema is a warning, not a failure: the gateway then sends
+json_object with the schema in the system message. Costs a few cents.
 """
 
 from __future__ import annotations
@@ -13,8 +15,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 import httpx
+
+ROOT = Path(__file__).resolve().parents[1]
 
 BASE = os.environ.get("RATCHET_TEACHER_BASE", "https://api.tokenfactory.nebius.com/v1").rstrip("/")
 KEY = os.environ.get("NEBIUS_API_KEY", "")
@@ -34,6 +39,63 @@ PROMPT = [
     {"role": "system", "content": 'Reply with JSON only: {"category": "billing|technical|account", "priority": "low|high"}'},
     {"role": "user", "content": "I was charged twice for my Pro plan this month."},
 ]
+# Structured outputs (ADR 0042): what an OpenAI SDK's `.parse()` sends for a small Pydantic model.
+SCHEMA_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "ticket",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["billing", "technical", "account"]},
+                "priority": {"type": "string", "enum": ["low", "high"]},
+            },
+            "required": ["category", "priority"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def schema_errors(text: str) -> list[str]:
+    """Why a json_schema answer does not match SCHEMA_FORMAT's schema (`ratchet.jsonschema_lite`, as the gateway checks
+    it, after the same cleaning: reasoning and a fence removed), or [] when it does."""
+    if str(ROOT) not in sys.path:  # `python scripts/day1_check.py` puts scripts/, not the repo, on the path
+        sys.path.insert(0, str(ROOT))
+    from ratchet import schema_tasks, tasks
+
+    task = tasks.Task("day1-schema").bound(schema_tasks.contract_for(SCHEMA_FORMAT))
+    assert task.contract is not None
+    return task.contract.errors(tasks.clean_answer(task, text))
+
+
+def check_json_schema(c: httpx.Client, auth: dict[str, str]) -> bool:
+    """The teacher with `response_format` json_schema: `[ok]` when it answers with JSON that matches the schema;
+    `[warn]` when it refuses the format with a 400 (the gateway asks again with json_object and the schema in the system
+    message, ADR 0042) or its answer does not match (the gateway repairs it once, RATCHET_SCHEMA_REPAIR); `[FAIL]`
+    (returns False) for any other status or a body without an answer."""
+    body = {"model": TEACHER, "messages": PROMPT, "max_tokens": 400, "response_format": SCHEMA_FORMAT}
+    r = c.post(f"{BASE}/chat/completions", headers=auth, json=body)
+    if r.status_code == 400:
+        print(f"[warn] {TEACHER} refused response_format json_schema: HTTP 400 {r.text[:200]}")
+        print("  The gateway asks again with json_object and the schema in the system message (ADR 0042).")
+        return True
+    if r.status_code != 200:
+        print(f"[FAIL] {TEACHER} with response_format json_schema: HTTP {r.status_code} {r.text[:200]}")
+        return False
+    try:
+        text = (r.json()["choices"][0].get("message") or {}).get("content") or ""
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        print(f"[FAIL] {TEACHER} with response_format json_schema: no answer in the body {r.text[:200]}")
+        return False
+    errors = schema_errors(text)
+    if errors:
+        print(f"[warn] {TEACHER} took json_schema, but its answer does not match: {errors[0]}")
+        print("  The gateway repairs such an answer once (RATCHET_SCHEMA_REPAIR) and never stores one that does not match.")
+    else:
+        print(f"[ok] {TEACHER} accepts response_format json_schema (strict): the answer matches the schema")
+    return True
 
 
 def main(client: httpx.Client | None = None) -> int:
@@ -94,6 +156,7 @@ def main(client: httpx.Client | None = None) -> int:
         else:
             finish = r.json()["choices"][0].get("finish_reason")
             print(f"[ok] {TEACHER} accepts max_tokens={TEACHER_MAX_TOKENS}, stop, seed, temperature: finish_reason={finish}")
+        ok &= check_json_schema(c, auth)
     print("\nAll good." if ok else "\nSome checks failed: update ratchet/config.py before building on them.")
     return 0 if ok else 1
 

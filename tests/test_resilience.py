@@ -42,7 +42,7 @@ from fakes import FALLBACK_TEACHER, OPEN_TEACHER, FakeClock, FakeOpenAIServer, R
 from fastapi.testclient import TestClient
 from sdk_bridge import make_openai_client, sdk
 
-from ratchet import licenses
+from ratchet import licenses, tasks
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
 from ratchet.live import AdapterReloader, adapter_reloader
@@ -75,7 +75,14 @@ CHAT = "/v1/chat/completions"
 TEACHER_URL = "https://teacher.test/v1/chat/completions?token=do-not-log"
 TEACHER_BASE = "https://teacher.test/v1"
 TEACHER_KEY = "tf-teacher-api-key"
-NO_ERRORS = {"student_errors": 0, "audit_errors": 0, "shadow_errors": 0, "degraded_answers": 0, "fallback_answers": 0}
+NO_ERRORS = {
+    "student_errors": 0,
+    "audit_errors": 0,
+    "shadow_errors": 0,
+    "degraded_answers": 0,
+    "fallback_answers": 0,
+    "repair_errors": 0,
+}
 HI = [{"role": "user", "content": "hi"}]
 KEY = "resilience-test-key-0123456789abcdef"
 OK_BODY = {"model": "m", "choices": [{"message": {"content": "hi"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
@@ -1662,7 +1669,7 @@ def test_demo_student_outage_opens_and_closes_the_breaker(gw_env, monkeypatch):
     assert any(e["kind"] == "circuit" for e in stats["events"])
 
 
-@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12", "FR-2.15")
+@pytest.mark.req("FR-2.11", "FR-2.9", "FR-2.12", "FR-2.15", "FR-1.41")
 def test_every_request_row_has_a_route():
     clock = FakeClock()
     led = Ledger(":memory:")
@@ -1692,6 +1699,11 @@ def test_every_request_row_has_a_route():
     student.text = A
     led.update_eval(live, {"threshold": 0.99})
     seen.append(r.handle(_ask("unsure"), TRIAGE).route)
+    # The release gate disabled the task on this version (FR-14.1): the student is not called.
+    disabled = {"spec_hash": tasks.get(TRIAGE).spec_hash, "threshold": 1.01, "disabled": "regressed"}
+    led.update_eval(live, {"threshold": 0.99, "tasks": {TRIAGE: disabled}})
+    seen.append(r.handle(_ask("disabled"), TRIAGE).route)
+    led.update_eval(live, {"threshold": 0.99})
     teacher.raise_on.add(OPEN_TEACHER)  # the primary teacher is down: the fallback answers
     seen.append(r.handle(_ask("unsure, primary down"), TRIAGE).route)
     fallback.raise_on.add(FALLBACK_TEACHER)  # both are down: the student's own answer, degraded
@@ -1701,6 +1713,10 @@ def test_every_request_row_has_a_route():
     seen += [r.handle(_ask(f"down {i}"), TRIAGE).route for i in range(3)]
     led.set_flag("student_disabled", True, "cli:ops")  # an operator's kill switch (ADR 0064): not even a breaker probe
     seen.append(r.handle(_ask("student off"), TRIAGE).route)
+    # A tool request and a part only the teacher reads go to the teacher alone, each with its own route (FR-1.41).
+    weather = [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}]
+    seen.append(r.handle(_ask("weather?"), TRIAGE, params=GenParams(tools=weather)).route)
+    seen.append(r.teacher_only(_ask("image"), TRIAGE, route="multimodal").route)
     assert seen == [
         "cold_start",
         "pinned",
@@ -1709,12 +1725,15 @@ def test_every_request_row_has_a_route():
         "student",
         "n_choices",
         "confidence",
+        "task_disabled",
         "fallback_teacher",
         "degraded",
         "student_error",
         "student_error",
         "student_breaker",
         "student_disabled",
+        "tools",
+        "multimodal",
     ]
     assert set(seen) == set(ROUTES)
     assert led.db.execute("SELECT COUNT(*) FROM requests WHERE route IS NULL").fetchone()[0] == 0
@@ -1731,6 +1750,9 @@ def test_every_request_row_has_a_route():
             "student_breaker": 1,
             "n_choices": 1,
             "student_disabled": 1,
+            "task_disabled": 1,
+            "tools": 1,
+            "multimodal": 1,
         },
         "research-plan": {"pinned": 1},
         "unregistered-task": {"unknown_task": 1},
@@ -2086,7 +2108,7 @@ def test_degraded_mode_never_hides_a_client_error_or_serves_an_invalid_answer():
     assert r.handle(_ask("down"), TRIAGE).route == "degraded"  # the baseline: an unavailable teacher degrades
     assert r.handle(_ask("down"), TRIAGE, params=GenParams(max_tokens=50)).route == "degraded"
     with pytest.raises(httpx.ConnectError):
-        r.handle(_ask("tools"), TRIAGE, params=GenParams(tools=TOOLS))  # the student never saw the tools
+        r.handle(_ask("tools"), TRIAGE, params=GenParams(tools=TOOLS))  # a tool request is teacher-only (FR-1.41)
     with pytest.raises(httpx.ConnectError):
         r.teacher_only(_ask("image"), TRIAGE)
 

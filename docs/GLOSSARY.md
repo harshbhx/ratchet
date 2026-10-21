@@ -8,7 +8,8 @@
 | **Cascade** | Try the cheap model first; send the request to the expensive model only when needed. |
 | **Escalation** | A request the student was not confident about, sent to the teacher. |
 | **Confidence** | A score from 0 to 1: 0.4 × token probability of the best majority sample + 0.6 × agreement among samples. Invalid-format answers score 0. |
-| **Threshold** | The confidence at or above which the student's answer is served. Calibrated per version. |
+| **Threshold** | The confidence at or above which the student's answer is served. Calibrated per version, and per task when several tasks share the adapter. |
+| **Per-task calibration** | When several tasks share one adapter, each gets its own threshold and held-out precision and coverage in the version's eval (`eval['tasks']`), and the release gate checks each one; a task that fails is disabled on that version (the teacher answers it) or rejects the version ([ADR 0040](adr/0040-per-task-calibration.md)). |
 | **Calibration** | Picking the lowest threshold whose served answers reach a target precision (97%) on held-out data. |
 | **Self-consistency / agreement** | How many of the student's n samples (default 3) give the same answer, compared pairwise with the task's field comparators. |
 | **Logprobs** | The model's log-probabilities for each generated token. Used to estimate how sure it is. |
