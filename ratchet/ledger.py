@@ -273,6 +273,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS failures_request_id ON failures (request_id)",
     "CREATE INDEX IF NOT EXISTS failures_ts ON failures (ts)",
     "CREATE INDEX IF NOT EXISTS failures_client_ts ON failures (client, ts)",
+    # The period's budget alerts the spend meter reads when it starts, so a restart does not repeat one (ADR 0063).
+    "CREATE INDEX IF NOT EXISTS events_kind_ts ON events (kind, ts)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -616,6 +618,37 @@ class Ledger:
                 total += float(self._rdb.execute(q, args).fetchone()[0])
             out[client] = total
         return out
+
+    @_reads
+    def api_usage_since(self, since: float) -> dict[str | None, tuple[int, float]]:
+        """Per client (an API key name, or None for requests without one): (answered requests, US dollars) of gateway API
+        requests since `since` (a wall-clock time), the spend of failed ones included. Gateway API requests are the rows
+        with a gateway request id; Scout's agents and the simulator call the cascade without one, so their spend stays
+        under their own guard (INV-11). What `spend.SpendMeter` reads when it starts (ADR 0063): one pass over the
+        `(client, ts)` index of each table, at startup only."""
+        out: dict[str | None, tuple[int, float]] = {}
+        rows = self._rdb.execute(
+            "SELECT client, COUNT(*) n, COALESCE(SUM(cost_usd), 0.0) usd FROM requests"
+            " WHERE ts>=? AND request_id IS NOT NULL GROUP BY client",
+            (since,),
+        )
+        for r in rows:
+            out[r["client"]] = (int(r["n"]), float(r["usd"]))
+        failed = self._rdb.execute(
+            "SELECT client, COALESCE(SUM(cost_usd), 0.0) usd FROM failures"
+            " WHERE ts>=? AND cost_usd>0 AND request_id IS NOT NULL GROUP BY client",
+            (since,),
+        )
+        for r in failed:
+            n, usd = out.get(r["client"], (0, 0.0))
+            out[r["client"]] = (n, usd + float(r["usd"]))
+        return out
+
+    @_reads
+    def events_since(self, kind: str, since: float) -> list[dict[str, Any]]:
+        """The events of one kind written since `since` (a wall-clock time), oldest first (`events_kind_ts`)."""
+        rows = self._rdb.execute("SELECT id, ts, day, kind, detail FROM events WHERE kind=? AND ts>=? ORDER BY id", (kind, since))
+        return [dict(r) for r in rows]
 
     @_locked
     def client_requests_since(self, client: str, ts: float) -> int:

@@ -299,7 +299,7 @@ EXAMPLES = REGISTRY.counter(
 REJECTIONS = REGISTRY.counter(
     "ratchet_rejections_total",
     "Chat requests refused before the cascade, by reason (auth, invalid_request, unknown_task, task_not_allowed, quota, "
-    "too_large, disconnected, forbidden, other).",
+    "budget, rate, overloaded, too_large, disconnected, forbidden, other).",
     ("reason",),
 )
 CIRCUIT_OPEN = REGISTRY.gauge("ratchet_circuit_open", "1 while a breaker is open or half-open, else 0.", ("breaker",))
@@ -308,4 +308,7 @@ VERSION_TRAFFIC = REGISTRY.gauge(
 )
 SPEND_TODAY = REGISTRY.gauge(
     "ratchet_spend_today_usd", "US dollars spent since 00:00 UTC by client, failed requests included.", ("client",)
+)
+INFLIGHT = REGISTRY.gauge(
+    "ratchet_inflight_requests", "Chat requests in flight now; RATCHET_MAX_INFLIGHT refuses past it with a 503."
 )

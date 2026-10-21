@@ -11,7 +11,7 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, NoReturn
 
 import httpx
 
@@ -43,6 +43,7 @@ from .resilience import (
     names_model,
     teacher_unavailable,
 )
+from .spend import BudgetExceeded
 
 # Given a version, return (provider, model name to send). For vLLM + LoRA the model name is the adapter name.
 StudentResolver = Callable[[Version], tuple[Provider, str]]
@@ -124,7 +125,9 @@ def _endpoint(provider: Provider) -> str:
 class RequestMeta:
     """What a caller knows about a request besides its messages and parameters; later items fill more of it.
     `storable=False` keeps every teacher answer of the request out of the training set (no example is inserted or
-    bumped); the request is still answered, audited and logged."""
+    bumped); the request is still answered, audited and logged. `student_only=True` (the gateway's daily budget is
+    spent under RATCHET_BUDGET_MODE=student_only, ADR 0063) serves only what the student answers alone: no audit, no
+    shadow, and a request that needs the teacher raises `spend.BudgetExceeded` instead of calling it."""
 
     request_id: str | None = None
     client_request_id: str | None = None
@@ -132,6 +135,7 @@ class RequestMeta:
     storable: bool = True
     end_user: str | None = None
     idempotency_key: str | None = None
+    student_only: bool = False
 
 
 # The model calls of one request, as `Result.usage_breakdown` names them: the student's samples (one call, n choices),
@@ -493,15 +497,16 @@ class Ratchet:
         *,
         call: str = "",
         final: bool = False,
+        status: int | None = None,
     ) -> None:
         """A `failures` row (ADR 0062) for `e` at `stage` (`ledger.FAILURE_STAGES`): the exception's class, status and
-        code only (`describe_failure`, prefixed with `call` when the stage holds several calls), the status it stands for,
-        the time since `t0` on `self.timer`, and `cost`: what the request spent with no `requests` row to hold it (only a
-        request that fails, `final`). A refusal by an open breaker that spent nothing is written for the 1st, 11th, 21st
-        ... time per stage only (OPEN_SAMPLE). A `final` failure tells the gateway's context its row is decided and where
-        the request failed, so the gateway writes no second row and does not count the mapped 4xx (a teacher's 400 or
-        429) as a refusal before the cascade. Never raises: a failures row must not fail the request it describes (INV-7,
-        INV-15)."""
+        code only (`describe_failure`, prefixed with `call` when the stage holds several calls), the status it stands for
+        (`status`, else `obs.failure_status`), the time since `t0` on `self.timer`, and `cost`: what the request spent
+        with no `requests` row to hold it (only a request that fails, `final`). A refusal by an open breaker that spent
+        nothing is written for the 1st, 11th, 21st ... time per stage only (OPEN_SAMPLE). A `final` failure tells the
+        gateway's context its row is decided and where the request failed, so the gateway writes no second row and does
+        not count the mapped 4xx (a teacher's 400 or 429) as a refusal before the cascade. Never raises: a failures row
+        must not fail the request it describes (INV-7, INV-15)."""
         if final:
             ctx = self._own_context(meta)
             if ctx is not None:
@@ -521,7 +526,7 @@ class Ratchet:
                 task=task.name,
                 stage=stage,
                 error=f"{call}: {describe_failure(e)}" if call else describe_failure(e),
-                status=obs.failure_status(e),
+                status=status if status is not None else obs.failure_status(e),
                 latency_ms=(self.timer() - t0) * 1000,
                 cost_usd=cost if cost > 0 else 0.0,
             )
@@ -566,14 +571,36 @@ class Ratchet:
         label = metrics.client_label(client)
         _spend(metrics.COST, label, cost)
         _spend(metrics.FAILED_COST, label, cost)
+        ctx = self._own_context(meta)
+        if ctx is not None:
+            ctx.spent_usd += cost  # the gateway counts it against the key's budget (ADR 0063)
         if obs.failure_status(e) is not None:
             self._record_failure("teacher", e, task, client, meta, t0, cost, final=True)
             return
-        ctx = self._own_context(meta)
         if ctx is not None:
             ctx.failed_cost_usd += cost
         else:
             self._record_failure("gateway", e, task, client, meta, t0, cost)
+
+    def _budget_refused(
+        self, need: str, task: tasks.Task, client: str | None, meta: RequestMeta | None, t0: float, cost: float = 0.0
+    ) -> NoReturn:
+        """Refuse a request that needs the teacher while the gateway's budget is spent (`RequestMeta.student_only`, ADR
+        0063): raise `BudgetExceeded`, which the gateway answers with a 429, without calling the teacher. What the request
+        already spent (the student's samples) is counted like a failed request's (NFR-3): in the metrics, on the request's
+        context for the key's budget, and in a `budget` failures row written here, never throttled. A refusal that spent
+        nothing gets its row from the gateway, throttled like its other refusals."""
+        e = BudgetExceeded(need)
+        ctx = self._own_context(meta)
+        if ctx is not None:
+            ctx.stage = "budget"
+            ctx.spent_usd += cost
+        if cost > 0:
+            label = metrics.client_label(client)
+            _spend(metrics.COST, label, cost)
+            _spend(metrics.FAILED_COST, label, cost)
+            self._record_failure("budget", e, task, client, meta, t0, cost, final=True, status=429)
+        raise e
 
     # ------------------------------------------------------------------
     def _pick_version(self) -> Version | None:
@@ -917,6 +944,8 @@ class Ratchet:
         request's row."""
         t0 = self.timer() if t0 is None else t0
         plan = plan or self._plain
+        if meta is not None and meta.student_only:  # the gateway's budget is spent: no teacher call (ADR 0063)
+            self._budget_refused(route, task, client, meta, t0)
         try:
             served, primary = self._serve_teacher(task, messages, plan.serve, plan.visible_max, plan.n)
         except Exception as e:
@@ -1051,6 +1080,12 @@ class Ratchet:
         teacher alone (`_teacher_only`); under `reject` an unregistered task raises `tasks.UnknownTask`. The client
         allow-list (`Task.clients`) is the gateway's check (`task_for`): internal callers pass no key.
 
+        With `meta.student_only` (the gateway's daily budget is spent, RATCHET_BUDGET_MODE=student_only; ADR 0063) only
+        a confident student answer is served, with no audit (the draw is still made, so the random stream stays the same)
+        and no shadow (its arbitration would need the teacher, and an unarbitrated disagreement would count against the
+        candidate). A request that needs the teacher (an escalation, a cold start, a pinned or unregistered task, `tools`)
+        raises `spend.BudgetExceeded` before any teacher call, its student spend recorded as a failed request's.
+
         `requests.wall_ms` is the time from here to the ledger write on `self.timer`, every model call included;
         `latency_ms` stays the providers' own time, so `wall_ms - latency_ms` is Ratchet's overhead (ADR 0060)."""
         t0 = self.timer()
@@ -1061,6 +1096,9 @@ class Ratchet:
             return self._teacher_only(task, messages, client, plan, params, route="unknown_task", t0=t0, meta=meta)
         if task.pinned:
             return self._teacher_only(task, messages, client, plan, params, t0=t0, meta=meta)
+        student_only = meta is not None and meta.student_only  # the gateway's budget is spent (ADR 0063)
+        if student_only and params is not None and params.tools:  # the student does not see tools: only the teacher could
+            self._budget_refused("tools", task, client, meta, t0)
         version = self._pick_version()
         cost = 0.0
         # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
@@ -1118,7 +1156,8 @@ class Ratchet:
             if sc.valid and sc.confidence >= threshold and picked is not None:
                 served, served_by, route, served_choices = sc.answer, "student", "student", picked
                 fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
-                if self.rng.random() < self.s.audit_rate:  # audit = quality signal + free training data
+                # audit = quality signal + free training data; drawn also under student_only, which skips the call
+                if self.rng.random() < self.s.audit_rate and not student_only:
                     try:
                         audit = self._call_teacher(task, messages, plan, "audit", meta)
                     except CircuitOpen as e:  # the teacher failed too often lately: not called, not counted again
@@ -1147,6 +1186,8 @@ class Ratchet:
             else:
                 escalated, route = True, "confidence"
         if served_by == "teacher":
+            if student_only:  # the student could not answer alone, and the teacher is out of budget
+                self._budget_refused("escalation", task, client, meta, t0, cost)
             try:
                 answer = self._call_teacher(task, messages, plan, "serve", meta)
             except Exception as e:  # no teacher answer: degraded if allowed, else the gateway maps the error (INV-7)
@@ -1196,7 +1237,7 @@ class Ratchet:
         # disagreement (Ledger.shadow_quality). An audit answer like that is no reference at all: the shadow
         # is compared with the served answer, as when no audit ran. A request a stand-in answered (degraded, or
         # the fallback teacher) runs no shadow: its only reference would not be the primary teacher's (ADR 0019).
-        shadow = None if route in STAND_IN_ROUTES else self.ledger.by_state("shadow")
+        shadow = None if route in STAND_IN_ROUTES or student_only else self.ledger.by_state("shadow")
         shadow_vid = shadow_serve = shadow_agree = None
         if shadow is not None:
             try:

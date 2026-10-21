@@ -707,6 +707,25 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
     # 6.12 Operations
+    "FR-12.2": (
+        "ratchet.spend:SpendMeter",
+        "ratchet.spend:BudgetExceeded",
+        "ratchet.auth:parse_key_limits",
+        "ratchet.config:Settings.limit_policy",
+        "ratchet.ledger:Ledger.api_usage_since",
+        "ratchet.gateway:_quota",
+        "ratchet.gateway:_budget",
+        "ratchet.gateway:_spend_headers",
+        "ratchet.router:Ratchet._budget_refused",
+    ),
+    "FR-12.3": (
+        "ratchet.ratelimit:Limiter",
+        "ratchet.ratelimit:TokenBucket",
+        "ratchet.auth:KeyLimits",
+        "ratchet.gateway:_admit",
+        "ratchet.gateway:_refusal",
+        "ratchet.gateway:_complete",
+    ),
     "FR-12.4": (
         "ratchet.ledger:Ledger.log_failure",
         "ratchet.ledger:Ledger.totals",
@@ -776,11 +795,17 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.live:AdapterReloader",
         "ratchet.live:reload_adapters",
     ),
-    "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night", "ratchet.providers:GenPolicy"),
+    "NFR-3": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.nightschool.orchestrate:run_night",
+        "ratchet.providers:GenPolicy",
+        "ratchet.spend:SpendMeter.add",
+    ),
     "NFR-4": ("ratchet.redact:redact_messages",),
     "NFR-5": (
         "ratchet.auth:KeyRing.identify",
         "ratchet.gateway:_quota",
+        "ratchet.gateway:_admit",
         "ratchet.gateway:_access",
         "ratchet.gateway:Runtime._set_access",
         "ratchet.access:ROUTES",
@@ -814,7 +839,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.nightschool.dataset:rows",
         "ratchet.nightschool.evaluate:cascade_eval",
     ),
-    "INV-11": ("ratchet.gateway:_scout_precheck", "ratchet.gateway:_run_scout", "ratchet.scout.guard:Guard.admit"),
+    "INV-11": (
+        "ratchet.gateway:_scout_precheck",
+        "ratchet.gateway:_run_scout",
+        "ratchet.scout.guard:Guard.admit",
+        "ratchet.ledger:Ledger.api_usage_since",
+    ),
     "INV-12": ("ratchet.redact:redact_messages", "ratchet.redact:redact_json", "ratchet.router:Ratchet._store_example"),
     "INV-13": (
         "ratchet.auth:KeyRing.identify",
@@ -822,6 +852,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_access",
         "ratchet.ledger:Ledger.save_task",
         "ratchet.access:pseudonyms",
+        "ratchet.auth:parse_key_limits",
     ),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
     "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
@@ -1159,7 +1190,7 @@ def rule_routes_documented(ctx: Context) -> list[str]:
 
 
 # config.py readers: _env(name, default), _int(name, default), ..., _float_or_none(name)
-ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none"}
+ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none", "_int_or_none"}
 
 
 def _env_name(node: ast.AST) -> str | None:

@@ -51,3 +51,33 @@ Lane D (operations, security, performance) does not number invariants in CLAUDE.
 **Enforcing code.** `ratchet/router.py`: `Ratchet._teacher_failed`, `Ratchet._record_failure`. `ratchet/gateway.py`: `_failure_row`. `ratchet/obs.py`: `RequestContext.failed_cost_usd`. `ratchet/ledger.py`: `Ledger.log_failure`, `Ledger.totals`.
 
 **Proving tests.** `tests/test_observability.py`: `test_teacher_failure_row_carries_the_student_cost`, `test_teacher_502_through_the_gateway_writes_one_row_with_the_student_cost`, `test_a_bug_on_the_teacher_path_is_a_gateway_failure_not_the_teachers` (a bug's row carries the spend, also past the throttle), `test_swallowed_failures_get_rows_and_breaker_refusals_are_sampled` (cost 0 around an answered request); `tests/test_system.py`: `test_reference_workloads_reproduce_v040` (three workloads' totals exactly as v0.4.0 gave them).
+
+## The request path never counts rows to enforce a limit (OPS-COST-RATE-LIMITS, ADR 0063)
+
+**Text.** The quota, budget and rate checks on the request path read memory only: `SpendMeter.usage` and `add` and `Limiter.admit` never query the ledger. The spend meter reads the ledger when it starts and when the clock moves back to an earlier day, nowhere else. Code that spends money for a gateway request after it was answered (an off-path audit or check) calls `SpendMeter.add(client, usd, requests=0)` and records the cost where the startup read finds it (`requests.cost_usd` or `failures.cost_usd` of a row with the request's id); never count spend for a limit anywhere else.
+
+**Why.** A `COUNT(*)` per request under the ledger's one lock grows with the table and makes every request wait for every other; a second count elsewhere would let the limits and the ledger disagree.
+
+**Enforcing code.** `ratchet/spend.py`: `SpendMeter.usage`, `SpendMeter.add`, `SpendMeter._seed`, `SpendMeter._sync`. `ratchet/ratelimit.py`: `Limiter.admit`. `ratchet/gateway.py`: `_quota`, `_budget`, `_admit`, `_complete`. `ratchet/ledger.py`: `Ledger.api_usage_since`.
+
+**Proving tests.** `tests/test_limits.py`: `test_quota_path_issues_no_count_query` (a sqlite trace callback), `test_spend_survives_a_restart_on_the_same_ledger`, `test_utc_rollover_resets_the_counters_and_a_clock_moved_back_reads_the_ledger`.
+
+## Gateway limits count gateway requests only (OPS-COST-RATE-LIMITS, ADR 0063)
+
+**Text.** The per-key budgets, quotas and the gateway's daily budget count only requests the gateway served on `/v1` (the rows with a gateway request id), answered and failed. Scout's agents and the simulator call `Ratchet.handle` without a gateway request id and without `RequestMeta.student_only`, so their spend never counts toward a key's or the gateway's limits, and a spent `/v1` budget never refuses them: Scout stays under its own guard (invariant 11). `student_only` is a per-request flag set by the gateway, never a global switch on `Ratchet`.
+
+**Why.** Scout has its own budget guard; a shared count would let a demo run spend a paying client's budget, and a global switch would fail Scout's pinned planner and writer whenever `/v1` spent its budget.
+
+**Enforcing code.** `ratchet/ledger.py`: `Ledger.api_usage_since` (`request_id IS NOT NULL`). `ratchet/gateway.py`: `_complete` (the only caller of `SpendMeter.add` and the only place that sets `student_only`). `ratchet/router.py`: `RequestMeta.student_only`, `Ratchet._budget_refused`.
+
+**Proving tests.** `tests/test_limits.py`: `test_scout_spend_stays_under_its_own_guard`, `test_utc_rollover_resets_the_counters_and_a_clock_moved_back_reads_the_ledger` (a row without a gateway request id is not read).
+
+## A spent budget never reaches the teacher (OPS-COST-RATE-LIMITS, ADR 0063)
+
+**Text.** With `RequestMeta.student_only`, `Ratchet.handle` and `_teacher_only` make no teacher call of any kind (no escalation, cold start, pinned or teacher-only answer, audit or arbitration) and run no shadow; a request that needs the teacher raises `spend.BudgetExceeded` before the call, and what its student samples cost is recorded as a failed request's (a `budget` failures row, the metrics, the key's budget). The audit draw is still made, so the random stream does not depend on the budget.
+
+**Why.** The mode exists so a spent budget stops costing; one teacher call on any path would make the budget a suggestion, and an unarbitrated shadow disagreement would count against a candidate for a reason that has nothing to do with it.
+
+**Enforcing code.** `ratchet/router.py`: `Ratchet.handle` (`student_only`), `Ratchet._teacher_only`, `Ratchet._budget_refused`. `ratchet/gateway.py`: `_budget`, `_gateway_budget_error`.
+
+**Proving tests.** `tests/test_limits.py`: `test_student_only_serves_a_confident_student_and_refuses_what_needs_the_teacher`, `test_router_refuses_teacher_work_under_student_only_without_a_gateway`.

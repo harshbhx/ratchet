@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 767 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability), ~75 s
+pytest -q                     # 791 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_limits), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -33,12 +33,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_perf.py` | 22 |
 | `tests/test_security.py` | 11 |
 | `tests/test_observability.py` | 28 |
-| **Total** | **767** |
+| `tests/test_limits.py` | 24 |
+| **Total** | **791** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), and request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`, `tests/test_limits.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)), and the spend and rate limits ([`tests/test_limits.py`](#teststest_limitspy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -644,6 +645,37 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 | `test_metrics_module_format` | Label and help escaping, a counter refusing to go down or take the wrong label count, duplicate names refused, bad buckets refused, `Gauge.replace` dropping old series, NaN observations ignored, cumulative buckets, `number()` formatting, relabelled series added together, `client_label` |
 | `test_a_failure_never_starts_the_live_ledgers_day_one` | On a fresh live (`auto_day`) file a 401 leaves the origin unset (day 0); day 1 starts at the first request 20 h later; a later failure is filed under day 2; after reopening the file the origin is the same and the next request is still day 1 |
 | `test_old_ledger_gains_request_ids_and_the_failures_table` | An old file gains `request_id`, `client_request_id` and the `failures` table; the lookup uses `requests_request_id`; the stage list; `spend_since` adds answered and failed spend per client since a time |
+
+### `tests/test_limits.py`
+
+Spend and rate limits ([ADR 0063](adr/0063-spend-and-rate-limits.md), FR-12.2, FR-12.3, NFR-3, NFR-5, INV-11, INV-13). Gateways run as live gateways through `Runtime(transports=)` with a `FakeOpenAIServer` teacher whose answers cost a known amount (10 prompt and 5 completion tokens at the teacher's price; cold start, so the teacher answers every request), or in mock mode; the spend meter runs on its own with an injected wall clock (`FakeClock`), the rate limits on the runtime's monotonic `FakeClock`. Concurrency tests block a teacher on a `threading.Event` and send the second request from the main thread while the first waits in a background thread, both through one `TestClient`. Live `Settings` pass every limit explicitly (`_live`), because live mode's per-IP default would refuse a burst from one test address.
+
+| Test | Covers |
+|---|---|
+| `test_key_daily_usd_cap_refuses_once_spent_and_other_keys_go_on` | A cap of 2.5 requests' worth: three 200s with `X-Ratchet-Spend-Today-USD` and `X-Ratchet-Budget-Remaining-USD` counting, the third overshooting by its own cost; the fourth a 429 `insufficient_quota` / `budget_exceeded` with remaining 0, `Retry-After`, `X-Ratchet-Budget-Reset`, `X-Should-Retry: false`, a `budget` failures row and a `budget` rejection; another key without a cap gets a 200 and no spend headers; no requests row for the refusal |
+| `test_monthly_cap_resets_on_the_first_and_names_the_later_reset` | On Oct 30 a spent daily and monthly cap: `Retry-After` runs to Nov 1 (the later reset); still refused on the 31st, a new day; answered on the 1st |
+| `test_spend_survives_a_restart_on_the_same_ledger` | A second `Runtime` on the same file reads today's requests, dollars and failed spend (a `failures` row) per key and for the gateway, and refuses the spent dollar cap and the used request quota |
+| `test_failed_requests_spend_counts_against_the_key` | An unsure student, then a teacher 502: the samples' cost counts against the key's dollars (no request counted), at once and after a restart |
+| `test_utc_rollover_resets_the_counters_and_a_clock_moved_back_reads_the_ledger` | 23:59 on Oct 31, then 00:01 on Nov 1: day, month and gateway counters start from zero; a new day within the month keeps the month; a clock moved back to Oct 31 reads that day's gateway rows from the ledger, leaving out a row without a gateway request id; `month_bounds` |
+| `test_meter_ignores_bad_costs_and_counts_spend_without_a_request` | Negative, NaN and infinite costs count as 0 (the requests still count); `add(requests=0)` adds dollars only |
+| `test_budget_alerts_fire_once_per_share_also_after_a_restart` | 50, 80 and 100% of a key's $5.00 daily cap and 50% of the gateway's $10.00, each once and in order (two shares at once when one request crosses both); a restarted meter on the same ledger repeats none; one started with a lower gateway budget writes the three shares it already passed; the next UTC day starts over; `money` |
+| `test_an_alert_that_cannot_be_written_is_tried_again` | A failing event write is retried on the next add, never raised |
+| `test_quota_path_issues_no_count_query` | With a sqlite trace callback: `SpendMeter.usage` issues no statement, and a chat request under a daily quota issues no `COUNT(*) FROM requests WHERE client` |
+| `test_student_only_serves_a_confident_student_and_refuses_what_needs_the_teacher` | The first request's audit spends the gateway's budget; then a confident student answer is a 200 with no audit and no shadow (route `student`, `audited` 0, no shadow version, one student call); an escalation is a 429 `gateway_budget_exceeded` that names no amount, with one `budget` failures row carrying the samples' cost; a pinned task and a request with `tools` get the 429 without any model call; a `budget` event at 100% |
+| `test_block_mode_refuses_every_chat_request_until_midnight` | Past the gateway's budget every key's chat request is a 429 `gateway_budget_exceeded`; `/v1/models` still answers; `/ratchet/stats` `budget` block |
+| `test_scout_spend_stays_under_its_own_guard` | A Scout run spends money that neither the meter nor a fresh one counts; `/v1` spends the budget, the next chat request is refused, Scout still runs |
+| `test_key_limits_override_the_defaults_and_bad_specs_stop_startup` | A per-key `daily_requests` override against the default; `parse_key_limits` with spaces and every field; 14 malformed specs, each naming `RATCHET_KEY_LIMITS` and never echoing a pasted key; a `Runtime` naming an unknown key does not start |
+| `test_task_scope_is_403_and_lists_only_the_scoped_tasks` | A pinned task and `default` outside the scope are 403 `task_not_allowed`; an unknown-task 400 lists only the scope's tasks; the refusals used no quota; another key sends the pinned task |
+| `test_store_zero_keeps_a_keys_requests_out_of_the_training_set` | `store=0`: the key's teacher answer is served with `stored` 0; another key's is stored |
+| `test_rpm_bucket_refuses_past_the_burst_and_refills_on_the_clock` | 60 a minute: ten 200s with the remaining count falling to 0; the 11th a 429 `rate_limit_exceeded` with `Retry-After: 1`, reset `10s`, no `X-Should-Retry`, a `rate` row and rejection; another key unaffected and without rate headers; one more a second later; the burst back a minute later |
+| `test_daily_quota_headers_win_over_the_rate_headers` | A key with both: the 200's `X-RateLimit-*-Requests` describe the daily quota |
+| `test_concurrency_one_refuses_a_second_request_while_the_first_runs` | `concurrency=1`: while the first request waits on the teacher, the key's second is a 429 with `Retry-After: 1`; another key is answered; after the first ends the slot is free again |
+| `test_max_inflight_answers_503_instead_of_queueing` | `RATCHET_MAX_INFLIGHT=1`: a second request is a 503 `overloaded` with `Retry-After: 1`, an `overloaded` rejection and a `rate` row; the in-flight count returns to 0 |
+| `test_per_ip_rate_on_a_gateway_without_keys` | Live default 120, mock 0; an open gateway with 6 a minute: the second request from one address (the first `X-Forwarded-For` hop) is a 429 with `Retry-After: 10` that does not echo the address; another address is answered; ten seconds later the first is again; with API keys the per-IP rate is off |
+| `test_token_bucket_concurrency_and_limiter_units` | `TokenBucket` (burst, refill, a clock moved back), `burst`, `RateLimiter`'s LRU bound and a new bucket for a new rate, `Concurrency`, and `Limiter.admit`'s order: a refusal holds no slot |
+| `test_limit_settings_are_checked_at_startup` | `limit_policy` reads the mode in any case and the shares sorted, once; eleven bad values each name their variable |
+| `test_stats_report_each_keys_spend_and_cap_and_the_security_switches` | `clients[].spent_today_usd` and `daily_cap_usd`, the three `security` keys and the `budget` block; key names only, never keys |
+| `test_router_refuses_teacher_work_under_student_only_without_a_gateway` | `RequestMeta(student_only=True)` on `Ratchet` itself: a pinned task raises `BudgetExceeded` (`pinned`) before any call and writes nothing; an unsure student raises it (`escalation`) after its samples with a `budget` row (429, the samples' cost) |
 
 ## Live-path tests
 
