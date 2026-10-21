@@ -64,8 +64,6 @@ def _float_or_none(name: str) -> float | None:
 # relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
 # checks). docs/CONFIGURATION.md lists them under "Reserved settings".
 RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
-    "teacher_probes": ("RATCHET_TEACHER_PROBES", "20", "the teacher watch (FR-16.7)"),
-    "adjudicate_max": ("RATCHET_ADJUDICATE_MAX", "50", "the teacher watch (FR-16.7)"),
     "take_rate": ("RATCHET_TAKE_RATE", "0.25", "verified savings receipts (FR-15.5)"),
     "receipt_min_audits": ("RATCHET_RECEIPT_MIN_AUDITS", "30", "verified savings receipts (FR-15.5)"),
     "mock_teacher_reasoning_mean": ("RATCHET_MOCK_TEACHER_REASONING_MEAN", "", "verified savings receipts (FR-15.5)"),
@@ -105,6 +103,9 @@ COST_MODELS = ("per_token", "gpu_hours")
 # turn the cost report into infinities.
 MAX_USD_PER_GPU_HOUR = 1000.0
 MAX_GPUS = 1024
+# The most probes (RATCHET_TEACHER_PROBES) or adjudications (RATCHET_ADJUDICATE_MAX) one night may run: each is paid
+# teacher calls, so a typo cannot turn the nightly job into a relabelling run.
+MAX_TEACHER_WATCH_CALLS = 10_000
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -325,13 +326,16 @@ class Settings:
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
     cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
 
-    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
-    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: teacher-watch probes and adjudications
-    # per night; the receipts' take rate, audits needed per task and the mock teacher's mean reasoning tokens (unset =
-    # the fixed RATCHET_TEACHER_REASONING_TOKENS); the backfill's batch API, discount and output cap; the ledger's sync
-    # mode.
+    # The teacher watch (FR-16.7, ADR 0033): stored labels Night School re-asks the teacher about per night (probes,
+    # FR-5.40) and contested labels it adjudicates per night with two more teacher answers each (FR-5.41); 0 = none.
+    # Read with `teacher_watch_limits()`.
     teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
     adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+
+    # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the receipts' take rate, audits needed per
+    # task and the mock teacher's mean reasoning tokens (unset = the fixed RATCHET_TEACHER_REASONING_TOKENS); the
+    # backfill's batch API, discount and output cap; the ledger's sync mode.
     take_rate: float = field(default_factory=lambda: _float("RATCHET_TAKE_RATE", "0.25"))
     receipt_min_audits: int = field(default_factory=lambda: _int("RATCHET_RECEIPT_MIN_AUDITS", "30"))
     mock_teacher_reasoning_mean: float | None = field(
@@ -478,6 +482,15 @@ class Settings:
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
                 raise ValueError(f"{env} must be a number strictly between 0 and 1, not {value!r}")
         return CertPolicy(mode, float(self.cert_target), float(self.cert_delta))
+
+    def teacher_watch_limits(self) -> tuple[int, int]:
+        """(RATCHET_TEACHER_PROBES, RATCHET_ADJUDICATE_MAX), checked: whole numbers from 0 to MAX_TEACHER_WATCH_CALLS,
+        because each probe is one teacher call and each adjudication two, paid every night. A bad value raises ValueError,
+        so the gateway, the simulator and the nightly job stop at startup."""
+        for env, value in (("RATCHET_TEACHER_PROBES", self.teacher_probes), ("RATCHET_ADJUDICATE_MAX", self.adjudicate_max)):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_TEACHER_WATCH_CALLS:
+                raise ValueError(f"{env} must be a whole number from 0 to {MAX_TEACHER_WATCH_CALLS:,}, not {value!r}")
+        return self.teacher_probes, self.adjudicate_max
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

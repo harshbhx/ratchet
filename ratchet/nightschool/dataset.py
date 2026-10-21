@@ -19,6 +19,9 @@
 - A row of a task that is pinned NOW is left out of both sets and counted (`excluded_pinned` in
   manifest.json; INV-10 at read time): pinning a task that already has data keeps that data from the
   student, and unpinning it brings the rows back, because the ledger keeps them.
+- A contested row (a later teacher label of the same request disagreed with it; the teacher watch,
+  FR-16.7) is left out of both sets and counted (`excluded_contested` in manifest.json), until Night
+  School's adjudication settles its label. `exclude_contested=False` (RATCHET_TEACHER_WATCH=0) keeps it.
 """
 
 from __future__ import annotations
@@ -41,10 +44,18 @@ def _prompt_key(r: Any) -> str:
     return example_hash(r["task"], json.loads(r["messages"])) if r["params"] else r["hash"]
 
 
-def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
+def rows(
+    ledger: Ledger,
+    split: str,
+    task: str | None = None,
+    counts: dict[str, int] | None = None,
+    *,
+    exclude_contested: bool = True,
+) -> list[dict[str, Any]]:
     """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
-    gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec) and
-    `excluded_pinned` (rows left out because their task is pinned now), each only when it happens."""
+    gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec),
+    `excluded_pinned` (rows left out because their task is pinned now) and `excluded_contested` (rows quarantined by the
+    teacher watch), each only when it happens."""
     out = []
     specs: dict[str, tasks.Task] = {}
     examples = ledger.examples(task=task)
@@ -61,6 +72,10 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
         if spec.pinned:  # INV-10 at read time: the task was pinned after these rows were stored
             if counts is not None:
                 counts["excluded_pinned"] = counts.get("excluded_pinned", 0) + 1
+            continue
+        if exclude_contested and r["contested"]:  # the teacher watch's quarantine (FR-16.7), in both splits
+            if counts is not None:
+                counts["excluded_contested"] = counts.get("excluded_contested", 0) + 1
             continue
         params = json.loads(r["params"]) if r["params"] else None
         if effective == "train" and params and "stop" in params:
@@ -110,11 +125,11 @@ def write_jsonl(items: list[dict[str, Any]], path: str | Path) -> Path:
     return p
 
 
-def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[str, Any]:
+def build(ledger: Ledger, out_dir: str | Path, task: str | None = None, *, exclude_contested: bool = True) -> dict[str, Any]:
     counts: dict[str, int] = {}
     golden_counts: dict[str, int] = {}
-    train = rows(ledger, "train", task, counts)
-    golden = rows(ledger, "golden", task, golden_counts)
+    train = rows(ledger, "train", task, counts, exclude_contested=exclude_contested)
+    golden = rows(ledger, "golden", task, golden_counts, exclude_contested=exclude_contested)
     out = Path(out_dir)
     write_jsonl(train, out / "train.jsonl")
     write_jsonl(golden, out / "golden.jsonl")
@@ -124,6 +139,7 @@ def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[
         "dataset_sha256": dataset_hash(train),
         "skipped_invalid": counts.get("skipped_invalid", 0),
         "excluded_pinned": counts.get("excluded_pinned", 0) + golden_counts.get("excluded_pinned", 0),
+        "excluded_contested": counts.get("excluded_contested", 0) + golden_counts.get("excluded_contested", 0),
         "bill_of_materials": ledger.bill_of_materials(),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))

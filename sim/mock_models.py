@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import random
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -100,17 +101,40 @@ def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
 
 class MockTeacher:
     """Plays Nemotron 3 Ultra: always right on labels, slow, reasoning tokens billed. Like Token Factory, it reports them
-    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`."""
+    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`.
 
-    def __init__(self, reasoning_tokens: int = 300, latency_ms: float = 2400.0):
+    `noise` > 0 plays an unstable teacher (the teacher watch's fault injection, `POST /ratchet/demo/teacher-drift`): on
+    each call about a labelled item, with probability `noise`, its first label is another value of its label space. The
+    draw comes from `_rng('teacher-noise', item.text, calls)`, never a shared generator, so a seeded run stays
+    reproducible; with `noise` 0 nothing is drawn and `calls` does not move, so every simulation number is unchanged."""
+
+    def __init__(self, reasoning_tokens: int = 300, latency_ms: float = 2400.0, noise: float = 0.0):
         self.reasoning_tokens = reasoning_tokens
         self.latency_ms = latency_ms
+        self.noise = noise
+        self.calls = 0  # noisy calls so far (the noise draw's counter)
+        self._lock = threading.Lock()
+
+    def _labels(self, item: Item) -> dict[str, Any]:
+        """The item's labels, the first one changed with probability `noise`."""
+        labels = dict(item.labels)
+        if self.noise <= 0 or not labels:
+            return labels
+        with self._lock:
+            r = _rng("teacher-noise", item.text, self.calls)
+            self.calls += 1
+        if r.random() < self.noise:
+            key = next(iter(labels))
+            others = [v for v in item.label_space[key] if v != labels[key]]
+            if others:
+                labels[key] = r.choice(others)
+        return labels
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         text = _pinned_answer(messages)
         if text is None:
             item = lookup(messages)
-            text = item.answer(item.labels)
+            text = item.answer(self._labels(item))
         text, finish = _generate(text, params)
         return [
             Completion(

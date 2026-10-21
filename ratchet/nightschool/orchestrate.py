@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, certificate, tasks
+from .. import bom, certificate, tasks, teacher_watch
 from ..config import GpuRate
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
@@ -94,6 +94,7 @@ def run_night(
     train_gpu: GpuRate | None = None,
     clock: Callable[[], float] | None = None,
     redact_pii: bool | None = None,
+    relabel: teacher_watch.Relabel | None = None,
 ) -> NightReport:
     """One night. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
     recorded as a `training_job` compute interval on `clock` (default `ledger.now`) for the cost report (FR-15.2), and
@@ -104,18 +105,33 @@ def run_night(
     With `gate.policy.drift_early_night`, a drift alarm since the last training halves `min_new_examples`
     (`early_night`).
 
+    The teacher watch (FR-16.7, ADR 0033) comes first: with `relabel` and no freeze on, the night's probes and
+    adjudications run (`teacher_watch.night`, FR-5.40, FR-5.41), also while a release is in flight (they are evidence,
+    not training), and the freeze rule is checked again. Then a freeze (`teacher_drift`, FR-6.42) skips the night,
+    before the in-flight check, because only an operator can lift it. Contested labels are left out of both sets, and
+    the BOM's `teacher` section records the epoch's self-agreement. With RATCHET_TEACHER_WATCH=0 none of this
+    happens.
+
     Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
     set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
     into the one `bom_extra` dict."""
+    watching = bool(gate.policy.teacher_watch)
+    if watching and relabel is not None and not ledger.teacher_state().frozen:
+        # Evidence, not training: it runs during a release too, when audits lean on the teacher most.
+        teacher_watch.night(ledger, relabel)
+        gate.check_teacher()  # tonight's probes may be what tips the e-value
+    if watching and ledger.teacher_state().frozen:  # said before an in-flight release: this one needs an operator
+        ledger.event("skip", "teacher labels look unstable; no training tonight (POST /ratchet/teacher/ack resumes)")
+        return NightReport(False, None, False, "teacher unstable")
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
         ledger.event("skip", f"v{v.id} still in {v.state}; no training tonight (saves GPU time)")
         return NightReport(False, None, False, "release in flight")
     with tempfile.TemporaryDirectory() as tmp:
-        manifest = dataset.build(ledger, tmp, task)
-    train_rows = dataset.rows(ledger, "train", task)
-    golden_rows = dataset.rows(ledger, "golden", task)
+        manifest = dataset.build(ledger, tmp, task, exclude_contested=watching)
+    train_rows = dataset.rows(ledger, "train", task, exclude_contested=watching)
+    golden_rows = dataset.rows(ledger, "golden", task, exclude_contested=watching)
 
     last = max((v.train_examples for v in ledger.versions()), default=0)
     new = manifest["train_examples"] - last
@@ -177,6 +193,8 @@ def run_night(
     # The adapter's own bill of materials, written now, while we know exactly what it was trained on. Features add their
     # sections (bom.EXTRA_KEYS) to `bom_extra` above this line.
     bom_extra: dict[str, Any] = {}
+    if watching:  # the teacher's self-agreement in this epoch and the contested labels left out (FR-16.7)
+        bom_extra["teacher"] = teacher_watch.bom_section(ledger, manifest.get("excluded_contested", 0))
     version = ledger.version(vid)
     assert version is not None
     m = bom.manifest(version, train_rows, golden_rows, extra=bom_extra or None, redact_pii=redact_pii)

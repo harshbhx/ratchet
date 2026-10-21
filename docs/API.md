@@ -26,6 +26,8 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
 | GET | `/ratchet/versions/{id}/certificate` | both | What a version's golden evals certify: the signed and the latest certificate, frontier and per-task bounds, the gate's evidence and the assumptions ([Certificates](#get-ratchetversionsidcertificate)) |
 | GET | `/ratchet/drift` | both | The label-free drift monitor: each (version, task) stream's test martingale on the student's confidence, its alarm and the false-alarm bounds ([Drift](#get-ratchetdrift)) |
+| GET | `/ratchet/teacher` | both | The teacher watch: the check epoch, the teacher's self-agreement on first re-tests, the freeze rule's e-value, the agreement ceiling and the contested labels ([Teacher watch](#teacher-watch)) |
+| POST | `/ratchet/teacher/ack` | both | Acknowledge the teacher watch: a new check epoch, Night School unfrozen (admin key; open in mock mode without admin keys) |
 | GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
 | GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
@@ -38,6 +40,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/demo/day` | mock only | Simulate one day of traffic and one night of training |
 | POST | `/ratchet/demo/break-next` | mock only | Make the next trained student deploy corrupted |
 | POST | `/ratchet/demo/student-outage` | mock only | Take the student endpoint down for a while, to show the circuit breaker |
+| POST | `/ratchet/demo/teacher-drift` | mock only | Make the mock teacher change labels at random, to show the teacher watch |
 | POST | `/ratchet/demo/reset` | mock only | Start over |
 | GET | `/scout/examples` | both | Example questions and whether free text is allowed |
 | GET | `/scout/status` | both | Budget guard state |
@@ -455,7 +458,9 @@ Needs a key when `RATCHET_API_KEYS` is set.
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
            "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
-  "drift": {"enabled": true, "threshold": 100.0, "family_bound": 0.03, "alarms": 1, "streams": 3}
+  "drift": {"enabled": true, "threshold": 100.0, "family_bound": 0.03, "alarms": 1, "streams": 3},
+  "teacher_watch": {"enabled": true, "epoch": 1, "frozen": false, "checks": 273, "disagreements": 11,
+                    "self_agreement": 0.9597, "ceiling": 0.9886, "e_value": 96.38, "contested": 0}
 }
 ```
 
@@ -501,6 +506,7 @@ Needs a key when `RATCHET_API_KEYS` is set.
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
 - `drift` (v0.5): the [drift monitor](#get-ratchetdrift)'s summary: whether it is on (`RATCHET_DRIFT_ALARM` above 0), its threshold, the chance that any stream it holds ever alarms on unchanged traffic (`family_bound`, K / threshold), how many streams alarmed (`alarms`) and how many it holds (`streams`, a count; the list is in `GET /ratchet/drift`). Off: `enabled` false, `threshold` and `family_bound` `null`, both counts 0.
+- `teacher_watch` (v0.5): the [teacher watch](#teacher-watch)'s summary: whether it acts (`RATCHET_TEACHER_WATCH`), the check epoch, whether Night School is frozen, the epoch's checks and disagreements, the teacher's self-agreement and the agreement ceiling (`null` without checks), the freeze rule's e-value and the contested labels. The same keys as `GET /ratchet/teacher`, without the per-source and per-task rows.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
@@ -655,6 +661,63 @@ The label-free drift monitor (FR-16.6, [ADR 0032](adr/0032-label-free-drift-alar
 - `alarms`: streams that alarmed. Each stream alarms at most once (the alarm latches) and writes one `drift` event, once across restarts and processes.
 - Per stream: `n` confidences seen; `log10_martingale` and `peak_log10`, log10 of the capital now and at its highest (the alarm is at log10 `threshold`, 2 by default); `alarm_at_request` (the request id), `alarm_day` and `alarm_n` of the first crossing, or `null`; `last_request`, the last request id seen; `active`, false for an older version that no longer serves (only its final numbers are kept; should it serve again, its stream is replayed from the ledger first); `alarm_day` is the ledger day of the request that crossed, which is also the `drift` event's `day`, even when the monitor found it later by replaying the ledger; `trajectory`, at most 200 `[n, log10 capital]` points, evenly spaced.
 - The test is one-sided: confidence that rises makes the capital fall. An alarm says traffic changed for this version, not that the model got worse; audits measure that ([Runbook](RUNBOOK.md#drift-event)). It suspends the version's certificate ([Certificates](#get-ratchetversionsidcertificate)) and, opt-in, boosts its audits (`RATCHET_DRIFT_AUDIT_BOOST`) and lets Night School train sooner (`RATCHET_DRIFT_EARLY_NIGHT`).
+
+## Teacher watch
+
+Every number Ratchet reports is measured against the teacher, so the teacher is checked too (FR-16.7, [ADR 0033](adr/0033-teacher-watch.md)). A request that repeats is labelled by the teacher again when it escalates or is audited; its first such re-test in a check epoch is compared with the stored label under the task's comparators, at no extra cost. Night School adds a few probes for traffic with few repeats (`RATCHET_TEACHER_PROBES`). Only labels that can be compared count: the same configured teacher at temperature 0, no redaction placeholders on either side, a registered task that names fields and is not pinned. A label a re-test disagreed with is **contested**: it is left out of training and the golden set until Night School's adjudication (two more teacher answers, a strict majority wins) settles it.
+
+When the epoch's first re-tests disagree too often, the release gate freezes Night School with a `teacher_drift` event: the freeze rule's e-value, a mixture over the epoch's days of `stats.e_bernoulli` against "a fresh label disagrees with an earlier one at most `RATCHET_TEACHER_NOISE_MAX` (5%) of the time", has reached 1 / `RATCHET_ALPHA_TEACHER` (100). A teacher within that noise freezes it with probability at most 1% per epoch, however often the gate looks. Training stays paused until an operator acknowledges ([Runbook](RUNBOOK.md#teacher_drift-event)). A change in the model id the teacher's responses report starts a new epoch on its own (`teacher_model_changed`).
+
+### GET `/ratchet/teacher`
+
+Public and read-only, like `/ratchet/stats`.
+
+```json
+{
+  "enabled": true,
+  "epoch": 1,
+  "epoch_started_day": 1,
+  "frozen": false,
+  "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "noise_max": 0.05,
+  "alpha": 0.01,
+  "threshold": 100.0,
+  "checks": 273,
+  "disagreements": 11,
+  "self_agreement": 0.9597,
+  "interval": [0.9293, 0.9774],
+  "ceiling": 0.9886,
+  "e_value": 96.38,
+  "strongest": {"from_day": 3, "checks": 48, "disagreements": 11},
+  "contested": 0,
+  "sources": {"duplicate": {"checks": 193, "disagreements": 1}, "probe": {"checks": 80, "disagreements": 10}},
+  "tasks": [
+    {"task": "ticket-triage", "checks": 273, "disagreements": 11, "self_agreement": 0.9597, "interval": [0.9293, 0.9774],
+     "ceiling": 0.9886, "e_value": 96.38, "contested": 0}
+  ]
+}
+```
+
+(Mock gateway, four days of tickets, the mock teacher changing 15% of labels from day 3 (`POST /ratchet/demo/teacher-drift`); simulation numbers from mock models, rounded here.)
+
+- `enabled`: `RATCHET_TEACHER_WATCH`. When 0 the checks are still recorded and reported, but nothing acts on them.
+- `epoch`, `epoch_started_day`: the check epoch (1 until the first ack or model change) and the ledger day it started. Each stored request gives at most one check per epoch: its first re-test. That is what keeps the e-value valid (comparing one stored label with several re-tests makes the checks dependent).
+- `frozen`: Night School skips training (`skip` event "teacher labels look unstable") until `POST /ratchet/teacher/ack`.
+- `model`: the model id the teacher's responses last reported (`null` before the first teacher call; at most 200 characters).
+- `noise_max`, `alpha`, `threshold`: the freeze rule (`RATCHET_TEACHER_NOISE_MAX`, `RATCHET_ALPHA_TEACHER`, 1 / alpha).
+- `checks`, `disagreements`: the epoch's first re-tests and how many disagreed. `self_agreement` is 1 − disagreements / checks, `interval` its 95% Wilson interval, and `ceiling` the square root of the interval's upper end: no student can agree with a fresh teacher label more often than that at full coverage (FR-6.43). All three are `null` without checks.
+- `e_value`: the freeze rule's e-value (capped at e^690); `strongest`: the stretch of days from `from_day` on that weighs most in it, with its counts (`null` without checks). The `teacher_drift` event quotes these.
+- `contested`: stored labels quarantined now, of every epoch.
+- `sources`: the checks by where they came from: `duplicate` (a repeated request the teacher labelled again) and `probe` (Night School).
+- `tasks`: per task with checks or contested labels, the same numbers. A task's `e_value` is diagnostic only: the freeze tests the pooled checks.
+
+### POST `/ratchet/teacher/ack`
+
+Starts a new check epoch, unfreezes Night School and writes a `teacher_ack` event naming the admin key (its name, never the key). Needs an admin key (`Authorization: Bearer <admin key>` or `X-API-Key`): **401** for a missing or wrong key, **403** for a regular API key, and **403** in live mode without `RATCHET_ADMIN_KEYS`. Open in mock mode without admin keys (the event names `mock-admin`). No body. Check the teacher's model id first ([Runbook](RUNBOOK.md#teacher_drift-event)).
+
+```json
+{"epoch": 2, "frozen": false}
+```
 
 ## GET `/ratchet/bom/public-key`
 
@@ -824,11 +887,11 @@ Remove an API task: `{"deleted": "invoice-extract", "spec_hash": "...", "example
 
 ## Demo controls (mock mode only)
 
-All four return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
+All five return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
 
 The mock demo is shared by every visitor, so the controls protect themselves:
 
-- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next` and `student-outage` do not take the lock.)
+- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next`, `student-outage` and `teacher-drift` do not take the lock.)
 - **Reset cooldown.** `reset` returns **429** `the demo was reset less than 30 seconds ago` within 30 seconds (`RESET_COOLDOWN_S`) of the last successful reset.
 
 The dashboard shows these messages under its buttons.
@@ -869,6 +932,16 @@ Fault injection for the student circuit breaker: for `seconds` (clamped to 5–3
 ```
 
 Send traffic (Scout, or **Run 1 day + night**) and the release log shows the breaker at work: a `student_error` event for the first failure (`v2: ConnectError`; later ones are logged on the 10th, 100th and 1000th), then, after 5 failures in a row, `circuit` `student: closed->open after 5 failures (ConnectError)`; requests go straight to the teacher (route `student_breaker`); after 30 s one probe (`open->half_open`), which fails while the outage lasts and doubles the wait (`half_open->open for 60 s ...`); once the endpoint is back, a probe succeeds and `half_open->closed`. Calling it again starts a new outage of the given length from now.
+
+### POST `/ratchet/demo/teacher-drift?noise=0.15`
+
+Fault injection for the [teacher watch](#teacher-watch): from now on the mock teacher changes the first label of an answer (a ticket's category) to another value with probability `noise` (0 to 1, default 0.15; **400** outside it). 0 makes it stable again; a reset does too. Each draw is seeded by the request text and a call counter, so a run is reproducible. It writes a `fault` event:
+
+```json
+{"noise": 0.15}
+```
+
+Then run days: re-tests and Night School's probes start to disagree with the stored labels, contested labels are adjudicated each night (`teacher_watch` events), and once the e-value reaches 100 a `teacher_drift` event freezes Night School (`skip` events) until `POST /ratchet/teacher/ack`. At 0.15 that takes a few days of mock traffic, because a student that serves most requests leaves few re-tests to the teacher (simulation).
 
 ### POST `/ratchet/demo/reset`
 

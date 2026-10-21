@@ -214,12 +214,14 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
 
 ## 3. Nightly loop (Night School)
 
-`run_night(ledger, trainer, evaluator, gate, base_model, min_new_examples=50, task=None)` in `nightschool/orchestrate.py`:
+`run_night(ledger, trainer, evaluator, gate, base_model, min_new_examples=50, task=None, relabel=None)` in `nightschool/orchestrate.py`:
 
 ```
- ┌─ release in flight? (any version in shadow or canary) ── yes ──▶ event "skip", stop
+ ┌─ teacher watch, not frozen: probes, then adjudication (relabel; also during a release) ─▶ event "teacher_watch"
+ ├─ teacher watch frozen? (teacher_drift) ───────────────────────── yes ──▶ event "skip", stop
+ ├─ release in flight? (any version in shadow or canary) ── yes ──▶ event "skip", stop
  │ no
- ├─ dataset.build(): train rows + golden rows (license-checked)
+ ├─ dataset.build(): train rows + golden rows (license-checked, contested rows left out)
  ├─ new = train_examples − max(train_examples of all previous versions)
  │     new < min_new_examples (50) ───────────────────────────────▶ event "skip" (re-score the live
  │                                       version first when a golden task's spec changed: "rescored"), stop
@@ -230,12 +232,13 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
  ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, certificate, ...} + spec_hashes
  ├─ live version? paired_evidence(): the candidate's test vector vs the re-check's → eval["paired"]
  ├─ ledger.update_eval(), then ledger.set_bom(): bill of materials from the exact train and golden rows,
- │     with the eval (certificate, frontier, paired counts), signed if a key is set
+ │     with the eval (certificate, frontier, paired counts) and the teacher's self-agreement, signed if a key is set
  ├─ event "trained"
  └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow
 ```
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator.
+- **Teacher watch** (`teacher_watch.night`, FR-5.40, FR-5.41, [ADR 0033](adr/0033-teacher-watch.md)): first, unless the watch is frozen. Probes ask the teacher again about up to `RATCHET_TEACHER_PROBES` (20) stored labels not yet re-tested in the current check epoch (the configured teacher's, no redaction placeholders, a checkable task, not contested; in hash order), as an audit asks (temperature 0, the example's stored conditions); each answer that could be stored is compared with the stored label as that request's first re-test of the epoch. Adjudication gives up to `RATCHET_ADJUDICATE_MAX` (50) contested labels two more teacher answers each: a strict majority of the three becomes the label (the same teacher, so provenance and license stay), and without one the label stays quarantined as unresolved, behind the ones never adjudicated. Both are evidence, not training, so they run while a release is in flight too; the first teacher error stops them, not the night. Then the release gate's freeze rule runs once more (tonight's probes may tip it), and a frozen watch skips the night before anything else: only an operator lifts it (`POST /ratchet/teacher/ack`). With `RATCHET_TEACHER_WATCH=0` none of this happens and contested rows stay in the sets.
 - **Early night** (`early_night`, `drift_early_night=1`, FR-6.41): after the in-flight check, so never during a release (INV-5), Night School brings the drift monitor up to date and, when a `drift` event is newer than the last `trained` one, needs `max(1, min_new_examples // 2)` new examples instead of `min_new_examples`. The `skip` and `trained` events say so.
 - **Live mode**: `NebiusTrainer` (`ratchet/live.py`) first checks that `RATCHET_STUDENT_BASE` is set (an adapter with no endpoint cannot be evaluated, so it stops before any spend). Then it does four things. It writes `RATCHET_DATA_DIR/night/train.jsonl`, runs `RATCHET_SYNC_CMD` (if set), runs `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`), then hot-loads the adapter into vLLM with `POST {root}/v1/load_lora_adapter` (an "already loaded" answer is fine). `LiveEvaluator` then scores it.
 
@@ -247,7 +250,8 @@ Only `_store_example` redacts, and it redacts everything it stores: the messages
 - Rows of a task that is pinned **now** are dropped from both sets and counted (`excluded_pinned` in `manifest.json`), and `cascade_eval` skips any it is handed (invariant 10 at read time): a task pinned after it had data neither trains the student nor calibrates its threshold. Unpinning brings the rows back.
 - Train rows whose answer is not valid under the task's current spec (`Task.valid`: a vocabulary shrank, a field became required) are dropped and counted (`skipped_invalid` in `manifest.json`); the ledger keeps them, so loosening the spec brings them back. Golden rows stay in the set, and `cascade_eval` skips the ones it cannot grade with (`golden_invalid_refs`).
 - Training is cumulative: each night trains from the **base model** on every train row so far ([ADR 0004](adr/0004-retrain-from-base-cumulative.md)).
-- `build()` also writes `manifest.json`: train and golden counts, `dataset_sha256` (a hash of the train rows' example hashes), `skipped_invalid`, `excluded_pinned`, and the bill of materials.
+- Contested rows (a later teacher label of the same request disagreed; the teacher watch, FR-16.7) are dropped from both sets and counted (`excluded_contested` in `manifest.json`) until an adjudication settles their label. `exclude_contested=False` (`RATCHET_TEACHER_WATCH=0`) keeps them.
+- `build()` also writes `manifest.json`: train and golden counts, `dataset_sha256` (a hash of the train rows' example hashes), `skipped_invalid`, `excluded_pinned`, `excluded_contested`, and the bill of materials.
 
 ## 4. Data model (SQLite)
 
@@ -298,7 +302,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `redactions` | INTEGER | PII placeholders inserted before storing (0 when none were found or redaction is off) |
 | `params` | TEXT | JSON: the conditions the teacher answered under that define the target (`response_format`, `tools`, `tool_choice`, `stop`), redacted like the messages; NULL when there were none and in rows from before v0.5. `dataset.rows` returns it as `params` |
 | `origin`, `job` | TEXT | Where the example came from (`escalation`, `audit`, `arbitration`, `backfill`; NULL: not recorded, read as `live`) and the backfill job that wrote it (FR-16.8). NULL until that feature writes them |
-| `contested`, `checked_epoch` | INTEGER | The teacher watch (FR-16.7): 1 when a later teacher label of the same request disagreed (quarantined from training), and the epoch of its last self-consistency check; 0 by default and in older rows |
+| `contested`, `checked_epoch` | INTEGER | The teacher watch (FR-16.7, [ADR 0033](adr/0033-teacher-watch.md)). `contested`: 0, or 1 when a later teacher label of the same request disagreed (quarantined from training and the golden set until adjudicated), or 2 when an adjudication found no strict majority (still quarantined); indexed with `task`. `checked_epoch`: the check epoch of its one comparison (each label is compared at most once per epoch), 0 before any, or −1 (`ledger.UNCHECKABLE`) for a label that is not one independent greedy teacher answer (sampled above temperature 0 or under a reasoning effort, or chosen by an adjudication) and so is never compared. 0 by default and in older rows |
 
 ### `versions`: student models
 
@@ -326,13 +330,13 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### Evidence tables
 
-Created by `SCHEMA` for the evidence features, so later items change no migration; nothing writes them yet ([ADR 0024](adr/0024-evidence-foundations.md)).
+Created by `SCHEMA` for the evidence features, so later items change no migration ([ADR 0024](adr/0024-evidence-foundations.md)). The drift monitor and the teacher watch write theirs; the others wait for their features.
 
 | Table | Columns | Feature |
 |---|---|---|
 | `version_leaves` | `version_id`, `split` (`train` or `golden`), `key` (the example hash, hex), `value` (sha256 of its label, teacher, license and redaction count); primary key (version, split, key), indexed by `key` | Committed training sets (FR-16.4) |
-| `teacher_checks` | `id`, `ts`, `day`, `epoch`, `task`, `source` (`duplicate` or `probe`), `agree`, `model`; indexed by `epoch` | Teacher watch (FR-16.7) |
-| `meta` | `key`, `value` | Small ledger-wide state (the teacher epoch, a training freeze). The drift monitor records each alarm's event here (`drift:<version>:<task>` → the event id, the alarm's request and its day), so it is written once across processes and restarts (`Ledger.event_once`) |
+| `teacher_checks` | `id`, `ts`, `day`, `epoch`, `task`, `source` (`duplicate` or `probe`), `agree`, `model` (the configured teacher); indexed by `epoch`. One row per comparison of a stored label with its first re-test in an epoch (`Ledger._check_label`) | Teacher watch (FR-16.7) |
+| `meta` | `key`, `value` | Small ledger-wide state. The teacher watch keeps `teacher_epoch` (1 when unset), `teacher_epoch_day`, `teacher_frozen` (`1` while Night School is frozen), `teacher_model` (the id the teacher's responses last reported, at most 200 characters) and `teacher_model_ids` (the ids reported in this epoch, a JSON list) here, each changed in one transaction with its event. The drift monitor records each alarm's event here (`drift:<version>:<task>` → the event id, the alarm's request and its day), so it is written once across processes and restarts (`Ledger.event_once`) |
 | `receipts` | `period` (ledger day), `client` (`''` for the whole gateway), `created_ts`, `doc` (the signed JSON); primary key (period, client) | Savings receipts (FR-15.5) |
 | `spend` | `id`, `ts`, `day`, `kind`, `ref`, `usd`, `realtime_usd`, `in_tokens`, `out_tokens`, `detail` | Money spent outside requests, e.g. backfill labelling (FR-16.8) |
 | `backfill_jobs` | `job`, `ts`, `backend`, `teacher`, `license`, `prompts`, `unique_prompts`, `outputs_discarded`, `source_models` (JSON), `status`, `usd`, `realtime_usd` | Clean-room backfill (FR-16.8) |
@@ -345,7 +349,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `drift`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rollback`, `inconclusive`, `alert`, `drift`, `teacher_drift`, `teacher_model_changed`, `teacher_watch`, `teacher_ack`, `warning`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -389,9 +393,11 @@ Using the candidate's `eval` (calibrated on half of the golden set, measured on 
 
 In practice step 5's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists. With the defaults (no certified floor, no paired gate) this is v0.4's gate exactly.
 
+Before step 1 the teacher watch may write an advisory `warning` (FR-6.43, `teacher_watch.ceiling_warning`): with at least 30 checks in the current epoch and `min_precision` above the agreement ceiling (the square root of the upper 95% Wilson bound of the teacher's self-agreement), no student can reach the floor at full coverage against this teacher. Per request a student agrees with a fresh teacher label at most max_y p_y ≤ sqrt(sum_y p_y²) of the time, and over requests E[max p] ≤ sqrt(E[sum p²]) by Jensen. It changes no decision.
+
 ### Ticks: `ReleaseGate.tick()`
 
-Run after every gateway request and by `python -m ratchet.live tick`. It is five steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The teacher watch (FR-16.7) will run last; its step is empty today.
+Run after every gateway request and by `python -m ratchet.live tick`. It is five steps in a fixed order, each in its own method so each later feature edits only its own (`_tick_drift`, `_tick_live`, `_tick_shadow`, `_tick_canary`, `_tick_watchers`; [ADR 0024](adr/0024-evidence-foundations.md)). The live version is read once, before the first. The teacher watch (FR-16.7) runs last.
 
 0. **Drift** (`_tick_drift` → `check_drift`, FR-16.6): one primary-key range query, `Ledger.confidence_stream(after_id)`, reads the student confidences logged since the last tick, and the drift monitor feeds each to its (version, task) stream ([§6](#drift-monitor-ratchetdriftpy)). A stream whose test martingale reaches `drift_alarm` (100) writes one `drift` event, once across processes and restarts (`Ledger.event_once`, keyed in `meta`), and its version's certificate reads `suspended`. With `drift_audit_boost` above 1, every serving version (canary or live) with an alarm is put in `audit_boost` and every other one taken out, so a newer version going live clears it. It decides no release. The gateway also runs it once at startup, so the replay of the ledger happens before the first request, and Night School runs it before deciding on an early night.
 1. **Live watch:** take the audits of the live version since it became live (`audit_counts(id, stage_since)`: `s` agreements of `n`). By default (`alert_eprocess=1`, FR-16.2), if `n > 0` and the e-value against "precision ≥ `live_floor`" reaches 1/`alpha_alert` (100), write one `alert` event per version, with the e-value and the 95% confidence sequence ([§6](#anytime-valid-evidence-statslog_e_bernoulli-statsconfidence_sequence)). With `alert_eprocess=0`: at least `min_audits` and the Wilson upper bound below `live_floor`. No automatic action is taken on the live version.
@@ -410,6 +416,7 @@ Run after every gateway request and by `python -m ratchet.live tick`. It is five
    - **Promotion,** on this stage's audits once there are `min_audits`: the point estimate ≥ floor, or with `promote_evidence=1` the e-value against "precision ≤ floor" over this stage reaching 1/`alpha_promote` (56 agreeing audits at a 0.92 floor). Then advance or promote as above; the event appends the evidence.
    - **Futility:** `max_stage_audits` (400) audits in this stage and no decision → `retired`, traffic back as on a rollback (event `inconclusive`). It counts audits, not time: a canary without audits holds.
    - else hold.
+4. **Teacher watch** (`_tick_watchers` → `check_teacher`, FR-16.7, FR-6.42, [ADR 0033](adr/0033-teacher-watch.md)): two indexed lookups when up to date, the epoch in `meta` and the `teacher_checks` rows added since the last tick (a primary-key range), added to running counts by ledger day. When the freeze rule's e-value (§6, [Teacher watch](#teacher-watch-ratchetteacher_watchpy)) reaches 1/`alpha_teacher` (100), `Ledger.teacher_freeze` sets `teacher_frozen` and writes one `teacher_drift` event, in one transaction that re-checks the epoch, so the gateway and the nightly job write it once. A new epoch (an ack, a model change) resets the counts. It decides no release; Night School reads the freeze.
 
 ### Shadow reference and arbitration
 
@@ -522,6 +529,15 @@ alarm    the first n with C ≥ drift_alarm (it latches)
 - **Determinism:** θ comes from the stream's own `random.Random(f"{seed}:{version}:{task}")`, never `Ratchet.rng`. Replaying the ledger gives the same capital to the last bit, so a restarted gateway, `python -m ratchet.live tick` and the nightly job all agree, and the `drift` event is written once (`Ledger.event_once`). Which task names get a stream of their own depends only on the order of the version's rows, so a replay makes the same choice.
 - **Late alarms:** a monitor that replays the ledger (a restart, a lowered threshold, the nightly job in its own process) can find an alarm days after it happened. Its `drift` event is dated on the alarm's own ledger day and `meta` records its request and day; the early night counts an alarm only when its request was logged after the last `trained` event. An event the ledger refuses to write is queued and written by the next check.
 - **Cost:** about 5 µs per confidence. A stream keeps its bins in a sorted array (2 bytes each, about 3 KB for a new stream with its generator) until it has seen 4,096 confidences, then in one Fenwick tree (about 80 KB, two walks of 14 steps per rank); both give the same counts. A version therefore holds at most 17 streams of at most about 100 KB each. An up-to-date monitor costs one primary-key range query per tick; the versions' states are read again every 1,000 rows to drop the counts and generators of versions that stopped serving, keeping canary, live and the most recently retired one. A compacted stream that gets new rows is replayed from the ledger first. `/ratchet/stats` reads counts the monitor keeps, not a row per stream.
+
+### Teacher watch (`ratchet/teacher_watch.py`)
+
+Every reported number is agreement with the teacher, so the teacher's own stability is measured ([ADR 0033](adr/0033-teacher-watch.md)). Each stored request's first re-test in a check epoch (a duplicate the teacher labels again during an escalation or audit, `Ledger.add_example`, or a Night School probe) is compared with its stored label under the task's comparators (`Task.key`, `Task.match`) and recorded in `teacher_checks`; a disagreement marks the label `contested`. Only comparable labels count: the same configured teacher, at temperature 0 without a reasoning effort (`router.comparable_label`), no redaction placeholders on either side, a registered task that names fields and is not pinned, both labels valid under its spec, and a stored label that is neither contested nor chosen by an adjudication.
+
+- **Freeze rule.** H0: a fresh label of any request disagrees with an independent earlier label of it with probability at most `teacher_noise_max` (ε, 5%). One check per request per epoch makes every check two independent draws, so given the earlier checks (of other requests) each disagrees with probability at most ε, and `stats.e_bernoulli(D, N, ε, 'above')` is a test supermartingale. Comparing one stored label with several re-tests would break this: a minority stored label makes every re-test disagree. The rule uses a mixture over the epoch's ledger days of that e-process started at each day's first check, with weight 1/(j(j+1)) for the j-th day (they sum to 1; a day not started counts 1), so a teacher that changes after weeks of agreeing is caught without first winning back what those weeks cost a single e-process. The start times are fixed calendar days, so the mixture is still a supermartingale starting at 1, and Ville's inequality bounds a false freeze by `alpha_teacher` per epoch, however often the gate looks. `evidence()` recomputes it from (day, checks, disagreements) triples; `first_alarm()` replays the rule for tests and simulations.
+- **Model ids.** `Ratchet._ask_teacher` compares each primary-teacher response's `model` with the last one (in memory, loaded from `meta`); a change reaches the ledger (`Ledger.teacher_model_seen`), which starts a new epoch with a `teacher_model_changed` event once per id new to the epoch. The fallback teacher's ids are not watched.
+- **Ceiling.** `ceiling(A) = sqrt(A)`; the golden gate's warning uses the self-agreement's upper Wilson bound (§5).
+- **Cost.** One indexed lookup per stored duplicate on the request path (the duplicate branch of `add_example`, in the same transaction); two indexed lookups per quiet tick; at most `RATCHET_TEACHER_PROBES` + 2 × `RATCHET_ADJUDICATE_MAX` teacher calls per night. The mock teacher at noise 0 draws nothing, so a seeded simulation's numbers do not move.
 
 ## 7. Cost accounting
 

@@ -19,7 +19,7 @@ from . import licenses, tasks
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .drift import boosted_rate
-from .ledger import STORED_PARAM_KEYS, Ledger, Version, target_params
+from .ledger import STORED_PARAM_KEYS, TEACHER_MODEL, Ledger, Version, target_params
 from .providers import (
     COMPLETE,
     Completion,
@@ -93,6 +93,14 @@ def answer_problem(task: tasks.Task, c: Completion) -> str | None:
     if c.finish_reason not in COMPLETE:
         return f"finish_reason {c.finish_reason if c.finish_reason in _FINISH_NAMED else 'other'}"
     return task.check(c.text)
+
+
+def comparable_label(gen: GenParams | None) -> bool:
+    """Whether a teacher answer written under `gen` may be compared with another label of the same request by the
+    teacher watch (FR-16.7): drawn at temperature 0 (or unset, which the provider sends as 0) without a client's
+    reasoning effort. A sampled answer may differ from another one by design, so it is stored as
+    `ledger.UNCHECKABLE`."""
+    return gen is None or ((gen.temperature or 0.0) == 0.0 and gen.reasoning_effort is None)
 
 
 # Added to a student call's longest time before its probe is presumed lost: the call starts a moment after allow().
@@ -357,6 +365,11 @@ class Ratchet:
         # RATCHET_TEACHER_BREAKER_* value stops startup. Every teacher call goes through one (`_teacher_complete`).
         self.teacher_policy = settings.teacher_breaker()
         self.teacher_breaker = self._teacher_breaker("teacher", teacher)
+        settings.teacher_watch_limits()  # a bad RATCHET_TEACHER_PROBES or RATCHET_ADJUDICATE_MAX stops startup here
+        # The model id the primary teacher's responses last reported (the teacher watch, FR-16.7): a cache of the ledger's
+        # `meta`, so only a change touches the ledger (`_watch_model`).
+        self._teacher_seen: str | None = ledger.meta_value(TEACHER_MODEL)
+        self._watch_lock = threading.Lock()
         self.fallback_breaker = (
             self._teacher_breaker("fallback_teacher", self.fallback_teacher) if self.fallback_teacher is not None else None
         )
@@ -502,6 +515,8 @@ class Ratchet:
         or arbitration counts it as a failed optional call. The teacher answered, so its breaker counts the call as a
         success."""
         cs = self._teacher_complete(messages, gen, fallback, n)
+        if not fallback:
+            self._watch_model(cs[0].model)
         if any(c.finish_reason == "tool_calls" for c in cs):
             raise UpstreamError(
                 502, "the teacher answered with a tool call, which the gateway cannot return yet", code=TOOL_CALLS_UNSUPPORTED
@@ -514,6 +529,23 @@ class Ratchet:
                 for c in cs
             ]
         return cs
+
+    def _watch_model(self, model: str) -> None:
+        """The teacher watch's model-id check (FR-16.7, ADR 0033): when a primary-teacher response reports another model
+        id than the last one, `Ledger.teacher_model_seen` writes `teacher_model_changed` and starts a new check epoch,
+        once across threads and processes. A string comparison on every teacher call; only a change reaches the ledger.
+        The fallback teacher's responses are not watched: they name another model by design. The watch never fails the
+        call it rides on: when the ledger refuses the write, the id stays unseen and the next response tries again."""
+        if not model or model == self._teacher_seen:
+            return
+        with self._watch_lock:
+            if model == self._teacher_seen:
+                return
+            try:
+                self.ledger.teacher_model_seen(model)
+            except Exception:  # noqa: BLE001 - evidence about the teacher, never a reason to fail its answer
+                return
+            self._teacher_seen = model
 
     def _serve_teacher(
         self, task: tasks.Task, messages: list[dict[str, Any]], gen: GenParams, visible_max: int | None, n: int = 1
@@ -618,6 +650,7 @@ class Ratchet:
             lic.url,
             redactions=sum(found.values()),
             params=conditions,
+            comparable=comparable_label(gen),
         )
         return True
 

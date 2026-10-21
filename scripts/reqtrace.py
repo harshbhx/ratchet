@@ -653,6 +653,23 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-5.3": ("ratchet.nightschool.evaluate:cascade_eval",),
     "FR-5.4": ("ratchet.nightschool.orchestrate:run_night",),
     "FR-5.5": ("ratchet.nightschool.evaluate:LiveEvaluator.judge_score",),
+    "FR-5.40": (
+        "ratchet.teacher_watch:night",
+        "ratchet.teacher_watch:_probe",
+        "ratchet.teacher_watch:usable_label",
+        "ratchet.teacher_watch:relabel_with",
+        "ratchet.ledger:Ledger.probe_candidates",
+        "ratchet.ledger:Ledger.record_teacher_check",
+        "ratchet.config:Settings.teacher_watch_limits",
+        "ratchet.nightschool.orchestrate:run_night",
+    ),
+    "FR-5.41": (
+        "ratchet.teacher_watch:_adjudicate",
+        "ratchet.teacher_watch:majority",
+        "ratchet.ledger:Ledger.contested_examples",
+        "ratchet.ledger:Ledger.resolve_contested",
+        "ratchet.ledger:Ledger.mark_unresolved",
+    ),
     # 6.6 Release gate
     "FR-6.1": ("ratchet.release:ReleaseGate.admit",),
     "FR-6.2": ("ratchet.release:ReleaseGate.admit",),
@@ -680,6 +697,17 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.nightschool.orchestrate:run_night",
         "ratchet.release:ReleaseGate.drift_alarm_since",
     ),
+    "FR-6.42": (
+        "ratchet.release:ReleaseGate._tick_watchers",
+        "ratchet.release:ReleaseGate.check_teacher",
+        "ratchet.teacher_watch:Watch.check",
+        "ratchet.teacher_watch:evidence",
+        "ratchet.ledger:Ledger.teacher_freeze",
+        "ratchet.ledger:Ledger.teacher_ack",
+        "ratchet.gateway:teacher_ack",
+        "ratchet.nightschool.orchestrate:run_night",
+    ),
+    "FR-6.43": ("ratchet.release:ReleaseGate.admit", "ratchet.teacher_watch:ceiling_warning", "ratchet.teacher_watch:ceiling"),
     # 6.7 Dashboard
     "FR-7.1": ("web/src/pages/dashboard/kpis.tsx", "ratchet.ledger:Ledger.totals"),
     "FR-7.2": ("web/src/pages/dashboard/charts.tsx", "ratchet.ledger:Ledger.stats_by_day"),
@@ -778,6 +806,19 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:version_certificate",
         "sim.simulate:run",
     ),
+    "FR-16.7": (
+        "ratchet.ledger:Ledger.add_example",
+        "ratchet.ledger:Ledger._check_label",
+        "ratchet.ledger:Ledger.teacher_model_seen",
+        "ratchet.router:Ratchet._watch_model",
+        "ratchet.router:comparable_label",
+        "ratchet.nightschool.dataset:rows",
+        "ratchet.teacher_watch:status",
+        "ratchet.teacher_watch:bom_section",
+        "ratchet.gateway:teacher",
+        "ratchet.gateway:demo_teacher_drift",
+        "sim.mock_models:MockTeacher",
+    ),
     # 7 Non-functional
     "NFR-1": ("ratchet.router:Ratchet._sample",),
     "NFR-2": (
@@ -799,6 +840,11 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
     "NFR-55": ("ratchet.release:ReleaseGate._tick_drift", "ratchet.drift:DriftMonitor._update", "ratchet.drift:Stream"),
     "NFR-56": ("ratchet.drift:Ranks", "ratchet.drift:DriftMonitor._stream", "ratchet.drift:DriftMonitor.counts"),
+    "NFR-57": (
+        "ratchet.teacher_watch:Watch.refresh",
+        "ratchet.ledger:Ledger.teacher_check_days",
+        "ratchet.router:Ratchet._watch_model",
+    ),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
