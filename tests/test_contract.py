@@ -1552,9 +1552,7 @@ CLIENT = GenParams(
     top_logprobs=3,
 )
 # What each call gets of CLIENT under the default policy.
-STUDENT_GETS = GenParams(
-    max_tokens=50, stop=("\n\n",), seed=7, logit_bias={"11": 5}, response_format={"type": "json_object"}, top_logprobs=3
-)
+STUDENT_GETS = GenParams(max_tokens=50, stop=("\n\n",), seed=7, response_format={"type": "json_object"}, top_logprobs=3)
 # Every standard field as sent (max_tokens already under the 8,192 cap), the logprobs included: the response returns them
 # (FR-1.14). Only the tool-call fields stay off by default.
 SERVE_GETS = CLIENT

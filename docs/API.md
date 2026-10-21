@@ -288,7 +288,8 @@ Each model call gets the client's parameters as its role allows ([ADR 0017](adr/
 | `top_logprobs` | The client's | The client's | No |
 | `stop`, `response_format` | The client's | The client's | The client's |
 | `tools`, `tool_choice`, `parallel_tool_calls` | The client's (only a tool request has them, and the teacher answers it alone: [Tools and function calling](#tools-and-function-calling)) | No | No audit or arbitration runs on a tool request |
-| `seed`, `logit_bias` | The client's | The client's | No |
+| `seed` | The client's | The client's | No |
+| `logit_bias` | The client's | No (it would steer the answer the audits compare; `RATCHET_STUDENT_PARAMS` can name it) | No |
 | `top_p`, `presence_penalty`, `frequency_penalty` | The client's | No | No |
 | `reasoning_effort` | The client's | No | The client's |
 | `model` | `RATCHET_TEACHER_MODEL`, always (invariant 1) | The version's adapter | `RATCHET_TEACHER_MODEL` |

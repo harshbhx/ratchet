@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1765 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1766 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -20,7 +20,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 
 | File | Tests |
 |---|---|
-| `tests/test_core.py` | 66 (44 functions; one has 19 cases, one has 5; 1 slow: skipped without `--runslow`) |
+| `tests/test_core.py` | 67 (44 functions; one has 19 cases, one has 5; 1 slow: skipped without `--runslow`) |
 | `tests/test_tasks.py` | 129 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
 | `tests/test_nightschool.py` | 29 (25 functions; one has 5 cases) |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1765** |
+| **Total** | **1766** |
 
 There are three layers:
 
@@ -128,6 +128,8 @@ None of these touch Token Factory or a GPU. Live behaviour is checked with `scri
 | `test_replay_precision_is_unbiased_under_the_designed_labelling_full_size` | The same with 500 replicates (`slow`) |
 | `test_replay_suggests_the_lowest_passing_grid_threshold_or_none` | FR-16.5: `suggest` scans `CERT_GRID` down from 0.95 and returns 0.80, the last threshold whose interval's lower bound reaches 0.97, with the advisory text; five rows at the top make it None although lower thresholds would pass (fixed sequence); `money_left_on_table` against 0.9 (nothing when every row was audited as logged, the savings and dollars at a 10% audit rate) and None when the current threshold is already lower; a target of 1 is refused |
 | `test_ratio_estimate_recovers_the_cost_ratio` | FR-16.5: `stats.ratio_estimate` recovers 1.3 within 3 standard errors on 400 noisy pairs, and `replay.ratio` from audited served answers weighted by 1 / `label_p` at mixed audit rates (escalations left out), with its interval; an unaudited served answer is priced at R times its estimate; `insufficient` (R 1.0) below 30 audited answers |
+| `test_a_client_logit_bias_never_steers_the_student_it_would_be_audited_against` | FR-1.13, FR-6.3, INV-2: `logit_bias` is not in the default student allowlist, so the student's body has none while the serving teacher still gets it; naming it in `RATCHET_STUDENT_PARAMS` restores it |
+
 ### `tests/test_tasks.py`
 
 Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Pure logic on `compare.FieldSpec` and `tasks.Task`, plus small ledgers and `RecordingProvider` for what the cascade, the golden eval and the dataset do with an answer the spec refuses.
