@@ -39,6 +39,9 @@
   otherwise, and TRL only warns when the rendered prompt is not a prefix of prompt+answer (FR-8.42). A train
   row whose answer holds a literal `<think>` or `</think>` is left out and counted (`skipped_think_tag`): the
   template renders such an answer without its empty think block, so its prompt would not be a prefix either.
+- A contested row (a later teacher label of the same request disagreed with it; the teacher watch,
+  FR-16.7) is left out of both sets and counted (`excluded_contested` in manifest.json), until Night
+  School's adjudication settles its label. `exclude_contested=False` (RATCHET_TEACHER_WATCH=0) keeps it.
 """
 
 from __future__ import annotations
@@ -96,11 +99,18 @@ def counts_as_train(r: Any, seen: Counter[str]) -> bool:
     return not (params and "stop" in params)
 
 
-def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
+def rows(
+    ledger: Ledger,
+    split: str,
+    task: str | None = None,
+    counts: dict[str, int] | None = None,
+    *,
+    exclude_contested: bool = True,
+) -> list[dict[str, Any]]:
     """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
     gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec),
-    `skipped_think_tag` (train rows whose answer holds a literal think tag) and `excluded_pinned` (rows left out because
-    their task is pinned now), each only when it happens."""
+    `skipped_think_tag` (train rows whose answer holds a literal think tag), `excluded_pinned` (rows left out because
+    their task is pinned now) and `excluded_contested` (rows quarantined by the teacher watch), each only when it happens."""
     out = []
     specs: dict[str, tasks.Task] = {}
     examples = ledger.examples(task=task)
@@ -122,6 +132,10 @@ def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, 
         if spec.pinned:  # INV-10 at read time: the task was pinned after these rows were stored
             if counts is not None:
                 counts["excluded_pinned"] = counts.get("excluded_pinned", 0) + 1
+            continue
+        if exclude_contested and r["contested"]:  # the teacher watch's quarantine (FR-16.7), in both splits
+            if counts is not None:
+                counts["excluded_contested"] = counts.get("excluded_contested", 0) + 1
             continue
         params = json.loads(r["params"]) if r["params"] else None
         if effective == "train" and params and "stop" in params:
@@ -217,11 +231,11 @@ def write_training(items: list[dict[str, Any]], path: str | Path) -> Path:
     return write_jsonl([training_record(it) for it in items], path)
 
 
-def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[str, Any]:
+def build(ledger: Ledger, out_dir: str | Path, task: str | None = None, *, exclude_contested: bool = True) -> dict[str, Any]:
     counts: dict[str, int] = {}
     golden_counts: dict[str, int] = {}
-    train = rows(ledger, "train", task, counts)
-    golden = rows(ledger, "golden", task, golden_counts)
+    train = rows(ledger, "train", task, counts, exclude_contested=exclude_contested)
+    golden = rows(ledger, "golden", task, golden_counts, exclude_contested=exclude_contested)
     out = Path(out_dir)
     write_training(train, out / "train.jsonl")
     write_jsonl(golden, out / "golden.jsonl")  # the eval's rows (messages and stored conditions): never trained on
@@ -232,6 +246,7 @@ def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[
         "skipped_invalid": counts.get("skipped_invalid", 0),
         "skipped_think_tag": counts.get("skipped_think_tag", 0),
         "excluded_pinned": counts.get("excluded_pinned", 0) + golden_counts.get("excluded_pinned", 0),
+        "excluded_contested": counts.get("excluded_contested", 0) + golden_counts.get("excluded_contested", 0),
         "bill_of_materials": ledger.bill_of_materials(),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))

@@ -88,7 +88,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 1654 tests
+pytest -q                                                                # 1750 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -212,6 +212,7 @@ python -m ratchet.stats check bom.json --public-key <yours>     # recompute ever
 ```
 
 ## Proving what an adapter was trained on
+A certificate holds only while traffic looks like what it was measured on. A **drift alarm** watches for that without labels ([ADR 0032](docs/adr/0032-label-free-drift-alarm.md)): for each version and task, a gambler bets against "traffic has not changed" using the rank of each new confidence score among the earlier ones. On unchanged traffic the bet's capital reaches 100 with probability at most 1% over the stream's whole life, however often anyone looks. When it does, a `drift` event says the traffic changed (not that the model got worse) and the version's certificate reads `suspended` (`curl -s localhost:8000/ratchet/drift`). In simulation (mock models), a product launch on day 5 raised the alarm on day 5 for six seeds out of six, and runs without the launch raised none.
 
 Every adapter's signed bill of materials also commits to its exact training and golden sets ([ADR 0027](docs/adr/0027-committed-training-sets.md)): one sparse Merkle root per set, over each example's hash mapped to a hash of its label, teacher, license and redaction count. From the BOM alone, anyone can then check a short proof that one request was, or was not, in an adapter's training set, and a held-out certificate that **no golden example was trained on**: invariants 3 and 6 as something you verify, not something you are told. The proofs show the operator's signed commitment, at training time, to the dataset; they do not show that the weights came from it. With guessable texts the proof endpoint would tell anyone what was trained on, so it needs an admin key.
 
@@ -244,7 +245,7 @@ curl -s localhost:8000/ratchet/receipts/3/proof/3006 > p.json                  #
 python -m ratchet.receipt verify r3.json --public-key <yours> --proof p.json  # OK: signature, OK: proof
 python -m sim.simulate --receipts --teacher-reasoning-mean 420                 # the bound next to the true cost (simulation)
 ```
-
+Every one of these numbers is agreement with the teacher, so the **teacher watch** checks the teacher too ([ADR 0033](docs/adr/0033-teacher-watch.md)). A request that repeats is labelled by the teacher again when it escalates or is audited; its first re-test in each check epoch is compared with the label stored for it, at no extra cost, and Night School adds 20 probes a night. A label a re-test disagrees with leaves training and the golden set until two more teacher answers settle it. When the disagreements pass 5% by enough that a stable teacher would get there at most 1% of the time, a `teacher_drift` event pauses Night School until an operator acknowledges (`curl -s localhost:8000/ratchet/teacher`); a new model id in the teacher's responses starts a fresh epoch. In simulation (mock models), a teacher that changed 15% of labels from day 5 froze training on day 5 to 7 for six seeds out of six, and a stable one never did.
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
@@ -336,6 +337,8 @@ ratchet/confidence.py   confidence score (pairwise agreement) + threshold calibr
 ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds, or an anytime-valid e-process)
 ratchet/certificate.py  certified precision: Clopper-Pearson certificates, frontier, paired McNemar comparison
 ratchet/stats.py        exact statistics, `python -m ratchet.stats plan|bound|mcnemar|check`
+ratchet/drift.py        label-free drift alarm: a conformal test martingale on each version's confidence stream
+ratchet/teacher_watch.py teacher watch: free re-test checks, quarantine and adjudication, a training freeze by e-process
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/redact.py       PII placeholders before examples are stored

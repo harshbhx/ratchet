@@ -47,19 +47,29 @@ RATCHET_MIN_JUDGE_PASS above 0 the golden gate also reads the judge's verdict on
 candidate would serve: an overall `judge_pass_rate` below it rejects the candidate, and a task whose
 own rate is below it fails like a task below its precision floor (`task_mode`). The judge runs in
 the golden eval at night, never on the request path (ADR 0008).
+Each tick starts with the label-free drift monitor (FR-16.6, ADR 0032): a conformal test martingale on every version's
+own confidence stream, read from the ledger. It decides no release; an alarm writes a `drift` event and suspends the
+version's certificate, and opt-in it boosts that version's audits and lets Night School train sooner.
+
+Each tick ends with the teacher watch (FR-16.7, FR-6.42, ADR 0033): when the teacher's labels disagree with earlier labels
+of the same requests too often (an e-process over the epoch's first re-tests), Night School is frozen until an operator
+acknowledges. The golden gate also warns when the teacher agrees with itself too little for any student to reach the
+precision floor at full coverage (FR-6.43). Neither changes a release decision.
 """
 
 from __future__ import annotations
 
 import math
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
-from . import calibration, certificate, tasks
+from . import calibration, certificate, tasks, teacher_watch
 from .confidence import SERVE_NOTHING
 from .config import ERROR, ConfigIssue
+from .drift import Alarm, DriftMonitor
 from .ledger import Ledger, Version
 from .stats import LOG_E_CAP, confidence_sequence, cp_lower, e_bernoulli, log_e_bernoulli, wilson  # `release.wilson` too
 
@@ -75,14 +85,8 @@ TASK_MODES = ("disable", "reject")
 # ReleasePolicy fields declared for the evidence features (ADR 0024) before the items that read them are built: field ->
 # the feature. Their defaults keep today's decisions; until a feature lands, any other value stops startup (from
 # `ReleasePolicy.__post_init__`), so nobody relies on a rule that does nothing yet. The item that builds a feature
-# removes its fields here.
-RESERVED_POLICY: dict[str, str] = {
-    "drift_alarm": "the drift alarm (FR-16.6)",
-    "drift_audit_boost": "the drift alarm (FR-16.6)",
-    "drift_early_night": "the drift alarm (FR-16.6)",
-    "teacher_noise_max": "the teacher watch (FR-16.7)",
-    "alpha_teacher": "the teacher watch (FR-16.7)",
-}
+# removes its fields here; every declared feature is built now, and the check stays for the next one.
+RESERVED_POLICY: dict[str, str] = {}
 
 
 @dataclass
@@ -122,13 +126,20 @@ class ReleasePolicy:
     paired_gate: int = 0
     regression_alpha: float = 0.05
     max_nfr: float = 1.0
-    # The drift alarm (FR-16.6): the martingale's threshold and the opt-in actions on an alarm.
+    # The drift alarm (FR-16.6, ADR 0032): the test martingale's threshold (a false alarm has probability at most
+    # 1/drift_alarm per stream; 0 = the monitor is off), and the opt-in actions on an alarm: the alarmed version's audit
+    # rate multiplied by drift_audit_boost (1 = off, FR-6.40), and Night School needing half the new examples
+    # (drift_early_night=1, FR-6.41).
     drift_alarm: float = 100.0
     drift_audit_boost: float = 1.0
     drift_early_night: int = 0
-    # The teacher watch (FR-16.7): the disagreement rate it tolerates and its error rate.
+    # The teacher watch (FR-16.7, ADR 0033): the rate at which a fresh teacher label may disagree with an earlier label
+    # of the same request (H0), the freeze's error rate (Night School stops when the e-value reaches 1/alpha_teacher,
+    # FR-6.42), and the switch (0 = no quarantine, no freeze, no ceiling warning, no probes or adjudications; checks are
+    # still recorded).
     teacher_noise_max: float = 0.05
     alpha_teacher: float = 0.01
+    teacher_watch: int = 1
 
     def __post_init__(self) -> None:
         def bad(name: str, value: object, want: str) -> ValueError:
@@ -147,20 +158,31 @@ class ReleasePolicy:
         for name in ("min_precision", "min_coverage", "tolerance", "min_certified_precision", "min_judge_pass"):
             if not 0 <= getattr(self, name) <= 1:
                 raise bad(name, getattr(self, name), "from 0 to 1")
-        for name in ("live_floor", "alpha_rollback", "alpha_promote", "alpha_alert", "regression_alpha", "teacher_noise_max"):
+        for name in (
+            "live_floor",
+            "alpha_rollback",
+            "alpha_promote",
+            "alpha_alert",
+            "regression_alpha",
+            "teacher_noise_max",
+            "alpha_teacher",
+        ):
             if not 0 < getattr(self, name) < 1:
                 raise bad(name, getattr(self, name), "strictly between 0 and 1")
-        for name in ("sequential", "promote_evidence", "alert_eprocess", "paired_gate", "drift_early_night"):
+        for name in ("sequential", "promote_evidence", "alert_eprocess", "paired_gate", "drift_early_night", "teacher_watch"):
             if getattr(self, name) not in (0, 1):
                 raise bad(name, getattr(self, name), "0 or 1")
         if not 0 < self.max_nfr <= 1:
             raise bad("max_nfr", self.max_nfr, "more than 0 and at most 1")
-        if not self.drift_alarm > 1:
-            raise bad("drift_alarm", self.drift_alarm, "more than 1")
+        if not (self.drift_alarm == 0 or self.drift_alarm > 1):
+            raise bad("drift_alarm", self.drift_alarm, "more than 1, or 0 (off)")
         if not self.drift_audit_boost >= 1:
             raise bad("drift_audit_boost", self.drift_audit_boost, "1 or more")
         if self.task_mode not in TASK_MODES:
             raise bad("task_mode", self.task_mode, " or ".join(TASK_MODES))
+        if self.drift_alarm == 0 and (self.drift_audit_boost > 1 or self.drift_early_night):
+            on = "RATCHET_DRIFT_AUDIT_BOOST" if self.drift_audit_boost > 1 else "RATCHET_DRIFT_EARLY_NIGHT"
+            raise ValueError(f"{on} acts on drift alarms, but RATCHET_DRIFT_ALARM=0 turns the monitor off")
         defaults = {f.name: f.default for f in fields(self) if f.default is not MISSING}
         for name, feature in RESERVED_POLICY.items():
             if getattr(self, name) != defaults[name]:
@@ -315,6 +337,20 @@ class ReleaseGate:
         # version -> the newest audited request its per-task check has seen: the grouped query runs only after a new audit
         # (`tick` runs after every gateway request).
         self._task_checked: dict[int, int] = {}
+        # The label-free drift monitor (FR-16.6, ADR 0032), fed from the ledger by `_tick_drift`; None when
+        # RATCHET_DRIFT_ALARM=0. A fresh gate replays the ledger on its first tick.
+        self.drift: DriftMonitor | None = DriftMonitor(self.policy.drift_alarm) if self.policy.drift_alarm else None
+        # {version id: audit-rate multiplier} for serving versions with an open drift alarm, when drift_audit_boost > 1
+        # (FR-6.40). The router reads this very dict (`Ratchet.audit_boost`); the gateway and the simulator share it.
+        self.audit_boost: dict[int, float] = {}
+        # A mock night (`early_night`) and the gateway's ticks may check drift at once; one at a time keeps the boosts
+        # consistent. The monitor has its own lock for its streams.
+        self._drift_lock = threading.Lock()
+        # Alarms whose `drift` event could not be written yet (the ledger raised); the next check writes them first. The
+        # monitor latches an alarm when it sees it, so without this a failed write would never be retried.
+        self._unwritten: list[Alarm] = []
+        # The teacher watch's running counts of the current epoch (FR-16.7, ADR 0033), read by `_tick_watchers`.
+        self.teacher = teacher_watch.Watch()
 
     # ---- step 1: after training ----
     def admit(self, vid: int) -> bool:
@@ -325,7 +361,9 @@ class ReleaseGate:
         the paired counts and the certificate. One transaction (ADR 0064): the checks, the retirement of an older shadow
         or canary and the candidate's move commit together, so no other process (the gateway's tick, an admin) sees half
         of it or acts in between. A version that is no longer a candidate (an admin moved it while it was scored) is left
-        as it is, with a `conflict` event."""
+        as it is, with a `conflict` event. Before any rule, an advisory `warning` when the teacher agrees with itself too
+        little for any student to reach `min_precision` at full coverage (FR-6.43, `teacher_watch.ceiling_warning`); it
+        decides nothing."""
         p = self.policy
         with self.ledger.transaction():
             v = self.ledger.version(vid)
@@ -333,6 +371,9 @@ class ReleaseGate:
             if v.state != "candidate":
                 self._conflict(v)
                 return False
+            ceiling = teacher_watch.ceiling_warning(self.ledger, p)
+            if ceiling:
+                self.ledger.event("warning", f"v{v.id}: {ceiling}")
             prec, cov = v.eval.get("precision", 0.0), v.eval.get("coverage", 0.0)
             live = self.ledger.live()
             if prec < p.min_precision:
@@ -660,7 +701,82 @@ class ReleaseGate:
         self._tick_watchers()
 
     def _tick_drift(self) -> None:
-        """The label-free drift monitor (FR-16.6) will update here, first, from the ledger. Nothing yet."""
+        """The label-free drift monitor (FR-16.6, ADR 0032), first: one primary-key range query for the confidences
+        logged since the last tick, each fed to its (version, task) stream (`check_drift`). It decides nothing about a
+        release; an alarm writes a `drift` event, suspends the version's certificate, and with the opt-in actions boosts
+        its audits and lets Night School train sooner."""
+        self.check_drift()
+
+    def check_drift(self) -> list[Alarm]:
+        """Bring the drift monitor up to date with the ledger and act on the alarms raised: a `drift` event for each,
+        written once per (version, task) across processes and restarts (`Ledger.event_keyed`), and the audit boosts
+        (`audit_boost`) refreshed. Returns the new alarms (none while RATCHET_DRIFT_ALARM=0).
+
+        The event is dated with the alarm's own ledger day, and `meta` records its request and day, because a monitor
+        that replays the ledger (a restart, a lowered threshold, a nightly job in its own process) can find an alarm
+        days after it happened. An event the ledger refused to write stays queued and is written by the next check; the
+        error still propagates."""
+        if self.drift is None:
+            return []
+        with self._drift_lock:
+            alarms = self.drift.update(self.ledger)
+            self._unwritten.extend(alarms)
+            while self._unwritten:
+                alarm = self._unwritten[0]
+                meta = {"request": alarm.request_id, "day": alarm.day}
+                self.ledger.event_keyed(alarm.key, "drift", alarm.detail(), day=alarm.day, meta=meta)
+                self._unwritten.pop(0)
+            if self.policy.drift_audit_boost > 1:
+                self._refresh_audit_boost()
+        return alarms
+
+    def drift_alarm_since(self, ts: float | None) -> bool:
+        """Whether some stream alarmed on a request logged after `ts` (any alarm when `ts` is None). The alarm's own
+        request decides, not when its event was written, so an alarm a replay finds late does not count as new (FR-6.41).
+        Both times are the ledger's wall-clock `ts`, also in simulations."""
+        if self.drift is None:
+            return False
+        latest = self.drift.alarm_requests()[:1]
+        if not latest:
+            return False
+        if ts is None:
+            return True
+        when = self.ledger.request_ts(latest[0])
+        return when is not None and when > ts
+
+    def _refresh_audit_boost(self) -> None:
+        """Boost the audits of every version that has an open drift alarm and still serves (canary or live); drop the
+        boost of one that no longer does, which is how a newer version going live clears it. In place, so the router's
+        reference to the dict stays valid; it only ever reads it with `.get`. Reads the ledger only while some version
+        has an alarm or a boost."""
+        assert self.drift is not None
+        alarmed = self.drift.alarmed_versions()
+        if not alarmed and not self.audit_boost:
+            return
+        states = self.ledger.version_states()
+        want = {vid: self.policy.drift_audit_boost for vid in alarmed if states.get(vid) in ("canary", "live")}
+        for vid in [v for v in self.audit_boost if v not in want]:
+            del self.audit_boost[vid]
+        self.audit_boost.update(want)
+
+    def drift_status(self, version: int | None = None, trajectory: bool = True) -> dict[str, Any]:
+        """`GET /ratchet/drift`: whether the monitor is on, its threshold and false-alarm bounds, and every stream (or
+        `version`'s) with its capital and trajectory (`DriftMonitor.status`)."""
+        if self.drift is None:
+            return {**self.drift_counts(), "streams": []}
+        return {"enabled": True, **self.drift.status(version, trajectory)}
+
+    def drift_counts(self) -> dict[str, Any]:
+        """`drift_status` without the streams: what `/ratchet/stats` shows on every poll, without a row per stream."""
+        if self.drift is None:
+            off = dict.fromkeys(("threshold", "false_alarm_bound", "family_bound"))
+            return {"enabled": False, **off, "monitored": 0, "alarms": 0}
+        return {"enabled": True, **self.drift.counts()}
+
+    def drift_view(self, version: int) -> dict[str, Any] | None:
+        """The certificate endpoint's `drift` for `version`: `alarm` (open or not), the threshold and its streams; None
+        when the monitor is off or the version never logged a confidence."""
+        return self.drift.version_view(version) if self.drift is not None else None
 
     def _tick_live(self, live: Version | None) -> None:
         """Alert once per live version when its audited precision since it went live is strongly below the floor (it is
@@ -910,7 +1026,20 @@ class ReleaseGate:
         }
 
     def _tick_watchers(self) -> None:
-        """The teacher watch (FR-16.7) will check here, last. Nothing yet."""
+        """The teacher watch (FR-16.7, FR-6.42, ADR 0033), last: the current epoch's new checks are added to the running
+        counts (`check_teacher`), and when their e-value reaches 1/alpha_teacher Night School is frozen with one
+        `teacher_drift` event. It changes no release decision."""
+        self.check_teacher()
+
+    def check_teacher(self) -> str | None:
+        """Freeze Night School when the teacher's labels disagree with earlier labels of the same requests too often
+        (`teacher_watch.Watch.check`); returns the `teacher_drift` event's text when this call froze it. Night School
+        calls it too, right after its probes. None while RATCHET_TEACHER_WATCH=0."""
+        return self.teacher.check(self.ledger, self.policy)
+
+    def teacher_status(self) -> dict[str, Any]:
+        """`GET /ratchet/teacher` (`teacher_watch.status`)."""
+        return teacher_watch.status(self.ledger, self.policy)
 
 
 def _paired_counts(pair: object, live_id: int) -> dict[str, Any] | None:

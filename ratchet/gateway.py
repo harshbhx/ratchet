@@ -69,6 +69,7 @@ from . import (
     schema_tasks,
     tasks,
     taskspec,
+    teacher_watch,
 )
 from . import access as acl
 from . import admin as admin_ops
@@ -480,6 +481,10 @@ class Runtime:
         self.ratchet.on_offpath_spend = lambda client, usd: self.meter.add(client, usd, requests=0)
         self.gate = ReleaseGate(self.ledger, policy)
         self.gate_lock = threading.Lock()
+        # The drift audit boost (FR-6.40): the router reads the gate's dict, which stays empty unless
+        # RATCHET_DRIFT_AUDIT_BOOST is above 1. Then the drift monitor replays the ledger now, not on the first request.
+        self.ratchet.audit_boost = self.gate.audit_boost
+        self.gate.check_drift()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
 
@@ -691,6 +696,7 @@ class Runtime:
             signer=self.signer,
             redact_pii=self.settings.redact_pii,
             store_examples=self.settings.store_examples,
+            relabel=self.relabel(),
         )
         trained = self.ledger.version(rep.version) if rep.trained and rep.version is not None else None
         record_simulated_day(self.ledger, self.cost_policy, self.ledger.day, trained)
@@ -698,6 +704,21 @@ class Runtime:
         # the ledger and writes receipts only: no random draw, so no other number moves.
         receipts.seal_due(self.ledger, self.receipt_config)
         return rep
+
+    def relabel(self) -> teacher_watch.Relabel:
+        """How Night School re-asks the teacher for the watch's probes and adjudications (FR-5.40, FR-5.41): the
+        cascade's own teacher, asked as an audit asks."""
+        s = self.settings
+        probes, adjudicate = s.teacher_watch_limits()
+        return teacher_watch.relabel_with(
+            self.ratchet.teacher,
+            s.teacher_model,
+            self.ratchet.gen,
+            probes,
+            adjudicate,
+            redact_pii=s.redact_pii,
+            price=s.price(s.teacher_model),
+        )
 
     def warm_up(self, days: int, requests: int) -> None:
         for _ in range(days):
@@ -3069,10 +3090,21 @@ def _stats_payload() -> dict[str, Any]:
         "controls": controls.as_dict(),
         # PRD §8.1's success metrics over the last RATCHET_KPI_WINDOW_DAYS days with traffic, as GET /ratchet/kpis has them.
         "kpis": _kpi_report(),
+        # The label-free drift alarm (FR-16.6): streams monitored and how many alarmed; `GET /ratchet/drift` has each.
+        "drift": _drift_block(),
+        # The teacher watch (FR-16.7): the epoch's checks, the freeze and the contested labels; `GET /ratchet/teacher`.
+        "teacher_watch": teacher_watch.stats_block(led, rt.gate.policy),
     }
 
 
 ERRORS_WINDOW_S = 3600.0  # /ratchet/stats' errors.last_hour
+
+
+def _drift_block() -> dict[str, Any]:
+    """`/ratchet/stats`' `drift`: whether the monitor is on, its threshold and family false-alarm bound, the streams it
+    holds (a count here; the list is in `GET /ratchet/drift`) and how many alarmed. Counts only: no row per stream."""
+    d = rt.gate.drift_counts()
+    return {k: d[k] for k in ("enabled", "threshold", "family_bound", "alarms")} | {"streams": d["monitored"]}
 
 
 def _clients_with_spend(rows: list[dict[str, Any]], spend: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -3201,6 +3233,14 @@ def kpi(days: int | None = None) -> dict[str, Any]:
     return _kpi_report(days)
 
 
+@app.get("/ratchet/drift")
+def drift(version: int | None = None) -> dict[str, Any]:
+    """The label-free drift monitor (FR-16.6, ADR 0032): its threshold, the false-alarm bound per stream and across
+    every stream it holds, and each (version, task) stream's test martingale with its trajectory; `version` narrows the
+    streams to one version. Read-only: the gateway feeds the monitor after every request."""
+    return rt.gate.drift_status(version)
+
+
 @app.get("/ratchet/bom")
 def bom() -> dict[str, Any]:
     """Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard
@@ -3278,7 +3318,7 @@ def version_certificate(vid: int) -> dict[str, Any]:
     current = certificate.section(v.eval)
     if current is not None:
         current["rechecked_day"] = v.eval.get("rechecked_day")
-    drift = None  # the drift alarm (FR-16.6) reports here; an open alarm makes the status 'suspended'
+    drift = rt.gate.drift_view(vid)  # an open drift alarm (FR-16.6) makes the status 'suspended'
     return {
         "version": v.id,
         "state": v.state,
@@ -3627,6 +3667,16 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
 
 # ----- ledger replay (FR-16.5, ADR 0028) -----
 MAX_REPLAY_DAY = 10_000_000  # a ledger day far beyond any real one: larger values are refused, not passed to SQLite
+
+
+# ----- the teacher watch (FR-16.7, ADR 0033) -----
+@app.get("/ratchet/teacher")
+def teacher() -> dict[str, Any]:
+    """The teacher watch (FR-16.7, ADR 0033): the check epoch, whether Night School is frozen, the model id the teacher
+    last reported, the rule (H0's disagreement rate, alpha, the e-value threshold), the epoch's first re-tests with the
+    teacher's self-agreement, its 95% interval, the agreement ceiling and the e-value, by source and by task, and the
+    contested labels. Public and read-only, like /ratchet/stats."""
+    return rt.gate.teacher_status()
 
 
 def _replay_version(request: Request) -> Version:
@@ -4203,6 +4253,15 @@ def admin_audit_log(limit: int = ADMIN_LOG_LIMIT, admin: str = Depends(_admin)) 
         raise HTTPException(e.status, str(e)) from e
 
 
+@app.post("/ratchet/teacher/ack")
+def teacher_ack(admin: str = Depends(_admin)) -> dict[str, Any]:
+    """Acknowledge the teacher watch (FR-6.42): a new check epoch, Night School unfrozen, and a `teacher_ack` event naming
+    the admin key (never the key). Needs an admin key; open in mock mode without admin keys, like the other management
+    calls. Check the teacher's model id first (docs/RUNBOOK.md)."""
+    epoch = rt.ledger.teacher_ack(admin)
+    return {"epoch": epoch, "frozen": rt.ledger.teacher_state().frozen}
+
+
 # ----- demo controls (mock mode only) -----
 # The public demo is shared by every visitor, so controls run one at a time and reset has a cooldown.
 _demo_lock = threading.Lock()
@@ -4274,6 +4333,19 @@ def demo_sample_example(split: str = "train", version: int | None = None) -> dic
         raise HTTPException(404, f"version {v.id} has no committed {split} example still stored")
     params = json.loads(row["params"]) if row["params"] else {}
     return {"version": v.id, "split": split, "task": row["task"], "messages": json.loads(row["messages"]), **params}
+
+
+@app.post("/ratchet/demo/teacher-drift")
+def demo_teacher_drift(noise: float = 0.15) -> dict[str, Any]:
+    """Fault injection: from now on the mock teacher changes a label with probability `noise` (0 to 1; 0 makes it
+    stable again), to show the teacher watch contest labels, freeze Night School (`teacher_drift`) and resume after
+    `POST /ratchet/teacher/ack`."""
+    _mock_only()
+    if not 0 <= noise <= 1:  # also NaN
+        raise HTTPException(400, "noise must be from 0 to 1")
+    rt.ratchet.teacher.noise = noise
+    rt.ledger.event("fault", f"mock teacher changes a label with probability {noise:g} (demo fault injection)")
+    return {"noise": noise}
 
 
 @app.post("/ratchet/demo/reset")

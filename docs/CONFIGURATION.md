@@ -329,6 +329,7 @@ How Night School's golden eval picks each version's threshold and what its certi
 Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served held-out rows; `python -m ratchet.stats plan --target T --delta D`): 95% at delta 0.05 needs 59, 93, 124 or 153 served rows; 97% needs 99, 157, 208 or 257; 90% needs 29, 46, 61 or 76. Only the held-out half counts, so the golden set must be about twice that, divided by the coverage.
 
 ## Ledger and hot path
+## Teacher watch (`Settings.teacher_watch_limits()`)
 
 How the ledger file is written and how often the request path does periodic work ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), [ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). A bad value stops startup with a `ValueError` naming the variable (the gateway, `python -m ratchet.live` and `python -m ratchet.cost`).
 
@@ -410,10 +411,17 @@ Read in `ratchet/config.py` (`Settings.kpi_window()`); used by `ratchet/kpis.py`
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_KPI_WINDOW_DAYS` | `3` | The steady state the success metrics describe: SM-1 to SM-3 and NFR-1 cover the last this many ledger days with traffic (days without requests are skipped). A whole number from 1 to 3,650; anything else stops startup with `ValueError` naming the variable. `GET /ratchet/kpis?days=N` overrides it for one report |
+How much paid teacher work Night School spends each night checking the teacher (FR-5.40, FR-5.41, [ADR 0033](adr/0033-teacher-watch.md)). The checks that come free with traffic (a stored request's first re-test in each check epoch) need no setting. Read by the gateway (mock nights), the simulator and `python -m ratchet.live night`; a value that is not a whole number from 0 to 10,000 stops startup with a `ValueError` naming the variable. The freeze rule and the switch are [release policy](#release-policy-ratchetreleasepy) fields (`teacher_noise_max`, `alpha_teacher`, `teacher_watch`).
 
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_TEACHER_PROBES` | `20` | Stored labels Night School asks the teacher about again each night (one call each, as an audit asks: temperature 0, under the example's stored conditions), so traffic with few repeats is checked too. Only labels that can be checked: the configured teacher's, no redaction placeholders, a task that names fields and is not pinned, not contested, not re-tested yet in the current epoch; in hash order. Each one is that request's first re-test of the epoch. 0: none |
+| `RATCHET_ADJUDICATE_MAX` | `50` | Contested labels Night School adjudicates each night, two more teacher answers each: a strict majority of the three becomes the label and ends the quarantine; without one the label stays quarantined and is tried again after the labels never adjudicated. 0: none (contested labels stay out of training) |
+
+At the defaults a night makes at most 120 teacher calls (20 probes, 50 adjudications of two calls each); at the teacher's list price (unverified) and about 200 tokens in and 300 out a call, that is about $0.13. The night's `teacher_watch` event states what it spent when anything happened; the cost report does not count it yet (ADR 0033).
 ## Release policy (`ratchet/release.py`)
 
-`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`).
+`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`, `--drift-alarm`, `--drift-boost`, `--drift-early-night`, `--teacher-watch`; `--teacher-noise` and `--teacher-noise-day` make its mock teacher unstable).
 
 | Field | Variable | Default | Used in |
 |---|---|---|---|
@@ -437,8 +445,14 @@ Read in `ratchet/config.py` (`Settings.kpi_window()`); used by `ratchet/kpis.py`
 | `regression_alpha` | `RATCHET_REGRESSION_ALPHA` | 0.05 | The paired gate's error rate for each McNemar test: a candidate no worse than live is rejected with probability at most this. Strictly between 0 and 1 |
 | `max_nfr` | `RATCHET_MAX_NFR` | 1.0 | The paired gate: reject when the 95% Wilson lower bound of the negative flip rate (answers live served right that the candidate serves wrong) is above this. 1: off. More than 0 and at most 1 |
 | `min_judge_pass` | `RATCHET_MIN_JUDGE_PASS` | 0 (off) | Golden gate on free-text tasks ([free-text tasks](#free-text-tasks), FR-14.40): the judge's pass rate the answers a candidate would serve need. Below it overall, the candidate is rejected; below it on a task with `min_task_test_n` held-out rows, that task fails as under `task_mode`. With it on, a free-text task the candidate would answer that no judge graded fails too. From 0 to 1 |
+| `drift_alarm` | `RATCHET_DRIFT_ALARM` | 100 | The label-free drift alarm ([ADR 0032](adr/0032-label-free-drift-alarm.md)): the alarm threshold of each (version, task) stream's test martingale on the student's confidence. A stream that sees no traffic change alarms with probability at most 1/threshold over its whole life (1% at 100); with K streams, at most K/threshold for any of them (`GET /ratchet/drift` reports both). A version holds at most 17 streams: 16 task streams and one for every later task name. An alarm writes a `drift` event and suspends the version's certificate; it decides no release. On by default; it reads the ledger in the gate's tick and never touches the request path. 0 turns it off; otherwise more than 1 |
+| `drift_audit_boost` | `RATCHET_DRIFT_AUDIT_BOOST` | 1.0 | After a drift alarm, the alarmed version's audit rate is multiplied by this while it serves (canary or live), up to 0.5, and never lowered (FR-6.40). The boosted rate is logged as `label_p`; a newer version going live clears it. 1: off. 1 or more, and needs the monitor on |
+| `drift_early_night` | `RATCHET_DRIFT_EARLY_NIGHT` | 0 | 1: when a drift alarm came from a request logged after the last `trained` event, Night School needs half the usual new examples (`max(1, min_new_examples // 2)`; FR-6.41). Never while a release is in flight. 0 or 1, and needs the monitor on |
+| `teacher_noise_max` | `RATCHET_TEACHER_NOISE_MAX` | 0.05 | The teacher watch ([ADR 0033](adr/0033-teacher-watch.md)): the rate at which a fresh teacher label of a request may disagree with an independent earlier label of it before the watch calls the teacher unstable (H0 of the freeze rule). Strictly between 0 and 1. Raise it on purpose for a teacher you know is noisier (a sampling teacher, a free-text-heavy task mix); the runbook says when |
+| `alpha_teacher` | `RATCHET_ALPHA_TEACHER` | 0.01 | The freeze rule's error rate: a teacher within `teacher_noise_max` freezes Night School with probability at most this per check epoch, however often the gate looks (threshold 1/alpha: 100). Strictly between 0 and 1 |
+| `teacher_watch` | `RATCHET_TEACHER_WATCH` | 1 | 1: the teacher watch acts: contested labels are left out of training and the golden set, the freeze rule pauses Night School (`teacher_drift`, FR-6.42), the golden gate warns about the agreement ceiling (FR-6.43), and Night School probes and adjudicates. 0: none of that; the free checks are still recorded (one indexed lookup per stored duplicate) and shown by `GET /ratchet/teacher`, so turning it on later has history. 0 or 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance`, `min_judge_pass` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, the switches 0 or 1, `task_mode` `disable` or `reject`. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, and with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed). The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and simulations may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance`, `min_judge_pass` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, `drift_alarm` 0 or more than 1, `drift_audit_boost` 1 or more, `teacher_noise_max` and `alpha_teacher` strictly between 0 and 1, the switches 0 or 1, `task_mode` `disable` or `reject`. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed), and a drift action (`drift_audit_boost` above 1 or `drift_early_night=1`) with `drift_alarm=0`. The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and simulations may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features not built yet are in [Reserved settings](#reserved-settings).
 
@@ -452,6 +466,7 @@ Other constants:
 | `target_precision` | `cascade_eval()` / `LiveEvaluator` | 0.97 for threshold calibration (the `point` rule) (`calibration.DEFAULT_TARGET_PRECISION`); a task's `policy.target_precision` overrides it for that task |
 | `CERT_GRID` | `stats.py` | 0.95, 0.90, …, 0.50: the thresholds Learn-then-Test and the frontier use (fixed in advance, never from the data) |
 | `floor` | `cascade_eval()` | 0.5: lowest allowed threshold |
+| Drift monitor | `drift.py` | `BINS` 10,000 (a confidence's rank is taken to 4 decimals); `BETS` 0.05, 0.15, 0.3, 0.6, 1.0 (the power betting functions); switching rate 0.01 for a stream's first 100 confidences, then 1/n; `MAX_POINTS` 200 trajectory points per stream; seed 7 for the tie-breaking draws (never the router's generator) |
 | Confidence weights | `confidence.score()` | 0.4 × token probability + 0.6 × agreement |
 | Student sampling | `router._sample` | `temperature=0.7`, `logprobs=True` |
 | Teacher temperature for `n` > 1 | `providers.CHOICES_TEMPERATURE` | 0.7, when the client sets no temperature (at 0 every choice would be the same) |
@@ -464,8 +479,7 @@ The evidence features (PRD §6.16) are built one at a time. Their settings are d
 
 | Variable | Default | Feature that will read it |
 |---|---|---|
-| `RATCHET_TEACHER_PROBES` | `20` | Teacher watch (FR-16.7): stored labels re-asked per night |
-| `RATCHET_ADJUDICATE_MAX` | `50` | Teacher watch (FR-16.7): contested labels adjudicated per night |
+
 | `RATCHET_BATCH_API` | `operations` | Clean-room backfill (FR-16.8): the Token Factory batch API (`operations` or `openai`) |
 | `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
 | `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |
@@ -473,15 +487,7 @@ The evidence features (PRD §6.16) are built one at a time. Their settings are d
 `RATCHET_DB_SYNC` was reserved here for the WAL journal; it is built now ([Ledger and hot path](#ledger-and-hot-path)).
 | `RATCHET_GATEWAY_LEASE` | `warn` | One gateway process per live ledger (NFR-60, waiting for the leases table): `warn` will write a `gateway_lease` event when a second process serves the same ledger and keep serving, `exclusive` will refuse to start, `off` will do nothing. Any other value stops startup now, also through `Settings.scout_policy()` |
 
-`ReleasePolicy` (`release.RESERVED_POLICY`, read by `from_env` as `RATCHET_<FIELD>` in live mode like the fields above):
-
-| Field | Variable | Default | Feature that will read it |
-|---|---|---|---|
-| `drift_alarm` | `RATCHET_DRIFT_ALARM` | 100 | Drift alarm (FR-16.6): the test martingale's alarm threshold (false-alarm probability at most 1/threshold per stream) |
-| `drift_audit_boost` | `RATCHET_DRIFT_AUDIT_BOOST` | 1.0 | FR-16.6: the audit-rate multiplier after an alarm (1: off) |
-| `drift_early_night` | `RATCHET_DRIFT_EARLY_NIGHT` | 0 | FR-16.6: 1 halves the new examples Night School needs after an alarm |
-| `teacher_noise_max` | `RATCHET_TEACHER_NOISE_MAX` | 0.05 | Teacher watch (FR-16.7): the teacher disagreement rate it tolerates |
-| `alpha_teacher` | `RATCHET_ALPHA_TEACHER` | 0.01 | FR-16.7: the teacher watch's error rate |
+`ReleasePolicy` (`release.RESERVED_POLICY`): none today. Every field declared for the evidence features is built; the check stays for the next feature that declares a field before it is built.
 
 ## Tasks
 

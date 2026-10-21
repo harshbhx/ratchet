@@ -48,6 +48,9 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/ratchet/bom/public-key"): PUBLIC,
     ("GET", "/ratchet/stats"): DASHBOARD,
     ("GET", "/ratchet/kpis"): DASHBOARD,
+    ("GET", "/ratchet/drift"): DASHBOARD,
+    ("GET", "/ratchet/teacher"): DASHBOARD,
+    ("POST", "/ratchet/teacher/ack"): ADMIN,
     ("GET", "/metrics"): METRICS,
     ("GET", "/ratchet/cost"): DASHBOARD,
     # The ledger replay reads like /ratchet/stats (FR-16.5); savings receipts check their callers themselves
