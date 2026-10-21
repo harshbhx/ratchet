@@ -94,6 +94,20 @@ def answer_problem(task: tasks.Task, c: Completion) -> str | None:
     return task.check(c.text)
 
 
+# The serving teacher's parameters that only report on its answer (token logprobs a client asked for) and never change
+# what it writes, so a serving call that sends them still writes the answer an audit would (FR-16.5, ADR 0028).
+_REPORT_ONLY = {"logprobs": None, "top_logprobs": None}
+
+
+def _labels_like_audit(plan: GenPlan) -> bool:
+    """Whether an escalation's teacher answer is a label of the same kind as an audit's: one choice, written under the
+    audit's parameters (temperature 0 and nothing from `CHECK_DROPS`, logprobs aside). Otherwise the teacher sampled
+    (a client temperature, or n > 1 choices at `CHOICES_TEMPERATURE`) or a client steered it (`logit_bias`, a penalty,
+    a seed), and the replay would weigh labels from two different teachers in one mean (ADR 0028). Such an escalation
+    leaves `student_agree` NULL: a designed label that was not obtained, like a failed teacher call."""
+    return plan.n == 1 and replace(plan.serve, **_REPORT_ONLY) == plan.check
+
+
 # Added to a student call's longest time before its probe is presumed lost: the call starts a moment after allow().
 PROBE_MARGIN_S = 5.0
 
@@ -987,8 +1001,9 @@ class Ratchet:
                 if answer.fallback:
                     route = "fallback_teacher"
                 # The escalation labels the student's own answer (label_p 1.0): one comparison, string work only. Only a
-                # valid student answer and the primary teacher's valid answer count, as for an audit (INV-16).
-                elif sc is not None and sc.valid and answer_problem(task, teacher_c) is None:
+                # valid student answer and the primary teacher's valid answer count, as for an audit (INV-16), and only
+                # when the teacher wrote it under the audit's conditions (`_labels_like_audit`, ADR 0028).
+                elif sc is not None and sc.valid and answer_problem(task, teacher_c) is None and _labels_like_audit(plan):
                     student_agree = int(task.agree(sc.answer.text, teacher_c.text))
 
         # The all-teacher cost by the token formula (requests.baseline_est_usd, FR-16.5), for every student answer, also

@@ -785,7 +785,6 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.replay:ratio",
         "ratchet.replay:suggest",
         "ratchet.replay:main",
-        "ratchet.stats:hajek_mean",
         "ratchet.stats:ratio_estimate",
         "ratchet.gateway:replay_version",
         "ratchet.gateway:replay_frontier",
