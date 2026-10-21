@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 784 tests
+pytest -q                                                                # 854 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -145,7 +145,7 @@ With **unverified list prices** (an L40S at about $1.55/hour, about $0.001 of Ul
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
 
-- **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default; names and addresses are not covered yet ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md)).
+- **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, GSTINs, UPI ids, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default. Extraction tasks can use numbered (`[EMAIL_1]`) or surrogate placeholders, consistent between the prompt and the answer, and names and addresses are covered when you plug in a detector such as Presidio ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md), [ADR 0082](docs/adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)).
 - **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, and cost and savings per client: the basis for per-customer receipts.
 - **Streaming** (`stream: true`) in the OpenAI chunk format, so streaming clients work unchanged.
 - **Signed bill of materials per adapter** ([ADR 0010](docs/adr/0010-signed-adapter-bom.md)): teachers, licenses, dataset and golden-set hashes and the evaluation, written at training time.

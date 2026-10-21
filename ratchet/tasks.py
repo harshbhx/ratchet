@@ -35,6 +35,7 @@ from typing import Any
 from . import vocab
 from .compare import INVALID as NO_KEY
 from .compare import MAX_FIELDS, MAX_RECORDS, FieldSpec, Record, jsonable
+from .redact import STYLES as REDACT_STYLES
 
 # Answer formats. `json`: the answer is JSON and fields are paths into it. `text`: the answer is plain text and its one
 # field is '$', the text without surrounding whitespace and trailing `.!,;:`. `tool_calls` and `sql` are reserved for
@@ -51,6 +52,8 @@ POLICY_KEYS = ("samples", "audit_rate", "target_precision", "min_precision")
 # with `system_prefix`, its `response_format.json_schema.name` is `schema_name`, or its tools are exactly `tools`. Plain
 # comparisons, never a pattern a request could make slow.
 MATCH_KEYS = ("system_prefix", "schema_name", "tools")
+# How a task's examples are stored (ADR 0082): `redact_style`, one of redact.STYLES (null: the deployment's default).
+PRIVACY_KEYS = ("redact_style",)
 MAX_DESCRIPTION = 1000  # characters
 MAX_PREFIX = 2000  # characters of `match.system_prefix`
 MAX_MATCH_TOOLS = 128  # OpenAI's limit on a request's tools
@@ -70,7 +73,8 @@ class Task:
 
     `description`, `clients` (the API key names that may use the task; empty: every key) and `match_rules` (a spec
     file's `match`) say who uses the task and how a request finds it, not how its answers compare, so they are left
-    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration."""
+    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration. So is
+    `redact_style`, which changes how new examples are stored, not how answers compare."""
 
     name: str
     compare_keys: Sequence[str] = ()
@@ -87,6 +91,9 @@ class Task:
     description: str = ""
     clients: Sequence[str] = ()  # API key names (RATCHET_API_KEYS) allowed to use this task; empty: every key
     match_rules: Mapping[str, Any] = field(default_factory=dict)  # MATCH_KEYS; a spec file's `match`
+    # How identifiers in this task's stored examples are replaced (redact.STYLES; a spec's `privacy.redact_style`);
+    # None: RATCHET_REDACT_STYLE (ADR 0082).
+    redact_style: str | None = None
     spec_hash: str = field(init=False, default="")  # sha256 of `spec()`, 16 hex digits
     _root: bool = field(init=False, repr=False, compare=False, default=False)  # a field at '$'
 
@@ -154,6 +161,8 @@ class Task:
             if problem is not None:
                 fail(f"match.{key} {problem}")
         put("match_rules", MappingProxyType({k: tuple(v) if k == "tools" else v for k, v in self.match_rules.items()}))
+        if self.redact_style is not None and self.redact_style not in REDACT_STYLES:
+            fail(f"privacy.redact_style must be one of {', '.join(REDACT_STYLES)}")
         put("policy", MappingProxyType(_policy(self.policy, fail)))
         if not isinstance(self.routing, Mapping) or not all(isinstance(k, str) for k in self.routing):
             fail("routing must be a mapping with string keys")

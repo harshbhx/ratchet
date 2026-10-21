@@ -61,7 +61,8 @@ from .openai_compat import (
     validate_chat_request,
 )
 from .providers import GenParams, OpenAICompatProvider
-from .redact import redact
+from .redact import STYLES as REDACT_STYLES
+from .redact import Pseudonymizer, RedactionError, redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import (
     CLIENT_CAUSED,
@@ -1008,6 +1009,11 @@ def stats() -> dict[str, Any]:
         "clients": led.stats_by_client(),
         "privacy": {
             "redaction": rt.settings.redact_pii,
+            # How identifiers are replaced (ADR 0082): the default style, tasks that override it, and whether a
+            # detector plugin runs. Names only.
+            "redaction_style": rt.ratchet.redact_style,
+            "redaction_task_styles": {t.name: t.redact_style for t in tasks.registered() if t.redact_style is not None},
+            "redaction_plugin": rt.ratchet.detector is not None,
             **led.privacy_stats(),
             **led.opt_out_stats(),
             # No-train registrations whose scope no request can be hashed in now (a renamed or removed key name).
@@ -1040,15 +1046,29 @@ def bom() -> dict[str, Any]:
 
 
 @app.post("/ratchet/redact")
-def redact_preview(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    """Show what the redactor would store for a piece of text. Nothing is logged or stored."""
+def redact_preview(body: dict[str, Any] = Body(...), style: str | None = None) -> dict[str, Any]:
+    """Show what the redactor would store for a piece of text: in the gateway's style (RATCHET_REDACT_STYLE) or
+    `?style=`, with the detector plugin when one is configured (ADR 0082). Nothing is logged or stored."""
     text = body.get("text")
     if not isinstance(text, str):
         raise HTTPException(400, "text is required")
     if len(text) > MAX_REDACT_CHARS:
         raise HTTPException(400, f"text is limited to {MAX_REDACT_CHARS} characters")
+    chosen = rt.ratchet.redact_style if style is None else style.strip().lower()
+    if chosen not in REDACT_STYLES:
+        raise HTTPException(400, f"style must be one of {', '.join(REDACT_STYLES)}")
     found: Counter[str] = Counter()
-    return {"text": redact(text, found), "found": dict(found), "enabled": rt.settings.redact_pii}
+    try:
+        out = redact(text, found, Pseudonymizer(chosen, rt.ratchet.detector))
+    except RedactionError as e:  # names the plugin's exception class only, never the text
+        raise HTTPException(500, str(e)) from None
+    return {
+        "text": out,
+        "found": dict(found),
+        "enabled": rt.settings.redact_pii,
+        "style": chosen,
+        "plugin": rt.ratchet.detector is not None,
+    }
 
 
 @app.get("/ratchet/bom/public-key")
@@ -1230,7 +1250,9 @@ def _put_task(name: str, raw: bytes, admin: str) -> dict[str, Any] | JSONRespons
         elif old_hash != task.spec_hash:
             rt.ledger.event("task_changed", f"{name}: spec {old_hash} -> {task.spec_hash} by {admin}")
         else:
-            rt.ledger.event("task_changed", f"{name}: spec {task.spec_hash} kept; description, clients or match by {admin}")
+            rt.ledger.event(
+                "task_changed", f"{name}: spec {task.spec_hash} kept; description, clients, match or privacy by {admin}"
+            )
     return _put_result(task, changed=True, created=created)
 
 

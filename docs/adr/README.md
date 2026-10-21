@@ -30,5 +30,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0024](0024-evidence-foundations.md) | Foundations for the evidence features: exact statistics, Merkle trees, one schema change with append-only tables, reserved settings and three pinned workloads | Accepted | 2026-10-20 |
 | [0080](0080-storage-opt-outs-and-pseudonymous-end-users.md) | Storage opt-outs at every level, and end users kept only as scoped keyed hashes | Accepted | 2026-10-20 |
 | [0081](0081-retention-tombstones-erasure-and-export.md) | Retention: tombstones, erasure and export | Accepted | 2026-10-20 |
+| [0082](0082-placeholder-styles-detector-plugin-and-indian-identifiers.md) | Placeholder styles for extraction tasks, a detector plugin, and Indian identifiers and amounts | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

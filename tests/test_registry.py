@@ -199,8 +199,8 @@ def test_tasks_file_unknown_key_fails_startup_with_path(gw_env, tmp_path, monkey
         gw.Runtime(Settings(mode="mock", tasks_file=str(path), mock_warmup_days=0))
     e = caught.value
     assert isinstance(e, SpecError) and e.errors == [
-        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, match, routing, policy, tools,"
-        " clients, extends",
+        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, privacy, match, routing, policy,"
+        " tools, clients, extends",
         "tasks[1].fields.total.abs_tol: must be a number >= 0",
     ]
     assert str(e).startswith(f"RATCHET_TASKS_FILE {path}: invalid task spec (2 errors):")
@@ -272,8 +272,8 @@ def test_spec_errors_list_every_problem_with_its_path():
     deep = "tasks[11].fields.r" + ".fields.r" * 4 + ".fields"
     assert caught.value.errors == [
         "version: unknown key; use tasks",
-        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, match, routing, policy, tools,"
-        " clients, extends",
+        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, privacy, match, routing, policy,"
+        " tools, clients, extends",
         "tasks[0].format: 'sql' is reserved for a later release",
         "tasks[0].pinned: must be true or false",
         "tasks[1].fields.total.abs_tol: must be a number >= 0",
@@ -682,7 +682,7 @@ def test_task_lifecycle_through_the_admin_api(gw_env):
     assert changed["changed"] and not changed["created"] and new_hash != old_hash
     assert events("task_changed") == [f"support-triage: spec {old_hash} -> {new_hash} by ops"]
     c.put(url, json={**ordinal, "description": "now with a priority tolerance"}, headers=ADMIN)
-    assert events("task_changed")[-1] == f"support-triage: spec {new_hash} kept; description, clients or match by ops"
+    assert events("task_changed")[-1] == f"support-triage: spec {new_hash} kept; description, clients, match or privacy by ops"
     # The live version was scored under the first spec, so the listing says the task is waiting for recalibration.
     _version(gw.rt.ledger, "live", {"threshold": 0.5, "spec_hashes": {"support-triage": old_hash}})
     assert c.get(url).json()["recalibrating"] and not c.get("/ratchet/tasks/ticket-triage").json()["recalibrating"]

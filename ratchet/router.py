@@ -29,7 +29,7 @@ from .providers import (
     approx_tokens,
     served_logprobs,
 )
-from .redact import redact, redact_json, redact_messages
+from .redact import Detector, Pseudonymizer, RedactionError, load_detector, redact, redact_json, redact_messages
 from .resilience import (
     BAD_RESPONSE,
     TEACHER_CIRCUIT_OPEN,
@@ -343,6 +343,13 @@ class Ratchet:
         if not isinstance(settings.store_examples, bool):
             raise ValueError(f"RATCHET_STORE_EXAMPLES must be true or false, not {settings.store_examples!r}")
         self.no_store_tasks = settings.no_store_task_names()
+        # Redaction (ADR 0082): the placeholder style (RATCHET_REDACT_STYLE) and the detector plugin
+        # (RATCHET_REDACT_PLUGIN), imported here, so a bad style or a missing plugin stops startup.
+        self.redact_style = settings.redaction_style()
+        plugin = settings.redact_plugin
+        if not isinstance(plugin, str):
+            raise ValueError(f"RATCHET_REDACT_PLUGIN must be 'module:function', not {plugin!r}")
+        self.detector: Detector | None = load_detector(plugin) if plugin.strip() else None
         self.breaker_policy = settings.student_breaker()  # a bad RATCHET_STUDENT_BREAKER_* value stops startup here
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
@@ -619,7 +626,9 @@ class Ratchet:
     ) -> bool:
         """Store a teacher answer as a training example, the only place that does (INV-2). Only a complete, valid answer
         is stored (INV-16, `answer_problem`): cleaned the way it is served (`tasks.clean_answer`), then, with
-        `Settings.redact_pii`, with identifiers in the messages, the answer and the stored conditions replaced (INV-12).
+        `Settings.redact_pii`, with identifiers in the messages, the stored conditions and the answer replaced (INV-12),
+        in the task's style (its spec's `privacy.redact_style`, else RATCHET_REDACT_STYLE), one value one placeholder
+        across the three; when the detector plugin fails, nothing is stored (`redaction failed`; FR-13.7).
         The conditions are the `STORED_PARAM_KEYS` of `gen`, the parameters the teacher answered under. An answer written
         under a client's label-altering sampling (`GenParams.unstorable`: `logit_bias`, a penalty, a temperature above 1,
         a vendor field) is not stored either: the client may choose the answer it gets, not the label everyone's student
@@ -648,9 +657,18 @@ class Ratchet:
         conditions = target_params({k: getattr(gen, k) for k in STORED_PARAM_KEYS}) if gen is not None else None
         stored, found = messages, Counter()
         if self.s.redact_pii:  # the teacher saw the original; the training set gets placeholders
-            stored, clean = redact_messages(messages, found), redact(clean, found)
-            if conditions:
-                conditions = redact_json(conditions, found)
+            # One Pseudonymizer per example: a value gets the same placeholder in the prompt, the conditions and the
+            # answer, and nothing of it outlives this call (ADR 0082). The request is numbered before the answer, so
+            # the example's hash (messages and conditions) never depends on which answer the teacher gave.
+            pseudo = Pseudonymizer(task.redact_style or self.redact_style, self.detector)
+            try:
+                stored = redact_messages(messages, found, pseudo)
+                if conditions:
+                    conditions = redact_json(conditions, found, pseudo)
+                clean = redact(clean, found, pseudo)
+            except RedactionError:  # the plugin failed: never store what it was meant to find
+                self._skip_example(task, "redaction failed")
+                return False
             # A placeholder can break a structured answer (a card-like number outside quotes, an identifier inside a
             # field the spec checks): never store that.
             if found and task.check(clean) is not None:

@@ -639,7 +639,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "deploy/Dockerfile.train",
     ),
     "FR-4.6": ("ratchet.live:NebiusTrainer", "deploy/train_job.sh"),
-    "FR-4.7": ("ratchet.redact:redact", "ratchet.redact:redact_messages", "ratchet.router:Ratchet._store_example"),
+    "FR-4.7": (
+        "ratchet.redact:redact",
+        "ratchet.redact:redact_messages",
+        "ratchet.redact:_pattern_spans",
+        "ratchet.router:Ratchet._store_example",
+    ),
     # 6.5 Evaluation
     "FR-5.1": (
         "ratchet.nightschool.evaluate:cascade_eval",
@@ -754,6 +759,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:admin_export",
         "ratchet.admin:run_export",
     ),
+    "FR-13.7": (
+        "ratchet.redact:Pseudonymizer",
+        "ratchet.redact:load_detector",
+        "ratchet.redact:spans",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.config:Settings.redaction_style",
+        "ratchet.tasks:Task",
+        "ratchet.taskspec:_build",
+        "ratchet.gateway:redact_preview",
+        "ratchet.gateway:stats",
+    ),
+    "FR-13.8": ("ratchet.redact:PATTERNS", "ratchet.compare:parse_number"),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",

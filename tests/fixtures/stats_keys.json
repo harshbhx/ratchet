@@ -106,7 +106,10 @@
       "purged_by_reason": "object",
       "erasures": "number",
       "erasure_refusals": "number",
-      "rolled_up_requests": "number"
+      "rolled_up_requests": "number",
+      "redaction_style": "string",
+      "redaction_task_styles": "object",
+      "redaction_plugin": "bool"
     },
     "security": {
       "api_keys": "bool",

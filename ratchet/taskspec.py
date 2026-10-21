@@ -14,9 +14,9 @@ lists every problem with its path (`tasks[2].fields.total.abs_tol: must be a num
 The comparator rules stay in `compare.FieldSpec` and `tasks.Task`, which check the spec again when it is built, so this
 module cannot admit a spec they refuse.
 
-`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `policy` and
-`match` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and `description`
-are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
+`extends` copies another task's spec when the task is defined, then applies this one's keys: `fields`, `policy`,
+`match` and `privacy` merge by key (null removes the base's entry), every other key replaces the base's, and `name` and
+`description` are never inherited. In a tasks file the base is another task of the file (before or after it) or a built-in task,
 because startup reads the file before it registers the stored API tasks; an API body may extend any registered task.
 The result is what is registered and stored, so later changes to the base do not reach a task that extended it.
 """
@@ -39,9 +39,22 @@ if TYPE_CHECKING:  # pragma: no cover
     from .ledger import Ledger
 
 # The keys of one task spec, in the order `document` writes them (`extends` is resolved away before that).
-SPEC_KEYS = ("name", "description", "format", "fields", "pinned", "store", "match", "routing", "policy", "tools", "clients")
+SPEC_KEYS = (
+    "name",
+    "description",
+    "format",
+    "fields",
+    "pinned",
+    "store",
+    "privacy",
+    "match",
+    "routing",
+    "policy",
+    "tools",
+    "clients",
+)
 INPUT_KEYS = frozenset(SPEC_KEYS) | {"extends"}
-MERGED = frozenset({"fields", "policy", "match"})  # `extends` merges these by key; any other key replaces the base's
+MERGED = frozenset({"fields", "policy", "match", "privacy"})  # `extends` merges these by key; any other key replaces
 MAX_JSON_DEPTH = 32  # nesting of a `routing` value
 MAX_PATH = 256  # characters of a field path
 _PATH = re.compile(r"\$|[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")  # '$' or dot-separated names
@@ -326,6 +339,18 @@ def _build(
     for key in ("pinned", "store"):
         if key in spec and not isinstance(spec[key], bool):
             errs.append(f"{_at(where, key)}: must be true or false")
+    privacy = spec.get("privacy", {})
+    redact_style = None
+    if not isinstance(privacy, Mapping):
+        errs.append(f"{_at(where, 'privacy')}: must be an object")
+    else:
+        for key, value in privacy.items():
+            if key not in tasks.PRIVACY_KEYS:
+                errs.append(f"{_at(where, 'privacy')}.{key}: unknown key; use {', '.join(tasks.PRIVACY_KEYS)}")
+            elif value is not None and value not in tasks.REDACT_STYLES:
+                errs.append(f"{_at(where, 'privacy')}.{key}: must be one of {', '.join(tasks.REDACT_STYLES)} or null")
+            else:
+                redact_style = value
     tools = spec.get("tools", "teacher")
     if tools not in tasks.TOOLS:
         errs.append(f"{_at(where, 'tools')}: must be one of {', '.join(tasks.TOOLS)}")
@@ -373,6 +398,7 @@ def _build(
             description=description,
             clients=tuple(clients),
             match_rules=match,
+            redact_style=redact_style,
         )
     except ValueError as e:  # a rule between keys: a text task with a field other than '$', a pinned auto task, ...
         errs.append(f"{where or '$'}: {_reason(e, _TASK_PREFIX)}")
@@ -557,6 +583,7 @@ def document(task: tasks.Task) -> dict[str, Any]:
         "fields": {f.path: _field_document(f) for f in task.fields},
         "pinned": task.pinned,
         "store": task.store,
+        "privacy": {"redact_style": task.redact_style} if task.redact_style is not None else {},
         "match": {k: list(v) if isinstance(v, tuple) else v for k, v in task.match_rules.items()},
         "routing": json.loads(json.dumps(dict(task.routing))),
         "policy": dict(task.policy),
