@@ -113,6 +113,7 @@ LIMIT_FIELDS = ("daily_requests", "daily_usd", "monthly_usd", "rpm", "concurrenc
 MAX_DAILY_REQUESTS = 100_000_000
 MAX_RPM = 1_000_000
 MAX_CONCURRENCY = 10_000
+MAX_USD = 1_000_000_000  # a dollar cap past a billion is a typo (and would print as hundreds of digits in a header)
 _WHOLE = re.compile(r"[0-9]+")
 _USD = re.compile(r"[0-9]+(?:\.[0-9]*)?|\.[0-9]+")  # a plain decimal: no sign, exponent, nan or inf
 
@@ -152,9 +153,18 @@ class KeyLimits:
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= top:
                 raise ValueError(f"{env}: {name} must be a whole number from 0 (off) to {top}, not {value!r}")
         for name, value in (("daily_usd", self.daily_usd), ("monthly_usd", self.monthly_usd)):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
-                raise ValueError(f"{env}: {name} must be US dollars, 0 (off) or more, not {value!r}")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{env}: {name} must be US dollars from 0 (off) to {MAX_USD}, not {value!r}")
+            if not 0 <= value <= MAX_USD:
+                raise ValueError(f"{env}: {name} must be US dollars from 0 (off) to {MAX_USD}, not {value!r}")
         return self
+
+
+def _shown(text: str) -> str:
+    """`text` quoted for an error message, unless it is long enough to be an API key (MIN_KEY_CHARS or more), which a
+    startup error must never print (INV-13): then only its length. RATCHET_API_KEYS' `name:key` pasted here is the
+    likely way a key ends up in RATCHET_KEY_LIMITS."""
+    return repr(text) if len(text) < MIN_KEY_CHARS else f"<{len(text)} characters, hidden: it may be a key>"
 
 
 def _limit_value(env: str, name: str, field: str, raw: str) -> object:
@@ -163,20 +173,21 @@ def _limit_value(env: str, name: str, field: str, raw: str) -> object:
     if field in ("daily_requests", "rpm", "concurrency"):
         top = {"daily_requests": MAX_DAILY_REQUESTS, "rpm": MAX_RPM, "concurrency": MAX_CONCURRENCY}[field]
         if not _WHOLE.fullmatch(raw) or int(raw) > top:
-            raise ValueError(f"{where} must be a whole number from 0 (off) to {top}, not {raw!r}")
+            raise ValueError(f"{where} must be a whole number from 0 (off) to {top}, not {_shown(raw)}")
         return int(raw)
     if field in ("daily_usd", "monthly_usd"):
-        if not _USD.fullmatch(raw):
-            raise ValueError(f"{where} must be US dollars, 0 (off) or more, not {raw!r}")
-        return float(raw)
+        usd = float(raw) if _USD.fullmatch(raw) else math.nan
+        if not 0 <= usd <= MAX_USD:  # also a run of digits too long for a float, which reads as inf
+            raise ValueError(f"{where} must be US dollars from 0 (off) to {MAX_USD}, not {_shown(raw)}")
+        return usd
     if field == "store":
         if raw not in ("0", "1"):
-            raise ValueError(f"{where} must be 0 or 1, not {raw!r}")
+            raise ValueError(f"{where} must be 0 or 1, not {_shown(raw)}")
         return raw == "1"
     names = [t.strip() for t in raw.split("|")]  # tasks
     bad = [t for t in names if not tasks.valid_name(t)]
     if not raw or bad:
-        raise ValueError(f"{where} must be task names separated by '|' (letters, digits, '_', '.', '-'), not {raw!r}")
+        raise ValueError(f"{where} must be task names separated by '|' (letters, digits, '_', '.', '-'), not {_shown(raw)}")
     return frozenset(names)
 
 
@@ -186,8 +197,9 @@ def parse_key_limits(
     """Every API key name in `names` -> its limits: `defaults` (the RATCHET_API_KEY_* values), with the fields `spec`
     gives it replaced. `spec` reads `name:field=value,field=value;name:...`, the fields LIMIT_FIELDS (`tasks` takes names
     separated by '|'). A name that is not a key, an unknown field, a field or a key given twice, or a bad value raises
-    ValueError naming `env`, so a typo stops startup, as in KeyRing. An unknown name is not echoed (it may be a key pasted
-    by mistake): the message lists the key names instead."""
+    ValueError naming `env`, so a typo stops startup, as in KeyRing. The message never prints what may be a key pasted by
+    mistake: an unknown name is not echoed (it lists the key names instead), and an item, field or value is quoted only
+    when it is shorter than any key (`_shown`)."""
     base = defaults if defaults is not None else KeyLimits()
     out = dict.fromkeys(names, base)
     seen: set[str] = set()
@@ -211,11 +223,11 @@ def parse_key_limits(
             field, eq, raw = item.partition("=")
             field, raw = field.strip(), raw.strip()
             if not eq:
-                raise ValueError(f"{env}: {name}: {item!r} must read field=value")
+                raise ValueError(f"{env}: {name}: {_shown(item)} must read field=value")
             if field not in LIMIT_FIELDS:
-                raise ValueError(f"{env}: {name}: unknown field {field!r}; use {', '.join(LIMIT_FIELDS)}")
+                raise ValueError(f"{env}: {name}: unknown field {_shown(field)}; use {', '.join(LIMIT_FIELDS)}")
             if field in changes:
                 raise ValueError(f"{env}: {name}.{field} appears twice")
             changes[field] = _limit_value(env, name, field, raw)
-        out[name] = replace(base, **changes)  # type: ignore[arg-type]
+        out[name] = replace(base, **changes).check(f"{env}: {name}")  # type: ignore[arg-type]
     return out

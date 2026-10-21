@@ -2,9 +2,11 @@
 keys), requests in flight per key, and chat requests in flight in all.
 
 Every limit refuses at once instead of making the request wait: a client over its rate gets a 429 with the time until a
-request would pass, and a gateway at its in-flight cap a 503, before the request takes one of the worker threads. A
-refused request reads no body and calls no model. The state is per process (one worker, ADR 0006) and keyed by the key's
-name or the client's IP, never by a key (INV-13). Standard library only.
+request would pass, and a gateway at its in-flight cap a 503, before the request takes one of the worker threads. The
+rate runs before the body is read, so a request over it reads no body; the in-flight caps run once the body is in, so a
+client that sends its body slowly holds no slot meant for requests that are using a worker thread. A refused request
+calls no model. The state is per process (one worker, ADR 0006) and keyed by the key's name or the client's IP, never by
+a key (INV-13). Standard library only.
 """
 
 from __future__ import annotations
@@ -137,13 +139,12 @@ class Refused(Exception):
 
 
 class Slot:
-    """What an admitted request holds: its in-flight slots, given back once by `release` (also as a context manager),
-    and the request-rate decision of its key or IP bucket (None when no rate applies), for the response's headers."""
+    """What a request in a worker thread holds: its in-flight slots, given back once by `release` (also as a context
+    manager)."""
 
-    def __init__(self, limiter: Limiter, held: list[str], decision: Decision | None) -> None:
+    def __init__(self, limiter: Limiter, held: list[str]) -> None:
         self._limiter = limiter
         self._held = held
-        self.decision = decision
 
     def release(self) -> None:
         held, self._held = self._held, []
@@ -158,9 +159,11 @@ class Slot:
 
 
 class Limiter:
-    """The gateway's limits for one request (`admit`), checked in this order so a refusal holds nothing and takes no
-    token: the in-flight cap (`max_inflight`, 0 = off), the key's in-flight cap, then the key's or the IP's token bucket
-    (`ip_rpm` applies only to requests without a key). `clock` is monotonic (tests pass a fake one)."""
+    """The gateway's limits for one chat request, in two steps. `rate`, before the body is read: the key's token bucket,
+    or the client IP's (`ip_rpm`, only for requests without a key). `hold`, once the body is in and just around the
+    worker thread: the in-flight cap (`max_inflight`, 0 = off), then the key's in-flight cap. A slow body therefore holds
+    no slot, and a request refused by `hold` has already taken its rate token (it was sent). `clock` is monotonic (tests
+    pass a fake one)."""
 
     def __init__(self, max_inflight: int = 0, ip_rpm: int = 0, clock: Callable[[], float] = time.monotonic) -> None:
         self.max_inflight = max_inflight
@@ -173,9 +176,23 @@ class Limiter:
     def inflight(self) -> int:
         return self.concurrency.count(INFLIGHT)
 
-    def admit(self, client: str | None, rpm: int = 0, concurrency: int = 0, ip: str | None = None) -> Slot:
-        """Admit one request from the key `client` (with its `rpm` and `concurrency` limits; 0 = off), or from the client
-        IP `ip` when it has no key. Raises `Refused` over a limit, having given back whatever it took."""
+    def rate(self, client: str | None, rpm: int = 0, ip: str | None = None) -> Decision | None:
+        """Take a token from the key `client`'s bucket of `rpm` requests a minute (0 = off), or from the client IP `ip`'s
+        when it has no key. Returns the bucket's decision (None when no rate applies), for the response's headers; raises
+        `Refused` when the bucket is empty, which takes no token."""
+        if client is not None:
+            decision = self.keys.take(client, rpm)
+            who: str | None = client
+        else:
+            decision = self.ips.take(ip or "unknown", self.ip_rpm)
+            who = "ip"
+        if decision is not None and not decision.allowed:
+            raise Refused("rate", who, decision.limit, decision)
+        return decision
+
+    def hold(self, client: str | None, concurrency: int = 0) -> Slot:
+        """Take a slot of the in-flight cap and one of the key `client`'s `concurrency` (0 = off). Raises `Refused` when
+        either is full, having given back whatever it took."""
         held: list[str] = []
         try:
             if self.max_inflight > 0:
@@ -187,16 +204,8 @@ class Limiter:
                 if not self.concurrency.acquire(name, concurrency):
                     raise Refused("concurrency", client, concurrency)
                 held.append(name)
-            if client is not None:
-                decision = self.keys.take(client, rpm)
-                who: str | None = client
-            else:
-                decision = self.ips.take(ip or "unknown", self.ip_rpm)
-                who = "ip"
-            if decision is not None and not decision.allowed:
-                raise Refused("rate", who, decision.limit, decision)
         except BaseException:
             for name in held:
                 self.concurrency.release(name)
             raise
-        return Slot(self, held, decision)
+        return Slot(self, held)

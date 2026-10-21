@@ -29,6 +29,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, NamedTuple
 
 from .ledger import Ledger
@@ -53,9 +54,25 @@ class BudgetExceeded(Exception):
 
 
 def money(usd: float) -> str:
-    """A cap as an alert names it: two decimals, or as many as it takes for a cap under a cent (`0.005`)."""
+    """A cap as an alert or a 429 names it: two decimals (`5.00`), or up to twelve significant digits for a cap that needs
+    more (`0.005`, `0.0000375`, `0.0000001`; float noise past them dropped), never in exponent form, so `_ALERT` reads it
+    back."""
     text = f"{usd:.2f}"
-    return text if float(text) == usd else f"{usd:.6f}".rstrip("0")
+    if float(text) == usd:
+        return text
+    return format(Decimal(f"{usd:.12g}"), "f")
+
+
+def public_alert(detail: str, names: Mapping[str, str]) -> str:
+    """A `budget` event's detail as a scrubbed /ratchet/stats read shows it (ADR 0061): the key under its pseudonym
+    (`client` for a name `names` does not hold) and no dollar amount, since a scrubbed copy names no cap
+    (`acme reached 80% of $5.00 daily budget` reads `client-1 reached 80% of its daily budget`). A detail that is not an
+    alert reads `budget alert`, so nothing in it can name a key."""
+    m = _ALERT.fullmatch(detail)
+    if m is None:
+        return "budget alert"
+    who = GATEWAY if m["who"] == GATEWAY else names.get(m["who"], "client")
+    return f"{who} reached {m['pct']}% of its {m['period']} budget"
 
 
 def day_number(ts: float) -> int:

@@ -97,7 +97,7 @@ RATCHET_KEY_LIMITS="acme:daily_usd=5,monthly_usd=100,concurrency=4,tasks=ticket-
 RATCHET_DAILY_BUDGET_USD=20 RATCHET_BUDGET_MODE=student_only uvicorn ratchet.gateway:app
 ```
 
-They are checked in this order, so a refusal costs nothing: the in-flight cap, the key's requests in flight, the key's (or the client address's) requests a minute, then, after the body is read and validated, the task scope, the daily request quota, the key's US dollar budgets and the gateway's budget. The rate limits run before the body is read, so a request refused later has used its token.
+They are checked in this order, so a refusal calls no model and costs nothing: the key's (or the client address's) requests a minute, before the body is read; then, once the body is in, the in-flight cap and the key's requests in flight; then, after the body is validated, the task scope, the daily request quota, the key's US dollar budgets and the gateway's budget. The rate runs before the body is read, so a request refused later has used its token. The in-flight caps count only requests whose body has arrived, so a client that sends its body slowly holds no slot meant for requests that are being answered.
 
 | Limit | Setting (per key: `RATCHET_KEY_LIMITS` field) | Over it | Headers |
 |---|---|---|---|
@@ -115,7 +115,7 @@ On a 200, a key with a daily request quota gets the `X-RateLimit-*-Requests` hea
 
 A check reads what was spent before the request, so a request in flight can overshoot a cap by its own cost, and concurrent requests by theirs. Counts live in memory: the gateway reads today's (and with a monthly budget this month's) spend from the ledger at startup, so a restart forgets nothing, and a new UTC day or month starts from zero. Only gateway API requests count: Scout's agents call the cascade inside the process and stay under the Scout budget (invariant 11).
 
-The first time a key or the gateway reaches each `RATCHET_BUDGET_ALERT_PCT` share (50, 80 and 100%) of a dollar cap in its UTC day or month, the release log gets a `budget` event (`acme reached 80% of $5.00 daily budget`); a restart does not repeat one. `/ratchet/stats` shows each key's `spent_today_usd` and `daily_cap_usd` under `clients`, and the gateway's budget under `budget` ([GET /ratchet/stats](#get-ratchetstats)).
+The first time a key or the gateway reaches each `RATCHET_BUDGET_ALERT_PCT` share (50, 80 and 100%) of a dollar cap in its UTC day or month, the release log gets a `budget` event (`acme reached 80% of $5.00 daily budget`); a restart does not repeat one. `/ratchet/stats` shows each key's `spent_today_usd` and `daily_cap_usd` under `clients`, and the gateway's budget under `budget` ([GET /ratchet/stats](#get-ratchetstats)). A scrubbed copy names no key and no cap: the event reads `client-1 reached 80% of its daily budget`, and `daily_cap_usd`, `budget.daily_usd` and `budget.remaining_usd` are `null`.
 
 ---
 
@@ -483,7 +483,7 @@ Needs a key when `RATCHET_API_KEYS` is set.
 
 ## GET `/ratchet/stats`
 
-Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; in live mode an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`, and then an anonymous reader gets a scrubbed copy (client pseudonyms, no URLs or error messages in `events`).
+Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; in live mode an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1`, and then an anonymous reader gets a scrubbed copy (client pseudonyms, also in `budget` events, no URLs or error messages in `events`, and no dollar caps: `clients[].daily_cap_usd`, `budget.daily_usd` and `budget.remaining_usd` are `null`, and a `budget` event names no amount).
 
 ```json
 {
@@ -550,10 +550,10 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 
   Later versions add routes; a client should show an unknown route as it is.
 - `versions`: every version, oldest first. `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4.
-- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. In a scrubbed copy `client` is a pseudonym. Since v0.5 each entry also has `spent_today_usd`, the key's chat-request dollars since 00:00 UTC (failed requests' spend included), and `daily_cap_usd`, its daily US dollar budget (`null` when it has none, or when the name is no longer a key; [Limits and headers](#limits-and-headers)).
+- `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. In a scrubbed copy `client` is a pseudonym. Since v0.5 each entry also has `spent_today_usd`, the key's chat-request dollars since 00:00 UTC (failed requests' spend included), and `daily_cap_usd`, its daily US dollar budget (`null` when it has none, when the name is no longer a key, and in a scrubbed copy; [Limits and headers](#limits-and-headers)).
 - `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`).
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)); whether any key has a limit of its own (`key_limits`), the per-IP rate of a gateway without keys (`ip_rpm`, `null` when off) and the in-flight cap (`max_inflight`, `null` when off).
-- `budget` (v0.5): the gateway's own daily budget (`daily_usd`, `null` when `RATCHET_DAILY_BUDGET_USD` is 0), what happens past it (`mode`: `block` or `student_only`), what chat requests spent since 00:00 UTC (`spent_today_usd`; Scout is not counted), what is left (`remaining_usd`, `null` without a budget), whether it is spent (`exceeded`) and the shares that write a `budget` event (`alert_pct`).
+- `budget` (v0.5): the gateway's own daily budget (`daily_usd`, `null` when `RATCHET_DAILY_BUDGET_USD` is 0), what happens past it (`mode`: `block` or `student_only`), what chat requests spent since 00:00 UTC (`spent_today_usd`; Scout is not counted), what is left (`remaining_usd`, `null` without a budget), whether it is spent (`exceeded`) and the shares that write a `budget` event (`alert_pct`). A scrubbed copy leaves the operator's budget out (`daily_usd` and `remaining_usd` are `null`), as the gateway's 429s do.
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
 - `totals.failed_cost_usd` (v0.5): what requests that failed spent without leaving a request row, such as the student's samples of an escalation whose teacher call then failed (NFR-3). It counts against the savings: `saved_usd = baseline_usd − cost_usd − failed_cost_usd` and `savings_pct = 1 − (cost_usd + failed_cost_usd) / baseline_usd`. Without failures both are what they were before. `days`, `tasks` and `clients` leave it out.
