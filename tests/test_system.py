@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from ratchet.kpis import SM_TARGETS
 from ratchet.providers import OpenAICompatProvider
 from sim.simulate import parser, run
 
@@ -23,12 +24,16 @@ def test_loop_learns_and_saves_money():
     days = res["days"]
     assert days[0]["student_share"] == 0  # cold start: all teacher
     assert days[-1]["student_share"] > 0.8  # student takes over
-    assert days[-1]["savings_pct"] > 0.6
     assert res["totals"]["saved_usd"] > 0
     assert any(v["state"] == "live" for v in res["versions"])
-    # audited quality of what the student served stays high
+    # Once the student has taken over (the last three days), the loop meets PRD §8.1's savings, quality and share targets
+    # (ratchet/kpis.py), and no single day's audited agreement drops far below them.
+    met = res["kpis"]["metrics"]
+    assert met["SM-1"]["value"] >= SM_TARGETS["SM-1"].value and met["SM-1"]["met"] is True
+    assert met["SM-2"]["value"] >= SM_TARGETS["SM-2"].value and met["SM-2"]["met"] is True
+    assert met["SM-3"]["met"] is True and days[-1]["savings_pct"] >= SM_TARGETS["SM-1"].value
     audits = [d["audit_agreement"] for d in days if d["audit_agreement"] is not None]
-    assert min(audits) >= 0.85
+    assert min(audits) >= 0.85  # a day's 70 to 150 audits: a floor, the pooled target is SM-2
 
 
 @pytest.mark.req("FR-9.3", "US-6")
@@ -68,6 +73,37 @@ def test_reference_simulation_unchanged(reference_run, sim_reference):
     assert have["days"] == want["days"]
     assert set(have) == set(want)
     assert sim_reference.matches(want, have)  # the same rule `regen_sim_reference.py --check` applies
+
+
+@pytest.mark.req("SM-1", "SM-2", "SM-3", "SM-4", "US-9", "NFR-1", "FR-7.9")
+def test_reference_simulation_meets_success_metrics(reference_run):
+    """PRD §8.1 on the pinned reference run (seed 7, 10 days x 2,000, drift day 5, corrupted v3; mock models), computed
+    by ratchet/kpis.py from the ledger as GET /ratchet/kpis computes it live. These numbers back the 'Met in simulation
+    (seed 7)' statuses; they are simulation output, not model quality."""
+    k = reference_run["kpis"]
+    m = k["metrics"]
+    assert k["simulated"] is True and k["window"] == {"from": 8, "to": 10, "days": 3, "complete": True}
+    assert m["SM-1"]["value"] >= 0.70 and m["SM-1"]["met"] is True  # savings over the last three days
+    assert m["SM-1"]["detail"]["cost_model"] == "per_token"
+    sm2 = m["SM-2"]
+    assert sm2["value"] >= 0.95 and sm2["met"] is True and sm2["detail"]["audits"] >= sm2["detail"]["min_audits"]
+    assert sm2["detail"]["lower"] <= sm2["value"] <= sm2["detail"]["upper"]
+    assert m["SM-3"]["value"] >= 0.80 and m["SM-3"]["met"] is True
+    # The corrupted v3 was rolled back as a 10% canary: caught before 100%, so it is not a bad deploy at full traffic.
+    assert m["SM-4"]["value"] == 0 and m["SM-4"]["met"] is True and m["SM-4"]["detail"]["reached_full_traffic"] >= 3
+    assert any(e["kind"] == "rollback" and e["detail"].startswith("v3 ") for e in reference_run["events"])
+    assert m["NFR-1"]["met"] is True  # simulated latencies
+    # SM-5 is measured: the launch on day 5 opens a drift episode that has closed by the end of the run.
+    episodes = m["SM-5"]["detail"]["episodes"]
+    assert episodes and episodes[0]["start"] == 5 and all(e["end"] is not None for e in episodes)
+    assert m["SM-5"]["value"] == max(e["nights"] for e in episodes)
+
+
+@pytest.mark.req("SM-5")
+@pytest.mark.xfail(strict=True, reason="4 nights in simulation (seed 7): escalations back to baseline on day 9")
+def test_sm5_drift_recovery_within_three_nights(reference_run):
+    sm5 = reference_run["kpis"]["metrics"]["SM-5"]
+    assert sm5["value"] is not None and sm5["value"] <= 3 and sm5["met"] is True
 
 
 def test_reference_workloads_reproduce_v040(reference_run, reference_check):

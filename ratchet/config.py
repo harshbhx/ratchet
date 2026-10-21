@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .kpis import check_window_days
 from .openai_compat import DEFAULT_MAX_N, Limits
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
@@ -365,6 +366,10 @@ class Settings:
     # Mock mode only: hours a day the simulated student endpoint runs (each simulated day records one interval).
     mock_endpoint_hours: float = field(default_factory=lambda: _float("RATCHET_MOCK_ENDPOINT_HOURS", "24"))
 
+    # Success metrics (ratchet/kpis.py, FR-7.9): SM-1 to SM-3 and NFR-1 are measured over the last this many ledger days
+    # with traffic, so they describe the steady state rather than the cold start.
+    kpi_window_days: int = field(default_factory=lambda: _int("RATCHET_KPI_WINDOW_DAYS", "3"))
+
     # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
     # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the canary's own audit rate (unset = the
     # audit rate); the golden eval's calibration rule and certificate level; teacher-watch probes and adjudications per
@@ -511,6 +516,15 @@ class Settings:
             student_max_tokens=self.student_max_tokens,
             reasoning_headroom=self.teacher_reasoning_headroom,
         )
+
+    def kpi_window(self) -> int:
+        """RATCHET_KPI_WINDOW_DAYS, checked: a whole number of days from 1 to 3650 (`kpis.check_window_days`). A bad value
+        raises ValueError naming the variable, so the gateway and the simulator stop at startup instead of reporting
+        metrics over a window nobody asked for."""
+        try:
+            return check_window_days(self.kpi_window_days)
+        except ValueError as e:
+            raise ValueError(f"RATCHET_KPI_WINDOW_DAYS: {e}") from None
 
     def cost_policy(self) -> CostPolicy:
         """The cost settings, checked. A bad value raises ValueError naming the variable, so the gateway, the simulator,

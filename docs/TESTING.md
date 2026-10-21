@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 857 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_redaction), ~80 s
+pytest -q                     # 874 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_redaction, test_kpis), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -19,13 +19,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_registry.py` | 29 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 21 (13 functions; one has 8 cases, one has 2) |
-| `tests/test_system.py` | 10 |
+| `tests/test_system.py` | 12 (one a strict xfail: SM-5) |
 | `tests/test_hardening.py` | 80 (54 functions; one has 11 cases, one has 8, one has 6, one has 4, one has 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
 | `tests/test_scout.py` | 15 |
 | `tests/test_contract.py` | 45 (34 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
-| `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
+| `tests/test_traceability.py` | 46 (24 functions; one has 23 cases) |
 | `tests/test_live.py` | 14 |
 | `tests/test_cost.py` | 36 (24 functions; two have 7 cases) |
 | `tests/test_stats.py` | 17 (2 of them slow: skipped without `--runslow`) |
@@ -33,12 +33,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 52 (34 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_redaction.py` | 43 (27 functions; one has 9 cases, one has 7, one has 3) |
-| **Total** | **857** |
+| `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
+| **Total** | **874** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`, `tests/test_redaction.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_privacy.py`, `tests/test_erasure.py`, `tests/test_redaction.py`, `tests/test_kpis.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -207,10 +208,12 @@ The invariant tests for Night School (INV-1 to INV-6). Each runs `run_night` or 
 
 | Test | Covers |
 |---|---|
-| `test_loop_learns_and_saves_money` | 6 days × 1,500 requests with no drift: day 1 is 0% student; final day is above 80% student and above 60% savings; a version reaches `live`; daily audited agreement never falls below 85% |
+| `test_loop_learns_and_saves_money` | 6 days × 1,500 requests with no drift: day 1 is 0% student; final day is above 80% student; a version reaches `live`; over the last three days the run meets PRD §8.1's SM-1 (savings ≥ 70%, also on the final day), SM-2 (pooled audited precision ≥ 95%) and SM-3 (student share ≥ 80%); no day's audited agreement falls below 85% |
 | `test_bad_deploy_is_rolled_back_and_users_return_to_live` | Fault-injects `student-v3`; v3 ends `rolled_back` and v1 stays `live` (skips if v3 was rejected before deploy for that seed) |
 | `test_drift_raises_escalations_then_recovers` | 9 days with a product launch on day 5: escalations rise on day 5 and are lower by day 9 |
 | `test_reference_simulation_unchanged` | The pinned reference run equals `tests/fixtures/sim_reference_seed7.json` exactly: the pinned inputs (a flag added later is not compared), daily numbers, release events and final versions ([below](#the-pinned-reference-simulation)) |
+| `test_reference_simulation_meets_success_metrics` | SM-1 to SM-4, US-9, NFR-1, FR-7.9: on the reference run, `ratchet/kpis.py` over days 8 to 10 gives savings ≥ 70%, pooled audited precision ≥ 95% on at least the minimum audits (inside its Wilson interval), student share ≥ 80%, no bad deploy at 100% (the corrupted v3 was rolled back as a canary), the latency target met, and a drift episode that opens on day 5 and has closed; these back the PRD's `Met in simulation (seed 7)` statuses |
+| `test_sm5_drift_recovery_within_three_nights` | SM-5, strict xfail: drift recovery within 3 nights; it takes 4 in the reference run (day 5 to day 9), so the PRD says `Not met`. It starts passing, and so fails the suite, once drift handling gets it within target |
 | `test_reference_workloads_reproduce_v040` | ADR 0024: the tickets workload of `tests/fixtures/reference.json` (captured from v0.4.0) matches the session's reference run under `scripts/reference_check.py`'s rules, and every input the fixture pins for all three workloads is still the simulator's default |
 | `test_reference_check_rules` | ADR 0024: `reference_check.compare` ignores float noise below a relative 1e-9, new day and totals keys, advisory event kinds and text appended to an event, and reports one line for a moved number, a removed key or day, reworded event text, an extra event, a changed version or a changed input default |
 | `test_provenance_only_lists_distillable_teachers` | Every BOM source is Ultra with OpenMDW-1.1 |
@@ -463,6 +466,8 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_missing_sources_are_findings_not_crashes` | With no PRD, CLAUDE.md, API.md or CONFIGURATION.md, every rule reports what is missing instead of raising |
 | `test_doc_rules_catch_drift` | A wrong "N tests" line and a wrong per-file count are reported with file and line; a route documented without its method is reported; the env-var scan finds `os.environ.get`, `getenv`, `_env`, `os.environ[...]` and `_int` reads and skips non-literal names and writes |
 | `test_invariants_keep_their_list_numbers` | INV-n is the list number; a gap in the numbering is one error; continuation lines join the item |
+| `test_metric_targets_match_the_prd` | FR-7.9: rule (j) on the repo: every SM row's Target equals `ratchet.kpis.SM_TARGETS` |
+| `test_metric_target_rule_catches_drift` | FR-7.9: with a swapped target table, a changed number, operator or unit, a missing entry, an extra entry, an unparseable PRD cell and a broken import each give exactly one error; `parse_target` reads `≥ 70%`, `0`, `≤ 3 nights` and `< 1 s` |
 | `test_clip_keeps_table_cells_valid` | Matrix text is at most 100 characters, ends in an ellipsis, never leaves an open code span or half an escaped pipe |
 
 ### `tests/test_live.py`
@@ -480,7 +485,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_production_and_both_evaluators_share_student_sampling` | FR-5.1, FR-2.1: `Ratchet._sample`, `LiveEvaluator.evaluate` and `MockFleet.evaluate` send the same sampling arguments, `{"n": 3, **STUDENT_SAMPLING, "params": GenParams(max_tokens=1024)}` |
 | `test_train_parse_args_defaults_and_row_contract` | FR-4.5: `train.py` defaults (epochs, learning rate, rank, sequence length, batch, Mamba projections in the targets), required `--data` and `--out`, the same base model in `config.py`, `train_job.sh` and `student_endpoint.sh`; rows written by Night School load back unchanged (blank lines skipped), end with the teacher's stored answer and carry teacher and license; `train.manifest` (saved as `ratchet_manifest.json`) names the base model and the licenses |
 | `test_scout_cli_over_http` | FR-10.6, FR-1.7: `python -m ratchet.scout` against the mock gateway in-process, with an API key: every agent prints a line, `--max-results` reaches search, citations and the cost summary print, every call is logged under the key's name with its task header (one planner and one writer request); the key also comes from `RATCHET_API_KEY`; a wrong key exits 1 with the 401 on stderr |
-| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation) and every event, and writes the JSON results with the documented keys, `cost` included (48 endpoint hours) |
+| `test_sim_cli_writes_json_and_table` | FR-9.4, FR-15.3, FR-7.9: `python -m sim.simulate` (2 days × 200, mixed, `--drift-day 0`) prints one table row per day, the totals, the GPU-hour line with its recommendation (labelled simulation), the success metrics (labelled simulation, one line per metric with its target and verdict) and every event, and writes the JSON results with the documented keys, `cost` (48 endpoint hours) and `kpis` included |
 | `test_mock_warmup_trains_a_student` | FR-9.6: `RATCHET_MOCK_WARMUP_DAYS=1` and `RATCHET_MOCK_WARMUP_REQUESTS=300` give day 1, 300 requests of mixed traffic, a `student-v1` in canary with a BOM and a `warmup` event, also in `/ratchet/stats`; the demo reset warms up again on a fresh ledger |
 | `test_trust_proxy_uses_forwarded_ip_only_when_enabled` | FR-10.5: with `RATCHET_TRUST_PROXY=1` the guard sees the first `X-Forwarded-For` address on `/scout/run` and `/scout/stream` (the peer address when the header is missing or empty); with it off the header is ignored; with it on, two forwarded clients each get their own hourly limit |
 | `test_day1_check_reports_missing_models_and_logprobs` | FR-8.5, INV-9: `scripts/day1_check.py` against a fake Token Factory: no key exits 2 without a request; a missing model is reported (with the NVIDIA models that exist) and never called; missing logprobs and unparseable JSON are reported, and each model's `finish_reason` is printed (INV-16 stores only `stop` answers); an HTTP 500 fails the check (exit 1); every model request has the bearer key, `logprobs`, JSON mode and `max_tokens` 400; then the teacher gets `max_tokens` 8,192 with a stop, a seed, a temperature and JSON mode, and a 400 there fails the check; all present exits 0 with "All good." |
@@ -672,6 +677,22 @@ Redaction for extraction tasks, the detector plugin and Indian identifiers (FR-1
 | `test_redact_preview_shows_the_style_and_takes_style` | FR-13.7: `POST /ratchet/redact` in the gateway's style, with the plugin for an API or admin key and without it (`plugin_skipped`) for no key or a wrong one, `?style=` in any case, 400 for an unknown style; `/ratchet/stats` `privacy` style keys, a task's override included |
 | `test_redact_preview_reports_a_failing_plugin_without_the_text` | FR-13.7: a failing plugin is a 500 naming its exception class only, for a caller with a key; a keyless preview never reaches it; without a plugin, names are left |
 | `test_gateway_stores_numbered_examples_end_to_end` | FR-13.7, INV-12: over HTTP under `RATCHET_REDACT_STYLE=numbered` the stored prompt and answer share placeholders |
+
+### `tests/test_kpis.py`
+
+Success metrics (FR-7.9, SM-1 to SM-5, NFR-1, [ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Each metric is checked on synthetic day rows built in the test, and the ledger reads against brute force over request rows the test logged; the reference run's metrics are in `test_system.py`.
+
+| Test | Covers |
+|---|---|
+| `test_kpis_unit` | SM-1, SM-2, SM-3, SM-5, FR-7.9: the window is the last W days with traffic (a quiet day skipped, fewer days, bad sizes refused); SM-1 with and without failed spend, a share at the target counting whatever the float rounding, no baseline as `None`; SM-3; SM-2's pooled point estimate with `stats.wilson`'s bounds, `None` below the minimum audits or without audits, exactly 95% met, bad counts refused; SM-5 episodes (3 nights met, 4 not, open within the target `None`, open past it not met, the longest of two, none at all 0, too few days `None`) |
+| `test_drift_episode_boundaries_and_what_counts_as_a_day` | SM-5: exactly 5 points above the baseline starts an episode and exactly 2 points above ends it; a slow climb never starts one; days with fewer than 50 judged requests are skipped and nights count calendar days; the rate ignores escalations the student never judged (an outage) |
+| `test_bad_deploys_count_versions_found_bad_at_full_traffic` | SM-4: a canary rolled back before 100% does not count; an alert on a live version does (also in the anytime-valid wording, without a logged promotion, repeated); a manual rollback after 100% by its event or by the version's state; `None` before any version reached 100%; events that name no version ignored |
+| `test_report_reads_the_ledger_and_survives_folding` | SM-1, SM-2, SM-3, NFR-1, FR-7.9, FR-13.4: `report` over six days of logged rows equals brute force (savings, share, pooled audits, nearest-rank median latency); `kpi_days`' judged and judged-escalated counts; folding days 1 to 2.5 and then everything into `daily_rollup` keeps every day's sums and the audits, while latency reads only the rows still kept; a `failures` table's spend counts against SM-1 inside the window only |
+| `test_latency_quantile_is_nearest_rank` | NFR-1, FR-7.9: every quantile from 0 to 1 against the nearest-rank rule, per server and per day range, no rows as `None`, bad arguments refused; once `requests.wall_ms` exists it is read where a row in the range recorded it, `latency_ms` otherwise |
+| `test_report_on_an_empty_or_odd_ledger_stays_valid_json` | FR-7.9, SM-4: an empty ledger (every metric unknown, SM-4 0); a version live now and a promotion event count as reaching 100%, an alert then makes it a bad deploy; an infinite cost gives `None`, never invalid JSON; bad arguments refused |
+| `test_report_while_requests_are_logged` | FR-7.9: two threads build reports while four log 600 requests; no error, every report valid JSON with a request count between the bounds, and the final count exact |
+| `test_kpis_endpoint_shape` | FR-7.9, SM-1 to SM-5, NFR-1: `GET /ratchet/kpis` on a fresh mock gateway (all unknown) and after three simulated days: `simulated`, the window, every metric's keys and types, the targets equal to `SM_TARGETS`, SM-2's minimum the gate's, a version at 100%; the same report as `/ratchet/stats`' `kpis` block; `?days=1` and a window larger than the ledger; 400 for 0, -2 and 3,651, 422 for a non-number |
+| `test_bad_kpi_window_stops_startup` (5 cases) | FR-7.9: `RATCHET_KPI_WINDOW_DAYS` of 0, -3, 3651, `two` and `1.5` stop the gateway's `Runtime` naming the variable; 7 and the default 3 are read |
 
 ## Live-path tests
 
@@ -908,6 +929,7 @@ The check fails when:
 | (g) | A `Not met` metric has no strict-xfail test (so the test fails loudly once the target is met) |
 | (h) | `docs/REQUIREMENTS.md` differs from a fresh render |
 | (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, `DEPLOYMENT.md` or `HACKATHON_SUBMISSION.md` differs from the parametrize-expanded count |
+| (j) | An SM row's Target in PRD §8.1 differs from `ratchet.kpis.SM_TARGETS` (operator, number or unit), has no entry there, or does not parse; or `SM_TARGETS` lists a metric the PRD does not have |
 
 To change behaviour:
 

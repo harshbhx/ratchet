@@ -29,6 +29,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
 | GET | `/ratchet/bom/public-key` | both | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | Show what the PII redactor would store for a text (stores nothing) |
+| GET | `/ratchet/kpis` | both | PRD §8.1's success metrics and NFR-1's latency target, computed from the ledger ([Success metrics](#get-ratchetkpisdaysn)) |
 | GET | `/ratchet/cost` | both | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
 | POST | `/ratchet/cost/endpoint` | both | Record the student endpoint going up or down (admin key) |
 | GET | `/ratchet/tasks` | both | Every registered task with its spec, source, spec hash and traffic ([Tasks](#tasks)) |
@@ -573,7 +574,11 @@ Needs a key when `RATCHET_API_KEYS` is set.
               "redaction_task_styles": {"invoice-extract": "numbered"}, "redaction_plugin": false},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d"},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
-           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"}
+           "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
+  "kpis": {"mode": "mock", "simulated": true, "window_days": 3, "window": {"from": 7, "to": 9, "days": 3, "complete": true},
+           "metrics": {"SM-1": {"name": "Cost reduction vs all-teacher, steady state", "value": 0.84, "target": 0.7,
+                                "op": ">=", "unit": "fraction", "met": true, "detail": {"…": "…"}}, "…": "…"},
+           "summary": {"met": 5, "not_met": 1, "unknown": 0}}
 }
 ```
 
@@ -602,8 +607,51 @@ Needs a key when `RATCHET_API_KEYS` is set.
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
 - `totals.cost_model` is `per_token`: `totals`, `days`, `tasks` and `clients` price the student per token (the hosted Nano price), as every figure since v0.1. The GPU-hour view is in `cost`.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
+- `kpis`: the [success metrics](#get-ratchetkpisdaysn) over the last `RATCHET_KPI_WINDOW_DAYS` days with traffic, exactly as `GET /ratchet/kpis` returns them.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
+
+## GET `/ratchet/kpis?days=N`
+
+PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, computed from the ledger by `ratchet/kpis.py` the same way as in the simulator and in CI ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Public, like `/ratchet/stats`, whose `kpis` block is this report. SM-1 to SM-3 and NFR-1 cover the last `days` ledger days with traffic (1 to 3,650, default `RATCHET_KPI_WINDOW_DAYS`, 3; anything else is **400**, a non-number **422**); SM-4 and SM-5 cover the whole history. An example from the mock demo (simulation numbers from mock models, `simulated: true`):
+
+```json
+{
+  "mode": "mock",
+  "simulated": true,
+  "window_days": 3,
+  "window": {"from": 8, "to": 10, "days": 3, "complete": true},
+  "metrics": {
+    "SM-1": {"name": "Cost reduction vs all-teacher, steady state", "value": 0.845, "target": 0.7, "op": ">=",
+             "unit": "fraction", "met": true,
+             "detail": {"cost_usd": 1.018, "failed_cost_usd": 0.0, "baseline_usd": 6.559, "requests": 6000,
+                        "cost_model": "per_token"}},
+    "SM-2": {"name": "Audited precision of student-served answers", "value": 0.985, "target": 0.95, "op": ">=",
+             "unit": "fraction", "met": true,
+             "detail": {"audits": 585, "agree": 576, "lower": 0.971, "upper": 0.992, "min_audits": 20}},
+    "SM-3": {"name": "Student share of traffic, steady state", "value": 0.969, "target": 0.8, "op": ">=",
+             "unit": "fraction", "met": true, "detail": {"requests": 6000, "student_served": 5814}},
+    "SM-4": {"name": "Bad deploys reaching 100% traffic", "value": 0, "target": 0, "op": "==", "unit": "versions",
+             "met": true, "detail": {"reached_full_traffic": 4, "bad_versions": []}},
+    "SM-5": {"name": "Time to recover from drift (escalations back to baseline)", "value": 4, "target": 3, "op": "<=",
+             "unit": "nights", "met": false,
+             "detail": {"days_measured": 9,
+                        "episodes": [{"start": 5, "end": 9, "nights": 4, "baseline": 0.022, "peak": 0.1405}]}},
+    "NFR-1": {"name": "Median latency of student-served requests", "value": 327.1, "target": 1000.0, "op": "<",
+              "unit": "ms", "met": true,
+              "detail": {"requests": 5814, "column": "latency_ms", "quantile": 0.5, "served_by": "student"}}
+  },
+  "summary": {"met": 5, "not_met": 1, "unknown": 0}
+}
+```
+
+- Every metric has `name`, `value`, `target`, `op` (`>=`, `<=`, `==`, `<`), `unit` (`fraction` for a share, else `versions`, `nights` or `ms`), `met` and `detail`. `met` is `null` when there is not enough data to say, with a `detail.reason`: no traffic in the window, fewer audits than `RATCHET_MIN_AUDITS` (SM-2), no version at 100% yet (SM-4), fewer than four days on which the student judged at least 50 requests, or a drift episode still open within its target (SM-5). `value` is `null` when there is nothing to measure, and for SM-5 while an episode is open (`detail.open_nights` counts it so far).
+- `simulated` is true in mock mode, where every number comes from mock models. `window` gives the first and last day used and whether the ledger had `window_days` days with traffic (`complete`).
+- **SM-1** is `1 - (cost_usd + failed_cost_usd) / baseline_usd`: per token, as `totals`; `failed_cost_usd` is what failed requests spent without leaving a request row (0 on a ledger without a `failures` table). **SM-2** pools every audit in the window, every version together, with a 95% Wilson interval (`lower`, `upper`); it is met on the point estimate. **SM-3** is the student's share of the window's requests.
+- **SM-4** counts versions that reached 100% of traffic (a `live` event, or live now) and were later named by an `alert` or a `rollback`, or are `rolled_back` now (`bad_versions`, each with its evidence and day). A canary rolled back before 100% does not count.
+- **SM-5** is the longest drift episode in nights over the whole history. A day's escalation rate is the share of the requests the student judged (its samples came back) that it escalated; an episode starts on a day at least 5 points above the lowest of the 3 measured days before it and ends on the first later day at most 2 points above that baseline.
+- **NFR-1** is the nearest-rank median latency of the window's student-served requests, from `requests.wall_ms` when the ledger records it, else `latency_ms` (`column`). Folded request rows keep no latencies.
+- New metrics may be added under `metrics`; a client should show an unknown one as it is.
 
 ## GET `/ratchet/bom`
 
