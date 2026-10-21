@@ -144,6 +144,7 @@ export const EVENT_TONE: Record<string, Tone> = {
   endpoint: "neutral",
   fault: "warn",
   warmup: "outline",
+  demo_reset: "outline",
 };
 
 export const EVENT_LABEL: Record<string, string> = {
@@ -175,6 +176,7 @@ export const EVENT_LABEL: Record<string, string> = {
   endpoint: "Endpoint",
   fault: "Fault injected",
   warmup: "Warm-up",
+  demo_reset: "Simulation reset",
 };
 
 /**

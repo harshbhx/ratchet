@@ -141,6 +141,8 @@ Next steps
   1. Wait 5-10 minutes for first boot (packages, Docker, image build, certificate).
      Watch it:  ssh ${SSH_USER}@${IP} 'sudo tail -f /var/log/ratchet-bootstrap.log'
   2. Open https://${SHOWN_DOMAIN}/   then /scout and /dashboard.
+     The simulation (mock models; run days, break a deploy, watch the rollback) is at https://sim.${SHOWN_DOMAIN}/
+     (sslip.io resolves it; your own domain needs a DNS record for sim.<name> first).
   3. Own domain: add a DNS A record, e.g. ratchet.dualmindlab.tech -> ${IP}, then on the VM:
        sudo -u ratchet sed -i 's|^RATCHET_DOMAIN=.*|RATCHET_DOMAIN=ratchet.dualmindlab.tech|' /opt/ratchet/deploy/vm/.env
        cd /opt/ratchet/deploy/vm && sudo -u ratchet docker compose up -d

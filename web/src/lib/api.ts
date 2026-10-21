@@ -3,6 +3,10 @@
  * All paths are absolute so the SPA works at /, /scout and /dashboard.
  */
 
+import type { DemoInfo, Links, Upstream } from "./surface-model";
+
+export type { DemoInfo, Links, Upstream, UpstreamCall } from "./surface-model";
+
 export type Mode = "mock" | "live";
 
 export interface DayStats {
@@ -128,6 +132,10 @@ export interface StudentServing {
 export interface Stats {
   mode: Mode;
   day: number;
+  /** v0.5: the other surface's URLs, the shared simulation's limits and the last real upstream call per role. Absent on an older gateway. */
+  links?: Links;
+  demo?: DemoInfo;
+  upstream?: Upstream;
   teacher: string;
   student_base: string;
   /** v0.5: the hosted, untuned model that answers student calls while the GPU endpoint is off (RATCHET_FALLBACK_STUDENT). */
@@ -479,7 +487,7 @@ export const api = {
   /** 404 on a gateway older than v0.5 (the dashboard then hides its Economics panel). */
   cost: (days?: number) => json<CostReport>(days == null ? "/ratchet/cost" : `/ratchet/cost?days=${encodeURIComponent(days)}`),
   demoDay: (workload: Workload, requests = 1500) =>
-    json<{ day: number; workload: Workload; night: NightReport }>(
+    json<{ day: number; workload: Workload; night: NightReport; auto_reset?: string | null }>(
       `/ratchet/demo/day?workload=${encodeURIComponent(workload)}&requests=${requests}`,
       { method: "POST" },
     ),

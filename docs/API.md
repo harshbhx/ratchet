@@ -2071,6 +2071,18 @@ The mock demo is shared by every visitor, so the controls protect themselves:
 
 The dashboard shows these messages under its buttons.
 
+### `/ratchet/stats`: `links`, `demo` and `upstream` (FR-11.30, FR-11.31)
+
+Three additive blocks, content-free, under `/ratchet/stats`'s access and scrubbing rules (a scrubbed anonymous copy passes them through unchanged). `tests/fixtures/stats_keys.json` lists them.
+
+| Block | Fields |
+|---|---|
+| `links` | `live`, `sim`: `RATCHET_LIVE_URL` and `RATCHET_SIM_URL` as set, else `null`. The header switch reads them |
+| `demo` | `surface` (`simulation` in mock mode, else `live`), `controls` and `shared` (true in mock mode), `max_days`, `max_requests`, `idle_reset_s`, `actions_per_minute` (`null` when off), `auto_resets` (since the process started), `last_reset_at` (epoch seconds or `null`) |
+| `upstream` | `recording` (true in live mode), `since` (epoch seconds the record started, `null` in mock mode), `token_factory` (whether `RATCHET_TEACHER_BASE` is Token Factory's host, which decides if a page may say "Live on Nebius Token Factory"), `calls`: the newest call per role called since start, in the order teacher, fallback_teacher, student, tavily |
+
+A `calls` item: `role`, `host` (`token_factory`, `student_endpoint`, `tavily` or `other`), `requested_model`, `model` (the response's `model`, kept only when it looks like a model id, else `null`; Token Factory echoing the id is unverified), `ok`, `status` (the upstream's HTTP status, `null` without one), `error` (the exception's class name), `reason` (`timeout`, `unreachable`, `bad_response`, `http` or `other`), `latency_ms`, `at` (epoch seconds), `age_s` and `last_ok_age_s` (seconds since the last success of that role, `null` if none). It **never contains** prompt or answer text, URLs, keys, headers, error messages or the upstream's own error code. Breaker refusals, adapter loads, Night School's judge and other processes (the live-run harness) are not recorded. The hosted Nano is the `student` role on `token_factory` with the fallback model's id as `requested_model`; our adapter is the `student` role on `student_endpoint`.
+
 ### POST `/ratchet/demo/day?requests=1500&workload=tickets`
 
 Advances `Ledger.day` by one and sends `requests` simulated requests through the cascade, calling `gate.tick()` every `requests/10`. Then it runs one night (`run_night`). `requests` is clamped to 100–5000.
@@ -2083,12 +2095,14 @@ Advances `Ledger.day` by one and sends `requests` simulated requests through the
 With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. With any other workload it trains on every stored task. Each workload has its own seeded stream, so the streams do not affect each other. The dashboard's **Traffic** selector sets `workload` (default there: `mixed`). Until tool calls pass through the gateway, the default allowlists forward `tools` to neither model, so the `tools` workload is answered, stored and learned as free text. The numbers are simulation output from mock models, and the response says so (`simulation: true`).
 
 ```json
-{"day": 4, "workload": "tickets", "simulation": true,
+{"day": 4, "workload": "tickets", "simulation": true, "auto_reset": null,
  "night": {"trained": false, "version": null, "admitted": false,
            "reason": "release in flight", "eval": null}}
 ```
 
 `night.reason` is one of `admitted`, `rejected`, `release in flight`, `not enough new data`, `no golden set`.
+
+`auto_reset` is `null`, or `"max_days"` or `"max_requests"` when the shared simulation reached `RATCHET_DEMO_MAX_DAYS` or `RATCHET_DEMO_MAX_REQUESTS`: it started over (a fresh ledger, the warm-up again, one `demo_reset` event) before this day ran, so `day` is then the first day after the warm-up. On a gateway with `RATCHET_DEMO_RPM` set, every non-GET `/ratchet/demo/*` call takes a token from the caller's IP bucket, and an empty bucket answers **429** `the shared simulation takes N actions a minute per visitor; try again in S s` with `Retry-After`. Live mode answers 403 before any of this.
 
 ### POST `/ratchet/demo/break-next`
 

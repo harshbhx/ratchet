@@ -195,6 +195,21 @@ Read in `ratchet/config.py`. Ignored in live mode.
 | `RATCHET_MOCK_ENDPOINT_HOURS` | `24` | Hours a day the simulated student endpoint runs, 0 to 24: each simulated day (the demo, the warm-up, `python -m sim.simulate`) records one endpoint interval of this length from the start of the day, on the synthetic clock, for the cost report ([Cost accounting](#cost-accounting)). `0` = no endpoint (as with the hosted fallback). Anything outside 0 to 24 stops startup. Simulation assumption, not a measurement |
 | `RATCHET_MOCK_TEACHER_REASONING_MEAN` | unset | The mock teacher's mean billed reasoning tokens. Unset, it bills exactly `RATCHET_TEACHER_REASONING_TOKENS` (300), the formula's assumption, so every number is as before. Set (more than 0, at most 100,000; anything else stops the gateway and `python -m ratchet.live` at startup, in live mode too, where nothing reads it), each request bills round(mean × exp(0.3 z − 0.045)) reasoning tokens, z a standard normal drawn from the request's text (the same request always costs the same), so the savings receipts have a gap between the formula and the bills to measure: with `420`, `ticket-triage`'s calibrated ratio is about 1.3 to 1.4 (simulation; [Savings receipts](#savings-receipts)). The simulator takes `--teacher-reasoning-mean` instead |
 
+## Demo hosting: the simulation host (FR-11.30)
+
+The demo VM can run a second gateway in mock mode beside the live one ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md), [ADR 0133](adr/0133-live-and-simulation-hosts.md)). Read in `ratchet/config.py`; a bad value stops startup, naming the variable. The four `RATCHET_DEMO_*` settings act in mock mode only and only when set (a warning in live mode); the compose file sets them on `ratchet-sim`.
+
+| Variable | Default | Mode | Meaning |
+|---|---|---|---|
+| `RATCHET_LIVE_URL` | empty | both | The live gateway's public URL, for the header switch (`/ratchet/stats` `links.live`). Empty, or `https://` with a host, at most 300 characters, no user info, no whitespace |
+| `RATCHET_SIM_URL` | empty | both | The simulation's public URL (`links.sim`). Same rule. On the VM the compose file derives it from `RATCHET_SIM_DOMAIN` unless `.env` sets it (empty: no link) |
+| `RATCHET_DEMO_RPM` | `0` (off) | mock | Demo actions (non-GET calls to `/ratchet/demo/*`) a minute per client IP, 0 to 600. Over it: 429 with `Retry-After`. The burst is `rpm // 6`, at least 1 |
+| `RATCHET_DEMO_MAX_DAYS` | `0` (off) | mock | Reset the shared simulation before the day after this many simulated days. 0, or above `RATCHET_MOCK_WARMUP_DAYS`, at most 3650. Enforced when a visitor clicks `POST /ratchet/demo/day` (`auto_reset: "max_days"`) |
+| `RATCHET_DEMO_MAX_REQUESTS` | `0` (off) | mock | Reset past this many ledger requests, 0, or above warm-up days x `RATCHET_MOCK_WARMUP_REQUESTS`, at most 10,000,000. Checked on a click and by a background pass every minute |
+| `RATCHET_DEMO_IDLE_RESET_S` | `0` (off) | mock | Reset after this many seconds with no demo action and no request while the state differs from the last reset. 0 or 300 to 604,800 |
+
+The warm-up rules exist so a cap can never reset the simulation right after its own warm-up. An automatic reset runs the warm-up again, writes a `demo_reset` event into the new ledger and clears everything visitors added.
+
 ## Demo VM: Caddy (`deploy/vm/`)
 
 Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)), from `deploy/vm/.env`. The gateway does not read them.
@@ -204,6 +219,9 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 | `RATCHET_DOMAIN` | required | Site name Caddy serves and gets a certificate for, e.g. `ratchet.dualmindlab.tech` or `<public-ip>.sslip.io`. First boot fills in the sslip.io name if it is still the placeholder |
 | `RATCHET_API_GUARD` | `open` | `open`: every path is public. `guarded`: `/v1/*`, `/openai/*`, `/ratchet/demo/*` and `/ratchet/admin/*` return 403 unless the request has a matching `X-Ratchet-Admin-Token` header (the admin API also needs an admin key, `RATCHET_ADMIN_KEYS`, in live mode). Pages, `/scout*`, `/ratchet/stats` and `/ratchet/bom` stay public at the edge; whether the gateway serves the dashboard API without a key is `RATCHET_PUBLIC_DASHBOARD`. In mock mode, `guarded` also disables the dashboard's demo buttons. In live mode without `RATCHET_API_KEYS`, the gateway starts only with `RATCHET_ALLOW_UNAUTHENTICATED=1` |
 | `RATCHET_ADMIN_TOKEN` | empty | Token for `guarded`. Hex, at least 32 characters (`openssl rand -hex 32`). Shorter or empty blocks the guarded paths for everyone. Caddy strips the header before it reaches the gateway |
+| `RATCHET_SIM` | `on` | `on`: Caddy serves the `ratchet-sim` container at `RATCHET_SIM_DOMAIN`. `off`: no simulation host (the container still runs, unreachable); then also set an empty `RATCHET_SIM_URL=` so the live pages link nothing. `update.sh` refuses anything else |
+| `RATCHET_SIM_DOMAIN` | `sim.<RATCHET_DOMAIN>` | The simulation host's name. It needs DNS: `sim.<ip>.sslip.io` resolves by itself; with your own domain add an A record (or a wildcard) first. Must differ from `RATCHET_DOMAIN` (`update.sh` refuses it before it builds anything) |
+| `RATCHET_SIM_BOM_SIGNING_KEY` | empty | Optional key that signs the simulation's BOMs, handed to `ratchet-sim` as its `RATCHET_BOM_SIGNING_KEY`. Never the same as the live `RATCHET_BOM_SIGNING_KEY` (`update.sh` refuses it): a simulated BOM must not verify against the live public key |
 
 `deploy/vm/create_vm.sh` and `deploy/vm/backup.sh` have their own settings, listed at the top of each script and in [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md). Like the variables above they are in `config.DEPLOY_ENV`, so the gateway's startup check does not call them unknown:
 
