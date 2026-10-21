@@ -284,16 +284,70 @@ def test_live_mode_without_api_keys_does_not_start(gw_env, tmp_path):
     with pytest.raises(ValueError, match="RATCHET_API_KEYS is empty: in live mode"):
         gw.Runtime(_live(tmp_path, api_keys=""))
     assert not (tmp_path / "live.db").exists()  # refused before the ledger was opened
-    assert gw.Runtime(_live(tmp_path, api_keys="", allow_unauthenticated=True)).keys.enabled is False
+    assert (
+        gw.Runtime(
+            _live(
+                tmp_path,
+                api_keys="",
+                allow_unauthenticated=True,
+                api_guard="guarded",
+                admin_token="0123456789abcdef0123456789abcdef",
+            )
+        ).keys.enabled
+        is False
+    )
     assert gw.Runtime(Settings(mode="mock", api_keys="", mock_warmup_days=0)).settings.mode == "mock"  # mock needs none
 
     # From the environment, as `uvicorn ratchet.gateway:app` starts it.
     live_env = {"RATCHET_MODE": "live", "RATCHET_DB": str(tmp_path / "env.db"), "RATCHET_API_KEYS": "", "NEBIUS_API_KEY": "tf"}
     with pytest.raises(ValueError, match="RATCHET_ALLOW_UNAUTHENTICATED=1"):
         gw_env(**live_env, RATCHET_STUDENT_BASE="")
-    assert gw_env(**live_env, RATCHET_STUDENT_BASE="", RATCHET_ALLOW_UNAUTHENTICATED="1").rt.settings.mode == "live"
+    assert (
+        gw_env(
+            **live_env,
+            RATCHET_STUDENT_BASE="",
+            RATCHET_ALLOW_UNAUTHENTICATED="1",
+            RATCHET_API_GUARD="guarded",
+            RATCHET_ADMIN_TOKEN="0123456789abcdef0123456789abcdef",
+        ).rt.settings.mode
+        == "live"
+    )
     keyed = gw_env(**{**live_env, "RATCHET_API_KEYS": f"acme:{ACME_KEY}"}, RATCHET_STUDENT_BASE="")
     assert keyed.rt.keys.names == ["acme"]
+
+
+@pytest.mark.req("NFR-5", "FR-12.7", "FR-12.30")
+def test_unauthenticated_live_mode_needs_the_edge_guard_it_relies_on(gw_env, tmp_path):
+    """`RATCHET_ALLOW_UNAUTHENTICATED=1` alone is one forgotten variable from an open, paid /v1/*: it also needs
+    `RATCHET_API_GUARD=guarded` and a `RATCHET_ADMIN_TOKEN` of 32+ characters (what Caddy checks), at startup and in the
+    config check. The refusal never quotes the token."""
+    from ratchet import config
+
+    gw = gw_env()
+    token = "0123456789abcdef0123456789abcdef"
+    for overrides in (
+        {"api_guard": "open", "admin_token": ""},  # the switch alone
+        {"api_guard": "open", "admin_token": token},
+        {"api_guard": "guarded", "admin_token": ""},  # no token
+        {"api_guard": "guarded", "admin_token": token[:31]},  # one character short
+        {"api_guard": "Guard", "admin_token": token},
+    ):
+        s = _live(tmp_path, api_keys="", allow_unauthenticated=True, **overrides)
+        with pytest.raises(ValueError, match="RATCHET_ALLOW_UNAUTHENTICATED=1 needs the edge guard") as e:
+            gw.Runtime(s)
+        assert token not in str(e.value) and token[:31] not in str(e.value)
+        assert not (tmp_path / "live.db").exists()  # refused before the ledger was opened
+    ok = _live(tmp_path, api_keys="", allow_unauthenticated=True, api_guard=" Guarded ", admin_token=token)
+    assert gw.Runtime(ok).keys.enabled is False  # case and spaces as in an .env file
+    # API keys need no guard.
+    assert gw.Runtime(_live(tmp_path, api_keys=f"acme:{ACME_KEY}", api_guard="open", admin_token="")).keys.enabled
+    # The config check says the same, once, under the variable the operator set.
+    bad = _live(tmp_path, api_keys="", allow_unauthenticated=True, api_guard="guarded", admin_token="short")
+    problems = [i for i in config.check(bad, {}) if i.var == "RATCHET_ALLOW_UNAUTHENTICATED" and i.level == config.ERROR]
+    assert (
+        len(problems) == 1 and "RATCHET_ADMIN_TOKEN of at least 32" in problems[0].message and "short" not in problems[0].message
+    )
+    assert not [i for i in config.check(ok, {}) if i.var == "RATCHET_ALLOW_UNAUTHENTICATED"]
 
 
 @pytest.mark.req("NFR-5", "INV-13")

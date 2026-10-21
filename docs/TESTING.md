@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1778 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1779 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -45,7 +45,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_feedback.py` | 32 |
 | `tests/test_docs_claims.py` | 10 |
 | `tests/test_perf.py` | 22 |
-| `tests/test_security.py` | 11 |
+| `tests/test_security.py` | 12 |
 | `tests/test_observability.py` | 28 |
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
 | `tests/test_idempotency.py` | 25 |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1778** |
+| **Total** | **1779** |
 
 There are three layers:
 
@@ -993,6 +993,7 @@ Endpoint access, scrubbed public stats, the OpenAPI switch, the live-mode auth g
 | `test_access_switches_resolve_by_mode_and_refuse_typos` | Mock and live defaults; explicit 0 and 1; set but empty is the default; `yes`, `true`, `2`, `on` stop startup naming the variable; a CSP with a line break is refused; `Access.scrubs` for every case |
 | `test_openapi_is_off_in_live_mode` | Live: `/openapi.json`, `/docs` and `/redoc` are 404, back with `RATCHET_OPENAPI=1`; mock serves the schema, `0` removes it |
 | `test_security_headers_on_every_response` | `nosniff` and `no-referrer` on a page, health, stats, a chat completion, a stream, a 400, a 404, a 413 from the body limit, Scout, and both 500s (sent outside the middleware); no CSP by default; `RATCHET_CSP` adds it |
+| `test_unauthenticated_live_mode_needs_the_edge_guard_it_relies_on` | NFR-5, FR-12.7, FR-12.30: `allow_unauthenticated` alone, with the guard open, a missing token, a 31-character token or a misspelled guard is refused at startup (before the ledger opens) and by the config check, naming both variables and never the token; ` Guarded ` and 32 characters start; API keys need no guard |
 
 ### `tests/test_observability.py`
 

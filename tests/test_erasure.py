@@ -874,7 +874,9 @@ def test_live_gateway_purges_hourly_off_the_request_path(gw_env, tmp_path, monke
         end_user_key=END_USER_KEY,
         example_retention_days=30,
         request_retention_days=60,
-        allow_unauthenticated=True,  # no API keys (ADR 0061)
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",  # no API keys (ADR 0061)
         public_dashboard=True,
         ip_rpm=0,
     )

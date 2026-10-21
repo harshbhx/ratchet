@@ -808,7 +808,9 @@ def test_teacher_always_gets_the_configured_model(gw_env, tmp_path, monkeypatch)
         model_policy="lenient",
         auto_task="off",
         mock_warmup_days=0,
-        allow_unauthenticated=True,  # no API keys, and the dashboard API read without one (ADR 0061)
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",  # no API keys, and the dashboard API read without one (ADR 0061)
         public_dashboard=True,
         ip_rpm=0,  # every request from one address (ADR 0063)
     )

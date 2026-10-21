@@ -121,7 +121,9 @@ def _live(gw: Any, tmp_path: Any, teacher: FakeOpenAIServer, **overrides: Any) -
         "student_params": "",
         "teacher_modalities": "text",
         "api_keys": "",
-        "allow_unauthenticated": True,  # a live gateway without API keys starts only with this (ADR 0061)
+        "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",  # a live gateway without API keys starts only with this (ADR 0061)
         "public_dashboard": True,  # and its /ratchet/stats needs a dashboard key without this (ADR 0061)
         "api_key_daily_requests": 0,
         "bom_signing_key": "",

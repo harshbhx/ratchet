@@ -512,12 +512,17 @@ class Runtime:
             both = ring.shared(other)
             if both:
                 raise ValueError(f"{ring.env}: the key for {both[0]!r} is also {fix}")
-        if s.mode != "mock" and not self.keys.enabled and not self.access.allow_unauthenticated:
-            raise ValueError(
-                "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
-                "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
-                "VM's Caddy guard) checks every caller"
-            )
+        if s.mode != "mock" and not self.keys.enabled:
+            if not self.access.allow_unauthenticated:
+                raise ValueError(
+                    "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
+                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
+                    "VM's Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
+                    "caller"
+                )
+            problem = s.guard_problem()
+            if problem is not None:
+                raise ValueError(problem)
         csp = {"Content-Security-Policy": self.access.csp} if self.access.csp else {}
         self.security_headers: dict[str, str] = {**SECURITY_HEADERS, **csp}
         # A Prometheus scraper's bearer token for GET /metrics (ADR 0062): a role of its own, so never one of the keys.

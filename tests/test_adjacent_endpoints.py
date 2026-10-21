@@ -122,6 +122,8 @@ def _live(gw: Any, tmp_path: Path, monkeypatch: Any, teacher: FakeOpenAIServer, 
         # No API keys and a public dashboard (ADR 0061), no per-IP rate (ADR 0063): these tests call /v1/* and read
         # /ratchet/stats without a key, from one address.
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,
         "ip_rpm": 0,
         **overrides,

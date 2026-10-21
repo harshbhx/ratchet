@@ -247,6 +247,8 @@ def test_no_client_mistake_gives_500(gw_env, tmp_path, monkeypatch):
             teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
             audit_rate=0.0,
             allow_unauthenticated=True,
+            api_guard="guarded",
+            admin_token="0123456789abcdef0123456789abcdef",
             ip_rpm=0,  # every mutation comes from one address: no per-IP limit (ADR 0063)
         ),
         transports={"teacher": FakeOpenAIServer(A).transport},
@@ -312,6 +314,8 @@ def test_unpaired_surrogate_is_a_400_in_both_modes(gw_env, tmp_path, monkeypatch
             teacher_api_key="tf-key",  # live mode needs a teacher key to start (ADR 0070)
             audit_rate=0.0,
             allow_unauthenticated=True,
+            api_guard="guarded",
+            admin_token="0123456789abcdef0123456789abcdef",
         ),
         transports={"teacher": teacher.transport},
     )
@@ -409,6 +413,8 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
         RATCHET_STUDENT_BASE="",
         NEBIUS_API_KEY="tf-key",  # live mode needs a teacher key to start (ADR 0070)
         RATCHET_ALLOW_UNAUTHENTICATED="1",
+        RATCHET_API_GUARD="guarded",
+        RATCHET_ADMIN_TOKEN="0123456789abcdef0123456789abcdef",
     )
 
     def lookup_bug(*args: Any, **kwargs: Any) -> Any:
@@ -680,7 +686,9 @@ def _gen_runtime(gw: Any, tmp_path: Any, teacher: FakeOpenAIServer, **overrides:
         "student_max_tokens": 1024,
         "teacher_reasoning_headroom": 0,
         "api_keys": "",
-        "allow_unauthenticated": True,  # no API keys in live mode (ADR 0061)
+        "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",  # no API keys in live mode (ADR 0061)
         "api_key_daily_requests": 0,
         "bom_signing_key": "",
         "mock_warmup_days": 0,

@@ -107,6 +107,8 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "mock_warmup_days": 0,
         # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,
         "stats_ttl_s": 0.0,  # every /ratchet/stats read computed afresh (live mode caches it for 2 s, ADR 0060)
     }
@@ -2243,7 +2245,15 @@ def test_liverun_refuses_mock_gateway_and_wrong_ledger(tmp_path, gw_env):
     assert len(world.client.calls) == 2  # /healthz and the probe
 
     # A gateway without RATCHET_API_KEYS: the row carries no key name.
-    world = LiveRunWorld(tmp_path / "open", gateway={"api_keys": "", "allow_unauthenticated": True})
+    world = LiveRunWorld(
+        tmp_path / "open",
+        gateway={
+            "api_keys": "",
+            "allow_unauthenticated": True,
+            "api_guard": "guarded",
+            "admin_token": "0123456789abcdef0123456789abcdef",
+        },
+    )
     with world:
         code, out = world.main("smoke", "--base-url", LR_BASE, "--out", str(tmp_path / "open" / "run"))
     assert code == 2 and "add liverun:<key> to RATCHET_API_KEYS" in out
