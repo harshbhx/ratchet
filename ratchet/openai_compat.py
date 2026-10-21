@@ -1427,6 +1427,10 @@ RESPONSES_READ = frozenset(
 )
 INPUT_ROLES = ("user", "assistant", "system", "developer")
 TEXT_PARTS = ("input_text", "output_text")
+# `reasoning.effort` values the OpenAI SDK's `Response` model accepts (`openai.types.shared.ReasoningEffort`). A response
+# echoes the value, so another one would be served and then fail to parse in the SDK; /v1/chat/completions echoes
+# nothing and keeps any string.
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass
@@ -1677,8 +1681,9 @@ def validate_responses_request(body: Any, limits: Limits | None = None) -> Respo
     """Check a decoded `/v1/responses` body and turn it into a chat request; raise `APIError` (400) on the first problem,
     naming the Responses field. `instructions` becomes a leading system message, `input` the messages
     (`_input_messages`), `text.format` the `response_format`, function `tools` and `tool_choice` the chat ones,
-    `max_output_tokens` `max_tokens`, `reasoning.effort` `reasoning_effort`; `model`, `temperature`, `top_p`, `metadata`,
-    `user`, `safety_identifier` and `parallel_tool_calls` keep their names. What needs state Ratchet does not keep
+    `max_output_tokens` `max_tokens`, `reasoning.effort` `reasoning_effort` (one of REASONING_EFFORTS, since the response
+    echoes it); `model`, `temperature`, `top_p`, `metadata`, `user`, `safety_identifier` and `parallel_tool_calls` keep
+    their names. What needs state Ratchet does not keep
     (`previous_response_id`, `conversation`, a stored `prompt`, `background: true`) and `stream: true` are a 400
     `unsupported_parameter`; RESPONSES_IGNORED fields are accepted and do nothing; any other field is an unknown field of
     the chat request (kept, and forwarded only when an allowlist names it). O(body), no I/O."""
@@ -1700,6 +1705,11 @@ def validate_responses_request(body: Any, limits: Limits | None = None) -> Respo
     reasoning = body.get("reasoning")
     if reasoning is not None and not isinstance(reasoning, dict):
         raise _wrong_type("reasoning", "an object", reasoning)
+    effort = (reasoning or {}).get("effort")
+    if isinstance(effort, str) and effort not in REASONING_EFFORTS:
+        expected = ", ".join(REASONING_EFFORTS)
+        message = f"Invalid value for 'reasoning.effort': expected one of {expected}, but got {_short(effort)} instead."
+        raise _bad("reasoning.effort", message)
     mapped = {
         "model": body.get("model"),
         "max_tokens": body.get("max_output_tokens"),

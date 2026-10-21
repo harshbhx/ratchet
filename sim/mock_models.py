@@ -326,7 +326,9 @@ class MockEmbedder:
 
     base_url = "mock://embeddings"
     default_dims = MOCK_EMBEDDING_DIMS
-    max_values = 1 << 20  # floats per request (inputs x dimensions), so one request cannot tie up the shared demo
+    # Floats per request (inputs x dimensions): about 3 MB of JSON and under half a second, so one request cannot tie
+    # up the shared demo (2^20 took 1.5 s of CPU and returned 22 MB). 512 inputs at the default 256 dimensions.
+    max_values = 1 << 17
 
     def __init__(self, latency_ms: float = 20.0) -> None:
         self.latency_ms = latency_ms  # simulated
