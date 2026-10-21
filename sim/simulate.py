@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ratchet import receipts
+from ratchet import kpis, receipts
 from ratchet.certificate import CALIBRATIONS
 from ratchet.config import MAX_MOCK_REASONING_TOKENS, Settings
 from ratchet.cost import cost_report, record_simulated_day
@@ -191,6 +191,8 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "exposure": {r["version"]: r["served"] for r in rolled},
         "rollbacks": rolled,
         "served": served,
+        # PRD §8.1's success metrics, computed from the ledger as the gateway's /ratchet/kpis does (simulation numbers).
+        "kpis": kpis.report(ledger, settings.kpi_window(), args.min_audits, settings.mode),
     }
     if sealing:  # each day's receipt next to the true all-teacher cost (simulation, mock models); only with --receipts
         res["receipts"] = receipt_days
@@ -260,6 +262,10 @@ def table(res: dict) -> str:
             )
     if res.get("receipts"):  # each day's savings receipt next to the truth (ADR 0029), labelled as simulation
         lines.append("\n" + receipt_table(res["receipts"]))
+    k = res.get("kpis")
+    if k:  # success metrics (PRD §8.1) over the last days with traffic, from mock models
+        lines.append(f"\nsuccess metrics (simulation; SM-1 to SM-3 and NFR-1 over the last {k['window']['days']} days):")
+        lines += [f"  {kpi_line(rid, m)}" for rid, m in k["metrics"].items()]
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
     return "\n".join(lines)
@@ -284,6 +290,21 @@ def receipt_table(days: list[dict[str, Any]]) -> str:
     held = sum(1 for d in days if d["held"])
     lines.append(f"the lower bound held on {held} of {len(days)} days (USD; a one-sided 95% bound misses about 1 day in 20)")
     return "\n".join(lines)
+
+
+def kpi_line(rid: str, m: dict) -> str:
+    """One success metric as a line: its id, value, target and verdict."""
+    if m["value"] is None:
+        value = "-"
+    elif m["unit"] == "fraction":
+        value = f"{m['value']:.1%}"
+    elif m["unit"] == "ms":
+        value = f"{m['value']:.0f} ms"
+    else:
+        value = f"{m['value']} {m['unit']}"
+    target = f"{m['target']:.0%}" if m["unit"] == "fraction" else f"{m['target']:g} {m['unit']}"
+    verdict = {True: "met", False: "not met", None: "not known yet"}[m["met"]]
+    return f"{rid:<6} {value:>10}  target {m['op']} {target:<10} {verdict}"
 
 
 def parser() -> argparse.ArgumentParser:

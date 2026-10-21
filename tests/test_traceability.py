@@ -125,6 +125,11 @@ def test_doc_test_counts_match(repo):
     assert rq.rule_test_counts(repo) == []
 
 
+@pytest.mark.req("FR-7.9")
+def test_metric_targets_match_the_prd(repo):
+    assert rq.rule_metric_targets(repo) == []
+
+
 def test_ast_count_matches_pytest_collection(repo):
     """The doc-count rule trusts the AST count; pytest's own collection must agree with it, file by file."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("COV_CORE", "PYTEST_ADDOPTS"))}
@@ -479,6 +484,51 @@ def test_doc_rules_catch_drift(tmp_path, monkeypatch):
     )
     found = [rq._env_name(n) for n in rq.ast.walk(rq.ast.parse(reads))]
     assert sorted(x for x in found if x) == ["A", "B", "C", "D", "E", "F"]
+
+
+@pytest.mark.req("FR-7.9")
+def test_metric_target_rule_catches_drift(tmp_path, monkeypatch):
+    @dataclass(frozen=True)
+    class T:
+        op: str
+        value: float
+        unit: str
+
+    ctx = World().load(tmp_path)  # SM-1: "Savings", target "≥ 70%"
+    good = T(">=", 0.70, "fraction")
+    monkeypatch.setattr(rq, "metric_targets", lambda: {"SM-1": good})
+    assert rq.rule_metric_targets(ctx) == []
+    differs = "SM-1: the PRD target '≥ 70%' differs from ratchet.kpis.SM_TARGETS"
+    for targets, expected in [
+        ({"SM-1": T(">=", 0.75, "fraction")}, f"{differs} (>= 0.75 fraction)"),
+        ({"SM-1": T("<=", 0.70, "fraction")}, differs),
+        ({"SM-1": T(">=", 70, "nights")}, differs),
+        ({}, "SM-1: no entry in ratchet.kpis.SM_TARGETS; add its target ('≥ 70%')"),
+        ({"SM-1": good, "SM-9": T("==", 0, "")}, "ratchet.kpis.SM_TARGETS lists SM-9, which is not a metric"),
+    ]:
+        monkeypatch.setattr(rq, "metric_targets", lambda targets=targets: targets)
+        errors = rq.rule_metric_targets(ctx)
+        assert len(errors) == 1 and expected in errors[0], errors
+    monkeypatch.setattr(rq, "metric_targets", lambda: {"SM-1": good})
+    world = World()
+    world.edit_prd("| ≥ 70% |", "| most of it |")
+    assert rq.rule_metric_targets(world.load(tmp_path)) == [
+        "SM-1: the PRD target 'most of it' does not read as a comparison and a number"
+    ]
+
+    def broken() -> dict:
+        raise ImportError("no module")
+
+    monkeypatch.setattr(rq, "metric_targets", broken)
+    assert rq.rule_metric_targets(ctx) == ["cannot import ratchet.kpis: ImportError: no module"]
+    cells = {
+        "≥ 70%": (">=", 0.7, "fraction"),
+        "0": ("==", 0.0, ""),
+        "≤ 3 nights": ("<=", 3.0, "nights"),
+        "< 1 s": ("<", 1.0, "s"),
+    }
+    assert {cell: rq.parse_target(cell) for cell in cells} == cells
+    assert rq.parse_target("about 70%") is None
 
 
 def test_clip_keeps_table_cells_valid():

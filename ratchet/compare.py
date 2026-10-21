@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import MISSING as _NO_DEFAULT
 from dataclasses import dataclass, field, fields
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
 
@@ -123,6 +124,13 @@ _CODE_PREFIX = re.compile(r"([A-Z]{3})(?![A-Za-z])")
 _CODE_SUFFIX = re.compile(r"(?<![A-Za-z])([A-Z]{3})$")
 _LETTERS_THEN_SYMBOL = re.compile(r"[A-Za-z]{1,2}(?=\S)")  # "US$", "HK$", "R$": letters glued to a currency symbol
 _SIGNS = {"-": -1.0, "+": 1.0, "−": -1.0}
+# Indian amounts: "Rs.", "Rs" or "Re." (one rupee) before or after the number, in any case, and "rupees" after it; "/-"
+# after it (no paise); and the lakh (10^5) and crore (10^7) scales, "lakh crore" being 10^12. "INR" and "₹" are an ISO
+# code and a currency symbol already. The abbreviations "Cr" and "L" are left out: on a bank statement "Cr" means
+# credit, and "L" is too short to tell from a unit.
+_RUPEE_PREFIX = re.compile(r"(?i:rs|re)\.?(?![A-Za-z])")
+_RUPEE_SUFFIX = re.compile(r"(?<![A-Za-z])(?i:rs|re|rupees?)\.?$")
+_INDIAN_SCALE = re.compile(r"(?<![A-Za-z])(?i:(lakhs?|lacs?)(\s*crores?)?|(crores?))\.?$")
 _EXP = r"(?:[eE][+-]?\d+)?"
 
 
@@ -147,7 +155,10 @@ _NUMBER = {".": _number_pattern("."), ",": _number_pattern(",")}
 def parse_number(text: str, decimal: str = ".", percent: str = "number") -> float | Any:
     """The value of a number written as text, or INVALID. Accepts a sign or '(12.00)' for a negative, currency symbols
     (Unicode category Sc) and an ISO 4217 code before or after it, thousands separators that fit `decimal`, and a
-    trailing '%' (with `percent` 'fraction', '12%' is 0.12). NaN and infinities are INVALID."""
+    trailing '%' (with `percent` 'fraction', '12%' is 0.12). Indian amounts too: 'Rs.' or 'Rs' before or after the
+    number, 'rupees' after it, a closing '/-', and lakh or crore after it ('Rs. 1.5 lakh' is 150000, scaled in decimal
+    so it is exact); the Indian grouping '1,23,456.50' is one of the accepted groupings. NaN and infinities are
+    INVALID."""
     t = unicodedata.normalize("NFKC", text).strip()
     if not t or len(t) > MAX_SCALAR_CHARS:
         return INVALID
@@ -157,6 +168,7 @@ def parse_number(text: str, decimal: str = ".", percent: str = "number") -> floa
     pct = False
     if t.endswith(("%", "٪")):
         pct, t = True, t[:-1].strip()
+    scale = 0  # a power of ten from 'lakh' or 'crore'
     for _ in range(8):  # currency marks and a sign, in any order around the digits; each pass removes at least one
         before = t
         if t and unicodedata.category(t[0]) == "Sc":
@@ -171,6 +183,15 @@ def parse_number(text: str, decimal: str = ".", percent: str = "number") -> floa
             t = t[m.end() + 1 :].lstrip()
         elif t[:1] in _SIGNS and sign is None:
             sign, t = _SIGNS[t[:1]], t[1:].lstrip()
+        elif (m := _RUPEE_PREFIX.match(t)) and m.end() < len(t):
+            t = t[m.end() :].lstrip()
+        elif t.endswith("/-"):
+            t = t[:-2].rstrip()
+        elif not scale and (m := _INDIAN_SCALE.search(t)) and m.start() > 0:
+            scale = 12 if m.group(2) else 5 if m.group(1) else 7
+            t = t[: m.start()].rstrip()
+        elif (m := _RUPEE_SUFFIX.search(t)) and m.start() > 0:
+            t = t[: m.start()].rstrip()
         if t == before:
             break
     m = _NUMBER[decimal].fullmatch(t)
@@ -178,9 +199,10 @@ def parse_number(text: str, decimal: str = ".", percent: str = "number") -> floa
         return INVALID
     sep = m.group("s")
     digits = t.replace(sep, "") if sep else (t.replace(",", "") if decimal == "." and "," in t else t)
+    text_value = digits.replace(decimal, ".") if decimal != "." else digits
     try:
-        value = float(digits.replace(decimal, ".") if decimal != "." else digits)
-    except (ValueError, OverflowError):
+        value = float(Decimal(text_value).scaleb(scale)) if scale else float(text_value)
+    except (ValueError, OverflowError, ArithmeticError):
         return INVALID
     if not math.isfinite(value):
         return INVALID

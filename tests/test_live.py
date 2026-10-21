@@ -832,14 +832,14 @@ def test_scout_cli_over_http(gw_env, monkeypatch, capsys):
     assert err.startswith("error: HTTPStatusError") and "401" in err
 
 
-@pytest.mark.req("FR-9.4", "FR-15.3")
+@pytest.mark.req("FR-9.4", "FR-15.3", "FR-7.9")
 def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     out = tmp_path / "sim.json"
     simulate.main(["--days", "2", "--requests", "200", "--drift-day", "0", "--workload", "mixed", "--out", str(out)])
     printed = capsys.readouterr().out
     res = json.loads(out.read_text(encoding="utf-8"))
     assert set(res) == {
-        "days", "nights", "versions", "events", "totals", "bill_of_materials", "cost", "exposure", "rollbacks", "served",
+        "days", "nights", "versions", "events", "totals", "bill_of_materials", "cost", "exposure", "rollbacks", "served", "kpis",
     }  # fmt: skip
     assert res["exposure"] == {} and res["rollbacks"] == []  # nothing rolled back in two days
     assert [d["day"] for d in res["days"]] == [1, 2] and [n["night"] for n in res["nights"]] == [1, 2]
@@ -854,6 +854,13 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     assert f"total: 400 requests, ${res['totals']['cost_usd']:.2f} vs ${res['totals']['baseline_usd']:.2f}" in printed
     assert "events:" in printed and "[trained]" in printed and lines[-1] == f"wrote {out}"
     assert lines[-3] == "simulation: mock models, workload mixed, seed 7; not a measure of real model quality"
+    # PRD §8.1's success metrics (FR-7.9), labelled as simulation, one line per metric with its target and verdict.
+    k = res["kpis"]
+    assert k["simulated"] is True and k["window"]["to"] == 2
+    assert "success metrics (simulation; SM-1 to SM-3 and NFR-1 over the last 2 days):" in printed
+    for rid in ("SM-1", "SM-2", "SM-3", "SM-4", "SM-5", "NFR-1"):
+        (line,) = [ln for ln in lines if ln.split()[:1] == [rid]]
+        assert "target" in line and line.rstrip().endswith(("met", "not met", "not known yet")), line
     for e in res["events"]:
         assert f"  day {e['day']}: [{e['kind']}] {e['detail']}" in lines
 

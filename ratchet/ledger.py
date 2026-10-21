@@ -92,7 +92,11 @@ CREATE TABLE IF NOT EXISTS examples (
     prompt_hash TEXT,          -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
     -- Human labels (FR-3.54, FR-4.50, ADR 0091):
     verified INTEGER DEFAULT 0,       -- 1: a person wrote the label (teacher_model 'human': a correction or an import)
-    golden_only INTEGER DEFAULT 0     -- 1: held out for good, even past FREQUENT, with every variant of its prompt
+    golden_only INTEGER DEFAULT 0,    -- 1: held out for good, even past FREQUENT, with every variant of its prompt
+    -- The example's key under the default redaction (`label` style, no detector plugin; ADR 0082) when it was stored
+    -- otherwise and the key differs; NULL when it is `hash`. An erasure tombstones both, so a style or plugin change
+    -- never lets an erased example be stored again.
+    canon_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,7 +195,7 @@ CREATE TABLE IF NOT EXISTS backfill_jobs (   -- historical prompts relabelled by
     source_models TEXT,        -- JSON: {model: outputs discarded}
     status TEXT, usd REAL, realtime_usd REAL
 );
-CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys, never stored again (FR-16.9)
+CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys (hash and canon_hash), never stored again (FR-16.9)
     key TEXT PRIMARY KEY, erasure_id INTEGER, ts REAL,
     suppressed INTEGER DEFAULT 0  -- how often a tombstoned example was offered again and refused
 );
@@ -246,7 +250,8 @@ CREATE TABLE IF NOT EXISTS daily_rollup (     -- request rows folded by retentio
     sampled INTEGER, avoided REAL, student_in_tokens INTEGER, student_out_tokens INTEGER, served_with_tokens INTEGER,
     audited INTEGER, audit_agree_sum INTEGER, audit_n INTEGER,  -- audit_n: audited rows that recorded agreement
     wall_ms_sum REAL, latency_n INTEGER, stored_sum INTEGER, stored_n INTEGER,
-    folded_ts REAL             -- when these rows were folded; one fold may leave several rows per key, readers sum them
+    folded_ts REAL,            -- when these rows were folded; one fold may leave several rows per key, readers sum them
+    answered INTEGER, answered_escalated INTEGER  -- rows the student answered, and of those escalated (FR-7.9, SM-5)
 );
 -- INV-17: committed leaves and sealed receipts are append-only. A changed or deleted row would silently break the
 -- signed roots and chains built from them, so the database refuses UPDATE and DELETE, and an INSERT that would replace
@@ -431,9 +436,11 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "prompt_hash": "TEXT",
         "verified": "INTEGER DEFAULT 0",
         "golden_only": "INTEGER DEFAULT 0",
+        "canon_hash": "TEXT",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
     "erasures": {"actor": "TEXT", "reason": "TEXT", "scope": "TEXT", "purged": "INTEGER", "kept": "INTEGER"},
+    "daily_rollup": {"answered": "INTEGER", "answered_escalated": "INTEGER"},
 }
 # Data a new column needs in rows written before it existed: (the columns it reads, the UPDATE), run once, right after
 # `_migrate` adds the column, when the table has the columns it reads (a hand-made partial file may not).
@@ -522,11 +529,12 @@ ROLLUP_SUMS = (
     "requests", "student_served", "teacher_served", "escalated", "cost", "baseline", "teacher_cost", "student_cost",
     "split_unknown", "split_unknown_cost", "sampled", "avoided", "student_in_tokens", "student_out_tokens",
     "served_with_tokens", "audited", "audit_agree_sum", "audit_n", "wall_ms_sum", "latency_n", "stored_sum", "stored_n",
+    "answered", "answered_escalated",
 )  # fmt: skip
 ROLLUP_INSERT = """INSERT INTO daily_rollup (folded_ts, day, task, client, route, store_opt_out, requests, student_served,
     teacher_served, escalated, cost, baseline, teacher_cost, student_cost, split_unknown, split_unknown_cost, sampled,
     avoided, student_in_tokens, student_out_tokens, served_with_tokens, audited, audit_agree_sum, audit_n, wall_ms_sum,
-    latency_n, stored_sum, stored_n)
+    latency_n, stored_sum, stored_n, answered, answered_escalated)
     SELECT ?, day, task, client, route, store_opt_out, COUNT(*),
            COALESCE(SUM(served_by='student'), 0), COALESCE(SUM(served_by='teacher'), 0), COALESCE(SUM(escalated), 0),
            SUM(cost_usd), SUM(baseline_cost_usd),
@@ -539,7 +547,8 @@ ROLLUP_INSERT = """INSERT INTO daily_rollup (folded_ts, day, task, client, route
            COALESCE(SUM(served_by='student' AND student_in_tokens IS NOT NULL), 0),
            COALESCE(SUM(audited=1), 0), SUM(CASE WHEN audited=1 THEN audit_agree END),
            COUNT(CASE WHEN audited=1 THEN audit_agree END),
-           SUM(latency_ms), COUNT(latency_ms), SUM(stored), COUNT(stored)
+           SUM(latency_ms), COUNT(latency_ms), SUM(stored), COUNT(stored),
+           COUNT(confidence), COALESCE(SUM(escalated=1 AND confidence IS NOT NULL), 0)
     FROM requests WHERE {where} GROUP BY day, task, client, route, store_opt_out"""
 # `Ledger.cost_by_day`'s columns and the daily_rollup sum each one adds (with its zero), for days with folded rows.
 COST_COLUMNS: dict[str, tuple[str, float]] = {
@@ -706,6 +715,24 @@ def _add(a: Any, b: Any) -> Any:
     if b is None:
         return a
     return a + b
+
+
+# `Ledger.kpi_days`'s sums and their zeros, for a day that only folded request rows have (FR-7.9, FR-13.4).
+KPI_ZERO: dict[str, Any] = {
+    "requests": 0, "student_served": 0, "escalated": 0, "answered": 0, "answered_escalated": 0, "cost": 0.0, "baseline": 0.0,
+}  # fmt: skip
+
+
+def _day_range(day_from: int | None, day_to: int | None) -> tuple[str, list[Any]]:
+    """A WHERE clause (and its arguments) for ledger days `day_from` to `day_to`, inclusive; None leaves a side open."""
+    where, args = "1=1", []
+    for op, day in ((">=", day_from), ("<=", day_to)):
+        if day is not None:
+            if isinstance(day, bool) or not isinstance(day, int):
+                raise ValueError(f"a ledger day must be a whole number, not {day!r}")
+            where += f" AND day {op} ?"
+            args.append(day)
+    return where, args
 
 
 # A stats row for a key that only folded request rows have (FR-13.4): every column a reader may read, empty.
@@ -1602,10 +1629,14 @@ class Ledger:
         bump: bool = True,
         count_seen: bool = True,
         sender: str | None = None,
+        canon_hash: str | None = None,
     ) -> bool | None:
         """Store a teacher-labelled example. Returns True when it was inserted, False when it was a duplicate, and None
-        when it was refused because an erasure tombstoned its hash (FR-13.3): nothing is stored or bumped, and only the
-        tombstone's `suppressed` count grows.
+        when it was refused because an erasure tombstoned its hash or its `canon_hash` (FR-13.3): nothing is stored or
+        bumped, and only the tombstone's `suppressed` count grows. `canon_hash` is the example's key under the default
+        redaction (`label` style, no detector plugin; ADR 0082) when it was redacted otherwise; it is stored with the
+        row, so an erasure tombstones it too, and an example erased under one style or plugin setting is refused under
+        any other.
         Human and imported labels (ADR 0091, `feedback.store_label`, the only caller that passes these) set `verified`
         (a person wrote the label), `golden_only` (the row goes to the golden split whatever its hash says, and stays
         held out even past FREQUENT; sticky on a duplicate) and `origin` (`LABEL_ORIGINS`). With `replace`, a duplicate's
@@ -1635,15 +1666,18 @@ class Ledger:
         text = json.dumps(messages, ensure_ascii=False)
         stored_params = json.dumps(target, ensure_ascii=False) if target else None
         now = time.time()
-        if self.db.execute("SELECT 1 FROM tombstones WHERE key=?", (h,)).fetchone() is not None:
-            return self._refuse_erased(h, now)
+        canon = canon_hash if canon_hash and canon_hash != h else None
+        keys = (h,) if canon is None else (h, canon)
+        hit = self.db.execute(f"SELECT key FROM tombstones WHERE key IN ({','.join('?' * len(keys))})", keys).fetchone()
+        if hit is not None:
+            return self._refuse_erased(hit["key"], now)
         label = (completion, teacher_model, license_name, license_url, redactions, int(verified), origin)
         window = self.seen_window if sender is not None else None
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
-                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen, canon_hash)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     now,
                     self.day,
@@ -1664,6 +1698,7 @@ class Ledger:
                     int(golden_only),
                     origin,
                     int(bump),  # 1 as the column's default for every router write; 0 for a label that is no occurrence
+                    canon,
                 ),
             )
             self.db.commit()
@@ -1918,7 +1953,7 @@ class Ledger:
         final = reason == "erasure"
         for part in _chunks(sorted(rows)):
             found = self.db.execute(
-                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason FROM examples"
+                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason, canon_hash FROM examples"
                 f" WHERE hash IN ({','.join('?' * len(part))})",
                 part,
             ).fetchall()
@@ -1983,12 +2018,13 @@ class Ledger:
         now: float | None = None,
     ) -> dict[str, int]:
         """Carry out an erasure in one transaction (FR-13.3): purge `purge` ({hash: counted as a training row}) for good,
-        tombstone each hash (`add_example` refuses it from now on), list the purged rows in `erasure_items` (hashes, task
-        and split, never text), unlink the erased party from the shared examples kept (`unlink`: (hash, 'client' or
-        'end_user', the client's name)), clear the erased end users' hashes from their request rows
-        (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data (`tainted`;
-        `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive checked and free
-        of request text. Returns the erasure's id and the counts. Signed BOMs are never touched (INV-14)."""
+        tombstone each hash and canonical key (`canon_hash`; `add_example` refuses both from now on), list the purged
+        rows in `erasure_items` (hashes, task and split, never text), unlink the erased party from the shared examples
+        kept (`unlink`: (hash, 'client' or 'end_user', the client's name)), clear the erased end users' hashes from their
+        request rows (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data
+        (`tainted`; `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive
+        checked and free of request text. Returns the erasure's id and the counts. Signed BOMs are never touched
+        (INV-14)."""
         now = time.time() if now is None else _check_ts(now, "now")
         tainted = sorted({int(v) for v in affected})
         self._begin()
@@ -2012,8 +2048,9 @@ class Ledger:
                 "INSERT OR IGNORE INTO erasure_items (erasure_id, hash, task, split) VALUES (?,?,?,?)",
                 [(eid, r["hash"], r["task"], r["split"]) for r in done],
             )
+            keys = [r["hash"] for r in done] + [r["canon_hash"] for r in done if r["canon_hash"]]
             self.db.executemany(
-                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(r["hash"], eid, now) for r in done]
+                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(k, eid, now) for k in keys]
             )
             kept = self._unlink(unlink)
             unlinked = 0
@@ -3753,3 +3790,105 @@ class Ledger:
             "savings_pct": 0.0 if b == 0 else 1 - spent / b,
             "failed_cost_usd": failed,
         }
+
+    # ---------- success metrics (FR-7.9, ratchet/kpis.py) ----------
+    @_locked
+    def kpi_days(self) -> list[dict[str, Any]]:
+        """Per ledger day, oldest first, the sums the success metrics read (ratchet/kpis.py), folded request rows
+        (FR-13.4) included: requests, student-served and escalated requests, cost and baseline, `answered` (requests whose
+        student samples came back, so the student judged them: not a cold start, a pinned or teacher-only task, or a
+        student that was down) and `answered_escalated` (of those, the ones it was unsure of). Rows folded before the
+        `answered` columns existed count as not answered. Rows without a day are left out: they have no place in time."""
+        rows = self.db.execute(
+            """SELECT day, COUNT(*) requests,
+                      COALESCE(SUM(served_by='student'), 0) student_served,
+                      COALESCE(SUM(escalated), 0) escalated,
+                      COUNT(confidence) answered,
+                      COALESCE(SUM(escalated=1 AND confidence IS NOT NULL), 0) answered_escalated,
+                      COALESCE(SUM(cost_usd), 0.0) cost,
+                      COALESCE(SUM(baseline_cost_usd), 0.0) baseline
+               FROM requests WHERE day IS NOT NULL GROUP BY day"""
+        )
+        by_day = {r["day"]: dict(r) for r in rows}
+        if self._has_rollup():
+            folded = self.db.execute(
+                """SELECT day, SUM(requests) requests, SUM(student_served) student_served, SUM(escalated) escalated,
+                          SUM(answered) answered, SUM(answered_escalated) answered_escalated,
+                          SUM(cost) cost, SUM(baseline) baseline
+                   FROM daily_rollup WHERE day IS NOT NULL GROUP BY day"""
+            )
+            for f in folded:
+                r = by_day.setdefault(f["day"], {"day": f["day"], **KPI_ZERO})
+                for col, zero in KPI_ZERO.items():
+                    r[col] = _add(r[col], f[col]) or zero
+        return [by_day[d] for d in sorted(by_day)]
+
+    @_locked
+    def audit_totals(self, day_from: int | None = None, day_to: int | None = None) -> tuple[int, int]:
+        """(audits, agreements) pooled over ledger days `day_from` to `day_to` (inclusive; None = unbounded), every version
+        together, folded request rows included: each audited request that recorded the teacher's verdict, the rows
+        `stats_by_day` averages per day. SM-2 reads it; the release gate counts per version and per stage instead."""
+        where, args = _day_range(day_from, day_to)
+        r = self.db.execute(
+            f"SELECT COUNT(*) n, COALESCE(SUM(audit_agree), 0) agree FROM requests "
+            f"WHERE audited=1 AND audit_agree IS NOT NULL AND {where}",
+            args,
+        ).fetchone()
+        n, agree = int(r["n"]), int(r["agree"])
+        if self._has_rollup():
+            f = self.db.execute(
+                f"SELECT COALESCE(SUM(audit_n), 0) n, COALESCE(SUM(audit_agree_sum), 0) agree FROM daily_rollup WHERE {where}",
+                args,
+            ).fetchone()
+            n, agree = n + int(f["n"]), agree + int(f["agree"])
+        return n, agree
+
+    @_locked
+    def failed_cost(self, day_from: int | None = None, day_to: int | None = None) -> float:
+        """What failed requests spent over ledger days `day_from` to `day_to` (inclusive; None = unbounded) without leaving
+        a request row, from the `failures` table when the ledger has one (ADR 0062); 0.0 otherwise. It counts against the
+        savings (SM-1)."""
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='failures'").fetchone() is None:
+            return 0.0
+        where, args = _day_range(day_from, day_to)
+        return float(self.db.execute(f"SELECT COALESCE(SUM(cost_usd), 0.0) FROM failures WHERE {where}", args).fetchone()[0])
+
+    @_locked
+    def latency_quantile(
+        self, q: float, day_from: int | None = None, day_to: int | None = None, served_by: str | None = None
+    ) -> tuple[float | None, int, str]:
+        """(the q-quantile, rows, column) of request latency over ledger days `day_from` to `day_to` (inclusive; None =
+        unbounded), of one `served_by` when given, by the nearest-rank rule: the smallest observed value with a share q of
+        the values at or below it, never an interpolation (an ORDER BY with an OFFSET, no SQLite extension). The column is
+        `wall_ms` (the whole cascade on the gateway's clock) when the ledger has it and a row in the range recorded it,
+        else `latency_ms` (the providers' part). Folded rows keep no latencies, so they do not count. (None, 0, column)
+        when no row matches."""
+        if isinstance(q, bool) or not isinstance(q, (int, float)) or not 0 <= q <= 1:
+            raise ValueError(f"q must be a number from 0 to 1, not {q!r}")
+        if served_by is not None and not isinstance(served_by, str):
+            raise ValueError(f"served_by must be a string, not {served_by!r}")
+        base, args = _day_range(day_from, day_to)
+        if served_by is not None:
+            base += " AND served_by = ?"
+            args.append(served_by)
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(requests)")}
+        n, col = 0, "latency_ms"
+        for col in ("wall_ms", "latency_ms") if "wall_ms" in have else ("latency_ms",):
+            n = int(self.db.execute(f"SELECT COUNT(*) FROM requests WHERE {base} AND {col} IS NOT NULL", args).fetchone()[0])
+            if n:
+                break
+        if n == 0:
+            return None, 0, col
+        offset = min(n, max(1, math.ceil(round(q * n, 9)))) - 1
+        q_sql = f"SELECT {col} FROM requests WHERE {base} AND {col} IS NOT NULL ORDER BY {col} LIMIT 1 OFFSET ?"
+        return float(self.db.execute(q_sql, [*args, offset]).fetchone()[0]), n, col
+
+    @_locked
+    def events_of(self, kinds: Iterable[str]) -> list[dict[str, Any]]:
+        """The events of the given kinds, oldest first (SM-4 reads the release log without the rest)."""
+        wanted = sorted(set(kinds))
+        if not wanted:
+            return []
+        qs = ",".join("?" for _ in wanted)
+        q = f"SELECT id, ts, day, kind, detail FROM events WHERE kind IN ({qs}) ORDER BY id"
+        return [dict(r) for r in self.db.execute(q, wanted)]

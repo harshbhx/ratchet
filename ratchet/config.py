@@ -26,6 +26,7 @@ import httpx
 from . import licenses
 from .auth import MAX_RPM, MAX_USD, KeyLimits, KeyRing, Token, parse_key_limits
 from .certificate import CALIBRATIONS
+from .kpis import check_window_days
 from .openai_compat import AUTO_TASK_MODES, DEFAULT_MAX_N, MODEL_POLICIES, Limits, ModelRouting, parse_aliases
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
@@ -35,6 +36,7 @@ from .providers import (
     GenPolicy,
     parse_param_allowlist,
 )
+from .redact import STYLES as REDACT_STYLES
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
 from .tasks import MAX_TASKS
 from .tasks import valid_name as valid_task_name
@@ -271,6 +273,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_IDEMPOTENCY_CACHE",
             "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
+            "RATCHET_KPI_WINDOW_DAYS",
             "RATCHET_LOG_FORMAT",
             "RATCHET_LOG_LEVEL",
             "RATCHET_MAX_BODY_BYTES",
@@ -290,6 +293,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_PUBLIC_BOM",
             "RATCHET_PUBLIC_DASHBOARD",
             "RATCHET_REDACT_PII",
+            "RATCHET_REDACT_PLUGIN",
+            "RATCHET_REDACT_STYLE",
             "RATCHET_SAMPLES",
             "RATCHET_SCOUT_DAILY_BUDGET_USD",
             "RATCHET_SCOUT_MAX_RESULTS",
@@ -824,6 +829,12 @@ class Settings:
     # Privacy: replace emails, phone numbers, card numbers etc. with placeholders before a
     # request and the teacher's answer are stored as a training example (ratchet/redact.py).
     redact_pii: bool = field(default_factory=lambda: _env("RATCHET_REDACT_PII", "1") != "0")
+    # Placeholder style (ADR 0082): `label` ([EMAIL], v0.4), `numbered` ([EMAIL_1], the same value the same number in
+    # the prompt and the answer) or `surrogate` (person1@example.com). A task spec's `privacy.redact_style` overrides it.
+    redact_style: str = field(default_factory=lambda: _env("RATCHET_REDACT_STYLE", "label"))
+    # A detector plugin, 'module:function' (redact.Detector), such as an NER model for names. Imported at startup, which
+    # fails when it is missing. Empty: patterns only.
+    redact_plugin: str = field(default_factory=lambda: _env("RATCHET_REDACT_PLUGIN", ""))
     # Storage opt-outs (FR-13.1, ADR 0080). 0 is zero retention: no teacher answer is stored as a training example and
     # Night School skips every night. The requests table (metadata only) is still written.
     store_examples: bool = field(default_factory=lambda: _bool("RATCHET_STORE_EXAMPLES", "1"))
@@ -948,6 +959,10 @@ class Settings:
     # Mock mode only: hours a day the simulated student endpoint runs (each simulated day records one interval).
     mock_endpoint_hours: float = field(default_factory=lambda: _float("RATCHET_MOCK_ENDPOINT_HOURS", "24"))
 
+    # Success metrics (ratchet/kpis.py, FR-7.9): SM-1 to SM-3 and NFR-1 are measured over the last this many ledger days
+    # with traffic, so they describe the steady state rather than the cold start.
+    kpi_window_days: int = field(default_factory=lambda: _int("RATCHET_KPI_WINDOW_DAYS", "3"))
+
     # Audit focusing (FR-16.1, ADR 0025): the canary's own audit rate, more than 0 and at most 1; unset = RATCHET_AUDIT_RATE.
     # Read with `checked_canary_audit_rate()`.
     canary_audit_rate: float | None = field(default_factory=lambda: _float_or_none("RATCHET_CANARY_AUDIT_RATE"))
@@ -1063,6 +1078,28 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def redact_detector(self) -> Any:
+        """RATCHET_REDACT_PLUGIN loaded: the detector function, or None when unset. A spec that is not `module:function`,
+        a module that cannot be imported or a detector that fails on an empty text raises ValueError (ADR 0082), here and
+        at startup alike."""
+        from .redact import load_detector  # redact reads no settings; imported here to keep config's imports light
+
+        plugin = self.redact_plugin
+        if not isinstance(plugin, str):
+            raise ValueError(f"RATCHET_REDACT_PLUGIN must be 'module:function', not {plugin!r}")
+        return load_detector(plugin) if plugin.strip() else None
+
+    def redaction_style(self) -> str:
+        """RATCHET_REDACT_STYLE: `label` (the default, also when set but empty), `numbered` or `surrogate`. Case and spaces
+        are ignored; anything else raises ValueError, so a typo stops startup instead of storing another style."""
+        raw = self.redact_style
+        style = raw.strip().lower() if isinstance(raw, str) else None
+        if style == "":
+            style = "label"
+        if style not in REDACT_STYLES:
+            raise ValueError(f"RATCHET_REDACT_STYLE must be {', '.join(REDACT_STYLES)}, not {raw!r}")
+        return style
 
     def no_store_task_names(self) -> frozenset[str]:
         """RATCHET_NO_STORE_TASKS as a set of task names (FR-13.1). A name need not be registered (an unregistered name
@@ -1189,6 +1226,15 @@ class Settings:
             student_max_tokens=self.student_max_tokens,
             reasoning_headroom=self.teacher_reasoning_headroom,
         )
+
+    def kpi_window(self) -> int:
+        """RATCHET_KPI_WINDOW_DAYS, checked: a whole number of days from 1 to 3650 (`kpis.check_window_days`). A bad value
+        raises ValueError naming the variable, so the gateway and the simulator stop at startup instead of reporting
+        metrics over a window nobody asked for."""
+        try:
+            return check_window_days(self.kpi_window_days)
+        except ValueError as e:
+            raise ValueError(f"RATCHET_KPI_WINDOW_DAYS: {e}") from None
 
     def cost_policy(self) -> CostPolicy:
         """The cost settings, checked. A bad value raises ValueError naming the variable, so the gateway, the simulator,
@@ -1595,6 +1641,9 @@ class Settings:
             ("RATCHET_MODEL_POLICY", Settings.model_routing),
             ("RATCHET_MAX_AUTO_TASKS", Settings.auto_task_cap),
             ("RATCHET_MIN_TASK_GOLDEN", Settings.min_task_golden_rows),
+            ("RATCHET_KPI_WINDOW_DAYS", Settings.kpi_window),
+            ("RATCHET_REDACT_STYLE", Settings.redaction_style),
+            ("RATCHET_REDACT_PLUGIN", Settings.redact_detector),
             ("RATCHET_EMBEDDINGS_BASE", Settings.embeddings_endpoint),
             ("RATCHET_MODEL_ALIASES", _embeddings_alias),
             ("", Settings.check_reserved),

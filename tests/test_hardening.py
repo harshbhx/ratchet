@@ -641,7 +641,14 @@ def test_redact_preview_endpoint(gw_env):
 
     c = TestClient(gw_env().app)
     r = c.post("/ratchet/redact", json={"text": "I'm bob@example.com, card 4111 1111 1111 1111"}).json()
-    assert r == {"text": "I'm [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": True}
+    assert r == {
+        "text": "I'm [EMAIL], card [CARD]",
+        "found": {"EMAIL": 1, "CARD": 1},
+        "enabled": True,
+        "style": "label",
+        "plugin": False,
+        "plugin_skipped": False,
+    }
     assert c.post("/ratchet/redact", json={"text": "x" * 5001}).status_code == 400
     assert c.post("/ratchet/redact", json={}).status_code == 400
 

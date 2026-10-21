@@ -55,6 +55,7 @@ from . import (
     certificate,
     feedback,
     idem,
+    kpis,
     licenses,
     live,
     merkle,
@@ -122,7 +123,8 @@ from .openai_compat import (
 )
 from .providers import Embedder, GenParams, OpenAICompatProvider, approx_tokens
 from .ratelimit import Decision, Limiter, Refused, Slot
-from .redact import redact
+from .redact import STYLES as REDACT_STYLES
+from .redact import Pseudonymizer, RedactionError, redact
 from .release import ReleaseGate, ReleasePolicy
 from .resilience import (
     CLIENT_CAUSED,
@@ -300,6 +302,7 @@ class Runtime:
         self.stats_cache = SnapshotCache(s.stats_ttl(), clock=self.clock)
         self._last_tick: float | None = None
         min_task_n = s.min_task_golden_rows()  # a bad RATCHET_MIN_TASK_GOLDEN stops startup here (FR-14.1)
+        self.kpi_window = s.kpi_window()  # a bad RATCHET_KPI_WINDOW_DAYS stops startup here (FR-7.9)
         if s.mode == "mock":
             from sim.mock_models import DEFAULT_REASONING_CV, MockFleet, MockTeacher
             from sim.world import make_stream
@@ -3017,6 +3020,11 @@ def _stats_payload() -> dict[str, Any]:
         "clients": _clients_with_spend(led.stats_by_client(), spend),
         "privacy": {
             "redaction": rt.settings.redact_pii,
+            # How identifiers are replaced (ADR 0082): the default style, tasks that override it, and whether a
+            # detector plugin runs. Names only.
+            "redaction_style": rt.ratchet.redact_style,
+            "redaction_task_styles": {t.name: t.redact_style for t in tasks.registered() if t.redact_style is not None},
+            "redaction_plugin": rt.ratchet.detector is not None,
             **led.privacy_stats(),
             **led.opt_out_stats(),
             # No-train registrations whose scope no request can be hashed in now (a renamed or removed key name).
@@ -3059,6 +3067,8 @@ def _stats_payload() -> dict[str, Any]:
         # The operator's runtime switches and task pins (the admin API and CLI, ADR 0064); `audit_rate` null is the
         # configured rate.
         "controls": controls.as_dict(),
+        # PRD §8.1's success metrics over the last RATCHET_KPI_WINDOW_DAYS days with traffic, as GET /ratchet/kpis has them.
+        "kpis": _kpi_report(),
     }
 
 
@@ -3173,6 +3183,24 @@ def metrics_endpoint(request: Request) -> Response:
     return Response(metrics.REGISTRY.render(relabel), media_type=metrics.CONTENT_TYPE)
 
 
+def _kpi_report(days: int | None = None) -> dict[str, Any]:
+    """The success metrics (ratchet/kpis.py) of the gateway's ledger, over `days` or RATCHET_KPI_WINDOW_DAYS. The audits
+    SM-2 needs are the release gate's own minimum (RATCHET_MIN_AUDITS)."""
+    window = rt.kpi_window if days is None else days
+    return kpis.report(rt.ledger, window, rt.gate.policy.min_audits, rt.settings.mode)
+
+
+@app.get("/ratchet/kpis")
+def kpi(days: int | None = None) -> dict[str, Any]:
+    """PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, each with its value, target, whether it is
+    met (None when there is not enough data yet) and the counts behind it, computed from the ledger as in the simulator.
+    SM-1 to SM-3 and NFR-1 use the last `days` ledger days with traffic (default RATCHET_KPI_WINDOW_DAYS). Public, like
+    /ratchet/stats; `simulated` is true in mock mode, where every number comes from mock models."""
+    if days is not None and not (1 <= days <= kpis.MAX_WINDOW_DAYS):
+        raise HTTPException(400, f"days must be 1 to {kpis.MAX_WINDOW_DAYS}")
+    return _kpi_report(days)
+
+
 @app.get("/ratchet/bom")
 def bom() -> dict[str, Any]:
     """Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard
@@ -3181,15 +3209,40 @@ def bom() -> dict[str, Any]:
 
 
 @app.post("/ratchet/redact")
-def redact_preview(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    """Show what the redactor would store for a piece of text. Nothing is logged or stored."""
+def redact_preview(
+    body: dict[str, Any] = Body(...),
+    style: str | None = None,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Show what the redactor would store for a piece of text: in the gateway's style (RATCHET_REDACT_STYLE) or
+    `?style=` (ADR 0082). Nothing is logged or stored. The endpoint is public, so the detector plugin, which may be an
+    NER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key; anyone else
+    gets the patterns alone (`plugin_skipped`)."""
     text = body.get("text")
     if not isinstance(text, str):
         raise HTTPException(400, "text is required")
     if len(text) > MAX_REDACT_CHARS:
         raise HTTPException(400, f"text is limited to {MAX_REDACT_CHARS} characters")
+    chosen = rt.ratchet.redact_style if style is None else style.strip().lower()
+    if chosen not in REDACT_STYLES:
+        raise HTTPException(400, f"style must be one of {', '.join(REDACT_STYLES)}")
+    key = bearer(authorization, x_api_key)
+    keyed = rt.keys.identify(key) is not None or rt.admin_keys.identify(key) is not None  # a wrong key is no key here
+    detector = rt.ratchet.detector if keyed else None
     found: Counter[str] = Counter()
-    return {"text": redact(text, found), "found": dict(found), "enabled": rt.settings.redact_pii}
+    try:
+        out = redact(text, found, Pseudonymizer(chosen, detector))
+    except RedactionError as e:  # names the plugin's exception class only, never the text
+        raise HTTPException(500, str(e)) from None
+    return {
+        "text": out,
+        "found": dict(found),
+        "enabled": rt.settings.redact_pii,
+        "style": chosen,
+        "plugin": detector is not None,
+        "plugin_skipped": rt.ratchet.detector is not None and detector is None,
+    }
 
 
 @app.get("/ratchet/bom/public-key")
@@ -3427,7 +3480,9 @@ def _put_task(name: str, raw: bytes, admin: str) -> dict[str, Any] | JSONRespons
         elif old_hash != task.spec_hash:
             rt.ledger.event("task_changed", f"{name}: spec {old_hash} -> {task.spec_hash} by {admin}")
         else:
-            rt.ledger.event("task_changed", f"{name}: spec {task.spec_hash} kept; description, clients or match by {admin}")
+            rt.ledger.event(
+                "task_changed", f"{name}: spec {task.spec_hash} kept; description, clients, match or privacy by {admin}"
+            )
     return _put_result(task, changed=True, created=created)
 
 

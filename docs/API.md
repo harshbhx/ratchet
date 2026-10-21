@@ -48,6 +48,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/versions/{id}/heldout` | both | [admin](#access-levels) | The held-out certificate: every golden example's proof of absence from the version's training set (admin key) |
 | GET | `/ratchet/bom/public-key` | both | [public](#access-levels) | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | [dashboard](#access-levels) | Show what the PII redactor would store for a text (stores nothing) |
+| GET | `/ratchet/kpis` | both | [dashboard](#access-levels) | PRD §8.1's success metrics and NFR-1's latency target, computed from the ledger ([Success metrics](#get-ratchetkpisdaysn)) |
 | GET | `/ratchet/cost` | both | [dashboard](#access-levels) | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
 | GET | `/ratchet/replay` | both | [dashboard](#access-levels) | Replay one version's logged traffic at another threshold or audit rate: coverage, precision, cost, and the calibrated baseline ([Ledger replay](#ledger-replay)) |
 | GET | `/ratchet/replay/frontier` | both | [dashboard](#access-levels) | One version's cost-precision frontier over thresholds 0.30 to 1.00, an advisory suggested threshold and the money the current one leaves on the table |
@@ -1081,7 +1082,8 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
               "no_store_clients": [], "end_user_key": "env", "example_retention_days": 180,
               "request_retention_days": 400, "erasure_shared": "delete", "purged_examples": 61,
               "purged_by_reason": {"retention": 58, "erasure": 3}, "erasures": 2, "erasure_refusals": 1,
-              "rolled_up_requests": 120400},
+              "rolled_up_requests": 120400, "redaction_style": "label",
+              "redaction_task_styles": {"invoice-extract": "numbered"}, "redaction_plugin": false},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d",
                "key_limits": true, "ip_rpm": null, "max_inflight": 32},
   "budget": {"daily_usd": 20.0, "mode": "student_only", "spent_today_usd": 3.41, "remaining_usd": 16.59, "exceeded": false,
@@ -1098,7 +1100,11 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
               "by_version": [{"version": 5, "audits_inline": 0, "shadows_dropped": 0, "audits_abandoned": 0,
                               "shadows_abandoned": 0}]}
   "controls": {"student_disabled": false, "releases_frozen": false, "training_paused": false, "audit_rate": null,
-               "pinned_tasks": []}
+               "pinned_tasks": []},
+  "kpis": {"mode": "mock", "simulated": true, "window_days": 3, "window": {"from": 7, "to": 9, "days": 3, "complete": true},
+           "metrics": {"SM-1": {"name": "Cost reduction vs all-teacher, steady state", "value": 0.84, "target": 0.7,
+                                "op": ">=", "unit": "fraction", "met": true, "detail": {"…": "…"}}, "…": "…"},
+           "summary": {"met": 5, "not_met": 1, "unknown": 0}}
 }
 ```
 
@@ -1164,7 +1170,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 
   e-values are finite (capped at e^690). With no audits `n` is 0, the e-values are 1 and both intervals are `[0, 1]`.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash; only rows still kept count, since folded rows keep no end user); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5). In a scrubbed copy `client` is a pseudonym. Since v0.5 each entry also has `spent_today_usd`, the key's chat-request dollars since 00:00 UTC (failed requests' spend included), and `daily_cap_usd`, its daily US dollar budget (`null` when it has none, when the name is no longer a key, and in a scrubbed copy; [Limits and headers](#limits-and-headers)).
-- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
+- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`); how identifiers are written in stored examples (`redaction_style`: `label`, `numbered` or `surrogate`, from `RATCHET_REDACT_STYLE`; `redaction_task_styles`: the tasks whose spec overrides it; `redaction_plugin`: whether a detector plugin runs, never its name; [ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)); whether any key has a limit of its own (`key_limits`), the per-IP rate of a gateway without keys (`ip_rpm`, `null` when off) and the in-flight cap (`max_inflight`, `null` when off).
 - `budget` (v0.5): the gateway's own daily budget (`daily_usd`, `null` when `RATCHET_DAILY_BUDGET_USD` is 0), what happens past it (`mode`: `block` or `student_only`), what chat requests spent since 00:00 UTC (`spent_today_usd`; Scout is not counted), what is left (`remaining_usd`, `null` without a budget), whether it is spent (`exceeded`) and the shares that write a `budget` event (`alert_pct`). A scrubbed copy leaves the operator's budget out (`daily_usd` and `remaining_usd` are `null`), as the gateway's 429s do.
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
@@ -1175,10 +1181,12 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 - `sidecar` (v0.5, [Off-path checks](#off-path-checks)): the queue that runs audits and shadows after the response. `workers` (0: every check runs before the response, mock mode's default), `max_queue`, `audit_places` (the places only a job with an audit may take) and `max_bytes` (the request text queued and running jobs may hold) are the settings; `queued` (places taken, jobs waiting included), `running` and `bytes` (the request text their jobs hold) are now; since start, `submitted`, `done`, `failed` (a job that raised; logged by class), `full` (a place refused because the queue or its byte budget was full), `refused` (a job handed over after shutdown began, which its request ran itself) and `abandoned` (still queued when the shutdown's drain ended: those rows stay pending). `by_version` lists every routed version, and any other version that lost something, with what could not go through the queue: `audits_inline` (drawn audits that ran before the response because the queue was full; an audit is never dropped), `shadows_dropped` (shadows that did not run for that reason), and `audits_abandoned` and `shadows_abandoned` (given up at shutdown). Counts are per process: a restart starts them at 0.
 - `controls` (v0.5): the operator's runtime switches ([Admin](#admin)): whether the student is turned off (`student_disabled`), releases are frozen (`releases_frozen`) and training is paused (`training_paused`), the runtime audit rate (`audit_rate`, `null` while `RATCHET_AUDIT_RATE` applies) and the tasks pinned to the teacher at runtime (`pinned_tasks`, sorted; such a task also shows `pinned: true` under `tasks`).
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
+- `kpis`: the [success metrics](#get-ratchetkpisdaysn) over the last `RATCHET_KPI_WINDOW_DAYS` days with traffic, exactly as `GET /ratchet/kpis` returns them.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
 
 Freshness: in live mode the payload is computed at most once every `RATCHET_STATS_TTL_S` seconds (default 2) by one request at a time, and every other read in between gets that payload; in mock mode (default 0) every read computes it. On a ledger file it is read from a read-only connection, so a dashboard never waits for requests nor slows them ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)).
+## GET `/ratchet/kpis?days=N`
 
 ## Request lookups
 
@@ -1255,6 +1263,47 @@ scrape_configs:
     static_configs: [{targets: ["ratchet:8000"]}]
 ```
 
+
+PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, computed from the ledger by `ratchet/kpis.py` the same way as in the simulator and in CI ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Access level `dashboard`, like `/ratchet/stats`, whose `kpis` block is this report. SM-1 to SM-3 and NFR-1 cover the last `days` ledger days with traffic (1 to 3,650, default `RATCHET_KPI_WINDOW_DAYS`, 3; anything else is **400**, a non-number **422**); SM-4 and SM-5 cover the whole history. An example from the mock demo (simulation numbers from mock models, `simulated: true`):
+
+```json
+{
+  "mode": "mock",
+  "simulated": true,
+  "window_days": 3,
+  "window": {"from": 8, "to": 10, "days": 3, "complete": true},
+  "metrics": {
+    "SM-1": {"name": "Cost reduction vs all-teacher, steady state", "value": 0.845, "target": 0.7, "op": ">=",
+             "unit": "fraction", "met": true,
+             "detail": {"cost_usd": 1.018, "failed_cost_usd": 0.0, "baseline_usd": 6.559, "requests": 6000,
+                        "cost_model": "per_token"}},
+    "SM-2": {"name": "Audited precision of student-served answers", "value": 0.985, "target": 0.95, "op": ">=",
+             "unit": "fraction", "met": true,
+             "detail": {"audits": 585, "agree": 576, "lower": 0.971, "upper": 0.992, "min_audits": 20}},
+    "SM-3": {"name": "Student share of traffic, steady state", "value": 0.969, "target": 0.8, "op": ">=",
+             "unit": "fraction", "met": true, "detail": {"requests": 6000, "student_served": 5814}},
+    "SM-4": {"name": "Bad deploys reaching 100% traffic", "value": 0, "target": 0, "op": "==", "unit": "versions",
+             "met": true, "detail": {"reached_full_traffic": 4, "bad_versions": []}},
+    "SM-5": {"name": "Time to recover from drift (escalations back to baseline)", "value": 4, "target": 3, "op": "<=",
+             "unit": "nights", "met": false,
+             "detail": {"days_measured": 9,
+                        "episodes": [{"start": 5, "end": 9, "nights": 4, "baseline": 0.022, "peak": 0.1405}]}},
+    "NFR-1": {"name": "Median latency of student-served requests", "value": 327.1, "target": 1000.0, "op": "<",
+              "unit": "ms", "met": true,
+              "detail": {"requests": 5814, "column": "latency_ms", "quantile": 0.5, "served_by": "student"}}
+  },
+  "summary": {"met": 5, "not_met": 1, "unknown": 0}
+}
+```
+
+- Every metric has `name`, `value`, `target`, `op` (`>=`, `<=`, `==`, `<`), `unit` (`fraction` for a share, else `versions`, `nights` or `ms`), `met` and `detail`. `met` is `null` when there is not enough data to say, with a `detail.reason`: no traffic in the window, fewer audits than `RATCHET_MIN_AUDITS` (SM-2), no version at 100% yet (SM-4), fewer than four days on which the student judged at least 50 requests, or a drift episode still open within its target (SM-5). `value` is `null` when there is nothing to measure, and for SM-5 while an episode is open (`detail.open_nights` counts it so far).
+- `simulated` is true in mock mode, where every number comes from mock models. `window` gives the first and last day used and whether the ledger had `window_days` days with traffic (`complete`).
+- **SM-1** is `1 - (cost_usd + failed_cost_usd) / baseline_usd`: per token, as `totals`; `failed_cost_usd` is what failed requests spent without leaving a request row (0 on a ledger without a `failures` table). **SM-2** pools every audit in the window, every version together, with a 95% Wilson interval (`lower`, `upper`); it is met on the point estimate. **SM-3** is the student's share of the window's requests.
+- **SM-4** counts versions that reached 100% of traffic (a `live` event, or live now) and were later named by an `alert` or a `rollback`, or are `rolled_back` now (`bad_versions`, each with its evidence and day). A canary rolled back before 100% does not count.
+- **SM-5** is the longest drift episode in nights over the whole history. A day's escalation rate is the share of the requests the student judged (its samples came back) that it escalated; an episode starts on a day at least 5 points above the lowest of the 3 measured days before it and ends on the first later day at most 2 points above that baseline.
+- **NFR-1** is the nearest-rank median latency of the window's student-served requests, from `requests.wall_ms` when the ledger records it, else `latency_ms` (`column`). Folded request rows keep no latencies.
+- New metrics may be added under `metrics`; a client should show an unknown one as it is.
+
 ## GET `/ratchet/bom`
 
 Access level `bom`: as `/ratchet/stats`, and public with `RATCHET_PUBLIC_BOM=1`.
@@ -1300,7 +1349,7 @@ Access level `bom`, like `/ratchet/bom`. The bill of materials of one adapter, w
     "base_model_license": {"name": "NVIDIA Nemotron Open Model License",
                            "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"},
     "notices": [{"file": "NOTICE.md", "sha256": "5d0c3a…", "text": "# NOTICE\n\nThis folder holds a LoRA adapter…"}],
-    "redactor": {"sha256": "e85726…", "rules": 9, "redact_pii": true},
+    "redactor": {"sha256": "7100b2…", "rules": 11, "redact_pii": true},
     "eval": {"golden_n": 110, "golden_agreement": 0.89, "threshold": 0.65, "coverage": 0.96, "precision": 0.94, "test_n": 55}
   },
   "sha256": "9b1f…",
@@ -1470,9 +1519,9 @@ python -m ratchet.proof key --task ticket-triage --messages request.json   # the
 
 `public_key` and `key_id` are `null` when signing is off. Publish the key somewhere you control as well (README, website): a key served by the same gateway proves nothing if the gateway itself is compromised.
 
-## POST `/ratchet/redact`
+## POST `/ratchet/redact?style=`
 
-Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored. Nothing is logged or stored. Backs the dashboard's **Try the redactor** box. Access level `dashboard`.
+Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored: in the gateway's style (`RATCHET_REDACT_STYLE`) or the one `style` names (`label`, `numbered` or `surrogate`, any case) ([ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Nothing is logged or stored. Backs the dashboard's **Try the redactor** box. Access level `dashboard`; the detector plugin (`RATCHET_REDACT_PLUGIN`), which may be an NER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key (`Authorization: Bearer <key>` or `X-API-Key`). Anyone else, or a wrong key, gets the patterns alone.
 
 ```bash
 curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
@@ -1480,10 +1529,21 @@ curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
 ```
 
 ```json
-{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true}
+{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true, "style": "label", "plugin": false, "plugin_skipped": false}
 ```
 
-`enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. **400** when `text` is missing or longer than 5,000 characters.
+```bash
+curl -s 'localhost:8000/ratchet/redact?style=numbered' -H 'content-type: application/json' \
+  -d '{"text": "Sales: ana@x.io. Billing: bo@y.io, cc ana@x.io"}'
+```
+
+```json
+{"text": "Sales: [EMAIL_1]. Billing: [EMAIL_2], cc [EMAIL_1]", "found": {"EMAIL": 3}, "enabled": true, "style": "numbered", "plugin": false, "plugin_skipped": false}
+```
+
+- `found` counts placeholders by label, every occurrence; `style` is the style used; `plugin` says whether the detector plugin ran; `plugin_skipped` is true when one is configured but did not run, because the caller sent no valid key.
+- `enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. A task whose spec sets `privacy.redact_style` stores in that style; preview it with `?style=`.
+- **400** when `text` is missing or longer than 5,000 characters, or `style` is not one of the three (`style must be one of label, numbered, surrogate`). **500** when the detector plugin fails (only callers with a key reach it), with a message that names the problem or the exception's class and never the text (`the redaction plugin raised RuntimeError`).
 
 ---
 
@@ -1734,7 +1794,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
   "tasks": [
     {"name": "invoice-extract", "description": "Vendor and total from an invoice", "format": "json",
      "fields": {"vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]}, "total": {"type": "number", "abs_tol": 0.01}},
-     "sql": null, "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
+     "sql": null, "pinned": false, "store": true, "privacy": {}, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
      "source": "api", "spec_hash": "1c7e77bb7041b4d8", "verifiable": true,
      "requests": 420, "student_share": 0.81, "recalibrating": false, "runtime_pinned": false}
   ],
@@ -1779,7 +1839,7 @@ curl -X PUT localhost:8000/ratchet/tasks/invoice-extract -H "Authorization: Bear
 | 409 | The registry holds `max_tasks` tasks, or (mock mode) 50 API tasks already |
 | 422 | The body is not strict JSON (NaN is refused), names another task, or breaks a spec rule; `clients` names a key that is not in `RATCHET_API_KEYS`; a sql task's fixture is outside `RATCHET_FIXTURES_DIR`, missing, over 5 MB, not UTF-8 or does not load (`sql.fixture: fixture '../x.sql' is outside RATCHET_FIXTURES_DIR`), or (Python 3.10) needs Python 3.11 |
 
-The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients` or `match` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
+The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients`, `match` or `privacy` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
 
 ### DELETE `/ratchet/tasks/{name}`
 
