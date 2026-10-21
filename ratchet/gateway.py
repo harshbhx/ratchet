@@ -218,6 +218,10 @@ class Runtime:
         )
         self.gate = ReleaseGate(self.ledger, policy)
         self.gate_lock = threading.Lock()
+        # The drift audit boost (FR-6.40): the router reads the gate's dict, which stays empty unless
+        # RATCHET_DRIFT_AUDIT_BOOST is above 1. Then the drift monitor replays the ledger now, not on the first request.
+        self.ratchet.audit_boost = self.gate.audit_boost
+        self.gate.check_drift()
         if s.mode == "mock" and s.mock_warmup_days > 0:
             self.warm_up(s.mock_warmup_days, s.mock_warmup_requests)
 
@@ -738,7 +742,24 @@ def stats() -> dict[str, Any]:
             "bom_key_id": rt.signer.key_id if rt.signer else None,
         },
         "cost": stats_block(cost_report(led, rt.settings)),
+        # The label-free drift alarm (FR-16.6): streams monitored and how many alarmed; `GET /ratchet/drift` has each.
+        "drift": _drift_block(),
     }
+
+
+def _drift_block() -> dict[str, Any]:
+    """`/ratchet/stats`' `drift`: whether the monitor is on, its threshold and family false-alarm bound, the streams it
+    holds (a count here; the list is in `GET /ratchet/drift`) and how many alarmed."""
+    d = rt.gate.drift_status(trajectory=False)
+    return {k: d[k] for k in ("enabled", "threshold", "family_bound", "alarms")} | {"streams": d["monitored"]}
+
+
+@app.get("/ratchet/drift")
+def drift(version: int | None = None) -> dict[str, Any]:
+    """The label-free drift monitor (FR-16.6, ADR 0032): its threshold, the false-alarm bound per stream and across
+    every stream it holds, and each (version, task) stream's test martingale with its trajectory; `version` narrows the
+    streams to one version. Read-only: the gateway feeds the monitor after every request."""
+    return rt.gate.drift_status(version)
 
 
 @app.get("/ratchet/bom")
@@ -791,7 +812,7 @@ def version_certificate(vid: int) -> dict[str, Any]:
     current = certificate.section(v.eval)
     if current is not None:
         current["rechecked_day"] = v.eval.get("rechecked_day")
-    drift = None  # the drift alarm (FR-16.6) reports here; an open alarm makes the status 'suspended'
+    drift = rt.gate.drift_view(vid)  # an open drift alarm (FR-16.6) makes the status 'suspended'
     return {
         "version": v.id,
         "state": v.state,

@@ -66,6 +66,20 @@ def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: in
         return None
 
 
+def early_night(ledger: Ledger, gate: ReleaseGate, min_new_examples: int) -> tuple[int, str]:
+    """The new examples tonight needs, and the note a skip event adds (FR-6.41, ADR 0032). With drift_early_night=1,
+    when a `drift` event was written after the last `trained` one, half of `min_new_examples` (at least 1): traffic
+    changed, so a student trained on it is worth having sooner. The drift monitor is brought up to date first, so a
+    nightly job in its own process sees the alarms the gateway would. Otherwise `min_new_examples` and no note. It runs
+    after the in-flight check, so it never trains during a release (INV-5)."""
+    if not gate.policy.drift_early_night or gate.drift is None:
+        return min_new_examples, ""
+    gate.check_drift()
+    if ledger.last_event_id("drift") <= ledger.last_event_id("trained"):
+        return min_new_examples, ""
+    return max(1, min_new_examples // 2), f" (halved from {min_new_examples} after a drift alarm)"
+
+
 def run_night(
     ledger: Ledger,
     trainer: Trainer,
@@ -84,6 +98,9 @@ def run_night(
     closed whether training returns or raises. It includes the dataset upload and the adapter load around the GPU job,
     so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
     (`cost.record_simulated_day`) and pass none. `redact_pii` (`Settings.redact_pii`) goes into the BOM's `redactor`.
+
+    With `gate.policy.drift_early_night`, a drift alarm since the last training halves `min_new_examples`
+    (`early_night`).
 
     Later features add their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate,
     set commitments right after `create_version`, paired evidence right after the candidate's eval, and BOM sections
@@ -106,8 +123,9 @@ def run_night(
     # look, because the manifest itself is a temporary file.
     invalid = manifest.get("skipped_invalid", 0)
     left_out = f" ({invalid} stored answers invalid under the current spec left out)" if invalid else ""
-    if new < min_new_examples:
-        ledger.event("skip", f"only {new} new examples (< {min_new_examples}){left_out}; no training tonight")
+    need, early = early_night(ledger, gate, min_new_examples)
+    if new < need:
+        ledger.event("skip", f"only {new} new examples (< {need}){early}{left_out}; no training tonight")
         # A task whose spec changed is on the teacher until the live version is scored under the new spec; without new
         # data that would wait for a training night, so score it now (the same re-score a training night starts with).
         changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
@@ -161,11 +179,15 @@ def run_night(
     assert version is not None
     m = bom.manifest(version, train_rows, golden_rows, extra=bom_extra or None, redact_pii=redact_pii)
     ledger.set_bom(vid, bom.document(m, signer))
+    # Only an early night trains on fewer than min_new_examples new examples (FR-6.41); say so after the usual text.
+    sooner = ""
+    if new < min_new_examples:
+        sooner = f"; early night after a drift alarm ({new} new examples, normally {min_new_examples})"
     ledger.event(
         "trained",
         f"v{vid} on {manifest['train_examples']} examples{left_out}; "
         f"golden agreement {result.get('golden_agreement', 0):.1%} "
-        f"(n={result.get('golden_n', 0)})",
+        f"(n={result.get('golden_n', 0)}){sooner}",
     )
     admitted = gate.admit(vid)
     return NightReport(True, vid, admitted, "admitted" if admitted else "rejected", result)

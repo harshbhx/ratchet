@@ -63,8 +63,12 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
         promote_evidence=int(bool(getattr(args, "promote_evidence", False))),
         paired_gate=int(bool(getattr(args, "paired_gate", False))),
         min_certified_precision=getattr(args, "min_certified", 0.0),
+        drift_alarm=getattr(args, "drift_alarm", 100.0),
+        drift_audit_boost=getattr(args, "drift_boost", 1.0),
+        drift_early_night=int(bool(getattr(args, "drift_early_night", False))),
     )
     gate = ReleaseGate(ledger, policy)
+    ratchet.audit_boost = gate.audit_boost  # the drift audit boost (FR-6.40): empty unless --drift-boost is above 1
     return settings, ledger, fleet, ratchet, gate
 
 
@@ -127,6 +131,8 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "exposure": {r["version"]: r["served"] for r in rolled},
         "rollbacks": rolled,
         "served": served,
+        # The drift monitor's streams and alarms (FR-16.6, ADR 0032); simulation, mock models.
+        "drift": gate.drift_status(),
     }
 
 
@@ -191,6 +197,14 @@ def table(res: dict) -> str:
                 f"  v{vid}: {c['served'] - c['errors']}/{c['served']} served answers agree at threshold {c['threshold']:g}; "
                 f"lower bound {c['lcb']:.1%} vs {c['target'] * 100:.3g}% (delta {c['delta']:g}, {c['calibration']}): {verdict}"
             )
+    drift = res.get("drift")
+    if drift and drift["enabled"]:  # the label-free drift alarm (ADR 0032), labelled as simulation
+        alarmed = [x for x in drift["streams"] if x["alarm"]]
+        where = ", ".join(f"v{x['version']} ({x['task']}) on day {x['alarm_day']}" for x in alarmed) or "none"
+        lines.append(
+            f"\ndrift (simulation, mock models): {drift['monitored']} streams at threshold {drift['threshold']:g} "
+            f"(false alarm <= {drift['false_alarm_bound']:.0%} each, <= {drift['family_bound']:.0%} in all); alarms: {where}"
+        )
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
     return "\n".join(lines)
@@ -251,6 +265,23 @@ def parser() -> argparse.ArgumentParser:
         help="reject a candidate whose certified lower bound is below this (0 = off)",
     )
     ap.add_argument(
+        "--drift-alarm",
+        type=float,
+        default=100.0,
+        help="the drift monitor's alarm threshold: a false alarm has probability at most 1/threshold per stream (0 = off)",
+    )
+    ap.add_argument(
+        "--drift-boost",
+        type=float,
+        default=1.0,
+        help="after a drift alarm, multiply the version's audit rate by this, up to 0.5 (1 = off)",
+    )
+    ap.add_argument(
+        "--drift-early-night",
+        action="store_true",
+        help="after a drift alarm, Night School trains on half the usual new examples",
+    )
+    ap.add_argument(
         "--compare-release",
         action="store_true",
         help="run twice with the same seed, once per --release rule, and compare the rolled-back versions",
@@ -273,6 +304,12 @@ def main(argv: list[str] | None = None) -> None:
             ap.error(f"{flag} must be strictly between 0 and 1, not {value}")
     if not 0 <= args.min_certified <= 1:
         ap.error(f"--min-certified must be from 0 to 1, not {args.min_certified}")
+    if not (args.drift_alarm == 0 or args.drift_alarm > 1):
+        ap.error(f"--drift-alarm must be more than 1, or 0 (off), not {args.drift_alarm}")
+    if not args.drift_boost >= 1:
+        ap.error(f"--drift-boost must be 1 or more, not {args.drift_boost}")
+    if args.drift_alarm == 0 and (args.drift_boost > 1 or args.drift_early_night):
+        ap.error("--drift-boost and --drift-early-night act on drift alarms; --drift-alarm 0 turns the monitor off")
     if args.compare_release:
         results = compare_release(args)
         print(compare_table(results))

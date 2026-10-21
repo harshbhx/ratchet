@@ -828,6 +828,77 @@ class Ledger:
         return [dict(r) for r in self.db.execute("SELECT id, ts, day, kind, detail FROM events ORDER BY id")]
 
     @_locked
+    def last_event_id(self, kind: str) -> int:
+        """The id of the latest event of `kind`, 0 when there is none (Night School compares 'drift' with 'trained')."""
+        return int(self.db.execute("SELECT COALESCE(MAX(id), 0) FROM events WHERE kind=?", (kind,)).fetchone()[0])
+
+    @_locked
+    def event_once(self, key: str, kind: str, detail: str) -> bool:
+        """Write event `kind` unless one was already written under `key`, and record it in `meta` (key -> the event's
+        id). The check and both writes are one transaction, so two processes watching the same ledger (the gateway and
+        `python -m ratchet.live tick`) or a restart that replays it write the event once. Returns whether it wrote."""
+        self._begin()
+        try:
+            if self.db.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None:
+                self.db.commit()
+                return False
+            cur = self.db.execute(
+                "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail)
+            )
+            self.db.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, json.dumps({"event": cur.lastrowid})))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return True
+
+    @_locked
+    def meta_value(self, key: str) -> str | None:
+        """The `meta` table's value for `key`, or None."""
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return None if r is None else str(r["value"])
+
+    @_locked
+    def confidence_stream(
+        self,
+        after_id: int = 0,
+        limit: int = 200_000,
+        *,
+        version: int | None = None,
+        task: str | None = None,
+        before_id: int | None = None,
+    ) -> list[tuple[int, int, str, float, int]]:
+        """(id, student_version, task, confidence, day) of requests after id `after_id` that logged a student confidence,
+        oldest first, at most `limit` (the drift monitor's input, FR-16.6). A primary-key range scan, so a monitor that
+        is up to date reads only the new rows. `version`, `task` and `before_id` (exclusive) narrow it to one stream's
+        rows, to replay a stream whose counts were dropped."""
+        q = (
+            "SELECT id, student_version, task, confidence, day FROM requests"
+            " WHERE id > ? AND confidence IS NOT NULL AND student_version IS NOT NULL"
+        )
+        args: list[Any] = [after_id]
+        if version is not None:
+            q += " AND student_version = ?"
+            args.append(version)
+        if task is not None:
+            q += " AND task = ?"
+            args.append(task)
+        if before_id is not None:
+            q += " AND id < ?"
+            args.append(before_id)
+        args.append(limit)
+        rows = self.db.execute(q + " ORDER BY id LIMIT ?", args)
+        return [(int(r[0]), int(r[1]), str(r[2]), r[3], r[4]) for r in rows]
+
+    @_locked
+    def version_states(self) -> dict[int, str]:
+        """{version id: state} of every version, without parsing evals (cheap enough to read on every gate tick), in the
+        order the versions entered their current state (`stage_since`, then id): the last retired one is the most
+        recently retired."""
+        rows = self.db.execute("SELECT id, state FROM versions ORDER BY stage_since, id")
+        return {int(r["id"]): r["state"] for r in rows}
+
+    @_locked
     def audit_counts(self, vid: int, since_id: int = 0) -> tuple[int, int]:
         """(audits, agreements): teacher audits of answers version `vid` served, in requests after id `since_id` (0: its
         whole life; a version's `stage_since`: its current stage). Every release decision is computed from these two

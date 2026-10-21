@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 759 tests
+pytest -q                                                                # 799 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -157,6 +157,8 @@ curl -s localhost:8000/ratchet/versions/2/bom > bom.json
 python -m ratchet.stats check bom.json --public-key <yours>     # recompute every number from the signed counts
 ```
 
+A certificate holds only while traffic looks like what it was measured on. A **drift alarm** watches for that without labels ([ADR 0032](docs/adr/0032-label-free-drift-alarm.md)): for each version and task, a gambler bets against "traffic has not changed" using the rank of each new confidence score among the earlier ones. On unchanged traffic the bet's capital reaches 100 with probability at most 1% over the stream's whole life, however often anyone looks. When it does, a `drift` event says the traffic changed (not that the model got worse) and the version's certificate reads `suspended` (`curl -s localhost:8000/ratchet/drift`). In simulation (mock models), a product launch on day 5 raised the alarm on day 5 for six seeds out of six, and runs without the launch raised none.
+
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
@@ -201,6 +203,7 @@ ratchet/confidence.py   confidence score (pairwise agreement) + threshold calibr
 ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds, or an anytime-valid e-process)
 ratchet/certificate.py  certified precision: Clopper-Pearson certificates, frontier, paired McNemar comparison
 ratchet/stats.py        exact statistics, `python -m ratchet.stats plan|bound|mcnemar|check`
+ratchet/drift.py        label-free drift alarm: a conformal test martingale on each version's confidence stream
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/redact.py       PII placeholders before examples are stored
