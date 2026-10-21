@@ -941,7 +941,7 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
-    "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold"),
+    "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold", "ratchet.router:Ratchet._own"),
     "FR-8.4": ("ratchet.live:main",),
     "FR-8.5": ("scripts/day1_check.py",),
     "FR-8.20": (
@@ -1225,6 +1225,21 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:stats",
     ),
     "FR-13.8": ("ratchet.redact:PATTERNS", "ratchet.compare:parse_number"),
+    "FR-12.32": (
+        "ratchet.router:Ratchet._own",
+        "ratchet.router:Ratchet._shadow_student",
+        "ratchet.router:Ratchet._unattributed",
+        "ratchet.router:Ratchet._student_fingerprint",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._finish_offpath",
+        "ratchet.ledger:OWN_STUDENT",
+        "ratchet.ledger:OWN_SHADOW",
+        "ratchet.ledger:Ledger.version_live_quality",
+        "ratchet.ledger:Ledger.shadow_quality",
+        "ratchet.ledger:Ledger.stats_by_day",
+        "ratchet.ledger:SCHEMA",
+        "ratchet.ledger:MIGRATIONS",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -1412,7 +1427,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.obs:log",
     ),
     "NFR-7": ("ratchet.providers:OpenAICompatProvider", "ratchet.live:export"),
-    "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval"),
+    "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval", "ratchet.ledger:OWN_STUDENT"),
     "NFR-9": ("ratchet.bom:manifest", "ratchet.nightschool.notices:render", "ratchet.live:publish_bom", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
