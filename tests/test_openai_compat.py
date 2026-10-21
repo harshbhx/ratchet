@@ -711,6 +711,7 @@ def test_generation_parameters_reach_teacher_student_and_audit(gw_env, tmp_path,
     hello = [{"role": "user", "content": "hello"}]
     r = c.post(CHAT, json={"messages": hello, **sent})
     assert r.json()["ratchet"]["served_by"] == "student" and r.json()["choices"][0]["finish_reason"] == "stop"
+    assert rt.ratchet.sidecar.drain(10)  # live mode audits after the response (ADR 0072)
     assert _bodies(teacher)[-1] == {
         "model": OPEN_TEACHER,
         "messages": hello,

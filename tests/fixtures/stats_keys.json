@@ -111,6 +111,29 @@
     },
     "errors": {
       "last_hour": "object"
+    },
+    "sidecar": {
+      "workers": "number",
+      "max_queue": "number",
+      "audit_places": "number",
+      "max_bytes": "number",
+      "queued": "number",
+      "running": "number",
+      "bytes": "number",
+      "closed": "bool",
+      "submitted": "number",
+      "done": "number",
+      "failed": "number",
+      "full": "number",
+      "refused": "number",
+      "abandoned": "number",
+      "by_version[]": {
+        "version": "number",
+        "audits_inline": "number",
+        "shadows_dropped": "number",
+        "audits_abandoned": "number",
+        "shadows_abandoned": "number"
+      }
     }
   }
 }

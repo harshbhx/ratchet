@@ -33,5 +33,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0062](0062-request-ids-failures-logs-and-metrics.md) | Request ids end to end, a failures table with spent cost, structured logs without content, and Prometheus metrics | Accepted | 2026-10-20 |
 | [0070](0070-configuration-checks-and-readiness.md) | Configuration checks that list every bad variable, a config check CLI, liveness apart from readiness, and `/readyz` with bounded dependency probes | Accepted | 2026-10-21 |
 | [0071](0071-idempotency-keys-and-retry-de-duplication.md) | Idempotency keys, and retries that never count as repeats | Accepted | 2026-10-21 |
+| [0072](0072-off-path-audits-and-shadow.md) | Off-path audits and shadow: a bounded sidecar, the same draws and calls, pending rows the gate ignores, and audits that are never dropped | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

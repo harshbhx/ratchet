@@ -771,6 +771,26 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.ledger:Ledger.probe",
         "deploy/vm/update.sh",
     ),
+    "FR-12.31": (
+        "ratchet.sidecar:SideCar",
+        "ratchet.sidecar:Slot",
+        "ratchet.sidecar:job_bytes",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._audit",
+        "ratchet.router:Ratchet._shadow",
+        "ratchet.router:Ratchet._finish_offpath",
+        "ratchet.router:Ratchet._sidecar_full",
+        "ratchet.router:Ratchet.close",
+        "ratchet.router:Ratchet.sidecar_report",
+        "ratchet.router:OffPath",
+        "ratchet.ledger:Ledger.update_request",
+        "ratchet.ledger:Ledger.version_live_quality",
+        "ratchet.providers:OpenAICompatProvider.complete",
+        "ratchet.config:Settings.sidecar",
+        "ratchet.gateway:Runtime.shutdown",
+        "ratchet.gateway:_lifespan",
+        "ratchet.gateway:_stats_payload",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -799,7 +819,12 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "FR-15.4": ("ratchet.cost:_recommend", "ratchet.cost:_explain"),
     # 7 Non-functional
-    "NFR-1": ("ratchet.router:Ratchet._sample", "ratchet.router:Ratchet.handle", "ratchet.ledger:Ledger.latency_percentiles"),
+    "NFR-1": (
+        "ratchet.router:Ratchet._sample",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.ledger:Ledger.latency_percentiles",
+        "ratchet.sidecar:SideCar",
+    ),
     "NFR-2": (
         "ratchet.router:Ratchet.handle",
         "ratchet.router:Ratchet._teacher_complete",
@@ -809,7 +834,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.live:reload_adapters",
         "ratchet.readiness:Readiness.report",
     ),
-    "NFR-3": ("ratchet.router:Ratchet.handle", "ratchet.nightschool.orchestrate:run_night", "ratchet.providers:GenPolicy"),
+    "NFR-3": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._finish_offpath",
+        "ratchet.nightschool.orchestrate:run_night",
+        "ratchet.providers:GenPolicy",
+    ),
     "NFR-4": ("ratchet.redact:redact_messages",),
     "NFR-5": (
         "ratchet.auth:KeyRing.identify",
@@ -862,7 +892,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.access:pseudonyms",
     ),
     "INV-14": ("ratchet.bom:document", "ratchet.bom:manifest"),
-    "INV-15": ("ratchet.router:Ratchet.handle", "ratchet.router:Ratchet._arbitrate"),
+    "INV-15": (
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._arbitrate",
+        "ratchet.router:Ratchet._audit",
+        "ratchet.router:Ratchet._shadow",
+    ),
     "INV-16": (
         "ratchet.router:Ratchet._store_example",
         "ratchet.router:answer_problem",
@@ -1196,8 +1231,8 @@ def rule_routes_documented(ctx: Context) -> list[str]:
     return [f"{m} {p}: not in {API_DOC}; add it to the endpoint table" for m, p in routes if (m, p) not in documented]
 
 
-# config.py readers: _env(name, default), _int(name, default), ..., _float_or_none(name)
-ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none"}
+# config.py readers: _env(name, default), _int(name, default), ..., _float_or_none(name), _int_or_none(name)
+ENV_HELPERS = {"_env", "_int", "_float", "_bool", "_float_or_none", "_int_or_none"}
 
 
 def _env_name(node: ast.AST) -> str | None:

@@ -323,3 +323,23 @@ VERSION_TRAFFIC = REGISTRY.gauge(
 SPEND_TODAY = REGISTRY.gauge(
     "ratchet_spend_today_usd", "US dollars spent since 00:00 UTC by client, failed requests included.", ("client",)
 )
+# The off-path sidecar (ADR 0072): a request's audit and shadow work, run after its answer is sent.
+SIDECAR_JOBS = REGISTRY.counter(
+    "ratchet_sidecar_jobs_total",
+    "Off-path jobs (a request's audit, shadow samples and arbitration) by outcome: queued, done, failed (the job raised; "
+    "logged by class), abandoned (still queued when the gateway stopped; their rows stay pending, which the release "
+    "gate ignores).",
+    ("outcome",),
+)
+SIDECAR_FULL = REGISTRY.counter(
+    "ratchet_sidecar_full_total",
+    "Requests whose off-path work found the queue full, by what happened: audit_inline (the drawn audit ran on the "
+    "request path instead; an audit is never dropped) or shadow_dropped (the shadow did not run for this request).",
+    ("outcome",),
+)
+SIDECAR_SECONDS = REGISTRY.histogram(
+    "ratchet_sidecar_job_seconds", "Time from an off-path job's queueing to its end: how long a row's checks stay pending."
+)
+SIDECAR_QUEUE = REGISTRY.gauge(
+    "ratchet_sidecar_jobs", "Off-path jobs waiting (queued, reserved places included) and running, at scrape time.", ("state",)
+)
