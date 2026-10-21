@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1775 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1777 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -32,7 +32,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_contract.py` | 56 (45 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
-| `tests/test_live.py` | 72 (3 of them strict xfails for NFR-60) |
+| `tests/test_live.py` | 74 (3 of them strict xfails for NFR-60) |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1775** |
+| **Total** | **1777** |
 
 There are three layers:
 
@@ -655,6 +655,8 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 The React app itself is checked with `npx tsc --noEmit`, `npm test` (pure helpers in `web/tests/*.test.mjs` under Node's test runner, such as the Economics panel's axis labels and scales and the story page's honest bill) and a production build in CI (`web` job), and by Playwright screenshots during development (light, dark, 1440 and 390 px).
 
 During development the v0.4 features were also checked end to end against a running gateway with the official OpenAI Python SDK (401 on a wrong key, streaming text identical to the non-streaming answer, the quota cutting one key off at its limit while another kept working, a signed BOM verifying with `python -m ratchet.bom verify` and failing once edited), and the dashboard's Trust and privacy panel with Playwright in light and dark mode at desktop and phone widths. The dashboard's Economics panel (FR-7.20) was checked the same way at 1360 and 375 px against the mock gateway, and against crafted `/ratchet/cost` bodies routed in the browser (self-host with 90 days, scale to zero with warnings and an open job, not enough data in live mode, an empty report, a 404 that hides the panel, a 500 and a malformed body that fall back to the `/ratchet/stats` summary), with no horizontal scroll on phones; a refresh that fails keeps the last report with a notice, and a demo day updates it. The Task registry and Resilience panels (FR-7.21, FR-7.22) were checked the same way at 1360 and 375 px: the outage drill run end to end in the browser (the countdown, the breaker opening during a day of traffic, the probe closing it the next day, the release log's breaker entries); the task editor's check, a refused spec with each error, bad JSON caught before sending, save, a no-change save, a copy of a built-in task and delete against the mock gateway; and a gateway with `RATCHET_ADMIN_KEYS`, where a save is a 401 without the key and recorded as `ops` with it, with nothing written to browser storage or cookies; no horizontal scroll on phones. The story page's honest bill and Built to be checked chapters (FR-7.23, FR-7.24) were checked with Playwright in light and dark mode at 1360 and 375 px (full-page screenshots, no horizontal scroll), against the mock gateway (its own cost report, labelled Simulation (mock models)) and with every `/ratchet/*` call failing (the reference run, labelled Simulation); the source toggle, reduced motion (every bar and marker drawn at its final place), and the link to the dashboard's redactor, which lands on it both after an in-app navigation and on a direct load of `/dashboard#redactor`, also while panels above it are still loading.
+| `test_a_night_after_an_endpoint_restart_reloads_the_adapters_before_it_scores_the_champion` | NFR-2, FR-8.2: `live.main(['night'])` against an endpoint that forgot its adapters (vLLM v0.18.0's 404s): the live adapter is loaded first, then the new one; the champion's re-score samples succeed; an `adapter_reloaded` event says `before the night` |
+| `test_a_failed_reload_before_the_night_is_an_event_and_the_evaluator_reloads_once_on_a_404` | NFR-2, FR-8.2: a 503 from the load endpoint is an `adapter_reload_failed` event with the error class and no key or URL; `LiveEvaluator` loads a forgotten adapter once per evaluation and asks again, and without the hook the 404 ends the evaluation |
 
 ### `tests/test_cost.py`
 

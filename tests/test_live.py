@@ -261,6 +261,101 @@ def test_reload_adapters_loads_live_canary_shadow(tmp_path, monkeypatch):
         live.reload_adapters(s, led, http=httpx.Client(transport=_failing(503)))
 
 
+@pytest.mark.req("NFR-2", "FR-8.2")
+def test_a_night_after_an_endpoint_restart_reloads_the_adapters_before_it_scores_the_champion(tmp_path, monkeypatch, capsys):
+    """vLLM forgets runtime-loaded adapters when the endpoint restarts. The night re-scores the live version on the golden
+    set first: with its adapter gone every call is a 404 and the night used to end there. It now loads the live, canary and
+    shadow adapters before `run_night`."""
+    db = tmp_path / "live.db"
+    _live_env(
+        monkeypatch,
+        RATCHET_DB=str(db),
+        RATCHET_DATA_DIR=str(tmp_path / "data"),
+        RATCHET_STUDENT_BASE=STUDENT_BASE,
+        RATCHET_STUDENT_KEY=STUDENT_KEY,
+        RATCHET_TEACHER_BASE=TEACHER_BASE,
+        NEBIUS_API_KEY=TEACHER_KEY,
+        RATCHET_JUDGE_MODEL=JUDGE,
+        RATCHET_SAMPLES="3",
+        RATCHET_ADAPTER_ROOT="/mnt/adapters",
+    )
+    led = Ledger(str(db))
+    _examples(led, train=60, golden=6)
+    live_version = _version(led, "live", {"precision": 0.9, "coverage": 0.5, "threshold": 0.8}, train_examples=0)
+    led.db.close()
+    vllm = FakeOpenAIServer(_answer_like_the_teacher, loaded=set(), errors="v0.18.0")  # restarted: nothing is loaded
+    token_factory = FakeOpenAIServer('{"score": 1, "reason": "same answer"}')
+
+    def factory(base_url: str, api_key: str, **options: Any) -> Any:
+        server = vllm if base_url == STUDENT_BASE else token_factory
+        return OpenAICompatProvider(base_url, api_key, transport=server.transport, **options)
+
+    live.main(["night"], provider_factory=factory, run=RecordingRun(), http=_http(vllm))
+    out = capsys.readouterr().out
+    assert "[trained] v2" in out or "NightReport(trained=True" in out
+    loads = [c.json["lora_name"] for c in vllm.calls_to("/load_lora_adapter")]
+    assert loads[0] == f"student-v{live_version}" and "student-v2" in loads  # the champion first, then the new adapter
+    sampled = [c for c in vllm.calls_to("/chat/completions") if c.json.get("logprobs")]
+    assert sampled and all(c.json["model"] in {"student-v1", "student-v2"} for c in sampled)
+    events = Ledger(str(db)).events()
+    assert [e for e in events if e["kind"] == "adapter_reloaded" and "before the night" in e["detail"]]
+    assert not [e for e in events if e["kind"] == "adapter_reload_failed"]
+
+
+@pytest.mark.req("NFR-2", "FR-8.2")
+def test_a_failed_reload_before_the_night_is_an_event_and_the_evaluator_reloads_once_on_a_404(tmp_path, monkeypatch):
+    _live_env(monkeypatch, RATCHET_ADAPTER_ROOT="/mnt/adapters")
+    led = Ledger(":memory:")
+    s = _live_settings(tmp_path)
+    _version(led, "live")
+    assert live.reload_before_night(s, led, http=httpx.Client(transport=_failing(503))) == []
+    (event,) = [e for e in led.events() if e["kind"] == "adapter_reload_failed"]
+    assert "before the night" in event["detail"] and STUDENT_KEY not in event["detail"] and STUDENT_BASE not in event["detail"]
+
+    # The evaluator: one 404 for the adapter loads it and asks again; a second 404 in the same run is not retried.
+    vllm = FakeOpenAIServer(_answer_like_the_teacher, loaded=set(), errors="v0.18.0")
+    loaded: list[str] = []
+
+    def reload(name: str) -> None:
+        loaded.append(name)
+        live.load_adapter(STUDENT_BASE, STUDENT_KEY, name, f"/mnt/adapters/{name}", client=_http(vllm))
+
+    provider = OpenAICompatProvider(STUDENT_BASE, STUDENT_KEY, transport=vllm.transport)
+    rows = [
+        {
+            "task": "default",
+            "messages": [
+                {"role": "user", "content": f"request {i}"},
+                {"role": "assistant", "content": f"teacher answer to request {i}"},
+            ],
+            "params": None,
+            "seen": 1,
+            "provenance": {
+                "teacher": OPEN_TEACHER,
+                "license": "OpenMDW-1.1",
+                "hash": f"{i:064x}",
+                "redactions": 0,
+                "origin": "live",
+            },
+        }
+        for i in range(4)
+    ]
+    ev = LiveEvaluator(provider, samples=3, on_adapter_missing=reload)
+    ev.evaluate("student-v9", rows)
+    assert loaded == ["student-v9"] and "student-v9" in vllm.loaded
+    vllm.restart()
+    ev.evaluate("student-v9", rows)  # a new evaluation may reload again
+    assert loaded == ["student-v9", "student-v9"]
+    never = LiveEvaluator(
+        OpenAICompatProvider(
+            STUDENT_BASE, STUDENT_KEY, transport=FakeOpenAIServer("x", loaded=set(), errors="v0.18.0").transport
+        ),
+        samples=3,
+    )
+    with pytest.raises(Exception, match="404|does not exist|NotFound"):
+        never.evaluate("student-v9", rows)  # without a reload hook the 404 ends the evaluation as before
+
+
 @pytest.mark.req("FR-8.4", "FR-3.6", "FR-15.2", "FR-16.4")
 def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     seed, public_key = bom.keygen()
