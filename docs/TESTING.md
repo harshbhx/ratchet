@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 816 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness), ~75 s
+pytest -q                     # 839 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_perf, test_security, test_observability, test_readiness, test_idempotency), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -34,12 +34,13 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_security.py` | 11 |
 | `tests/test_observability.py` | 25 |
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
-| **Total** | **816** |
+| `tests/test_idempotency.py` | 23 |
+| **Total** | **839** |
 
 There are three layers:
 
 1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
-2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`, `tests/test_readiness.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)), and the startup configuration check, liveness and readiness ([`tests/test_readiness.py`](#teststest_readinesspy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
+2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_perf.py`, `tests/test_security.py`, `tests/test_observability.py`, `tests/test_readiness.py`, `tests/test_idempotency.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)), the hot path's caches, journal and time bounds ([Hot-path tests](#hot-path-tests)), who may call each route ([`tests/test_security.py`](#teststest_securitypy)), request ids, failures, logs and metrics ([`tests/test_observability.py`](#teststest_observabilitypy)), the startup configuration check, liveness and readiness ([`tests/test_readiness.py`](#teststest_readinesspy)), and retry de-duplication ([`tests/test_idempotency.py`](#teststest_idempotencypy)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
@@ -670,6 +671,36 @@ The startup configuration check, the config check CLI, liveness and readiness (F
 | `test_hung_endpoints_never_make_the_ledger_look_unwritable` | Teacher and student `/models` that hang hold both HTTP probe threads; the ledger's own thread still answers, 200 `degraded`, also once its result is stale; the hung runs are shared, not started again |
 | `test_probe_cache_shares_runs_times_out_and_names_classes` | `ProbeCache`: one run per name per TTL shared by concurrent callers, a caller's timeout that leaves the run going (and keeps its result), a raising probe named by class only, `clear()` |
 | `test_ledger_error_codes_and_model_lists` | `ledger_error`'s codes; `list_models` reads an OpenAI model list, sends no `Authorization` without a key and calls a `data` that is not a list unreadable |
+
+### `tests/test_idempotency.py`
+
+Retry de-duplication (FR-1.70, INV-3, NFR-6; [ADR 0071](adr/0071-idempotency-keys-and-retry-de-duplication.md)): `Idempotency-Key` answers, the SDK's retry count and the ledger's seen window. The gateway tests run the mock gateway with a `RecordingProvider` teacher (cold start: the teacher answers and the example is stored); TTLs and windows run on a `FakeClock` (`Runtime(clock=)`); threads meet at known points by polling `IdemCache.stats()["waiting"]` or a `BlockingTeacher`'s events, never by sleeping for a guess. Metrics are process-wide, so the tests compare deltas.
+
+| Test | Covers |
+|---|---|
+| `test_keys_retry_counts_and_fingerprints_parse_strictly` | `check_key` (1 to 255 printable ASCII, trimmed), `retry_count` (a plain count, else 0), `fingerprint` (key order ignored; the task header and the body count) |
+| `test_idem_cache_keeps_expires_evicts_and_releases` | Replays, `KeyReused`, keys per client, a second `finish` ignored, the TTL on the cache's clock, a failure releasing the key, least-recently-used eviction that never drops a running entry, the byte budget (an oversized answer not kept), the sweep, bad arguments, `enabled` |
+| `test_idem_cache_waiters_share_the_answer_or_take_over_after_a_failure` | A waiter gets the owner's answer even with TTL 0; another body refused while the first runs; after a failure one waiter takes over and the other gets its answer; a wait that runs out is `InFlight` |
+| `test_waiters_per_key_are_bounded` | Past `max_waiters` (default `MAX_WAITERS_PER_KEY`, 4) a duplicate is `InFlight` at once; another key is not affected; the slots are given back |
+| `test_seen_window_counts_once_per_window_per_sender` | `SeenWindow`: once per window per sender, a skipped repeat not restarting it, the oldest pair forgotten first |
+| `test_add_example_skips_retries_and_repeats_within_the_window` | `Ledger.add_example(count_seen=, sender=)`: no window counts every repeat; `count_seen=False` never counts and closes the refused INSERT's transaction; the window per sender ('' included), internal traffic (None) always counting, a repeat after the window, a new example starting its window; `ratchet_seen_skipped_total` |
+| `test_concurrent_retries_count_once` | Eight threads repeating one example for one client count once; eight clients count once each |
+| `test_old_ledger_gains_retry_count` | An old file gains `requests.retry_count` (old rows 0) |
+| `test_same_idempotency_key_replays_without_a_cascade` | One ledger row and one teacher call; the replay's body byte-identical (same completion id), `Idempotent-Replayed: true`, the answer's headers but no rate-limit headers, its own `x-request-id`; served after the daily quota is used up while a new key gets 429; another client's key space; outcome counts |
+| `test_concurrent_duplicates_call_the_teacher_once` | A duplicate that arrives while the teacher is blocked waits and gets the same answer (`joined`); one teacher call, one row |
+| `test_key_reused_with_another_body_or_malformed_is_a_400` | Another body or task header: 400 `idempotency_key_reused` with `X-Should-Retry: false`; malformed keys 400 `invalid_idempotency_key`; bad JSON never claims its key; `ratchet_rejections_total{reason="idempotency"}` |
+| `test_in_flight_wait_is_bounded_by_the_teacher_deadline` | After `RATCHET_TEACHER_DEADLINE_S` the duplicate gets 409 `idempotency_key_in_use` with `Retry-After: 1`; once the first finished, the key replays |
+| `test_idempotency_ttl_expiry_runs_again` | On a fake clock: a replay at 599 s, a second cascade at 601 s |
+| `test_streamed_answer_is_replayed_as_the_same_events` | A stream with `include_usage` replayed as the same events and headers; the same key without `stream` is reused |
+| `test_failed_first_request_releases_the_key` | A 502 is never kept: the retry with the key runs and answers |
+| `test_idempotency_off_ignores_the_header` | `RATCHET_IDEMPOTENCY_CACHE=0`: every request runs and the header is not checked |
+| `test_replay_log_line_says_it_replayed` | The chat log line's `retry_count` and `idempotent_replay`; the replay's `replay_of` names the request that ran, its `cost_usd` is 0; the key never logged |
+| `test_sdk_retries_do_not_drain_the_golden_set` | Three escalated retries with `x-stainless-retry-count: 1` leave a golden example at `seen` 1 and in `dataset.rows(ledger, "golden")`, rows recording the count; a keyless client's repeats within 300 s count once; another client's counts |
+| `test_the_same_request_minutes_later_still_counts` | Repeats ten minutes apart (fake clock) count, and the third moves the example to training (`FREQUENT`) |
+| `test_openai_sdk_retry_after_a_server_error_is_not_a_repeat` | The real OpenAI SDK's retry of a request that failed after its example was stored sends `x-stainless-retry-count: 1`, and `seen` stays 1 |
+| `test_internal_traffic_and_mock_mode_count_every_repeat` | Mock mode leaves the window off by default; calls outside a gateway request (no meta, or a meta whose request is not in flight) count every repeat; an explicit retry count is still honoured |
+| `test_retry_settings_are_checked_at_startup` | Mode defaults (300 s live, 0 mock) and each out-of-range value as one error naming its variable |
+| `test_bad_retry_setting_stops_the_gateway` | Unparsable and negative values stop a `Runtime` with one `ConfigError` naming both |
 
 ## Live-path tests
 

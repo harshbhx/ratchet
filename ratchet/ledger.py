@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import tasks
+from . import metrics, tasks
+from .idem import SeenWindow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS requests (
     -- Request ids (ADR 0062): the gateway's id ('req_' + 32 hex, also in x-request-id) and the client's own
     -- (X-Request-Id or X-Client-Request-Id, validated); NULL for internal calls and older rows.
     request_id TEXT,
-    client_request_id TEXT
+    client_request_id TEXT,
+    retry_count INTEGER DEFAULT 0  -- the client SDK's attempt number (x-stainless-retry-count, ADR 0071); 0 when unsent
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,6 +243,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "wall_ms": "REAL",
         "request_id": "TEXT",
         "client_request_id": "TEXT",
+        "retry_count": "INTEGER DEFAULT 0",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -446,6 +449,9 @@ class Ledger:
         self._day_latency: dict[int | None, tuple[tuple[int, int, int | None], float | None, float | None]] = {}
         self._digest: tuple[tuple[int, int | None, int | None], str] | None = None  # bill_of_materials' sha
         self._listeners: list[Callable[[dict[str, Any]], object]] = []  # event listeners (add_event_listener)
+        # When each (example, sender) repeat was last counted (`add_example`, ADR 0071); None counts every repeat, as
+        # before. The gateway sets one from RATCHET_SEEN_DEDUP_S; in memory only, like the request path's other caches.
+        self.seen_window: SeenWindow | None = None
         self._watch()
         self._ro, self._ro_lock = self._reader()
         self._rdb = self._ro if self._ro is not None else self.db
@@ -822,14 +828,25 @@ class Ledger:
         license_url: str,
         redactions: int = 0,
         params: Mapping[str, Any] | None = None,
+        *,
+        count_seen: bool = True,
+        sender: str | None = None,
     ) -> bool:
         """Store a teacher-labelled example. Returns False if it was a duplicate.
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
-        under other conditions are another example, in the same split (`_split`)."""
+        under other conditions are another example, in the same split (`_split`).
+
+        A duplicate adds one to `seen`, which the frequent-request rule reads (INV-3), unless it is a retry (FR-1.70,
+        ADR 0071): `count_seen=False` (the client's SDK said it retries) never counts, and with a seen window
+        (`seen_window`, RATCHET_SEEN_DEDUP_S) a repeat from the same `sender` counts at most once per window. `sender`
+        is who sent the request (the API key's name, '' without one), or None for internal traffic (Scout, the
+        simulator, the mock warm-up), whose repeats are traffic by construction and always count. The window is
+        checked and the row written under the ledger's lock, so two concurrent retries cannot both count."""
         target = target_params(params)
         h = example_hash(task, messages, target)
         split = self._split(example_hash(task, messages) if target else h)  # without conditions, h is the split key
+        window = self.seen_window if sender is not None else None
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model,"
@@ -850,10 +867,17 @@ class Ledger:
                 ),
             )
             self.db.commit()
+            if window is not None:
+                window.note(h, sender or "")
             return True
         except sqlite3.IntegrityError:
-            self.db.execute("UPDATE examples SET seen = seen + 1 WHERE hash=?", (h,))
-            self.db.commit()
+            if not count_seen:
+                metrics.SEEN_SKIPPED.inc("retry")
+            elif window is not None and not window.count(h, sender or ""):
+                metrics.SEEN_SKIPPED.inc("window")
+            else:
+                self.db.execute("UPDATE examples SET seen = seen + 1 WHERE hash=?", (h,))
+            self.db.commit()  # also ends the transaction the refused INSERT opened
             return False
 
     def split_of(self, task: str, messages: list[dict[str, Any]]) -> str:

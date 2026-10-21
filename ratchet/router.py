@@ -124,7 +124,10 @@ def _endpoint(provider: Provider) -> str:
 class RequestMeta:
     """What a caller knows about a request besides its messages and parameters; later items fill more of it.
     `storable=False` keeps every teacher answer of the request out of the training set (no example is inserted or
-    bumped); the request is still answered, audited and logged."""
+    bumped); the request is still answered, audited and logged. `retry_count` is the client SDK's attempt number
+    (`x-stainless-retry-count`, 0 for a first attempt; ADR 0071): above 0 the request is a retry, so a teacher answer it
+    stores never bumps a duplicate's `seen`, and its ledger row records the number. `idempotency_key` is the client's
+    Idempotency-Key, which the gateway acts on before the cascade; it is never stored."""
 
     request_id: str | None = None
     client_request_id: str | None = None
@@ -481,6 +484,14 @@ class Ratchet:
             return None
         return ctx
 
+    @classmethod
+    def _sender(cls, meta: RequestMeta | None) -> str | None:
+        """Who sent the request, for the ledger's seen window (`Ledger.add_example`, ADR 0071): the API key's name ('' with
+        keys off) of the request the gateway is serving, or None for a call outside it (Scout's agents, the simulator,
+        the mock warm-up), whose repeats are traffic, never a client's retries."""
+        ctx = cls._own_context(meta)
+        return None if ctx is None else (ctx.client or "")
+
     def _record_failure(
         self,
         stage: str,
@@ -760,6 +771,10 @@ class Ratchet:
             lic.url,
             redactions=sum(found.values()),
             params=conditions,
+            # A client's retry is not a repeat: never counted when its SDK says so, and at most once per seen window
+            # for the same sender, so retries cannot move a golden example into training (FR-1.70, INV-3).
+            count_seen=meta is None or meta.retry_count <= 0,
+            sender=self._sender(meta),
         )
         if inserted:  # a new row, not a duplicate's `seen` bumped
             metrics.EXAMPLES.inc(task_label(task), self.ledger.split_of(task.name, stored))
@@ -944,6 +959,7 @@ class Ratchet:
             wall_ms=wall_ms,
             request_id=meta.request_id if meta is not None else None,
             client_request_id=meta.client_request_id if meta is not None else None,
+            retry_count=meta.retry_count if meta is not None else 0,
         )
         self._count_request(task, "teacher", route, wall_ms, cost, baseline, client, False, meta)
         choices = _choices(task, served, params)
@@ -1248,6 +1264,7 @@ class Ratchet:
             wall_ms=wall_ms,
             request_id=meta.request_id if meta is not None else None,
             client_request_id=meta.client_request_id if meta is not None else None,
+            retry_count=meta.retry_count if meta is not None else 0,
         )
         self._count_request(task, served_by, route, wall_ms, cost, baseline, client, escalated, meta)
         choices = _choices(task, served_choices, params)

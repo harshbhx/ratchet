@@ -564,6 +564,21 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.ledger:Ledger.request_record",
         "ratchet.providers:OpenAICompatProvider.complete",
     ),
+    "FR-1.70": (
+        "ratchet.idem:IdemCache",
+        "ratchet.idem:SeenWindow",
+        "ratchet.idem:check_key",
+        "ratchet.idem:fingerprint",
+        "ratchet.idem:retry_count",
+        "ratchet.gateway:chat",
+        "ratchet.gateway:_complete_idempotent",
+        "ratchet.gateway:_replay",
+        "ratchet.gateway:BufferedStream",
+        "ratchet.ledger:Ledger.add_example",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.config:Settings.idempotency",
+        "ratchet.config:Settings.seen_dedup",
+    ),
     # 6.2 Cascade and confidence
     "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),
     "FR-2.2": ("ratchet.confidence:score",),
@@ -820,7 +835,11 @@ CODE: dict[str, tuple[str, ...]] = {
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
-    "INV-3": ("ratchet.nightschool.dataset:rows", "ratchet.nightschool.dataset:FREQUENT"),
+    "INV-3": (
+        "ratchet.nightschool.dataset:rows",
+        "ratchet.nightschool.dataset:FREQUENT",
+        "ratchet.ledger:Ledger.add_example",  # a retry never counts as a repeat (FR-1.70)
+    ),
     "INV-4": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-5": ("ratchet.nightschool.orchestrate:run_night",),
     "INV-6": ("ratchet.nightschool.evaluate:cascade_eval",),

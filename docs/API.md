@@ -112,6 +112,37 @@ The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratch
 | Header | Meaning |
 |---|---|
 | `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. A name that is not registered ([Tasks](#tasks)) follows `RATCHET_UNKNOWN_TASKS`: by default it creates a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); with `teacher` the teacher answers and nothing is stored; with `reject` it is a 400 `unknown_task`. A task with `clients` answers 403 `task_not_allowed` to any other key. A header that is not a valid name means `default` under `distill`, and is a 400 `unknown_task` under `teacher` and `reject`. Missing means `metadata.ratchet_task`, else `default`. No header, metadata key or other field can pin a task: only an operator's spec does |
+| `Idempotency-Key` | Optional; 1 to 255 printable ASCII characters (else a 400 `invalid_idempotency_key`). Makes the request idempotent for this API key: a retry with the same key and body gets the first answer again instead of a second cascade ([Idempotency and retries](#idempotency-and-retries)). Never stored or logged |
+| `x-stainless-retry-count` | Sent by OpenAI's SDKs (and other Stainless-built ones) on every request: 0 for the first attempt, then 1, 2. Above 0, a teacher answer the request stores never adds to an existing example's `seen`, and `requests.retry_count` records it. A value that is not a plain count is ignored |
+
+#### Idempotency and retries
+
+A client that retries (after a timeout, a dropped connection, a 5xx) can make the gateway answer the same request twice: two cascades, two bills, and, through the frequent-request rule (an example seen `FREQUENT` = 3 times moves from the golden set to training, INV-3), retries could drain the golden set. Two mechanisms stop that ([ADR 0071](adr/0071-idempotency-keys-and-retry-de-duplication.md)).
+
+**With an `Idempotency-Key`.** Keys are per API key (with keys off, every caller shares one key space). For a key this API key has not used within `RATCHET_IDEMPOTENCY_TTL_S` (600 s):
+
+| Request | Answer |
+|---|---|
+| The first with the key | Runs as usual. A 200 answer is kept in memory, never on disk, for `RATCHET_IDEMPOTENCY_TTL_S` after it finished (at most `RATCHET_IDEMPOTENCY_CACHE` (10,000) answers and 64 MiB, the least recently used dropped first). An error is never kept, so the client's retry runs again |
+| The same key and the same request while the first is still running | Waits for the first, at most `RATCHET_TEACHER_DEADLINE_S` (180 s), and gets its answer with `Idempotent-Replayed: true`. If the first fails, the waiting request runs instead. After the wait, or at once when four requests already wait for the key: **409** `idempotency_key_in_use` with `Retry-After: 1`, which OpenAI's SDKs retry |
+| The same key and the same request after the first finished | The same answer again, at once, with `Idempotent-Replayed: true`: the same body (the same completion `id`, `created`, `usage` and `ratchet` block, whose `request_id` names the request that ran), or for a stream the same events. No cascade, no ledger row, no daily quota used, and no `X-RateLimit-*` headers; `x-request-id` is the replay's own id |
+| The same key with a different request | **400** `idempotency_key_reused` with `X-Should-Retry: false` (not a 409, which SDKs retry): use a new key for a new request |
+
+"The same request" is the JSON body with keys sorted (so a client that serialises its retry again in another key order still matches) plus the `X-Ratchet-Task` header; headers that differ between attempts do not count. The checks run after the API key (401) and the body's JSON (400) and before validation and the quota, so a replay of an answered request is served even after the key's daily quota is used up. `RATCHET_IDEMPOTENCY_CACHE=0` turns the header off. The cache is per gateway process: with several workers, a retry that reaches another process runs again.
+
+```bash
+curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -H 'Idempotency-Key: order-7-triage' \
+  -d '{"messages": [{"role": "user", "content": "Where is my order?"}]}'
+# the same command again: the same answer, with Idempotent-Replayed: true and no second cascade
+```
+
+```python
+client.chat.completions.create(model="ratchet", messages=msgs, extra_headers={"Idempotency-Key": "order-7-triage"})
+```
+
+OpenAI's SDKs keep extra headers across their own retries, so one `Idempotency-Key` per logical request covers every retry the SDK makes.
+
+**Without a key.** A retry still does not count as another occurrence of its request. A request with `x-stainless-retry-count` above 0 never adds to the `seen` of the example its teacher answer duplicates, and the same API client's repeat of a stored example within `RATCHET_SEEN_DEDUP_S` (300 s in live mode, off in mock mode) counts once, so a client without an SDK that retries a few times in a row cannot move a golden example into training either. A genuine repeat after the window, or the same request from another API key, counts as before. The request itself is answered (and paid for) as usual: only an `Idempotency-Key` saves the second cascade.
 
 #### Messages
 
@@ -256,7 +287,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 
 `finish_reason` is the served answer's: `stop`, `length` (cut off by `max_tokens` or a cap, or over the client's `max_tokens` with the reasoning headroom) or `content_filter`; any other value an upstream model reports is returned as `stop`. It is never `tool_calls`, because `message.tool_calls` is not returned yet ([Generation parameters](#generation-parameters)). A student answer is always one that ended by itself.
 
-Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set, and on every response `x-request-id` and `openai-processing-ms` ([Request ids](#request-ids)).
+Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set, `Idempotent-Replayed: true` on an answer sent again for an `Idempotency-Key` ([Idempotency and retries](#idempotency-and-retries)), and on every response `x-request-id` and `openai-processing-ms` ([Request ids](#request-ids)).
 
 #### Request ids
 
@@ -366,6 +397,9 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 404 | `not_found_error` | `unknown_url` | No such route: `Unknown request URL: POST /v1/foo.` | No |
 | 405 | `invalid_request_error` | `null` | A route called with the wrong method (`Allow` names the right one) | No |
 | 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
+| 400 | `invalid_request_error` | `invalid_idempotency_key` | The `Idempotency-Key` header is empty, longer than 255 characters or not printable ASCII (`Invalid Idempotency-Key header: ...`); `X-Should-Retry: false` ([Idempotency and retries](#idempotency-and-retries)) | No |
+| 400 | `invalid_request_error` | `idempotency_key_reused` | This API key used the `Idempotency-Key` for a different request (another body or `X-Ratchet-Task`) within `RATCHET_IDEMPOTENCY_TTL_S`; `X-Should-Retry: false` | No |
+| 409 | `invalid_request_error` | `idempotency_key_in_use` | The first request with this `Idempotency-Key` was still running after `RATCHET_TEACHER_DEADLINE_S`, or four requests were already waiting for it; `Retry-After: 1`. The retry gets its answer once it finished | Yes, after `Retry-After` |
 | 400 | `invalid_request_error` | the teacher's (`context_length_exceeded`, ...), `request_too_large` for an upstream 413 without one, or `null` | Live mode: the teacher refused the request with 400, 413 or 422, so it cannot succeed as sent (too long for the model, a content part it cannot read). `message` and `param` are the teacher's; `X-Should-Retry: false` | No |
 | 429 | `insufficient_quota` | `daily_quota_exceeded` | The key's daily quota is used up (`daily request quota of N used up for 'acme'; resets at 00:00 UTC`); `Retry-After` (seconds to 00:00 UTC), `X-RateLimit-Reset-Requests` and `X-Should-Retry: false` | No: the response tells them not to |
 | 429 | `rate_limit_error` | `upstream_rate_limited` | Live mode: Token Factory rate-limited the teacher call, after the gateway's own retries (`teacher rate limited: upstream 429; retry after 7 s`). `Retry-After` is the teacher's wait, clamped to 1 to 60 s (1 when it sent none) | Yes, after `Retry-After` |
@@ -608,7 +642,7 @@ Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plai
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `ratchet_requests_total` | counter | `task`, `served_by`, `route`, `status` | Requests. The cascade counts each answered one with `status="200"` (chat requests, and Scout's agents, which call it in-process); the gateway counts each chat request that ended in an error, with `served_by="none"`, `route="none"` and its status |
+| `ratchet_requests_total` | counter | `task`, `served_by`, `route`, `status` | Requests. The cascade counts each answered one with `status="200"` (chat requests, and Scout's agents, which call it in-process); the gateway counts each chat request that ended in an error, with `served_by="none"`, `route="none"` and its status. A replay by `Idempotency-Key` ran no cascade and is counted in `ratchet_idempotent_requests_total` only |
 | `ratchet_request_seconds` | histogram | `served_by` | Wall-clock time per request (`requests.wall_ms` for answered ones; `none`: until the error) |
 | `ratchet_upstream_requests_total` | counter | `upstream`, `outcome` | Model calls: `upstream` is `teacher`, `fallback_teacher`, `student`, `shadow`, `audit` or `arbitration`; `outcome` is `ok`, `error`, `timeout` or `circuit_open` (refused by the breaker, no call made) |
 | `ratchet_upstream_seconds` | histogram | `upstream` | Time per model call made, the provider's retries included |
@@ -619,7 +653,9 @@ Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plai
 | `ratchet_audits_total` | counter | `result` | Teacher audits of served student answers: `agree`, `disagree`, `invalid` (the teacher's answer measured nothing), `error`, `circuit_open` |
 | `ratchet_examples_stored_total` | counter | `task`, `split` | New training examples (`train` or `golden`); a duplicate's `seen` bumped is not one |
 | `ratchet_failures_total` | counter | `stage` | Failures by stage (`failures.stage`), every one: the table samples breaker refusals 1 in 10 and throttles the gateway's rows, this counter does not |
-| `ratchet_rejections_total` | counter | `reason` | Chat requests refused before the cascade: `auth`, `invalid_request`, `unknown_task`, `task_not_allowed`, `quota`, `too_large`, `disconnected`, `forbidden`, `other` |
+| `ratchet_rejections_total` | counter | `reason` | Chat requests refused before the cascade: `auth`, `invalid_request`, `unknown_task`, `task_not_allowed`, `quota`, `too_large`, `disconnected`, `forbidden`, `idempotency` (a malformed or reused `Idempotency-Key`, or the 409 while its first request runs), `other` |
+| `ratchet_idempotent_requests_total` | counter | `outcome` | Chat requests with an `Idempotency-Key` ([Idempotency and retries](#idempotency-and-retries)): `first` (ran, answer kept), `uncached` (ran, answer not kept), `failed` (ran and failed; the key is released), `replayed` (sent from the cache), `joined` (waited for the first and got its answer), `reused` (400), `in_flight` (409), `invalid` (400) |
+| `ratchet_seen_skipped_total` | counter | `reason` | Repeats of a stored example not counted in its `seen`: `retry` (`x-stainless-retry-count` above 0) or `window` (the same API client within `RATCHET_SEEN_DEDUP_S`) |
 | `ratchet_circuit_open` | gauge | `breaker` | 1 while a breaker (`student`, `shadow`, `teacher`, `fallback_teacher`, ...) is open or half-open, else 0 |
 | `ratchet_version_traffic_pct` | gauge | `version`, `state` | Traffic share of the live, canary and shadow versions (`v5`, `live`, 100) |
 | `ratchet_spend_today_usd` | gauge | `client` | US dollars spent since 00:00 UTC, failed requests included |
