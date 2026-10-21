@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (973 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (985 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -27,7 +27,7 @@ make sim            # 10-day simulation with a corrupted deploy (mock models)
 make demo           # mock gateway (4-day warm-up) on http://localhost:8000: / story, /scout, /dashboard
 make web            # rebuild the React UI into ratchet/web/dist (commit the result)
 make web-dev        # UI hot reload on :5173 against the gateway on :8000
-make day1           # live Token Factory checks (needs NEBIUS_API_KEY; costs cents)
+make day1           # live Token Factory checks (needs NEBIUS_API_KEY; costs cents); DAY1_CHECKS="all --json evidence/day1/day1.json" for every probe
 make docker         # build the gateway image (ratchet-gateway)
 make clean          # remove caches, build output, sim_results.json, ratchet.db
 ```
@@ -106,7 +106,7 @@ Always run `make lint test reference` before committing.
 | `sim/` | Synthetic tickets, mock research world (`research.py`), workloads (`world.py`), mock teacher/student/trainer for demos and tests (the mock teacher's reasoning optionally varies around a mean, for the receipts' demo) |
 | `deploy/` | Nebius Serverless Job / Endpoint scripts, training Dockerfile |
 | `deploy/vm/` | Public demo on one Nebius CPU VM: `create_vm.sh`, cloud-init, Docker Compose + Caddy, update and backup scripts |
-| `scripts/day1_check.py` | Verifies model IDs, logprobs, JSON mode on Token Factory |
+| `scripts/day1_check.py` | Day-1 probes: Token Factory model IDs, logprobs, JSON mode (default); the teacher's n choices, reasoning acceptance, the student endpoint's runtime LoRA load and lost-adapter 404, Tavily, nebius flags; `--json` |
 | `scripts/regen_sim_reference.py` | Regenerates (or `--check`s) `tests/fixtures/sim_reference_seed7.json`, the pinned reference simulation that `test_reference_simulation_unchanged` compares exactly |
 | `scripts/reference_check.py` | Checks (or `--write`s) `tests/fixtures/reference.json`: three workloads (tickets seed 7, mixed seed 1, research seed 7) captured from v0.4.0, compared on every v0.4 day stat, the totals, the versions and the event log (`make reference`, CI) |
 | `scripts/reqtrace.py` | Requirements traceability: PRD rows and invariants → code (`CODE`) and `@pytest.mark.req` tests; writes and checks `docs/REQUIREMENTS.md` (generated, never edit by hand) |
