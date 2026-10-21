@@ -308,8 +308,10 @@ def test_live_quality_ignores_pending_audits_until_their_verdict(tmp_path):
     fresh = Ledger(str(tmp_path / "q.db"))  # a new tally (another process, a restart) reads the same numbers
     assert fresh.version_live_quality(vid) == (3, 2 / 3)
     # Finding a stage's pending audits searches the gate's index, never the whole table (ADR 0060).
-    (plan,) = [r[-1] for r in led.db.execute("EXPLAIN QUERY PLAN " + AUDIT_PENDING_SQL, (vid, 0, 10))]
-    assert plan == "SEARCH requests USING INDEX requests_version_audited (student_version=? AND audited=? AND id>? AND id<?)"
+    plan = [r[-1] for r in led.db.execute("EXPLAIN QUERY PLAN " + AUDIT_PENDING_SQL, (vid, 0, 10))]
+    assert plan[0] == "SEARCH requests USING INDEX requests_version_audited (student_version=? AND audited=? AND id>? AND id<?)"
+    # The version's adapter (attribution, ADR 0073) is read once, by primary key; nothing scans a table.
+    assert "SEARCH versions USING INTEGER PRIMARY KEY (rowid=?)" in plan and not any("SCAN" in p for p in plan)
 
 
 @pytest.mark.req("FR-12.31")

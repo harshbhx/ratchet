@@ -40,6 +40,7 @@
       "audit_agreement": "number|null",
       "degraded": "number",
       "fallback_teacher": "number",
+      "fallback_served": "number",
       "p50_student_ms": "number|null",
       "p95_ms": "number|null"
     },
