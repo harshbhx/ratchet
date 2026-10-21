@@ -23,6 +23,7 @@ import time
 import uuid
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +115,7 @@ class Runtime:
         self.clock = clock
         self.tasks_lock = threading.Lock()  # admin writes to the registry and the tasks table, and resets, one at a time
         self.keysets_lock = threading.Lock()  # the committed-set cache (`_keyset`)
+        self.replay_lock = threading.Lock()  # one ledger replay at a time (`_replaying`)
         self.reset()
 
     def reset(self) -> None:
@@ -1071,7 +1073,8 @@ def _replay_version(request: Request) -> Version:
             raise HTTPException(400, "no live version: name one with ?version=")
         return v
     raw = values[0].strip()
-    if not raw.isdigit() or len(raw) > 18:
+    # ASCII digits only: str.isdigit() also accepts superscript and circled digits ('²', '①'), which int() refuses.
+    if not (raw.isascii() and raw.isdigit()) or len(raw) > 18:
         raise HTTPException(400, f"version must be one version id (a whole number), not {values[0]!r}; versions are never pooled")
     v = rt.ledger.version(int(raw))
     if v is None:
@@ -1089,6 +1092,27 @@ def _replay_days(since_day: int | None, until_day: int | None) -> None:
 
 def _replay_label() -> str:
     return replay.SIMULATION if rt.settings.mode == "mock" else "live traffic"
+
+
+def _replay_current(v: Version) -> float:
+    """The version's threshold now, as the router holds its answers to it: in live mode without a student endpoint the
+    hosted fallback student answers (`Runtime.reset`'s resolver), whose threshold is the configured default."""
+    s = rt.settings
+    model = s.fallback_student_model if s.mode == "live" and not s.student_base else v.adapter_uri
+    return rt.ratchet.threshold(v, model)
+
+
+@contextmanager
+def _replaying() -> Iterator[None]:
+    """One replay at a time per gateway. A replay reads a version's whole history into memory, so concurrent ones
+    would multiply that; a second request meanwhile gets a 429 with `Retry-After` rather than waiting on the worker
+    threads that chat completions share."""
+    if not rt.replay_lock.acquire(blocking=False):
+        raise HTTPException(429, "another replay is running; try again in a moment", headers={"Retry-After": "1"})
+    try:
+        yield
+    finally:
+        rt.replay_lock.release()
 
 
 @app.get("/ratchet/replay")
@@ -1109,8 +1133,9 @@ def replay_version(
         a = None if audit_rate is None else replay.check_rate(audit_rate)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
-    history = replay.load(rt.ledger, v.id, since_day, until_day)
-    out = replay.report(history, t, a, current=rt.ratchet.threshold(v), fallback_rate=rt.settings.audit_rate)
+    with _replaying():
+        history = replay.load(rt.ledger, v.id, since_day, until_day)
+        out = replay.report(history, t, a, current=_replay_current(v), fallback_rate=rt.settings.audit_rate)
     return {**out, "state": v.state, "label": _replay_label()}
 
 
@@ -1132,8 +1157,9 @@ def replay_frontier(
         a = None if audit_rate is None else replay.check_rate(audit_rate)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
-    history = replay.load(rt.ledger, v.id, since_day, until_day)
-    out = replay.frontier_report(history, rt.ratchet.threshold(v), target, audit_rate=a, fallback_rate=rt.settings.audit_rate)
+    with _replaying():
+        history = replay.load(rt.ledger, v.id, since_day, until_day)
+        out = replay.frontier_report(history, _replay_current(v), target, audit_rate=a, fallback_rate=rt.settings.audit_rate)
     return {**out, "state": v.state, "label": _replay_label()}
 
 

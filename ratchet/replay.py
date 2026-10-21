@@ -30,6 +30,7 @@ from typing import Any, NamedTuple, TextIO
 
 from . import stats, tasks
 from .ledger import Ledger
+from .router import Ratchet
 
 # The frontier's default grid, and the most thresholds one frontier may hold (an endpoint or CLI cannot ask for more).
 GRID_LO, GRID_HI, GRID_STEP = 0.30, 1.00, 0.01
@@ -68,12 +69,19 @@ class Row(NamedTuple):
     student_usd: float  # the request's student spend as logged (its samples, and any shadow's)
     teacher_usd: float | None  # what the teacher alone cost, when it was called (escalation or audit)
     estimate_usd: float  # the token formula's all-teacher estimate
+    # Held to SERVE_NOTHING because its task's spec changed since the version was scored, and still changed now (`load`)
+    spec_changed: bool = False
 
     @property
     def servable(self) -> bool:
         """Whether some threshold above 0 serves it: a valid answer (confidence above 0; a sample set without one scores
-        0) that did not escalate for a reason the threshold does not decide."""
-        return self.confidence > 0 and self.route not in NEVER_SERVED_ROUTES
+        0) that did not escalate for a reason the threshold does not decide (route `n_choices`, or a task whose spec
+        changed, which the router holds to SERVE_NOTHING at any threshold until a night re-scores the version).
+
+        One such reason is not logged: a request for n > 1 choices whose samples were below the threshold and also
+        fewer than n in agreement escalated on route `confidence`, so it counts as servable here although at a lower
+        threshold it would escalate on route `n_choices` (ADR 0028)."""
+        return self.confidence > 0 and self.route not in NEVER_SERVED_ROUTES and not self.spec_changed
 
 
 @dataclass(frozen=True)
@@ -142,15 +150,20 @@ def _row(r: dict[str, Any]) -> Row | None:
 def load(ledger: Ledger, version: int, since_day: int | None = None, until_day: int | None = None) -> History:
     """Version `version`'s requests on ledger days `since_day` to `until_day` (`Ledger.replay_rows`), less the rows of a
     task that is pinned now: the student will never answer those again, so no threshold applies to them (INV-10 at read
-    time, as Night School reads it)."""
+    time, as Night School reads it). A row logged at SERVE_NOTHING whose task's spec is still changed for this version
+    (`Ratchet.spec_changed`) stays in, as never servable: the router answers it with the teacher at any threshold."""
     raw, excluded = ledger.replay_rows(version, since_day, until_day)
+    v = ledger.version(version)
     pinned: dict[str, bool] = {}
+    changed: dict[str, bool] = {}
     rows: list[Row] = []
     left = {**excluded, "pinned_now": 0, "malformed": 0}
     for r in raw:
         name = r["task"]
         if name not in pinned:
-            pinned[name] = tasks.get(name).pinned
+            task = tasks.get(name)
+            pinned[name] = task.pinned
+            changed[name] = v is not None and Ratchet.spec_changed(v, task)
         if pinned[name]:
             left["pinned_now"] += 1
             continue
@@ -158,6 +171,8 @@ def load(ledger: Ledger, version: int, since_day: int | None = None, until_day: 
         if row is None:
             left["malformed"] += 1
             continue
+        if changed[name] and row.threshold >= stats.SERVE_NOTHING:
+            row = row._replace(spec_changed=True)
         rows.append(row)
     return History(version, tuple(rows), left)
 
@@ -359,8 +374,8 @@ def at(
     - `t` None replays each request at the threshold it was logged with (what happened); `audit_rate` None prices each
       served request's audits at the rate it was drawn at (a request that escalated in fact at `default_rate`, by
       default the version's logged rate, `logged_rate`).
-    - coverage = (1/N) sum 1[c >= t], exact: no label is needed. A request without a valid answer, or one that could not
-      fill its n choices, is never served.
+    - coverage = (1/N) sum 1[c >= t], exact: no label is needed. A request without a valid answer, one that could not
+      fill its n choices, or one held to SERVE_NOTHING by a changed spec is never served (`Row.servable`).
     - precision (Hajek) = sum over labelled served rows of y / label_p, divided by the sum of 1 / label_p; null with a
       reason when nothing is served, when a served row could never be labelled (audit rate 0: positivity), or when no
       served row has a label. Labels come from the logs, so `audit_rate` changes cost only.

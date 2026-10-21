@@ -240,6 +240,8 @@ INDEXES = [
     # A version's audits (version_live_quality, the release gate's counts), its shadow rows (shadow_quality) and a day's
     # rows (stats and receipts by day) without a full scan as the ledger grows (ADR 0024).
     "CREATE INDEX IF NOT EXISTS requests_version_audited ON requests (student_version, audited, id)",
+    # One version's rows in id order, a chunk at a time (`replay_rows`), without sorting the version's whole history.
+    "CREATE INDEX IF NOT EXISTS requests_version_id ON requests (student_version, id)",
     "CREATE INDEX IF NOT EXISTS requests_shadow_version ON requests (shadow_version)",
     "CREATE INDEX IF NOT EXISTS requests_day ON requests (day)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
@@ -268,6 +270,8 @@ UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
 # (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
+# Rows `Ledger.replay_rows` reads per locked statement, so a long history never holds the lock for long.
+REPLAY_CHUNK = 20_000
 
 
 def _check_compute(kind: str, usd_per_hour: float, gpus: int) -> None:
@@ -921,7 +925,6 @@ class Ledger:
         )
         return {int(r["v"]): int(r["n"]) for r in rows}
 
-    @_locked
     def replay_rows(
         self, vid: int, since_day: int | None = None, until_day: int | None = None
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -932,7 +935,12 @@ class Ledger:
         failed or its breaker was open: no confidence to replay). `teacher_usd` is what the teacher alone cost when it
         was called for the request (`baseline_cost_usd` of an escalation the teacher answered, or of an audit), else
         NULL; `estimate_usd` is the token formula's estimate (`baseline_est_usd`). One version only: confidence scales
-        differ between versions, so the replay never pools them."""
+        differ between versions, so the replay never pools them.
+
+        A version's history can be long, so it is read in chunks of REPLAY_CHUNK rows, each under the lock, up to the
+        last request id when the read began (rows logged meanwhile are not read): the request path's `log_request` waits
+        for one chunk at most, never the whole history. That is why this method is not `_locked` itself; every statement
+        runs in a locked helper."""
         where, args = "student_version=?", [vid]
         if since_day is not None:
             where += " AND day>=?"
@@ -940,23 +948,42 @@ class Ledger:
         if until_day is not None:
             where += " AND day<=?"
             args.append(until_day)
+        last, excluded = self._replay_bounds(where, args)
+        rows: list[dict[str, Any]] = []
+        after = 0
+        while True:
+            chunk = self._replay_chunk(where, args, after, last)
+            rows.extend(chunk)
+            if len(chunk) < REPLAY_CHUNK:
+                return rows, excluded
+            after = chunk[-1]["id"]
+
+    @_locked
+    def _replay_bounds(self, where: str, args: list[Any]) -> tuple[int, dict[str, int]]:
+        """`replay_rows`' last request id and its left-out counts up to that id, in one locked read."""
+        last = int(self.db.execute("SELECT COALESCE(MAX(id), 0) FROM requests").fetchone()[0])
+        left = self.db.execute(
+            f"""SELECT COALESCE(SUM(confidence IS NOT NULL AND (label_p IS NULL OR threshold IS NULL)), 0) before_logging,
+                       COALESCE(SUM(confidence IS NULL), 0) no_student_answer
+                FROM requests WHERE {where} AND id<=?""",
+            [*args, last],
+        ).fetchone()
+        return last, {"before_logging": int(left["before_logging"]), "no_student_answer": int(left["no_student_answer"])}
+
+    @_locked
+    def _replay_chunk(self, where: str, args: list[Any], after: int, last: int) -> list[dict[str, Any]]:
+        """Up to REPLAY_CHUNK of `replay_rows`' rows with ids in (after, last], in id order."""
         rows = self.db.execute(
             f"""SELECT id, day, task, confidence, threshold, label_p, student_agree, route, audited,
                        COALESCE(student_cost_usd, 0.0) student_usd,
                        CASE WHEN audited=1 OR (escalated=1 AND served_by='teacher') THEN baseline_cost_usd END teacher_usd,
                        COALESCE(baseline_est_usd, baseline_cost_usd, 0.0) estimate_usd
-                FROM requests WHERE {where} AND confidence IS NOT NULL AND label_p IS NOT NULL AND threshold IS NOT NULL
-                ORDER BY id""",
-            args,
+                FROM requests WHERE {where} AND id>? AND id<=?
+                  AND confidence IS NOT NULL AND label_p IS NOT NULL AND threshold IS NOT NULL
+                ORDER BY id LIMIT ?""",
+            [*args, after, last, REPLAY_CHUNK],
         ).fetchall()
-        left = self.db.execute(
-            f"""SELECT COALESCE(SUM(confidence IS NOT NULL AND (label_p IS NULL OR threshold IS NULL)), 0) before_logging,
-                       COALESCE(SUM(confidence IS NULL), 0) no_student_answer
-                FROM requests WHERE {where}""",
-            args,
-        ).fetchone()
-        excluded = {"before_logging": int(left["before_logging"]), "no_student_answer": int(left["no_student_answer"])}
-        return [dict(r) for r in rows], excluded
+        return [dict(r) for r in rows]
 
     @_locked
     def shadow_quality(self, vid: int) -> dict[str, Any]:

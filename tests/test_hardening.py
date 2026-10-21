@@ -1464,7 +1464,9 @@ def test_replay_endpoint_refuses_to_mix_versions(gw_env):
     r = _replay_cascade(led)
     for i in range(5):
         r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage")
-    for query in (f"version={first}&version={live}", f"version={first},{live}", "version=all", "version=-1", "version=1.5"):
+    # Superscript and circled digits pass str.isdigit() but not int(): a 400 too, never a 500.
+    queries = (f"version={first}&version={live}", f"version={first},{live}", "version=all", "version=-1", "version=1.5")
+    for query in (*queries, "version=²", "version=①", "version=1²"):
         for path in ("/ratchet/replay", "/ratchet/replay/frontier"):
             resp = c.get(f"{path}?{query}")
             assert resp.status_code == 400, (path, query)
@@ -1491,3 +1493,109 @@ def test_pinned_tasks_never_appear_in_replay_rows():
     tasks.register(tasks.Task("ticket-triage", pinned=True, source="file"))  # pinned now, after the traffic
     h = replay.load(led, vid)
     assert h.rows == () and h.excluded["pinned_now"] == 4
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_reads_a_long_history_in_chunks_up_to_the_id_it_started_at(monkeypatch):
+    """A version's history is read in chunks, each under the ledger lock, so the request path's `log_request` (another
+    thread) never waits for the whole read; a request logged meanwhile is not part of the replay."""
+    import ratchet.ledger as ledger_module
+
+    led = Ledger(":memory:")
+    vid = _version(led, "live", {"threshold": 0.5})
+    r = _replay_cascade(led)
+    for i in range(7):
+        r.handle([{"role": "user", "content": f"ticket {i}"}], "ticket-triage")
+    whole, excluded = led.replay_rows(vid)
+    monkeypatch.setattr(ledger_module, "REPLAY_CHUNK", 2)
+    original = Ledger._replay_chunk
+    between: list[bool] = []
+
+    def chunk_then_log(self, *args, **kwargs):
+        rows = original(self, *args, **kwargs)
+        writer = threading.Thread(target=r.handle, args=([{"role": "user", "content": "ticket 0"}], "ticket-triage"))
+        writer.start()
+        writer.join(timeout=5)
+        between.append(not writer.is_alive())  # the other thread logged a request between two chunks
+        return rows
+
+    monkeypatch.setattr(Ledger, "_replay_chunk", chunk_then_log)
+    chunked, chunked_excluded = led.replay_rows(vid)
+    assert chunked == whole and chunked_excluded == excluded and len(chunked) == 7
+    assert between == [True] * 4  # 2 + 2 + 2 + 1 rows: four reads, the lock free after each
+    assert len(led.replay_rows(vid)[0]) == 11  # the requests logged during the read are there for the next one
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_endpoints_run_one_at_a_time(gw_env):
+    """A replay holds a version's history in memory, so the gateway runs one at a time: another request meanwhile is a
+    429 with Retry-After instead of a second copy (or a wait on the threads chat completions share)."""
+    from fastapi.testclient import TestClient
+
+    gw = gw_env()
+    c = TestClient(gw.app)
+    _version(gw.rt.ledger, "live", {"threshold": 0.5})
+    with gw.rt.replay_lock:
+        for path in ("/ratchet/replay", "/ratchet/replay/frontier"):
+            resp = c.get(path)
+            assert resp.status_code == 429 and resp.headers["Retry-After"] == "1", path
+            assert "replay" in resp.json()["detail"], path
+    assert c.get("/ratchet/replay").status_code == 200 and c.get("/ratchet/replay/frontier").status_code == 200
+
+
+@pytest.mark.req("FR-16.5", "FR-2.15")
+def test_replay_leaves_rows_held_by_a_changed_spec_unservable():
+    """While a task's spec is changed for a version, the router holds its answers to SERVE_NOTHING whatever the
+    threshold, so the replay never serves the rows logged that way; rows logged before the change replay as usual, and
+    once a night re-scores the version under the new spec, the held rows are servable again."""
+    from ratchet import replay
+    from ratchet.confidence import SERVE_NOTHING
+
+    led = Ledger(":memory:")
+    vid = _version(led, "live", {"threshold": 0.5})
+    r = _replay_cascade(led)
+    ask = [{"role": "user", "content": "ticket 0"}]
+    for _ in range(3):
+        r.handle(ask, "ticket-triage")
+    current = tasks.get("ticket-triage").spec_hash
+    led.update_eval(vid, {"threshold": 0.5, "spec_hashes": {"ticket-triage": "scored-under-another-spec"}})
+    for _ in range(2):
+        assert r.handle(ask, "ticket-triage").route == "confidence"
+    rows = replay.load(led, vid).rows
+    assert [row.threshold for row in rows] == [0.5] * 3 + [SERVE_NOTHING] * 2
+    assert [row.spec_changed for row in rows] == [False] * 3 + [True] * 2
+    assert replay.at(rows, 0.3)["served"] == 3 and replay.at(rows)["served"] == 3
+    led.update_eval(vid, {"threshold": 0.5, "spec_hashes": {"ticket-triage": current}})  # re-scored by a night
+    assert replay.at(replay.load(led, vid).rows, 0.3)["served"] == 5
+
+
+@pytest.mark.req("FR-16.5")
+def test_replay_current_threshold_is_the_one_the_router_uses(gw_env, tmp_path, monkeypatch):
+    """The replay's current threshold is the one the router holds answers to: the version's own in mock mode, the
+    configured default for the hosted fallback student in live mode without a student endpoint (never calibrated)."""
+    from fastapi.testclient import TestClient
+
+    gw = gw_env()
+    _version(gw.rt.ledger, "live", {"threshold": 0.9})
+    assert TestClient(gw.app).get("/ratchet/replay").json()["current_threshold"] == 0.9
+    settings = Settings(
+        mode="live",
+        db_path=str(tmp_path / "live.db"),
+        teacher_base="https://tokenfactory.test/v1",
+        teacher_api_key="tf-key",
+        teacher_model=OPEN_TEACHER,
+        student_base="",
+        confidence_threshold=0.7,
+        admin_keys="",
+        api_keys="",
+        tasks_file="",
+        bom_signing_key="",
+        tavily_api_key="",
+        mock_warmup_days=0,
+    )
+    rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("ok").transport})
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.9})
+    c = TestClient(gw.app)
+    assert c.get("/ratchet/replay").json()["current_threshold"] == 0.7
+    assert c.get("/ratchet/replay/frontier").json()["current_threshold"] == 0.7
