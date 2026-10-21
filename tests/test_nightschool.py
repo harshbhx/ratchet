@@ -1119,3 +1119,52 @@ def test_the_version_is_recorded_on_the_rows_the_adapter_was_trained_on(monkeypa
     assert bom_doc["dataset_sha256"] == dataset.dataset_hash(rows)
     assert len(led.version_leaves(rep.version, "train")) == 60
     assert len(dataset.rows(led, "train")) == 61  # the late example waits for tomorrow
+
+
+@pytest.mark.req("INV-3", "INV-6", "FR-4.2")
+def test_a_prompt_held_out_in_one_task_is_never_trained_on_through_another():
+    """One adapter serves every task, so the split is by prompt across tasks (ADR 0131): a prompt that is golden under one
+    task is golden under all of them, and its occurrences add up across tasks for the frequent rule."""
+    from ratchet import licenses
+
+    lic = licenses.lookup(OPEN_TEACHER)
+    led = Ledger(":memory:", golden_fraction=0.3)
+
+    def pick(first: str, second: str, want_first: str, want_second: str, tag: str) -> list[dict[str, str]]:
+        for i in range(2000):
+            msgs = [{"role": "user", "content": f"shared prompt {tag} {i}"}]
+            if led.split_of(first, msgs) == want_first and led.split_of(second, msgs) == want_second:
+                return msgs
+        raise AssertionError("no prompt found")
+
+    def store(task: str, msgs: list[dict[str, str]]) -> None:
+        assert led.add_example(task, msgs, f"answer in {task}", OPEN_TEACHER, lic.name, lic.url)
+
+    split_apart = pick("alpha", "beta", "golden", "train", "apart")  # golden under alpha, train under beta
+    both_train = pick("alpha", "beta", "train", "train", "both-train")
+    both_golden = pick("alpha", "beta", "golden", "golden", "both-golden")
+    frequent = pick("alpha", "beta", "golden", "golden", "frequent")
+    for msgs in (split_apart, both_train, both_golden, frequent):
+        store("alpha", msgs)
+        store("beta", msgs)
+    assert not led.add_example("alpha", frequent, "again", OPEN_TEACHER, lic.name, lic.url)  # a duplicate: seen 2 in alpha
+    # A prompt only beta holds (alpha has no copy) trains as before.
+    only_beta = pick("beta", "gamma", "train", "train", "only-beta")
+    store("beta", only_beta)
+
+    def contents(split: str, task: str | None = None) -> set[tuple[str, str]]:
+        return {(r["task"], r["messages"][0]["content"]) for r in dataset.rows(led, split, task)}
+
+    def key(task: str, msgs: list[dict[str, str]]) -> tuple[str, str]:
+        return task, msgs[0]["content"]
+
+    train, golden = contents("train"), contents("golden")
+    assert key("beta", split_apart) not in train and key("beta", split_apart) in golden  # held out through alpha
+    assert key("alpha", split_apart) in golden
+    assert {key("alpha", both_train), key("beta", both_train)} <= train  # trained in both, as before
+    assert {key("alpha", both_golden), key("beta", both_golden)} <= golden
+    assert {key("alpha", frequent), key("beta", frequent)} <= train and not {key("alpha", frequent)} & golden  # 2 + 1 = FREQUENT
+    assert key("beta", only_beta) in train
+    assert key("beta", split_apart) in contents("golden", "beta") and key("beta", split_apart) not in contents("train", "beta")
+    # Every row is in one split only, and the two sets never share a prompt.
+    assert not {c for _, c in train} & {c for _, c in golden}
