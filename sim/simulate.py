@@ -13,6 +13,7 @@ import argparse
 import json
 from pathlib import Path
 
+from ratchet import kpis
 from ratchet.config import Settings
 from ratchet.cost import cost_report, record_simulated_day
 from ratchet.ledger import Ledger
@@ -77,6 +78,8 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "totals": ledger.totals(),
         "bill_of_materials": ledger.bill_of_materials(),
         "cost": cost_report(ledger, settings),
+        # PRD §8.1's success metrics, computed from the ledger as the gateway's /ratchet/kpis does (simulation numbers).
+        "kpis": kpis.report(ledger, settings.kpi_window(), args.min_audits, settings.mode),
     }
 
 
@@ -102,9 +105,28 @@ def table(res: dict) -> str:
             f"({c['endpoint_hours']:.0f} endpoint hours, {c['training_hours']:.2f} training hours); "
             f"recommendation: {c['recommendation']}"
         )
+    k = res.get("kpis")
+    if k:  # success metrics (PRD §8.1) over the last days with traffic, from mock models
+        lines.append(f"\nsuccess metrics (simulation; SM-1 to SM-3 and NFR-1 over the last {k['window']['days']} days):")
+        lines += [f"  {kpi_line(rid, m)}" for rid, m in k["metrics"].items()]
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
     return "\n".join(lines)
+
+
+def kpi_line(rid: str, m: dict) -> str:
+    """One success metric as a line: its id, value, target and verdict."""
+    if m["value"] is None:
+        value = "-"
+    elif m["unit"] == "fraction":
+        value = f"{m['value']:.1%}"
+    elif m["unit"] == "ms":
+        value = f"{m['value']:.0f} ms"
+    else:
+        value = f"{m['value']} {m['unit']}"
+    target = f"{m['target']:.0%}" if m["unit"] == "fraction" else f"{m['target']:g} {m['unit']}"
+    verdict = {True: "met", False: "not met", None: "not known yet"}[m["met"]]
+    return f"{rid:<6} {value:>10}  target {m['op']} {target:<10} {verdict}"
 
 
 def parser() -> argparse.ArgumentParser:

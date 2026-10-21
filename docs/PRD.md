@@ -245,6 +245,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-7.6 | Light and dark mode; works at phone width | Done (v0.1) |
 | FR-7.7 | **By task** table (requests, student share, escalations, savings, route) from `tasks` in `/ratchet/stats` | Done (v0.2) |
 | FR-7.8 | Traffic selector for **Run 1 day + night** (tickets, Scout research calls, both); demo controls run one at a time (409) and reset has a 30 s cooldown (429) | Done (v0.2) |
+| FR-7.9 | Success metrics ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)): `GET /ratchet/kpis`, the `kpis` block of `/ratchet/stats` and the simulator compute §8.1's SM-1 to SM-5 and NFR-1's latency target from the ledger, the same way in mock and live mode (`simulated` says which), each with its value, target, whether it is met (`null` while there is too little data) and the counts behind it. SM-1 to SM-3 and NFR-1 cover the last `RATCHET_KPI_WINDOW_DAYS` (3) ledger days with traffic: savings with failed requests' spend counted, audits pooled with a 95% Wilson interval and met on the point estimate after `RATCHET_MIN_AUDITS`, the student share, and the nearest-rank median latency of student-served requests. SM-4 counts versions that reached 100% and were later alerted on or rolled back; SM-5 is the longest drift episode in nights over the whole history (an escalation rate among the requests the student judged at least 5 points above the lowest of the 3 days before, until a day at most 2 points above it; `null` while one is open). The targets live in `kpis.SM_TARGETS`, which the traceability check compares with the table in §8.1. The dashboard does not show them yet | Done (v0.5) |
 
 ### 6.8 Live operations on Nebius
 
@@ -359,13 +360,13 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 
 | ID | Metric | Target | Status |
 |---|---|---|---|
-| SM-1 | Cost reduction vs all-teacher, steady state | ≥ 70% | Not checked |
-| SM-2 | Audited precision of student-served answers | ≥ 95% | Not checked |
-| SM-3 | Student share of traffic, steady state | ≥ 80% | Not checked |
-| SM-4 | Bad deploys reaching 100% traffic | 0 | Not checked |
-| SM-5 | Time to recover from drift (escalations back to baseline) | ≤ 3 nights | Not checked |
+| SM-1 | Cost reduction vs all-teacher, steady state | ≥ 70% | Met in simulation (seed 7) |
+| SM-2 | Audited precision of student-served answers | ≥ 95% | Met in simulation (seed 7) |
+| SM-3 | Student share of traffic, steady state | ≥ 80% | Met in simulation (seed 7) |
+| SM-4 | Bad deploys reaching 100% traffic | 0 | Met in simulation (seed 7) |
+| SM-5 | Time to recover from drift (escalations back to baseline) | ≤ 3 nights | Not met (simulation: 4 nights, seed 7) |
 
-`Not checked` means no test computes the metric yet. The simulation results below are a single run, not a check.
+`ratchet/kpis.py` computes each metric from the ledger (FR-7.9): live at `GET /ratchet/kpis`, and on the reference simulation below in `tests/test_system.py`, which backs these statuses (`test_reference_simulation_meets_success_metrics`; SM-5 has a strict expected failure, `test_sm5_drift_recovery_within_three_nights`, which starts passing when the target is met). "Steady state" is the last three days with traffic (`RATCHET_KPI_WINDOW_DAYS`). These are simulation results from mock models, not real model quality; no live run has been measured yet.
 
 **Simulation results (mock models, not real model quality):** with seed 7, 2,000 tickets a day over 10 days, a product launch on day 5, and a corrupted deploy of v3:
 
@@ -374,6 +375,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 - Audited precision ranged from 92% to 100%.
 - The corrupted v3 was rolled back at 41.2% audited precision.
 - Drift raised escalations to 14% on day 5; they were back to 2% by day 9.
+- Success metrics over days 8 to 10 (`ratchet/kpis.py`): savings 84.5% (SM-1), audited precision 98.5% pooled over 585 audits, Wilson 97.1–99.2% (SM-2), student share 96.9% (SM-3), and no bad deploy at 100% traffic (SM-4: the corrupted v3 was rolled back as a 10% canary). Drift recovery took 4 nights, from day 5 to day 9 (SM-5, target 3).
 - Across four other seeds, the final student share was 98% and final savings 85–87%.
 
 ### 8.2 Hackathon

@@ -123,6 +123,78 @@
       "gpu_hours_savings_pct": "number|null",
       "break_even_student_requests_per_gpu_hour": "number|null",
       "recommendation": "string"
+    },
+    "kpis": {
+      "mode": "string",
+      "simulated": "bool",
+      "window_days": "number",
+      "window": {
+        "from": "number|null",
+        "to": "number|null",
+        "days": "number",
+        "complete": "bool"
+      },
+      "metrics": {
+        "SM-1": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-2": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-3": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-4": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-5": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "NFR-1": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        }
+      },
+      "summary": {
+        "met": "number",
+        "not_met": "number",
+        "unknown": "number"
+      }
     }
   }
 }

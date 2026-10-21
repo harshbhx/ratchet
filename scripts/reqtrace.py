@@ -11,8 +11,8 @@ Sources of truth:
 - This file: CODE (where each requirement is implemented), EXEMPT (checked by hand or only live)
   and KNOWN_GAPS (done but untested when this check landed; it may only shrink).
 
-Standard library only. Parsing is AST and regex; only the CODE, route and env checks import the
-package. It is not called trace.py because that would shadow the standard library module.
+Standard library only. Parsing is AST and regex; only the CODE, route, env and metric-target checks import
+the package. It is not called trace.py because that would shadow the standard library module.
 """
 
 from __future__ import annotations
@@ -22,12 +22,14 @@ import ast
 import contextlib
 import dataclasses
 import importlib
+import math
 import os
 import re
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # `python scripts/reqtrace.py` puts scripts/, not the repo, on the path
@@ -676,6 +678,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-7.6": ("web/src/styles/globals.css", "web/src/components/layout/site-header.tsx"),
     "FR-7.7": ("ratchet.ledger:Ledger.stats_by_task", "web/src/pages/dashboard/tables.tsx"),
     "FR-7.8": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_reset", "web/src/pages/dashboard/controls.tsx"),
+    "FR-7.9": ("ratchet.kpis:report", "ratchet.gateway:kpi", "ratchet.gateway:stats", "ratchet.ledger:Ledger.kpi_days"),
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
@@ -799,7 +802,7 @@ CODE: dict[str, tuple[str, ...]] = {
     ),
     "FR-15.4": ("ratchet.cost:_recommend", "ratchet.cost:_explain"),
     # 7 Non-functional
-    "NFR-1": ("ratchet.router:Ratchet._sample",),
+    "NFR-1": ("ratchet.router:Ratchet._sample", "ratchet.kpis:student_latency", "ratchet.ledger:Ledger.latency_quantile"),
     "NFR-2": (
         "ratchet.router:Ratchet.handle",
         "ratchet.router:Ratchet._teacher_complete",
@@ -823,6 +826,12 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-9": ("ratchet.bom:manifest", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
+    # 8.1 Success metrics (ratchet/kpis.py; their targets are checked against the PRD by rule_metric_targets)
+    "SM-1": ("ratchet.kpis:cost_reduction", "ratchet.ledger:Ledger.failed_cost"),
+    "SM-2": ("ratchet.kpis:audited_precision", "ratchet.ledger:Ledger.audit_totals"),
+    "SM-3": ("ratchet.kpis:student_share",),
+    "SM-4": ("ratchet.kpis:bad_deploys", "ratchet.ledger:Ledger.events_of"),
+    "SM-5": ("ratchet.kpis:drift_recovery", "ratchet.kpis:drift_episodes", "ratchet.kpis:escalation_rates"),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),
@@ -1273,6 +1282,63 @@ def rule_test_counts(ctx: Context) -> list[str]:
     return errors
 
 
+# A Target cell of PRD §8.1: an optional comparison, a number, and an optional unit ("≥ 70%", "0", "≤ 3 nights").
+_TARGET = re.compile(r"(≥|≤|<|>|=)?\s*(\d+(?:\.\d+)?)\s*(%|\w+)?")
+_TARGET_OPS = {"≥": ">=", "≤": "<=", "<": "<", ">": ">", "=": "==", None: "=="}
+
+
+def parse_target(text: str) -> tuple[str, float, str] | None:
+    """(op, value, unit) of a PRD target cell, a percentage as a fraction ("≥ 70%" -> (">=", 0.7, "fraction")); None when
+    it does not read as one."""
+    m = _TARGET.fullmatch(text.strip())
+    if m is None:
+        return None
+    op, number, unit = m.groups()
+    value = float(number)
+    if unit == "%":
+        return _TARGET_OPS[op], value / 100, "fraction"
+    return _TARGET_OPS[op], value, unit or ""
+
+
+def metric_targets() -> Mapping[str, Any]:
+    """`ratchet.kpis.SM_TARGETS`: {SM id: target with `op`, `value` and `unit`}. A seam, so tests can swap the table."""
+    return _import("ratchet.kpis").SM_TARGETS
+
+
+def _same_unit(prd_unit: str, code_unit: str) -> bool:
+    """A PRD percentage is a code `fraction`; a bare PRD number ("0") takes any count unit; a named one must match."""
+    if (prd_unit == "fraction") != (code_unit == "fraction"):
+        return False
+    return prd_unit in ("", "fraction") or prd_unit == code_unit
+
+
+def rule_metric_targets(ctx: Context) -> list[str]:
+    """(j) Every SM row's Target matches `ratchet.kpis.SM_TARGETS` (comparison, number and unit), and each has an entry."""
+    try:
+        targets = metric_targets()
+    except Exception as e:  # noqa: BLE001 - a broken import is a finding, not a crash
+        return [f"cannot import ratchet.kpis: {type(e).__name__}: {e}"]
+    errors = []
+    metrics = [r for r in ctx.unique() if r.kind == "SM"]
+    for r in metrics:
+        cell = r.text.rsplit(": ", 1)[-1]
+        want, have = parse_target(cell), targets.get(r.id)
+        if have is None:
+            errors.append(f"{r.id}: no entry in ratchet.kpis.SM_TARGETS; add its target ({cell!r})")
+        elif want is None:
+            errors.append(f"{r.id}: the PRD target {cell!r} does not read as a comparison and a number")
+        else:
+            op, value, unit = want
+            same = op == have.op and math.isclose(value, have.value, abs_tol=1e-12) and _same_unit(unit, have.unit)
+            if not same:
+                errors.append(
+                    f"{r.id}: the PRD target {cell!r} differs from ratchet.kpis.SM_TARGETS ({have.op} {have.value:g} {have.unit})"
+                )
+    for rid in sorted(set(targets) - {r.id for r in metrics}):
+        errors.append(f"ratchet.kpis.SM_TARGETS lists {rid}, which is not a metric in {PRD}")
+    return errors
+
+
 CORE_RULES: tuple[Callable[[Context], list[str]], ...] = (
     rule_ids_and_statuses,
     rule_coverage,
@@ -1287,6 +1353,7 @@ DOC_RULES: tuple[Callable[[Context], list[str]], ...] = (
     rule_routes_documented,
     rule_env_documented,
     rule_test_counts,
+    rule_metric_targets,
 )
 RULES = CORE_RULES + (rule_generated,) + DOC_RULES
 

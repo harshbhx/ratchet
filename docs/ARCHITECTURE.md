@@ -50,6 +50,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/openai_compat.py` | `validate_chat_request()` (typed `ChatRequest`), `normalize_messages()`, `APIError` and OpenAI's error envelope; standard library only |
 | `ratchet/bom.py` | Per-adapter bill of materials: `manifest()`, `document()`, Ed25519 `Signer`, `verify()`, CLI (`keygen`, `verify`) |
 | `ratchet/cost.py` | Utilization-aware cost accounting ([§7](#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)): `cost_report()` (savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover, a recommendation), interval merging (`segments`), the simulator's compute (`record_simulated_day`), CLI (`report`, `endpoint up\|down`, `close`) |
+| `ratchet/kpis.py` | Success metrics ([§7](#success-metrics-kpispy), [ADR 0083](adr/0083-success-metrics-from-the-ledger.md)): PRD §8.1's SM-1 to SM-5 and NFR-1's latency target from ledger rows (`report`, one pure function per metric, `SM_TARGETS`), for `GET /ratchet/kpis`, the `kpis` block of `/ratchet/stats` and the simulator |
 | `ratchet/nightschool/dataset.py` | Builds train and golden sets from the ledger |
 | `ratchet/nightschool/train.py` | LoRA fine-tune script, run inside the Serverless Job |
 | `ratchet/nightschool/evaluate.py` | `cascade_eval()` and `LiveEvaluator`: golden-set precision, coverage and threshold |
@@ -377,7 +378,7 @@ New tables, so older files gain them on open ([ADR 0080](adr/0080-storage-opt-ou
 | `example_clients` | `hash` (`examples.hash`), `client` (API key name); primary key (hash, client) | Other clients whose requests matched a stored example; `examples.client` holds the first and is never listed here (`Ledger.example_clients(hash)` returns all of them) |
 | `no_train` | `end_user_hash` (primary key), `ts`, `client` (the key name the hash is scoped to; NULL for keyless requests; `*` for an admin's registration for every client), `admin` (the admin's name when an admin registered it) | End users whose requests are never stored (`POST /v1/ratchet/no-train`). A row an admin made can only be removed by an admin |
 | `erasure_items` | `erasure_id`, `hash`, `task`, `split`; primary key (erasure, hash) | The examples each erasure purged: hashes, never text (FR-13.3) |
-| `daily_rollup` | `day`, `task`, `client`, `route`, `store_opt_out` and the sums of the request rows folded by retention: `requests`, `student_served`, `teacher_served`, `escalated`, `cost`, `baseline`, `teacher_cost`, `student_cost`, `split_unknown`, `split_unknown_cost`, `sampled`, `avoided`, the student tokens, `served_with_tokens`, `audited`, `audit_agree_sum`, `audit_n`, `wall_ms_sum`, `latency_n`, `stored_sum`, `stored_n`, `folded_ts`; indexed by `day` | Request rows older than `RATCHET_REQUEST_RETENTION_DAYS` (FR-13.4). A fold may leave several rows per key; readers sum them. No end user is kept |
+| `daily_rollup` | `day`, `task`, `client`, `route`, `store_opt_out` and the sums of the request rows folded by retention: `requests`, `student_served`, `teacher_served`, `escalated`, `cost`, `baseline`, `teacher_cost`, `student_cost`, `split_unknown`, `split_unknown_cost`, `sampled`, `avoided`, the student tokens, `served_with_tokens`, `audited`, `audit_agree_sum`, `audit_n`, `wall_ms_sum`, `latency_n`, `stored_sum`, `stored_n`, `answered` and `answered_escalated` (requests the student judged, and of those the ones it escalated: SM-5), `folded_ts`; indexed by `day` | Request rows older than `RATCHET_REQUEST_RETENTION_DAYS` (FR-13.4). A fold may leave several rows per key; readers sum them. No end user is kept |
 
 Indexes for retention and erasure: `requests(ts)`, `examples(last_seen_ts)`, `examples(client)`, `examples(end_user)` and `example_clients(client)`.
 
@@ -535,6 +536,23 @@ idle hours        = endpoint hours on days when no request reached the student
 The recommendation (`_recommend`): `self_host` when observed ≥ break-even and ≥ the crossover; otherwise `scale_to_zero` when more than half the endpoint hours were idle; `insufficient_data` with no recorded uptime or no student answer yet; `hosted_fallback` when observed is below the crossover; else `scale_to_zero` (below break-even with a hosted fallback that costs more, so the endpoint has to run fewer hours). The `explanation` gives the numbers. `RATCHET_STUDENT_COST_MODEL` picks the `headline` view. Idle time is counted in whole ledger days, so idle hours inside a busy day are not counted. `GET /ratchet/cost`, the `cost` block of `/ratchet/stats` and `python -m ratchet.cost report` serve it ([API.md](API.md#cost)).
 
 Worked example with unverified list prices: an L40S at $1.55 per hour and about $0.001 of Ultra spend avoided per ticket-triage answer (the simulation) give a break-even of about 1,500 student answers per endpoint hour, roughly 36,000 a day. A 24/7 endpoint at the demo's 1,500 requests a day loses money; the report says `hosted_fallback`.
+
+### Success metrics (`kpis.py`)
+
+PRD §8.1's metrics come from the same ledger the cost report reads, by the same code in the simulator, the mock demo and a live gateway ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). `kpis.report(ledger, window_days, min_audits, mode)` reads per-day sums (`Ledger.kpi_days`, folded request rows included), the window's pooled audits (`audit_totals`), failed requests' spend (`failed_cost`, from the `failures` table when the ledger has one), the median latency of student-served requests (`latency_quantile`, nearest rank) and the release events (`events_of`), then applies one pure function per metric:
+
+```
+window  = the last RATCHET_KPI_WINDOW_DAYS ledger days with requests
+SM-1    = 1 − (Σ cost + failed cost) / Σ baseline                  over the window, per token
+SM-2    = Σ agree / Σ audits, 95% Wilson interval                  over the window; met on the point estimate, n ≥ min audits
+SM-3    = Σ student-served / Σ requests                            over the window
+SM-4    = versions that reached 100% and were later alerted on or rolled back
+SM-5    = longest drift episode in nights; rate(d) = escalated among judged / judged, days with ≥ 50 judged
+          start: rate(d) ≥ min(rate of the 3 measured days before) + 0.05; end: first later day ≤ that baseline + 0.02
+NFR-1   = median latency of the window's student-served requests (wall_ms when recorded, else latency_ms) < 1,000 ms
+```
+
+Each metric is `{name, value, target, op, unit, met, detail}`, `met` `null` while the data cannot say. `SM_TARGETS` holds the targets; `scripts/reqtrace.py` checks them against the PRD table. `GET /ratchet/kpis`, the `kpis` block of `/ratchet/stats` and `python -m sim.simulate` serve it ([API.md](API.md#get-ratchetkpisdaysn)).
 
 ## 8. Provenance
 

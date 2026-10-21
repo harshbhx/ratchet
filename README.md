@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 857 tests
+pytest -q                                                                # 874 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -85,6 +85,18 @@ day  student  escal. audit ok     $/1k all-Ultra  saved
   9      98%      2%      97%    0.162     1.093    85%     <- learned overnight
  10      98%      2%      99%    0.147     1.093    87%
 ```
+
+Success metrics for that run (PRD §8.1, computed by `ratchet/kpis.py` over the last three days; simulation, mock models, not real model quality):
+
+| Metric | Target | Simulation (seed 7) |
+|---|---|---|
+| SM-1 cost reduction vs all-teacher | ≥ 70% | 84.5%, met |
+| SM-2 audited precision (585 audits pooled) | ≥ 95% | 98.5%, met (Wilson 97.1–99.2%) |
+| SM-3 student share | ≥ 80% | 96.9%, met |
+| SM-4 bad deploys reaching 100% traffic | 0 | 0, met (v3 rolled back at 10%) |
+| SM-5 time to recover from drift | ≤ 3 nights | 4 nights, **not met** |
+
+`GET /ratchet/kpis` computes the same metrics from a live ledger, and `python -m sim.simulate` prints them. No live run has been measured yet.
 
 `--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 96% of research calls on day 8 (85% saved that day, 63% over all 8 days), and 98% of mixed calls (86% saved that day, 54% overall). See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed).
 

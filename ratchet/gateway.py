@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from . import __version__, live, privacy, tasks, taskspec
+from . import __version__, kpis, live, privacy, tasks, taskspec
 from . import bom as bomdoc
 from .auth import KeyLimits, KeyRing, bearer, parse_key_limits
 from .config import Settings
@@ -132,6 +132,7 @@ class Runtime:
         s = self.settings
         self.cost_policy = s.cost_policy()  # a bad RATCHET_STUDENT_COST_MODEL or GPU rate stops startup here (ADR 0023)
         self.retention = s.retention()  # a bad retention window or RATCHET_ERASURE_SHARED stops startup here (ADR 0081)
+        self.kpi_window = s.kpi_window()  # a bad RATCHET_KPI_WINDOW_DAYS stops startup here (FR-7.9)
         if s.mode == "mock":
             from sim.mock_models import MockFleet, MockTeacher
             from sim.world import make_stream
@@ -1036,7 +1037,27 @@ def stats() -> dict[str, Any]:
             "bom_key_id": rt.signer.key_id if rt.signer else None,
         },
         "cost": stats_block(cost_report(led, rt.settings)),
+        # PRD §8.1's success metrics over the last RATCHET_KPI_WINDOW_DAYS days with traffic, as GET /ratchet/kpis has them.
+        "kpis": _kpi_report(),
     }
+
+
+def _kpi_report(days: int | None = None) -> dict[str, Any]:
+    """The success metrics (ratchet/kpis.py) of the gateway's ledger, over `days` or RATCHET_KPI_WINDOW_DAYS. The audits
+    SM-2 needs are the release gate's own minimum (RATCHET_MIN_AUDITS)."""
+    window = rt.kpi_window if days is None else days
+    return kpis.report(rt.ledger, window, rt.gate.policy.min_audits, rt.settings.mode)
+
+
+@app.get("/ratchet/kpis")
+def kpi(days: int | None = None) -> dict[str, Any]:
+    """PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, each with its value, target, whether it is
+    met (None when there is not enough data yet) and the counts behind it, computed from the ledger as in the simulator.
+    SM-1 to SM-3 and NFR-1 use the last `days` ledger days with traffic (default RATCHET_KPI_WINDOW_DAYS). Public, like
+    /ratchet/stats; `simulated` is true in mock mode, where every number comes from mock models."""
+    if days is not None and not (1 <= days <= kpis.MAX_WINDOW_DAYS):
+        raise HTTPException(400, f"days must be 1 to {kpis.MAX_WINDOW_DAYS}")
+    return _kpi_report(days)
 
 
 @app.get("/ratchet/bom")

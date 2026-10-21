@@ -193,6 +193,14 @@ Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py
 
 The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mode demo](#mock-mode-demo)).
 
+## Success metrics
+
+Read in `ratchet/config.py` (`Settings.kpi_window()`); used by `ratchet/kpis.py` through `GET /ratchet/kpis`, the `kpis` block of `/ratchet/stats` and the simulator ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). SM-2 needs the release gate's `RATCHET_MIN_AUDITS` audits in the window before it reports met or not met.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_KPI_WINDOW_DAYS` | `3` | The steady state the success metrics describe: SM-1 to SM-3 and NFR-1 cover the last this many ledger days with traffic (days without requests are skipped). A whole number from 1 to 3,650; anything else stops startup with `ValueError` naming the variable. `GET /ratchet/kpis?days=N` overrides it for one report |
+
 ## Release policy (`ratchet/release.py`)
 
 `ReleasePolicy` defaults. In live mode (gateway and `ratchet.live`) each field can be overridden with the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode ignores them and uses `min_audits=15`.
