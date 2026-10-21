@@ -214,6 +214,7 @@ class Runtime:
             clock=self.clock,
             on_adapter_missing=reload,
             fallback_teacher=fallback_teacher,
+            tasks_lock=self.tasks_lock,  # auto tasks (ADR 0042) and admin writes never interleave
         )
         self.gate = ReleaseGate(self.ledger, policy)
         self.gate_lock = threading.Lock()
@@ -620,17 +621,21 @@ async def chat(
 def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONResponse | StreamingResponse:
     req = validate_chat_request(parse_body(raw), rt.limits)
     messages, flags = normalize_messages(req.messages, rt.modalities, rt.settings.merge_system)
-    try:  # the header wins over metadata.ratchet_task; refused before the quota, so a refusal costs nothing
-        task = rt.ratchet.task_for(header_task or req.task, client)
+    params = GenParams.from_request(req)
+    # The header wins over metadata.ratchet_task, and either over a response_format schema's auto task (ADR 0042);
+    # refused before the quota, so a refusal costs nothing.
+    try:
+        task = rt.ratchet.task_for(header_task or req.task, client, params)
     except tasks.UnknownTask as e:  # RATCHET_UNKNOWN_TASKS=reject; or teacher/reject and a header that is not a task name
-        raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", None if header_task else "metadata.ratchet_task") from e
+        param = None if header_task else "metadata.ratchet_task" if req.task else "response_format"
+        raise APIError(400, str(e), INVALID_REQUEST, "unknown_task", param) from e
     except tasks.TaskForbidden as e:  # the task's `clients` do not name this key (threat model T12)
         raise APIError(403, "task not allowed for this key", "permission_error", "task_not_allowed") from e
     headers = _quota(client)
     # A part only the teacher reads (RATCHET_TEACHER_MODALITIES): no student, nothing stored, as for a pinned task.
     serve = rt.ratchet.teacher_only if flags.multimodal else rt.ratchet.handle
     try:  # each model call gets the parameters its role allows (GenPolicy, ADR 0017); n choices (FR-1.14)
-        r = serve(messages, task, client=client, params=GenParams.from_request(req), n=req.n)
+        r = serve(messages, task, client=client, params=params, n=req.n)
     except KeyError as e:
         if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
             raise
@@ -649,6 +654,8 @@ def _complete(raw: bytes, header_task: str | None, client: str | None) -> JSONRe
         "latency_ms": r.latency_ms,
         "usage_breakdown": r.usage_breakdown,
         "degraded": r.degraded,  # "teacher_unavailable" when the student's below-threshold answer stood in (ADR 0019)
+        "task": r.task,  # the task the request was resolved to: named, an auto task from its schema, or default
+        "schema_valid": r.schema_valid,  # every choice meets the response_format; null without one (ADR 0042)
     }
     # `usage` is the served answer's, as if its model had answered alone; Ratchet's overhead is in the breakdown and in
     # cost_usd (FR-1.12, docs/API.md#usage).
@@ -945,13 +952,14 @@ def _put_result(task: tasks.Task, changed: bool, created: bool) -> dict[str, Any
 
 @app.delete("/ratchet/tasks/{name}")
 def delete_task(name: str, admin: str = Depends(_admin)) -> dict[str, Any]:
-    """Remove an API task. Its stored examples stay, for provenance; requests that name it then get the unknown-task
-    policy (RATCHET_UNKNOWN_TASKS)."""
+    """Remove an API task or an auto task. Its stored examples stay, for provenance; requests that name it then get the
+    unknown-task policy (RATCHET_UNKNOWN_TASKS), and a request with a response_format schema registers its auto task
+    again, from that request's schema (ADR 0042)."""
     with rt.tasks_lock:
         current = tasks.lookup(name)
         if current is None:
             raise HTTPException(404, f"no registered task is named {name!r}")
-        if current.source != "api":
+        if current.source not in ("api", "auto"):
             raise _not_yours(current)
         tasks.unregister(name)
         try:

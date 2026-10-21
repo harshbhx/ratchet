@@ -75,7 +75,14 @@ CHAT = "/v1/chat/completions"
 TEACHER_URL = "https://teacher.test/v1/chat/completions?token=do-not-log"
 TEACHER_BASE = "https://teacher.test/v1"
 TEACHER_KEY = "tf-teacher-api-key"
-NO_ERRORS = {"student_errors": 0, "audit_errors": 0, "shadow_errors": 0, "degraded_answers": 0, "fallback_answers": 0}
+NO_ERRORS = {
+    "student_errors": 0,
+    "audit_errors": 0,
+    "shadow_errors": 0,
+    "degraded_answers": 0,
+    "fallback_answers": 0,
+    "repair_errors": 0,
+}
 HI = [{"role": "user", "content": "hi"}]
 KEY = "resilience-test-key-0123456789abcdef"
 OK_BODY = {"model": "m", "choices": [{"message": {"content": "hi"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
