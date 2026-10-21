@@ -69,7 +69,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 919 tests
+pytest -q                                                                # 973 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -102,6 +102,7 @@ export RATCHET_STUDENT_BASE=https://<endpoint>/v1
 RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000   # point your app at http://<host>:8000/v1
 python -m ratchet.live night                                # nightly (cron)
 python -m ratchet.live tick                                 # every few minutes (cron)
+python -m ratchet.live seal                                 # hourly (cron): seal the savings receipts of days that ended
 ```
 
 Use it from any OpenAI SDK:
@@ -180,12 +181,23 @@ curl -s "localhost:8000/ratchet/replay/frontier?target=0.97"               # thr
 python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # the same from a simulated run (simulation)
 ```
 
+## Savings you can check
+
+Ratchet is priced on savings, so the savings must be checkable by the customer, not just reported. Each day gets a **savings receipt** for the gateway and one per API client ([ADR 0029](docs/adr/0029-verified-savings-receipts.md)). The baseline of an answer the student served is calibrated on the audited answers' real teacher bills (a ratio estimator with a confidence bound), so a wrong reasoning-token assumption is measured and corrected, and the fee is a share of the one-sided 95% **lower bound** of the savings. Each receipt is an RFC 9162 Merkle tree over the day's request metadata (no text), signed and chained to the client's previous one: any request id a client got in `X-Ratchet-Request-Id` can be proven to be in it, and an edit after sealing shows. Receipts cannot prove the costs written at request time; reconcile them with the Token Factory bill.
+
+```bash
+curl -s localhost:8000/ratchet/receipts/3 > r3.json                            # one day's receipt (your own, with an API key)
+curl -s localhost:8000/ratchet/receipts/3/proof/3006 > p.json                  # a row id you saw (ratchet.row_id) is in it
+python -m ratchet.receipt verify r3.json --public-key <yours> --proof p.json  # OK: signature, OK: proof
+python -m sim.simulate --receipts --teacher-reasoning-mean 420                 # the bound next to the true cost (simulation)
+```
+
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
 
 - **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default; names and addresses are not covered yet ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md)).
-- **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, and cost and savings per client: the basis for per-customer receipts.
+- **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, cost and savings per client, and each client's own signed savings receipts ([above](#savings-you-can-check)).
 - **Streaming** (`stream: true`) in the OpenAI chunk format, so streaming clients work unchanged.
 - **Signed bill of materials per adapter** ([ADR 0010](docs/adr/0010-signed-adapter-bom.md)): teachers, licenses, dataset and golden-set hashes, the evaluation and, since v0.5, a set commitment per split ([above](#proving-what-an-adapter-was-trained-on)), written at training time; in live mode a copy goes into the adapter's folder in the bucket.
 
@@ -231,6 +243,7 @@ ratchet/auth.py         gateway API keys (named, per-key quota in gateway.py)
 ratchet/bom.py          per-adapter bill of materials, Ed25519 signing, `python -m ratchet.bom`
 ratchet/proof.py        committed training sets: membership and held-out proofs, `python -m ratchet.proof`
 ratchet/replay.py       ledger replay: past traffic at another threshold or audit rate, `python -m ratchet.replay`
+ratchet/receipts.py     verified savings receipts: calibrated baseline, lower-bound billing, `python -m ratchet.receipt`
 ratchet/nightschool/    dataset build, LoRA training (Unsloth), golden eval, nightly orchestration
 ratchet/live.py         live Night School on Nebius (job -> hot-load adapter -> eval -> gate)
 ratchet/scout/          Scout agents, prompts, Tavily/mock search, budget guard, CLI

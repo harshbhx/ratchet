@@ -68,6 +68,9 @@ write_files:
       # 30 2 * * * ratchet cd /opt/ratchet/deploy/vm && docker compose exec -T ratchet python -m ratchet.live night >> /var/log/ratchet/night.log 2>&1
       # Release gate every 5 minutes (the gateway also ticks on every request).
       # */5 * * * * ratchet cd /opt/ratchet/deploy/vm && docker compose exec -T ratchet python -m ratchet.live tick >> /var/log/ratchet/tick.log 2>&1
+      # Savings receipts, hourly: a ledger day starts at the first request's time of day, not 00:00 UTC (live mode;
+      # needs no CLI, only the ledger; nothing due writes nothing; the gateway also seals on request).
+      # 20 * * * * ratchet cd /opt/ratchet/deploy/vm && docker compose exec -T ratchet python -m ratchet.live seal >> /var/log/ratchet/seal.log 2>&1
 
   - path: /etc/logrotate.d/ratchet
     permissions: "0644"

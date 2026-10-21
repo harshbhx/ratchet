@@ -37,6 +37,10 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/ratchet/replay` | both | Replay one version's logged traffic at another threshold or audit rate: coverage, precision, cost, and the calibrated baseline ([Ledger replay](#ledger-replay)) |
 | GET | `/ratchet/replay/frontier` | both | One version's cost-precision frontier over thresholds 0.30 to 1.00, an advisory suggested threshold and the money the current one leaves on the table |
 | POST | `/ratchet/cost/endpoint` | both | Record the student endpoint going up or down (admin key) |
+| GET | `/ratchet/receipts` | both | The sealed savings receipts a caller may read, by day ([Savings receipts](#savings-receipts)) |
+| GET | `/ratchet/receipts/{period}` | both | One day's signed savings receipt: the gateway's, or a client's (`?client=`; an API key gets its own) |
+| GET | `/ratchet/receipts/{period}/proof/{request_id}` | both | That a request (`X-Ratchet-Request-Id`) is in its day's receipt: its leaf and RFC 9162 audit path |
+| GET | `/ratchet/receipts/{period}/leaves` | both | A receipt's leaves as JSON lines, to recompute it offline |
 | GET | `/ratchet/tasks` | both | Every registered task with its spec, source, spec hash and traffic ([Tasks](#tasks)) |
 | GET | `/ratchet/tasks/{name}` | both | One registered task |
 | POST | `/ratchet/tasks/validate` | both | Check a task spec or a tasks file without changing anything (admin key) |
@@ -69,6 +73,7 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
 - `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
 - **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)); the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` ([Committed training sets](#committed-training-sets)), which would otherwise tell anyone whether a text they can guess was trained on; and they may register or remove a no-train end user for any client ([End users and storage](#end-users-and-storage)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
+- **Savings receipts** (`/ratchet/receipts*`, [Savings receipts](#savings-receipts)): with API keys on, a key reads only its own receipts and proofs; an admin key reads every receipt; any other caller is **401**. In mock mode without keys they are open; in live mode without any keys they are **403** (`receipts need RATCHET_API_KEYS or RATCHET_ADMIN_KEYS in live mode`), because their leaves list every request's time, task and cost.
 - Pages, `/healthz`, the other `/ratchet/*` routes (reads included: `GET /ratchet/tasks`) and Scout stay public. The read-only `/ratchet/stats` and `/ratchet/bom` are what the dashboard reads; the mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
 The demo VM's Caddy config also has an opt-in edge guard for `/v1/*` and `/ratchet/demo/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
@@ -221,7 +226,8 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
     "degraded": null,
     "stored": false,
     "store_opt_out": null,
-    "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79"
+    "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
+    "row_id": 4512
   }
 }
 ```
@@ -239,6 +245,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `stored` | `true` when a teacher answer of this request was stored as a training example, or matched one already stored (its repeat count went up); `false` otherwise, including every student answer that was not audited |
 | `store_opt_out` | `null`, or why this request's teacher answers could not be stored: `global` (`RATCHET_STORE_EXAMPLES=0`), `task` (a no-store task), `key` (the API key has `store=0`), `request` (`store: false`, `X-Ratchet-Store` or `metadata.ratchet_store`) or `end_user` (a no-train end user) ([End users and storage](#end-users-and-storage)) |
 | `request_id` | The request's id, `req_` and 32 hex digits; the response's `id` is `chatcmpl-` and the same digits. It is logged with the request's row (never its text) and names the request in [`POST /v1/ratchet/feedback`](#feedback) |
+| `row_id` | The request's row in the ledger (also the `X-Ratchet-Request-Id` header): what its day's savings receipt proves it by (`GET /ratchet/receipts/{day}/proof/{request_id}`, [Savings receipts](#savings-receipts)). Row ids are global and sequential, unlike `request_id`, which is random: feedback names a request by `request_id`, a receipt proof by `row_id` |
 | `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call; every choice, for `n` > 1), `audit`, `shadow` (the candidate's samples) and `arbitration` ([Usage](#usage)) |
 
 A request that sent `metadata` gets it back as a top-level `metadata` field, as OpenAI echoes it (in a stream, on the chunk that carries the `ratchet` block). It is never stored.
@@ -251,7 +258,7 @@ A request that sent `metadata` gets it back as a top-level `metadata` field, as 
 
 `finish_reason` is the served answer's: `stop`, `length` (cut off by `max_tokens` or a cap, or over the client's `max_tokens` with the reasoning headroom) or `content_filter`; any other value an upstream model reports is returned as `stop`. It is never `tool_calls`, because `message.tool_calls` is not returned yet ([Generation parameters](#generation-parameters)). A student answer is always one that ended by itself.
 
-Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
+Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Request-Id` (the ledger row, as `ratchet.row_id`), `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set.
 
 #### Usage
 
@@ -1061,6 +1068,99 @@ The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-
 - `money_left_on_table`: `{threshold, current_threshold, savings, usd}`, what serving at the suggested threshold would have saved over the current one, when the suggestion is lower; null otherwise (above, the suggestion says the current threshold is not supported at the target by this approximate interval).
 
 `python -m ratchet.replay --db PATH [--version V] [--sweep 0.3:0.95:0.05] [--audit-rate A] [--target 0.97] [--since-day D] [--until-day D] [--json]` prints the frontier report as one table per version (labelled as simulation when the simulator wrote the ledger); exit 2 on bad input. `python -m sim.simulate --db PATH` keeps a simulated run's ledger in a new file for it.
+
+## Savings receipts
+
+Verified savings receipts ([ADR 0029](adr/0029-verified-savings-receipts.md), FR-15.5): for each ledger day, one receipt for the whole gateway and one per API client, sealed once the day is over and never changed (invariant 17). A receipt states what the day cost and saved, with the all-teacher baseline of the answers the student served **calibrated on audited teacher bills** and a one-sided 95% lower bound, and bills only on that bound. It is an RFC 9162 Merkle tree over each request's metadata (never request text; the client by its key's name), signed with the BOM key (`/ratchet/bom/public-key`) and chained to the same client's previous receipt. Every amount is whole nano-USD (1e-9 USD); numbers that are not whole are decimal strings, so the signed JSON has no floats. Who may read what is under [Authentication](#authentication). In the mock demo the numbers are simulation output and say so (`label`).
+
+A day is sealed when it is over and someone asks: the mock demo after each simulated night, any of these endpoints (lazily, every unsealed day up to the one asked for, oldest first), `python -m ratchet.live seal` from cron ([RUNBOOK](RUNBOOK.md#savings-receipts)) or `python -m ratchet.receipt seal --db`. On a live ledger a day is over 5 minutes after it ended. A day that has not ended is **409**; a day on which the client sent no request (nobody did, for the gateway's receipt) is **404**; a `period` outside 0 to 10,000,000 is **400**.
+
+### GET `/ratchet/receipts`
+
+```json
+{"receipts": [{"period": 1, "global": true, "clients": ["acme"]}, {"period": 2, "global": true, "clients": ["acme", "globex"]}],
+ "sealed_through": 2, "public_key": "YLHq1TAo…", "key_id": "9d2479f21890a44f", "label": "live traffic"}
+```
+
+Every sealed receipt the caller may read, by day, after sealing every day that has ended: an admin (or the open mock demo) sees the gateway's (`global`) and every client's; an API key sees only its own (`global: false`). `sealed_through` is the last day that has ended; `public_key` is null when receipts are unsigned.
+
+### GET `/ratchet/receipts/{period}?client=`
+
+The signed document of day `period`: the gateway's, or `client`'s for an admin; an API key always gets its own (`?client=` naming another client is **403**). An example from the mock demo with `RATCHET_MOCK_TEACHER_REASONING_MEAN=420`, after four simulated days (simulation, mock models; shortened):
+
+```json
+{
+  "manifest": {
+    "schema": "ratchet.receipt/v1", "generator": "ratchet 0.4.0", "created_at": "2026-10-21T11:39:44Z",
+    "label": "simulation (mock models)", "period": {"day": 3}, "client": null,
+    "first_id": 3001, "last_id": 4500, "n": 1500,
+    "merkle": {"alg": "rfc9162-sha256", "root": "efd10ccd…", "size": 1500, "leaf_keys": ["id", "ts_ms", "…"]},
+    "totals": {"requests": 1500, "teacher_served": 29, "student_served": 1471, "unverified": 0, "audits": 147,
+               "cost_nusd": 297406120, "student_cost_nusd": 40212120, "teacher_cost_nusd": 257194000,
+               "baseline_recorded_nusd": 1703467000, "baseline_measured_nusd": 33954000,
+               "baseline_calibrated_nusd": 2267342206, "missing_amounts": 0},
+    "calibration": {"method": "ratio estimator (Cochran, …) per task over audited student answers, weighted 1/label_p; …",
+                    "min_audits": 30, "z": "1.645",
+                    "tasks": {"ticket-triage": {"status": "ok", "n_served": 1471, "n_audits": 147, "n_eff": "147.0",
+                                                "cost_nusd": 262666960, "recorded_nusd": 1669513000, "x_total_nusd": 1606891000,
+                                                "ratio": "1.389882", "ratio_se": "0.029841",
+                                                "point_nusd": 2233388206, "se_nusd": 45502963}}},
+    "savings": {"recorded_nusd": 1406060880, "calibrated_nusd": 1969936086, "stand_in_loss_nusd": 0,
+                "billable_nusd": 1969936086, "margin_nusd": 74852375, "billable_lo_nusd": 1895083711, "spend_nusd": 0, "net_billable_lo_nusd": 1895083711},
+    "billing": {"share": "0.25", "fee_nusd": 473770927, "basis": "one-sided 95% lower bound",
+                "billable": {"requests": 1500, "baseline_nusd": 2267342206, "cost_nusd": 297406120, "tasks": ["ticket-triage"]}},
+    "cost_views": {"billed": "per_token",
+                   "gpu_hours": {"total_nusd": 37743255111, "endpoint_seconds": 86400, "savings_calibrated_nusd": -35475912905,
+                                 "basis": "informational: billing uses the per-token view", "…": "…"},
+                   "gpu_hours_note": null},
+    "prev_sha256": "6c073996…",
+    "units": "amounts in nano-USD (1e-9 USD); numbers that are not whole are decimal strings",
+    "scope": "edits after sealing are detectable, …; costs written at request time are not verified: reconcile …"
+  },
+  "sha256": "64008e19…",
+  "signature": {"alg": "Ed25519", "key_id": "9d2479f21890a44f", "public_key": "YLHq1TAo…", "value": "uNVs30b5…"}
+}
+```
+
+- Requests are **measured** (the primary teacher answered: its bill is the baseline), **served** (the student served on the audit design) or **unverified** (a stand-in answer: route `degraded` or `fallback_teacher`, outside the audit design; counted at its recorded baseline, never billed, though what it lost counts: below). `totals.teacher_served` counts the measured ones.
+- `calibration.tasks`: per task with served answers, the ratio `R` of the audited answers' teacher bills to the token formula's estimates (weights 1 / `label_p`), the point estimate of the served answers' all-teacher cost (`point_nusd` = R × `x_total_nusd`) and its standard error (`se_nusd`, Cochran's variance with the finite population correction; normal approximation). `insufficient_audits` below `min_audits` (`RATCHET_RECEIPT_MIN_AUDITS`) and `unlogged` (a served answer written before the formula estimate was logged) have none and are not billed.
+- `totals.baseline_calibrated_nusd` = measured bills + each calibrated task's point + the recorded baseline of every other request. `savings.recorded_nusd` is the formula's savings, as `/ratchet/stats` reports them; `calibrated_nusd` uses the calibrated baseline.
+- `billing.billable`: the measured requests and the served answers of the calibrated tasks. `savings.stand_in_loss_nusd` (0 or less) = Σ min(0, baseline − cost) over the unverified requests: a stand-in's gain is never billed, but its loss (a fallback teacher's answer after the student's samples were paid for) counts against the bill, like a measured request's. `savings.billable_nusd` = the billable baseline − the billable cost + `stand_in_loss_nusd`, and `billable_lo_nusd` = that − `margin_nusd` (⌈1.645 √Σ se²⌉); `net_billable_lo_nusd` subtracts the day's spend outside requests (`spend_nusd`; a client's share by request count). `billing.fee_nusd` = ⌊`share` × max(0, net)⌋. With no calibrated task, `basis` is `formula` and the fee 0.
+- `cost_views.gpu_hours` (the gateway's receipt only; `gpu_hours_note` says why a client's has none): the day's cost by GPU-hours paid (ADR 0023), informational.
+- `prev_sha256`: the `sha256` of the same client's previous receipt (64 zeros for its first).
+
+### GET `/ratchet/receipts/{period}/proof/{request_id}?client=`
+
+```json
+{"period": 3, "client": null, "request_id": 3006,
+ "leaf": {"id": 3006, "ts_ms": 1792582781950, "day": 3, "task": "ticket-triage", "client": null, "served_by": "student",
+          "route": "student", "student_version": 1, "escalated": 0, "audited": 0, "label_p_ppb": 100000000,
+          "cost_nusd": 27240, "student_cost_nusd": 27240, "teacher_cost_nusd": 0,
+          "baseline_nusd": 1093000, "baseline_est_nusd": 1093000},
+ "index": 5, "size": 1500, "path": ["273c76f7…", "… 11 hashes"], "root": "efd10ccd…", "alg": "rfc9162-sha256",
+ "receipt_sha256": "64008e19…"}
+```
+
+The leaf (exactly the receipt's `leaf_keys`) and its RFC 9162 audit path, deepest sibling first, against the root and size the receipt signs. A request of another day or client is **404**. The gateway rebuilds the tree from the ledger and serves a proof only when it rebuilds the signed root; rows changed after sealing get **500** and one `integrity` event per day and client ([RUNBOOK](RUNBOOK.md#savings-receipts)).
+
+### GET `/ratchet/receipts/{period}/leaves?client=`
+
+The receipt's leaves as JSON lines (`application/x-ndjson`), in tree order: anyone holding them can rebuild the root and recompute every total, estimate and the fee. Same checks and errors as the proof.
+
+### Checking a receipt offline
+
+```bash
+curl -s localhost:8000/ratchet/bom/public-key                                    # publish this once
+curl -s localhost:8000/ratchet/receipts/3 > r3.json; curl -s localhost:8000/ratchet/receipts/2 > r2.json
+curl -s localhost:8000/ratchet/receipts/3/proof/3006 > p.json; curl -s localhost:8000/ratchet/receipts/3/leaves > leaves.jsonl
+python -m ratchet.receipt verify r3.json --public-key <key> --prev r2.json --proof p.json --rows leaves.jsonl
+# OK: signature valid (Ed25519, key 9d2479f21890a44f, trusted key)
+# OK: chain: prev_sha256 is the sha256 of day 2's receipt
+# OK: proof: request 3006 is leaf 5 of 1500 in the signed tree
+# OK: rows: 1500 leaves rebuild the signed root, and every total, estimate and the fee follow
+```
+
+Exit 0 when every check passes, 1 when one fails (an edited digit fails the hash), 2 on bad input. `--rows` recomputes amounts that come from the estimator within 2 nano-USD and the decimal strings within 1e-5 (relative), so another implementation's floating point may differ slightly. `python -m ratchet.receipt seal --db PATH [--period N [--client NAME]]` seals a ledger file offline (a simulator's ledger from `python -m sim.simulate --db`: every day it logged) and prints the receipt asked for. A receipt cannot prove the costs written at request time: reconcile `totals.teacher_cost_nusd` over the days with the Token Factory bill for the same API key.
 
 ---
 

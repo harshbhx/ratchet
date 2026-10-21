@@ -79,7 +79,7 @@ Exit criteria: two design partners running v0.5 on one task each; zero bad deplo
 ## Milestone 3: v1.0 Ratchet Cloud (Q1–Q2 2027)
 
 - Managed, multi-tenant service on Nebius.
-- Savings-based billing from ledger receipts.
+- Savings-based billing from ledger receipts (the receipts themselves: done in v0.5, [ADR 0029](adr/0029-verified-savings-receipts.md); invoicing from them: planned).
 - Region choice: EU and India.
 - Alerts (email, Slack), audit exports, SSO.
 - One-click migration path for OpenAI fine-tuning users (before or soon after Jan 6, 2027).

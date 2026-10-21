@@ -5,6 +5,7 @@
     python -m sim.simulate --bad-deploy-version 3 --compare-release   # Wilson vs the anytime-valid gate, same seed
     python -m sim.simulate --calibration ltt --paired-gate   # certified thresholds and the paired gate (ADR 0026)
     python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # replay the run's ledger (ADR 0028)
+    python -m sim.simulate --receipts --teacher-reasoning-mean 420   # savings receipts vs the true cost (ADR 0029)
 
 Prints a day-by-day table and writes results JSON (for the dashboard). Uses mock models:
 the numbers show how the loop behaves, not real model quality. Live mode gives real numbers.
@@ -14,24 +15,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
 
+from ratchet import receipts
 from ratchet.certificate import CALIBRATIONS
-from ratchet.config import Settings
+from ratchet.config import MAX_MOCK_REASONING_TOKENS, Settings
 from ratchet.cost import cost_report, record_simulated_day
 from ratchet.ledger import Ledger
 from ratchet.nightschool.orchestrate import run_night
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
 
-from .mock_models import MockFleet, MockTeacher
+from .mock_models import DEFAULT_REASONING_CV, MockFleet, MockTeacher
 from .world import WORKLOADS, make_stream, night_task
 
 # The canary rules --release picks (ADR 0025): today's Wilson bound, or the anytime-valid e-process.
 RELEASE_RULES = ("wilson", "sequential")
 _SUBJECT = re.compile(r"^v(\d+)\b")  # gate events name their version first ('v3 rolled back: ...')
+SIMULATION = "simulation (mock models)"
 
 
 def build(args: argparse.Namespace, db: str = ":memory:"):
@@ -56,7 +60,12 @@ def build(args: argparse.Namespace, db: str = ":memory:"):
         cert_target=cert.target,
         cert_delta=cert.delta,
     )
-    ratchet = Ratchet(settings, ledger, MockTeacher(settings.teacher_reasoning_tokens), fleet.resolve, seed=args.seed)
+    # --teacher-reasoning-mean: the mock teacher's billed reasoning varies around that mean (FR-15.5), so the formula's
+    # 300-token assumption is off and the receipts measure by how much; unset, it bills exactly the assumption.
+    mean = getattr(args, "teacher_reasoning_mean", None)
+    cv = getattr(args, "teacher_reasoning_cv", DEFAULT_REASONING_CV) if mean is not None else 0.0
+    teacher = MockTeacher(settings.teacher_reasoning_tokens, reasoning_mean=mean, reasoning_cv=cv)
+    ratchet = Ratchet(settings, ledger, teacher, fleet.resolve, seed=args.seed)
     policy = ReleasePolicy(
         min_shadow=args.min_shadow,
         min_audits=args.min_audits,
@@ -85,18 +94,63 @@ def rollbacks(ledger: Ledger, served: dict[int, int]) -> list[dict[str, Any]]:
     return out
 
 
+def receipt_day(ledger: Ledger, day: int, truth: dict[int, int]) -> dict[str, Any] | None:
+    """One day's sealed gateway receipt next to the truth (simulation): the calibrated baseline, the billable set's
+    baseline and its one-sided 95% lower bound, and the true all-teacher cost of the same requests (`truth`: request id
+    -> nano-USD, from asking the mock teacher about every request, kept in memory only). `held` says whether the bound
+    was at or below the truth."""
+    doc = ledger.receipt(day)
+    if doc is None:
+        return None
+    m = doc["manifest"]
+    tasks = m["calibration"]["tasks"]
+    bill = m["billing"]["billable"]
+    leaves = [receipts.leaf(r) for r in ledger.period_rows(day)]
+    true_billable = sum(truth.get(lf["id"], 0) for lf in leaves if receipts.billable(lf, tasks))
+    lower = bill["baseline_nusd"] - m["savings"]["margin_nusd"]
+    usd = receipts.NANO
+    return {
+        "day": day,
+        "ratio": {t: c["ratio"] for t, c in tasks.items()},
+        "status": {t: c["status"] for t, c in tasks.items()},
+        "audits": m["totals"]["audits"],
+        "baseline_recorded_usd": m["totals"]["baseline_recorded_nusd"] / usd,
+        "baseline_calibrated_usd": m["totals"]["baseline_calibrated_nusd"] / usd,
+        "true_baseline_usd": sum(truth.get(lf["id"], 0) for lf in leaves) / usd,
+        "billable_baseline_usd": bill["baseline_nusd"] / usd,
+        "billable_baseline_lo_usd": lower / usd,
+        "true_billable_baseline_usd": true_billable / usd,
+        "held": lower <= true_billable,
+        "billable_lo_usd": m["savings"]["billable_lo_nusd"] / usd,
+        "fee_usd": m["billing"]["fee_nusd"] / usd,
+        "basis": m["billing"]["basis"],
+        "receipt_sha256": doc["sha256"],
+    }
+
+
 def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
     settings, ledger, fleet, ratchet, gate = build(args, db)
     policy = settings.cost_policy()  # GPU rates and the simulated endpoint's hours a day (RATCHET_MOCK_ENDPOINT_HOURS)
     workload = getattr(args, "workload", "tickets")
     stream = make_stream(workload, seed=args.seed, drift_day=args.drift_day)
+    # --receipts: seal each day's savings receipt after its night (FR-15.5), and keep each request's true all-teacher
+    # cost in memory (the mock teacher asked about every request; never stored, no random draw), to show whether the
+    # receipts' lower bound held. Sealing reads the ledger and writes receipts only, so no other number moves.
+    sealing = bool(getattr(args, "receipts", False))
+    seal_config = receipts.SealConfig.from_settings(settings, None, SIMULATION) if sealing else None
+    price = settings.price(settings.teacher_model)
+    receipt_days = []
     nights = []
     for day in range(1, args.days + 1):
         ledger.day = day
         ticks = max(1, args.requests // 10)
+        truth: dict[int, int] = {}
         for i in range(args.requests):
             t = stream.sample(day)
-            ratchet.handle(t.messages(), t.task)
+            res = ratchet.handle(t.messages(), t.task)
+            if sealing and res.request_id is not None:
+                c = ratchet.teacher.complete(t.messages(), settings.teacher_model)[0]
+                truth[res.request_id] = receipts.nusd(price.cost(c.in_tokens, c.out_tokens)) or 0
             if (i + 1) % ticks == 0:
                 gate.tick()
         rep = run_night(
@@ -114,9 +168,14 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         trained = ledger.version(rep.version) if rep.trained and rep.version is not None else None
         record_simulated_day(ledger, policy, day, trained)
         nights.append({"night": day, "trained": rep.trained, "version": rep.version, "admitted": rep.admitted, "eval": rep.eval})
+        if seal_config is not None:  # the day is over: no request comes for it after its night
+            receipts.seal_due(ledger, seal_config, through=day, closed=day)
+            summary = receipt_day(ledger, day, truth)
+            if summary is not None:
+                receipt_days.append(summary)
     served = ledger.served_counts()
     rolled = rollbacks(ledger, served)
-    return {
+    res = {
         "days": ledger.stats_by_day(),
         "nights": nights,
         "versions": [v.__dict__ for v in ledger.versions()],
@@ -130,6 +189,9 @@ def run(args: argparse.Namespace, db: str = ":memory:") -> dict:
         "rollbacks": rolled,
         "served": served,
     }
+    if sealing:  # each day's receipt next to the true all-teacher cost (simulation, mock models); only with --receipts
+        res["receipts"] = receipt_days
+    return res
 
 
 def compare_release(args: argparse.Namespace) -> dict[str, dict]:
@@ -193,8 +255,31 @@ def table(res: dict) -> str:
                 f"  v{vid}: {c['served'] - c['errors']}/{c['served']} served answers agree at threshold {c['threshold']:g}; "
                 f"lower bound {c['lcb']:.1%} vs {c['target'] * 100:.3g}% (delta {c['delta']:g}, {c['calibration']}): {verdict}"
             )
+    if res.get("receipts"):  # each day's savings receipt next to the truth (ADR 0029), labelled as simulation
+        lines.append("\n" + receipt_table(res["receipts"]))
     lines.append("\nevents:")
     lines += [f"  day {e['day']}: [{e['kind']}] {e['detail']}" for e in res["events"]]
+    return "\n".join(lines)
+
+
+def receipt_table(days: list[dict[str, Any]]) -> str:
+    """The receipts' calibrated baseline and the lower bound billed on, next to the true all-teacher cost (simulation)."""
+    lines = [
+        "savings receipts (simulation, mock models): the billable baseline's one-sided 95% lower bound vs the true cost",
+        f"{'day':>3} {'R by task':<34} {'recorded':>9} {'calibrated':>10} {'true':>9} {'billable lo':>11} "
+        f"{'true bill.':>10} {'held':>4} {'fee':>8}",
+    ]
+    for d in days:
+        ratio = ", ".join(f"{t}={r}" if r is not None else f"{t}=-" for t, r in d["ratio"].items()) or "-"
+        if len(ratio) > 34:
+            ratio = ratio[:31] + "..."
+        lines.append(
+            f"{d['day']:>3} {ratio:<34} {d['baseline_recorded_usd']:>9.4f} {d['baseline_calibrated_usd']:>10.4f} "
+            f"{d['true_baseline_usd']:>9.4f} {d['billable_baseline_lo_usd']:>11.4f} {d['true_billable_baseline_usd']:>10.4f} "
+            f"{'yes' if d['held'] else 'NO':>4} {d['fee_usd']:>8.4f}"
+        )
+    held = sum(1 for d in days if d["held"])
+    lines.append(f"the lower bound held on {held} of {len(days)} days (USD; a one-sided 95% bound misses about 1 day in 20)")
     return "\n".join(lines)
 
 
@@ -257,6 +342,23 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run twice with the same seed, once per --release rule, and compare the rolled-back versions",
     )
+    ap.add_argument(
+        "--receipts",
+        action="store_true",
+        help="seal each day's savings receipt and print it next to the true all-teacher cost (ADR 0029)",
+    )
+    ap.add_argument(
+        "--teacher-reasoning-mean",
+        type=float,
+        default=None,
+        help="the mock teacher bills this many reasoning tokens on average instead of exactly 300 (e.g. 420)",
+    )
+    ap.add_argument(
+        "--teacher-reasoning-cv",
+        type=float,
+        default=DEFAULT_REASONING_CV,
+        help=f"with --teacher-reasoning-mean: the spread (coefficient of variation, default {DEFAULT_REASONING_CV})",
+    )
     ap.add_argument("--out", default="sim_results.json")
     ap.add_argument(
         "--db",
@@ -280,6 +382,11 @@ def main(argv: list[str] | None = None) -> None:
             ap.error(f"{flag} must be strictly between 0 and 1, not {value}")
     if not 0 <= args.min_certified <= 1:
         ap.error(f"--min-certified must be from 0 to 1, not {args.min_certified}")
+    mean = args.teacher_reasoning_mean
+    if mean is not None and not (math.isfinite(mean) and 0 < mean <= MAX_MOCK_REASONING_TOKENS):
+        ap.error(f"--teacher-reasoning-mean must be more than 0 and at most {MAX_MOCK_REASONING_TOKENS:,}, not {mean}")
+    if not (math.isfinite(args.teacher_reasoning_cv) and 0 <= args.teacher_reasoning_cv <= 3):
+        ap.error(f"--teacher-reasoning-cv must be from 0 to 3, not {args.teacher_reasoning_cv}")
     if args.db is not None:
         if args.compare_release:
             ap.error("--db holds one run's ledger; it cannot be used with --compare-release (two runs)")

@@ -98,13 +98,45 @@ def _pinned_answer(messages: list[dict[str, Any]]) -> str | None:
     return None
 
 
+# The spread of the mock teacher's reasoning tokens when a mean is set (the gateway's RATCHET_MOCK_TEACHER_REASONING_MEAN,
+# the simulator's --teacher-reasoning-mean): a coefficient of variation, so receipts have real variance to bound.
+DEFAULT_REASONING_CV = 0.3
+
+
 class MockTeacher:
     """Plays Nemotron 3 Ultra: always right on labels, slow, reasoning tokens billed. Like Token Factory, it reports them
-    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`."""
+    in `completion_tokens_details.reasoning_tokens` (`Completion.reasoning_tokens`), included in `out_tokens`.
 
-    def __init__(self, reasoning_tokens: int = 300, latency_ms: float = 2400.0):
+    By default it bills exactly `reasoning_tokens` (300, the router's formula assumption), so a formula baseline is
+    right to the token. With `reasoning_mean` set it bills round(mean * exp(cv * z - cv^2 / 2)) instead, z a standard
+    normal drawn from the request alone (`_rng('reasoning', ...)`, no shared random state), so the same request always
+    costs the same and the mean is `reasoning_mean`: the gap between the formula and the bills that savings receipts
+    measure and correct (FR-15.5, simulation)."""
+
+    def __init__(
+        self,
+        reasoning_tokens: int = 300,
+        latency_ms: float = 2400.0,
+        *,
+        reasoning_mean: float | None = None,
+        reasoning_cv: float = 0.0,
+    ):
+        if reasoning_mean is not None and not (math.isfinite(reasoning_mean) and reasoning_mean > 0):
+            raise ValueError(f"reasoning_mean must be a positive number of tokens, not {reasoning_mean!r}")
+        if not (math.isfinite(reasoning_cv) and reasoning_cv >= 0):
+            raise ValueError(f"reasoning_cv must be 0 or more, not {reasoning_cv!r}")
         self.reasoning_tokens = reasoning_tokens
         self.latency_ms = latency_ms
+        self.reasoning_mean = reasoning_mean
+        self.reasoning_cv = reasoning_cv
+
+    def reasoning(self, messages: list[dict[str, Any]]) -> int:
+        """The reasoning tokens billed for this request."""
+        if self.reasoning_mean is None:
+            return self.reasoning_tokens
+        cv = self.reasoning_cv
+        z = _rng("reasoning", json.dumps(messages, sort_keys=True, ensure_ascii=False)).gauss(0.0, 1.0) if cv else 0.0
+        return max(0, round(self.reasoning_mean * math.exp(cv * z - cv * cv / 2)))
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         text = _pinned_answer(messages)
@@ -112,15 +144,16 @@ class MockTeacher:
             item = lookup(messages)
             text = item.answer(item.labels)
         text, finish = _generate(text, params)
+        reasoning = self.reasoning(messages)
         return [
             Completion(
                 text=text,
                 model=model,
                 in_tokens=approx_tokens(json.dumps(messages)),
-                out_tokens=approx_tokens(text) + self.reasoning_tokens,
+                out_tokens=approx_tokens(text) + reasoning,
                 latency_ms=self.latency_ms,
                 finish_reason=finish,
-                reasoning_tokens=self.reasoning_tokens,
+                reasoning_tokens=reasoning,
             )
         ] * n
 

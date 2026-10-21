@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import sqlite3
 import threading
 import time
@@ -12,9 +13,9 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, RecordingRun, _version
+from fakes import OPEN_TEACHER, FakeOpenAIServer, RecordingProvider, RecordingRun, _request, _version
 
-from ratchet import live, tasks
+from ratchet import live, receipts, tasks
 from ratchet.config import Settings
 from ratchet.ledger import DAY_SECONDS, Ledger
 from ratchet.nightschool import dataset
@@ -1313,9 +1314,6 @@ def test_committed_leaves_and_sealed_receipts_are_append_only():
 RESERVED_ENV = {
     "RATCHET_TEACHER_PROBES": "5",
     "RATCHET_ADJUDICATE_MAX": "7",
-    "RATCHET_TAKE_RATE": "0.3",
-    "RATCHET_RECEIPT_MIN_AUDITS": "40",
-    "RATCHET_MOCK_TEACHER_REASONING_MEAN": "420",
     "RATCHET_BATCH_API": "openai",
     "RATCHET_BATCH_DISCOUNT": "0.4",
     "RATCHET_BACKFILL_MAX_TOKENS": "1024",
@@ -1332,24 +1330,23 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
     for env in RESERVED_ENV:
         monkeypatch.delenv(env, raising=False)
     Settings().check_reserved()
-    for env, value in {"RATCHET_TAKE_RATE": "0.250", "RATCHET_BATCH_API": " Operations ", "RATCHET_DB_SYNC": "full"}.items():
+    for env, value in {"RATCHET_BATCH_DISCOUNT": "0.50", "RATCHET_BATCH_API": " Operations ", "RATCHET_DB_SYNC": "full"}.items():
         monkeypatch.setenv(env, value)
-    monkeypatch.setenv("RATCHET_MOCK_TEACHER_REASONING_MEAN", "")  # empty: unset
     Settings().check_reserved()
     for env, value in RESERVED_ENV.items():
         monkeypatch.setenv(env, value)
         with pytest.raises(ValueError, match=env):
             Settings().check_reserved()
         monkeypatch.delenv(env)
-    monkeypatch.setenv("RATCHET_TAKE_RATE", "0.3")
-    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE.*verified savings receipts"):
+    monkeypatch.setenv("RATCHET_BATCH_API", "openai")
+    with pytest.raises(ValueError, match="RATCHET_BATCH_API.*clean-room backfill"):
         Ratchet(Settings(), Ledger(":memory:"), FakeTeacher(), lambda v: (BrokenStudent(), ""))
     monkeypatch.setenv("RATCHET_DB", str(tmp_path / "never.db"))
-    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE"):
+    with pytest.raises(ValueError, match="RATCHET_BATCH_API"):
         live.main(["tick"])
     assert not (tmp_path / "never.db").exists()  # refused before the ledger was opened
-    monkeypatch.setenv("RATCHET_TAKE_RATE", "lots")
-    with pytest.raises(ValueError, match="RATCHET_TAKE_RATE must be a number"):
+    monkeypatch.setenv("RATCHET_BATCH_DISCOUNT", "lots")
+    with pytest.raises(ValueError, match="RATCHET_BATCH_DISCOUNT must be a number"):
         Settings()
 
 
@@ -1599,3 +1596,177 @@ def test_replay_current_threshold_is_the_one_the_router_uses(gw_env, tmp_path, m
     c = TestClient(gw.app)
     assert c.get("/ratchet/replay").json()["current_threshold"] == 0.7
     assert c.get("/ratchet/replay/frontier").json()["current_threshold"] == 0.7
+
+
+# ---------- savings receipts (FR-15.5, ADR 0029): review fixes ----------
+def _two_receipt_days() -> tuple[Ledger, list[dict], dict]:
+    """A ledger with two sealed days of served, audited and escalated answers: (ledger, day 2's leaves, the inclusion
+    proof of day 2's first request)."""
+    led = Ledger(":memory:")
+    for day in (1, 2):
+        led.day = day
+        for i in range(60):
+            _request(led, audited=int(i % 3 == 0), baseline_cost_usd=0.0013 if i % 3 == 0 else 0.001)
+        _request(led, served_by="teacher", cost_usd=0.0011)
+    led.day = 3
+    receipts.seal_due(led, receipts.SealConfig(min_audits=5))
+    leaves = [receipts.leaf(r) for r in led.period_rows(2)]
+    index, path = receipts.proof_for([lf["id"] for lf in leaves], receipts.tree(leaves), leaves[0]["id"])
+    return led, leaves, {"leaf": leaves[0], "index": index, "path": path}
+
+
+@pytest.mark.req("FR-15.5")
+@pytest.mark.parametrize(
+    "where, section, value",
+    [
+        ("receipt", "period", "2"),
+        ("receipt", "period", 5),
+        ("receipt", "period", [1]),
+        ("receipt", "period", {"day": True}),
+        ("receipt", "merkle", [1]),
+        ("previous", "period", "2"),
+        ("previous", "period", 5.0),
+        ("previous", "merkle", "x"),
+    ],
+)
+def test_receipt_verifiers_never_raise_on_nested_junk(tmp_path, capsys, where, section, value):
+    """A receipt (or the previous one) whose `period` is a string, a number or a list made `verify_chain` and
+    `verify_proof` raise AttributeError, and `python -m ratchet.receipt verify` print a traceback instead of exiting 1.
+    Every verifier now answers FAIL, and the CLI exits 1."""
+    led, leaves, proof = _two_receipt_days()
+    doc, prev = led.receipt(2), led.receipt(1)
+    assert receipts.verify_chain(doc, prev)[0] and receipts.verify_proof(doc, proof)[0]  # intact, both pass
+    if where == "receipt":
+        doc = json.loads(json.dumps(doc))
+        doc["manifest"][section] = value
+        assert not receipts.verify_proof(doc, proof)[0]
+        assert not receipts.verify_rows(doc, leaves)[0] and receipts.recheck(doc, leaves)
+        assert receipts.check_manifest(doc) and not receipts.verify_receipt(doc)[0]
+    else:
+        prev = json.loads(json.dumps(prev))
+        prev["manifest"][section] = value
+    if section == "period" or where == "previous":  # a junk merkle section on the receipt leaves its chain intact
+        assert not receipts.verify_chain(doc, prev)[0]
+    assert not receipts.verify_chain(prev, doc)[0]  # the wrong way round
+    paths = {}
+    for name, obj in (("r", doc), ("p", prev), ("x", proof)):
+        paths[name] = tmp_path / f"{name}.json"
+        paths[name].write_text(json.dumps(obj))
+    rows = tmp_path / "leaves.jsonl"
+    rows.write_text("\n".join(json.dumps(lf) for lf in leaves))
+    argv = ["verify", str(paths["r"]), "--prev", str(paths["p"]), "--proof", str(paths["x"]), "--rows", str(rows)]
+    assert receipts.main(argv) == 1 and "FAIL" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-15.5")
+def test_receipt_verifiers_never_raise_on_seeded_nested_mutations():
+    """Up to three fields anywhere in a receipt, the previous receipt, a proof or the leaves replaced by junk of another
+    type (or removed): every verifier returns a result, none raises (seeded; 72 raises in 2,000 trials before the fix)."""
+    led, leaves, proof = _two_receipt_days()
+    doc, prev = led.receipt(2), led.receipt(1)
+    junk = [None, "2", 5, -1, 2**70, 1.5, True, [], [1], {}, {"day": "x"}]
+    rng = random.Random(29)
+
+    def paths(obj, pre=()):
+        yield pre
+        children = obj.items() if isinstance(obj, dict) else enumerate(obj[:3]) if isinstance(obj, list) else ()
+        for k, v in children:
+            yield from paths(v, (*pre, k))
+
+    def mutate(obj):
+        obj = json.loads(json.dumps(obj))
+        where = [p for p in paths(obj) if p]
+        for _ in range(rng.randint(1, 3)):
+            *parents, last = rng.choice(where)
+            cur = obj
+            try:
+                for k in parents:
+                    cur = cur[k]
+                if isinstance(cur, dict) and rng.random() < 0.15:
+                    del cur[last]
+                else:
+                    cur[last] = json.loads(json.dumps(rng.choice(junk)))
+            except (KeyError, IndexError, TypeError):
+                pass
+        return obj
+
+    for _ in range(300):
+        which = rng.choice(("doc", "prev", "proof", "leaves", "all"))
+        d = mutate(doc) if which in ("doc", "all") else doc
+        p = mutate(prev) if which in ("prev", "all") else prev
+        x = mutate(proof) if which in ("proof", "all") else proof
+        lv = mutate(leaves) if which in ("leaves", "all") else leaves
+        receipts.verify_receipt(d)
+        receipts.verify_chain(d, p)
+        receipts.verify_chain(p, d)
+        receipts.verify_proof(d, x)
+        receipts.verify_rows(d, lv)
+        receipts.check_manifest(d)
+        receipts.recheck(d, lv)
+
+
+@pytest.mark.req("FR-15.5")
+def test_a_stand_in_that_loses_money_lowers_the_fee():
+    """A fallback teacher's answer after the student answered costs the student's samples and the fallback's bill
+    against the primary teacher's price on the same tokens: with teachers priced alike, it loses about the student's cost.
+    Leaving stand-ins out of the billable set dropped that loss, so the fee could exceed the share of the true billable
+    savings. Their losses now count (`stand_in_loss_nusd`); their gains still never do."""
+    led = Ledger(":memory:")
+    rng = random.Random(7)
+    for _ in range(300):
+        audited = rng.random() < 0.3
+        x = rng.uniform(0.0008, 0.0012)
+        _request(led, audited=int(audited), baseline_cost_usd=1.3 * x if audited else x, baseline_est_usd=x, label_p=0.3)
+    plain = receipts.compute([receipts.leaf(r) for r in led.period_rows(0)], min_audits=30)
+    assert plain["savings"]["stand_in_loss_nusd"] == 0 and plain["billing"]["fee_nusd"] > 0
+    # a loss: $0.0002 of student samples, then the fallback teacher's $0.001 against a $0.001 baseline
+    _request(led, served_by="teacher", route="fallback_teacher", cost_usd=0.0012, baseline_cost_usd=0.001, label_p=1.0)
+    # gains, never billed: a cheaper fallback teacher, and a degraded answer
+    _request(led, served_by="teacher", route="fallback_teacher", cost_usd=0.0001, baseline_cost_usd=0.009)
+    _request(led, route="degraded", escalated=1, label_p=1.0, baseline_est_usd=0.005, baseline_cost_usd=0.005)
+    out = receipts.compute([receipts.leaf(r) for r in led.period_rows(0)], min_audits=30)
+    sav, bill = out["savings"], out["billing"]
+    assert sav["stand_in_loss_nusd"] == -200_000 and out["totals"]["unverified"] == 3
+    assert bill["billable"] == plain["billing"]["billable"]  # still outside the billable set
+    assert sav["billable_nusd"] == plain["savings"]["billable_nusd"] - 200_000
+    assert sav["net_billable_lo_nusd"] == plain["savings"]["net_billable_lo_nusd"] - 200_000
+    assert bill["fee_nusd"] == sav["net_billable_lo_nusd"] // 4 < plain["billing"]["fee_nusd"]
+    led.day += 1  # the day is over: its sealed receipt rechecks from the leaves, the loss included
+    doc = receipts.seal(led, 0, config=receipts.SealConfig(min_audits=30))
+    assert doc["manifest"]["savings"] == sav and doc["manifest"]["billing"] == bill
+    assert receipts.recheck(doc, [receipts.leaf(r) for r in led.period_rows(0)]) == []
+
+
+@pytest.mark.req("FR-15.5")
+def test_mock_reasoning_mean_out_of_range_stops_live_startup_too(gw_env, tmp_path, monkeypatch):
+    """CONFIGURATION.md says a RATCHET_MOCK_TEACHER_REASONING_MEAN outside (0, 100,000] stops startup; it was checked in
+    mock mode only, so a live gateway and `python -m ratchet.live` started with -5 or 1e9 as if it were unset."""
+    gw = gw_env()
+    settings = Settings(
+        mode="live",
+        db_path=str(tmp_path / "live.db"),
+        teacher_base="https://tokenfactory.test/v1",
+        teacher_api_key="tf-key",
+        teacher_model=OPEN_TEACHER,
+        student_base="",
+        admin_keys="",
+        api_keys="",
+        tasks_file="",
+        bom_signing_key="",
+        tavily_api_key="",
+        mock_warmup_days=0,
+        mock_teacher_reasoning_mean=-5.0,
+    )
+    with pytest.raises(ValueError, match="RATCHET_MOCK_TEACHER_REASONING_MEAN must be more than 0"):
+        gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("ok").transport})
+    assert not (tmp_path / "live.db").exists()  # refused before the ledger is opened
+    for name in list(os.environ):
+        if name.startswith("RATCHET_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("RATCHET_DB", str(tmp_path / "live.db"))
+    monkeypatch.setenv("RATCHET_MOCK_TEACHER_REASONING_MEAN", "1e9")
+    with pytest.raises(ValueError, match="RATCHET_MOCK_TEACHER_REASONING_MEAN must be more than 0"):
+        live.main(["seal"])
+    assert not (tmp_path / "live.db").exists()
+    monkeypatch.setenv("RATCHET_MOCK_TEACHER_REASONING_MEAN", "420")  # in range: accepted, and nothing reads it
+    live.main(["seal"])
