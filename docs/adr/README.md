@@ -31,5 +31,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0040](0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate, and per-task alerts | Accepted | 2026-10-20 |
 | [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
 | [0054](0054-free-text-similarity-and-a-judge-gate.md) | Free-text tasks: a similarity comparator, per-task sample counts and a judge gate; long-form stays pinned | Accepted | 2026-10-21 |
+| [0055](0055-sql-tasks-compared-by-execution.md) | Text-to-SQL tasks compared by what their queries return, in a sandboxed in-memory SQLite fixture | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

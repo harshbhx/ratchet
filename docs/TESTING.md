@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 774 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world), ~85 s
+pytest -q                     # 800 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_sqlcheck), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -16,7 +16,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | File | Tests |
 |---|---|
 | `tests/test_core.py` | 52 (30 functions; one has 19 cases, one has 5) |
-| `tests/test_tasks.py` | 98 (44 functions; one has 36 cases, one has 20) |
+| `tests/test_tasks.py` | 99 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
 | `tests/test_nightschool.py` | 18 (14 functions; one has 5 cases) |
 | `tests/test_release.py` | 25 (17 functions; one has 8 cases, one has 2) |
@@ -33,11 +33,12 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 18 |
-| **Total** | **774** |
+| `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
+| **Total** | **800** |
 
 There are three layers:
 
-1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_calibration.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
+1. **Unit tests** (`tests/test_core.py`, `tests/test_tasks.py`, `tests/test_nightschool.py`, `tests/test_release.py`, `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_calibration.py`, `tests/test_sqlcheck.py`): the pure logic of each module (the exact statistics and the Merkle trees against hand-computed values, brute force and seeded Monte Carlo), and every Night School and release-gate rule tested directly against a small ledger with recording fakes (`tests/fakes.py`).
 2. **System tests** (`tests/test_system.py`, `tests/test_resilience.py`, `tests/test_scout.py`, `tests/test_openai_compat.py`, `tests/test_live.py`, `tests/test_cost.py`, `tests/test_mock_world.py`): the whole loop over simulated days, the gateway API (including OpenAI request validation and the real OpenAI SDK in-process), the HTTP clients, Scout end to end, and the live-mode and operational entry points run offline ([Live-path tests](#live-path-tests)). One of them pins the reference simulation exactly ([below](#the-pinned-reference-simulation)).
 3. **Simulation** (`sim/`): a reproducible offline world with a mock teacher, mock students that learn, synthetic traffic, drift and fault injection. It is used for demos, and to find design bugs before spending on GPUs.
 
@@ -112,7 +113,7 @@ Field comparators and task specs (FR-2.14, [ADR 0021](adr/0021-field-comparators
 | `test_empty_json_is_invalid_when_fields_required` | `{}` is invalid for `ticket-triage` (score 0), but still valid for a `compare_keys` task, as in v0.4 |
 | `test_out_of_vocab_label_invalid` | INV-16: `check` reasons (`invalid field category`, `invalid field priority`, `invalid answer`, `empty answer`); every answer the mock world writes is valid |
 | `test_nullable_field_accepts_null` | Required, nullable and optional fields and how null and missing agree |
-| `test_bad_specs_fail_when_defined` (36 cases) | Reserved and unknown types, a similarity field's `metric`, `threshold` and `max_len_ratio` out of range, similarity options on another type, similarity inside records or as a set element, bad paths, options on the wrong type (`values`, `tolerance`, `abs_tol`, `mode`, `k`, `min_jaccard`, `day_first`), duplicate labels, an alias that is a label of the vocabulary or names two labels, tolerances on set elements, record keys, the value, field and format limits, `compare_keys` with `.` or `$`, policy keys and ranges, `tools` |
+| `test_bad_specs_fail_when_defined` (37 cases) | Reserved and unknown types, the `sql` format without its options, a similarity field's `metric`, `threshold` and `max_len_ratio` out of range, similarity options on another type, similarity inside records or as a set element, bad paths, options on the wrong type (`values`, `tolerance`, `abs_tol`, `mode`, `k`, `min_jaccard`, `day_first`), duplicate labels, an alias that is a label of the vocabulary or names two labels, tolerances on set elements, record keys, the value, field and format limits, `compare_keys` with `.` or `$`, policy keys and ranges, `tools` |
 | `test_records_nest_at_most_four_deep_and_hold_at_most_200` | Depth 4 allowed and 5 refused; 200 records valid and 201 invalid; the 200 count across nesting |
 | `test_spec_hash_covers_the_rules_not_the_name` | Same rules, same hash, whatever the name or source; a vocabulary or `pinned` changes it; `dataclasses.replace` recomputes it, also on a `compare_keys` task; `policy` is read-only |
 | `test_legacy_compare_keys_canonical_byte_identical` | FR-2.6: a `compare_keys` task's `canonical` and `agree` equal v0.4's on 25 answers with fences, `<think>`, nulls, `1` vs `1.0`, nested values, NaN and deep nesting |
@@ -147,7 +148,7 @@ The task registry (FR-2.15, [ADR 0022](adr/0022-task-registry.md)): specs from `
 | `test_tasks_file_in_yaml` | The same in YAML (skipped without PyYAML); `clients` checked against the API key names; a syntax error with its line; bare `yes`/`no` read as booleans refused |
 | `test_tasks_file_unknown_key_fails_startup_with_path` | A bad file stops `Runtime` and `python -m ratchet.live` with every error and its path (`tasks[0].feilds`); a missing file, broken JSON and NaN refused |
 | `test_yaml_without_pyyaml_message` | A `.yaml` file without PyYAML is an error that says so; JSON needs nothing extra |
-| `test_spec_errors_list_every_problem_with_its_path` | One document with 36 mistakes (unknown keys and options, options for another type, bad paths, ranges, reserved formats, a similarity field's `metric` and `threshold`, policy, match, routing, clients, names, duplicates, `extends` cycles and missing bases, records nested too deep) gives exactly 36 errors, in file order |
+| `test_spec_errors_list_every_problem_with_its_path` | One document with 36 mistakes (unknown keys and options, options for another type, bad paths, ranges, a reserved format (`tool_calls`), a similarity field's `metric` and `threshold`, policy, match, routing, clients, names, duplicates, `extends` cycles and missing bases, records nested too deep) gives exactly 36 errors, in file order |
 | `test_spec_parser_never_raises_anything_but_spec_error` | 3,000 seeded junk specs (wrong types, unhashable values, unknown types, nesting) in `parse_spec` and `parse_document` give `SpecError` or a task, never another exception |
 | `test_specs_round_trip_and_every_option_is_checked` | Every `FieldSpec` option has a check; a spec with every type, and every built-in task, survives `document` and `parse_spec` with the same hash; `description`, `clients` and `match` leave the hash alone, field order does not; the ledger keeps the order |
 | `test_extends_copies_and_merges` | `extends` within a file (forward too), from a built-in task, a file adjusting a built-in task of the same name, a copy of that, through the API on the task's own name; `fields`, `policy` and `match` merge, null removes, `name` and `description` are not inherited |
@@ -634,6 +635,38 @@ The generic mock world (FR-9.7, [ADR 0041](adr/0041-generic-mock-world.md)): eve
 | `test_demo_day_runs_the_schema_and_tools_workloads` | FR-9.7, INV-8: `gateway.WORKLOADS` is `sim.world.WORKLOADS`; `/ratchet/demo/day?workload=schema` and `tools` answer 200 with `simulation: true`, their tasks appear in `/ratchet/stats`, and an unknown workload is a 400 |
 | `test_sdk_gets_answers_and_structured_outputs_from_the_mock_gateway` | FR-9.7, FR-1.1, US-1: through the OpenAI SDK, `hello` gets a 200 restating it, and `client.chat.completions.parse(response_format=Claim)` (a Pydantic model with a `Literal`, a bounded integer, a date, a nested list and an optional field) returns a parsed `Claim` whose raw content validates against the schema the SDK sent |
 | `test_a_mock_tool_call_is_refused_until_tool_calls_pass_through` | FR-9.7: with `RATCHET_TEACHER_PARAMS=all` the mock teacher's tool call reaches the router, which refuses it (502 `tool_calls_unsupported`) and stores nothing; with the default the same request gets a prose answer |
+
+### `tests/test_sqlcheck.py`
+
+Text-to-SQL tasks (FR-2.56, [ADR 0055](adr/0055-sql-tasks-compared-by-execution.md)): answers compared by what their queries return on a fixture, in a sandboxed in-memory SQLite database. One fixture script (`SHOP`: customers and orders, written like a `.dump`) serves most tests; tasks with the same fixture text share one sandbox, so tests that count executions or change limits use a script of their own. Running SQL needs Python 3.11 (`Connection.setlimit`), so the tests that do are marked `needs_sql` and skipped on 3.10; the path, postgres and refusal tests run everywhere.
+
+| Test | Covers |
+|---|---|
+| `test_sql_equivalent_queries_agree` | FR-2.56: `COUNT(*)` and `count(id)`, a JOIN and an IN subquery (and EXISTS), aliases, SUM over integers and TOTAL, `0.1 + 0.2` and `0.3`, VALUES and UNION ALL agree; an executing sql task is verifiable, not free text, `exact` |
+| `test_sql_wrong_filter_disagrees` | FR-2.56: another filter, `>` against `>=`, another column count, `1` against `'1'`, a duplicated row (a multiset) disagree |
+| `test_sql_order_by_respected_otherwise_multiset` | FR-2.56: the outermost ORDER BY keeps rows in order; ORDER BY in a subquery, a CTE or a window does not; an ordered result never equals an unordered one of two rows or more; one row has one order; `ordered` `never` and `always` |
+| `test_sql_empty_results_fall_back_to_text` | FR-2.56: two empty results agree only as the same normalised query (case, whitespace, comments, `;`); empty against not empty disagrees; `normalize`; `empty_result: agree` with the column count |
+| `test_sql_multiple_statements_invalid` | FR-2.56: a second statement, prose after the query, unterminated strings, names and comments, EXPLAIN, PRAGMA, writes, a parenthesised start and a query over `MAX_QUERY_CHARS` are `not one query`; `;` and comments around one query, and `;` inside a string, are fine |
+| `test_sql_answer_cleaning` | FR-2.56, FR-2.13: `<think>` and a ```` ```sql ```` fence are stripped (cleaning is idempotent); a fence inside the fence is kept and invalid; an empty or unfinished answer is `empty answer` |
+| `test_sql_write_and_attach_denied_and_fixture_unchanged` | FR-2.56: writes that read as a query (`WITH ... INSERT`, `DELETE`, `UPDATE`) are `sql denied`; DELETE, INSERT, UPDATE, DROP, CREATE (TEMP too), ALTER, ATTACH, VACUUM INTO, BEGIN, SAVEPOINT, ANALYZE and PRAGMA run on the sandbox directly never return a result; no file is written; the row counts never change; with an authorizer that allows everything, `query_only` still refuses a write |
+| `test_sql_pragma_denied` | FR-2.56: PRAGMA statements and the pragma table-valued functions are denied; reading `sqlite_master` is allowed |
+| `test_sql_runaway_recursive_cte_interrupted_quickly` | FR-2.56, NFR-1: an endless recursive CTE stops on `max_steps` in under 0.5 s, so does a nine-way cross join; a query within its steps but past `QUERY_SECONDS` stops too and is not cached |
+| `test_sql_random_function_denied` | FR-2.56: `random()` (in ORDER BY too), `randomblob`, `changes`, `total_changes`, `last_insert_rowid`, `load_extension`, `sqlite_version`, `zeroblob` are `sql denied`; `'now'`, `'NOW'`, `'localtime'` in a date function (also inside a nested call, a subquery or a CASE among its arguments) and CURRENT_DATE/TIMESTAMP `reads the clock`; dates from the data and the string `'now'` outside a date function are fine |
+| `test_sql_rows_result_size_and_value_limits` | FR-2.56: more than `max_rows` rows is invalid, as many is fine; a result over `RESULT_BYTES` is `sql result too large` |
+| `test_sql_value_limit` | FR-2.56: on Python 3.11+ a doubling string stops at `VALUE_BYTES` (`sql error`); skipped on 3.10 |
+| `test_sql_quadratic_builtins_replaced_by_linear_ones` | FR-2.56, NFR-1: `trim`, `rtrim`, `instr` (text and blobs) and `replace` at `VALUE_BYTES` on inputs that are quadratic in SQLite all finish in under 0.5 s together; a `replace` result over the cap and a large mixed-type `instr` are `sql error`; a LIKE pattern of `LIKE_PATTERN_BYTES` is refused and one just under it runs; `json_patch` and `unhex` are denied; a query that repeats the most expensive LIKE per row stops on `QUERY_SECONDS`; on 3,000 random arguments per function (text, blobs, numbers, NULL, NUL characters, empty strings, long character sets) the Python versions give exactly SQLite's results and errors |
+| `test_sql_memory_guard` | FR-2.56: a sorter filled with 2 KB rows is stopped by the resident-memory guard (4 MB here) and the outcome is not cached; Linux only (skipped where `/proc` cannot be read) |
+| `test_sql_outcomes_cached_by_query_text` | FR-2.56: a result and an error run once for three checks; a statement over `CACHE_CHARS` runs every time; the cache holds at most `CACHE_SIZE` entries |
+| `test_sql_threads_share_one_sandbox_safely` | FR-2.56: two tasks with the same fixture text share one sandbox; eight threads checking 60 answers each get the single-threaded keys and no error |
+| `test_sql_spec_round_trip_and_spec_hash` | FR-2.56, FR-2.15: `parse_spec` and `document` round-trip the `sql` options (also through the ledger); the hash changes with an option or the fixture's text, not with its path (one sandbox); no other task's spec has the key; `extends` merges `sql` by key; RATCHET_FIXTURES_DIR is the default directory |
+| `test_fixture_path_outside_dir_rejected` | FR-2.56, FR-2.15: `..`, an absolute path, a symlink out and `sub/../..` are spec errors at `sql.fixture`; `SqlSpec.load` refuses them too |
+| `test_sql_spec_errors_have_paths` | FR-2.56, FR-2.15: a document of 17 tasks with 23 mistakes (no `sql` for format sql, `sql` on a JSON task, fields on a sql task, every option out of range or unknown, postgres with a fixture, no fixture, not an object, a missing, broken, attaching, pragma-setting, random-using, tableless, Latin-1, oversized or directory fixture, a reserved format) gives exactly those errors in order; a FIFO is not read; `Task` and `SqlSpec` built in code refuse the same |
+| `test_fixture_load_limits` | FR-2.56: a `.dump` (PRAGMA foreign_keys, BEGIN, COMMIT) and an unfinished transaction load; a value over `VALUE_BYTES`, a fixture over `MAX_FIXTURE_DB_BYTES` once loaded and one past `LOAD_SECONDS` are refused |
+| `test_sql_execution_needs_python_311` | FR-2.56: `CAN_LIMIT` is true from Python 3.11; without it a sandbox is refused and a sqlite spec is a `sql.fixture` error that says why and names `postgres`; a postgres task still works (runs on 3.10 too) |
+| `test_sql_postgres_dialect_compares_text_only` | FR-2.56: normalised text only, nothing runs (so no clock check); not verifiable, free text; parses and round-trips |
+| `test_sql_task_in_the_cascade` | FR-2.56, FR-2.13, INV-16: three texts of one query let the student answer, unfenced; disagreeing or failing samples escalate and the teacher's answer is stored without its fence; a teacher answer that is denied, fails or reads the clock is served, not stored, and `skip_example` names only the reason |
+| `test_sql_golden_eval_and_dataset` | FR-2.56, INV-6: `cascade_eval` skips references that fail on the fixture (`golden_invalid_refs`) and scores equivalent student queries as agreeing; `dataset.rows` leaves stored answers that fail out (`skipped_invalid`) |
+| `test_sql_task_through_the_admin_api_and_tasks_file` | FR-2.56, FR-2.15: PUT creates a sql task (verifiable, its `sql` shown); the same body is no change until the fixture's text changes, then a new spec_hash and a `task_changed` event; a path outside the directory is a 422; validate; a chat request; a tasks file with a sql task starts, and one whose fixture is gone stops startup with the path |
 
 ## Live-path tests
 

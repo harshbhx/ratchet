@@ -618,6 +618,18 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.confidence:score",
         "ratchet.router:Ratchet.handle",
     ),
+    "FR-2.56": (
+        "ratchet/sqlcheck.py",
+        "ratchet.sqlcheck:Sandbox",
+        "ratchet.sqlcheck:SqlSpec",
+        "ratchet.sqlcheck:_guarded",
+        "ratchet.sqlcheck:parse_query",
+        "ratchet.sqlcheck:read_fixture",
+        "ratchet.tasks:Task.key",
+        "ratchet.tasks:clean_answer",
+        "ratchet.tasks:sql_problem",
+        "ratchet.taskspec:parse_spec",
+    ),
     "FR-2.15": (
         "ratchet/taskspec.py",
         "ratchet.taskspec:parse_document",

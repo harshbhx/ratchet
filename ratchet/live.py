@@ -227,7 +227,7 @@ def main(
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
-    for line in taskspec.install(led, s.tasks_file):
+    for line in taskspec.install(led, s.tasks_file, fixtures_dir=s.fixtures_dir):
         print(f"task skipped: {line}", file=sys.stderr)
     cmd = argv[0] if argv else "night"
     if cmd == "tick":

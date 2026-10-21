@@ -199,8 +199,8 @@ def test_tasks_file_unknown_key_fails_startup_with_path(gw_env, tmp_path, monkey
         gw.Runtime(Settings(mode="mock", tasks_file=str(path), mock_warmup_days=0))
     e = caught.value
     assert isinstance(e, SpecError) and e.errors == [
-        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, match, routing, policy, tools,"
-        " clients, extends",
+        "tasks[0].feilds: unknown key; use name, description, format, fields, sql, pinned, store, match, routing, policy,"
+        " tools, clients, extends",
         "tasks[1].fields.total.abs_tol: must be a number >= 0",
     ]
     assert str(e).startswith(f"RATCHET_TASKS_FILE {path}: invalid task spec (2 errors):")
@@ -233,7 +233,7 @@ def test_spec_errors_list_every_problem_with_its_path():
     doc = {
         "version": 2,
         "tasks": [
-            {"name": "a", "feilds": {}, "pinned": "yes", "format": "sql"},
+            {"name": "a", "feilds": {}, "pinned": "yes", "format": "tool_calls"},
             {
                 "name": "b",
                 "fields": {
@@ -272,9 +272,9 @@ def test_spec_errors_list_every_problem_with_its_path():
     deep = "tasks[11].fields.r" + ".fields.r" * 4 + ".fields"
     assert caught.value.errors == [
         "version: unknown key; use tasks",
-        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, match, routing, policy, tools,"
-        " clients, extends",
-        "tasks[0].format: 'sql' is reserved for a later release",
+        "tasks[0].feilds: unknown key; use name, description, format, fields, sql, pinned, store, match, routing, policy,"
+        " tools, clients, extends",
+        "tasks[0].format: 'tool_calls' is reserved for a later release",
         "tasks[0].pinned: must be true or false",
         "tasks[1].fields.total.abs_tol: must be a number >= 0",
         "tasks[1].fields.total.decimal: must be one of '.', ','",
