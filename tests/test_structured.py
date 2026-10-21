@@ -327,7 +327,7 @@ def test_derive_resolves_refs_nullable_nested_records_and_formats():
     # A nullable parent: its children may all be missing, so none is required.
     assert got["ship_to.country"] == FieldSpec("ship_to.country", "label", required=False, values=("DE", "IN"))
     assert got["bill_to.country"] == FieldSpec("bill_to.country", "label", required=False, values=("DE", "IN"))
-    assert got["level"] == FieldSpec("level", "label", nullable=True, values=("1", "2", "3"))
+    assert got["level"] == FieldSpec("level", "number", nullable=True)  # an enum of numbers: compared exactly
     # Not compared: a const, integers in a list, a name a path cannot hold, two non-null options, free text.
     for absent in ("kind", "counts", "bad-name", "either", "ship_to.zip", "parts.note"):
         assert absent not in got, absent
@@ -351,6 +351,26 @@ def test_derive_resolves_refs_nullable_nested_records_and_formats():
     assert task.valid(json.dumps(answer))
     reordered = json.loads(json.dumps(PYDANTIC_LIKE), object_pairs_hook=lambda pairs: dict(reversed(pairs)))
     assert derive(reordered) == derive(PYDANTIC_LIKE)
+
+
+@pytest.mark.req("FR-14.2", "FR-1.40")
+def test_an_enum_of_numbers_takes_what_the_schema_takes():
+    """JSON equality makes 2.0 one of the enum values [1, 2, 3], so the derived field compares numbers exactly: a label
+    '2' would refuse 2.0, and an answer that meets the client's contract would get no vote and never be stored."""
+    schema = {
+        "type": "object",
+        "properties": {"p": {"type": "integer", "enum": [1, 2, 3]}, "tags": {"type": "array", "items": {"enum": [1, 2]}}},
+        "required": ["p", "tags"],
+    }
+    assert derive(schema) == (FieldSpec("p", "number"), FieldSpec("tags", "set", item=FieldSpec("$", "number")))
+    task = schema_tasks.auto_task("auto-x-1", schema)
+    assert task is not None
+    bound = task.bound(contract_for(_rf(schema, "x")))
+    assert bound.check('{"p": 2.0, "tags": [1.0]}') is None
+    assert bound.agree('{"p": 2, "tags": [1]}', '{"p": 2.0, "tags": [1.0]}')
+    assert not bound.agree('{"p": 2, "tags": [1]}', '{"p": 3, "tags": [1]}')
+    assert bound.check('{"p": 4, "tags": [1]}') == "schema mismatch at $.p"  # which values: the schema's check
+    assert derive({"type": "object", "properties": {"s": {"enum": ["a", 1]}}})[0].type == "label"  # mixed: labels
 
 
 @pytest.mark.req("FR-14.2")
@@ -445,7 +465,8 @@ def test_derived_tasks_round_trip_through_a_spec():
 def test_auto_task_name_is_stable_across_key_order():
     spec = {"name": "Ticket Route!", "schema": TICKET_SCHEMA}
     name = auto_name(spec)
-    assert name.startswith("auto-ticket-route-") and len(name.rsplit("-", 1)[1]) == 8 and tasks.valid_name(name)
+    digest = name.rsplit("-", 1)[1]
+    assert name.startswith("auto-ticket-route-") and len(digest) == schema_tasks.NAME_DIGEST == 16 and tasks.valid_name(name)
     shuffled = {
         "schema": json.loads(json.dumps(TICKET_SCHEMA), object_pairs_hook=lambda p: dict(reversed(p))),
         "name": "Ticket Route!",
@@ -454,7 +475,7 @@ def test_auto_task_name_is_stable_across_key_order():
     other = {"name": "Ticket Route!", "schema": {**TICKET_SCHEMA, "required": ["category"]}}
     assert auto_name(other) != name  # another schema, another task
     long = auto_name({"name": "x" * 64, "schema": TICKET_SCHEMA})
-    assert len(long) == len("auto-") + 40 + 1 + 8 and tasks.valid_name(long)
+    assert len(long) == len("auto-") + 40 + 1 + 16 <= 64 and tasks.valid_name(long)
     assert auto_name({"schema": TICKET_SCHEMA}).startswith("auto-schema-")
 
 
@@ -548,9 +569,15 @@ def test_a_name_the_client_makes_up_becomes_an_auto_task_under_distill_only():
     r, led = _ratchet(RecordingProvider(GOOD))
     out = r.handle(ASK, "my-extract", params=_params())
     assert out.task == "my-extract" and tasks.lookup("my-extract").source == "auto"  # type: ignore[union-attr]
-    # Registered now: a request under that name with another schema keeps the first one's fields (it is only checked).
+    # Registered now: a request under that name with another schema never takes the first one's fields; it gets its
+    # own schema's auto task (`auto_task_collision`). The same schema keeps the name.
     other = {"type": "object", "properties": {"x": {"type": "boolean"}}, "required": ["x"]}
-    assert r.resolve("my-extract", _params(other)).fields == tasks.lookup("my-extract").fields  # type: ignore[union-attr]
+    mine = r.resolve("my-extract", _params(other, "other"))
+    assert mine.name == auto_name(_rf(other, "other")["json_schema"]) and [f.path for f in mine.fields] == ["x"]
+    assert _events(led, "auto_task_collision") == [
+        "my-extract: registered from another schema; this request's schema derives other fields"
+    ]
+    assert r.resolve("my-extract", _params()).name == "my-extract"
     tasks.reset_builtin()
     r, led = _ratchet(RecordingProvider(GOOD), unknown_tasks="teacher")
     out = r.handle(ASK, "my-extract", params=_params())
@@ -558,6 +585,68 @@ def test_a_name_the_client_makes_up_becomes_an_auto_task_under_distill_only():
     assert led.examples() == []
     # No name: the auto task, whatever the policy (RATCHET_MAX_AUTO_TASKS=0 turns auto tasks off).
     assert r.handle(ASK, params=_params()).route == "cold_start" and led.examples() != []
+
+
+CLAIM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"category": {"type": "string", "enum": ["billing", "technical"]}, "refund_usd": {"type": "number"}},
+    "required": ["category", "refund_usd"],
+    "additionalProperties": False,
+}
+WEAK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"category": {"type": "string", "enum": ["billing", "technical"]}},
+    "required": ["category"],
+}
+REFUND_10 = json.dumps({"category": "billing", "refund_usd": 10})
+REFUND_99999 = json.dumps({"category": "billing", "refund_usd": 99999})
+
+
+@pytest.mark.req("FR-14.2")
+def test_a_client_cannot_choose_the_fields_another_clients_answers_are_compared_on():
+    """Anyone can compute an auto task's name from a schema. A client that names another client's auto task before it
+    exists, with a weaker schema, must not decide what that client's answers are compared on: a client's own `auto-`
+    name never names a new task, and an auto task serves only a schema that derives its rules."""
+    victim = GenParams(response_format=_rf(CLAIM_SCHEMA, "claim"))
+    name = auto_name(_rf(CLAIM_SCHEMA, "claim")["json_schema"])
+    r, led = _ratchet(RecordingProvider(REFUND_10))
+    squat = r.task_for(name, "client-a", _params(WEAK_SCHEMA, "x"))
+    assert squat.name == auto_name(_rf(WEAK_SCHEMA, "x")["json_schema"]) and tasks.lookup(name) is None
+    honest = r.task_for(None, "client-b", victim)
+    assert honest.name == name and [f.path for f in honest.fields] == ["category", "refund_usd"]
+    assert not honest.agree(REFUND_10, REFUND_99999)  # the refund is compared
+    # Named once it exists, by a schema that derives other fields: that request gets its own schema's task.
+    again = r.task_for(name, "client-a", _params(WEAK_SCHEMA, "x"))
+    assert again.name == squat.name and [f.path for f in again.fields] == ["category"]
+    assert _events(led, "auto_task_collision") == [
+        f"{name}: registered from another schema; this request's schema derives other fields"
+    ]
+    assert r.task_for(name, "client-c", victim).name == name  # the same schema under that name: the task itself
+    # A name a client makes up is held by the first schema's fields, for that schema only.
+    r.handle(ASK, "claims", params=_params(WEAK_SCHEMA, "x"))
+    later = r.task_for("claims", "client-b", victim)
+    assert later.name == name and not later.agree(REFUND_10, REFUND_99999)
+
+
+@pytest.mark.req("FR-14.2", "INV-16")
+def test_an_auto_name_held_by_other_fields_stores_nothing():
+    """Two schemas with one auto name (a digest collision, or an auto task derived differently by another release): the
+    request is never compared on the registered task's fields and nothing is stored under the name;
+    RATCHET_UNKNOWN_TASKS decides about it, as for any unregistered task."""
+    victim = GenParams(response_format=_rf(CLAIM_SCHEMA, "claim"))
+    name = auto_name(_rf(CLAIM_SCHEMA, "claim")["json_schema"])
+    tasks.register(tasks.Task(name, fields=derive(WEAK_SCHEMA), source="auto"))
+    r, led = _ratchet(RecordingProvider(REFUND_10))
+    out = r.handle(ASK, params=victim)
+    assert (out.task, out.schema_valid) == (name, True) and led.examples() == [] and _requests(led)[0]["stored"] == 0
+    task = r.resolve(None, victim)
+    assert task.source == "adhoc" and not task.store and task.fields == ()
+    assert _events(led, "auto_task_collision") == [
+        f"{name}: registered from another schema; this request's schema derives other fields"
+    ]
+    r, _ = _ratchet(RecordingProvider(REFUND_10), unknown_tasks="reject")
+    with pytest.raises(tasks.UnknownTask, match=name):
+        r.task_for(None, None, victim)
 
 
 @pytest.mark.req("FR-14.2", "FR-2.15")
@@ -592,8 +681,15 @@ def test_auto_tasks_stop_at_the_cap_and_say_so_once():
     r2, _ = _ratchet(RecordingProvider("{}"), led=led, max_auto_tasks=1)  # a second process on the same ledger
     r2.handle(ASK, params=_params(schema(3), "s3"))
     assert len(_events(led, "auto_task_cap")) == 1
+    # 0 turns auto tasks off: a request keeps the task it names, or `default`, held to its schema, as before auto tasks.
+    tasks.reset_builtin()
     off, led = _ratchet(RecordingProvider(GOOD), max_auto_tasks=0)
-    assert tasks.lookup(off.handle(ASK, params=_params(name="off")).task) is None
+    out = off.handle(ASK, params=_params(name="off"))
+    assert (out.task, out.schema_valid) == ("default", True) and led.saved_tasks() == [] and len(led.examples()) == 1
+    assert off.handle(ASK, "my-extract", params=_params(name="off")).task == "my-extract"
+    for policy in ("teacher", "reject"):
+        off, _ = _ratchet(RecordingProvider(GOOD), max_auto_tasks=0, unknown_tasks=policy)
+        assert off.task_for(None, None, _params(name="off")).name == "default"  # never refused for having a schema
     with pytest.raises(ValueError, match="RATCHET_MAX_AUTO_TASKS"):
         _ratchet(RecordingProvider(GOOD), max_auto_tasks=-1)
     with pytest.raises(ValueError, match="RATCHET_MAX_AUTO_TASKS"):
@@ -866,6 +962,88 @@ def test_arbitration_and_pinned_answers_are_repaired_and_priced():
     assert _requests(led)[0]["cost_usd"] == pytest.approx(out.cost_usd)
 
 
+class _PromptTeacher:
+    """A teacher whose prompt tokens grow with what it is sent (about 4 characters a token, half of them cached) and
+    that takes 1000 ms for a first answer and 500 ms for a repair, as a real endpoint would: a repair's prompt also
+    holds the rejected answer and the note. `then_finish` is why the repair answer stopped."""
+
+    def __init__(self, first: str, then: str, then_finish: str = "stop") -> None:
+        self.first, self.then, self.then_finish = first, then, then_finish
+        self.calls: list[list[dict[str, Any]]] = []
+
+    def complete(self, messages: list[dict[str, Any]], model: str, n: int = 1, **_: Any) -> list[Completion]:
+        self.calls.append(messages)
+        repair = "did not match the schema" in str(messages[-1].get("content"))
+        tokens = len(json.dumps(messages)) // 4
+        c = Completion(
+            self.then if repair else self.first,
+            model,
+            in_tokens=tokens,
+            out_tokens=7,
+            latency_ms=500.0 if repair else 1000.0,
+            finish_reason=self.then_finish if repair else "stop",
+            cached_tokens=tokens // 2,
+        )
+        return [c] * n
+
+
+LONG_BAD = json.dumps({"category": "refund", "priority": "high", "reply": "x" * 2000})
+
+
+@pytest.mark.req("FR-1.40", "FR-15.1", "FR-1.12")
+def test_after_a_repair_the_baseline_usage_and_latency_count_the_request_itself():
+    """The repair call's prompt holds the request, the rejected answer and the note. Both calls are paid for in
+    `cost_usd` and listed in the breakdown as made, but what the teacher alone would have cost (the baseline, so the
+    savings) and the client's `usage.prompt_tokens` count the request's own prompt, and `latency_ms` both calls."""
+    price = _settings().price(OPEN_TEACHER)
+    teacher = _PromptTeacher(LONG_BAD, GOOD)
+    r, led = _ratchet(teacher, redact_pii=False)
+    out = r.handle(ASK, params=_params())
+    own, repair_in = (len(json.dumps(m)) // 4 for m in teacher.calls)
+    assert repair_in > 10 * own and out.text == GOOD
+    assert (out.prompt_tokens, out.cached_tokens) == (own, own // 2)
+    assert out.baseline_usd == pytest.approx(price.cost(own, 7))
+    assert out.cost_usd == pytest.approx(price.cost(own, 7) + price.cost(repair_in, 7))
+    assert out.latency_ms == pytest.approx(1500.0)
+    assert out.usage_breakdown["served"] == {"in": repair_in, "out": 7}
+    assert out.usage_breakdown["repair"] == {"in": own, "out": 7}
+    row = _requests(led)[0]
+    assert row["baseline_cost_usd"] == pytest.approx(out.baseline_usd) and row["latency_ms"] == pytest.approx(1500.0)
+    # The pinned path counts the same way.
+    tasks.register(tasks.Task("pinned-extract", fields=derive(TICKET_SCHEMA), source="api", pinned=True))
+    r, led = _ratchet(_PromptTeacher(LONG_BAD, GOOD))
+    out = r.handle(ASK, "pinned-extract", params=_params())
+    assert (out.route, out.prompt_tokens, out.latency_ms) == ("pinned", own, pytest.approx(1500.0))
+    assert out.baseline_usd == pytest.approx(price.cost(own, 7))
+    assert out.cost_usd == pytest.approx(price.cost(own, 7) + price.cost(repair_in, 7))
+    assert _requests(led)[0]["latency_ms"] == pytest.approx(1500.0)
+    # An audit's baseline too; the student served, so the latency is its own.
+    student = RecordingProvider(GOOD, logprob=-0.01, latency_ms=20.0)
+    r, led = _ratchet(_PromptTeacher(LONG_BAD, GOOD), student, live={"threshold": 0.5}, audit_rate=1.0)
+    out = r.handle(ASK, params=_params())
+    assert out.served_by == "student" and out.latency_ms == pytest.approx(20.0)
+    assert out.baseline_usd == pytest.approx(price.cost(own, 7))
+    assert _requests(led)[0]["baseline_cost_usd"] == pytest.approx(price.cost(own, 7))
+
+
+@pytest.mark.req("FR-1.40", "INV-16")
+def test_a_cut_off_or_empty_repair_answer_keeps_the_first_answer():
+    """A complete answer that breaks the schema is better than a repair answer that was cut off or is empty: the first is
+    served, with its own finish_reason, and neither is stored. The repair call is still paid for."""
+    price = _settings().price(OPEN_TEACHER)
+    for then, finish in ((GOOD[:20], "length"), ("", "stop"), ("<think>only reasoning</think>", "stop")):
+        teacher = _PromptTeacher(BAD, then, then_finish=finish)
+        r, led = _ratchet(teacher)
+        out = r.handle(ASK, params=_params())
+        assert (out.text, out.finish_reason, out.schema_valid) == (BAD, "stop", False), then
+        assert len(teacher.calls) == 2 and led.examples() == []
+        own, repair_in = (len(json.dumps(m)) // 4 for m in teacher.calls)
+        assert out.usage_breakdown["served"] == {"in": own, "out": 7}
+        assert out.usage_breakdown["repair"] == {"in": repair_in, "out": 7} and out.prompt_tokens == own
+        assert out.cost_usd == pytest.approx(price.cost(own, 7) + price.cost(repair_in, 7))
+        assert out.baseline_usd == pytest.approx(price.cost(own, 7)) and out.latency_ms == pytest.approx(1500.0)
+
+
 def _refusing_teacher() -> tuple[OpenAICompatProvider, list[dict[str, Any]]]:
     """A Token Factory that refuses response_format json_schema with a 400, and answers json_object."""
     bodies: list[dict[str, Any]] = []
@@ -919,51 +1097,98 @@ def test_a_teacher_that_refuses_json_schema_gets_json_object_and_the_schema():
     assert len(calls) == 1
 
 
-@pytest.mark.req("FR-1.40", "FR-1.11")
-def test_json_schema_is_turned_off_for_an_endpoint_only_after_several_schemas_are_refused():
-    """A grammar engine may refuse one client's schema (a keyword it cannot compile) and take every other: only that
-    schema goes as json_object until JSON_SCHEMA_STRIKES different schemas were refused; then every schema does, the
-    provider says so (`supports_json_schema`), and each step writes one event per ledger."""
-    from ratchet.router import JSON_SCHEMA_STRIKES
-
+def _schema_refusing_teacher(refuse_all: bool = False, probe_status: int = 200) -> tuple[OpenAICompatProvider, list[Any]]:
+    """A Token Factory whose grammar engine refuses the json_schema of every schema named `s<i>` (or every json_schema,
+    with `refuse_all`) with a 400 about response_format, and answers the router's probe with `probe_status`."""
     bodies: list[dict[str, Any]] = []
-    refused_names = {f"s{i}" for i in range(JSON_SCHEMA_STRIKES)}
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         bodies.append(body)
         rf = body.get("response_format", {})
-        if rf.get("type") == "json_schema" and rf["json_schema"]["name"] in refused_names:
-            error = {"message": "Invalid JSON schema in response_format: unsupported keyword", "param": "response_format"}
-            return httpx.Response(400, json={"error": error})
+        if rf.get("type") == "json_schema":
+            name = rf["json_schema"]["name"]
+            if name == "probe" and probe_status != 200 and not refuse_all:
+                return httpx.Response(probe_status, json={"error": {"message": "overloaded"}})
+            if refuse_all or name.startswith("s"):
+                error = {"message": "Invalid JSON schema in response_format: unsupported keyword", "param": "response_format"}
+                return httpx.Response(400, json={"error": error})
         message = {"role": "assistant", "content": GOOD}
         return httpx.Response(200, json={"choices": [{"message": message, "finish_reason": "stop"}]})
 
-    teacher = OpenAICompatProvider("https://teacher.test/v1", "tf-key", transport=httpx.MockTransport(handler))
+    return OpenAICompatProvider("https://teacher.test/v1", "tf-key", transport=httpx.MockTransport(handler)), bodies
+
+
+def _variant(i: int) -> dict[str, Any]:
+    return {**TICKET_SCHEMA, "description": f"variant {i}"}
+
+
+def _types(bodies: list[dict[str, Any]]) -> list[str]:
+    return [b["response_format"]["type"] for b in bodies]
+
+
+@pytest.mark.req("FR-1.40", "FR-1.11")
+def test_refused_client_schemas_never_turn_json_schema_off_for_the_others():
+    """A grammar engine may refuse a client's schema (a keyword it cannot compile) and take every other: only that schema
+    goes as json_object. After JSON_SCHEMA_STRIKES refused schemas the endpoint is asked once with the smallest strict
+    schema (`schema_tasks.PROBE_FORMAT`); it answers, so json_schema stays on for every other schema, and one client
+    sending schemas the endpoint refuses cannot take grammar-constrained decoding away from the rest."""
+    from ratchet.router import JSON_SCHEMA_STRIKES
+
+    teacher, bodies = _schema_refusing_teacher()
     r, led = _ratchet(teacher)
-
-    def schema(i: int) -> dict[str, Any]:
-        return {**TICKET_SCHEMA, "description": f"variant {i}"}
-
-    r.handle(ASK, params=_params(schema(0), "s0"))  # refused, retried as json_object
-    r.handle([{"role": "user", "content": "b"}], params=_params(schema(9), "ok"))  # another schema: still json_schema
-    assert [b["response_format"]["type"] for b in bodies] == ["json_schema", "json_object", "json_schema"]
+    r.handle(ASK, params=_params(_variant(0), "s0"))  # refused, retried as json_object
+    r.handle([{"role": "user", "content": "b"}], params=_params(_variant(9), "ok"))  # another schema: still json_schema
+    assert _types(bodies) == ["json_schema", "json_object", "json_schema"]
+    bodies.clear()
     for i in range(1, JSON_SCHEMA_STRIKES):
-        r.handle([{"role": "user", "content": f"c{i}"}], params=_params(schema(i), f"s{i}"))
+        r.handle([{"role": "user", "content": f"c{i}"}], params=_params(_variant(i), f"s{i}"))
+    probes = [b for b in bodies if b["response_format"] == schema_tasks.PROBE_FORMAT]
+    assert len(probes) == 1 and probes[0]["messages"] == schema_tasks.PROBE_MESSAGES
+    assert probes[0]["max_tokens"] == schema_tasks.PROBE_MAX_TOKENS
+    assert getattr(teacher, "supports_json_schema", True) is True  # the endpoint took the probe: json_schema stays on
+    bodies.clear()
+    r.handle([{"role": "user", "content": "d"}], params=_params(_variant(9), "ok"))
+    r.handle([{"role": "user", "content": "e"}], params=_params(_variant(0), "s0"))  # remembered: straight to json_object
+    r.handle([{"role": "user", "content": "f"}], params=_params(_variant(7), "s7"))  # one more refused: no second probe
+    assert _types(bodies) == ["json_schema", "json_object", "json_schema", "json_object"]
+    assert _events(led, "json_schema_fallback") == [
+        "teacher: schema refused (UpstreamError 400); that schema is sent as json_object with the schema in the system message"
+    ]
+    # A probe that fails for another reason decides nothing: the endpoint is asked again after the next refused schema.
+    flaky, bodies = _schema_refusing_teacher(probe_status=503)
+    r, _ = _ratchet(flaky)
+    for i in range(JSON_SCHEMA_STRIKES + 1):
+        r.handle([{"role": "user", "content": f"g{i}"}], params=_params(_variant(i), f"s{i}"))
+    assert sum(b["response_format"] == schema_tasks.PROBE_FORMAT for b in bodies) == 2
+    assert getattr(flaky, "supports_json_schema", True) is True
+
+
+@pytest.mark.req("FR-1.40", "FR-1.11")
+def test_json_schema_is_turned_off_for_an_endpoint_that_refuses_the_probe_too():
+    """An endpoint that takes no json_schema at all refuses the probe as well: then every schema goes as json_object,
+    the provider says so (`supports_json_schema`), and each step writes one event per ledger."""
+    from ratchet.router import JSON_SCHEMA_STRIKES
+
+    teacher, bodies = _schema_refusing_teacher(refuse_all=True)
+    r, led = _ratchet(teacher)
+    for i in range(JSON_SCHEMA_STRIKES):
+        r.handle([{"role": "user", "content": f"c{i}"}], params=_params(_variant(i), f"s{i}"))
     assert teacher.supports_json_schema is False  # type: ignore[attr-defined]
     bodies.clear()
-    r.handle([{"role": "user", "content": "d"}], params=_params(schema(9), "ok"))  # off now: straight to json_object
-    assert [b["response_format"]["type"] for b in bodies] == ["json_object"]
+    out = r.handle([{"role": "user", "content": "d"}], params=_params(_variant(9), "ok"))  # off now: straight to json_object
+    assert _types(bodies) == ["json_object"] and out.schema_valid is True
     assert _events(led, "json_schema_fallback") == [
         "teacher: schema refused (UpstreamError 400); that schema is sent as json_object with the schema in the system message",
-        f"teacher: json_schema off: {JSON_SCHEMA_STRIKES} schemas refused (UpstreamError 400); every schema is sent as "
-        "json_object with the schema in the system message",
+        f"teacher: json_schema off: {JSON_SCHEMA_STRIKES} schemas and the probe refused (UpstreamError 400); every schema "
+        "is sent as json_object with the schema in the system message",
     ]
     # A second process on the same ledger writes neither event again.
-    teacher2 = OpenAICompatProvider("https://teacher.test/v1", "tf-key", transport=httpx.MockTransport(handler))
+    teacher2, _ = _schema_refusing_teacher(refuse_all=True)
     r2, _ = _ratchet(teacher2, led=led)
     for i in range(JSON_SCHEMA_STRIKES):
-        r2.handle([{"role": "user", "content": f"e{i}"}], params=_params(schema(i), f"s{i}"))
+        r2.handle([{"role": "user", "content": f"e{i}"}], params=_params(_variant(i), f"s{i}"))
+    assert teacher2.supports_json_schema is False  # type: ignore[attr-defined]
     assert len(_events(led, "json_schema_fallback")) == 2
     # The fallback teacher's endpoint is its own: a refusal by the primary never changes what it is sent.
     assert r2._takes_json_schema(RecordingProvider(GOOD), _params()) is True

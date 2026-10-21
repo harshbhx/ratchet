@@ -28,7 +28,7 @@ Invariants proposed by lane C (task model and use cases) for the integrator to n
 
 ## Structured answers meet their request's contract (API-STRUCTURED-OUTPUTS, FR-1.40, FR-14.2)
 
-**Text.** An answer to a request with a `response_format` counts only when it meets it (`json_object`: one JSON object; `json_schema`: JSON that matches the schema), everywhere an answer is judged: a student sample that breaks it gets no vote, a teacher answer that breaks it is never stored, never an audit and never a shadow reference, and Night School holds every stored row to the `response_format` stored with it, exactly as the router held the request. A schema repair is a teacher answer to the original request: the example stores the request's own messages, never the repair conversation. `x-ratchet` annotations never reach a model or the ledger, and the `tasks` table never stores an auto task whose derived spec holds personal data. See [ADR 0042](../adr/0042-auto-tasks-from-response-format-schemas.md).
+**Text.** An answer to a request with a `response_format` counts only when it meets it (`json_object`: one JSON object; `json_schema`: JSON that matches the schema), everywhere an answer is judged: a student sample that breaks it gets no vote, a teacher answer that breaks it is never stored, never an audit and never a shadow reference, and Night School holds every stored row to the `response_format` stored with it, exactly as the router held the request. A schema repair is a teacher answer to the original request: the example stores the request's own messages, never the repair conversation. `x-ratchet` annotations never reach a model or the ledger, and the `tasks` table never stores an auto task whose derived spec holds personal data. An auto task judges only requests whose own schema derives its fields, so no client's schema sets the fields another client's answers are compared on. See [ADR 0042](../adr/0042-auto-tasks-from-response-format-schemas.md).
 
 **Enforcing code.**
 
@@ -37,6 +37,7 @@ Invariants proposed by lane C (task model and use cases) for the integrator to n
 - `ratchet.tasks:for_row`, called by `ratchet.nightschool.dataset:rows` and `ratchet.nightschool.evaluate:cascade_eval`.
 - `ratchet.router:Ratchet._repair` with `ratchet.schema_tasks:repair_messages`: `_call_teacher` stores the repaired answer under the request's original `messages`.
 - `ratchet.schema_tasks:forwardable`, applied in `Ratchet.handle` and `Ratchet.teacher_only` before `plan`; `ratchet.router:Ratchet._auto_task` (the `redact_json` check before `Ledger.save_task`).
+- `ratchet.router:Ratchet._derives`, checked by `Ratchet.resolve` on every registered auto task it would use.
 
 **Proving tests** (`tests/test_structured.py`).
 
@@ -47,5 +48,7 @@ Invariants proposed by lane C (task model and use cases) for the integrator to n
 - `test_annotations_never_reach_a_model_or_the_ledger`
 - `test_an_auto_task_whose_schema_holds_personal_data_is_not_stored`
 - `test_a_registered_task_beats_the_schema`
+- `test_a_client_cannot_choose_the_fields_another_clients_answers_are_compared_on`
+- `test_an_auto_name_held_by_other_fields_stores_nothing`
 
 **For `scripts/reqtrace.py`.** Once numbered (say INV-n), add `"INV-n": ("ratchet.tasks:Task.bound", "ratchet.router:Ratchet.resolve", "ratchet.tasks:for_row", "ratchet.router:Ratchet._repair", "ratchet.schema_tasks:forwardable")` to `CODE` and mark the tests above with `@pytest.mark.req("INV-n")`.
