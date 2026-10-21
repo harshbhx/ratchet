@@ -798,6 +798,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-9": ("ratchet.bom:manifest", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
+    "NFR-70": ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "ratchet/web/landing.html"),
     # Invariants (CLAUDE.md)
     "INV-1": ("ratchet.licenses:require_distillable",),
     "INV-2": ("ratchet.router:Ratchet._store_example", "ratchet.nightschool.dataset:rows"),

@@ -9,18 +9,18 @@
 
 ## 1. Overview
 
-**One-liner:** Ratchet is an OpenAI-compatible gateway that turns a company's own AI traffic into a cheaper model the company owns, using only teachers whose licenses allow it.
+**One-liner:** Ratchet is an OpenAI-compatible gateway that turns a company's own AI traffic into a cheaper model (a small open model with a LoRA adapter the company owns), using only teachers whose licenses allow it.
 
 **Tagline:** Rent intelligence today. Own it tomorrow.
 
 An app changes one line, its API base URL. From then on:
 
-1. A small model the customer owns (the **student**) tries each request first.
+1. A small open model with the customer's own LoRA adapter (the **student**) tries each request first.
 2. If the student is not confident, the request goes to a large open model (the **teacher**, NVIDIA Nemotron 3 Ultra on Nebius Token Factory).
 3. Every teacher answer is stored with its **provenance**: which teacher wrote it and which license allows training on it.
 4. Every night, **Night School** trains a new student on that data, tests it on a held-out **golden set**, and releases it step by step (shadow, canary 10%, 50%, 100%), with automatic rollback.
 
-The bill goes down over time. At the end, the customer owns the model weights.
+The bill falls as the student takes over, and Ratchet reports when a GPU endpoint would cost more than it saves. The customer owns the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.
 
 ## 2. Problem
 
@@ -54,7 +54,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 | G2 | Make distillation automatic: no manual dataset curation, training runs, or deploys |
 | G3 | Make every release safe: nothing reaches users unless it beats or matches what is live |
 | G4 | Make training data license-clean and provable (provenance ledger, model bill of materials) |
-| G5 | Give the customer ownership of the trained weights |
+| G5 | Give the customer ownership of the trained LoRA adapter and its signed training lineage (the base model stays under its own license) |
 | G6 | Run end to end on open models and Nebius infrastructure (Token Factory + AI Cloud) |
 | G7 | Win or place in the Nebius x NVIDIA Global AI Hackathon (Best Apps and Agents track) |
 
@@ -86,12 +86,12 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 - Works in finance or the public sector in India or the EU.
 - Must know where data and models live and must prove training data is clean.
 - Sovereign cloud spend is forecast at $80.4B in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-02-09-gartner-says-worldwide-sovereign-cloud-iaas-spending-will-total-us-dollars-80-billion-in-2026)).
-- **Needs:** own the weights, a provenance record she can show auditors, region control.
+- **Needs:** own the adapter, a provenance record she can show auditors, region control.
 
 ### P4. Leo, an OpenAI fine-tuning migrant
 
 - Has a fine-tuned GPT model in production. OpenAI stops new fine-tuning jobs on Jan 6, 2027.
-- **Needs:** a path to a model he owns, built from his own traffic, with no license risk.
+- **Needs:** a path to an adapter he owns, built from his own traffic, with no license risk.
 
 ## 5. User stories and acceptance criteria
 
@@ -127,7 +127,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 **US-9. Savings receipts.** As Priya, I want to see dollars saved against an all-teacher baseline.
 - Given traffic, then the dashboard shows total saved, savings % by day, cost per 1,000 requests vs baseline, and the share answered by the student.
 
-**US-10. Own the weights.** As Leo, I want the trained adapter in storage I control.
+**US-10. Own the adapter.** As Leo, I want the trained adapter in storage I control.
 - Given a training run in live mode, then the adapter is written to the customer's Nebius Object Storage bucket under `adapters/<version>`.
 
 **US-11. Demo without keys.** As a hackathon judge, I want to see the loop work without credentials.
@@ -349,6 +349,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter. | Partial: teacher licenses travel in each adapter's BOM (v0.4); the base-model license does not yet |
 | NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
 | NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass (`RATCHET_PRICES_VERIFIED`). | Partial: the cost report, the `cost` block and `totals.cost_model` in `/ratchet/stats` and the simulator's GPU-hour line name their cost model (v0.5); the `ratchet` block of a chat completion, Scout's run totals and the simulator's main savings line still give per-token figures without saying so |
+| NFR-70 | Claim honesty | Public copy (README, PRD, competitive analysis, business plan, Devpost draft, the lite landing page and the React pages) claims only what is true: the customer owns the LoRA adapter and its signed training lineage, not the base model's weights, and the base keeps NVIDIA's license; savings are never promised below break-even; competitors and prior art carry a source and a date, and claims nobody could source are removed; the README names its prior art, its limitations and the NVIDIA lineage it builds on, and quotes the teacher's license exactly. Checked offline by `tests/test_docs_claims.py`. | Done (v0.5) |
 
 ## 8. Success metrics
 
