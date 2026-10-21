@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import date
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NamedTuple, TextIO
 from urllib.parse import urlsplit
 
 import httpx
@@ -26,6 +26,8 @@ import httpx
 from . import licenses
 from .auth import MAX_RPM, MAX_USD, KeyLimits, KeyRing, Token, parse_key_limits
 from .certificate import CALIBRATIONS
+from .demo import DemoPolicy
+from .demo import check_policy as check_demo_policy
 from .kpis import check_window_days
 from .openai_compat import AUTO_TASK_MODES, DEFAULT_MAX_N, MODEL_POLICIES, Limits, ModelRouting, parse_aliases
 from .providers import (
@@ -263,6 +265,10 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_BOM_SIGNING_KEY",
             "RATCHET_CONFIDENCE_THRESHOLD",
             "RATCHET_CSP",
+            "RATCHET_DEMO_IDLE_RESET_S",
+            "RATCHET_DEMO_MAX_DAYS",
+            "RATCHET_DEMO_MAX_REQUESTS",
+            "RATCHET_DEMO_RPM",
             "RATCHET_DASHBOARD_KEYS",
             "RATCHET_DATA_DIR",
             "RATCHET_DB",
@@ -273,6 +279,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_IDEMPOTENCY_CACHE",
             "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
+            "RATCHET_LIVE_URL",
             "RATCHET_ADJUDICATE_MAX",
             "RATCHET_KPI_WINDOW_DAYS",
             "RATCHET_LOG_FORMAT",
@@ -301,6 +308,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SCOUT_MAX_RESULTS",
             "RATCHET_SCOUT_MAX_RUNS_PER_DAY",
             "RATCHET_SCOUT_RUNS_PER_HOUR",
+            "RATCHET_SIM_URL",
             "RATCHET_SCRUB_STATS",
             "RATCHET_SEEN_DEDUP_S",
             "RATCHET_SIDECAR_DRAIN_S",
@@ -418,6 +426,9 @@ DEPLOY_ENV: frozenset[str] = frozenset(
         "RATCHET_REGISTRY_SECRET",
         "RATCHET_REPO_URL",
         "RATCHET_S3_ENDPOINT",
+        "RATCHET_SIM",
+        "RATCHET_SIM_BOM_SIGNING_KEY",
+        "RATCHET_SIM_DOMAIN",
         "RATCHET_SERVE_MAX_LEN",
         "RATCHET_SERVE_MAX_SEQS",
         "RATCHET_SERVE_PLATFORM",
@@ -443,6 +454,10 @@ MOCK_ONLY_ENV: dict[str, str] = {
     "RATCHET_MOCK_PACE": "0.25",
     "RATCHET_MOCK_ENDPOINT_HOURS": "24",
     "RATCHET_MOCK_TEACHER_REASONING_MEAN": "",
+    "RATCHET_DEMO_RPM": "0",
+    "RATCHET_DEMO_MAX_DAYS": "0",
+    "RATCHET_DEMO_MAX_REQUESTS": "0",
+    "RATCHET_DEMO_IDLE_RESET_S": "0",
 }
 # 0/1 switches read as `== "1"` (or `!= "0"` for RATCHET_REDACT_PII, on unless 0): another value is not an error, for
 # v0.4 compatibility, but it is a warning, because `true` reads as off (and `false` as on for redaction).
@@ -1040,6 +1055,13 @@ class Settings:
     # Mock mode only: Scout's live stream waits this fraction of each call's simulated latency,
     # so the page shows agents working instead of finishing in 20 ms. 0 = no waiting.
     mock_pace: float = field(default_factory=lambda: _float("RATCHET_MOCK_PACE", "0.25"))
+    # The header switch's links (FR-11.30): empty, or an https URL. The simulation host's limits (mock mode only; 0 is off).
+    live_url: str = field(default_factory=lambda: _env("RATCHET_LIVE_URL", ""))
+    sim_url: str = field(default_factory=lambda: _env("RATCHET_SIM_URL", ""))
+    demo_rpm: int = field(default_factory=lambda: _int("RATCHET_DEMO_RPM", "0"))
+    demo_max_days: int = field(default_factory=lambda: _int("RATCHET_DEMO_MAX_DAYS", "0"))
+    demo_max_requests: int = field(default_factory=lambda: _int("RATCHET_DEMO_MAX_REQUESTS", "0"))
+    demo_idle_reset_s: float = field(default_factory=lambda: _float("RATCHET_DEMO_IDLE_RESET_S", "0"))
     # Mock mode only: answer just the demo's own requests (tickets, research calls), a 400 for anything else, as before
     # the generic mock world (sim/generic.py) answered every request.
     mock_strict: bool = field(default_factory=lambda: _env("RATCHET_MOCK_STRICT", "0") == "1")
@@ -1438,6 +1460,21 @@ class Settings:
         live mode, 0 in mock mode, every request). A rollback can wait this long; the cron tick runs regardless."""
         return _seconds("RATCHET_TICK_INTERVAL_S", self.tick_interval_s, 0.0 if self.mode == "mock" else 5.0)
 
+    def links(self) -> Links:
+        """RATCHET_LIVE_URL and RATCHET_SIM_URL, checked (`public_url`): ValueError names the variable."""
+        return Links(public_url("RATCHET_LIVE_URL", self.live_url), public_url("RATCHET_SIM_URL", self.sim_url))
+
+    def demo_policy(self) -> DemoPolicy:
+        """The four RATCHET_DEMO_* settings, checked against the mock warm-up (ValueError names the variable)."""
+        return check_demo_policy(
+            self.demo_rpm,
+            self.demo_max_days,
+            self.demo_max_requests,
+            self.demo_idle_reset_s,
+            self.mock_warmup_days if isinstance(self.mock_warmup_days, int) else 0,
+            self.mock_warmup_requests if isinstance(self.mock_warmup_requests, int) else 0,
+        )
+
     def stats_ttl(self) -> float:
         """RATCHET_STATS_TTL_S: how long /ratchet/stats serves one computed payload (unset: 2 s in live mode, 0 in mock
         mode, a fresh payload per read)."""
@@ -1664,6 +1701,8 @@ class Settings:
             ("RATCHET_DB_SYNC", Settings.ledger_sync),
             ("RATCHET_TICK_INTERVAL_S", Settings.tick_interval),
             ("RATCHET_STATS_TTL_S", Settings.stats_ttl),
+            ("RATCHET_LIVE_URL", Settings.links),
+            ("RATCHET_DEMO_RPM", Settings.demo_policy),
             ("RATCHET_SIDECAR_WORKERS", Settings.sidecar),
             ("RATCHET_LOG_FORMAT", Settings.log_settings),
             ("RATCHET_PUBLIC_DASHBOARD", Settings.access),
@@ -1890,6 +1929,46 @@ def _bom_signer(settings: Settings) -> object:
         return bom.Signer(settings.bom_signing_key)
     except RuntimeError as e:  # `cryptography` is missing
         raise ValueError(str(e)) from e
+
+
+class Links(NamedTuple):
+    """The other surface's public URLs (`Settings.links`): the live gateway's and the simulation's, None when unset."""
+
+    live: str | None
+    sim: str | None
+
+
+MAX_PUBLIC_URL_CHARS = 300
+
+
+def public_url(name: str, raw: object) -> str | None:
+    """A URL a page may link to: empty (None), or `https://` with a host, at most 300 characters, no user info and no
+    whitespace or control characters. ValueError names the variable and never repeats the value."""
+    if not isinstance(raw, str):
+        raise ValueError(f"{name} must be empty or an https URL, not {type(raw).__name__}")
+    url = raw.strip()
+    if not url:
+        return None
+    problem = None
+    if len(url) > MAX_PUBLIC_URL_CHARS:
+        problem = f"is longer than {MAX_PUBLIC_URL_CHARS} characters"
+    elif any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        problem = "has whitespace or a control character"
+    else:
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname
+        except ValueError:
+            parts, host = None, None
+        if parts is None or parts.scheme != "https":
+            problem = "must start with https://"
+        elif not host:
+            problem = "must name a host"
+        elif parts.username is not None or parts.password is not None or "@" in parts.netloc:
+            problem = "must not hold a user name or password"
+    if problem:
+        raise ValueError(f"{name} must be empty or an https URL with a host: it {problem}")
+    return url
 
 
 def _number_in(value: object, lo: float, hi: float, low_open: bool) -> bool:

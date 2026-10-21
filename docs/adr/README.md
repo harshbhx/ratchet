@@ -63,5 +63,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0032](0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions | Accepted | 2026-10-21 |
 | [0033](0033-teacher-watch.md) | Teacher watch: free self-consistency checks with a first-re-test rule, quarantine and adjudication, a training freeze by e-process, and the sqrt(A) ceiling | Accepted | 2026-10-21 |
 | [0131](0131-golden-prompts-are-golden-in-every-task.md) | A prompt that is golden under one task is golden under every task, and occurrences count across tasks | Accepted | 2026-10-22 |
+| [0133](0133-live-and-simulation-hosts.md) | Live and simulation hosts: a keyless mock gateway beside the live one, limits for the shared simulation, and a content-free last-call record per role | Accepted | 2026-10-22 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

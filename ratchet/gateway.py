@@ -70,6 +70,7 @@ from . import (
     tasks,
     taskspec,
     teacher_watch,
+    upstream,
 )
 from . import access as acl
 from . import admin as admin_ops
@@ -78,6 +79,7 @@ from . import config as cfg
 from .auth import KeyLimits, KeyRing, Token, bearer, parse_key_limits
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, ConfigError, ConfigIssue, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
+from .demo import DemoJanitor, reset_event
 from .ledger import DAY_SECONDS, Ledger, NoTrainFull, Version
 from .merkle import KeySet, LogTree
 from .nightschool.orchestrate import NightReport, run_night
@@ -123,7 +125,7 @@ from .openai_compat import (
     validate_responses_request,
 )
 from .providers import Embedder, GenParams, OpenAICompatProvider, approx_tokens
-from .ratelimit import Decision, Limiter, Refused, Slot
+from .ratelimit import Decision, Limiter, RateLimiter, Refused, Slot
 from .redact import STYLES as REDACT_STYLES
 from .redact import Pseudonymizer, RedactionError, redact
 from .release import ReleaseGate, ReleasePolicy
@@ -144,6 +146,7 @@ from .scout.judge import COOKIE, COOKIE_PATH, JUDGE_ATTEMPTS_PER_HOUR, AttemptLi
 from .scout.prompts import EXAMPLE_QUESTIONS
 from .scout.search import UNAVAILABLE_REASONS, MockSearch, SearchTool, TavilySearch
 from .spend import BudgetExceeded, Caps, Hold, SpendMeter, Usage, money, month_bounds
+from .upstream import UpstreamRecorder
 
 HERE = Path(__file__).parent
 DASHBOARD = HERE / "dashboard.html"
@@ -262,6 +265,13 @@ class Runtime:
         self.receipts_lock = threading.Lock()  # the receipt-tree cache (`_receipt_tree`)
         # Retention runs on its own thread, at most every RETENTION_INTERVAL_S on `clock` (`maybe_purge`, FR-13.4).
         self.purge_lock = threading.Lock()
+        # The last real upstream call per role, content-free (FR-11.31); made once, so a demo reset keeps it. A fallback
+        # teacher on the teacher's own client is told apart by its model id.
+        alias = {}
+        if settings.teacher_fallback_model and settings.teacher_fallback_model != settings.teacher_model:
+            alias[("teacher", settings.teacher_fallback_model)] = "fallback_teacher"
+        self.upstream = UpstreamRecorder(clock=wall_clock, aliases=alias)
+        self.demo_limiter = RateLimiter(clock=clock)  # the shared simulation's per-IP demo actions (FR-11.30)
         self.purge_thread: threading.Thread | None = None
         self._last_purge: float | None = None
         self.reset()
@@ -284,6 +294,8 @@ class Runtime:
         # The license registry (RATCHET_TEACHER_LICENSES, ADR 0090): a bad file stops startup here, before anything is
         # opened; `Ratchet.__init__` installs the same file again.
         licenses.install(s.teacher_licenses_file)
+        self.links = s.links()  # a bad RATCHET_LIVE_URL or RATCHET_SIM_URL stops startup here (FR-11.30)
+        self.demo_policy = s.demo_policy()  # a bad RATCHET_DEMO_* stops startup here, in either mode
         self._set_access(s)  # first, so a live gateway without keys stops before it opens anything (ADR 0061)
         self._set_limits(s)  # a bad limit, or RATCHET_KEY_LIMITS naming no key, stops startup here (ADR 0063)
         obs.configure(*s.log_settings())  # a bad RATCHET_LOG_FORMAT or RATCHET_LOG_LEVEL stops startup here (ADR 0062)
@@ -349,6 +361,7 @@ class Runtime:
                 retry=s.teacher_retry(),
                 transport=self.transports.get("teacher"),
                 sleep=self.sleep,
+                observe=self.upstream.bind("teacher", upstream.host_of(s.teacher_base)),
             )
             # The fallback teacher (ADR 0019) has the teacher's key, timeouts and retries. On the teacher's endpoint it
             # shares the teacher's client (Ratchet's default); on another one it gets its own, on the teacher transport.
@@ -362,13 +375,18 @@ class Runtime:
                     retry=s.teacher_retry(),
                     transport=self.transports.get("teacher"),
                     sleep=self.sleep,
+                    observe=self.upstream.bind("fallback_teacher", upstream.host_of(fallback_base)),
                 )
             self.reloader = None
             self.student_http = None
             if s.student_base:
                 student_transport = self.transports.get("student")
                 student = OpenAICompatProvider(
-                    s.student_base, s.student_api_key, timeout=s.student_timeout(), transport=student_transport
+                    s.student_base,
+                    s.student_api_key,
+                    timeout=s.student_timeout(),
+                    transport=student_transport,
+                    observe=self.upstream.bind("student", "student_endpoint"),
                 )
                 # vLLM forgets runtime-loaded adapters when it restarts; a 404 for one queues its reload (ADR 0015).
                 http = httpx.Client(transport=student_transport) if student_transport is not None else None
@@ -379,7 +397,11 @@ class Runtime:
                     return student, v.adapter_uri  # vLLM serves each LoRA adapter under its own name
             else:  # endpoint offline: the hosted, untuned fallback on Token Factory, still with the student's timeouts
                 fallback = OpenAICompatProvider(
-                    s.teacher_base, s.teacher_api_key, timeout=s.student_timeout(), transport=self.transports.get("teacher")
+                    s.teacher_base,
+                    s.teacher_api_key,
+                    timeout=s.student_timeout(),
+                    transport=self.transports.get("teacher"),
+                    observe=self.upstream.bind("student", upstream.host_of(s.teacher_base)),
                 )
 
                 def resolver(v: Version):
@@ -390,7 +412,7 @@ class Runtime:
             if s.tavily_api_key:
                 tavily = self.transports.get("tavily")
                 client = httpx.Client(timeout=30.0, transport=tavily) if tavily is not None else None
-                self.search = TavilySearch(s.tavily_api_key, client=client)
+                self.search = TavilySearch(s.tavily_api_key, client=client, observe=self.upstream.bind("tavily", "tavily"))
                 self.credits = CreditMeter(
                     scout.monthly_credits,
                     scout.judge_credits,
@@ -1244,7 +1266,36 @@ rt = Runtime()
 # /docs, /redoc and /openapi.json only with RATCHET_OPENAPI (default: mock mode only): in live mode the schema would show
 # anyone every management route.
 _DOCS: dict[str, Any] = {} if rt.access.openapi else {"docs_url": None, "redoc_url": None, "openapi_url": None}
-app = FastAPI(title="Ratchet", version=__version__, dependencies=[Depends(_access)], lifespan=_lifespan, **_DOCS)
+
+
+async def _demo_limit(request: Request) -> None:
+    """The shared simulation's per-IP limit on demo actions (FR-11.30, ADR 0133), run after `_access` on every route. It
+    acts only in mock mode, with RATCHET_DEMO_RPM set, on a non-GET call to a `/ratchet/demo/` route: it counts the call
+    as activity for the idle reset and takes a token from the IP's bucket, answering 429 with `Retry-After` when it is
+    empty. In live mode it does nothing, so `_mock_only()` still answers 403 first (INV-8)."""
+    if rt.settings.mode != "mock" or request.method == "GET":
+        return
+    route = request.scope.get("route")
+    if not str(getattr(route, "path", "")).startswith("/ratchet/demo/"):
+        return
+    policy = rt.demo_policy
+    _janitor.touch()
+    _janitor.ensure_started()
+    if policy.rpm <= 0:
+        return
+    d = rt.demo_limiter.take(f"demo:{_client_ip(request)}", policy.rpm)
+    if d is not None and not d.allowed:
+        wait = max(1, math.ceil(d.retry_after_s))
+        raise HTTPException(
+            429,
+            f"the shared simulation takes {policy.rpm} actions a minute per visitor; try again in {wait} s",
+            headers={"Retry-After": str(wait)},
+        )
+
+
+app = FastAPI(
+    title="Ratchet", version=__version__, dependencies=[Depends(_access), Depends(_demo_limit)], lifespan=_lifespan, **_DOCS
+)
 app.add_middleware(BodyLimitMiddleware, max_bytes=rt.settings.max_body_bytes)
 app.add_middleware(SecurityHeadersMiddleware, headers=lambda: rt.security_headers)  # a 413 carries them too
 app.add_middleware(ObservabilityMiddleware)  # outermost: every response, a 413 included, carries x-request-id
@@ -3055,9 +3106,26 @@ def _stats_payload() -> dict[str, Any]:
     controls = led.flags()  # first: it publishes the runtime pins `tasks` (by-task `pinned`) reads (ADR 0064)
     boms = led.bom_status()
     spend = rt.meter.snapshot()
+    mock = rt.settings.mode == "mock"
     return {
         "mode": rt.settings.mode,
         "day": led.day,
+        # The other surface's URLs for the header switch (FR-11.30), the shared simulation's limits and the last real
+        # upstream call per role (FR-11.31). All three are content-free.
+        "links": {"live": rt.links.live, "sim": rt.links.sim},
+        "demo": {
+            "surface": "simulation" if mock else "live",
+            "controls": mock,
+            "shared": mock,
+            **rt.demo_policy.as_dict(),
+            **_janitor.snapshot(),
+        },
+        "upstream": {
+            "recording": not mock,
+            "since": None if mock else round(rt.upstream.since, 1),
+            "token_factory": upstream.host_of(rt.settings.teacher_base) == "token_factory",
+            "calls": [] if mock else rt.upstream.snapshot(),
+        },
         "teacher": rt.settings.teacher_model,
         "student_base": rt.settings.student_base_model,
         # The model that answers student calls now: our adapter, or the hosted fallback with the endpoint off (FR-7.40).
@@ -4302,6 +4370,31 @@ def teacher_ack(admin: str = Depends(_admin)) -> dict[str, Any]:
 # The public demo is shared by every visitor, so controls run one at a time and reset has a cooldown.
 _demo_lock = threading.Lock()
 _last_reset = [0.0]
+
+
+def _reset_locked(reason: str) -> None:
+    """The shared simulation's own reset (caller holds `_demo_lock`): a fresh ledger and warm-up, the new ledger's
+    `demo_reset` event (reasons and counts only), and the janitor told the state is clean."""
+    rt.reset()
+    _last_reset[0] = time.time()
+    rt.ledger.event("demo_reset", reset_event(reason, rt.demo_policy))
+    _janitor.mark_reset(int(rt.ledger.totals().get("requests", 0) or 0), auto=True)
+
+
+def _auto_reset(reason: str) -> bool:
+    """The janitor's callback: reset when no demo action holds the lock, else False (the next pass tries again)."""
+    if not _demo_lock.acquire(blocking=False):
+        return False
+    try:
+        _reset_locked(reason)
+    finally:
+        _demo_lock.release()
+    return True
+
+
+# One per gateway process, so a demo reset keeps its counters; no thread until a mock demo action needs one.
+_janitor = DemoJanitor(rt.demo_policy, _auto_reset, lambda: int(rt.ledger.totals().get("requests", 0) or 0), wall=time.time)
+_janitor.mark_reset(_janitor._counts())  # the warm-up's requests are the clean baseline
 RESET_COOLDOWN_S = 30.0
 OUTAGE_MIN_S, OUTAGE_MAX_S = 5, 300
 
@@ -4327,10 +4420,16 @@ def demo_day(requests: int = 1500, workload: str = "tickets") -> dict[str, Any]:
     if not _demo_lock.acquire(blocking=False):
         raise _demo_busy()
     try:
+        # The caps are enforced on a click, so nobody watching a rollback loses the state under them (FR-11.30).
+        auto = _janitor.due(int(rt.ledger.totals().get("requests", 0) or 0), rt.ledger.day, _janitor.clock())
+        if auto in ("max_days", "max_requests"):
+            _reset_locked(auto)
+        else:
+            auto = None
         rep = rt.simulate_day(max(100, min(requests, 5000)), workload)
     finally:
         _demo_lock.release()
-    return {"day": rt.ledger.day, "workload": workload, "simulation": True, "night": rep.__dict__}
+    return {"day": rt.ledger.day, "workload": workload, "simulation": True, "auto_reset": auto, "night": rep.__dict__}
 
 
 @app.post("/ratchet/demo/break-next")
@@ -4394,6 +4493,7 @@ def demo_reset() -> dict[str, str]:
     try:
         rt.reset()
         _last_reset[0] = time.time()
+        _janitor.mark_reset(_janitor._counts())
     finally:
         _demo_lock.release()
     return {"status": "reset"}

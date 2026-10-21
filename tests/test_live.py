@@ -1493,6 +1493,7 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     assert all("--parent-id project-e00test" in ln for ln in shown)
     assert "--cloud-init-user-data <cloud-init.yaml>" in shown[2] and "--boot-disk-existing-disk-id dry-run-id" in shown[2]
     assert "Public IP:  203.0.113.7" in r.stdout and "Domain:     ratchet.example.org" in r.stdout
+    assert "https://sim.ratchet.example.org/" in r.stdout  # the simulation host's address (FR-11.30)
     assert SECRET not in r.stdout + r.stderr  # the user data (which holds the repo URL) is never printed
 
     r = create_vm(NEBIUS_SUBNET_ID="vpcsubnet-e00given")
@@ -1510,6 +1511,134 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     backup = ROOT / "deploy" / "vm" / "backup.sh"
     r = subprocess.run([BASH, str(backup)], env={**env, "RATCHET_MODE": "mock"}, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
+
+
+@pytest.mark.req("FR-11.1", "FR-11.2", "FR-11.30", "NFR-67", "INV-13")
+def test_compose_and_caddy_run_a_keyless_simulation_beside_the_live_gateway():
+    """A second gateway in mock mode with its own environment: no env_file, no volume, no port, no key, token or code, and
+    no interpolation of the live signing key; capped; the Caddy snippet proxies it, strips the edge token and carries no
+    guard (FR-11.30)."""
+    yaml = pytest.importorskip("yaml")
+    vm = ROOT / "deploy" / "vm"
+    raw = (vm / "docker-compose.yml").read_text(encoding="utf-8")
+    compose = yaml.safe_load(raw)
+    live, sim = compose["services"]["ratchet"], compose["services"]["ratchet-sim"]
+    assert sim["environment"]["RATCHET_MODE"] == "mock" and sim["environment"]["RATCHET_MOCK_WARMUP_DAYS"] == "4"
+    assert not {"env_file", "volumes", "ports"} & set(sim) and sim["cpus"] and sim["mem_limit"]
+    for key in ("image", "command", "build"):
+        assert sim[key] == live[key]
+    assert sim["healthcheck"]["test"] == live["healthcheck"]["test"]
+    start = sim["healthcheck"]["start_period"]
+    assert start == "180s" and live["env_file"] == ".env" and "RATCHET_MODE" not in live["environment"]
+    forbidden = {
+        "NEBIUS_API_KEY",
+        "TAVILY_API_KEY",
+        "RATCHET_STUDENT_KEY",
+        "RATCHET_API_KEYS",
+        "RATCHET_ADMIN_KEYS",
+        "RATCHET_DASHBOARD_KEYS",
+        "RATCHET_ADMIN_TOKEN",
+        "RATCHET_METRICS_TOKEN",
+        "RATCHET_SCOUT_JUDGE_CODE",
+    }
+    assert not forbidden & set(sim["environment"])
+    block = raw[raw.index("  ratchet-sim:\n") : raw.index("  caddy:\n")]
+    assert set(re.findall(r"\$\{(\w+)", block)) <= {"RATCHET_DOMAIN", "RATCHET_SIM_DOMAIN", "RATCHET_SIM_BOM_SIGNING_KEY"}
+    assert "${RATCHET_BOM_SIGNING_KEY" not in block
+    caddy = compose["services"]["caddy"]
+    assert caddy["environment"]["RATCHET_SIM"].startswith("${RATCHET_SIM:-") and "RATCHET_SIM_DOMAIN" in caddy["environment"]
+    assert "ratchet-sim" in caddy["depends_on"]
+    assert live["environment"]["RATCHET_SIM_URL"].startswith("${RATCHET_SIM_URL-")  # unset-only default: empty means no link
+    text = (vm / "Caddyfile").read_text(encoding="utf-8")
+    on = text[text.index("(sim-on) {") : text.index("(sim-off) {")]
+    assert "reverse_proxy ratchet-sim:8000" in on and "header_up -X-Ratchet-Admin-Token" in on
+    assert "import {$RATCHET_API_GUARD" not in on and "(sim-off) {" in text and "\nimport sim-{$RATCHET_SIM}" in text
+    assert "import {$RATCHET_API_GUARD:open}" in text[: text.index("(sim-on) {")]  # the live site keeps its guard
+    env = (vm / ".env.vm.example").read_text(encoding="utf-8")
+    assert "RATCHET_SIM=on" in env.splitlines() and "RATCHET_SIM_BOM_SIGNING_KEY=" in env.splitlines()
+
+
+def _update_stubs(tmp: Path, **opts: str) -> tuple[Path, dict[str, str]]:
+    """A copy of deploy/vm/update.sh in tmp/deploy/vm (owned by this user, so it does not switch users) with stub `git`,
+    `docker`, `curl` and `sleep` on PATH. The stubs log their arguments to tmp/calls.log; `curl` answers 200 and a
+    /healthz body whose mode is SIM_MODE for the simulation host and LIVE_MODE for the other."""
+    vm = tmp / "deploy" / "vm"
+    vm.mkdir(parents=True)
+    for name in ("update.sh", "env_missing.sh", ".env.vm.example"):
+        shutil.copy(ROOT / "deploy" / "vm" / name, vm / name)
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir()
+    log = tmp / "calls.log"
+    scripts = {
+        "git": 'echo "git $*" >> "$CALLS"',
+        "sleep": "true",
+        "docker": 'echo "docker $*" >> "$CALLS"\n'
+        'case "$*" in\n'
+        '  "compose ps -q "*) echo "cid-${@: -1}";;\n'
+        '  "inspect "*) echo healthy;;\n'
+        '  *"exec -T"*) echo "200 {}";;\n'
+        "esac\nexit 0",
+        "curl": 'echo "curl $*" >> "$CALLS"\n'
+        'url="${@: -1}"\n'
+        'if [[ "$*" == *"%{http_code}"* ]]; then echo 200; exit 0; fi\n'
+        'case "$url" in\n'
+        '  https://sim.*/healthz) echo "{\\"status\\":\\"ok\\",\\"mode\\":\\"$SIM_MODE\\"}";;\n'
+        '  */healthz) echo "{\\"status\\":\\"ok\\",\\"mode\\":\\"$LIVE_MODE\\"}";;\n'
+        "esac\nexit 0",
+    }
+    for name, body in scripts.items():
+        f = bin_dir / name
+        f.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+        f.chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "HOME": str(tmp),
+        "CALLS": str(log),
+        "SIM_MODE": opts.get("sim_mode", "mock"),
+        "LIVE_MODE": "live",
+    }
+    return vm, env
+
+
+def _run_update(tmp: Path, env_lines: list[str], **opts: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    assert BASH is not None
+    vm, env = _update_stubs(tmp, **opts)
+    (vm / ".env").write_text(chr(10).join(env_lines) + chr(10), encoding="utf-8")
+    r = subprocess.run([BASH, str(vm / "update.sh")], env=env, capture_output=True, text=True, timeout=60)
+    log = tmp / "calls.log"
+    return r, log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-11.2", "FR-11.30", "NFR-67", "INV-8")
+def test_update_script_checks_both_hosts(tmp_path):
+    base = ["RATCHET_DOMAIN=x.example.org", "RATCHET_MODE=live", "RATCHET_PUBLIC_DASHBOARD=1"]
+    r, log = _run_update(tmp_path / "a", base)
+    assert r.returncode == 0, r.stdout + r.stderr
+    urls = [ln.split()[-1] for ln in log if ln.startswith("curl ") and "http_code" in ln]
+    for path in ("/", "/healthz", "/readyz", "/dashboard", "/scout", "/ratchet/stats"):
+        assert f"https://x.example.org{path}" in urls and f"https://sim.x.example.org{path}" in urls, path
+    checks = [ln for ln in log if "ratchet.config check" in ln]
+    assert any("ratchet-sim" in ln for ln in checks) and any(" ratchet python" in ln for ln in checks)  # both services
+    assert any(ln.startswith("docker compose build") and "ratchet-sim" in ln for ln in log)
+
+    r, _ = _run_update(tmp_path / "b", base, sim_mode="live")  # a simulation host answering in live mode
+    assert r.returncode == 1 and "the simulation host is not in mock mode" in r.stderr
+
+    r, log = _run_update(tmp_path / "c", [*base, "RATCHET_SIM=off"])
+    assert r.returncode == 0 and "RATCHET_SIM_URL" in r.stderr  # the warning: no empty RATCHET_SIM_URL= line
+    assert not [ln for ln in log if ln.startswith("curl ") and "https://sim." in ln]
+    r, _ = _run_update(tmp_path / "d", [*base, "RATCHET_SIM=off", "RATCHET_SIM_URL="])
+    assert r.returncode == 0 and "RATCHET_SIM_URL" not in r.stderr
+
+    r, log = _run_update(tmp_path / "e", [*base, "RATCHET_SIM_DOMAIN=x.example.org"])
+    assert r.returncode == 1 and "RATCHET_SIM_DOMAIN equals RATCHET_DOMAIN" in r.stderr
+    assert not [ln for ln in log if ln.startswith("docker")]  # nothing was built or replaced
+    r, log = _run_update(tmp_path / "f", [*base, "RATCHET_BOM_SIGNING_KEY=samekey", "RATCHET_SIM_BOM_SIGNING_KEY=samekey"])
+    assert r.returncode == 1 and "never sign with the live key" in r.stderr and not [ln for ln in log if ln.startswith("docker")]
+    assert "samekey" not in r.stdout + r.stderr
+    r, _ = _run_update(tmp_path / "g", [*base, "RATCHET_SIM=maybe"])
+    assert r.returncode == 1 and "RATCHET_SIM must be on or off" in r.stderr
 
 
 @pytest.mark.req("NFR-5", "FR-11.1")

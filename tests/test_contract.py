@@ -1120,6 +1120,37 @@ def test_demo_endpoints_are_403_in_live_mode(gw_env, tmp_path):
     assert gw.rt.ledger is led  # reset did not rebuild the live runtime
 
 
+@pytest.mark.req("INV-8", "FR-11.30")
+def test_demo_limits_never_answer_before_the_mode_check(gw_env, tmp_path):
+    """The simulation's per-IP limit and caps act in mock mode only: a live gateway with them set still answers every
+    demo call 403 "mock mode" (never 429), starts no janitor thread and reports no controls."""
+    gw = _gateway(
+        gw_env,
+        RATCHET_MODE="live",
+        RATCHET_DB=str(tmp_path / "live.db"),
+        RATCHET_STUDENT_BASE="",
+        NEBIUS_API_KEY="tf-key",
+        TAVILY_API_KEY="",
+        RATCHET_ALLOW_UNAUTHENTICATED="1",
+        RATCHET_API_GUARD="guarded",
+        RATCHET_ADMIN_TOKEN="0123456789abcdef0123456789abcdef",
+        RATCHET_PUBLIC_DASHBOARD="1",
+        RATCHET_DEMO_RPM="1",
+        RATCHET_DEMO_MAX_DAYS="5",
+        RATCHET_DEMO_IDLE_RESET_S="600",
+    )
+    c = TestClient(gw.app)
+    started: list[object] = []
+    gw._janitor.thread_factory = lambda **kw: started.append(kw)
+    for path in ("/ratchet/demo/day", "/ratchet/demo/break-next", "/ratchet/demo/student-outage", "/ratchet/demo/reset"):
+        for _ in range(10):
+            r = c.post(path)
+            assert r.status_code == 403 and "mock mode" in r.json()["detail"], (path, r.status_code)
+    assert started == [] and gw._janitor.auto_resets == 0
+    s = c.get("/ratchet/stats").json()
+    assert s["demo"]["controls"] is False and s["demo"]["surface"] == "live" and s["upstream"]["recording"] is True
+
+
 # ---------- cascade ----------
 @pytest.mark.req("FR-2.1", "NFR-1")
 def test_student_sampled_once_with_production_params():

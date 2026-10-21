@@ -973,3 +973,15 @@ Manual interventions go through one module, `ratchet/admin.py` ([ADR 0064](adr/0
 | Runtime pins | `flags()` publishes the names to `tasks.OVERRIDES`; `tasks.get` and `tasks.effective` return a pinned copy of the registered task (its spec's `spec_hash` kept), so the router's pinned path (`_teacher_only`, nothing stored) and Night School's read-time exclusion (`excluded_pinned`) apply as for a spec pin (invariant 10) |
 
 A switch is seen by every process that shares the ledger on its next request, tick or night: no restart. `/ratchet/stats` shows them under `controls`.
+
+## Demo hosting: live and simulation
+
+The demo VM serves two gateways from one image behind one Caddy: the live one at the root domain, and `ratchet-sim` (mock mode, in-memory ledger, no keys, 1 vCPU and 1 GiB) at `sim.<domain>`. INV-8 stays in the app, so the live host answers every demo route 403 whatever Caddy does ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
+
+```
+Caddy ─┬─ <domain>      ─▶ ratchet      (live; Token Factory, student endpoint, Tavily)
+       └─ sim.<domain>  ─▶ ratchet-sim  (mock; demo controls open, per-IP limit, self-reset)
+```
+
+- `ratchet/demo.py` (mock mode only): `DemoPolicy`, and the `DemoJanitor` that resets the shared simulation after N simulated days or requests (on a click) or idle time (a daemon thread). `gateway._demo_limit` is an app-level dependency after `_access`: a per-IP bucket (`ratelimit.RateLimiter`) on non-GET `/ratchet/demo/*` calls.
+- `ratchet/upstream.py`: the last real upstream call per role, content-free. The provider and the Tavily client report to an `observe` callback in a `finally`; the recorder sits beside the metrics (`ratchet_upstream_*`, counters by purpose) and keeps a model id, status, latency and time instead. `/ratchet/stats` carries it as `upstream`, with `links` and `demo`.
