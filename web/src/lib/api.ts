@@ -307,8 +307,12 @@ export interface TaskEntry {
   description: string;
   format: string;
   fields: Record<string, FieldDoc>;
+  /** The SQL checker spec (format "sql"), else null. */
+  sql: Record<string, unknown> | null;
   pinned: boolean;
   store: boolean;
+  /** Per-task privacy settings (taskspec `privacy`), an empty object when none. */
+  privacy: Record<string, unknown>;
   match: Record<string, unknown>;
   routing: Record<string, unknown>;
   policy: Record<string, unknown>;
@@ -416,6 +420,8 @@ export interface ScoutTotals {
   wall_ms: number;
 }
 
+import type { Recording, RecordingSummary } from "@/lib/recording-model";
+
 export type ScoutEvent =
   | { type: "start"; run_id: string; question: string; mode: Mode }
   | ScoutStep
@@ -508,6 +514,9 @@ export const api = {
   redact: (text: string) => json<RedactPreview>("/ratchet/redact", { method: "POST", body: JSON.stringify({ text }) }),
   scoutExamples: () => json<ScoutExamples>("/scout/examples"),
   scoutStatus: () => json<ScoutStatus>("/scout/status"),
+  /** Recorded live runs, newest first (FR-10.40): read-only, no model call, no budget. */
+  scoutRecordings: () => json<{ recordings: RecordingSummary[] }>("/scout/recorded"),
+  scoutRecording: (id: string) => json<Recording>(`/scout/recorded/${encodeURIComponent(id)}`),
   scoutRun: (question: string) =>
     json<{ events: ScoutEvent[] }>("/scout/run", { method: "POST", body: JSON.stringify({ question }) }),
 };

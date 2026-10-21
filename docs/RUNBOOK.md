@@ -596,6 +596,10 @@ The gateway, the simulator, `python -m ratchet.live` or `python -m ratchet.admin
 5. A judge without the code still gets public runs, and a run without search still calls Token Factory.
 6. To revoke every session (a leaked code), set a new code and run `update.sh`, then send the new code to the hackathon managers.
 
+### Recording a Scout run for judges
+
+Do this after each deploy that changes a model, a prompt or a price, while the day's guard still has room: `python -m ratchet.scout record "<question>" --base-url https://<domain> --judge-code <code>`, then commit `evidence/scout/*.json` and run `update.sh` (the compose file mounts the folder read-only). Check `curl -s https://<domain>/scout/recorded | jq '.recordings[0] | {id, mode, duration_ms}'`: `mode` must be `live`. The command exits 1 and writes nothing when the run fails, ends without a result or the gateway is in mock mode. When the guard refuses runs or search fails, the Scout page offers "Watch a recorded live run". Nothing in the gateway writes a recording ([ADR 0140](adr/0140-recorded-scout-run.md)).
+
 ### Tavily credits running low or search unavailable
 
 1. `curl -s https://<domain>/scout/status | jq .search`: `available`, `last_error`, `errors_today` and `credits` (`used_this_cycle`, `left`, `public_left_today`, `judge_left`, `exhausted_until`).
