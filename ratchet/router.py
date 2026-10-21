@@ -78,11 +78,15 @@ ROUTES = (
 )
 RULE_ROUTE = "rule:"  # + the index of the escalate_when rule (FR-2.50)
 INELIGIBLE_ROUTE = "ineligible:"  # + one of routing.INELIGIBLE_REASONS (FR-2.50)
+# The route of a request the gateway sends straight to an upstream model without the cascade: an embeddings request
+# (served_by `upstream`, FR-1.51, ADR 0050). The router never writes it.
+PASSTHROUGH_ROUTE = "passthrough"
 
 
 def known_route(route: str) -> bool:
-    """Whether `route` is one the router writes: one of ROUTES, `rule:<i>` or `ineligible:<reason>`."""
-    if route in ROUTES:
+    """Whether `route` is one the ledger may hold: one of ROUTES, `rule:<i>` or `ineligible:<reason>` (the router's), or
+    the gateway's PASSTHROUGH_ROUTE."""
+    if route in ROUTES or route == PASSTHROUGH_ROUTE:
         return True
     if route.startswith(RULE_ROUTE):
         index = route[len(RULE_ROUTE) :]

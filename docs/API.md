@@ -23,6 +23,11 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/v1/models/{id}` | both | One model of the list, or 404 `model_not_found` (API key when keys are on) |
 | POST | `/v1/chat/completions` | both | The cascade; `stream: true` supported (API key when keys are on) |
 | POST | `/openai/deployments/{deployment}/chat/completions` | both | Azure OpenAI's URL for the same cascade, the deployment naming the task ([Azure-style route](#azure-style-route)) |
+| POST | `/v1/completions` | both | The legacy completions API through the same cascade, one request per prompt ([Completions](#post-v1completions)) |
+| POST | `/v1/responses` | both | The stateless subset of the Responses API through the same cascade ([Responses](#post-v1responses)) |
+| POST | `/v1/embeddings` | both | Embeddings, passed through to `RATCHET_EMBEDDINGS_MODEL`; no cascade, nothing stored ([Embeddings](#post-v1embeddings)) |
+| POST | `/v1/moderations` | both | Not served: 404 `unsupported_endpoint` ([Unsupported endpoints](#unsupported-endpoints)) |
+| GET, POST, DELETE | `/v1/responses/{response_id}` | both | Retrieve, delete, cancel or list a stored response: not served (no response state), 404 `unsupported_endpoint` |
 | GET | `/ratchet/stats` | both | Everything the dashboard shows |
 | GET | `/ratchet/bom` | both | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | One adapter's bill of materials, written at training time, signed when a key is set |
@@ -46,6 +51,22 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 
 The three pages are static HTML files with no build step. If a page file is missing, the route returns a small placeholder page with links to the other two.
 
+## OpenAI endpoints
+
+What an OpenAI client pointed at `http://<gateway>/v1` can call ([ADR 0050](adr/0050-adjacent-openai-endpoints.md), FR-1.51). Every route below shares authentication, the body limit, request validation with OpenAI's error envelope, the daily quota and the request log. Error messages for an unsupported endpoint link here.
+
+| Endpoint | Status | What happens |
+|---|---|---|
+| `POST /v1/chat/completions` | Supported | The cascade: student first, teacher when it is unsure, the teacher's answer stored as training data |
+| `POST /openai/deployments/{deployment}/chat/completions` | Supported | The same, for Azure OpenAI clients ([Azure-style route](#azure-style-route)) |
+| `GET /v1/models`, `GET /v1/models/{id}` | Supported | The model ids a client may send, the embeddings model among them |
+| `POST /v1/completions` | Supported, without `suffix`, `echo`, `best_of` > `n` or token-array prompts | Each prompt is one user message through the chat path, so it is answered, logged and stored exactly as that chat request ([Completions](#post-v1completions)) |
+| `POST /v1/responses` | Partial: stateless, not streamed, function tools only | `instructions` and `input` become chat messages, then the chat path ([Responses](#post-v1responses)) |
+| `POST /v1/embeddings` | Supported, as a pass-through | One call to `RATCHET_EMBEDDINGS_MODEL`, whatever `model` says; logged and counted, nothing stored ([Embeddings](#post-v1embeddings)) |
+| `POST /v1/moderations` | Not supported | 404 `unsupported_endpoint`: the gateway has no moderation model |
+| `GET` / `DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items` | Not supported | 404 `unsupported_endpoint`: Ratchet keeps no response state |
+| Anything else under `/v1/` (images, audio, files, uploads, batches, fine-tuning, vector stores, assistants, threads, realtime, ...) | Not supported | 404 `unknown_url` |
+
 ## Authentication
 
 Off by default, so the mock demo and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*` and `/openai/*`:
@@ -57,7 +78,7 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`), as `X-API-Key: <key>`, or as `api-key: <key>` (what Azure OpenAI SDKs send), checked in that order.
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
 - The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
-- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
+- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N requests per UTC day: chat completions, responses, embeddings, and completions at one request per prompt (a batch the quota cannot finish is refused whole, before its first prompt runs). Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight.
 - **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key **403**. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - Pages, `/healthz`, the other `/ratchet/*` routes (reads included: `GET /ratchet/tasks`) and Scout stay public. The read-only `/ratchet/stats` and `/ratchet/bom` are what the dashboard reads; the mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
@@ -347,10 +368,13 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 |---|---|---|---|---|
 | 400 | `invalid_request_error` | `invalid_json`, `invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `context_length_exceeded`, `unsupported_content_type` | The request breaks a rule in [Request validation](#request-validation); `param` names the field | No |
 | 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
+| 400 | `invalid_request_error` | `reserved_task` | The request names the task `embeddings` (header, `metadata.ratchet_task`, `model` or Azure deployment), the name `/v1/embeddings` logs its requests under ([Embeddings](#post-v1embeddings)); `param` says where it came from. Checked before the quota | No |
 | 400 | `invalid_request_error` | `unknown_task` | `RATCHET_UNKNOWN_TASKS=reject` and the task is not registered (`unknown task "x"; registered: default, page-read, ...`, at most 20 names, only tasks this key may use); `param` is `metadata.ratchet_task` when the name came from there | No |
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
 | 403 | `permission_error` | `task_not_allowed` | The task's `clients` do not name this key, or the request has no key (`task not allowed for this key`). Checked before the quota, so it uses none | No |
 | 404 | `not_found_error` | `unknown_url` | No such route: `Unknown request URL: POST /v1/foo.` | No |
+| 404 | `not_found_error` | `unsupported_endpoint` | An OpenAI endpoint this gateway knows but does not serve: `POST /v1/moderations`, a stored response (`/v1/responses/{id}`), or `/v1/embeddings` under `RATCHET_EMBEDDINGS_BASE=off`. The message says why and links [OpenAI endpoints](#openai-endpoints). Checked after the key | No |
+| 400 | `invalid_request_error` | `unsupported_parameter` | A field the gateway understands but cannot honour, so serving without it would answer another question: `suffix`, `echo` or `best_of` on `/v1/completions`; `previous_response_id`, `conversation`, `prompt`, `background`, `stream` or a built-in tool on `/v1/responses`. `param` names it | No |
 | 404 | `invalid_request_error` | `model_not_found` | `RATCHET_MODEL_POLICY=strict` and the `model` is not `ratchet`, `ratchet/<task>` or an alias (`The model 'gpt-4o' does not exist.`, `param` `model`); under either policy, `ratchet/` with a name that is not a task name; on the Azure-style route, a deployment that is not a task name (`param` null). Checked before the quota, so it uses none and nothing is logged | No |
 | 405 | `invalid_request_error` | `null` | A route called with the wrong method (`Allow` names the right one) | No |
 | 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
@@ -363,6 +387,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 502 | `api_error` | `upstream_not_found` | Live mode: Token Factory answered 404: `RATCHET_TEACHER_MODEL` or `RATCHET_TEACHER_BASE` is wrong. The request's `model` never selects the teacher, so this is the gateway's configuration, not the client's mistake. `X-Should-Retry: false` | No |
 | 502 | `api_error` | `tool_calls_unsupported` | Live mode, only when `RATCHET_TEACHER_PARAMS` allows `tools`: the teacher answered with a tool call, which the gateway cannot return yet (`The teacher answered with a tool call, which this gateway cannot return yet; send the request without tools.`). Nothing is stored. `X-Should-Retry: false` | No |
 | 503 | `api_error` | `teacher_circuit_open` | Live mode: the teacher failed `RATCHET_TEACHER_BREAKER_FAILURES` (5) calls in a row, so its circuit breaker is open and the gateway does not call it until the next probe (`teacher circuit open: recent teacher calls failed, so the gateway is not calling it; retry after 18 s`). Answered at once, for any request that needs the teacher's answer (an escalation, a cold start, a pinned task, a teacher-only request) that no fallback teacher or degraded answer covers. `Retry-After` is the time until the breaker lets a probe through, clamped to 1 to 60 s ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)) | Yes, after `Retry-After` |
+| 502, 504 | `api_error` | `upstream_unavailable`, `upstream_timeout` (and `upstream_auth_error`, `upstream_not_found`, `upstream_rate_limited` as above) | `/v1/embeddings` in live mode: the embeddings model failed after the provider's retries. Mapped by cause as a teacher failure is, with these codes, since no teacher was involved; an upstream 400 (an input over the model's length) is a 400 with its message and code | As for the teacher's |
 | 504 | `api_error` | `teacher_timeout` | Live mode: the teacher did not answer in time (`RATCHET_TEACHER_TIMEOUT_S`, retried once within `RATCHET_TEACHER_DEADLINE_S`), or Token Factory answered 504 (`teacher timeout: upstream 504 upstream_timeout`). Token Factory's `Retry-After`, if it sent one, is passed on (1 to 60 s) | Yes, after `Retry-After` when present |
 
 OpenAI's Python and Node SDKs retry connection errors, 408, 409, 429 and 5xx responses twice by default, with backoff (or `Retry-After`, up to 60 s), unless the response carries `x-should-retry`. Set `max_retries=0` on the client to turn that off. Each retry of a request the student cannot answer runs the student's samples again, so the gateway marks the errors no retry can fix.
@@ -456,7 +481,8 @@ The model ids a client can send ([Task resolution](#task-resolution)), each a `m
 - `ratchet` first (its task comes from each request);
 - `ratchet/<task>` for every registered task the key may use (a task whose `clients` do not name it is left out; with keys on, an auto task only to a key whose own requests used it in the last 30 days, since its name is a digest of a client's system prompt), in registry order;
 - unless `RATCHET_UNKNOWN_TASKS=reject`, `ratchet/<name>` for every unregistered name the key's own requests named in the last 30 days (with keys off, any request's), at most 500, the most recently used first;
-- every model alias whose task the key may use, with `alias_of`.
+- every model alias whose task the key may use, with `alias_of`;
+- the embeddings model (`RATCHET_EMBEDDINGS_MODEL`) unless `RATCHET_EMBEDDINGS_BASE=off`, with `ratchet.endpoint: "embeddings"` and no task: the id `RATCHET_MODEL_POLICY=strict` accepts on `/v1/embeddings`. `ratchet/embeddings` is never listed for it: `embeddings` is the task name embeddings requests are logged under, not a chat task.
 
 ```json
 {"object": "list", "data": [
@@ -486,6 +512,102 @@ from openai import AzureOpenAI
 client = AzureOpenAI(azure_endpoint="http://localhost:8000", api_key="unused", api_version="2024-10-21")
 resp = client.chat.completions.create(model="ticket-triage", messages=[{"role": "user", "content": "I was charged twice."}])
 ```
+
+## POST `/v1/embeddings`
+
+A pass-through ([ADR 0050](adr/0050-adjacent-openai-endpoints.md)): one call to `RATCHET_EMBEDDINGS_MODEL` at `RATCHET_EMBEDDINGS_BASE` (by default the teacher's Token Factory endpoint, with `NEBIUS_API_KEY`; another base gets `RATCHET_EMBEDDINGS_KEY`, or no key when that is empty, never the Token Factory key). No student, no teacher, no confidence, no audit, and nothing of the request is stored: vectors are not distilled. Mock mode answers locally with deterministic unit vectors (256 values, seeded from SHA-256 of each input). `RATCHET_EMBEDDINGS_BASE=off` turns the route into a 404 `unsupported_endpoint`.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `input` | string, array of strings, array of token ids, or array of token-id arrays | yes | 1 to 2,048 items, none empty, all of one kind. Their text counts against `RATCHET_MAX_INPUT_CHARS` (a token as 4 characters) |
+| `model` | string | no | Never selects the upstream model: the configured one always answers. Under `RATCHET_MODEL_POLICY=lenient` any id is served (another id than `ratchet` or the configured one is echoed in `X-Ratchet-Model-Alias`); under `strict` only `ratchet` and the configured id, anything else a 404 `model_not_found`, because vectors from another model than an index was built with cannot be compared with it |
+| `encoding_format` | `float` or `base64` | no | What the client gets; the upstream is always asked for floats, and the gateway encodes base64 (little-endian float32, what the OpenAI SDKs ask for by default and decode) |
+| `dimensions` | integer, 1 to 8,192 | no | Sent upstream as is (the mock keeps the first that many values of the full vector and scales them back to length 1) |
+| `user` | string | no | Checked, never forwarded |
+| any other field | | no | Ignored, never forwarded |
+
+The response is OpenAI's (`openai.types.CreateEmbeddingResponse`) plus a `ratchet` block; `model` is the upstream's name for the model that served, and `usage` is the upstream's prompt tokens (about 4 characters a token when it reports none):
+
+```json
+{"object": "list", "model": "Qwen/Qwen3-Embedding-8B",
+ "data": [{"object": "embedding", "index": 0, "embedding": [0.0123, -0.0456, ...]}],
+ "usage": {"prompt_tokens": 5, "total_tokens": 5},
+ "ratchet": {"served_by": "upstream", "route": "passthrough", "task": "embeddings", "cost_usd": 5e-08,
+             "all_teacher_cost_usd": 5e-08, "latency_ms": 41.2, "requested_model": "text-embedding-3-small"}}
+```
+
+Each answered call is one request row (task `embeddings`, served_by `upstream`, route `passthrough`, `stored` 0) priced at the configured model's input price (`EMBEDDING_PRICES` in `ratchet/config.py`, unverified until the day-1 checks pass; a model without a price there is priced as the teacher), so it counts against the key's quota and shows in `/ratchet/stats` and the cost report, with its own cost as its all-teacher baseline: it never moves a savings figure. Headers: `X-Ratchet-Served-By: upstream`, `X-Ratchet-Task: embeddings`. The task name `embeddings` is reserved for these rows: a chat, completions or responses request that names it (`X-Ratchet-Task`, `metadata.ratchet_task`, `model: "ratchet/embeddings"`, an Azure deployment) is a 400 `reserved_task`, and no task spec or model alias may use it. A failed call logs nothing; its error is mapped by cause ([Errors](#errors): `upstream_*` codes). The shared mock demo returns at most 1,048,576 values (inputs x dimensions) per request.
+
+```python
+vectors = client.embeddings.create(model="ratchet", input=["refund my order", "reset my password"])
+```
+
+## POST `/v1/completions`
+
+The legacy text API, for clients and tools that still call it. Each prompt becomes one user message, `[{"role": "user", "content": prompt}]`, and runs the chat path: the same validation, task resolution (`X-Ratchet-Task`, `metadata.ratchet_task`, `model: "ratchet/<task>"`, ...), cascade, quota, storage rules and `ratchet` block as a `/v1/chat/completions` request with that message, so a prompt is stored as exactly that chat request's example.
+
+| Field | Notes |
+|---|---|
+| `prompt` | A string, or up to 16 strings (each its own cascade request, logged and counted against the quota; a batch the quota cannot finish is refused before its first prompt runs). Token arrays are a 400 `unsupported_value`: the gateway works in text |
+| `suffix` | A 400 `unsupported_parameter` unless empty: a chat model cannot fill in text before a suffix |
+| `echo` | A 400 `unsupported_parameter` when `true` |
+| `best_of` | A 400 `unsupported_parameter` unless 1 or `n`: the gateway returns the choices it samples, it does not rank more |
+| `logprobs` | 0 to 5: each choice's token logprobs in the legacy shape (`tokens`, `token_logprobs`, `top_logprobs` as `{token: logprob}` per token, `text_offset` counted from the prompt's length), from the chat path's token logprobs with that many alternatives ([Choices and logprobs](#choices-and-logprobs)); `null` when they cannot be given |
+| `model`, `max_tokens`, `temperature`, `top_p`, `n`, `stream`, `stream_options`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `metadata`, others | The chat field of the same name, checked and sent exactly as on `/v1/chat/completions`. `max_tokens` has no default of 16 here: the per-call caps apply ([Generation parameters](#generation-parameters)) |
+
+```json
+{"id": "cmpl-...", "object": "text_completion", "created": 1792400000, "model": "student-v3", "system_fingerprint": "fp_...",
+ "choices": [{"text": "{\"category\": \"billing\", ...}", "index": 0, "logprobs": null, "finish_reason": "stop"}],
+ "usage": {"prompt_tokens": 18, "completion_tokens": 21, "total_tokens": 39, ...},
+ "ratchet": {"served_by": "student", "task": "ticket-triage", ...}}
+```
+
+Prompt p's choice j is choice `p * n + j`, as OpenAI numbers them; `usage` adds up every prompt's. With one prompt `ratchet` is the chat path's block; with several it is `{"prompts": [block, ...]}`, and the headers are the last prompt's (`X-Ratchet-Served-By` is `mixed` when the prompts were not all served the same way). With `stream: true` the answer comes as `text_completion` chunks (`choices: [{text, index, logprobs, finish_reason}]`), each choice's text then its finish chunk, a last chunk with `usage` and no choices under `stream_options.include_usage`, and `[DONE]`; the `ratchet` block rides on the last finish chunk or on the usage chunk, as in a chat stream. If one prompt of a batch fails at the teacher, the request returns that error; the prompts answered before it stay logged and billed.
+
+```python
+resp = client.completions.create(model="ratchet/ticket-triage", prompt="I was charged twice this month.")
+print(resp.choices[0].text)
+```
+
+## POST `/v1/responses`
+
+The stateless subset of OpenAI's Responses API. The body becomes a chat request, which runs the chat path (validation, task resolution, cascade, quota, storage, `ratchet` block); the answer comes back as a `response` object (`openai.types.responses.Response`). Ratchet keeps no response state: each response is built for its request and forgotten, so a conversation is sent whole every time.
+
+| Field | Becomes |
+|---|---|
+| `input` | A string: one user message. An array of items: `message` items keep their role (`user`, `assistant`, `system`, `developer`) and content (a string, or `input_text` / `output_text` / `refusal` parts joined as a chat request's text parts are; an `input_image` with an `image_url`, read by the teacher only under `RATCHET_TEACHER_MODALITIES`); consecutive `function_call` items the tool calls of one assistant message (`call_id` the call's id), joined to the assistant `message` item right before them when there is one, as a response's `output` lists its text and then its calls; a `function_call_output` a `tool` message. `reasoning` items are dropped (and split no calls). So a tool loop sent back as input is the chat conversation it would be, and is stored as that request. An `item_reference`, a built-in tool's item, a file, audio or an image by file id is a 400 `unsupported_value` |
+| `instructions` | A leading system message |
+| `text.format` | `response_format`: `json_schema` (its `name`, `schema`, `strict`, `description`), `json_object`, or `text` (none) |
+| `tools`, `tool_choice`, `parallel_tool_calls` | Function tools (`{type: "function", name, description, parameters, strict}`) and a function `tool_choice` become the chat ones and follow their rules ([Generation parameters](#generation-parameters)). A built-in tool (web search, file search, code interpreter, MCP, ...) or a tool choice naming one is a 400 `unsupported_parameter` |
+| `max_output_tokens`, `temperature`, `top_p`, `reasoning.effort` | `max_tokens`, `temperature`, `top_p`, `reasoning_effort` |
+| `model`, `metadata`, `user`, `safety_identifier` | The chat fields of the same name (`model: "ratchet/<task>"` and `metadata.ratchet_task` name the task) |
+| `previous_response_id`, `conversation`, `prompt`, `background: true`, `stream: true` | A 400 `unsupported_parameter`: they need stored state, or a stream of response events, that the gateway does not keep or send. `stream: false` and `background: false` are fine |
+| `include`, `truncation`, `service_tier`, `store`, `top_logprobs`, `max_tool_calls`, `prompt_cache_key` | Accepted, no effect: no reasoning items or logprobs are returned, the input is never cut, and nothing is stored (`store` is `false` in the response) |
+| a chat-only field (`n`, `stop`, `messages`, ...) | Ignored |
+| any other field | An unknown chat field: kept, forwarded only when an allowlist names it ([Request](#request)) |
+
+Errors name the Responses field (`max_output_tokens`, `text.format.name`, `tools[0].name`, `input[2].call_id`).
+
+```json
+{"id": "resp_...", "object": "response", "created_at": 1792400000, "status": "completed", "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+ "output": [{"type": "message", "id": "msg_...", "status": "completed", "role": "assistant",
+             "content": [{"type": "output_text", "text": "Refunds take 5 to 7 days.", "annotations": []}]}],
+ "usage": {"input_tokens": 21, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+           "output_tokens": 9, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 30},
+ "instructions": "Be brief.", "store": false, "previous_response_id": null, "tool_choice": "auto", "tools": [], ...,
+ "ratchet": {"served_by": "teacher", "task": "default", ...}}
+```
+
+`status` is `incomplete` with `incomplete_details.reason` `max_output_tokens` when the answer was cut off (`content_filter` when filtered). Tool calls in an answer become `function_call` items (`call_id`, `name`, `arguments`), which a client answers with a `function_call_output` item carrying the same `call_id`; a teacher answer that is a tool call follows the chat path's rules (`tool_calls_unsupported` until tool calls are returned). The settings the request sent are echoed as sent.
+
+```python
+resp = client.responses.create(model="ratchet", instructions="Be brief.", input="How long do refunds take?")
+print(resp.output_text)
+```
+
+## Unsupported endpoints
+
+`POST /v1/moderations` and the stored-response routes (`GET` and `DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items`) answer 404 `unsupported_endpoint` after the key check, with a message that says why and links [OpenAI endpoints](#openai-endpoints), so a library that calls them fails with a clear reason (`openai.NotFoundError`, `e.code == "unsupported_endpoint"`). Any other path under `/v1/` is a 404 `unknown_url`.
 
 ## GET `/ratchet/stats`
 

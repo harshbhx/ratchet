@@ -19,6 +19,8 @@ instance of its `response_format` schema, or a tool call when it is sent `tools`
 request instead, as before the generic world (the gateway's 400 in mock mode); the trainer and the golden eval never do,
 since what they read was stored already.
 
+`MockEmbedder` plays the /v1/embeddings model: a deterministic unit vector per input (FR-1.51).
+
 This is a simulation for demos and tests. Real numbers come from live mode.
 """
 
@@ -40,7 +42,7 @@ from ratchet.calibration import MIN_TASK_GOLDEN
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
-from ratchet.providers import Completion, GenParams, GenPolicy, approx_tokens
+from ratchet.providers import Completion, Embeddings, GenParams, GenPolicy, approx_tokens
 from ratchet.scout.prompts import PLAN_SYSTEM, WRITE_SYSTEM
 
 from . import research
@@ -309,3 +311,36 @@ class MockFleet:
             strict=self.strict,
         )
         return student, version.adapter_uri
+
+
+MOCK_EMBEDDING_DIMS = 256  # the mock embeddings model's vector length when a request sets no `dimensions`
+
+
+class MockEmbedder:
+    """Plays the /v1/embeddings model (FR-1.51): a deterministic unit vector per input, seeded from SHA-256 of its text
+    (a token array: of its JSON), so the same input always gets the same vector and different inputs almost orthogonal
+    ones. `dimensions` keeps the first that many values of the full vector (at least 256 long) and scales them back to
+    length 1, as OpenAI's shortened embeddings do. Prompt tokens are counted at about 4 characters a token (a token
+    array: its length). No network, no failures, no state; the gateway refuses a request for more than `max_values`
+    floats, so the public demo stays responsive."""
+
+    base_url = "mock://embeddings"
+    default_dims = MOCK_EMBEDDING_DIMS
+    max_values = 1 << 20  # floats per request (inputs x dimensions), so one request cannot tie up the shared demo
+
+    def __init__(self, latency_ms: float = 20.0) -> None:
+        self.latency_ms = latency_ms  # simulated
+
+    @staticmethod
+    def vector(item: str | list[int], dims: int = MOCK_EMBEDDING_DIMS) -> list[float]:
+        text = item if isinstance(item, str) else json.dumps(item)
+        rng = random.Random(hashlib.sha256(text.encode("utf-8", "surrogatepass")).digest())
+        full = [rng.gauss(0.0, 1.0) for _ in range(max(dims, MOCK_EMBEDDING_DIMS))]
+        values = full[:dims]
+        norm = math.sqrt(sum(v * v for v in values)) or 1.0
+        return [v / norm for v in values]
+
+    def embed(self, inputs: list[Any], model: str, dimensions: int | None = None) -> Embeddings:
+        dims = dimensions or MOCK_EMBEDDING_DIMS
+        tokens = sum(approx_tokens(i) if isinstance(i, str) else len(i) for i in inputs)
+        return Embeddings([self.vector(i, dims) for i in inputs], model, tokens, self.latency_ms)
