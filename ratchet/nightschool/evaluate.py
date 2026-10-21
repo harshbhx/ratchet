@@ -70,6 +70,7 @@ from ..certificate import CALIBRATIONS, paired  # noqa: F401  (`evaluate.paired`
 from ..compare import INVALID
 from ..confidence import SERVE_NOTHING, STUDENT_SAMPLING, calibrate_threshold, score
 from ..providers import Completion, GenParams, GenPolicy, Provider, UpstreamError
+from ..resilience import adapter_missing
 from ..routing import CriticalRow
 from ..stats import CERT_GRID, ltt_fixed_sequence
 
@@ -426,7 +427,9 @@ class LiveEvaluator:
     (RATCHET_JUDGE_MODEL on Token Factory), the answers the student would serve on free-text tasks' held-out rows are
     graded against the teacher's (`cascade_eval`'s `judge`, FR-5.5, FR-14.40): the candidate is the answer chosen from
     the samples drawn with `STUDENT_SAMPLING`, so no extra student call is made and the judge grades what production
-    would serve."""
+    would serve. `on_adapter_missing(adapter_uri)` loads an adapter the endpoint forgot (it restarted since the adapter was
+    loaded): when a call answers 404 for the adapter, the evaluator calls it once per `evaluate` and asks again, so one
+    restart does not end a night."""
 
     def __init__(
         self,
@@ -441,7 +444,9 @@ class LiveEvaluator:
         cert_delta: float = 0.05,
         min_task_n: int = calibration.MIN_TASK_GOLDEN,
         per_task: bool = True,
+        on_adapter_missing: Callable[[str], object] | None = None,
     ):
+        self.on_adapter_missing = on_adapter_missing
         self.student = student
         self.judge = judge
         self.judge_model = judge_model
@@ -470,8 +475,17 @@ class LiveEvaluator:
         return int(obj.get("score", 0) == 1)
 
     def evaluate(self, adapter_uri: str, golden_rows: list[dict[str, Any]]) -> dict[str, Any]:
+        reloaded: list[bool] = []
+
         def sample(prompt, n, params=None):
             gen = self.policy.student(GenParams.from_stored(params))
+            try:
+                return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
+            except Exception as e:
+                if self.on_adapter_missing is None or reloaded or not adapter_missing(e, adapter_uri):
+                    raise
+            reloaded.append(True)  # the endpoint forgot the adapter: load it again, once, and ask again
+            self.on_adapter_missing(adapter_uri)
             return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
 
         def judge(prompt, reference, candidate, params=None):

@@ -192,6 +192,21 @@ def reload_adapters(s: Settings, led: Ledger, http: httpx.Client | None = None) 
     return names
 
 
+def reload_before_night(s: Settings, led: Ledger, http: httpx.Client | None = None) -> list[str]:
+    """Load the live, canary and shadow adapters again before a night: the endpoint may have restarted since they were
+    loaded (vLLM forgets runtime-loaded adapters), and the night re-scores the champion and may shadow the others. A
+    failure is an `adapter_reload_failed` event and the night goes on (the evaluator reloads once more on a 404); the
+    adapters that were loaded are an `adapter_reloaded` event. Returns the names loaded."""
+    try:
+        names = reload_adapters(s, led, http)
+    except Exception as e:  # noqa: BLE001 - a night with the endpoint down fails in its own eval, with its own message
+        led.event("adapter_reload_failed", f"before the night: {describe_failure(e)}")
+        return []
+    if names:
+        led.event("adapter_reloaded", f"before the night: {', '.join(names)} loaded again")
+    return names
+
+
 class AdapterReloader:
     """Loads a version's LoRA adapter again when vLLM answers 404 for it: an endpoint restart forgets every adapter
     loaded at runtime, and before this only `python -m ratchet.live reload` by hand brought them back.
@@ -524,9 +539,14 @@ def main(
             cert_delta=cert.delta,
             min_task_n=s.min_task_golden_rows(),
             per_task=s.per_task_calibration,
+            # vLLM forgets runtime-loaded adapters when the endpoint restarts: a 404 for the adapter loads it once more.
+            on_adapter_missing=lambda name: load_adapter(
+                s.student_base, s.student_api_key, name, f"{adapter_root()}/{name}", http
+            ),
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         trainer = NebiusTrainer(s, run, http)
+        reload_before_night(s, led, http)
         if retention.request_days:  # the night folds request rows first: every day that ended is sealed before that
             seal_receipts(led, s)
         # The teacher watch's probes and adjudications (FR-5.40, FR-5.41) ask the teacher on Token Factory, with the
