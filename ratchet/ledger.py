@@ -71,7 +71,11 @@ CREATE TABLE IF NOT EXISTS examples (
     purged_ts REAL,            -- when its text was removed; NULL while it is kept
     purge_reason TEXT,         -- 'retention' (a storable duplicate restores it) | 'erasure' (never stored again)
     purged_train INTEGER,      -- 1: it counted as a training row when purged (dataset.counts_as_train)
-    prompt_hash TEXT           -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
+    prompt_hash TEXT,          -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
+    -- The example's key under the default redaction (`label` style, no detector plugin; ADR 0082) when it was stored
+    -- otherwise and the key differs; NULL when it is `hash`. An erasure tombstones both, so a style or plugin change
+    -- never lets an erased example be stored again.
+    canon_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +143,7 @@ CREATE TABLE IF NOT EXISTS backfill_jobs (   -- historical prompts relabelled by
     source_models TEXT,        -- JSON: {model: outputs discarded}
     status TEXT, usd REAL, realtime_usd REAL
 );
-CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys, never stored again (FR-16.9)
+CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys (hash and canon_hash), never stored again (FR-16.9)
     key TEXT PRIMARY KEY, erasure_id INTEGER, ts REAL,
     suppressed INTEGER DEFAULT 0  -- how often a tombstoned example was offered again and refused
 );
@@ -307,6 +311,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "purge_reason": "TEXT",
         "purged_train": "INTEGER",
         "prompt_hash": "TEXT",
+        "canon_hash": "TEXT",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
     "erasures": {"actor": "TEXT", "reason": "TEXT", "scope": "TEXT", "purged": "INTEGER", "kept": "INTEGER"},
@@ -761,10 +766,14 @@ class Ledger:
         params: Mapping[str, Any] | None = None,
         client: str | None = None,
         end_user: str | None = None,
+        canon_hash: str | None = None,
     ) -> bool | None:
         """Store a teacher-labelled example. Returns True when it was inserted, False when it was a duplicate, and None
-        when it was refused because an erasure tombstoned its hash (FR-13.3): nothing is stored or bumped, and only the
-        tombstone's `suppressed` count grows.
+        when it was refused because an erasure tombstoned its hash or its `canon_hash` (FR-13.3): nothing is stored or
+        bumped, and only the tombstone's `suppressed` count grows. `canon_hash` is the example's key under the default
+        redaction (`label` style, no detector plugin; ADR 0082) when it was redacted otherwise; it is stored with the
+        row, so an erasure tombstones it too, and an example erased under one style or plugin setting is refused under
+        any other.
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
         under other conditions are another example, in the same split (`_split`). `client` (the API key name) and
@@ -778,12 +787,16 @@ class Ledger:
         text = json.dumps(messages, ensure_ascii=False)
         stored_params = json.dumps(target, ensure_ascii=False) if target else None
         now = time.time()
-        if self.db.execute("SELECT 1 FROM tombstones WHERE key=?", (h,)).fetchone() is not None:
-            return self._refuse_erased(h, now)
+        canon = canon_hash if canon_hash and canon_hash != h else None
+        keys = (h,) if canon is None else (h, canon)
+        hit = self.db.execute(f"SELECT key FROM tombstones WHERE key IN ({','.join('?' * len(keys))})", keys).fetchone()
+        if hit is not None:
+            return self._refuse_erased(hit["key"], now)
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
-                " split, redactions, params, client, end_user, last_seen_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " split, redactions, params, client, end_user, last_seen_ts, canon_hash)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     now,
                     self.day,
@@ -800,6 +813,7 @@ class Ledger:
                     client,
                     end_user,
                     now,
+                    canon,
                 ),
             )
             self.db.commit()
@@ -988,7 +1002,7 @@ class Ledger:
         final = reason == "erasure"
         for part in _chunks(sorted(rows)):
             found = self.db.execute(
-                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason FROM examples"
+                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason, canon_hash FROM examples"
                 f" WHERE hash IN ({','.join('?' * len(part))})",
                 part,
             ).fetchall()
@@ -1053,12 +1067,13 @@ class Ledger:
         now: float | None = None,
     ) -> dict[str, int]:
         """Carry out an erasure in one transaction (FR-13.3): purge `purge` ({hash: counted as a training row}) for good,
-        tombstone each hash (`add_example` refuses it from now on), list the purged rows in `erasure_items` (hashes, task
-        and split, never text), unlink the erased party from the shared examples kept (`unlink`: (hash, 'client' or
-        'end_user', the client's name)), clear the erased end users' hashes from their request rows
-        (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data (`tainted`;
-        `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive checked and free
-        of request text. Returns the erasure's id and the counts. Signed BOMs are never touched (INV-14)."""
+        tombstone each hash and canonical key (`canon_hash`; `add_example` refuses both from now on), list the purged
+        rows in `erasure_items` (hashes, task and split, never text), unlink the erased party from the shared examples
+        kept (`unlink`: (hash, 'client' or 'end_user', the client's name)), clear the erased end users' hashes from their
+        request rows (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data
+        (`tainted`; `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive
+        checked and free of request text. Returns the erasure's id and the counts. Signed BOMs are never touched
+        (INV-14)."""
         now = time.time() if now is None else _check_ts(now, "now")
         tainted = sorted({int(v) for v in affected})
         self._begin()
@@ -1082,8 +1097,9 @@ class Ledger:
                 "INSERT OR IGNORE INTO erasure_items (erasure_id, hash, task, split) VALUES (?,?,?,?)",
                 [(eid, r["hash"], r["task"], r["split"]) for r in done],
             )
+            keys = [r["hash"] for r in done] + [r["canon_hash"] for r in done if r["canon_hash"]]
             self.db.executemany(
-                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(r["hash"], eid, now) for r in done]
+                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(k, eid, now) for k in keys]
             )
             kept = self._unlink(unlink)
             unlinked = 0

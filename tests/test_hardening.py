@@ -501,6 +501,7 @@ def test_redact_preview_endpoint(gw_env):
         "enabled": True,
         "style": "label",
         "plugin": False,
+        "plugin_skipped": False,
     }
     assert c.post("/ratchet/redact", json={"text": "x" * 5001}).status_code == 400
     assert c.post("/ratchet/redact", json={}).status_code == 400

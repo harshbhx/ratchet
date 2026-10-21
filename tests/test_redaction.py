@@ -34,10 +34,13 @@ from ratchet.router import Ratchet
 
 CHAT = "/v1/chat/completions"
 EXTRACT = "contact-extract"
+ACME_KEY = "sk-acme-0123456789abcdef"
+ADMIN_KEY = "sk-admin-0123456789abcdef"
 # v0.4's nine rules, unchanged: the SHA-256 the BOM's `redactor` section showed before GSTIN and UPI (ADR 0082 cites e85726…).
 V04_LABELS = ("SECRET", "EMAIL", "IBAN", "CARD", "AADHAAR", "SSN", "PAN", "IP", "PHONE")
 V04_RULES_SHA256 = "e85726e38b1cf2b1878ba4099b7c38c30ea5268a811b270511c54ac3d0d4d27c"
 V04_PATTERNS = [p for p in PATTERNS if p[0] in V04_LABELS]
+CHECKS = {label: check for label, _, check in PATTERNS}
 # One of each identifier the patterns know, as people write them.
 IDENTIFIERS = {
     "EMAIL": "jane.doe@acme.co.uk",
@@ -281,39 +284,57 @@ def _first_pass(text: str, patterns: list[Any]) -> list[tuple[int, int, str]]:
     return sorted(spans)
 
 
+def _references(n: int, seed: int) -> list[str]:
+    """Long numbers that are no identifier, as people type them: tracking, policy and invoice numbers of 5 to 8 groups
+    of four digits (20 to 32 digits), also dashed, unspaced or with a word after them. About one window in ten passes
+    Luhn or Verhoeff by chance, so a rule that tried more windows than v0.4 would cut them into pieces."""
+    rng = random.Random(seed)
+    out = []
+    for _ in range(n):
+        groups = [f"{rng.randrange(10000):04d}" for _ in range(rng.randint(5, 8))]
+        number = rng.choice([" ", " ", " ", "-", ""]).join(groups)
+        out.append(
+            rng.choice(["Ref {}.", "Tracking number {} shipped", "Policy {}", "UTR {} on 2026-10-20", "{}"]).format(number)
+        )
+    return out
+
+
+def _run_end(text: str, at: int, label: str) -> int:
+    """Where the run that continues at `at` ends: digits for a card, digits and capitals for an IBAN, one space or dash
+    apart."""
+    m = re.compile(r"(?:[ -]?\d)*" if label == "CARD" else r"(?:[ -]?[0-9A-Z])*").match(text, at)
+    return m.end() if m else at
+
+
 @pytest.mark.req("FR-13.7", "FR-4.7", "NFR-4")
 def test_label_style_matches_v04():
-    """The default style is v0.4's: the same nine rules (their SHA-256 as v0.4's BOMs carried it), and on text without
-    the new GSTIN and UPI formats, exactly v0.4's output; on any text, exactly what v0.4's replacement pattern by
-    pattern gives with today's rules, unless the second pass found a checksum identifier v0.4 left in the text, and
-    then every v0.4 span is still there, unchanged."""
+    """The default style is v0.4's: the same nine rules (their SHA-256 as v0.4's BOMs carried it); on fuzzed text,
+    exactly what v0.4's replacement pattern by pattern gives with today's rules, and exactly v0.4's output where there
+    is neither a GSTIN nor a UPI id; on 8,000 long reference numbers, exactly v0.4's output. The one other difference,
+    a card or IBAN with a short tail, is in `test_a_refused_match_no_longer_hides_a_card`."""
     from ratchet import bom
 
     rules = [[label, rx.pattern, rx.flags, getattr(check, "__name__", None)] for label, rx, check in V04_PATTERNS]
     assert hashlib.sha256(bom.canonical(rules)).hexdigest() == V04_RULES_SHA256
     texts = [*_corpus(3000, seed=7), *_corpus(1500, seed=8)]
-    rescued = 0
+    plain = 0
     for text in texts:
-        old, new = _first_pass(text, PATTERNS), rd._pattern_spans(text)
-        if old == new:
-            assert redact(text) == _sequential(text, PATTERNS), text
-        else:  # the second pass added spans, and took nothing from v0.4's
-            rescued += 1
-            assert set(old) < set(new), text
-            assert {label for _, _, label in set(new) - set(old)} & set(rd._RETRY), text
+        assert rd._pattern_spans(text) == _first_pass(text, PATTERNS), text
+        assert redact(text) == _sequential(text, PATTERNS), text
+        if not {label for _, _, label in rd.spans(text)} & {"UPI", "GSTIN"}:
+            plain += 1
+            assert redact(text) == _sequential(text, V04_PATTERNS), text
         assert redact(text, None, Pseudonymizer("label")) == redact(text)
         # Every style finds the same spans: a numbered placeholder is a label placeholder with a number.
         numbered = redact(text, None, Pseudonymizer("numbered"))
         assert re.sub(r"\[([A-Z]+)_\d+\]", r"[\1]", numbered) == redact(text), text
-    assert 0 < rescued < len(texts) // 20
-    plain = []  # texts with neither a GSTIN nor a UPI id, where the second pass found nothing
-    for text in texts:
-        found = rd.spans(text)
-        if not {label for _, _, label in found} & {"UPI", "GSTIN"} and _first_pass(text, PATTERNS) == found:
-            plain.append(text)
-    assert len(plain) > 1000
-    for text in plain:
-        assert redact(text) == _sequential(text, V04_PATTERNS), text
+    assert plain > 2000
+    changed = 0
+    for text in _references(8000, seed=9):
+        out = redact(text)
+        assert out == _sequential(text, V04_PATTERNS), text
+        changed += out != text
+    assert changed > 500  # v0.4's own single windows still find a chance card or Aadhaar now and then, as they did
     c: Counter[str] = Counter()
     assert redact("Mail jane.doe@acme.co.uk, PAN ABCPE1234F, call +1 (415) 555-0132 or 98765 43210.", c) == (
         "Mail [EMAIL], PAN [PAN], call [PHONE] or [PHONE]."
@@ -323,26 +344,73 @@ def test_label_style_matches_v04():
 
 @pytest.mark.req("FR-4.7", "NFR-4", "INV-12")
 def test_a_refused_match_no_longer_hides_a_card():
-    """v0.4 tried each pattern once per digit run: a card followed by its CVV or expiry, or after another number, is a
-    longer run that fails Luhn, and the card stayed in the stored text. The checksum patterns now search again in what
-    the patterns left; a phone number the card hid is found in the pass after."""
+    """v0.4 tried each rule once per run: a card followed by its CVV or expiry is a longer run that fails Luhn, and the
+    card stayed in the stored text. A refused card or IBAN match is now tried again shorter, and kept when 1 to 4
+    characters of its run follow it; those stay as typed and no later rule reads them. Nothing else changes."""
     cases = {
         "card 4111 1111 1111 1111 123": "card [CARD] 123",  # the CVV
         "card 4111111111111111 12/27": "card [CARD] 12/27",  # the expiry
-        "Pay 500 4111 1111 1111 1111 now": "Pay 500 [CARD] now",  # a number before it
-        "4111 1111 1111 1111 5500 0000 0000 0004 99": "[CARD] [CARD] 99",  # two cards in a row
-        "Aadhaar 2345 6789 0124 4111 1111 1111 1111": "Aadhaar [AADHAAR] [CARD]",
-        "call +1 (415) 555-0132 4111 1111 1111 1111.": "call [PHONE] [CARD].",  # v0.4 left both
+        "card 4111 1111 1111 1111 12 27": "card [CARD] 12 27",
+        "4111 1111 1111 1111 5500 0000 0000 0004 99": "[CARD] [CARD] 99",  # two cards in a row, a CVV after the second
         "IBAN BE68 5390 0754 7034 2026": "IBAN [IBAN] 2026",  # a 16-character IBAN and the year after it
+        "Pay to BE68 5390 0754 7034 FROM my account": "Pay to [IBAN] FROM my account",  # v0.4: BE68 [PHONE]
+        "card 4111 1111 1111 1111 123.": "card [CARD] 123.",
+        "5500 0000 0000 0004 99, GSTIN 27AAPFU0939F1ZV": "[CARD] 99, GSTIN [GSTIN]",
+        "5500 0000 0000 0004 27AAPFU0939F1ZV": "[CARD] [GSTIN]",  # the card rule read the GSTIN's 27 as a group
+        "4111 1111 1111 1111 12abc": "[CARD] 12abc",
     }
     for text, want in cases.items():
         assert _sequential(text, PATTERNS) != want  # v0.4 left an identifier in the text
         assert redact(text) == want, text
-    # What v0.4 found stays as it was; a digit run with no valid checksum part stays too: phones have no checksum, so a
-    # long run is never cut into a "phone" and a rest.
-    for kept in ("4111 1111 1111 1112", "Order 1234 5678 9012 3456 7891", "ISBN 978-3-16-148410-0"):
-        assert redact(kept) == kept == _sequential(kept, PATTERNS), kept
+    # Everything else is v0.4's: a run with digits before the refused match, or more than 4 after the card, and a digit
+    # run with no valid checksum part, stay as v0.4 left them (phones have no checksum and are never retried).
+    for kept in (
+        "4111 1111 1111 1111 1112",  # 20 digits: the card is v0.4's own first window
+        "4111 1111 1111 1112",
+        "Order 1234 5678 9012 3456 7891",
+        "ISBN 978-3-16-148410-0",
+        "x 4111 1111 1111 1111 123 4567",  # 7 digits after the card: a longer number
+        "Pay 500 4111 1111 1111 1111 now",  # a number before it: v0.4's limit, kept
+        "Aadhaar 2345 6789 0124 4111 1111 1111 1111",
+        "call +1 (415) 555-0132 4111 1111 1111 1111.",
+        "4111 1111 1111 1111 123.45.67.89",  # an IP address v0.4 found, not a CVV
+        "4111 1111 1111 1111 123.456.7890",
+        "2026 BE68 5390 0754 7034 1 123.456.7890",  # the card rule would start inside the word BE68
+        "123.45.67.89 4111 1111 1111 1111",  # ... or inside the IP address before the card
+        "+918-5943037390 6749",  # a phone number's country code: no card starts after a '+'
+    ):
+        assert redact(kept) == _sequential(kept, PATTERNS), kept
     assert redact("+91 98765 43210 2345 6789 0124") == "[PHONE] [AADHAAR]"
+    # Fuzzed: wherever the output differs from v0.4's, it is that rule and nothing else.
+    rng = random.Random(12)
+    valid = ["4111 1111 1111 1111", "5500 0000 0000 0004", "4111111111111111", "4111-1111-1111-1111", "BE68 5390 0754 7034"]
+    pieces = [*valid, "123", "12/27", "2026", "99", "1", "12 27", "12345", "98765 43210", "2345 6789 0124", "Order", "x"]
+    pieces += ["27AAPFU0939F1ZV", "12abc", "123.456.7890", "123.45.67.89", "IBAN", "FROM", "BE68", "12.", "+91"]
+    rescued = 0
+    for _ in range(3000):
+        text = " ".join(rng.choice(pieces) for _ in range(rng.randint(1, 5)))
+        old, new = set(_first_pass(text, PATTERNS)), set(rd._pattern_spans(text))
+        if old == new:
+            assert redact(text) == _sequential(text, PATTERNS), text
+            continue
+        rescued += 1
+        runs = []
+        for start, end, label in sorted(new - old):
+            assert label in ("CARD", "IBAN") and CHECKS[label](text[start:end]), text
+            # Nothing joins it to the text before (a span kept before it ends a run), nor its tail to the text after.
+            before = text[max(0, start - 2) : start]
+            kept_before = any(s <= start - 2 < e for s, e, _ in new)
+            assert kept_before or not re.search(r"[\w+]$|\w[.-]$|\d $", before), text
+            tail = text[end : _run_end(text, end, label)]
+            after = text[end + len(tail) : end + len(tail) + 2]
+            if re.fullmatch(r" \w+", tail) and re.match(r"\w", after):  # the start of the next word, read whole later
+                tail = ""
+            else:  # a short tail of the run that nothing joins to the text after it
+                assert 1 <= sum(ch.isalnum() for ch in tail) <= 4 and not re.match(r"\w|[.-]\w", after), text
+            runs.append((start, end + len(tail)))
+        for start, end, _ in old - new:  # a v0.4 span is replaced only inside a rescued card's run
+            assert any(s <= start and end <= e for s, e in runs), text
+    assert rescued > 100
     # Numbered and surrogate placeholders find the same.
     assert redact("card 4111 1111 1111 1111 123", None, Pseudonymizer("numbered")) == "card [CARD_1] 123"
     out = redact("card 4111 1111 1111 1111 123", None, Pseudonymizer("surrogate"))
@@ -350,23 +418,34 @@ def test_a_refused_match_no_longer_hides_a_card():
 
 
 def _realistic(n: int, seed: int, pool: list[str]) -> list[str]:
-    """Identifiers and ordinary words between the separators people type."""
+    """Identifiers and ordinary words between the separators people type. Two numbers are never one space apart: the
+    rules read them as one digit run, as v0.4's did (a card after an Aadhaar, two phone numbers), and a second pass,
+    which sees them apart, can then find what the first could not."""
     rng = random.Random(seed)
     glue = [" ", ", ", ". ", "\n", " (", ") ", ": ", "; ", '"', " / ", " - ", "\t", " and ", ' "', '" ', "<", "> "]
-    return ["".join(rng.choice(pool) + rng.choice(glue) for _ in range(rng.randint(1, 8))) for _ in range(n)]
+    out = []
+    for _ in range(n):
+        parts = [rng.choice(pool) for _ in range(rng.randint(1, 8))]
+        text = ""
+        for i, part in enumerate(parts):
+            sep = rng.choice(glue)
+            if sep == " " and i + 1 < len(parts) and part[-1].isdigit() and parts[i + 1][0].isdigit():
+                sep = ", "
+            text += part + sep
+        out.append(text)
+    return out
 
 
 @pytest.mark.req("FR-13.7", "FR-4.7")
 def test_redaction_is_idempotent_on_realistic_text():
     """A stored example redacted again is unchanged, in every style: no placeholder or surrogate is read as an
-    identifier, and nothing the first pass left is found by the second. Surrogates have one known exception, so the
-    surrogate run leaves out the decoy that triggers it: a surrogate card is an unspaced 16-digit run, and when another
-    long digit run follows it after one space, the phone pattern reads the two as one, as it would two such numbers in
-    the original text."""
-    decoy = "4111 1111 1111 1112"  # 16 digits that fail Luhn
+    identifier, and nothing the first pass left is found by the second. Two numbers typed one space apart are the known
+    exception, left out of the corpus (`_realistic`): the rules read them as one digit run, as v0.4's did, and so miss
+    a card after an Aadhaar, or read a surrogate card and the number after it as one phone; a second pass, which sees
+    a placeholder or a surrogate between them, can then find more."""
     pool = [
         *IDENTIFIERS.values(),
-        decoy,
+        "4111 1111 1111 1112",  # 16 digits that fail Luhn
         "5500 0000 0000 0004",
         "98765 43210",
         "9876543210@ybl",
@@ -393,8 +472,7 @@ def test_redaction_is_idempotent_on_realistic_text():
         "ZZ39000000000000001",
     ]
     for style in rd.STYLES:
-        texts = _realistic(3000, 11, pool if style != "surrogate" else [v for v in pool if v != decoy])
-        for text in texts:
+        for text in _realistic(3000, 11, pool):
             once = redact(text, None, Pseudonymizer(style))
             assert redact(once, None, Pseudonymizer(style)) == once, (style, text)
 
@@ -634,6 +712,97 @@ def test_changing_the_style_stores_a_new_example_once():
     assert [r["seen"] for r in rows] == [2, 2]
 
 
+@pytest.mark.req("FR-13.3", "FR-13.7", "INV-12")
+def test_an_erasure_holds_under_every_style_and_plugin():
+    """Erasure tombstones the example's hash, which covers the redacted text, so another style or a detector plugin
+    would hash the same request differently. Each example stored otherwise than in the default (label style, no plugin)
+    also records its key under the default redaction (`canon_hash`), and an erasure tombstones both: an example erased
+    under one setting is refused under every other, in either direction."""
+    from ratchet import privacy
+    from ratchet.ledger import example_hash
+    from ratchet.providers import GenParams
+
+    answer = json.dumps({"contact": "bo@y.io"})
+    msgs = [{"role": "user", "content": "Sales: ana@x.io. Billing: bo@y.io. Alice Smith here."}]
+    params = GenParams(stop=("ana@x.io",))
+    _extract_task()
+    settings = [("label", ""), ("numbered", ""), ("surrogate", ""), ("label", "redact_plugins:names")]
+    settings.append(("numbered", "redact_plugins:names"))
+    for erased_under in settings:
+        led = Ledger(":memory:")
+
+        def store(style: str, plugin: str, led: Ledger = led) -> bool:
+            r = Ratchet(
+                _settings(redact_style=style, redact_plugin=plugin), led, RecordingProvider(answer), lambda v: (None, "x")
+            )
+            return r.handle(msgs, EXTRACT, params=params).stored
+
+        assert store(*erased_under)
+        (row,) = led.examples()
+        canon = example_hash(EXTRACT, redact_messages(msgs), {"stop": ["[EMAIL]"]})
+        assert row["canon_hash"] == (None if erased_under == ("label", "") else canon), erased_under
+        out = privacy.erase(led, hashes=[row["hash"]], actor="admin", reason="gdpr request", dry_run=False)
+        assert out["purged"] == 1
+        keys = {r[0] for r in led.db.execute("SELECT key FROM tombstones")}
+        assert keys == {row["hash"], canon}, erased_under
+        for again in settings:
+            assert not store(*again), (erased_under, again)
+        assert len(led.examples()) == 1 and led.examples()[0]["purged_ts"] is not None
+        assert int(led.db.execute("SELECT SUM(suppressed) FROM tombstones").fetchone()[0]) == len(settings)
+    # The key is stored only when it differs, so rows under the default settings are as before.
+    led, r, _ = _cold(answer)
+    r.handle(msgs, EXTRACT)
+    assert led.examples()[0]["canon_hash"] is None
+
+
+@pytest.mark.req("FR-4.7", "NFR-4", "INV-12", "INV-3")
+def test_long_reference_numbers_store_as_in_v04():
+    """A tracking number in the prompt and the same digits in the answer are stored as v0.4 stored them: neither is cut
+    into chance checksum windows, so the training target never holds digits its prompt lacks, and the example hash, the
+    split and the frequent-request count are v0.4's."""
+    from ratchet.ledger import example_hash
+
+    rng = random.Random(3)
+    for i in range(40):
+        groups = [f"{rng.randrange(10000):04d}" for _ in range(rng.randint(5, 8))]
+        if i == 0:
+            groups = ["1033", "5827", "9625", "0562", "5008", "5954", "9163"]  # the review's example
+        prompt = f"Where is parcel {' '.join(groups)}? Return its tracking number."
+        answer = json.dumps({"tracking": "".join(groups)})
+        led, r, _ = _cold(answer)
+        assert r.handle([{"role": "user", "content": prompt}], "track").stored
+        (row,) = led.examples()
+        want = [{"role": "user", "content": _sequential(prompt, V04_PATTERNS)}]
+        assert json.loads(row["messages"]) == want, prompt
+        assert row["completion"] == _sequential(answer, V04_PATTERNS)
+        assert row["hash"] == example_hash("track", want)
+        if i == 0:
+            assert want[0]["content"] == prompt and row["completion"] == answer and row["redactions"] == 0
+
+
+@pytest.mark.req("FR-13.7", "INV-12", "INV-3")
+def test_stored_conditions_are_numbered_in_key_order():
+    """Two requests whose conditions differ only in the order of their keys are one example: the stored conditions are
+    numbered in key order, as the example hash sorts them, and the copy keeps the client's order."""
+    from ratchet.ledger import example_hash
+
+    a = {"y": "b@b.io", "x": "a@a.io", "z": [{"d": "d@d.io", "c": "c@c.io"}, "b@b.io"], "n": 1}
+    b = {"n": 1, "z": [{"c": "c@c.io", "d": "d@d.io"}, "b@b.io"], "x": "a@a.io", "y": "b@b.io"}
+    out_a, out_b = redact_json(a, None, Pseudonymizer("numbered")), redact_json(b, None, Pseudonymizer("numbered"))
+    want = {"n": 1, "x": "[EMAIL_1]", "y": "[EMAIL_2]", "z": [{"c": "[EMAIL_3]", "d": "[EMAIL_4]"}, "[EMAIL_2]"]}
+    assert out_a == out_b == want
+    assert list(out_a) == ["y", "x", "z", "n"] and list(out_b) == ["n", "z", "x", "y"]
+    assert list(out_a["z"][0]) == ["d", "c"]
+    msgs = [{"role": "user", "content": "mail b@b.io"}]
+    hashes = set()
+    for schema in (a, b):
+        p = Pseudonymizer("numbered")
+        stored = redact_messages(msgs, None, p)
+        fmt = {"type": "json_schema", "json_schema": {"name": "s", "schema": redact_json(schema, None, p)}}
+        hashes.add(example_hash("t", stored, {"response_format": fmt}))
+    assert len(hashes) == 1
+
+
 @pytest.mark.req("FR-13.7", "INV-12", "INV-3")
 def test_the_example_hash_never_depends_on_the_answer():
     """The prompt and the stored conditions are numbered before the answer, so the same request is one example however
@@ -684,19 +853,33 @@ def test_concurrent_examples_never_share_placeholders():
 # ---------- the gateway ----------
 @pytest.mark.req("FR-13.7", "FR-4.7")
 def test_redact_preview_shows_the_style_and_takes_style(gw_env):
-    gw = gw_env(RATCHET_REDACT_STYLE="numbered", RATCHET_REDACT_PLUGIN="redact_plugins:names")
+    gw = gw_env(
+        RATCHET_REDACT_STYLE="numbered",
+        RATCHET_REDACT_PLUGIN="redact_plugins:names",
+        RATCHET_API_KEYS=f"acme:{ACME_KEY}",
+        RATCHET_ADMIN_KEYS=f"ops:{ADMIN_KEY}",
+    )
     c = TestClient(gw.app)
     body = {"text": "Alice Smith: ana@x.io, bo@y.io, ana@x.io"}
-    r = c.post("/ratchet/redact", json=body).json()
+    keyed = {"Authorization": f"Bearer {ACME_KEY}"}
+    r = c.post("/ratchet/redact", json=body, headers=keyed).json()
     assert r == {
         "text": "[NAME_1]: [EMAIL_1], [EMAIL_2], [EMAIL_1]",
         "found": {"NAME": 1, "EMAIL": 3},
         "enabled": True,
         "style": "numbered",
         "plugin": True,
+        "plugin_skipped": False,
     }
-    assert c.post("/ratchet/redact?style=label", json=body).json()["text"] == "[NAME]: [EMAIL], [EMAIL], [EMAIL]"
-    out = c.post("/ratchet/redact?style=Surrogate", json=body).json()
+    assert c.post("/ratchet/redact", json=body, headers={"X-API-Key": ADMIN_KEY}).json() == r  # an admin key too
+    # The endpoint is public: without a valid key the plugin does not run, and the response says so.
+    for headers in ({}, {"Authorization": "Bearer not-a-key"}):
+        anon = c.post("/ratchet/redact", json=body, headers=headers)
+        assert anon.status_code == 200 and anon.json()["text"] == "Alice Smith: [EMAIL_1], [EMAIL_2], [EMAIL_1]"
+        assert (anon.json()["plugin"], anon.json()["plugin_skipped"]) == (False, True)
+    label = c.post("/ratchet/redact?style=label", json=body, headers=keyed).json()
+    assert label["text"] == "[NAME]: [EMAIL], [EMAIL], [EMAIL]"
+    out = c.post("/ratchet/redact?style=Surrogate", json=body, headers=keyed).json()
     assert out["text"] == "[NAME_1]: person1@example.com, person2@example.com, person1@example.com"
     assert out["style"] == "surrogate"
     bad = c.post("/ratchet/redact?style=hashed", json=body)
@@ -709,12 +892,16 @@ def test_redact_preview_shows_the_style_and_takes_style(gw_env):
 
 @pytest.mark.req("FR-13.7")
 def test_redact_preview_reports_a_failing_plugin_without_the_text(gw_env):
-    gw = gw_env(RATCHET_REDACT_PLUGIN="redact_plugins:flaky")
+    gw = gw_env(RATCHET_REDACT_PLUGIN="redact_plugins:flaky", RATCHET_ADMIN_KEYS=f"ops:{ADMIN_KEY}")
     c = TestClient(gw.app, raise_server_exceptions=False)
-    r = c.post("/ratchet/redact", json={"text": "Alice Smith"})
+    r = c.post("/ratchet/redact", json={"text": "Alice Smith"}, headers={"Authorization": f"Bearer {ADMIN_KEY}"})
     assert r.status_code == 500 and r.json() == {"detail": "the redaction plugin raised RuntimeError"}
+    # A caller without a key never reaches the plugin, so a failing plugin cannot turn every public preview into a 500.
+    anon = c.post("/ratchet/redact", json={"text": "Alice Smith"})
+    assert anon.status_code == 200 and (anon.json()["plugin"], anon.json()["plugin_skipped"]) == (False, True)
     plain = TestClient(gw_env(RATCHET_REDACT_PLUGIN="").app).post("/ratchet/redact", json={"text": "Alice Smith"})
-    assert plain.json()["plugin"] is False and plain.json()["text"] == "Alice Smith"  # patterns alone find no names
+    assert plain.json()["text"] == "Alice Smith"  # patterns alone find no names
+    assert (plain.json()["plugin"], plain.json()["plugin_skipped"]) == (False, False)
 
 
 @pytest.mark.req("FR-13.7", "INV-12")

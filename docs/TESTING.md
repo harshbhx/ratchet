@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 854 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_redaction), ~80 s
+pytest -q                     # 857 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_privacy, test_erasure, test_redaction), ~80 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -32,8 +32,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 13 |
 | `tests/test_privacy.py` | 26 |
 | `tests/test_erasure.py` | 52 (34 functions; one has 13 cases, one has 4, three have 2) |
-| `tests/test_redaction.py` | 40 (24 functions; one has 9 cases, one has 7, one has 3) |
-| **Total** | **854** |
+| `tests/test_redaction.py` | 43 (27 functions; one has 9 cases, one has 7, one has 3) |
+| **Total** | **857** |
 
 There are three layers:
 
@@ -650,9 +650,9 @@ Redaction for extraction tasks, the detector plugin and Indian identifiers (FR-1
 | `test_one_pseudonymizer_covers_messages_answer_and_conditions` | FR-13.7: content parts, `name`, `refusal`, tool-call arguments, the answer and the conditions share one numbering; the caller's messages are untouched |
 | `test_surrogate_values_stable_under_second_pass` | FR-13.7: `redact(redact(x)) == redact(x)` in every style for a text with one of each identifier; surrogates are `example.com`, 555-01xx in E.164, RFC 5737, valid `ZZ` IBANs and card numbers that fail Luhn and hold no Aadhaar; no original left |
 | `test_surrogates_are_reserved_and_distinct_until_they_run_out` | FR-13.7: 300 emails, 79,800 phones, 999 cards, IBANs and 762 IPs distinct and reserved, then the numbered fallback |
-| `test_label_style_matches_v04` | FR-13.7, FR-4.7, NFR-4: the nine v0.4 rules' SHA-256; on 4,500 fuzzed texts the output is v0.4's sequential replacement unless the second pass found a checksum identifier, and then v0.4's spans are a strict subset of today's; numbered placeholders find the same spans; on text without GSTIN or UPI ids, exactly v0.4's output with v0.4's rules |
-| `test_a_refused_match_no_longer_hides_a_card` | FR-4.7, NFR-4, INV-12: a card with its CVV or expiry, after another number, two cards in a row, after an Aadhaar or a phone, and a 16-character IBAN before a year are found where v0.4 left them; a non-Luhn 16-digit run, a long order number and an ISBN stay; a phone and an Aadhaar keep their spans; numbered and surrogate alike |
-| `test_redaction_is_idempotent_on_realistic_text` | FR-13.7, FR-4.7: 3,000 texts of identifiers and words between ordinary separators, redacted twice, are unchanged in every style (the surrogate run without the decoy its docstring names) |
+| `test_label_style_matches_v04` | FR-13.7, FR-4.7, NFR-4: the nine v0.4 rules' SHA-256; on 4,500 fuzzed texts exactly v0.4's spans and v0.4's sequential replacement with today's rules, and on those without GSTIN or UPI ids exactly v0.4's output with v0.4's rules; on 8,000 long reference numbers (5 to 8 groups of four digits, spaced, dashed or unspaced) exactly v0.4's output; numbered placeholders find the same spans |
+| `test_a_refused_match_no_longer_hides_a_card` | FR-4.7, NFR-4, INV-12: a card with its CVV or expiry, two cards in a row, a card before a GSTIN, and a 16-character IBAN before a year or a short word are found where v0.4 left them; a card with digits or a word before it on its run, more than 4 digits after it, a tail that joins an IP address or a phone number, and a non-Luhn run stay as v0.4 left them; on 3,000 fuzzed texts, wherever the output differs from v0.4's it is that rule and nothing else; numbered and surrogate alike |
+| `test_redaction_is_idempotent_on_realistic_text` | FR-13.7, FR-4.7: 3,000 texts of identifiers and words between ordinary separators, never two numbers one space apart (the known exception its docstring names), redacted twice, are unchanged in every style |
 | `test_default_settings_store_v04_examples` | FR-13.7, FR-4.7: with the default settings the stored example is v0.4's byte for byte |
 | `test_gstin_and_upi_ids_are_redacted` | FR-13.8, FR-4.7, NFR-4: GSTINs (also entity `A` and a company PAN) and UPI ids (`name@okicici`, `9876543210@ybl`, a sentence's full stop) replaced; package tags, `a+b@ybl`, one-letter handles, a space after `@` and a 14-character near-GSTIN kept |
 | `test_redact_plugin_detector_applied` | FR-13.7, NFR-4: a fake NER detector tags names, numbered with the emails; label and surrogate styles; an empty text never reaches the plugin; a dotted path, a lower-case label and offsets of an integer type that is not `int` (numpy's) |
@@ -664,10 +664,13 @@ Redaction for extraction tasks, the detector plugin and Indian identifiers (FR-1
 | `test_task_spec_privacy_redact_style_overrides_the_default` | FR-13.7, FR-2.15: `privacy.redact_style` parsed, documented and round-tripped, outside `spec_hash`; bad values and keys listed with their paths; `extends` merges it (null removes it); the cascade stores that task numbered and another task labelled |
 | `test_admin_api_sets_a_tasks_style_without_recalibrating` | FR-13.7, FR-2.15: a `PUT` that only sets `privacy.redact_style` changes the task, keeps its `spec_hash` (not recalibrating), shows in `/ratchet/stats` and writes a `task_changed` event saying the hash was kept; a bad style is a 422 with its path |
 | `test_changing_the_style_stores_a_new_example_once` | FR-13.7: the same request under `label` twice and `numbered` twice is two examples seen twice each |
+| `test_an_erasure_holds_under_every_style_and_plugin` | FR-13.3, FR-13.7, INV-12: an example erased under each of five style and plugin settings is refused under all five; both its hash and its key under the default redaction (`canon_hash`) are tombstoned; default rows record no `canon_hash` |
+| `test_long_reference_numbers_store_as_in_v04` | FR-4.7, NFR-4, INV-12, INV-3: 40 tracking numbers in a prompt and unspaced in the answer are stored exactly as v0.4 stored them, with v0.4's example hash, so the target never holds digits its prompt lacks |
+| `test_stored_conditions_are_numbered_in_key_order` | FR-13.7, INV-12, INV-3: conditions that differ only in key order get the same numbering and the same example hash; each copy keeps the client's key order |
 | `test_the_example_hash_never_depends_on_the_answer` | FR-13.7, INV-3: three different answers to one request with a stop string are one example seen three times; the conditions are numbered before the answer |
 | `test_concurrent_examples_never_share_placeholders` | FR-13.7, INV-12: 16 threads each store an example that starts at `[EMAIL_1]` and names its own `[EMAIL_2]` |
-| `test_redact_preview_shows_the_style_and_takes_style` | FR-13.7: `POST /ratchet/redact` in the gateway's style with the plugin, `?style=` in any case, 400 for an unknown style; `/ratchet/stats` `privacy` style keys, a task's override included |
-| `test_redact_preview_reports_a_failing_plugin_without_the_text` | FR-13.7: a failing plugin is a 500 naming its exception class only; without a plugin, names are left |
+| `test_redact_preview_shows_the_style_and_takes_style` | FR-13.7: `POST /ratchet/redact` in the gateway's style, with the plugin for an API or admin key and without it (`plugin_skipped`) for no key or a wrong one, `?style=` in any case, 400 for an unknown style; `/ratchet/stats` `privacy` style keys, a task's override included |
+| `test_redact_preview_reports_a_failing_plugin_without_the_text` | FR-13.7: a failing plugin is a 500 naming its exception class only, for a caller with a key; a keyless preview never reaches it; without a plugin, names are left |
 | `test_gateway_stores_numbered_examples_end_to_end` | FR-13.7, INV-12: over HTTP under `RATCHET_REDACT_STYLE=numbered` the stored prompt and answer share placeholders |
 
 ## Live-path tests

@@ -188,52 +188,122 @@ def _detected(detector: Detector, text: str) -> list[tuple[int, int, str]]:
 _MASK = "\ue000"
 
 
-# Labels whose check is a checksum (Luhn, mod-97, Verhoeff), searched again in what the patterns left (`_pattern_spans`):
-# a part of a refused match that passes the checksum is an identifier. PHONE only counts digits, so searching it again
-# would cut order and account numbers into "phones".
-_RETRY = ("IBAN", "CARD", "AADHAAR")
+# A card or an IBAN typed with a few more characters of the same run after it is one longer match its checksum refuses:
+# a card and its CVV or expiry month ('4111 1111 1111 1111 123', '4111111111111111 12/27'), an IBAN and a year. v0.4
+# skipped such a match whole and stored the card. For these rules a refused match is tried again shorter, ending at a
+# space inside it, and kept when it passes the checksum and at most `_TAIL` characters of the run follow it, or the next
+# word begins inside it (`_matches`). Nothing else is retried, so every other text redacts exactly as in v0.4: a long
+# reference number is never cut into windows that pass a checksum by chance (one in ten does), and phones (no checksum)
+# and Aadhaar numbers (always exactly 12 digits) are never retried.
+_TAIL = 4
+# What continues a rule's run after a match: its characters, one space or dash apart (a card typed with dashes after
+# an IBAN is still the same run), read at most `_TAIL` + 1 characters far, so a long run costs no more than a short one.
+_RUNS: dict[str, re.Pattern[str]] = {
+    "CARD": re.compile(rf"(?:[ -]?\d){{1,{_TAIL + 1}}}"),
+    "IBAN": re.compile(rf"(?:[ -]?[A-Z0-9]){{1,{_TAIL + 1}}}"),
+}
 
 
-def _matches(pattern: re.Pattern[str], check: Callable[[str], bool] | None, text: str, retry: bool) -> list[tuple[int, int]]:
-    """The (start, end) of each match of `pattern` in `text` that passes `check`, left to right, not overlapping.
+def _joins(ch: str) -> bool:
+    """Whether `ch` next to a run makes it part of a longer word: a letter, a digit or '_'."""
+    return ch.isalnum() or ch == "_"
 
-    With `retry`, a match the check refuses is tried again before the search moves on: shorter, ending at each
-    whitespace inside it (shortest first, so two card numbers in a row are two), then from each word inside it that
-    follows whitespace. A shorter match ends where whitespace follows, which every checked pattern's closing assertion
-    accepts, so it is a match the pattern could have made on its own. The retries stay inside the refused match, a few
-    dozen characters."""
+
+def _free_before(text: str, start: int, boundary: int) -> bool:
+    """Whether nothing before `start` joins a match there to more text: a letter, digit, '_' or '+' (a phone number's
+    country code) right before it, a '.' or '-' after a letter or digit (`123.45.67.89 4111 ...` read from its `89`),
+    or a space after a digit (the same number typed in groups). Text before `boundary`, the end of a match this rule
+    kept, does not count."""
+    if start == 0 or start - 1 < boundary:
+        return True
+    prev = text[start - 1]
+    if _joins(prev) or prev == "+":
+        return False
+    if start < 2 or start - 2 < boundary:
+        return True
+    return not ((prev in ".-" and _joins(text[start - 2])) or (prev == " " and text[start - 2].isdecimal()))
+
+
+def _free_after(text: str, end: int) -> bool:
+    """Whether nothing after `end` joins the text before it to more: a letter, digit or '_', or a '.' or '-' before one
+    (the `27` of `27AAPFU0939F1ZV`, a GSTIN; the `123` of `123.45.67.89`, an IP address, or of a phone number)."""
+    if end >= len(text):
+        return True
+    if _joins(text[end]):
+        return False
+    return not (text[end] in ".-" and end + 1 < len(text) and _joins(text[end + 1]))
+
+
+def _word_after(text: str, at: int, run_end: int) -> bool:
+    """Whether what follows `at` is a space and then one word that only begins with the run's characters: the
+    `27AAPFU0939F1ZV` (a GSTIN) after `5500 0000 0000 0004 `. The card rule read its `27` as a fifth group; it is no
+    part of the card's run, and the later rules read the word whole."""
+    if text[at : at + 1] != " " or run_end >= len(text) or not _joins(text[run_end]):
+        return False
+    return not any(ch in " -" for ch in text[at + 1 : run_end])
+
+
+def _tail(run: re.Pattern[str], text: str, at: int) -> tuple[int, int]:
+    """(where the run that continues at `at` ends, how many characters of it there are), counting at most `_TAIL` + 1:
+    more than `_TAIL` means too many, wherever the run ends."""
+    m = run.match(text, at)
+    if m is None:
+        return at, 0
+    return m.end(), sum(1 for ch in m.group(0) if ch.isalnum())
+
+
+def _matches(
+    pattern: re.Pattern[str], check: Callable[[str], bool] | None, text: str, run: re.Pattern[str] | None = None
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """The (start, end) of each match of `pattern` in `text` that passes `check`, left to right as `re.sub` finds them,
+    and the ranges later rules must not read.
+
+    With `run` (CARD, IBAN), a match the check refuses is tried again, ending at each space inside it, longest first,
+    when nothing before it joins it to more text (`_free_before`; a match this rule kept ends a run): the first shorter
+    match that passes the check is kept when 1 to `_TAIL` characters of the run follow it and nothing after them joins
+    them to more text (`_free_after`): those few characters stay in the text as typed and are hidden from the later
+    rules, which could not have matched them anyway. It is also kept when the rest of the refused match is the start of
+    the next word (`_word_after`), which the later rules then read whole. A shorter match ends where a space follows,
+    which the pattern's closing assertion accepts, so it is a match the pattern could have made on its own; the search
+    then goes on where v0.4's did, after the refused match."""
     if check is None:
-        return [m.span() for m in pattern.finditer(text)]
-    if not retry:
-        return [m.span() for m in pattern.finditer(text) if check(m.group(0))]
+        return [m.span() for m in pattern.finditer(text)], []
+    if run is None:
+        return [m.span() for m in pattern.finditer(text) if check(m.group(0))], []
     out: list[tuple[int, int]] = []
-    pos = 0
-    while (m := pattern.search(text, pos)) is not None:
+    hidden: list[tuple[int, int]] = []
+    boundary = 0  # where the last kept match ended: the run before it is not this match's
+    for m in pattern.finditer(text):
         start, end = m.span()
         if check(m.group(0)):
             out.append((start, end))
-            pos = end
+            boundary = end
             continue
-        cuts = [i for i in range(start + 1, end) if text[i].isspace() and not text[i - 1].isspace()]
-        shorter = None
-        for cut in cuts:
-            t = pattern.match(text, start, cut)
-            if t is not None and check(t.group(0)):
-                shorter = t.end()
-                break
-        if shorter is not None:
-            out.append((start, shorter))
-            pos = shorter
-            continue
-        # Nothing valid starts here: search again from the next word inside the refused match, or after it.
-        pos = next((i for i in range(start + 1, end) if text[i - 1].isspace() and not text[i].isspace()), end)
-    return out
+        if not _free_before(text, start, boundary):
+            continue  # a window inside a longer word or number, as v0.4 left it
+        for cut in reversed([i for i in range(start + 1, end) if text[i] == " "]):
+            run_end, rest = _tail(run, text, cut)
+            if rest > _TAIL:
+                break  # a shorter match leaves more of the run after it
+            short = pattern.match(text, start, cut)
+            if short is None or not check(short.group(0)):
+                continue
+            run_end, rest = _tail(run, text, short.end())
+            if 0 < rest <= _TAIL and _free_after(text, run_end):  # a CVV, an expiry month, a year: a short tail
+                out.append((start, short.end()))
+                hidden.append((short.end(), run_end))
+                boundary = run_end
+            elif _word_after(text, short.end(), run_end):  # the rest is the start of another word, not of this run
+                out.append((start, short.end()))
+                boundary = short.end()
+            break
+    return out, hidden
 
 
-def _masked(text: str, found: list[tuple[int, int, str]]) -> str:
-    """`text` with each found span replaced by as many `_MASK` characters."""
+def _masked(text: str, ranges: list[tuple[int, int]]) -> str:
+    """`text` with each (start, end) range, sorted and not overlapping, replaced by as many `_MASK` characters."""
     parts, last = [], 0
-    for start, end, _ in found:
+    for start, end in ranges:
         parts += [text[last:start], _MASK * (end - start)]
         last = end
     parts.append(text[last:])
@@ -241,34 +311,16 @@ def _masked(text: str, found: list[tuple[int, int, str]]) -> str:
 
 
 def _pattern_spans(text: str) -> list[tuple[int, int, str]]:
-    """Every pattern's matches in `text` as (start, end, label), sorted.
-
-    First pass: the patterns run in PATTERNS order and each sees the earlier ones' matches masked, which finds exactly
-    what v0.4's replacement pattern by pattern found. A card number followed by its CVV or expiry ('4111 1111 1111 1111
-    123') is one digit run that fails Luhn, and v0.4 left the card in the text. So a second pass, in what is left, runs
-    the checksum patterns (`_RETRY`) with the refused matches retried (`_matches`), and when that finds something, a
-    third runs every pattern once more on what is then left: a phone number just before the card is found now that the
-    card no longer joins it into one long digit run. Only text no pattern took is searched again, so every v0.4 span
-    stays as it was and a chance checksum match cannot cut into a phone number or an Aadhaar."""
+    """Every pattern's matches in `text` as (start, end, label), sorted. The patterns run in PATTERNS order and each
+    sees the earlier ones' matches masked, which finds exactly what v0.4's replacement pattern by pattern found, apart
+    from the new rules (UPI, GSTIN) and a card or IBAN followed by a short tail of its run (`_matches`)."""
     spans: list[tuple[int, int, str]] = []
     masked = text
-
-    def run(retry: bool) -> bool:
-        nonlocal masked
-        added = False
-        for label, pattern, check in PATTERNS:
-            if retry and label not in _RETRY:
-                continue
-            found = [(start, end, label) for start, end in _matches(pattern, check, masked, retry)]
-            if found:
-                spans.extend(found)
-                masked = _masked(masked, found)
-                added = True
-        return added
-
-    run(False)
-    if run(True):
-        run(False)
+    for label, pattern, check in PATTERNS:
+        found, hidden = _matches(pattern, check, masked, _RUNS.get(label))
+        if found or hidden:
+            spans.extend((start, end, label) for start, end in found)
+            masked = _masked(masked, sorted(found + hidden))
     spans.sort()
     return spans
 
@@ -501,8 +553,10 @@ def redact_messages(
 def redact_json(value: Any, counts: Counter[str] | None = None, pseudo: Pseudonymizer | None = None) -> Any:
     """A copy of a JSON value with every string value redacted: the generation conditions stored with an example (a
     tool's description, a schema's enum, a stop string can carry what a user typed). Object keys are kept: they are
-    field names a schema needs. Iterative, so any nesting the request validation let through is fine. The values are
-    visited in the same order every time, so `pseudo` numbers the same conditions alike."""
+    field names a schema needs. Iterative, so any nesting the request validation let through is fine. Object members
+    are visited in key order, whatever order the client wrote them in, so `pseudo` numbers the same conditions alike
+    and two requests that differ only in key order stay one example (the example hash sorts keys too); the copy keeps
+    the client's order."""
     if isinstance(value, str):
         return redact(value, counts, pseudo)
     if not isinstance(value, (dict, list, tuple)):
@@ -511,7 +565,12 @@ def redact_json(value: Any, counts: Counter[str] | None = None, pseudo: Pseudony
     stack: list[tuple[Any, Any]] = [(value, root)]
     while stack:
         src, dst = stack.pop()
-        for key, item in src.items() if isinstance(src, dict) else enumerate(src):
+        if isinstance(src, dict):
+            dst.update(dict.fromkeys(src))  # the client's key order, filled in below in sorted order
+            members: Iterable[tuple[Any, Any]] = sorted(src.items(), key=lambda kv: str(kv[0]))
+        else:
+            members = enumerate(src)
+        for key, item in members:
             if isinstance(item, str):
                 out: Any = redact(item, counts, pseudo)
             elif isinstance(item, dict):
