@@ -87,6 +87,8 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/demo/teacher-drift` | mock only | [mock](#access-levels) | Make the mock teacher change labels at random, to show the teacher watch |
 | POST | `/ratchet/demo/reset` | mock only | [mock](#access-levels) | Start over |
 | GET | `/scout/examples` | both | [public](#access-levels) | Example questions and whether free text is allowed |
+| GET | `/scout/recorded` | both | [public](#access-levels) | Recorded live Scout runs, newest first (FR-10.40) |
+| GET | `/scout/recorded/{id}` | both | [public](#access-levels) | One recording, to play back at its real pace |
 | GET | `/scout/status` | both | [public](#access-levels) | Budget guard state, the judges' reserve, search and Tavily credits, and which model answers student calls (`fallback_student`, `student_serving`) |
 | POST | `/scout/judge` | both | [public](#access-levels) | Open a judge session: the access code in the body, a signed cookie back |
 | DELETE | `/scout/judge` | both | [public](#access-levels) | End a judge session (clears the cookie) |
@@ -2168,6 +2170,19 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 ```
 
 `examples` is `ratchet.scout.prompts.EXAMPLE_QUESTIONS` (8 questions). `free_text` is `true` only in live mode.
+
+### GET `/scout/recorded`
+
+```json
+{"recordings": [{"id": "20261021T100500Z-what-is-lora-fine-tuning", "recorded_at": "2026-10-21T10:05:00Z",
+                 "question": "What is LoRA fine-tuning?", "duration_ms": 41800, "mode": "live", "totals": {"llm_calls": 14, "...": "..."}}]}
+```
+
+Up to 20 recordings from `RATCHET_SCOUT_RECORDINGS_DIR`, newest first; `{"recordings": []}` when the setting is empty or the folder is. Public, read-only: no model call, no guard budget, no ledger row ([ADR 0140](adr/0140-recorded-scout-run.md)).
+
+### GET `/scout/recorded/{id}`
+
+One recording: `{"id", "schema": "ratchet.scout-recording/v1", "recorded_at", "host", "mode": "live"|"mock", "question", "duration_ms", "events": [...], "totals"}`. Each event is the SSE event of [SCOUT.md](SCOUT.md#event-objects-sse-data-payloads-in-order) plus `t_ms`, its offset in milliseconds from the first. 404 when the id does not match `^[0-9]{8}T[0-9]{6}Z-[a-z0-9-]{1,40}$`, the file is missing, over 2 MB, not JSON or another schema.
 
 ### GET `/scout/status`
 
