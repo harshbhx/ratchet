@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1769 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1773 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -23,7 +23,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_core.py` | 67 (44 functions; one has 19 cases, one has 5; 1 slow: skipped without `--runslow`) |
 | `tests/test_tasks.py` | 129 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
-| `tests/test_nightschool.py` | 29 (25 functions; one has 5 cases) |
+| `tests/test_nightschool.py` | 30 (25 functions; one has 5 cases) |
 | `tests/test_release.py` | 41 (32 functions; one has 8 cases, two have 2) |
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
@@ -38,7 +38,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 43 (32 functions; one has 8 cases, one has 5) |
 | `tests/test_privacy.py` | 26 |
-| `tests/test_erasure.py` | 54 (36 functions; one has 13 cases, one has 4, three have 2) |
+| `tests/test_erasure.py` | 57 (36 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
 | `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
@@ -62,7 +62,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1769** |
+| **Total** | **1773** |
 
 There are three layers:
 
@@ -251,6 +251,7 @@ The last six check that the student trains on the prompt it is served (FR-8.42, 
 | `test_dockerfile_is_pinned` | FR-8.42: `deploy/Dockerfile.train` has no `\|\| true` and `trl==1.16.0`; every package of every `pip install` carries `==`, and together they equal `deploy/train-versions.txt` (no Unsloth); every step after torch reads that file as constraints; the kernel import check comes after the Mamba install; `python-is-python3` is installed; `train.LIBRARIES` names exactly the pinned packages; the `train` extra in `pyproject.toml` agrees with the list |
 | `test_train_records_library_versions` | FR-8.42, FR-4.5, INV-14: `train.versions` records Python, CUDA and each pinned package (None when missing, from an injected lookup) in `LIBRARIES` order; `bom.EXTRA_KEYS` has no section for them, so `versions.json` stays beside the adapter; `ratchet_manifest.json` records the template arguments |
 | `test_train_refuses_rows_that_would_train_another_prompt` | FR-8.42: `train.check_rows` refuses, naming the row and never its text, an old `messages` row, missing or other template arguments, a completion that is not one assistant message with text, an answer with a think tag, an empty or malformed prompt, provenance without a license, a row that is not an object, and an empty file |
+| `test_the_version_is_recorded_on_the_rows_the_adapter_was_trained_on` | FR-4.4, INV-14, INV-17: an example stored while the dataset files are written is not trained on: rows, `train_examples`, the BOM's count, commitment size and `dataset_sha256` all describe the same 60 rows; the late one is in the next read |
 
 ### `tests/test_release.py`
 
@@ -824,6 +825,9 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_admin_cli_erases_and_exports` | FR-13.3, FR-13.5: `python -m ratchet.admin erase` (a dry run, then `--apply` with the end user from stdin across every scope), its errors, and `export` to a file and to stdout, with a refused filter |
 | `test_admin_cli_erases_end_users_only_with_the_gateways_key_and_never_writes_otherwise` | FR-13.3: `python -m ratchet.admin erase --end-user` in a shell without the gateway's `RATCHET_END_USER_KEY`, with another key or a short one is refused (dry run and `--apply`) and the ledger's meta, events and erasures stay unchanged; with the right key and no `RATCHET_API_KEYS` it finds the end user in every scope the ledger holds (a removed key's too) and logs no key change; a gateway's generated key is used from the ledger; a ledger that never hashed an end user is refused; a free-text `--actor` is refused |
 | `test_a_ledger_from_before_retention_gains_its_columns_and_tables` | FR-13.3, FR-13.4: a file with the old `erasures` table gains the new columns and tables twice without change; `last_seen_ts` is backfilled from `ts`, and retention works on it |
+| `test_an_erasure_during_the_champion_rescore_is_not_trained_on` | FR-13.3, INV-2, INV-17: an example erased while the live version is re-scored is not in the trainer's rows or the new version's leaves; the count and dataset hash match the rows; an `erasure_honoured` event, no `erasure_tainted` |
+| `test_an_erasure_while_the_adapter_trains_taints_the_new_version` | FR-13.3, INV-14, INV-17: an erasure recorded inside `trainer.train` names no version when it runs; afterwards it is `pending` with the new version in `tainted`, one `erasure_tainted` event, the leaf stays |
+| `test_an_erased_example_is_never_a_tombstone_hit_in_the_training_rows_of_a_quiet_night` | FR-13.3: an erasure before the night changes nothing the night writes (59 rows, no erasure event); `Ledger.tombstoned` answers by key |
 
 ### `tests/test_licensing.py`
 ### `tests/test_redaction.py`
