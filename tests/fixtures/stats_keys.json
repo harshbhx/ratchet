@@ -42,7 +42,9 @@
       "baseline_usd": "number",
       "savings_pct": "number",
       "avg_latency_ms": "number",
-      "routes": "object"
+      "routes": "object",
+      "human_feedback": "number",
+      "human_agreement": "number|null"
     },
     "versions[]": {
       "id": "number",
@@ -74,6 +76,14 @@
         "license_url": "string",
         "split": "string",
         "n": "number"
+      },
+      "purged_examples": "number",
+      "label_sources[]": {
+        "teacher_model": "string",
+        "license": "string",
+        "license_url": "string",
+        "split": "string",
+        "n": "number"
       }
     },
     "clients[]": {
@@ -82,13 +92,31 @@
       "student_share": "number",
       "cost_usd": "number",
       "baseline_usd": "number",
-      "savings_pct": "number"
+      "savings_pct": "number",
+      "end_users": "number",
+      "stored_share": "number|null"
     },
     "privacy": {
       "redaction": "bool",
       "examples": "number",
       "redacted_examples": "number",
-      "placeholders": "number"
+      "placeholders": "number",
+      "not_stored_requests": "number",
+      "not_stored_by_reason": "object",
+      "no_train_end_users": "number",
+      "no_train_unmatched": "number",
+      "store_examples": "bool",
+      "no_store_tasks": "list",
+      "no_store_clients": "list",
+      "end_user_key": "string",
+      "example_retention_days": "number",
+      "request_retention_days": "number",
+      "erasure_shared": "string",
+      "purged_examples": "number",
+      "purged_by_reason": "object",
+      "erasures": "number",
+      "erasure_refusals": "number",
+      "rolled_up_requests": "number"
     },
     "security": {
       "api_keys": "bool",
@@ -102,6 +130,24 @@
       "gpu_hours_savings_pct": "number|null",
       "break_even_student_requests_per_gpu_hour": "number|null",
       "recommendation": "string"
+    },
+    "feedback": {
+      "verdicts": "number",
+      "correct": "number",
+      "incorrect": "number",
+      "corrections_sent": "number",
+      "corrections_stored": "number",
+      "human_examples": "number",
+      "golden_only_examples": "number",
+      "corrections": "bool",
+      "by_version[]": {
+        "version": "number",
+        "verdicts": "number",
+        "correct": "number",
+        "precision": "number",
+        "lower": "number",
+        "upper": "number"
+      }
     }
   }
 }

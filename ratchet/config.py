@@ -22,6 +22,7 @@ from .providers import (
     parse_param_allowlist,
 )
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
+from .tasks import valid_name as valid_task_name
 
 
 def _env(name: str, default: str) -> str:
@@ -45,6 +46,23 @@ def _int(name: str, default: str) -> int:
         return int(raw)
     except ValueError:
         raise ValueError(f"{name} must be a whole number, not {raw!r}") from None
+
+
+TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
+FALSE_WORDS = frozenset({"0", "false", "no", "off"})
+
+
+def _bool(name: str, default: str) -> bool:
+    """A switch from the environment: 1, true, yes or on, or 0, false, no or off, in any case (empty means the default).
+    Anything else raises ValueError naming the variable: for a privacy switch, a typo must stop startup instead of
+    quietly meaning the other thing."""
+    raw = _env(name, default)
+    word = raw.strip().lower() or default
+    if word in TRUE_WORDS:
+        return True
+    if word in FALSE_WORDS:
+        return False
+    raise ValueError(f"{name} must be 1 or 0 (true/false, yes/no, on/off), not {raw!r}")
 
 
 def _float_or_none(name: str) -> float | None:
@@ -165,6 +183,27 @@ class CertPolicy:
     delta: float
 
 
+# RATCHET_ERASURE_SHARED: what an erasure of a client or an end user does with an example another client also sent
+# (FR-13.3, ADR 0081). `delete`: purge it too; `keep`: keep it for the other client and unlink the erased party.
+ERASURE_SHARED = ("delete", "keep")
+MAX_RETENTION_DAYS = 36500  # RATCHET_EXAMPLE_RETENTION_DAYS and RATCHET_REQUEST_RETENTION_DAYS: 0 (forever) to this
+
+
+@dataclass(frozen=True)
+class Retention:
+    """The retention and erasure settings, checked (`Settings.retention()`, FR-13.3, FR-13.4): whole days examples and
+    request rows are kept after they were last seen or logged (0 = forever), and ERASURE_SHARED's choice."""
+
+    example_days: int = 0
+    request_days: int = 0
+    erasure_shared: str = "delete"
+
+    @property
+    def enabled(self) -> bool:
+        """Whether there is anything for a scheduled purge to do."""
+        return self.example_days > 0 or self.request_days > 0
+
+
 DEFAULT_PRICES: dict[str, Price] = {
     # Token Factory list prices (USD / 1M tokens), Oct 2026. Verify in the console.
     "nvidia/Nemotron-3-Ultra-550b-a55b": Price(1.00, 3.00),
@@ -191,6 +230,10 @@ class Settings:
     fallback_student_model: str = field(
         default_factory=lambda: _env("RATCHET_FALLBACK_STUDENT", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
     )
+    # Open teachers added without a code change (ratchet/licenses.py, ADR 0090): a JSON list of {model, license, url,
+    # note}, merged into a copy of the built-in registry at startup. Only allowed licenses, never a closed model family;
+    # a bad file stops startup with every error listed. Empty = the built-in registry only.
+    teacher_licenses_file: str = field(default_factory=lambda: _env("RATCHET_TEACHER_LICENSES", ""))
 
     # Student on a Nebius Serverless Endpoint running vLLM with LoRA adapters.
     student_base: str = field(default_factory=lambda: _env("RATCHET_STUDENT_BASE", ""))
@@ -263,6 +306,25 @@ class Settings:
     # Privacy: replace emails, phone numbers, card numbers etc. with placeholders before a
     # request and the teacher's answer are stored as a training example (ratchet/redact.py).
     redact_pii: bool = field(default_factory=lambda: _env("RATCHET_REDACT_PII", "1") != "0")
+    # Storage opt-outs (FR-13.1, ADR 0080). 0 is zero retention: no teacher answer is stored as a training example and
+    # Night School skips every night. The requests table (metadata only) is still written.
+    store_examples: bool = field(default_factory=lambda: _bool("RATCHET_STORE_EXAMPLES", "1"))
+    # Tasks whose teacher answers are never stored, comma-separated: the same as `store: false` in their specs.
+    no_store_tasks: str = field(default_factory=lambda: _env("RATCHET_NO_STORE_TASKS", ""))
+    # End-user attribution (FR-13.2): the HMAC key `user` and `safety_identifier` are hashed with (at least 16
+    # characters). Empty = 32 random bytes generated once and kept in the ledger's meta table.
+    end_user_key: str = field(default_factory=lambda: _env("RATCHET_END_USER_KEY", ""))
+    # Human feedback (FR-13.30, ADR 0091): whether a correction sent with an 'incorrect' verdict may be stored as a
+    # human-labelled training example. 0 keeps the verdicts (statistics and alerts) and stores no correction.
+    feedback_corrections: bool = field(default_factory=lambda: _bool("RATCHET_FEEDBACK_CORRECTIONS", "1"))
+    # Per-key settings for API keys: "name:field=value,...;name:field=value". Only `store` (1 or 0) is built so far.
+    key_limits: str = field(default_factory=lambda: _env("RATCHET_KEY_LIMITS", ""))
+    # Retention and erasure (FR-13.3, FR-13.4, ADR 0081): whole days a stored example is kept after it was last seen, and a
+    # request row after it was logged (its sums are kept in daily_rollup), 0 = forever; and whether erasing a client or
+    # an end user also purges an example another client sent too (`delete`) or keeps it for that client (`keep`).
+    example_retention_days: int = field(default_factory=lambda: _int("RATCHET_EXAMPLE_RETENTION_DAYS", "0"))
+    request_retention_days: int = field(default_factory=lambda: _int("RATCHET_REQUEST_RETENTION_DAYS", "0"))
+    erasure_shared: str = field(default_factory=lambda: _env("RATCHET_ERASURE_SHARED", "delete"))
 
     # Gateway API keys for /v1/*: "name:key,name:key". Empty = no authentication (v0.3 behaviour).
     api_keys: str = field(default_factory=lambda: _env("RATCHET_API_KEYS", ""))
@@ -399,6 +461,40 @@ class Settings:
         if mode not in UNKNOWN_TASK_POLICIES:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
+
+    def no_store_task_names(self) -> frozenset[str]:
+        """RATCHET_NO_STORE_TASKS as a set of task names (FR-13.1). A name need not be registered (an unregistered name
+        may still be used under RATCHET_UNKNOWN_TASKS=distill), but one that is not a task name raises ValueError, so a
+        typo such as a space-separated list stops startup instead of storing what the operator meant to keep out."""
+        raw = self.no_store_tasks if isinstance(self.no_store_tasks, str) else None
+        if raw is None:
+            raise ValueError(f"RATCHET_NO_STORE_TASKS must be comma-separated task names, not {self.no_store_tasks!r}")
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        for name in names:
+            if not valid_task_name(name):
+                raise ValueError(
+                    f"RATCHET_NO_STORE_TASKS: {name!r} is not a task name (1 to 64 letters, digits, '_', '.' or '-'; "
+                    "separate names with commas)"
+                )
+        return frozenset(names)
+
+    def retention(self) -> Retention:
+        """RATCHET_EXAMPLE_RETENTION_DAYS, RATCHET_REQUEST_RETENTION_DAYS and RATCHET_ERASURE_SHARED, checked. A bad
+        value raises ValueError naming the variable, so the gateway and `python -m ratchet.live` stop at startup instead
+        of keeping data longer, or deleting more, than the operator meant."""
+        for env, days in (
+            ("RATCHET_EXAMPLE_RETENTION_DAYS", self.example_retention_days),
+            ("RATCHET_REQUEST_RETENTION_DAYS", self.request_retention_days),
+        ):
+            if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= MAX_RETENTION_DAYS:
+                raise ValueError(f"{env} must be a whole number of days, 0 (keep forever) to {MAX_RETENTION_DAYS}, not {days!r}")
+        raw = self.erasure_shared
+        shared = raw.strip().lower() if isinstance(raw, str) else None
+        if shared == "":  # set but empty, as in an .env file: the default
+            shared = "delete"
+        if shared not in ERASURE_SHARED:
+            raise ValueError(f"RATCHET_ERASURE_SHARED must be {' or '.join(ERASURE_SHARED)}, not {raw!r}")
+        return Retention(self.example_retention_days, self.request_retention_days, shared)
 
     def limits(self) -> Limits:
         """The request limits `validate_chat_request` applies (RATCHET_MAX_MESSAGES, RATCHET_MAX_INPUT_CHARS,

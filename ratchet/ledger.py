@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import bisect
+import contextlib
 import functools
 import hashlib
 import json
@@ -10,12 +12,14 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections import Counter
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from . import tasks
+from . import licenses, tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
+from .stats import wilson
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -41,7 +45,16 @@ CREATE TABLE IF NOT EXISTS requests (
     label_p REAL,              -- probability that a teacher label of the student's answer was observed (FR-16.5)
     student_agree INTEGER,     -- 1/0: the student's answer agreed with the escalation's or a random audit's (FR-16.5)
     baseline_est_usd REAL,     -- the all-teacher cost by the token formula, also when the teacher answered (FR-16.5)
-    optional_failed INTEGER    -- 1: an optional teacher call of this request (audit, arbitration) failed
+    optional_failed INTEGER,   -- 1: an optional teacher call of this request (audit, arbitration) failed
+    -- Data governance (FR-13.1, FR-13.2, ADR 0080):
+    end_user TEXT,             -- HMAC of the request's safety_identifier or user (privacy.EndUsers), never the value
+    store_opt_out TEXT,        -- why its teacher answers could not be stored (privacy.OPT_OUTS); NULL: no opt-out
+    -- The gateway's request id ('req_' + 32 hex; the completion id is 'chatcmpl-' + the same digits), which feedback
+    -- names the request by (FR-13.30); NULL for internal calls (Scout, the simulator) and older rows.
+    request_id TEXT,
+    -- HMAC of the second end-user identifier the request carried ('user' beside 'safety_identifier'), in the same scope as
+    -- end_user, never the value: a correction must name it too, so a no-train registration made with it applies (FR-13.30)
+    end_user_secondary TEXT
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,10 +67,24 @@ CREATE TABLE IF NOT EXISTS examples (
     redactions INTEGER DEFAULT 0, -- PII placeholders inserted before storing (ratchet/redact.py)
     params TEXT,               -- JSON: the conditions the teacher answered under (STORED_PARAM_KEYS); NULL when none
     -- Evidence columns (ADR 0024):
-    origin TEXT,               -- 'escalation' | 'audit' | 'arbitration' | 'backfill'; NULL: not recorded (FR-16.8)
+    origin TEXT,               -- 'escalation' | 'audit' | 'arbitration' | 'backfill'; NULL: not recorded (FR-16.8);
+                               -- 'feedback' | 'import' for a human or imported label (LABEL_ORIGINS, ADR 0091)
     job TEXT,                  -- the backfill job that wrote it; NULL otherwise (FR-16.8)
     contested INTEGER DEFAULT 0,      -- 1: a later teacher label of the same request disagreed (FR-16.7)
-    checked_epoch INTEGER DEFAULT 0   -- the teacher-watch epoch of its last self-consistency check (FR-16.7)
+    checked_epoch INTEGER DEFAULT 0,  -- the teacher-watch epoch of its last self-consistency check (FR-16.7)
+    -- Data governance (FR-13.2, ADR 0080): who sent the request it was first stored from; NULL for internal calls
+    client TEXT,               -- API key name, never the key; later senders are in example_clients
+    end_user TEXT,             -- the end user's HMAC (privacy.EndUsers), never the raw value
+    -- Retention and erasure (FR-13.3, FR-13.4, ADR 0081). A purge keeps the row as a tombstone: hash, task, split, seen,
+    -- teacher and license stay; messages, completion and params become NULL.
+    last_seen_ts REAL,         -- when it was stored or last seen again (a duplicate); retention counts from it
+    purged_ts REAL,            -- when its text was removed; NULL while it is kept
+    purge_reason TEXT,         -- 'retention' (a storable duplicate restores it) | 'erasure' (never stored again)
+    purged_train INTEGER,      -- 1: it counted as a training row when purged (dataset.counts_as_train)
+    prompt_hash TEXT,          -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
+    -- Human labels (FR-3.54, FR-4.50, ADR 0091):
+    verified INTEGER DEFAULT 0,       -- 1: a person wrote the label (teacher_model 'human': a correction or an import)
+    golden_only INTEGER DEFAULT 0     -- 1: held out for good, even past FREQUENT, with every variant of its prompt
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,13 +156,58 @@ CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys, never store
     key TEXT PRIMARY KEY, erasure_id INTEGER, ts REAL,
     suppressed INTEGER DEFAULT 0  -- how often a tombstoned example was offered again and refused
 );
-CREATE TABLE IF NOT EXISTS erasures (        -- erasure requests and their certificates (FR-16.9)
+CREATE TABLE IF NOT EXISTS erasures (        -- erasure requests (FR-13.3) and, later, their certificates (FR-16.9)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts REAL, day INTEGER, key TEXT,
-    tainted TEXT,              -- JSON: ids of the versions trained on the example
-    status TEXT,               -- 'pending' | 'complete'
-    replacement INTEGER,       -- the version trained without it
-    certificate TEXT           -- JSON: the signed certificate
+    ts REAL, day INTEGER,
+    key TEXT,                  -- one erased example key (FR-16.9); NULL for FR-13.3's erasures, whose keys are in erasure_items
+    tainted TEXT,              -- JSON: ids of the versions that may have been trained on the erased examples
+    status TEXT,               -- 'pending': tainted versions exist and none was replaced yet | 'complete'
+    replacement INTEGER,       -- the version trained without them (FR-16.9)
+    certificate TEXT,          -- JSON: the signed certificate (FR-16.9)
+    actor TEXT,                -- who asked: an admin's or an API key's name, or the CLI's --actor; never a key
+    reason TEXT,               -- why, as the operator wrote it, redacted (ratchet/redact.py)
+    scope TEXT,                -- JSON: what was selected; end users as HMACs, `contains` as its SHA-256, never text
+    purged INTEGER,            -- examples whose text this erasure removed (or whose retention tombstone it made final)
+    kept INTEGER               -- shared examples kept under RATCHET_ERASURE_SHARED=keep, with the erased party unlinked
+);
+-- Data governance tables (FR-13.2, ADR 0080). Hashes and key names only, never a raw end-user value or a key.
+CREATE TABLE IF NOT EXISTS example_clients (  -- other API clients whose requests matched a stored example
+    hash TEXT NOT NULL,        -- examples.hash
+    client TEXT NOT NULL,      -- API key name; examples.client holds the first sender and is never listed here
+    PRIMARY KEY (hash, client)
+);
+CREATE TABLE IF NOT EXISTS no_train (         -- end users whose requests are never stored as training examples
+    end_user_hash TEXT PRIMARY KEY,  -- privacy.EndUsers hash, scoped to `client`
+    ts REAL,
+    client TEXT,               -- the API key name the hash belongs to; NULL for requests sent without a key; '*' for
+                               -- an admin's registration for every client (privacy.EVERY_CLIENT)
+    admin TEXT                 -- the admin's name when an admin registered it; then only an admin can remove it
+);
+CREATE TABLE IF NOT EXISTS erasure_items (    -- the examples each erasure purged: hashes, never text (FR-13.3)
+    erasure_id INTEGER NOT NULL, hash TEXT NOT NULL, task TEXT, split TEXT,
+    PRIMARY KEY (erasure_id, hash)
+);
+CREATE TABLE IF NOT EXISTS feedback (          -- human verdicts on served answers (FR-13.30): ids and names, never text
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, day INTEGER,      -- when the verdict was last given; a later verdict on the same request replaces it
+    request_id TEXT NOT NULL UNIQUE,  -- requests.request_id: one row per request
+    client TEXT,               -- the API key name that sent the request (and the feedback); NULL when keys are off
+    verdict TEXT,              -- 'correct' | 'incorrect' (feedback.VERDICTS)
+    corrected_present INTEGER DEFAULT 0,  -- 1: a correction came with a verdict on this request
+    -- Copied from the request row, so the statistics outlive it (request retention folds request rows):
+    task TEXT, version INTEGER, served_by TEXT, route TEXT,
+    stored INTEGER DEFAULT 0,  -- 1: a correction was stored as a human-labelled example
+    example_hash TEXT          -- the example that correction is (examples.hash); NULL otherwise
+);
+CREATE TABLE IF NOT EXISTS daily_rollup (     -- request rows folded by retention (FR-13.4): sums only, no row or end user
+    day INTEGER, task TEXT, client TEXT, route TEXT, store_opt_out TEXT,
+    requests INTEGER, student_served INTEGER, teacher_served INTEGER, escalated INTEGER,
+    cost REAL, baseline REAL,  -- SUM(cost_usd), SUM(baseline_cost_usd)
+    teacher_cost REAL, student_cost REAL, split_unknown INTEGER, split_unknown_cost REAL,  -- cost_by_day's split
+    sampled INTEGER, avoided REAL, student_in_tokens INTEGER, student_out_tokens INTEGER, served_with_tokens INTEGER,
+    audited INTEGER, audit_agree_sum INTEGER, audit_n INTEGER,  -- audit_n: audited rows that recorded agreement
+    wall_ms_sum REAL, latency_n INTEGER, stored_sum INTEGER, stored_n INTEGER,
+    folded_ts REAL             -- when these rows were folded; one fold may leave several rows per key, readers sum them
 );
 -- INV-17: committed leaves and sealed receipts are append-only. A changed or deleted row would silently break the
 -- signed roots and chains built from them, so the database refuses UPDATE and DELETE, and an INSERT that would replace
@@ -191,6 +263,34 @@ def example_hash(task: str, messages: list[dict[str, Any]], params: Mapping[str,
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
+def prompt_key(r: Mapping[str, Any]) -> str:
+    """The hash of an example's task and messages without its conditions: the same for every variant of one request,
+    and the example's own hash when it has none. A purged row has no messages left, so it carries the key it had
+    (`prompt_hash`, written by the purge)."""
+    if r["prompt_hash"]:
+        return str(r["prompt_hash"])
+    if r["params"] and r["messages"]:
+        return example_hash(r["task"], json.loads(r["messages"]))
+    return str(r["hash"])
+
+
+def seen_count(r: Mapping[str, Any]) -> int:
+    """How often an example's exact request occurred (`examples.seen`). A label stored without an occurrence of its
+    request (an import, or a correction of a request already counted in another variant) is inserted with 0 and counts
+    0 (ADR 0091); NULL, in a row read before the column existed, counts once."""
+    return 1 if r["seen"] is None else int(r["seen"])
+
+
+def count_prompts(rows: Iterable[Mapping[str, Any]]) -> Counter[str]:
+    """How often each request was seen (`prompt_key`), over every stored variant, purged rows included: a purge removes
+    text, not the fact that the request repeated, so it never moves a frequent request's other variants back to the
+    golden set (INV-3). A label that was not an occurrence of its request adds nothing (`seen_count`)."""
+    seen: Counter[str] = Counter()
+    for r in rows:
+        seen[prompt_key(r)] += seen_count(r)
+    return seen
+
+
 @dataclass
 class Version:
     id: int
@@ -221,6 +321,10 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "student_agree": "INTEGER",
         "baseline_est_usd": "REAL",
         "optional_failed": "INTEGER",
+        "end_user": "TEXT",
+        "store_opt_out": "TEXT",
+        "request_id": "TEXT",
+        "end_user_secondary": "TEXT",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -230,8 +334,23 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "job": "TEXT",
         "contested": "INTEGER DEFAULT 0",
         "checked_epoch": "INTEGER DEFAULT 0",
+        "client": "TEXT",
+        "end_user": "TEXT",
+        "last_seen_ts": "REAL",
+        "purged_ts": "REAL",
+        "purge_reason": "TEXT",
+        "purged_train": "INTEGER",
+        "prompt_hash": "TEXT",
+        "verified": "INTEGER DEFAULT 0",
+        "golden_only": "INTEGER DEFAULT 0",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
+    "erasures": {"actor": "TEXT", "reason": "TEXT", "scope": "TEXT", "purged": "INTEGER", "kept": "INTEGER"},
+}
+# Data a new column needs in rows written before it existed: (the columns it reads, the UPDATE), run once, right after
+# `_migrate` adds the column, when the table has the columns it reads (a hand-made partial file may not).
+BACKFILLS: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
+    ("examples", "last_seen_ts"): (("ts",), "UPDATE examples SET last_seen_ts = ts WHERE last_seen_ts IS NULL"),
 }
 # Created after migrations, because they index columns that old files only get from MIGRATIONS.
 INDEXES = [
@@ -247,6 +366,19 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
+    # One end user's requests over time (FR-13.2): what erasure, export and per-user limits look up.
+    "CREATE INDEX IF NOT EXISTS requests_end_user_ts ON requests (end_user, ts)",
+    "CREATE INDEX IF NOT EXISTS requests_end_user_secondary ON requests (end_user_secondary)",
+    # Retention and erasure (FR-13.3, FR-13.4): old requests and examples, a client's or an end user's examples.
+    "CREATE INDEX IF NOT EXISTS requests_ts ON requests (ts)",
+    "CREATE INDEX IF NOT EXISTS examples_last_seen ON examples (last_seen_ts)",
+    "CREATE INDEX IF NOT EXISTS examples_client ON examples (client)",
+    "CREATE INDEX IF NOT EXISTS examples_end_user ON examples (end_user)",
+    "CREATE INDEX IF NOT EXISTS example_clients_client ON example_clients (client)",
+    "CREATE INDEX IF NOT EXISTS daily_rollup_day ON daily_rollup (day)",
+    # Feedback (FR-13.30): a request by the gateway's id, and one version's verdicts (its human precision).
+    "CREATE INDEX IF NOT EXISTS requests_request_id ON requests (request_id)",
+    "CREATE INDEX IF NOT EXISTS feedback_version ON feedback (version)",
 ]
 _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\)")
 # Tables and triggers created by SCHEMA for the evidence features (ADR 0024); the migration test checks an old file gains
@@ -264,7 +396,70 @@ def _hex32(value: object, what: str) -> str:
     return value
 
 
+# Tables created by SCHEMA for data governance (FR-13.2, ADR 0080); the migration test checks an old file gains them.
+GOVERNANCE_TABLES = ("example_clients", "no_train", "erasure_items", "daily_rollup")
+# Created by SCHEMA for human feedback (FR-13.30, ADR 0091); the migration test checks an old file gains it.
+FEEDBACK_TABLES = ("feedback",)
+# examples.origin of a human or imported label (ADR 0091); live teacher answers leave it NULL ('live').
+LABEL_ORIGINS = ("feedback", "import")
+
 DAY_SECONDS = 86400
+DAY_ORIGIN_META = "day_origin"  # meta row: when day 1 started on a live ledger, kept once request retention deletes rows
+PURGE_REASONS = ("retention", "erasure")  # examples.purge_reason
+FOLD_CHUNK = 20000  # request rows folded per transaction, so a large fold never holds the ledger lock for long
+PURGE_CHUNK = 5000  # examples retention purges per transaction (`privacy.apply_retention`), for the same reason
+SQL_CHUNK = 500  # values per `IN (...)` list (SQLite's limit on bound variables is 999 in older builds)
+# daily_rollup's sums (FR-13.4): what every stats reader needs from folded request rows, as `ROLLUP_INSERT` computes them
+# from `requests` with the same expressions the readers use on live rows.
+ROLLUP_SUMS = (
+    "requests", "student_served", "teacher_served", "escalated", "cost", "baseline", "teacher_cost", "student_cost",
+    "split_unknown", "split_unknown_cost", "sampled", "avoided", "student_in_tokens", "student_out_tokens",
+    "served_with_tokens", "audited", "audit_agree_sum", "audit_n", "wall_ms_sum", "latency_n", "stored_sum", "stored_n",
+)  # fmt: skip
+ROLLUP_INSERT = """INSERT INTO daily_rollup (folded_ts, day, task, client, route, store_opt_out, requests, student_served,
+    teacher_served, escalated, cost, baseline, teacher_cost, student_cost, split_unknown, split_unknown_cost, sampled,
+    avoided, student_in_tokens, student_out_tokens, served_with_tokens, audited, audit_agree_sum, audit_n, wall_ms_sum,
+    latency_n, stored_sum, stored_n)
+    SELECT ?, day, task, client, route, store_opt_out, COUNT(*),
+           COALESCE(SUM(served_by='student'), 0), COALESCE(SUM(served_by='teacher'), 0), COALESCE(SUM(escalated), 0),
+           SUM(cost_usd), SUM(baseline_cost_usd),
+           COALESCE(SUM(COALESCE(teacher_cost_usd, cost_usd, 0.0)), 0.0), SUM(student_cost_usd),
+           COALESCE(SUM(student_cost_usd IS NULL), 0), SUM(CASE WHEN student_cost_usd IS NULL THEN cost_usd END),
+           COALESCE(SUM(served_by='student' OR COALESCE(student_in_tokens, 0) + COALESCE(student_out_tokens, 0) > 0), 0),
+           SUM(CASE WHEN served_by='student'
+               THEN COALESCE(baseline_cost_usd, 0.0) - COALESCE(teacher_cost_usd, cost_usd, 0.0) END),
+           SUM(student_in_tokens), SUM(student_out_tokens),
+           COALESCE(SUM(served_by='student' AND student_in_tokens IS NOT NULL), 0),
+           COALESCE(SUM(audited=1), 0), SUM(CASE WHEN audited=1 THEN audit_agree END),
+           COUNT(CASE WHEN audited=1 THEN audit_agree END),
+           SUM(latency_ms), COUNT(latency_ms), SUM(stored), COUNT(stored)
+    FROM requests WHERE {where} GROUP BY day, task, client, route, store_opt_out"""
+# `Ledger.cost_by_day`'s columns and the daily_rollup sum each one adds (with its zero), for days with folded rows.
+COST_COLUMNS: dict[str, tuple[str, float]] = {
+    "requests": ("requests", 0),
+    "student_served": ("student_served", 0),
+    "teacher_served": ("teacher_served", 0),
+    "cost_usd": ("cost", 0.0),
+    "baseline_usd": ("baseline", 0.0),
+    "teacher_usd": ("teacher_cost", 0.0),
+    "student_usd": ("student_cost", 0.0),
+    "split_unknown": ("split_unknown", 0),
+    "split_unknown_usd": ("split_unknown_cost", 0.0),
+    "sampled": ("sampled", 0),
+    "avoided": ("avoided", 0.0),
+    "student_in_tokens": ("student_in_tokens", 0),
+    "student_out_tokens": ("student_out_tokens", 0),
+    "served_with_tokens": ("served_with_tokens", 0),
+}
+# What `Ledger.export_page` exports (FR-13.5), and the filters each kind takes.
+EXPORT_KINDS = ("examples", "requests", "versions", "events", "erasures")
+EXPORT_FILTERS: dict[str, frozenset[str]] = {
+    "examples": frozenset({"task", "split", "since", "client"}),
+    "requests": frozenset({"task", "since", "client"}),
+    "versions": frozenset({"since"}),
+    "events": frozenset({"since"}),
+    "erasures": frozenset({"since"}),
+}
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
@@ -291,6 +486,66 @@ def _check_ts(ts: float, what: str) -> float:
     return float(ts)
 
 
+def _chunks(values: list[Any], size: int = SQL_CHUNK) -> Iterator[list[Any]]:
+    for i in range(0, len(values), size):
+        yield values[i : i + size]
+
+
+def _like(text: str) -> str:
+    """A LIKE pattern that matches `text` anywhere, with `%`, `_` and the escape character taken literally."""
+    return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _add(a: Any, b: Any) -> Any:
+    """a + b, where None (SQL's SUM over nothing) adds nothing."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a + b
+
+
+# A stats row for a key that only folded request rows have (FR-13.4): every column a reader may read, empty.
+_EMPTY_STATS: dict[str, Any] = {
+    "requests": 0, "student_served": None, "escalated": None, "cost": None, "baseline": None, "latency_ms": None,
+    "latency_sum": None, "latency_n": 0, "audit_agree": None, "audit_sum": None, "audit_n": 0, "degraded": 0,
+    "fallback_teacher": 0, "end_users": 0, "stored_share": None, "stored_sum": None, "stored_n": 0,
+}  # fmt: skip
+
+
+def _merge(rows: list[dict[str, Any]], key: str, folded: Mapping[Any, Mapping[str, Any]]) -> dict[Any, dict[str, Any]]:
+    """A stats query's rows (by `key`) plus the folded sums for the same keys (`Ledger._rollup_by`), in the rows' order
+    with folded-only keys after. Sums add; averages are recomputed from their sums and counts. `end_users` is left as
+    the rows have it: a fold keeps no end user."""
+    out = {r[key]: r for r in rows}
+    for k, f in folded.items():
+        r = out.get(k)
+        if r is None:
+            r = out[k] = {key: k, **_EMPTY_STATS}
+        r["requests"] = int(r["requests"] or 0) + int(f["requests"] or 0)
+        for col in ("student_served", "escalated", "cost", "baseline"):
+            r[col] = _add(r.get(col), f[col])
+        r["degraded"] = int(r.get("degraded") or 0) + int(f.get("route:degraded", 0))
+        r["fallback_teacher"] = int(r.get("fallback_teacher") or 0) + int(f.get("route:fallback_teacher", 0))
+        for avg, total, n, rolled_total, rolled_n in (
+            ("latency_ms", "latency_sum", "latency_n", "wall_ms_sum", "latency_n"),
+            ("audit_agree", "audit_sum", "audit_n", "audit_agree_sum", "audit_n"),
+            ("stored_share", "stored_sum", "stored_n", "stored_sum", "stored_n"),
+        ):
+            r[total] = _add(r.get(total), f[rolled_total])
+            r[n] = int(r.get(n) or 0) + int(f[rolled_n] or 0)
+            r[avg] = (r[total] or 0) / r[n] if r[n] else None
+    return out
+
+
+class NoTrainFull(Exception):
+    """`Ledger.no_train_add` with a `limit` the new registrations would pass (the shared mock demo's)."""
+
+    def __init__(self, limit: int):
+        super().__init__(f"at most {limit} no-train registrations")
+        self.limit = limit
+
+
 def _locked(fn):
     """Serialise ledger access: Scout's agents call the gateway from several threads at once,
     and they all share one SQLite connection."""
@@ -315,10 +570,38 @@ class Ledger:
         self._migrate()
         self.golden_fraction = golden_fraction
         self.auto_day = auto_day
+        # Day 1 starts at the first logged request. Request retention deletes old rows, so a fold first records that
+        # moment in `meta` (DAY_ORIGIN_META), which wins over the oldest row left; otherwise the days would renumber.
+        origin = self.db.execute("SELECT value FROM meta WHERE key=?", (DAY_ORIGIN_META,)).fetchone()
         first = self.db.execute("SELECT MIN(ts) FROM requests").fetchone()[0]
-        self._t0: float | None = float(first) if first is not None else None
-        last_day = self.db.execute("SELECT COALESCE(MAX(day), 0) FROM requests").fetchone()[0]
+        self._t0: float | None = float(origin[0]) if origin is not None else (float(first) if first is not None else None)
+        last_day = self.db.execute(
+            "SELECT MAX(COALESCE((SELECT MAX(day) FROM requests), 0), COALESCE((SELECT MAX(day) FROM daily_rollup), 0))"
+        ).fetchone()[0]
         self.day = int(last_day)
+
+    def locked(self) -> threading.RLock:
+        """The ledger's lock, for a caller that reads, decides and then writes through several methods (an erasure, a
+        retention purge): holding it, no other thread of this process writes in between. Re-entrant, so the ledger's
+        own methods still work inside."""
+        return self._lock
+
+    @contextlib.contextmanager
+    def atomic(self) -> Iterator[None]:
+        """The ledger's lock and a write transaction (`BEGIN IMMEDIATE`), for a caller whose reads, decision and write
+        must not interleave with another process's writes either: the importer CLI and the gateway may share the file
+        (`feedback.store_label`). A method that commits ends the transaction early; anything left is committed on exit,
+        or rolled back when the block raises."""
+        with self._lock:
+            self._begin()
+            try:
+                yield
+            except BaseException:
+                if self.db.in_transaction:
+                    self.db.rollback()
+                raise
+            if self.db.in_transaction:
+                self.db.commit()
 
     def _migrate(self) -> None:
         for table, cols in MIGRATIONS.items():
@@ -326,6 +609,9 @@ class Ledger:
             for col, decl in cols.items():
                 if col not in have:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                    reads, backfill = BACKFILLS.get((table, col), ((), ""))
+                    if backfill and set(reads) <= have:
+                        self.db.execute(backfill)
         for ddl in INDEXES:
             m = _INDEX_DDL.fullmatch(ddl)
             if m is None:
@@ -395,7 +681,16 @@ class Ledger:
         if until is not None:
             q += " AND day <= ?"
             args.append(until)
-        return [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
+        rows = [dict(r) for r in self.db.execute(q + " GROUP BY day ORDER BY day", args)]
+        if not self._has_rollup():
+            return rows
+        where = " AND ".join(["1=1"] + (["day >= ?"] if since is not None else []) + (["day <= ?"] if until is not None else []))
+        by_day = {r["day"]: r for r in rows}
+        for day, f in self._rollup_by("day", f"WHERE {where}", args).items():  # folded request rows (FR-13.4)
+            r = by_day.setdefault(day, {"day": day, **{col: zero for col, (_, zero) in COST_COLUMNS.items()}})
+            for col, (rolled, zero) in COST_COLUMNS.items():
+                r[col] = _add(r[col], f[rolled]) or zero
+        return [by_day[d] for d in sorted(by_day)]
 
     @_locked
     def student_traffic_by_hour(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
@@ -602,39 +897,114 @@ class Ledger:
         license_url: str,
         redactions: int = 0,
         params: Mapping[str, Any] | None = None,
-    ) -> bool:
-        """Store a teacher-labelled example. Returns False if it was a duplicate.
+        client: str | None = None,
+        end_user: str | None = None,
+        *,
+        verified: bool = False,
+        golden_only: bool = False,
+        origin: str | None = None,
+        replace: bool = False,
+        bump: bool = True,
+    ) -> bool | None:
+        """Store a teacher-labelled example. Returns True when it was inserted, False when it was a duplicate, and None
+        when it was refused because an erasure tombstoned its hash (FR-13.3): nothing is stored or bumped, and only the
+        tombstone's `suppressed` count grows.
+        Human and imported labels (ADR 0091, `feedback.store_label`, the only caller that passes these) set `verified`
+        (a person wrote the label), `golden_only` (the row goes to the golden split whatever its hash says, and stays
+        held out even past FREQUENT; sticky on a duplicate) and `origin` (`LABEL_ORIGINS`). With `replace`, a duplicate's
+        label (completion, teacher, license, redactions, verified, origin) becomes this one: how a human label beats a
+        teacher's on the same hash. Without it a duplicate keeps its label, so a teacher answer never overwrites a human
+        one. `bump` False is for a label that is not a new occurrence of the request (an import, a correction of a request
+        already counted): a duplicate's `seen` stays as it is and a new example starts at `seen` 0, so the label never
+        counts toward FREQUENT (INV-3).
         `messages`, `completion` and `params` arrive already redacted; `redactions` counts the placeholders. `params`
         are the conditions the teacher answered under; only `target_params` of them are stored, and the same messages
-        under other conditions are another example, in the same split (`_split`)."""
+        under other conditions are another example, in the same split (`_split`). `client` (the API key name) and
+        `end_user` (its HMAC, `privacy.EndUsers`) record who sent the request (FR-13.2). A duplicate keeps its first
+        sender and adds a client that is not that one to `example_clients`, so a client's data can be found later, and
+        moves `last_seen_ts`, which retention counts from. A duplicate of an example whose text retention purged restores
+        the text, with this answer's teacher and license (FR-13.4)."""
         target = target_params(params)
         h = example_hash(task, messages, target)
-        split = self._split(example_hash(task, messages) if target else h)  # without conditions, h is the split key
+        # Without conditions, h is the split key. A golden-only label is golden whatever its hash says (ADR 0091).
+        split = "golden" if golden_only else self._split(example_hash(task, messages) if target else h)
+        text = json.dumps(messages, ensure_ascii=False)
+        stored_params = json.dumps(target, ensure_ascii=False) if target else None
+        now = time.time()
+        if self.db.execute("SELECT 1 FROM tombstones WHERE key=?", (h,)).fetchone() is not None:
+            return self._refuse_erased(h, now)
+        label = (completion, teacher_model, license_name, license_url, redactions, int(verified), origin)
         try:
             self.db.execute(
-                "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model,"
-                " license, license_url, split, redactions, params) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
+                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    time.time(),
+                    now,
                     self.day,
                     task,
                     h,
-                    json.dumps(messages, ensure_ascii=False),
+                    text,
                     completion,
                     teacher_model,
                     license_name,
                     license_url,
                     split,
                     redactions,
-                    json.dumps(target, ensure_ascii=False) if target else None,
+                    stored_params,
+                    client,
+                    end_user,
+                    now,
+                    int(verified),
+                    int(golden_only),
+                    origin,
+                    int(bump),  # 1 as the column's default for every router write; 0 for a label that is no occurrence
                 ),
             )
             self.db.commit()
             return True
         except sqlite3.IntegrityError:
-            self.db.execute("UPDATE examples SET seen = seen + 1 WHERE hash=?", (h,))
-            self.db.commit()
-            return False
+            pass
+        row = self.db.execute("SELECT purge_reason FROM examples WHERE hash=?", (h,)).fetchone()
+        reason = row["purge_reason"] if row is not None else None
+        if reason == "erasure":  # every erasure writes a tombstone; a row purged without one is refused all the same
+            return self._refuse_erased(h, now)
+        more = int(bump)
+        if reason == "retention":
+            self.db.execute(
+                "UPDATE examples SET messages=?, completion=?, params=?, teacher_model=?, license=?, license_url=?,"
+                " redactions=?, verified=?, origin=?, seen = seen + ?, last_seen_ts=?, purged_ts=NULL, purge_reason=NULL,"
+                " purged_train=NULL, golden_only = MAX(COALESCE(golden_only, 0), ?) WHERE hash=?",
+                (text, completion, stored_params, teacher_model, license_name, license_url, redactions, int(verified), origin)
+                + (more, now, int(golden_only), h),
+            )
+        elif replace:  # a human label beats the stored one (`feedback.store_label` decides when)
+            self.db.execute(
+                "UPDATE examples SET completion=?, teacher_model=?, license=?, license_url=?, redactions=?, verified=?,"
+                " origin=?, seen = seen + ?, last_seen_ts=?, golden_only = MAX(COALESCE(golden_only, 0), ?) WHERE hash=?",
+                (*label, more, now, int(golden_only), h),
+            )
+        else:
+            self.db.execute(
+                "UPDATE examples SET seen = seen + ?, last_seen_ts=?, golden_only = MAX(COALESCE(golden_only, 0), ?)"
+                " WHERE hash=?",
+                (more, now, int(golden_only), h),
+            )
+        if client is not None:  # `IS NOT` so an example first stored without a client records this one
+            self.db.execute(
+                "INSERT OR IGNORE INTO example_clients (hash, client) SELECT hash, ? FROM examples"
+                " WHERE hash=? AND client IS NOT ?",
+                (client, h, client),
+            )
+        self.db.commit()
+        return False
+
+    def _refuse_erased(self, h: str, now: float) -> None:
+        """Count a tombstoned example offered again (FR-13.3); the caller stores nothing."""
+        self.db.execute("INSERT OR IGNORE INTO tombstones (key, ts) VALUES (?, ?)", (h, now))
+        self.db.execute("UPDATE tombstones SET suppressed = suppressed + 1 WHERE key=?", (h,))
+        self.db.commit()
+        return None
 
     def _split(self, key: str) -> str:
         """'golden' or 'train', deterministic from `key`, the hash of an example's task and messages without its
@@ -646,6 +1016,8 @@ class Ledger:
 
     @_locked
     def examples(self, split: str | None = None, task: str | None = None) -> list[sqlite3.Row]:
+        """Every stored example (of `split` and `task`), oldest first, purged ones included: their `messages`,
+        `completion` and `params` are NULL and `purged_ts` is set (FR-13.3, FR-13.4), and their `seen` still counts."""
         q, args = "SELECT * FROM examples WHERE 1=1", []
         if split:
             q += " AND split=?"
@@ -656,32 +1028,808 @@ class Ledger:
         return list(self.db.execute(q + " ORDER BY id", args))
 
     @_locked
+    def example_clients(self, h: str) -> list[str]:
+        """Every API client whose request matched the example with hash `h`: its first sender, then the others in
+        name order (`example_clients`). Empty when the example was stored without a client (or does not exist)."""
+        row = self.db.execute("SELECT client FROM examples WHERE hash=?", (h,)).fetchone()
+        first = [row["client"]] if row is not None and row["client"] is not None else []
+        others = [r["client"] for r in self.db.execute("SELECT client FROM example_clients WHERE hash=? ORDER BY client", (h,))]
+        return first + [c for c in others if c not in first]
+
+    @_locked
+    def example(self, h: str) -> sqlite3.Row | None:
+        """The stored example with hash `h` (purged or not), or None."""
+        return self.db.execute("SELECT * FROM examples WHERE hash=?", (h,)).fetchone()
+
+    @_locked
+    def prompt_status(self, task: str, prompt: str) -> tuple[int, bool]:
+        """For one prompt of one task (`prompt`, its `prompt_key`), over every stored variant, purged ones included: how
+        often it was seen (`count_prompts`) and whether a variant is in the train split. What a golden-only label checks
+        before it holds a prompt out for good, inside the write transaction that stores it (`feedback.store_label`): a
+        prompt that may already have been trained on cannot be held-out evidence (ADR 0091). The candidates are the rows
+        whose hash or recorded prompt key is `prompt` and the kept rows with stored conditions, whose key needs their
+        messages."""
+        rows = self.db.execute(
+            "SELECT hash, task, CASE WHEN params IS NOT NULL THEN messages END messages, params, prompt_hash, seen, split"
+            " FROM examples WHERE task=? AND (hash=? OR prompt_hash=? OR (params IS NOT NULL AND prompt_hash IS NULL))",
+            (task, prompt, prompt),
+        ).fetchall()
+        mine = [r for r in rows if prompt_key(r) == prompt]
+        return count_prompts(mine)[prompt], any(r["split"] == "train" for r in mine)
+
+    @_locked
     def example_count(self, task: str) -> int:
         """Stored examples of one task (what deleting the task keeps, for provenance)."""
         return int(self.db.execute("SELECT COUNT(*) FROM examples WHERE task=?", (task,)).fetchone()[0])
 
     @_locked
     def bill_of_materials(self) -> dict[str, Any]:
-        """Model bill of materials: which teachers and licenses produced the training data."""
-        rows = self.db.execute(
-            "SELECT teacher_model, license, license_url, split, COUNT(*) n FROM examples"
+        """Model bill of materials: which teachers and licenses produced the training data. Only examples that still
+        have their text count in `sources` and the fingerprint; purged ones (FR-13.3, FR-13.4) are counted in
+        `purged_examples`, so a purge changes the fingerprint. Labels from a provenance source that is not a teacher
+        (`licenses.SOURCES`: `human`) are listed apart, in `label_sources`, and count in the fingerprint like the rest
+        (FR-3.54). Each adapter's own signed BOM is never touched (INV-14)."""
+        grouped = self.db.execute(
+            "SELECT teacher_model, license, license_url, split, COUNT(*) n FROM examples WHERE purged_ts IS NULL"
             " GROUP BY teacher_model, license, license_url, split"
         ).fetchall()
+        rows = [r for r in grouped if r["teacher_model"] not in licenses.SOURCES]
+        labels = [r for r in grouped if r["teacher_model"] in licenses.SOURCES]
         digest = hashlib.sha256()
-        for r in self.db.execute("SELECT hash FROM examples ORDER BY hash"):
+        for r in self.db.execute("SELECT hash FROM examples WHERE purged_ts IS NULL ORDER BY hash"):
             digest.update(r["hash"].encode())
+        purged = int(self.db.execute("SELECT COUNT(*) FROM examples WHERE purged_ts IS NOT NULL").fetchone()[0])
         return {
             "generated_at": time.time(),
             "examples_sha256": digest.hexdigest(),
             "sources": [dict(r) for r in rows],
+            "label_sources": [dict(r) for r in labels],
+            "purged_examples": purged,
         }
 
     @_locked
     def privacy_stats(self) -> dict[str, int]:
+        """Examples that still have their text, and how many carry redaction placeholders."""
         r = self.db.execute(
             "SELECT COUNT(*) n, SUM(redactions > 0) redacted, COALESCE(SUM(redactions), 0) placeholders FROM examples"
+            " WHERE purged_ts IS NULL"
         ).fetchone()
         return {"examples": int(r["n"]), "redacted_examples": int(r["redacted"] or 0), "placeholders": int(r["placeholders"])}
+
+    # ---------- retention and erasure (FR-13.3, FR-13.4, ADR 0081) ----------
+    @_locked
+    def prompt_counts(self, task: str | None = None) -> Counter[str]:
+        """`count_prompts` over every stored example (of `task`), purged ones included, reading the messages only of
+        rows with stored conditions (the only ones whose key needs them)."""
+        q = "SELECT hash, task, CASE WHEN params IS NOT NULL THEN messages END messages, params, prompt_hash, seen FROM examples"
+        args: list[Any] = []
+        if task:
+            q += " WHERE task=?"
+            args.append(task)
+        return count_prompts(self.db.execute(q, args))
+
+    @_locked
+    def erasure_candidates(
+        self,
+        *,
+        client: str | None = None,
+        end_users: Collection[str] | None = None,
+        hashes: Collection[str] | None = None,
+        contains: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """The examples an erasure scope selects, oldest first: every selector given narrows it. `client` is an API key
+        name (the first sender or any later one, `example_clients`), `end_users` HMACs (`examples.end_user`), `hashes`
+        example hashes, `contains` text matched with LIKE (case-insensitive for ASCII) in the stored, already-redacted
+        messages, answer and conditions. Rows an erasure already purged are left out; rows retention purged are in (no
+        text left to match `contains`), so the erasure makes their tombstone final."""
+        q = "SELECT * FROM examples WHERE (purge_reason IS NULL OR purge_reason != 'erasure')"
+        args: list[Any] = []
+        if client is not None:
+            q += " AND (client = ? OR hash IN (SELECT hash FROM example_clients WHERE client = ?))"
+            args += [client, client]
+        if end_users is not None:
+            users = sorted(set(end_users))
+            q += f" AND end_user IN ({','.join('?' * len(users))})" if users else " AND 0"
+            args += users
+        if contains is not None:
+            raw, encoded = _like(contains), _like(json.dumps(contains, ensure_ascii=False)[1:-1])
+            q += r" AND (messages LIKE ? ESCAPE '\' OR completion LIKE ? ESCAPE '\' OR params LIKE ? ESCAPE '\')"
+            args += [encoded, raw, encoded]
+        if hashes is None:
+            return list(self.db.execute(q + " ORDER BY id", args))
+        out: list[sqlite3.Row] = []
+        wanted = sorted(set(hashes))
+        for part in _chunks(wanted):
+            out += self.db.execute(q + f" AND hash IN ({','.join('?' * len(part))})", [*args, *part]).fetchall()
+        return sorted(out, key=lambda r: r["id"])
+
+    @_locked
+    def retention_candidates(self, cutoff: float, client: str | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+        """Examples that still have their text and were last stored or seen before `cutoff` (golden ones too), oldest
+        first; with `client`, only those that API client sent (first or later); with `limit`, at most that many."""
+        cutoff = _check_ts(cutoff, "cutoff")
+        q = "SELECT * FROM examples WHERE purged_ts IS NULL AND (last_seen_ts < ? OR (last_seen_ts IS NULL AND ts < ?))"
+        args: list[Any] = [cutoff, cutoff]
+        if client is not None:
+            q += " AND (client = ? OR hash IN (SELECT hash FROM example_clients WHERE client = ?))"
+            args += [client, client]
+        q += " ORDER BY id"
+        if limit is not None:
+            q += " LIMIT ?"
+            args.append(int(limit))
+        return list(self.db.execute(q, args))
+
+    @_locked
+    def purge_examples(self, rows: Mapping[str, bool], reason: str, now: float | None = None) -> int:
+        """Remove the text of the examples `rows` names ({hash: whether it counts as a training row now,
+        `dataset.counts_as_train`}), in one transaction. Each row stays as a tombstone: hash, task, split, seen, teacher,
+        license and client stay; messages, completion and params become NULL; `purged_ts`, `purge_reason` and
+        `purged_train` are set, and a row with conditions keeps its prompt key (`prompt_hash`) so its `seen` still
+        counts toward its request's frequency (INV-3). Retention (`retention`) leaves the end user's hash, so a later
+        erasure can still find the row; an erasure (`erasure`, through `record_erasure`) removes it. Returns how many
+        rows were purged: a row already purged is skipped, except that an erasure makes a retention tombstone final."""
+        if reason not in PURGE_REASONS:
+            raise ValueError(f"purge reason must be one of {', '.join(PURGE_REASONS)}, not {reason!r}")
+        self._begin()
+        try:
+            done = self._purge(rows, reason, time.time() if now is None else _check_ts(now, "now"))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return len(done)
+
+    def _purge(self, rows: Mapping[str, bool], reason: str, now: float) -> list[sqlite3.Row]:
+        """`purge_examples` inside the caller's transaction; returns the rows purged (hash, task, split)."""
+        done: list[sqlite3.Row] = []
+        final = reason == "erasure"
+        for part in _chunks(sorted(rows)):
+            found = self.db.execute(
+                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason FROM examples"
+                f" WHERE hash IN ({','.join('?' * len(part))})",
+                part,
+            ).fetchall()
+            for r in found:
+                if r["purge_reason"] == "erasure" or (r["purge_reason"] is not None and not final):
+                    continue
+                if r["purge_reason"] is None:
+                    key = prompt_key(r) if r["params"] else None  # without conditions the key is the hash itself
+                    self.db.execute(
+                        "UPDATE examples SET messages=NULL, completion=NULL, params=NULL, purged_ts=?, purge_reason=?,"
+                        " purged_train=?, prompt_hash=COALESCE(prompt_hash, ?),"
+                        " end_user=CASE WHEN ? THEN NULL ELSE end_user END WHERE hash=?",
+                        (now, reason, int(bool(rows[r["hash"]])), key, int(final), r["hash"]),
+                    )
+                else:  # an erasure of a row retention purged: its text is gone already; it now stays gone
+                    self.db.execute("UPDATE examples SET purge_reason='erasure', end_user=NULL WHERE hash=?", (r["hash"],))
+                done.append(r)
+        return done
+
+    @_locked
+    def affected_versions(self, rows: Iterable[tuple[str, float, bool]]) -> list[dict[str, Any]]:
+        """The versions that may have been trained on these examples, each `(hash, ts, counted as a training row)`, with
+        how many of them: reported, never edited. A version whose training set is committed in `version_leaves` (FR-16.4)
+        is checked by membership; any other counts an example it was created after, when the example counted as a
+        training row. That approximation errs toward reporting: it includes a version whose dataset was built just
+        before the example arrived, and one trained while the example was still golden."""
+        rows = list(rows)
+        if not rows:
+            return []
+        stamps = sorted(float(ts) for _, ts, counted in rows if counted and ts is not None)
+        committed = {int(r[0]) for r in self.db.execute("SELECT DISTINCT version_id FROM version_leaves WHERE split='train'")}
+        hashes = sorted({h for h, _, _ in rows})
+        out = []
+        for v in self.db.execute("SELECT id, created_ts, state, adapter_uri FROM versions ORDER BY id").fetchall():
+            if v["id"] in committed:
+                n = 0
+                for part in _chunks(hashes):
+                    n += int(
+                        self.db.execute(
+                            "SELECT COUNT(*) FROM version_leaves WHERE version_id=? AND split='train'"
+                            f" AND key IN ({','.join('?' * len(part))})",
+                            [v["id"], *part],
+                        ).fetchone()[0]
+                    )
+            else:
+                n = bisect.bisect_left(stamps, float(v["created_ts"])) if v["created_ts"] is not None else 0
+            if n:
+                out.append({"id": int(v["id"]), "state": v["state"], "adapter_uri": v["adapter_uri"], "examples": n})
+        return out
+
+    @_locked
+    def record_erasure(
+        self,
+        *,
+        actor: str,
+        reason: str,
+        scope: Mapping[str, Any],
+        purge: Mapping[str, bool],
+        unlink: Iterable[tuple[str, str, str | None]] = (),
+        unlink_end_users: Collection[str] = (),
+        affected: Iterable[int] = (),
+        now: float | None = None,
+    ) -> dict[str, int]:
+        """Carry out an erasure in one transaction (FR-13.3): purge `purge` ({hash: counted as a training row}) for good,
+        tombstone each hash (`add_example` refuses it from now on), list the purged rows in `erasure_items` (hashes, task
+        and split, never text), unlink the erased party from the shared examples kept (`unlink`: (hash, 'client' or
+        'end_user', the client's name)), clear the erased end users' hashes from their request rows
+        (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data (`tainted`;
+        `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive checked and free
+        of request text. Returns the erasure's id and the counts. Signed BOMs are never touched (INV-14)."""
+        now = time.time() if now is None else _check_ts(now, "now")
+        tainted = sorted({int(v) for v in affected})
+        self._begin()
+        try:
+            cur = self.db.execute(
+                "INSERT INTO erasures (ts, day, key, tainted, status, actor, reason, scope, purged, kept)"
+                " VALUES (?,?,NULL,?,?,?,?,?,0,0)",
+                (
+                    now,
+                    self.day,
+                    json.dumps(tainted),
+                    "pending" if tainted else "complete",
+                    actor,
+                    reason,
+                    json.dumps(dict(scope), ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            eid = int(cur.lastrowid)
+            done = self._purge(purge, "erasure", now)
+            self.db.executemany(
+                "INSERT OR IGNORE INTO erasure_items (erasure_id, hash, task, split) VALUES (?,?,?,?)",
+                [(eid, r["hash"], r["task"], r["split"]) for r in done],
+            )
+            self.db.executemany(
+                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(r["hash"], eid, now) for r in done]
+            )
+            kept = self._unlink(unlink)
+            unlinked = 0
+            for part in _chunks(sorted(set(unlink_end_users)), SQL_CHUNK // 2):  # each value is bound twice
+                marks = ",".join("?" * len(part))
+                # A row that named the end user under either identifier it carried loses both hashes.
+                unlinked += self.db.execute(
+                    "UPDATE requests SET end_user=NULL, end_user_secondary=NULL"
+                    f" WHERE end_user IN ({marks}) OR end_user_secondary IN ({marks})",
+                    part + part,
+                ).rowcount
+            self.db.execute("UPDATE erasures SET purged=?, kept=? WHERE id=?", (len(done), kept, eid))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return {"id": eid, "purged": len(done), "kept": kept, "requests_unlinked": unlinked}
+
+    def _unlink(self, entries: Iterable[tuple[str, str, str | None]]) -> int:
+        """Remove an erased party from shared examples that stay (RATCHET_ERASURE_SHARED=keep): an erased client leaves
+        `example_clients`, or, when it was the first sender, the next client in name order takes its place (without an
+        end user, which belonged to the erased client); an erased end user's hash is cleared. Returns the rows changed."""
+        changed = 0
+        for h, party, name in entries:
+            if party == "end_user":
+                cur = self.db.execute("UPDATE examples SET end_user=NULL WHERE hash=? AND end_user IS NOT NULL", (h,))
+                changed += cur.rowcount
+                continue
+            if party != "client" or name is None:
+                raise ValueError(f"unlink takes ('client', name) or ('end_user', ...), not {(party, name)!r}")
+            row = self.db.execute("SELECT client FROM examples WHERE hash=?", (h,)).fetchone()
+            if row is not None and row["client"] == name:
+                other = self.db.execute(
+                    "SELECT MIN(client) FROM example_clients WHERE hash=? AND client != ?", (h, name)
+                ).fetchone()[0]
+                if other is None:
+                    continue  # not shared after all: nothing to keep it for (the caller purges such rows)
+                self.db.execute("UPDATE examples SET client=?, end_user=NULL WHERE hash=?", (other, h))
+                self.db.execute("DELETE FROM example_clients WHERE hash=? AND client=?", (h, other))
+                changed += 1
+            changed += self.db.execute("DELETE FROM example_clients WHERE hash=? AND client=?", (h, name)).rowcount
+        return changed
+
+    @_locked
+    def requests_of_end_users(self, hashes: Collection[str]) -> int:
+        """Request rows that name one of these end-user hashes, as the attributed end user or the second identifier (what
+        erasing those end users unlinks)."""
+        n = 0
+        for part in _chunks(sorted(set(hashes)), SQL_CHUNK // 2):  # each value is bound twice
+            marks = ",".join("?" * len(part))
+            q = f"SELECT COUNT(*) FROM requests WHERE end_user IN ({marks}) OR end_user_secondary IN ({marks})"
+            n += int(self.db.execute(q, part + part).fetchone()[0])
+        return n
+
+    @_locked
+    def end_user_scopes(self) -> list[str | None]:
+        """Every scope an end-user hash is stored in (the API key names of examples and request rows that name an end
+        user, configured now or not) and the keyless scope (None), keyless first. Erasing an end user for every client
+        hashes it in each of these, so a renamed or removed key's rows are reached too, whatever keys the caller has."""
+        rows = self.db.execute(
+            "SELECT DISTINCT client FROM examples WHERE end_user IS NOT NULL AND client IS NOT NULL"
+            " UNION SELECT DISTINCT client FROM requests WHERE end_user IS NOT NULL AND client IS NOT NULL"
+        ).fetchall()
+        return [None, *sorted(str(r[0]) for r in rows)]
+
+    @_locked
+    def train_rows_kept(self, task: str | None = None) -> int:
+        """The most training rows any version had that are still stored: for each version, its `train_examples` less its
+        training rows purged since (examples that counted as training rows when purged, stored before it was created and
+        purged after it), and the largest of those. `run_night` counts new data from it, so deletions never hide new
+        data and never make old data look new (FR-4.4). Each version is measured against its own purges: measuring every
+        version against the largest one's would add the same purged rows back every night once a later version trained
+        on fewer rows. Without purges it is the largest `train_examples`, v0.4's count. `purged_train` errs toward
+        counting a row (`dataset.counts_as_train`), so a purged row that was not in a version's set can raise the next
+        night's count once, by one; the version trained that night resets it."""
+        versions = self.db.execute("SELECT train_examples, created_ts FROM versions ORDER BY train_examples DESC, id DESC")
+        q = "SELECT COUNT(*) FROM examples WHERE purged_train = 1 AND ts <= ? AND purged_ts > ?"
+        if task:
+            q += " AND task=?"
+        best = 0
+        for v in versions.fetchall():
+            trained = int(v["train_examples"] or 0)
+            if trained <= best:
+                break  # sorted by size: no later version can keep more than it trained on
+            if v["created_ts"] is None:
+                best = trained
+                continue
+            args: list[Any] = [v["created_ts"], v["created_ts"], *([task] if task else [])]
+            best = max(best, trained - int(self.db.execute(q, args).fetchone()[0]))
+        return best
+
+    def fold_requests(
+        self,
+        cutoff: float,
+        client: str | None = None,
+        *,
+        dry_run: bool = False,
+        now: float | None = None,
+        chunk: int = FOLD_CHUNK,
+    ) -> int:
+        """Fold request rows logged before `cutoff` (of one API `client`, when given) into `daily_rollup`, then delete
+        them (FR-13.4): per day, task, client, route and opt-out, the sums every stats reader needs, and no end user.
+        Rows newer than the `stage_since` of a version in shadow or canary, and the rows such a version served or
+        shadowed in earlier stages, are never folded, so a release in flight keeps its evidence (`_fold_where`). `chunk`
+        rows per transaction, each under the ledger's lock, so requests keep flowing during a large fold. Returns the rows
+        folded (with `dry_run`, the rows that would be, writing nothing)."""
+        cutoff = _check_ts(cutoff, "cutoff")
+        stamp = time.time() if now is None else _check_ts(now, "now")
+        if isinstance(chunk, bool) or not isinstance(chunk, int) or chunk < 1:
+            raise ValueError(f"chunk must be a whole number of rows, 1 or more, not {chunk!r}")
+        total = 0
+        while True:
+            with self._lock:
+                self._begin()
+                try:
+                    where, args = self._fold_where(cutoff, client)
+                    if dry_run:
+                        n = int(self.db.execute(f"SELECT COUNT(*) FROM requests WHERE {where}", args).fetchone()[0])
+                        self.db.rollback()
+                        return n
+                    hi = self.db.execute(
+                        f"SELECT MAX(id) FROM (SELECT id FROM requests WHERE {where} ORDER BY id LIMIT ?)", [*args, chunk]
+                    ).fetchone()[0]
+                    if hi is None:
+                        self.db.commit()
+                        return total
+                    origin = self._t0 if self._t0 is not None else self.db.execute("SELECT MIN(ts) FROM requests").fetchone()[0]
+                    if origin is not None:  # day numbers must survive the rows that defined day 1
+                        self.db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", (DAY_ORIGIN_META, repr(origin)))
+                    self.db.execute(ROLLUP_INSERT.format(where=f"{where} AND id <= ?"), [stamp, *args, hi])
+                    n = self.db.execute(f"DELETE FROM requests WHERE {where} AND id <= ?", [*args, hi]).rowcount
+                    self.db.commit()
+                except BaseException:
+                    self.db.rollback()
+                    raise
+            total += n
+
+    def _fold_where(self, cutoff: float, client: str | None) -> tuple[str, list[Any]]:
+        """The rows a fold may take: older than `cutoff`, never newer than the `stage_since` of a version in shadow or
+        canary, and never a row such a version served or shadowed, in any stage of its life: the anytime-valid canary
+        rule and a version's `evidence` count every audit since it began (`audit_counts(vid)`, ADR 0025)."""
+        where, args = "ts < ?", [cutoff]
+        inflight = [int(r[0]) for r in self.db.execute("SELECT id FROM versions WHERE state IN ('shadow', 'canary')")]
+        protect = self.db.execute("SELECT MIN(stage_since) FROM versions WHERE state IN ('shadow', 'canary')").fetchone()[0]
+        if protect is not None:
+            where += " AND id <= ?"
+            args.append(int(protect))
+        if inflight:  # version ids start at 1, so 0 stands for a row without one
+            marks = ",".join("?" for _ in inflight)
+            where += f" AND COALESCE(student_version, 0) NOT IN ({marks}) AND COALESCE(shadow_version, 0) NOT IN ({marks})"
+            args.extend(inflight * 2)
+        if client is not None:
+            where += " AND client = ?"
+            args.append(client)
+        return where, args
+
+    def _has_rollup(self) -> bool:
+        return self.db.execute("SELECT 1 FROM daily_rollup LIMIT 1").fetchone() is not None
+
+    def _rollup_by(self, key: str, where: str = "", args: Iterable[Any] = ()) -> dict[Any, dict[str, Any]]:
+        """Folded request rows summed per `key` (a daily_rollup column), with each route's count in `route:<name>` and
+        each opt-out's in `opt_out:<name>`."""
+        sums = ", ".join(f"SUM({c}) {c}" for c in ROLLUP_SUMS)
+        out: dict[Any, dict[str, Any]] = {}
+        for r in self.db.execute(f"SELECT {key} k, {sums} FROM daily_rollup {where} GROUP BY {key}", list(args)):
+            out[r["k"]] = {c: r[c] for c in ROLLUP_SUMS}
+        per_route = f"SELECT {key} k, route, store_opt_out, SUM(requests) n FROM daily_rollup {where}"
+        for r in self.db.execute(per_route + f" GROUP BY {key}, route, store_opt_out", list(args)):
+            entry = out[r["k"]]
+            route = f"route:{r['route'] or UNRECORDED_ROUTE}"
+            entry[route] = entry.get(route, 0) + int(r["n"] or 0)
+            if r["store_opt_out"] is not None:
+                reason = f"opt_out:{r['store_opt_out']}"
+                entry[reason] = entry.get(reason, 0) + int(r["n"] or 0)
+        return out
+
+    @_locked
+    def retention_stats(self) -> dict[str, Any]:
+        """Counts for /ratchet/stats (public, so never a hash): examples purged (by reason), erasures recorded, tombstoned
+        examples offered again and refused, and request rows folded into daily_rollup."""
+        by_reason = {reason: 0 for reason in PURGE_REASONS}
+        q = "SELECT purge_reason, COUNT(*) n FROM examples WHERE purged_ts IS NOT NULL GROUP BY purge_reason"
+        for r in self.db.execute(q):
+            reason = r["purge_reason"] or "retention"
+            by_reason[reason] = by_reason.get(reason, 0) + int(r["n"])
+        return {
+            "purged_examples": sum(by_reason.values()),
+            "purged_by_reason": by_reason,
+            "erasures": int(self.db.execute("SELECT COUNT(*) FROM erasures").fetchone()[0]),
+            "erasure_refusals": int(self.db.execute("SELECT COALESCE(SUM(suppressed), 0) FROM tombstones").fetchone()[0]),
+            "rolled_up_requests": int(self.db.execute("SELECT COALESCE(SUM(requests), 0) FROM daily_rollup").fetchone()[0]),
+        }
+
+    @_locked
+    def export_page(
+        self,
+        kind: str,
+        after: int = 0,
+        limit: int = 500,
+        *,
+        task: str | None = None,
+        split: str | None = None,
+        since: float | None = None,
+        client: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Up to `limit` rows of one table with an id above `after`, in id order, as plain dicts for an export (FR-13.5).
+        `kind` is one of EXPORT_KINDS; the filters apply where EXPORT_FILTERS allows (ValueError otherwise). Examples are
+        those that still have their text, with their provenance and every client that sent them. End-user hashes never
+        leave the ledger this way: request and example rows lose them, an erasure's scope keeps only their count."""
+        if kind not in EXPORT_KINDS:
+            raise ValueError(f"export kind must be one of {', '.join(EXPORT_KINDS)}, not {kind!r}")
+        given = {k for k, v in (("task", task), ("split", split), ("since", since), ("client", client)) if v is not None}
+        if given - EXPORT_FILTERS[kind]:
+            raise ValueError(f"{kind} take only {', '.join(sorted(EXPORT_FILTERS[kind])) or 'no filters'}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError(f"limit must be a whole number of rows, 1 or more, not {limit!r}")
+        ts_col = "created_ts" if kind == "versions" else "ts"
+        q, args = f"SELECT * FROM {kind} WHERE id > ?", [int(after)]
+        if kind == "examples":
+            q += " AND purged_ts IS NULL"
+        if task is not None:
+            q += " AND task = ?"
+            args.append(task)
+        if split is not None:
+            q += " AND split = ?"
+            args.append(split)
+        if since is not None:
+            q += f" AND {ts_col} >= ?"
+            args.append(_check_ts(since, "since"))
+        if client is not None and kind == "examples":
+            q += " AND (client = ? OR hash IN (SELECT hash FROM example_clients WHERE client = ?))"
+            args += [client, client]
+        elif client is not None:
+            q += " AND client = ?"
+            args.append(client)
+        rows = self.db.execute(q + " ORDER BY id LIMIT ?", [*args, limit]).fetchall()
+        return getattr(self, f"_export_{kind}")(rows)
+
+    def _export_examples(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        others: dict[str, list[str]] = {}
+        for part in _chunks([r["hash"] for r in rows]):
+            for c in self.db.execute(
+                f"SELECT hash, client FROM example_clients WHERE hash IN ({','.join('?' * len(part))}) ORDER BY client", part
+            ):
+                others.setdefault(c["hash"], []).append(c["client"])
+        out = []
+        for r in rows:
+            first = [r["client"]] if r["client"] is not None else []
+            out.append(
+                {
+                    "id": r["id"],
+                    "ts": r["ts"],
+                    "day": r["day"],
+                    "task": r["task"],
+                    "hash": r["hash"],
+                    "split": r["split"],
+                    "seen": seen_count(r),
+                    "messages": json.loads(r["messages"]),
+                    "completion": r["completion"],
+                    "params": json.loads(r["params"]) if r["params"] else None,
+                    "provenance": {
+                        "teacher": r["teacher_model"],
+                        "license": r["license"],
+                        "license_url": r["license_url"],
+                        "hash": r["hash"],
+                        "redactions": int(r["redactions"] or 0),
+                        "origin": r["origin"] or "live",
+                    },
+                    "client": r["client"],
+                    "clients": first + [c for c in others.get(r["hash"], []) if c not in first],
+                    "last_seen_ts": r["last_seen_ts"],
+                    "verified": bool(r["verified"]),  # a person wrote the label (ADR 0091)
+                    "golden_only": bool(r["golden_only"]),
+                }
+            )
+        return out
+
+    def _export_requests(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        return [{k: r[k] for k in r.keys() if k not in ("end_user", "end_user_secondary")} for r in rows]
+
+    def _export_versions(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        out = []
+        for r in rows:
+            row = dict(r)
+            row["eval"] = json.loads(r["eval"] or "{}")
+            row["bom"] = json.loads(r["bom"]) if r["bom"] else None  # as stored: a signature covers it (INV-14)
+            out.append(row)
+        return out
+
+    def _export_events(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        return [dict(r) for r in rows]
+
+    def _export_erasures(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        out = []
+        for r in rows:
+            scope = json.loads(r["scope"]) if r["scope"] else {}
+            if isinstance(scope.get("end_users"), list):
+                scope["end_users"] = len(scope["end_users"])
+            listed = self.db.execute("SELECT hash, task, split FROM erasure_items WHERE erasure_id=? ORDER BY hash", (r["id"],))
+            items = [{"hash": i["hash"], "task": i["task"], "split": i["split"]} for i in listed]
+            out.append(
+                {
+                    "id": r["id"],
+                    "ts": r["ts"],
+                    "day": r["day"],
+                    "actor": r["actor"],
+                    "reason": r["reason"],
+                    "scope": scope,
+                    "purged": r["purged"],
+                    "kept": r["kept"],
+                    "affected_versions": json.loads(r["tainted"]) if r["tainted"] else [],
+                    "status": r["status"],
+                    "replacement": r["replacement"],
+                    "certificate": json.loads(r["certificate"]) if r["certificate"] else None,
+                    "items": items,
+                }
+            )
+        return out
+
+    @_locked
+    def opt_out_stats(self) -> dict[str, Any]:
+        """Requests under a storage opt-out (`not_stored_requests`, and by reason, `privacy.OPT_OUTS`) and end users
+        registered as no-train. Counts only, never a hash: /ratchet/stats is public (FR-13.1, FR-13.2)."""
+        reasons = {
+            row["store_opt_out"]: int(row["n"])
+            for row in self.db.execute(
+                "SELECT store_opt_out, COUNT(*) n FROM requests WHERE store_opt_out IS NOT NULL"
+                " GROUP BY store_opt_out ORDER BY n DESC, store_opt_out"
+            )
+        }
+        if self._has_rollup():  # folded request rows keep their opt-out (FR-13.4)
+            for row in self.db.execute(
+                "SELECT store_opt_out, SUM(requests) n FROM daily_rollup WHERE store_opt_out IS NOT NULL GROUP BY store_opt_out"
+            ):
+                reasons[row["store_opt_out"]] = reasons.get(row["store_opt_out"], 0) + int(row["n"] or 0)
+            reasons = dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0])))
+        no_train = int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+        return {
+            "not_stored_requests": sum(reasons.values()),
+            "not_stored_by_reason": reasons,
+            "no_train_end_users": no_train,
+        }
+
+    # ---------- end users (FR-13.2, ADR 0080) ----------
+    @_locked
+    def no_train_add(
+        self, entries: Iterable[tuple[str, str | None]], admin: str | None = None, limit: int | None = None
+    ) -> list[bool]:
+        """Register end users as no-train: `entries` are (hash, the API key name the hash belongs to). Returns, per
+        entry, whether it was new. An admin's registration (`admin`, the admin's name) also marks an existing one as
+        the admin's, so its client cannot remove it. With `limit`, raises `NoTrainFull` and writes nothing when the new
+        entries would take the table past it (entries already there do not count). One transaction."""
+        now = time.time()
+        entries = list(entries)
+        created = []
+        self._begin()
+        try:
+            if limit is not None:
+                total = int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+                new = len({h for h, _ in entries if not self._no_train_row(h)})
+                if total + new > limit:
+                    raise NoTrainFull(limit)
+            for h, client in entries:
+                cur = self.db.execute(
+                    "INSERT OR IGNORE INTO no_train (end_user_hash, ts, client, admin) VALUES (?,?,?,?)", (h, now, client, admin)
+                )
+                created.append(cur.rowcount > 0)
+                if cur.rowcount == 0 and admin is not None:
+                    self.db.execute("UPDATE no_train SET admin=? WHERE end_user_hash=? AND admin IS NULL", (admin, h))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return created
+
+    @_locked
+    def no_train_remove(self, hashes: Iterable[str], admin: bool = False) -> list[str]:
+        """Remove no-train registrations: any of `hashes` with `admin`, else only those a client registered. Returns,
+        per hash, `removed`, `kept` (an admin registered it) or `absent`. One transaction."""
+        out = []
+        self._begin()
+        try:
+            for h in hashes:
+                row = self._no_train_row(h)
+                if row is None:
+                    out.append("absent")
+                elif row["admin"] is not None and not admin:
+                    out.append("kept")
+                else:
+                    self.db.execute("DELETE FROM no_train WHERE end_user_hash=?", (h,))
+                    out.append("removed")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return out
+
+    def _no_train_row(self, h: str) -> sqlite3.Row | None:
+        return self.db.execute("SELECT admin FROM no_train WHERE end_user_hash=?", (h,)).fetchone()
+
+    @_locked
+    def is_no_train(self, *hashes: str | None) -> bool:
+        """Whether any of `hashes` (one end user's, in the scopes a registration may use) is registered as no-train: one
+        lookup on the primary key."""
+        wanted = [h for h in hashes if h is not None]
+        if not wanted:
+            return False
+        marks = ",".join("?" * len(wanted))
+        return self.db.execute(f"SELECT 1 FROM no_train WHERE end_user_hash IN ({marks}) LIMIT 1", wanted).fetchone() is not None
+
+    @_locked
+    def no_train_count(self) -> int:
+        return int(self.db.execute("SELECT COUNT(*) FROM no_train").fetchone()[0])
+
+    @_locked
+    def no_train_scopes_stored(self) -> list[str | None]:
+        """Every scope (`client`) a no-train registration is stored in, configured or not."""
+        rows = self.db.execute("SELECT DISTINCT client FROM no_train").fetchall()
+        return sorted((r["client"] for r in rows), key=lambda c: (c is not None, c or ""))
+
+    @_locked
+    def no_train_unmatched(self, scopes: Iterable[str | None]) -> dict[str | None, int]:
+        """{scope: registrations} for the no-train registrations stored in a scope not among `scopes` (the ones requests
+        can be hashed in now, `privacy.no_train_scopes`): they match no request."""
+        live = set(scopes)
+        rows = self.db.execute("SELECT client, COUNT(*) n FROM no_train GROUP BY client").fetchall()
+        return {r["client"]: int(r["n"]) for r in rows if r["client"] not in live}
+
+    # ---------- meta (small ledger-wide state) ----------
+    @_locked
+    def meta_get(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    @_locked
+    def meta_set(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self.db.commit()
+
+    @_locked
+    def meta_setdefault(self, key: str, value: str) -> str:
+        """The stored value of `key`, storing `value` first when there is none. Atomic across processes sharing the
+        file: the first writer wins and everyone reads its value."""
+        self.db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self.db.commit()
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return str(row["value"])
+
+    # ---------- human feedback (FR-13.30, ADR 0091) ----------
+    @_locked
+    def feedback_request(self, request_id: str) -> sqlite3.Row | None:
+        """The metadata a verdict needs of the request the gateway logged under `request_id`: who sent it, its task,
+        version, how it was served, its storage opt-out, end user (both identifiers' hashes) and whether a teacher answer
+        of it was stored. None when no row has that id (never logged, or folded by request retention)."""
+        return self.db.execute(
+            "SELECT id, client, task, served_by, route, student_version, store_opt_out, end_user, end_user_secondary, stored"
+            " FROM requests WHERE request_id=? ORDER BY id LIMIT 1",
+            (request_id,),
+        ).fetchone()
+
+    @_locked
+    def feedback_row(self, request_id: str) -> sqlite3.Row | None:
+        """The verdict recorded for a request, or None."""
+        return self.db.execute("SELECT * FROM feedback WHERE request_id=?", (request_id,)).fetchone()
+
+    @_locked
+    def record_feedback(
+        self,
+        request_id: str,
+        client: str | None,
+        verdict: str,
+        request: Mapping[str, Any],
+        *,
+        corrected: bool = False,
+        stored_hash: str | None = None,
+    ) -> bool:
+        """Record a verdict on a request (`request`: its `feedback_request` row), one row per request: a later verdict
+        replaces the earlier one, `corrected_present` and `stored` only ever go from 0 to 1, and the stored example's
+        hash is kept from the first correction that was stored. Returns True when an earlier verdict was replaced."""
+        now = time.time()
+        updated = self.db.execute("SELECT 1 FROM feedback WHERE request_id=?", (request_id,)).fetchone() is not None
+        self.db.execute(
+            "INSERT INTO feedback (ts, day, request_id, client, verdict, corrected_present, task, version, served_by, route,"
+            " stored, example_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(request_id) DO UPDATE SET ts=excluded.ts, day=excluded.day, verdict=excluded.verdict,"
+            " corrected_present = MAX(corrected_present, excluded.corrected_present),"
+            " stored = MAX(stored, excluded.stored), example_hash = COALESCE(example_hash, excluded.example_hash)",
+            (
+                now,
+                self.day,
+                request_id,
+                client,
+                verdict,
+                int(corrected),
+                request["task"],
+                request["student_version"],
+                request["served_by"],
+                request["route"],
+                int(stored_hash is not None),
+                stored_hash,
+            ),
+        )
+        self.db.commit()
+        return updated
+
+    @_locked
+    def human_precision(self, version: int) -> tuple[int, int]:
+        """(verdicts, correct ones) on the answers `version` served by itself (route `student`: not degraded stand-ins),
+        the latest verdict per request."""
+        r = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback"
+            " WHERE version=? AND served_by='student' AND route='student'",
+            (version,),
+        ).fetchone()
+        return int(r["n"]), int(r["ok"])
+
+    @_locked
+    def feedback_stats(self) -> dict[str, Any]:
+        """Counts for /ratchet/stats: verdicts by kind, corrections sent and stored, the human-labelled and golden-only
+        examples that still have their text, and per version the human precision of the answers it served itself, with
+        its 95% Wilson bounds. Never a request id or text: the stats are public."""
+        r = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok, COALESCE(SUM(corrected_present), 0) sent,"
+            " COALESCE(SUM(stored), 0) stored FROM feedback"
+        ).fetchone()
+        e = self.db.execute(
+            "SELECT COALESCE(SUM(verified = 1), 0) human, COALESCE(SUM(golden_only = 1), 0) golden_only FROM examples"
+            " WHERE purged_ts IS NULL"
+        ).fetchone()
+        by_version = []
+        for v in self.db.execute(
+            "SELECT version, COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback"
+            " WHERE version IS NOT NULL AND served_by='student' AND route='student' GROUP BY version ORDER BY version"
+        ):
+            n, ok = int(v["n"]), int(v["ok"])
+            lo, hi = wilson(ok, n)
+            by_version.append(
+                {"version": v["version"], "verdicts": n, "correct": ok, "precision": ok / n, "lower": lo, "upper": hi}
+            )
+        return {
+            "verdicts": int(r["n"]),
+            "correct": int(r["ok"]),
+            "incorrect": int(r["n"]) - int(r["ok"]),
+            "corrections_sent": int(r["sent"]),
+            "corrections_stored": int(r["stored"]),
+            "human_examples": int(e["human"]),
+            "golden_only_examples": int(e["golden_only"]),
+            "by_version": by_version,
+        }
 
     # ---------- versions ----------
     @_locked
@@ -766,11 +1914,12 @@ class Ledger:
 
     @_locked
     def leaf_example(self, vid: int, split: str) -> sqlite3.Row | None:
-        """The stored example behind the first of version `vid`'s `split` leaves (in key order) that is still in the
-        examples table, or None: the mock demo's sample of a committed example (prompt only goes out)."""
+        """The stored example behind the first of version `vid`'s `split` leaves (in key order) that still has its text,
+        or None: the mock demo's sample of a committed example (prompt only goes out). A purged or erased example keeps
+        its row with no text (FR-13.3, FR-13.4), and its leaf stays (INV-17), so it is skipped here."""
         q = (
             "SELECT e.task, e.messages, e.params, e.hash FROM version_leaves l JOIN examples e ON e.hash = l.key"
-            " WHERE l.version_id=? AND l.split=? ORDER BY l.key LIMIT 1"
+            " WHERE l.version_id=? AND l.split=? AND e.purged_ts IS NULL AND e.messages IS NOT NULL ORDER BY l.key LIMIT 1"
         )
         return self.db.execute(q, (vid, split)).fetchone()
 
@@ -1023,18 +2172,27 @@ class Ledger:
     def stats_by_day(self) -> list[dict[str, Any]]:
         """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
-        `fallback_teacher`: the fallback teacher; ADR 0019)."""
-        rows = self.db.execute(
-            """SELECT day, COUNT(*) requests,
+        `fallback_teacher`: the fallback teacher; ADR 0019). Days whose request rows retention folded (FR-13.4) add
+        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before."""
+        rows = [
+            dict(r)
+            for r in self.db.execute(
+                """SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
                       AVG(latency_ms) latency_ms,
                       AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
                       SUM(route='degraded') degraded,
-                      SUM(route='fallback_teacher') fallback_teacher
+                      SUM(route='fallback_teacher') fallback_teacher,
+                      SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n,
+                      SUM(CASE WHEN audited=1 THEN audit_agree END) audit_sum,
+                      COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n
                FROM requests GROUP BY day ORDER BY day"""
-        ).fetchall()
+            )
+        ]
+        if self._has_rollup():
+            rows = sorted(_merge(rows, "day", self._rollup_by("day")).values(), key=lambda r: r["day"])
         out = []
         for r in rows:
             n = r["requests"] or 1
@@ -1059,22 +2217,44 @@ class Ledger:
     @_locked
     def stats_by_task(self) -> list[dict[str, Any]]:
         """Per task: requests, student share, escalations, cost, savings, latency, and `routes`: how many requests took
-        each route (`unrecorded` for rows older than the route column), most frequent first."""
-        rows = self.db.execute(
-            """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
-                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms
+        each route (`unrecorded` for rows older than the route column), most frequent first. Folded request rows
+        (FR-13.4) count too."""
+        rows = [
+            dict(r)
+            for r in self.db.execute(
+                """SELECT task, COUNT(*) requests, SUM(served_by='student') student_served, SUM(escalated) escalated,
+                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline, AVG(latency_ms) latency_ms,
+                      SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n
                FROM requests GROUP BY task ORDER BY COUNT(*) DESC"""
-        ).fetchall()
+            )
+        ]
         routes: dict[str, dict[str, int]] = {}
         counted = self.db.execute("SELECT task, route, COUNT(*) n FROM requests GROUP BY task, route ORDER BY n DESC, route")
         for r in counted:
             per_task = routes.setdefault(r["task"], {})
             key = r["route"] or UNRECORDED_ROUTE
             per_task[key] = per_task.get(key, 0) + int(r["n"])
+        if self._has_rollup():
+            folded = self._rollup_by("task")
+            for name, sums in folded.items():
+                per_task = routes.setdefault(name, {})
+                for k, v in sums.items():
+                    if k.startswith("route:"):
+                        per_task[k[6:]] = per_task.get(k[6:], 0) + v
+                routes[name] = dict(sorted(per_task.items(), key=lambda kv: (-kv[1], kv[0])))
+            rows = sorted(_merge(rows, "task", folded).values(), key=lambda r: -r["requests"])  # stable: ties keep order
+        # Human verdicts on the task's answers (FR-13.30), the latest per request; their rows outlive the requests'.
+        human = {
+            f["task"]: (int(f["n"]), int(f["ok"]))
+            for f in self.db.execute(
+                "SELECT task, COUNT(*) n, COALESCE(SUM(verdict='correct'), 0) ok FROM feedback GROUP BY task"
+            )
+        }
         out = []
         for r in rows:
             n = r["requests"] or 1
             cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
+            verdicts, correct = human.get(r["task"], (0, 0))
             out.append(
                 {
                     "task": r["task"],
@@ -1087,18 +2267,31 @@ class Ledger:
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
                     "avg_latency_ms": r["latency_ms"],
                     "routes": routes.get(r["task"], {}),
+                    "human_feedback": verdicts,
+                    "human_agreement": correct / verdicts if verdicts else None,
                 }
             )
         return out
 
     @_locked
     def stats_by_client(self) -> list[dict[str, Any]]:
-        """Per API key: requests, cost and savings (the basis for per-client receipts)."""
-        rows = self.db.execute(
-            """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
-                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline
+        """Per API key: requests, cost and savings (the basis for per-client receipts); `end_users`, the distinct end
+        users its requests named (FR-13.2); and `stored_share`, the share of its requests that stored or bumped a
+        training example (None when no request recorded it, as before v0.5). Folded request rows (FR-13.4) count in
+        every figure but `end_users`: a fold keeps no end user, so that counts the rows still kept."""
+        rows = [
+            dict(r)
+            for r in self.db.execute(
+                """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
+                      SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
+                      COUNT(DISTINCT end_user) end_users, AVG(stored) stored_share,
+                      SUM(stored) stored_sum, COUNT(stored) stored_n
                FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
-        ).fetchall()
+            )
+        ]
+        if self._has_rollup():
+            folded = self._rollup_by("client", "WHERE client IS NOT NULL")
+            rows = sorted(_merge(rows, "client", folded).values(), key=lambda r: -r["requests"])
         out = []
         for r in rows:
             cost, base = r["cost"] or 0.0, r["baseline"] or 0.0
@@ -1110,13 +2303,19 @@ class Ledger:
                     "cost_usd": cost,
                     "baseline_usd": base,
                     "savings_pct": 0.0 if base == 0 else 1 - cost / base,
+                    "end_users": int(r["end_users"] or 0),
+                    "stored_share": None if r["stored_share"] is None else float(r["stored_share"]),
                 }
             )
         return out
 
     @_locked
     def totals(self) -> dict[str, float]:
-        r = self.db.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone()
+        """Requests, cost and savings over the whole ledger, folded request rows included (FR-13.4)."""
+        r = dict(self.db.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone())
+        if self._has_rollup():
+            f = self.db.execute("SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup").fetchone()
+            r = {"n": r["n"] + int(f["n"] or 0), "c": _add(r["c"], f["c"]), "b": _add(r["b"], f["b"])}
         c, b = r["c"] or 0.0, r["b"] or 0.0
         return {
             "requests": r["n"],

@@ -7,8 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, certificate, tasks
-from ..config import GpuRate
+from .. import bom, certificate, privacy, tasks
+from ..config import GpuRate, Retention
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
 from ..resilience import describe_failure
@@ -66,6 +66,24 @@ def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: in
         return None
 
 
+def _rescore_changed_specs(
+    ledger: Ledger, evaluator: Evaluator, live: Version | None, golden_rows: list[dict[str, Any]], hashes: dict[str, str]
+) -> None:
+    """A task whose spec changed is on the teacher until the live version is scored under the new spec; on a night that
+    does not train, score it now (the same re-score a training night starts with). It reads the stored golden rows and
+    writes only the version's eval, so it also runs under zero retention. A failure leaves the tasks on the teacher."""
+    changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
+    if live is None or not changed:
+        return
+    try:
+        recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
+    except Exception as e:  # noqa: BLE001 - a skip night stays a skip night; the tasks stay on the teacher
+        ledger.event("rescore_failed", f"v{live.id}: {describe_failure(e)}; spec changed for {', '.join(changed)}")
+    else:
+        ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
+        ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
+
+
 def run_night(
     ledger: Ledger,
     trainer: Trainer,
@@ -78,9 +96,17 @@ def run_night(
     train_gpu: GpuRate | None = None,
     clock: Callable[[], float] | None = None,
     redact_pii: bool | None = None,
+    store_examples: bool = True,
+    retention: Retention | None = None,
 ) -> NightReport:
-    """One night. With `train_gpu` (live mode: the training job's GPU rate), the wall-clock time of `trainer.train()` is
-    recorded as a `training_job` compute interval on `clock` (default `ledger.now`) for the cost report (FR-15.2), and
+    """One night. With `retention` (live mode: `Settings.retention()`), the retention windows are applied first
+    (`privacy.apply_retention`, FR-13.4), so the night never trains on text that has expired; a failure there stops the
+    night. With `store_examples` False (RATCHET_STORE_EXAMPLES=0, zero retention; FR-13.1) nothing is stored, so
+    the night skips before anything else (`storage disabled`): examples kept from before are not trained on, but when
+    no release is in flight a task whose spec changed is still re-scored on them, so it does not stay on the teacher
+    for good (`_rescore_changed_specs`, which stores nothing). With `train_gpu` (live mode: the training job's GPU
+    rate), the wall-clock time of `trainer.train()` is recorded as a `training_job` compute interval on `clock`
+    (default `ledger.now`) for the cost report (FR-15.2), and
     closed whether training returns or raises. It includes the dataset upload and the adapter load around the GPU job,
     so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
     (`cost.record_simulated_day`) and pass none. `redact_pii` (`Settings.redact_pii`) goes into the BOM's `redactor`.
@@ -88,7 +114,19 @@ def run_night(
     Each version commits to its training and golden rows (FR-16.4, ADR 0027): their leaves are written right after
     `create_version` (`Ledger.set_version_leaves`, append-only) and their roots signed in the BOM. Later features add
     their steps at fixed places (ADR 0024): early-night checks before the `min_new_examples` gate, paired evidence right
-    after the candidate's eval, and BOM sections into the one `bom_extra` dict."""
+    after the candidate's eval, and BOM sections into the one `bom_extra` dict.
+
+    New data is the training rows now less the most training rows any version had that are still stored
+    (`Ledger.train_rows_kept`: each version's `train_examples` less its own training rows purged since), so deleting
+    data never hides new data and never makes old data look new (FR-4.4); without purges the count is v0.4's."""
+    if retention is not None and retention.enabled:
+        privacy.apply_retention(ledger, retention)
+    if not store_examples:
+        ledger.event("skip", "storage disabled (RATCHET_STORE_EXAMPLES=0): no new examples are stored; no training tonight")
+        if not ledger.versions(["shadow", "canary"]):
+            golden_rows = dataset.rows(ledger, "golden", task)
+            _rescore_changed_specs(ledger, evaluator, ledger.live(), golden_rows, spec_hashes(golden_rows))
+        return NightReport(False, None, False, "storage disabled")
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
@@ -99,8 +137,7 @@ def run_night(
     train_rows = dataset.rows(ledger, "train", task)
     golden_rows = dataset.rows(ledger, "golden", task)
 
-    last = max((v.train_examples for v in ledger.versions()), default=0)
-    new = manifest["train_examples"] - last
+    new = manifest["train_examples"] - ledger.train_rows_kept(task)
     hashes = spec_hashes(golden_rows)
     live = ledger.live()
     # Stored answers the current spec refuses (it tightened since): left out of training, and said so where operators
@@ -109,17 +146,8 @@ def run_night(
     left_out = f" ({invalid} stored answers invalid under the current spec left out)" if invalid else ""
     if new < min_new_examples:
         ledger.event("skip", f"only {new} new examples (< {min_new_examples}){left_out}; no training tonight")
-        # A task whose spec changed is on the teacher until the live version is scored under the new spec; without new
-        # data that would wait for a training night, so score it now (the same re-score a training night starts with).
-        changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
-        if live is not None and changed:
-            try:
-                recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
-            except Exception as e:  # noqa: BLE001 - a skip night stays a skip night; the tasks stay on the teacher
-                ledger.event("rescore_failed", f"v{live.id}: {describe_failure(e)}; spec changed for {', '.join(changed)}")
-            else:
-                ledger.update_eval(live.id, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
-                ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
+        # Without new data a changed spec would wait for a training night: re-score the live version now.
+        _rescore_changed_specs(ledger, evaluator, live, golden_rows, hashes)
         return NightReport(False, None, False, "not enough new data")
     if not golden_rows:
         ledger.event("skip", "no golden examples yet; no training tonight")

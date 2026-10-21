@@ -8,12 +8,19 @@ check that a given adapter was trained on what its BOM says, and that nobody edi
 
     python -m ratchet.bom keygen                          # new signing key + public key
     python -m ratchet.bom verify bom.json --public-key K  # check a downloaded BOM
+    python -m ratchet.bom verify bom.json --public-key K --notice NOTICE.md  # and the NOTICE.md next to the adapter
 
 Schema `ratchet.bom/v2` (ADR 0024) keeps every v1 field and adds `redactor` (which redaction rules the training text
 went through), `training.origins` (examples by where they came from), a set commitment per split (`training.commitment`,
 `golden.commitment`: the root of a `merkle.KeySet` over the split's example keys, so single examples can be proved in
 or out of the adapter's training set, ADR 0027; `python -m ratchet.proof`) and optional sections later items fill (the
-`EXTRA_KEYS`). Stored v1 documents are never rewritten (invariant 14), and `verify` accepts both.
+`EXTRA_KEYS`). The licenses travel with the adapter (NFR-9, ADR 0090): `base_model_license` ({name, url} of the base
+model, or a `warning` for one Ratchet does not know), `notices` (the exact NOTICE.md that goes next to the adapter
+weights, with its SHA-256) and each source's `license_origin` ('builtin', or 'config' for a teacher added in
+RATCHET_TEACHER_LICENSES). Labels a person wrote are not teachers: `label_sources` lists them apart (source `human`, its
+license, examples by origin), `training.targets` says when they are among the targets, and `golden.human_labels` counts
+golden rows with a human reference (ADR 0091). Stored v1 documents, and v2 documents written before those fields, are
+never rewritten (invariant 14), and `verify` accepts them all.
 """
 
 from __future__ import annotations
@@ -28,9 +35,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from . import __version__, licenses, redact
+from . import licenses, redact
 from .ledger import Version
 from .merkle import SMT_ALG
+from .nightschool import notices
 
 SCHEMA = "ratchet.bom/v2"
 ACCEPTED = ("ratchet.bom/v1", SCHEMA)  # what `verify` checks; anything else is refused as an unknown schema
@@ -40,6 +48,9 @@ ALG = "Ed25519"
 # refuses any other key, so the shape changes only with a new schema version.
 EXTRA_KEYS = ("teacher", "backfill_jobs", "erasures_honored")
 COMMITMENT_SPLITS = {"training": "train", "golden": "golden"}  # manifest section -> example split
+# `training.targets`: what the training targets were (invariant 2, as amended by ADR 0091).
+TARGETS = "teacher answers only"
+TARGETS_WITH_LABELS = "teacher answers and customer-attested human labels"
 
 
 def canonical(obj: Any) -> bytes:
@@ -110,37 +121,33 @@ def manifest(
     unknown = sorted(set(commitments or {}) - set(COMMITMENT_SPLITS))
     if unknown:
         raise ValueError(f"unknown commitments {unknown}; use {list(COMMITMENT_SPLITS)}")
-    sources: Counter[tuple[str, str]] = Counter()
-    for r in train_rows:
-        sources[(r["provenance"]["teacher"], r["provenance"]["license"])] += 1
-    out_sources = []
-    for (teacher, lic_name), n in sorted(sources.items()):
-        lic = licenses.lookup(teacher)
-        out_sources.append(
-            {
-                "teacher": teacher,
-                "license": lic_name,
-                "license_url": lic.url if lic else None,
-                "distill_ok": bool(lic and lic.distill_ok),
-                "examples": n,
-            }
-        )
+    # One entry per (teacher, license), with the URL, distill_ok and license_origin from the registry in force; labels a
+    # person wrote (licenses.SOURCES) are not teachers and are listed apart (FR-3.54, ADR 0091).
+    out_sources = notices.sources(train_rows)
+    labels = notices.label_sources(train_rows)
+    generator = notices.generator()  # "ratchet <version>", also named in the NOTICE
     training: dict[str, Any] = {
         "examples": len(train_rows),
         "dataset_sha256": version.dataset_hash,
         "tasks": dict(sorted(Counter(r["task"] for r in train_rows).items())),
-        "targets": "teacher answers only",
+        "targets": TARGETS_WITH_LABELS if labels else TARGETS,
         "examples_with_pii_redacted": sum(1 for r in train_rows if r["provenance"].get("redactions")),
         # Where the training examples came from (`examples.origin`; 'live' for rows that did not record one).
         "origins": dict(sorted(Counter(r["provenance"].get("origin") or "live" for r in train_rows).items())),
     }
-    golden: dict[str, Any] = {"examples": len(golden_rows), "sha256": _rows_hash(golden_rows), "held_out": True}
+    golden: dict[str, Any] = {
+        "examples": len(golden_rows),
+        "sha256": _rows_hash(golden_rows),
+        "held_out": True,
+        # Golden rows whose reference a person wrote (a human-verified golden set, FR-4.50).
+        "human_labels": sum(1 for r in golden_rows if r["provenance"]["teacher"] in licenses.SOURCES),
+    }
     for section, value in (commitments or {}).items():
         target = training if section == "training" else golden
         target["commitment"] = _commitment(section, value, train_rows if section == "training" else golden_rows)
     return {
         "schema": SCHEMA,
-        "generator": f"ratchet {__version__}",
+        "generator": generator,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "adapter": {
             "version": version.id,
@@ -151,6 +158,12 @@ def manifest(
         "training": training,
         "golden": golden,
         "sources": out_sources,
+        "label_sources": labels,
+        # The licenses that travel with the adapter (NFR-9): its base model's, and the NOTICE.md written next to it.
+        "base_model_license": notices.base_license(version.base_model),
+        "notices": [
+            notices.notice_entry(notices.render(version.base_model, out_sources, version=generator, label_sources=labels))
+        ],
         "redactor": redactor(redact_pii),
         "eval": version.eval,
         **(extra or {}),
@@ -232,6 +245,22 @@ def verify(doc: dict[str, Any], public_key_b64: str | None = None) -> tuple[bool
     return True, f"signature valid ({ALG}, key {key_id(key)}, {trust})"
 
 
+def check_notice(doc: dict[str, Any], data: bytes) -> tuple[bool, str]:
+    """(ok, reason): whether `data` (a NOTICE.md file's bytes) is the notice this BOM signed (its `notices` entry for
+    NOTICE.md, compared by SHA-256). Check the BOM itself with `verify` first: this only ties the file to the document."""
+    try:
+        entries = doc["manifest"].get("notices") or []
+    except (KeyError, TypeError, AttributeError):
+        return False, "not a Ratchet BOM document"
+    want = next((e.get("sha256") for e in entries if isinstance(e, dict) and e.get("file") == notices.NOTICE_FILE), None)
+    if not isinstance(want, str):
+        return False, "this BOM records no NOTICE.md (written before NFR-9)"
+    got = hashlib.sha256(data).hexdigest()
+    if got != want:
+        return False, f"NOTICE.md does not match the BOM (sha256 {got[:16]}…, the BOM signed {want[:16]}…)"
+    return True, "NOTICE.md matches the BOM"
+
+
 def keygen() -> tuple[str, str]:
     """(private seed base64, public key base64)."""
     from cryptography.hazmat.primitives import serialization
@@ -249,6 +278,7 @@ def main(argv: list[str]) -> int:
     v = sub.add_parser("verify", help="check a BOM document (file or - for stdin)")
     v.add_argument("path")
     v.add_argument("--public-key", default=None, help="the base64 public key you trust")
+    v.add_argument("--notice", default=None, help="a NOTICE.md to check against the notice the BOM signed")
     args = ap.parse_args(argv)
     if args.cmd == "keygen":
         seed, pub = keygen()
@@ -257,8 +287,17 @@ def main(argv: list[str]) -> int:
         print(f"# key id: {key_id(pub)}")
         return 0
     text = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
-    ok, reason = verify(json.loads(text), args.public_key)
+    doc = json.loads(text)
+    ok, reason = verify(doc, args.public_key)
     print(("OK: " if ok else "FAIL: ") + reason)
+    if ok and args.notice is not None:
+        try:
+            data = Path(args.notice).read_bytes()
+        except OSError as e:
+            ok, reason = False, f"cannot read {args.notice}: {e.strerror or type(e).__name__}"
+        else:
+            ok, reason = check_notice(doc, data)
+        print(("OK: " if ok else "FAIL: ") + reason)
     return 0 if ok else 1
 
 
