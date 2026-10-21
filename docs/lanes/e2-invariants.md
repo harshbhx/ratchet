@@ -6,21 +6,24 @@ branch; the integrator gives a new invariant the next free number in `CLAUDE.md`
 invariant it extends), adds its `CODE` entry in `scripts/reqtrace.py`, and adds the number to the proving tests'
 `@pytest.mark.req` markers.
 
-## Amendment to invariant 1: configuration cannot add a closed teacher (LIC-NOTICES-PORTABILITY)
+## Amendment to invariant 1: configuration cannot relabel a known closed teacher (LIC-NOTICES-PORTABILITY)
 
 **Text (append to invariant 1 in CLAUDE.md).** Open teachers may also come from `RATCHET_TEACHER_LICENSES`
 (`licenses.install`, merged into a copy of `BUILTIN` at startup), but only under a license in
 `licenses.ALLOWED_LICENSES` (OpenMDW-1.1, Apache-2.0, MIT, NVIDIA Nemotron Open Model License) and for a model id no part
-of which starts with a `CLOSED` prefix, contains `gpt`, `claude` or `gemini`, or contains a closed vendor's name
-(`licenses.closed_family`, `licenses.CLOSED_VENDORS`); a configured entry never replaces a built-in one, and
-a bad file stops startup. Never widen the allowlist or loosen the closed-family check without a reviewed ADR. See
+of which starts with a `CLOSED` prefix or `o` and a digit, contains `gpt`, `claude` or `gemini`, a closed model's name or
+a closed vendor's name, and which is no router alias (`licenses.closed_family`, `licenses.CLOSED_NAMES`,
+`licenses.CLOSED_VENDORS`, `licenses.ROUTER`); a configured entry never replaces a built-in one, and a bad file stops
+startup. The check knows only the closed models it names: any other id is admitted on the operator's claim, which every
+BOM and NOTICE marks `config`. Never widen the allowlist or loosen the closed-family check without a reviewed ADR. See
 [ADR 0090](../adr/0090-licenses-travel-with-the-adapter.md).
 
 **Enforcing code.**
 
 - `ratchet.licenses:parse_entries` (the allowlist, the closed-family check, no built-in override, no duplicates)
-- `ratchet.licenses:closed_family` (any part of the id: a closed prefix at its start, a family name or a closed vendor's
-  name anywhere in it; stricter than `lookup`'s last-segment rule)
+- `ratchet.licenses:closed_family` (any part of the id: a closed prefix or `o` and a digit at its start, a family name,
+  a closed model's name or a closed vendor's name anywhere in it, a router's name; a last path segment `auto`; stricter
+  than `lookup`'s last-segment rule)
 - `ratchet.licenses:lookup` (defence in depth: a configured entry naming a closed family resolves to the closed terms)
 - `ratchet.licenses:install` (publishes `{**BUILTIN, **configured}` in one assignment; a bad file leaves the registry
   as it was) and its callers at startup: `ratchet.gateway:Runtime.reset`, `ratchet.router:Ratchet.__init__`,
@@ -29,9 +32,10 @@ a bad file stops startup. Never widen the allowlist or loosen the closed-family 
 **Proving tests** (`tests/test_licensing.py`, marked `INV-1`).
 
 - `test_config_teacher_license_allowed_and_closed_prefix_still_refused`: `gpt-4o`, `azure-gpt-4o`, `chatgpt-4o-latest`,
-  `openai/davinci-002`, `anthropic/next-model`, `openai/gpt-oss-120b`, `claude-3-5-sonnet`, `google/gemini-2.5-pro` and
-  others claimed as Apache-2.0 are refused; unknown or restrictive license names are refused; a built-in teacher cannot
-  be relabelled; a closed id forced into the registry still raises `LicenseError`.
+  `openai/davinci-002`, `davinci-002`, `codex-mini-latest`, `o5-mini`, `anthropic/next-model`, `openai/gpt-oss-120b`,
+  `claude-3-5-sonnet`, `google/gemini-2.5-pro` and others claimed as Apache-2.0 are refused, and so are router aliases
+  (`openrouter/auto`); unknown or restrictive license names are refused; a built-in teacher cannot be relabelled; a
+  closed id or router alias forced into the registry still raises `LicenseError`.
 - `test_config_teacher_end_to_end`: without the file the configured teacher is unknown (refused at startup, its rows
   out of training).
 - `test_bad_teacher_license_file_fails_at_startup`: every entry point stops on a bad file before it opens anything.

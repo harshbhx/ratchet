@@ -8,7 +8,9 @@ The built-in registry (`BUILTIN`) is code. An operator can add open teachers wit
 change in `RATCHET_TEACHER_LICENSES` (a JSON list of {model, license, url, note}); `install`
 merges them into a copy of the built-in registry at startup and publishes it as `REGISTRY`. A
 configured entry is accepted only under a license in `ALLOWED_LICENSES` and for a model id
-that belongs to no `CLOSED` family, so invariant 1 cannot be configured away (ADR 0090).
+`closed_family` does not recognise as closed (a closed family, model name or vendor, or a router
+alias), so configuration cannot relabel a closed model Ratchet knows of. Any other id is admitted on
+the operator's claim, which every BOM and NOTICE marks `config` (ADR 0090).
 
 `BASE_MODELS` names the license of each known student base model: it travels with every
 adapter in its BOM and its NOTICE.md (NFR-9).
@@ -121,6 +123,16 @@ _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 # the id carries no family prefix (`anthropic/<a new name>`), mapped to their `CLOSED` entry. Their open releases
 # (`openai/gpt-oss-120b`) are added in code, after their license is read.
 CLOSED_VENDORS: Mapping[str, str] = MappingProxyType({"openai": "gpt", "anthropic": "claude"})
+# For a configured teacher only: closed models whose names carry no `CLOSED` prefix (OpenAI's legacy and Codex models,
+# `davinci-002`, `codex-mini-latest`), refused anywhere in a part of the id, mapped to their `CLOSED` entry.
+CLOSED_NAMES: Mapping[str, str] = MappingProxyType({"davinci": "gpt", "babbage": "gpt", "codex": "gpt"})
+_O_SERIES = re.compile(r"o\d")  # a part starting with `o` and a digit: OpenAI's o-series, also the ones after o4 (`o5-mini`)
+# A router alias names no model: the one that answers is chosen per request and may be closed, so no license claim can
+# cover its outputs. Refused for a configured teacher: a part containing a router's name (`openrouter/auto`, also its
+# unnamed preview models), or a last path segment that is an alias (`auto`, `x/auto:floor`).
+ROUTER = TeacherLicense("a router alias", False, "", "The model that answers is chosen per request and may be a closed model.")
+ROUTER_VENDORS: tuple[str, ...] = ("openrouter",)
+ROUTER_ALIASES: tuple[str, ...] = ("auto",)
 
 
 class LicenseError(ValueError):
@@ -140,20 +152,29 @@ class LicenseConfigError(LicenseError):
 
 
 def closed_family(model: str) -> TeacherLicense | None:
-    """The closed terms a model id belongs to, else None. The id is split at every character that is not a letter or
-    digit; it belongs to a closed family when a part starts with a `CLOSED` prefix (`azure-gpt-4o`, `proxy/o1`,
-    `claude-3-5-sonnet@20241022`), a part contains a prefix of three letters or more (`chatgpt-4o-latest`), or a part
-    contains a `CLOSED_VENDORS` name (`anthropic/<a new name>`). Stricter than `lookup`'s rule, which reads only the start
-    of the last path segment: this is the check a configured teacher must pass, so it errs toward refusing."""
-    for token in _TOKEN_SPLIT.split(model.lower()):
-        if not token:
-            continue
+    """The closed terms a model id belongs to (`ROUTER` for a router alias), else None. The id is split at every
+    character that is not a letter or digit; it belongs to a closed family when a part starts with a `CLOSED` prefix
+    (`azure-gpt-4o`, `proxy/o1`, `claude-3-5-sonnet@20241022`) or with `o` and a digit (`o5-mini`), a part contains a
+    prefix of three letters or more (`chatgpt-4o-latest`), a `CLOSED_NAMES` name (`davinci-002`) or a `CLOSED_VENDORS`
+    name (`anthropic/<a new name>`). It is a router alias when a part contains a `ROUTER_VENDORS` name or the last path
+    segment is a `ROUTER_ALIASES` alias. Stricter than `lookup`'s rule, which reads only the start of the last path
+    segment: this is the check a configured teacher must pass, so it errs toward refusing. It only knows the closed
+    models named here: a closed model from another vendor under a new name passes, and is then admitted on the
+    operator's license claim alone (marked `config` in the BOM and NOTICE)."""
+    tokens = [t for t in _TOKEN_SPLIT.split(model.lower()) if t]
+    for token in tokens:
         for prefix, lic in CLOSED.items():
             if token.startswith(prefix) or (len(prefix) >= 3 and prefix in token):
                 return lic
-        for vendor, family in CLOSED_VENDORS.items():
-            if vendor in token:
+        if _O_SERIES.match(token):
+            return CLOSED["o1"]
+        for name, family in (*CLOSED_NAMES.items(), *CLOSED_VENDORS.items()):
+            if name in token:
                 return CLOSED[family]
+    segments = [s for s in model.lower().split("/") if s]
+    last = re.split(r"[:@]", segments[-1])[0] if segments else ""
+    if last in ROUTER_ALIASES or any(router in token for token in tokens for router in ROUTER_VENDORS):
+        return ROUTER
     return None
 
 
@@ -241,6 +262,11 @@ def _entry_problems(model: str | None, name: str | None, url: str | None, where:
         closed = closed_family(model)
         if not _MODEL_RE.fullmatch(model):
             errors.append(f"{where}.model: {model!r} is not a model id (letters, digits and . _ : / @ + -)")
+        elif closed is ROUTER:
+            errors.append(
+                f"{where}.model: {model!r} is a router alias: the model that answers is chosen per request and may be a "
+                "closed one, so no license claim covers its outputs (invariant 1); name the model itself"
+            )
         elif closed is not None:
             errors.append(
                 f"{where}.model: {model!r} belongs to a closed model family ({closed.name}); its outputs may not train "

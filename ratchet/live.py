@@ -254,6 +254,32 @@ def publish_bom(led: Ledger, vid: int, data: Path) -> list[Path]:
     return [out, *notices.write_adapter_files(adapter_dir(data, version.adapter_uri), doc)]
 
 
+# What makes an adapter folder usable on its own: PEFT's config and a weights file (`save_pretrained` writes both).
+ADAPTER_CONFIG = "adapter_config.json"
+WEIGHT_SUFFIXES = (".safetensors", ".bin")
+
+
+def adapter_files(folder: Path) -> list[Path]:
+    """The adapter's own files under `folder`, sorted: everything but the BOM and NOTICE.md at its top level, which
+    `publish_bom` (and the training job, for NOTICE.md) write there and an export writes again from the stored BOM. After
+    a live night with an upload-only RATCHET_SYNC_CMD the local folder holds only those two, and no adapter."""
+    if not folder.is_dir():
+        return []
+    ours = {notices.BOM_FILE, notices.NOTICE_FILE}
+    return sorted(p for p in folder.rglob("*") if p.is_file() and p.relative_to(folder).as_posix() not in ours)
+
+
+def has_weights(files: list[Path]) -> bool:
+    """Whether `files` (`adapter_files`) make a loadable adapter: an `adapter_config.json` and a weights file."""
+    return any(p.name == ADAPTER_CONFIG for p in files) and any(p.suffix in WEIGHT_SUFFIXES for p in files)
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    """Whether `path` is `folder` or lies under it, once both are resolved (symlinks and `..` followed)."""
+    target, root = path.resolve(), folder.resolve()
+    return target == root or root in target.parents
+
+
 def export_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m ratchet.live export",
@@ -269,7 +295,10 @@ def export(led: Ledger, argv: list[str], data: Path | None = None) -> dict[str, 
     """`python -m ratchet.live export`: an adapter ready to hand over (US-10, NFR-7, NFR-9). The adapter folder is copied
     when it is on this machine (a bucket mount, or synced down); the BOM is the one stored at training time (INV-14),
     checked against its own sha256 and signature first; NOTICE.md is the text the BOM signed (`notices.bom_notice`), so it
-    replaces any copy in the folder. The output folder must be new or empty, so an export never mixes two adapters."""
+    replaces any copy in the folder. `adapter_files` counts the adapter's own files, never the BOM and NOTICE.md that a
+    live night leaves in the local folder, and without the weights (`has_weights`) the command says where to copy them
+    from. The output folder must be new or empty, so an export never mixes two adapters, and outside RATCHET_DATA_DIR,
+    which the next sync uploads to the bucket."""
     args = export_parser().parse_args(argv)
     data = data if data is not None else data_dir()
     version = led.version(args.version)
@@ -288,30 +317,37 @@ def export(led: Ledger, argv: list[str], data: Path | None = None) -> dict[str, 
         src = adapter_dir(data, version.adapter_uri)
     except ValueError as e:
         raise SystemExit(f"export: version {args.version}: {e}") from None
-    if out.resolve() == src.resolve() or src.resolve() in out.resolve().parents:
+    if _inside(out, src):
         # Inside the adapter folder the bundle would be copied into itself, and the next sync would upload it there.
         raise SystemExit(f"export: {out} is inside the adapter folder {src}; choose a folder outside it")
-    copied = 0
-    if src.is_dir():
+    if _inside(out, data):
+        # RATCHET_SYNC_CMD uploads the whole data folder: a second copy of the weights would land in the bucket.
+        raise SystemExit(
+            f"export: {out} is inside RATCHET_DATA_DIR ({data}), which RATCHET_SYNC_CMD uploads; choose a folder outside it"
+        )
+    files = adapter_files(src)
+    weights = has_weights(files)
+    if files:
         shutil.copytree(src, out, dirs_exist_ok=True)
-        copied = sum(1 for p in out.rglob("*") if p.is_file())
-    bom_path, notice_path = notices.write_adapter_files(out, doc)
+    bom_path, notice_path = notices.write_adapter_files(out, doc)  # replaces any BOM or NOTICE.md the copy brought
     result = {
         "version": version.id,
         "adapter": version.adapter_uri,
         "out": str(out),
-        "adapter_files": copied,
+        "adapter_files": len(files),
+        "weights": weights,
         "bom": str(bom_path),
         "notice": str(notice_path),
         "bom_sha256": doc["sha256"],
         "signed": bool(doc.get("signature")),
     }
-    if copied:
+    if weights:
         print(f"exported {version.adapter_uri} (v{version.id}) from {src} to {out}")
     else:
+        what = f"the licenses and {len(files)} other file{'s' if len(files) != 1 else ''}" if files else "the licenses"
         print(
-            f"exported the licenses of {version.adapter_uri} (v{version.id}) to {out}; the adapter weights are not at {src}: "
-            f"copy them from the bucket's adapters/{version.adapter_uri}/ into {out}"
+            f"exported {what} of {version.adapter_uri} (v{version.id}) to {out}; the adapter weights ({ADAPTER_CONFIG} and "
+            f"adapter_model.safetensors) are not at {src}: copy them from the bucket's adapters/{version.adapter_uri}/ into {out}"
         )
     print(f"bill of materials: {bom_path} ({reason})")
     print(f"notice: {notice_path}")

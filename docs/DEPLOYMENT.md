@@ -9,7 +9,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 793 tests, ~80 s
+pytest -q                                                          # 794 tests, ~80 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
@@ -161,7 +161,7 @@ python -m ratchet.live export --version 3 --out ./student-v3-export
 # bom sha256: 9b1f…
 ```
 
-The folder gets the adapter files from `RATCHET_DATA_DIR/adapters/<name>/` (when they are on this machine; otherwise the command says where to copy them from), the BOM stored at training time (`ratchet_bom.json`, checked against its own `sha256` and signature first; a BOM that does not verify is refused) and the `NOTICE.md` that BOM signed: the base model's license (the NVIDIA Nemotron Open Model License for the Nano models), each teacher's license and URL, that the targets were teacher outputs only, and the Ratchet version. The output folder must be new or empty, and outside the adapter folder. Give the recipient your public key: `python -m ratchet.bom verify student-v3-export/ratchet_bom.json --public-key <yours> --notice student-v3-export/NOTICE.md` prints `OK` for the BOM and `OK: NOTICE.md matches the BOM` for the notice (its SHA-256 equals the BOM's `notices[0].sha256`). Keep `NOTICE.md` with the adapter wherever it goes; a version trained before v0.4 has no BOM and is refused.
+The folder gets the adapter files from `RATCHET_DATA_DIR/adapters/<name>/` when they are on this machine. With an upload-only `RATCHET_SYNC_CMD`, that folder holds only the `ratchet_bom.json` and `NOTICE.md` the night wrote, not the weights; the export then counts no adapter files and says so (`exported the licenses of student-v3 (v3) to student-v3-export; the adapter weights (adapter_config.json and adapter_model.safetensors) are not at data/adapters/student-v3: copy them from the bucket's adapters/student-v3/ into student-v3-export`). It also gets the BOM stored at training time (`ratchet_bom.json`, checked against its own `sha256` and signature first; a BOM that does not verify is refused) and the `NOTICE.md` that BOM signed: the base model's license (the NVIDIA Nemotron Open Model License for the Nano models), each teacher's license and URL, that the targets were teacher outputs only, and the Ratchet version. The output folder must be new or empty, and outside `RATCHET_DATA_DIR`, which the next sync would upload to the bucket. Give the recipient your public key: `python -m ratchet.bom verify student-v3-export/ratchet_bom.json --public-key <yours> --notice student-v3-export/NOTICE.md` prints `OK` for the BOM and `OK: NOTICE.md matches the BOM` for the notice (its SHA-256 equals the BOM's `notices[0].sha256`). Keep `NOTICE.md` with the adapter wherever it goes; a version trained before v0.4 has no BOM and is refused.
 
 ## 3. Keeping the demo alive for judging (Dec 1–15, 2026)
 

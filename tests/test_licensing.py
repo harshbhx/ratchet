@@ -397,7 +397,8 @@ def test_export_bundle(tmp_path, monkeypatch, capsys):
         "version": vid,
         "adapter": "student-v1",
         "out": str(out),
-        "adapter_files": 4,  # the four files the adapter folder held
+        "adapter_files": 3,  # the adapter's own files; the job's NOTICE.md is replaced, not counted
+        "weights": True,
         "bom": str(out / "ratchet_bom.json"),
         "notice": str(out / "NOTICE.md"),
         "bom_sha256": doc["sha256"],
@@ -426,10 +427,15 @@ def test_export_bundle(tmp_path, monkeypatch, capsys):
     # An empty folder is fine; without the weights on this machine, the licenses alone, and where to get the weights.
     (tmp_path / "empty").mkdir()
     result = live.export(led, ["--version", str(vid), "--out", str(tmp_path / "empty")], data=tmp_path / "elsewhere")
-    assert result["adapter_files"] == 0 and sorted(p.name for p in (tmp_path / "empty").iterdir()) == [
-        "NOTICE.md",
-        "ratchet_bom.json",
-    ]
+    assert (
+        result["adapter_files"] == 0
+        and not result["weights"]
+        and sorted(p.name for p in (tmp_path / "empty").iterdir())
+        == [
+            "NOTICE.md",
+            "ratchet_bom.json",
+        ]
+    )
     assert "copy them from the bucket's adapters/student-v1/" in capsys.readouterr().out
 
     # Refused: an unknown version, one without a BOM, a stored BOM that no longer verifies, an adapter name that is not
@@ -458,6 +464,13 @@ def test_export_bundle(tmp_path, monkeypatch, capsys):
             live.export(led, ["--version", str(vid), "--out", str(inside)], data=data)
     assert not (src / "export").exists() and not any((src / "empty").iterdir())
     (src / "empty").rmdir()
+    # Nor anywhere else in RATCHET_DATA_DIR: the next sync would upload a second copy of the weights to the bucket.
+    (data / "empty").mkdir()
+    for inside in (data / "exports" / "v1", data / "empty", tmp_path / "x6" / ".." / "data" / "export"):
+        with pytest.raises(SystemExit, match="inside RATCHET_DATA_DIR"):
+            live.export(led, ["--version", str(vid), "--out", str(inside)], data=data)
+    assert not (data / "exports").exists() and not (data / "export").exists() and not any((data / "empty").iterdir())
+    (data / "empty").rmdir()
     assert not any((tmp_path / name).exists() for name in ("x1", "x2", "x3", "x4"))
     with pytest.raises(SystemExit):
         live.export(led, ["--out", str(tmp_path / "x5")], data=data)  # --version is required
@@ -468,6 +481,51 @@ def test_export_bundle(tmp_path, monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert lines[-1] == f"bom sha256: {doc['sha256']}" and not any(line.startswith("day ") for line in lines)
     assert (tmp_path / "cli" / "adapter_model.safetensors").exists()
+
+
+@pytest.mark.req("FR-3.52", "FR-3.51", "NFR-9", "US-10")
+def test_export_after_a_live_night_says_the_weights_are_in_the_bucket(tmp_path, monkeypatch, capsys):
+    """With an upload-only RATCHET_SYNC_CMD, the local adapter folder after a live night holds only the BOM and NOTICE.md
+    that `publish_bom` wrote; the weights are in the bucket. An export then counts no adapter files and says where the
+    weights are, never that it exported the adapter."""
+    data, db = _live_night_env(monkeypatch, tmp_path)
+    _examples(Ledger(str(db)), train=60, golden=6)
+    _live_main(["night"], RecordingRun())
+    folder = data / "adapters" / "student-v1"
+    assert sorted(p.name for p in folder.iterdir()) == ["NOTICE.md", "ratchet_bom.json"]
+    assert live.adapter_files(folder) == [] and not live.has_weights([])
+    capsys.readouterr()
+    led = Ledger(str(db))
+    doc = led.version_bom(1)
+    hint = f"copy them from the bucket's adapters/student-v1/ into {tmp_path / 'b1'}"
+
+    result = live.export(led, ["--version", "1", "--out", str(tmp_path / "b1")], data=data)
+    printed = capsys.readouterr().out
+    assert (result["adapter_files"], result["weights"]) == (0, False)
+    assert sorted(p.name for p in (tmp_path / "b1").iterdir()) == ["NOTICE.md", "ratchet_bom.json"]
+    assert f"exported the licenses of student-v1 (v1) to {tmp_path / 'b1'}" in printed and hint in printed
+    assert f"from {folder}" not in printed and f"bom sha256: {doc['sha256']}" in printed
+    # The same through `python -m ratchet.live export`, after publish_bom wrote the folder again.
+    live.publish_bom(led, 1, data)
+    live.main(["export", "--version", "1", "--out", str(tmp_path / "b2")])
+    printed = capsys.readouterr().out
+    assert "exported the licenses of student-v1 (v1)" in printed and "copy them from the bucket's adapters/student-v1/" in printed
+
+    # A folder with some files but no weights: they are copied and counted, and the hint still prints.
+    (folder / "README.md").write_text("model card")
+    result = live.export(led, ["--version", "1", "--out", str(tmp_path / "b3")], data=data)
+    printed = capsys.readouterr().out
+    assert (result["adapter_files"], result["weights"]) == (1, False) and (tmp_path / "b3" / "README.md").exists()
+    assert "exported the licenses and 1 other file of student-v1 (v1)" in printed
+    assert "copy them from the bucket's adapters/student-v1/" in printed
+    # Once the weights are synced down, the export ships the adapter and needs no hint.
+    (folder / "adapter_config.json").write_text('{"r": 16}')
+    (folder / "adapter_model.safetensors").write_bytes(b"\x00weights")
+    result = live.export(led, ["--version", "1", "--out", str(tmp_path / "b4")], data=data)
+    printed = capsys.readouterr().out
+    assert (result["adapter_files"], result["weights"]) == (3, True)
+    assert f"exported student-v1 (v1) from {folder} to {tmp_path / 'b4'}" in printed and "copy them" not in printed
+    assert (tmp_path / "b4" / "NOTICE.md").read_text(encoding="utf-8") == doc["manifest"]["notices"][0]["text"]
 
 
 # ---------- RATCHET_TEACHER_LICENSES ----------
@@ -503,14 +561,33 @@ def test_config_teacher_license_allowed_and_closed_prefix_still_refused(tmp_path
         "chatgpt-4o-latest",  # the family name inside a part, not at its start
         "openai/davinci-002",  # a closed vendor without a family prefix
         "anthropic/next-model",
+        "davinci-002",  # OpenAI's legacy and Codex models, without the vendor
+        "babbage-002",
+        "codex-mini-latest",
+        "o5-mini",  # the o-series after o4
     ):
         with pytest.raises(licenses.LicenseConfigError) as caught:
             licenses.parse_entries([{"model": model, "license": "Apache-2.0", "url": "https://example.test"}])
         assert "closed model family" in str(caught.value) and "invariant 1" in str(caught.value), model
         assert model not in licenses.REGISTRY
+    # A router alias names no model: whatever answers may be closed, so no claimed license covers it.
+    for model in ("openrouter/auto", "auto", "acme-router/auto:floor", "openrouter/stealth-preview"):
+        with pytest.raises(licenses.LicenseConfigError) as caught:
+            licenses.parse_entries([{"model": model, "license": "MIT", "url": "https://example.test"}])
+        assert "router alias" in str(caught.value) and "invariant 1" in str(caught.value), model
+        assert licenses.closed_family(model) is licenses.ROUTER
     # Open model ids pass the family check (their license still has to be on the allowlist).
-    for model in ("Qwen/Qwen3-235B-A22B-Instruct-2507", "deepseek-ai/DeepSeek-V3.1", "meta-llama/Llama-3.3-70B-Instruct"):
+    for model in (
+        "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "deepseek-ai/DeepSeek-V3.1",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "openbmb/MiniCPM-o-2_6",  # an `o` part without a digit
+        "acme/autopilot-7b",  # `auto` inside a name, not the alias
+    ):
         assert licenses.closed_family(model) is None, model
+    # The check knows only the closed families, names and vendors it lists: any other id passes it, and is then
+    # admitted on the operator's license claim alone, marked `config` (ADR 0090).
+    assert licenses.closed_family("x-ai/grok-4") is None
     with pytest.raises(licenses.LicenseError, match="not distillable"):  # the file above did not change that
         licenses.require_distillable("gpt-4o")
     # Only allowed licenses: an unknown or restrictive license name is refused.
@@ -529,6 +606,12 @@ def test_config_teacher_license_allowed_and_closed_prefix_still_refused(tmp_path
     licenses.REGISTRY = {**licenses.REGISTRY, "azure-gpt-4o": licenses.TeacherLicense("MIT", True, "https://e", origin="config")}
     with pytest.raises(licenses.LicenseError, match="OpenAI Business Terms"):
         licenses.require_distillable("azure-gpt-4o")
+    licenses.REGISTRY = {
+        **licenses.REGISTRY,
+        "openrouter/auto": licenses.TeacherLicense("MIT", True, "https://e", origin="config"),
+    }
+    with pytest.raises(licenses.LicenseError, match="router alias"):
+        licenses.require_distillable("openrouter/auto")
     licenses.reset_builtin()
     with pytest.raises(licenses.LicenseError, match="RATCHET_TEACHER_LICENSES"):  # unknown again, and says how to add it
         licenses.require_distillable(CONFIG_TEACHER)
