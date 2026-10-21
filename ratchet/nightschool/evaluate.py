@@ -27,11 +27,17 @@ Several tasks can share one adapter (FR-14.1, ADR 0040), so each task also gets 
 spec's `policy.target_precision` on its own even rows and measured on its own odd rows, with the
 same global parity, so a single-task eval gives the global numbers again.
 
-A task's routing block (FR-2.50, ADR 0049) adds two things. A row the router would keep from the
+A task's routing block (FR-2.50, ADR 0049) adds three things. A row the router would keep from the
 student (`routing.Routing.ineligible`: an over-length prompt stored with `store_ineligible`) is
-skipped and counted (`excluded_ineligible`), as a pinned task's row is. And a task with critical
+skipped and counted (`excluded_ineligible`), as a pinned task's row is. The eligibility check reads
+the stored prompt, which was redacted (INV-12): a placeholder such as [EMAIL] is shorter than what it
+replaced, so a stored prompt just over the limit in production can come back just under it here.
+A task with `escalate_when` rules is calibrated and measured on the answers the rules let the
+student serve: an answer a rule sends to the teacher is never served, so it is neither in the
+threshold's calibration nor in the precision and coverage the gate checks (the pooled numbers
+too), though it still counts in `test_n` and coverage's denominator. And a task with critical
 classes gets `critical` in its record: per class, on its held-out rows, how often the answer served
-at the task's threshold misses a class the teacher's reference is in (`routing.Routing.misses`),
+at the task's stored threshold misses a class the teacher's reference is in (`routing.Routing.misses`),
 which the release gate reads.
 """
 
@@ -39,7 +45,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 from .. import calibration, tasks
 from ..compare import INVALID
@@ -72,6 +78,36 @@ JUDGE_PROMPT = (
 Point = tuple[float, bool]  # (confidence, agreed with the teacher's answer)
 
 
+class _Points(NamedTuple):
+    """One task's scored golden rows. `calib_served` and `test_served` are those whose answer the task's `escalate_when`
+    rules let the student serve (`_servable`): for a task without rules, every row, in the same lists."""
+
+    task: tasks.Task
+    calib: list[Point]
+    test: list[Point]
+    calib_served: list[Point]
+    test_served: list[Point]
+
+    @classmethod
+    def new(cls, task: tasks.Task) -> _Points:
+        calib: list[Point] = []
+        test: list[Point] = []
+        if task.routing_rules.rules:
+            return cls(task, calib, test, [], [])
+        return cls(task, calib, test, calib, test)
+
+
+def _servable(task: tasks.Task, key: Any, confidence: float) -> bool:
+    """Whether the task's `escalate_when` rules let the student serve an answer with this key at this confidence
+    (FR-2.50): no rule holds, or each that holds asks for no more confidence (`routing.Routing.floor`). An invalid answer
+    (or none: the endpoint refused the row) never is, as in `Routing.critical_row`. A task without rules: always, so its
+    rows are calibrated and measured exactly as before."""
+    rules = task.routing_rules
+    if not rules.rules:
+        return True
+    return key is not INVALID and confidence >= rules.floor(key)
+
+
 def _task_record(
     task: tasks.Task,
     calib: list[Point],
@@ -81,29 +117,40 @@ def _task_record(
     floor: float,
     min_task_n: int,
     critical: list[CriticalRow] | None = None,
+    calib_served: list[Point] | None = None,
+    test_served: list[Point] | None = None,
 ) -> dict[str, Any]:
     """One task's calibration record (FR-14.1). Its threshold is calibrated on its own calibration rows to its
     `policy.target_precision` (else the eval's target), by the same rule as the global one. With fewer than `min_task_n`
     calibration rows it is `calibrated: false` and gets the higher of its own threshold and the global one, so a few
     lucky rows cannot lower it; with none it gets the global one. A task with no held-out row gets SERVE_NOTHING: the
     student never answers it without evidence measured on rows the threshold was not tuned on (INV-6). A task with
-    critical classes (FR-2.50) also gets `critical`, their misses on its held-out rows (`critical`) at that threshold."""
+    critical classes (FR-2.50) also gets `critical`, their misses on its held-out rows (`critical`) at the threshold the
+    record stores, which is the one the router applies.
+
+    `calib_served` and `test_served` (default: `calib` and `test`) are the rows whose answer the task's `escalate_when`
+    rules let the student serve (`_servable`): the threshold is calibrated, and precision and coverage measured, on
+    those only, as production serves no other, while `test_n`, `agreement` and coverage's denominator count every
+    row."""
+    calib_served = calib if calib_served is None else calib_served
+    test_served = test if test_served is None else test_served
     target = calibration.target_precision(task, target_precision)
-    own = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib, target))) if calib else None
-    calibrated = own is not None and len(calib) >= min_task_n
+    own = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib_served, target))) if calib_served else None
+    calibrated = own is not None and len(calib_served) >= min_task_n
     if not test:
         thr = SERVE_NOTHING
     elif calibrated:
         thr = own
     else:
         thr = global_thr if own is None else max(global_thr, own)
-    served = [ok for c, ok in test if c >= thr]
+    stored = round(thr, 4)
+    served = [ok for c, ok in test_served if c >= thr]
     points = calib + test
     record = {
         "golden_n": len(points),
         "test_n": len(test),
         "agreement": sum(ok for _, ok in points) / len(points) if points else 0.0,
-        "threshold": round(thr, 4),
+        "threshold": stored,
         "precision": sum(served) / len(served) if served else 0.0,
         "coverage": len(served) / len(test) if test else 0.0,
         "spec_hash": task.spec_hash,
@@ -111,7 +158,7 @@ def _task_record(
         "calibrated": calibrated,
     }
     if task.routing_rules.critical:  # only then, so every other record stays exactly as it was
-        record["critical"] = task.routing_rules.misses(critical or [], thr)
+        record["critical"] = task.routing_rules.misses(critical or [], stored)
     return record
 
 
@@ -138,16 +185,23 @@ def cascade_eval(
     so SERVE_NOTHING. With `per_task` False (RATCHET_PER_TASK_CALIBRATION=0) there is no `tasks`, so
     the version keeps one pooled threshold and the gate checks only the pooled numbers, as in v0.4;
     only a task with critical classes (FR-2.50) still gets its record, which the critical gate needs.
+    Those records then cover only some tasks, so the eval also says what the others come to
+    (`other_tasks`: their held-out rows and how many the global threshold serves), which the release
+    gate adds to the records' rows when it checks the coverage left after disabling a task.
 
     A row the task's routing block keeps from the student (FR-2.50) is skipped before it is sampled
     and counted (`excluded_ineligible`, only when there is one): production never shows it to the
     student, so it would calibrate a threshold for answers it never serves. Its task still gets a
-    record. For a task with critical classes, each held-out row also records whether the teacher's
-    reference and the student's answer are in each class and what the task's rules ask of that
-    answer (`routing.Routing.critical_row`), for `critical` in the task's record."""
+    record. A row whose answer an `escalate_when` rule sends to the teacher is scored and counted, but
+    neither calibrates a threshold nor counts as served (`_servable`), in the task's record and in the
+    pooled numbers. For a task with critical classes, each held-out row also records whether the
+    teacher's reference and the student's answer are in each class and what the task's rules ask of
+    that answer (`routing.Routing.critical_row`), for `critical` in the task's record."""
     calib: list[Point] = []
     test: list[Point] = []
-    per_task_points: dict[str, tuple[tasks.Task, list[Point], list[Point]]] = {}  # by the task's name, not its spelling
+    calib_served: list[Point] = []  # the rows whose answer no escalate_when rule sends to the teacher
+    test_served: list[Point] = []
+    per_task_points: dict[str, _Points] = {}  # by the task's name, not its spelling
     critical_rows: dict[str, list[CriticalRow]] = {}  # held-out rows of the tasks with critical classes
     n_refused = n_invalid = n_pinned = n_ineligible = 0
     specs: dict[str, tasks.Task] = {}
@@ -157,7 +211,7 @@ def cascade_eval(
         if task.pinned:  # INV-10, read time: pinned after its rows were stored, so the student never answers it now
             n_pinned += 1
             continue
-        _, task_calib, task_test = per_task_points.setdefault(task.name, (task, [], []))
+        own = per_task_points.get(task.name) or per_task_points.setdefault(task.name, _Points.new(task))
         prompt, ref = row["messages"][:-1], row["messages"][-1]["content"]
         if task.routing_rules.ineligible(prompt) is not None:  # FR-2.50: the student never sees such a request
             n_ineligible += 1
@@ -177,14 +231,19 @@ def cascade_eval(
             sc = score(task, got)
             point = (sc.confidence, task.agree(sc.answer.text, ref))
             answer_key = sc.key
-        (calib if i % 2 == 0 else test).append(point)
-        (task_calib if i % 2 == 0 else task_test).append(point)
-        if i % 2 == 1 and task.routing_rules.critical:
+        even = i % 2 == 0
+        (calib if even else test).append(point)
+        (own.calib if even else own.test).append(point)
+        if _servable(task, answer_key, point[0]):
+            (calib_served if even else test_served).append(point)
+            if own.calib_served is not own.calib:
+                (own.calib_served if even else own.test_served).append(point)
+        if not even and task.routing_rules.critical:
             row_ = task.routing_rules.critical_row(task.key(ref), answer_key, point[0])
             critical_rows.setdefault(task.name, []).append(row_)
         i += 1
-    thr = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib, target_precision)))
-    served = [ok for c, ok in test if c >= thr]
+    thr = min(SERVE_NOTHING, max(floor, calibrate_threshold(calib_served, target_precision)))
+    served = [ok for c, ok in test_served if c >= thr]
     allpts = calib + test
     extra: dict[str, Any] = {"excluded_pinned": n_pinned} if n_pinned else {}
     if n_ineligible:
@@ -192,12 +251,31 @@ def cascade_eval(
     # With per-task calibration off, a task with critical classes still gets its record: the critical gate reads it, and
     # without one the router keeps the task on the teacher (`calibration.critical_measured`).
     records = {
-        name: _task_record(task, c, t, thr, target_precision, floor, min_task_n, critical_rows.get(name))
-        for name, (task, c, t) in sorted(per_task_points.items())
-        if per_task or task.routing_rules.critical
+        name: _task_record(
+            pts.task,
+            pts.calib,
+            pts.test,
+            thr,
+            target_precision,
+            floor,
+            min_task_n,
+            critical_rows.get(name),
+            pts.calib_served,
+            pts.test_served,
+        )
+        for name, pts in sorted(per_task_points.items())
+        if per_task or pts.task.routing_rules.critical
     }
     if per_task or records:
         extra["tasks"] = records
+    if not per_task and records:
+        # The records cover only the critical tasks: the others are served at the global threshold, and the release gate
+        # needs their rows to check the coverage left once it disables a critical task.
+        rest = [pts for name, pts in per_task_points.items() if name not in records]
+        extra["other_tasks"] = {
+            "test_n": sum(len(pts.test) for pts in rest),
+            "served": sum(1 for pts in rest for c, _ in pts.test_served if c >= thr),
+        }
     return {
         "golden_n": len(allpts),
         "golden_agreement": sum(ok for _, ok in allpts) / len(allpts) if allpts else 0.0,

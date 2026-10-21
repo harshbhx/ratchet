@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 830 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_model_routing, test_routing), ~85 s
+pytest -q                     # 832 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_calibration, test_mock_world, test_model_routing, test_routing), ~85 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -34,8 +34,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 18 |
 | `tests/test_model_routing.py` | 26 |
-| `tests/test_routing.py` | 52 (20 functions; one has 33 cases) |
-| **Total** | **830** |
+| `tests/test_routing.py` | 54 (22 functions; one has 33 cases) |
+| **Total** | **832** |
 
 There are three layers:
 
@@ -639,11 +639,13 @@ Risk-aware routing (FR-2.50, [ADR 0049](adr/0049-risk-aware-routing.md)): a task
 | `test_ineligible_reads_every_message_shape` | FR-2.50: `input_chars` counts content strings, text parts, names, refusals, tool call ids, names and arguments and skips anything else; text parts and an assistant's refusal are text, a user's refusal part or an unknown part is not; the content check comes before the length check; `stores` only for an over-length request with `store_ineligible` |
 | `test_task_audit_rate_override` | FR-2.50, FR-2.5: `policy.audit_rate` 1.0 audits every served answer of its task and 0 none, under a global 0.5; another task is audited on exactly the same requests whatever rate a neighbour task sets (one draw either way) |
 | `test_route_logged_and_in_stats_by_task` | FR-2.50, FR-2.11: `stats_by_task` counts `rule:0`, `ineligible:input_tokens` and `student`; an ineligible request is not an escalation; `known_route` accepts the fixed routes and the two families and refuses `rule:`, `rule:x`, `rule:-1`, a non-ASCII digit and unknown reasons |
-| `test_cascade_eval_measures_critical_misses` | FR-2.50, FR-5.2, INV-6: 2 of 40 flagged held-out rows answered unflagged at the threshold are misses (and right for a second class on `severity`); answered below the threshold, sent to the teacher by a `min_confidence` rule, or refused by the endpoint, they are not; an invalid answer is never served; no rows in the class give an upper bound of 1.0 |
+| `test_cascade_eval_measures_critical_misses` | FR-2.50, FR-5.2, INV-6: 2 of 40 flagged held-out rows answered unflagged at the threshold are misses (and right for a second class on `severity`); answered below the threshold, sent to the teacher by a `min_confidence` rule, or refused by the endpoint, they are not; a miss just under the exact calibrated threshold but at the stored (rounded) one counts; an invalid answer is never served; no rows in the class give an upper bound of 1.0 |
 | `test_critical_miss_rate_disables_task_at_admit` | FR-2.50, FR-6.1, FR-14.1: a candidate whose pooled numbers pass but which misses 2 of 40 flagged rows (upper bound 16.5% > 10%) has the task disabled with the reason, a `task_disabled` event, and ships for its other task; the router then sends the task to the teacher without a student call; `RATCHET_TASK_MODE=reject` rejects the version |
 | `test_critical_gate_needs_enough_rows_in_the_class` | FR-2.50, FR-6.1: with no misses 35 rows pass a 10% limit and 34 fail; 9 rows fail a 50% limit for want of 10 rows and 10 pass; `RATCHET_MIN_TASK_TEST_N` sets the minimum; the limit is the spec's; a record without measurements, with an empty or broken list, under another spec, or with a malformed class entry fails |
-| `test_critical_task_without_measurements_stays_on_teacher` | FR-2.50, FR-14.1: without a record, or with one that lacks `critical`, the task is held back (route `task_disabled`, threshold 1.01) while other tasks keep the global threshold; a measured record serves; the hosted untuned model never serves the task; a shadow without a measured record does not serve it |
+| `test_critical_task_without_measurements_stays_on_teacher` | FR-2.50, FR-14.1: without a record, or with one that lacks `critical`, the task is held back (route `task_disabled`, threshold 1.01) while other tasks keep the global threshold; a measured record serves; the hosted untuned model never serves the task and is not sampled for it (route `task_disabled`), while other tasks still sample it; a resolver that fails leaves the request to the student path (`student_error`); a shadow without a measured record does not serve it |
 | `test_per_task_off_still_records_critical_tasks` | FR-2.50, FR-14.1: with `per_task=False` only the task with critical classes gets a record, with its measurements; without such a task there is no `tasks` |
+| `test_per_task_off_critical_gate_disables_only_that_task` | FR-2.50, FR-14.1, FR-6.1: with `per_task=False` the eval gives `other_tasks`; a failing critical task is disabled and the version ships for its other task (rejected under `reject`); a passing critical task with 20% coverage of its own does not reject a version whose other task is fully served; a version whose other task serves nothing is rejected once the critical task is disabled |
+| `test_rules_apply_to_task_precision_and_coverage` | FR-2.50, FR-14.1, FR-6.1: with every flagged answer sent to the teacher by a rule, the record (and the pooled numbers) show precision 0.9 and coverage 0.5 on what is served, and the task fails a 93% floor; wrong answers a rule always escalates do not keep the threshold from calibrating (0.9 instead of 1.01 without the rule) |
 | `test_rescore_disables_failing_critical_task` | FR-2.50, FR-2.15, INV-4: a training night's re-check of the live version that finds 3 misses in 40 disables the task in the same eval write with a `task_disabled` event ("re-scored"); `rescore` without a gate leaves it; passing, missing and pinned records give no holds |
 | `test_cascade_eval_skips_ineligible_rows` | FR-2.50, FR-5.2: an over-length golden row is not sampled and is counted in `excluded_ineligible`; the task keeps its record; without such rows the key is absent |
 | `test_rule_must_reference_declared_field` | FR-2.50, FR-2.15: a rule naming `flaged` is one `SpecError` listing the task's fields; a field-less task's critical class says `its fields: none`; a `Task` built in code raises `ValueError`; a field with its own error is reported once |

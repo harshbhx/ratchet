@@ -391,12 +391,15 @@ def _scripted(prompt: list[dict[str, Any]], n: int, params: Any = None) -> list[
     return [Completion(spec["answer"], "student-v1", 10, 3, 1.0, [lp] * 3) for _ in range(n)]
 
 
-def _critical_rows(class_rows: int, misses: int, others: int = 80, miss_conf: float = 0.98) -> list[dict[str, Any]]:
+def _critical_rows(
+    class_rows: int, misses: int, others: int = 80, miss_conf: float = 0.98, calib_conf: float = 0.98, chat_conf: float = 0.98
+) -> list[dict[str, Any]]:
     """Golden rows for the moderation task and a plain `chat` task, in blocks of (moderation calibration row,
     moderation held-out row, chat calibration row, chat held-out row), so each task's held-out rows are its odd rows.
-    Every calibration row is right at confidence 0.98. Of the moderation task's held-out rows, `class_rows` have a
-    flagged reference, and the first `misses` of those the student answers unflagged at `miss_conf`; the rest, and
-    `others` unflagged ones, are right at 0.98."""
+    Every moderation calibration row is right at confidence `calib_conf`, every chat one at 0.98. Of the moderation
+    task's held-out rows, `class_rows` have a flagged reference, and the first `misses` of those the student answers
+    unflagged at `miss_conf`; the rest, and `others` unflagged ones, are right at 0.98. Chat's held-out rows are right
+    at `chat_conf`."""
     flagged, clean = _answer(True, "high"), _answer(False)
     held_out = [
         (flagged, _answer(False, "high") if j < misses else flagged, miss_conf if j < misses else 0.98) for j in range(class_rows)
@@ -406,10 +409,10 @@ def _critical_rows(class_rows: int, misses: int, others: int = 80, miss_conf: fl
     for j, (ref, got, conf) in enumerate(held_out):
         calib = flagged if j % 3 == 0 else clean
         rows += [
-            _golden(MOD, f"c{j}", 0.98, calib, calib),
+            _golden(MOD, f"c{j}", calib_conf, calib, calib),
             _golden(MOD, f"t{j}", conf, got, ref),
             _golden("chat", f"cc{j}", 0.98, "fine", "fine"),
-            _golden("chat", f"ct{j}", 0.98, "fine", "fine"),
+            _golden("chat", f"ct{j}", chat_conf, "fine", "fine"),
         ]
     return rows
 
@@ -450,6 +453,12 @@ def test_cascade_eval_measures_critical_misses():
     _register({"escalate_when": [{"field": "flagged", "equals": False, "min_confidence": 0.99}], "critical": [CRITICAL]})
     ruled = cascade_eval(_scripted, _critical_rows(class_rows=40, misses=2))["tasks"][MOD]
     assert ruled["critical"] == [_measured(40, 0)]
+
+    # Misses are counted at the threshold the record stores, which the router applies: a miss just under the exact
+    # calibrated threshold (0.98004) but at or over the stored one (0.98) is served in production, so it counts.
+    _register({"critical": [CRITICAL]})
+    edge = cascade_eval(_scripted, _critical_rows(class_rows=40, misses=2, miss_conf=0.98002, calib_conf=0.98004))
+    assert edge["tasks"][MOD]["threshold"] == 0.98 and edge["tasks"][MOD]["critical"] == [_measured(40, 2)]
 
     # A held-out row the endpoint refuses escalates in production (INV-7): never a miss.
     _register({"critical": [CRITICAL]})
@@ -567,10 +576,18 @@ def test_critical_task_without_measurements_stays_on_teacher():
     out = r.handle(_ask(4), MOD)
     assert (out.route, out.version) == ("student", measured) and r.threshold(led.version(measured), "x", MOD) == 0.9
 
-    # The hosted untuned model never answers it, measured or not.
+    # The hosted untuned model never answers it, measured or not, so it is not sampled for it either.
     s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0)
     hosted = Ratchet(s, led, RecordingProvider(_answer(False)), lambda v: (student, s.fallback_student_model))
-    assert hosted.handle(_ask(5), MOD).route == "confidence"
+    calls = len(student.calls)
+    out = hosted.handle(_ask(5), MOD)
+    assert (out.route, out.served_by, out.escalated) == ("task_disabled", "teacher", True) and len(student.calls) == calls
+    assert hosted.handle(_ask(51), "ticket-triage").route == "confidence" and len(student.calls) == calls + 1
+
+    def broken(v: Any) -> Any:
+        raise RuntimeError("resolver down")
+
+    assert Ratchet(s, led, RecordingProvider(_answer(False)), broken).handle(_ask(52), MOD).route == "student_error"
     assert hosted.threshold(led.version(measured), s.fallback_student_model, MOD) == SERVE_NOTHING
     assert hosted.threshold(led.version(measured), s.fallback_student_model, "ticket-triage") == s.confidence_threshold
     led.update_eval(measured, {"threshold": 0.8})  # no record: held back, also for the hosted model
@@ -598,6 +615,97 @@ def test_per_task_off_still_records_critical_tasks():
     assert set(pooled["tasks"]) == {MOD} and pooled["tasks"][MOD]["critical"] == [_measured(40, 0)]
     plain = cascade_eval(_scripted, [r for r in rows if r["task"] == "chat"], per_task=False)
     assert "tasks" not in plain
+
+
+@pytest.mark.req("FR-2.50", "FR-14.1", "FR-6.1")
+def test_per_task_off_critical_gate_disables_only_that_task():
+    """With RATCHET_PER_TASK_CALIBRATION=0 only the critical task has a record, so the eval also gives the other tasks'
+    held-out rows and how many the global threshold serves (`other_tasks`). The coverage the gate checks once it
+    disables the critical task counts them: the version ships for its other tasks, as with per-task calibration on,
+    and a critical task that passes with a low coverage of its own does not reject the version. A version whose other
+    tasks serve too little is still rejected."""
+    _register({"critical": [CRITICAL]})
+    tasks.register(tasks.Task("chat", source="file"))
+    hi = wilson(2, 40)[1]
+    why = f"critical flagged = true: missed 2 of 40 held-out rows (5.0%, upper bound {hi:.1%} > 10.0%)"
+
+    led = Ledger(":memory:")
+    res = cascade_eval(_scripted, _critical_rows(class_rows=40, misses=2), per_task=False)
+    assert set(res["tasks"]) == {MOD} and res["other_tasks"] == {"test_n": 120, "served": 120}
+    cand = _version(led, "candidate", res)
+    assert ReleaseGate(led).admit(cand)
+    v = led.version(cand)
+    assert v.state == "canary" and v.eval["tasks"][MOD]["disabled"] == why
+    assert led.events()[0]["detail"] == f"v{cand} {MOD}: {why}; the teacher answers it, v{cand} ships for its other tasks"
+    rejected = _version(led, "candidate", res)
+    assert not ReleaseGate(led, ReleasePolicy(task_mode="reject")).admit(rejected)
+    assert led.events()[-1]["detail"] == f"v{rejected}: task {MOD}: {why}"
+
+    # The critical task passes, but its own threshold serves only 40 of its 200 held-out rows; chat's are all served.
+    flagged, clean = _answer(True, "high"), _answer(False)
+    rows = []
+    for j in range(200):
+        calib = flagged if j % 3 == 0 else clean
+        held = _golden(MOD, f"t{j}", 0.98, flagged, flagged) if j < 40 else _golden(MOD, f"t{j}", 0.7, clean, clean)
+        rows += [
+            _golden(MOD, f"c{j}", 0.98, calib, calib),
+            held,
+            _golden("chat", f"cc{j}", 0.98, "fine", "fine"),
+            _golden("chat", f"ct{j}", 0.98, "fine", "fine"),
+        ]
+    led = Ledger(":memory:")
+    res = cascade_eval(_scripted, rows, per_task=False)
+    assert res["tasks"][MOD]["coverage"] == pytest.approx(0.2) and res["other_tasks"] == {"test_n": 200, "served": 200}
+    cand = _version(led, "candidate", res)
+    assert ReleaseGate(led).task_failures(led.version(cand), None) == []
+    assert ReleaseGate(led).admit(cand) and led.version(cand).state == "canary"
+
+    # Chat's held-out rows are unsure: once the critical task is disabled the version would serve nothing.
+    led = Ledger(":memory:")
+    res = cascade_eval(_scripted, _critical_rows(class_rows=40, misses=2, chat_conf=0.7), per_task=False)
+    assert res["coverage"] == pytest.approx(0.5) and res["other_tasks"] == {"test_n": 120, "served": 0}
+    cand = _version(led, "candidate", res)
+    assert not ReleaseGate(led).admit(cand)
+    assert led.events()[-1]["detail"] == f"v{cand}: golden coverage 0.0% < 25% once {MOD} disabled"
+
+
+@pytest.mark.req("FR-2.50", "FR-14.1", "FR-6.1")
+def test_rules_apply_to_task_precision_and_coverage():
+    """An answer an `escalate_when` rule sends to the teacher is never served, so the golden eval neither calibrates
+    the task's threshold on it nor counts it in the precision and coverage the gate checks (in the task's record and
+    in the pooled numbers). Here every flagged answer goes to the teacher: what the student serves is the unflagged
+    answers, 45 of 50 right, so the task fails a 93% floor at coverage 0.5."""
+    _register({"escalate_when": [FLAG_RULE]}, policy={"min_precision": 0.93})
+    flagged, clean, wrong = _answer(True, "high"), _answer(False), _answer(False, "high")
+    rows = []
+    for j in range(100):
+        calib = flagged if j % 2 else clean
+        rows.append(_golden(MOD, f"c{j}", 0.98, calib, calib))
+        if j < 50:  # flagged and right: a rule sends every one to the teacher
+            rows.append(_golden(MOD, f"t{j}", 0.98, flagged, flagged))
+        else:  # unflagged: wrong on 5 of 50
+            rows.append(_golden(MOD, f"t{j}", 0.98, wrong if j < 55 else clean, clean))
+    res = cascade_eval(_scripted, rows)
+    rec = res["tasks"][MOD]
+    assert (rec["threshold"], rec["precision"], rec["coverage"], rec["test_n"]) == (0.98, 0.9, 0.5, 100)
+    assert (res["precision"], res["coverage"]) == (0.9, 0.5)  # one task: the pooled numbers are its own
+    led = Ledger(":memory:")
+    v = _version(led, "candidate", res)
+    assert ReleaseGate(led).task_failures(led.version(v), None) == [(MOD, "golden precision 90.0% on 50 answers < 93.0%")]
+
+    # The threshold is calibrated on the answers the rules let through: flagged answers that are wrong at 0.98 would
+    # keep any threshold from reaching 97%, but the rule sends them to the teacher, so 0.9 serves the rest.
+    rows = []
+    for j in range(100):
+        if j % 2:
+            pair = [_golden(MOD, f"c{j}", 0.98, flagged, clean), _golden(MOD, f"t{j}", 0.98, flagged, clean)]
+        else:
+            pair = [_golden(MOD, f"c{j}", 0.9, clean, clean), _golden(MOD, f"t{j}", 0.9, clean, clean)]
+        rows += pair
+    rec = cascade_eval(_scripted, rows)["tasks"][MOD]
+    assert (rec["threshold"], rec["precision"], rec["coverage"]) == (0.9, 1.0, 0.5)
+    _register()  # without the rule nothing reaches 97%: the task serves nothing
+    assert cascade_eval(_scripted, rows)["tasks"][MOD]["threshold"] == SERVE_NOTHING
 
 
 @pytest.mark.req("FR-2.50", "FR-2.15", "INV-4")

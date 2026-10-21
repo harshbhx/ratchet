@@ -696,11 +696,19 @@ class Ratchet:
         """Whether `version` holds `task` at SERVE_NOTHING by its own per-task record (`calibration.held_back`), so the
         student need not be called. A version served by the hosted untuned fallback model ignores its records
         (`threshold`), so it is never held back, except on a task with critical classes, which that model never answers
-        (FR-2.50); the resolver is asked only when the record holds the task back, and a resolver that fails here leaves
-        the task held back (the student is not called either way)."""
+        (FR-2.50): such a task is held back whenever the resolver picks that model, whatever the record says, so the
+        model is not sampled (and paid for) for answers `threshold` would never serve. The resolver is asked only when
+        the answer depends on it; one that fails here leaves a held-back task held back and a critical task with a
+        serving record to the student path, which fails over to the teacher as before."""
+        critical = bool(task.routing_rules.critical)
         if not calibration.held_back(version.eval, task):
-            return False
-        if not self.s.fallback_student_model or task.routing_rules.critical:
+            if not (critical and self.s.fallback_student_model):
+                return False
+            try:
+                return self.resolve_student(version)[1] == self.s.fallback_student_model
+            except Exception:
+                return False
+        if not self.s.fallback_student_model or critical:
             return True
         try:
             return self.resolve_student(version)[1] != self.s.fallback_student_model

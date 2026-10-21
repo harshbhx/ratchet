@@ -333,10 +333,17 @@ class ReleaseGate:
     @staticmethod
     def _coverage_without(v: Version, disabled: set[str]) -> float:
         """The share of `v`'s held-out rows it would still answer with the tasks in `disabled` on the teacher, each other
-        task at its own threshold: what the coverage gate is held to once tasks are disabled."""
+        task at its own threshold: what the coverage gate is held to once tasks are disabled. With per-task calibration
+        off only the tasks with critical classes have records (FR-2.50), and the eval's `other_tasks` holds the other
+        tasks' held-out rows and how many the global threshold serves, which count here too: without them, disabling
+        one critical task would read as a version that serves nothing."""
         records = calibration.entries(v.eval)
+        rest = v.eval.get("other_tasks")
+        rest = rest if isinstance(rest, Mapping) else {}
         total = sum(calibration.number(r.get("test_n")) or 0 for r in records.values())
+        total += calibration.number(rest.get("test_n")) or 0
         served = sum(calibration.served_rows(r) for name, r in records.items() if name not in disabled)
+        served += calibration.number(rest.get("served")) or 0
         return served / total if total else 0.0
 
     # ---- steps 2-4: call periodically (e.g. every few minutes in production) ----
