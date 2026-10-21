@@ -1,7 +1,6 @@
-import { useCallback, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useInView, useReducedMotion } from "motion/react";
 import { Activity, CheckCircle2, Pause, Play, Snowflake, Sprout, TrendingUp, Undo2, type LucideIcon } from "lucide-react";
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 import { CountUp } from "@/components/ui/stat";
@@ -11,6 +10,8 @@ import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { Chapter, ChapterHead, EASE, Lead, Reveal, SimBadge } from "../shared";
 
 const LAST = SIM_DAYS.length;
+// recharts is the largest library on the page; the chart is far below the fold, so it loads after the hero paints.
+const CostChart = lazy(() => import("./cost-chart"));
 
 const NOTE_STYLE: Record<number, { icon: LucideIcon; tone: string }> = {
   1: { icon: Snowflake, tone: "text-muted" },
@@ -24,137 +25,6 @@ const NOTE_STYLE: Record<number, { icon: LucideIcon; tone: string }> = {
 function noteFor(d: SimDay) {
   if (d.note) return d.note;
   return `${fmtPct(d.student)} answered by your model, ${fmtPct(d.escalated)} sent to the teacher${d.audit != null ? `, ${fmtPct(d.audit)} of audits agreed` : ""}.`;
-}
-
-interface TipProps {
-  active?: boolean;
-  label?: string | number;
-  payload?: ReadonlyArray<{ payload?: SimDay }>;
-}
-
-function ChartTip({ active, payload }: TipProps) {
-  const d = payload?.[0]?.payload;
-  if (!active || !d) return null;
-  return (
-    <div className="min-w-44 rounded-xl border border-line bg-surface px-3 py-2.5 text-[12px] shadow-card">
-      <div className="mb-1.5 font-semibold text-ink">Day {d.day}</div>
-      <div className="flex items-center justify-between gap-4 text-ink-2">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-0.5 w-3 rounded-full bg-owned" /> With Ratchet
-        </span>
-        <span className="font-mono tabular text-ink">{fmtUsd(d.costPer1k, 3)}</span>
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-4 text-ink-2">
-        <span className="inline-flex items-center gap-1.5">
-          <svg width="12" height="4" aria-hidden>
-            <line x1="0" x2="12" y1="2" y2="2" stroke="var(--rented)" strokeWidth="2" strokeDasharray="4 2" />
-          </svg>{" "}
-          All-Ultra
-        </span>
-        <span className="font-mono tabular text-ink">{fmtUsd(d.baselinePer1k, 3)}</span>
-      </div>
-      <div className="mt-1.5 border-t border-line pt-1.5 text-muted">{fmtPct(d.student)} answered by your model</div>
-    </div>
-  );
-}
-
-function CostChart({ day, onPick }: { day: number; onPick: (d: number) => void }) {
-  const summary = `Line chart, simulation: cost per 1,000 requests over ${LAST} days. All-Ultra stays at ${fmtUsd(SIM_DAYS[0].baselinePer1k, 3)}. With Ratchet it starts at ${fmtUsd(SIM_DAYS[0].costPer1k, 3)} on day 1 and ends at ${fmtUsd(SIM_DAYS[LAST - 1].costPer1k, 3)} on day ${LAST}, with a bump on day 5 when a product launch brings new questions.`;
-  return (
-    <div className="h-[260px] w-full sm:h-[320px]" role="img" aria-label={summary}>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart
-          data={SIM_DAYS}
-          margin={{ top: 22, right: 12, bottom: 0, left: -6 }}
-          onClick={(s) => {
-            const n = Number(s?.activeLabel);
-            if (n >= 1 && n <= LAST) onPick(n);
-          }}
-          style={{ cursor: "pointer" }}
-        >
-          <CartesianGrid stroke="var(--line)" vertical={false} />
-          <XAxis
-            dataKey="day"
-            tickLine={false}
-            axisLine={{ stroke: "var(--line-strong)" }}
-            tick={{ fill: "var(--muted)", fontSize: 11.5 }}
-            tickMargin={8}
-            interval={0}
-            padding={{ left: 8, right: 8 }}
-          />
-          <YAxis
-            domain={[0, 1.2]}
-            ticks={[0, 0.3, 0.6, 0.9, 1.2]}
-            tickFormatter={(v: number) => `$${v.toFixed(2)}`}
-            tickLine={false}
-            axisLine={false}
-            tick={{ fill: "var(--muted)", fontSize: 11.5 }}
-            width={50}
-          />
-          <Tooltip
-            content={(p) => <ChartTip active={p.active} payload={p.payload as TipProps["payload"]} />}
-            cursor={{ stroke: "var(--line-strong)", strokeWidth: 1 }}
-            isAnimationActive={false}
-          />
-          <ReferenceLine x={day} stroke="var(--ink-2)" strokeDasharray="3 3" strokeWidth={1} />
-          <Line
-            type="monotone"
-            dataKey="baselinePer1k"
-            name="All-Ultra"
-            stroke="var(--rented)"
-            strokeWidth={2}
-            strokeDasharray="6 5"
-            dot={false}
-            activeDot={{ r: 4, fill: "var(--rented)", stroke: "var(--surface)", strokeWidth: 2 }}
-            isAnimationActive={false}
-            label={(p: { index?: number; x?: number | string; y?: number | string }) =>
-              p.index === LAST - 1 ? (
-                <text key="lbl-base" x={Number(p.x)} y={Number(p.y) - 10} textAnchor="end" fill="var(--rented-ink)" fontSize={12} fontWeight={600}>
-                  All-Ultra
-                </text>
-              ) : (
-                <g key={`lb-${p.index}`} />
-              )
-            }
-          />
-          <Line
-            type="monotone"
-            dataKey="costPer1k"
-            name="With Ratchet"
-            stroke="var(--owned)"
-            strokeWidth={2}
-            strokeLinecap="round"
-            isAnimationActive={false}
-            dot={(p: { index?: number; cx?: number; cy?: number; payload?: SimDay }) => {
-              const sel = p.payload?.day === day;
-              const noted = !!p.payload?.note;
-              return (
-                <circle
-                  key={`dot-${p.index}`}
-                  cx={p.cx}
-                  cy={p.cy}
-                  r={sel ? 5.5 : noted ? 3.5 : 0}
-                  fill={sel ? "var(--owned)" : "var(--surface)"}
-                  stroke={sel ? "var(--surface)" : "var(--owned)"}
-                  strokeWidth={sel ? 2.5 : 1.5}
-                />
-              );
-            }}
-            activeDot={{ r: 5, fill: "var(--owned)", stroke: "var(--surface)", strokeWidth: 2 }}
-            label={(p: { index?: number; x?: number | string; y?: number | string }) =>
-              p.index === LAST - 1 ? (
-                <text key="lbl-own" x={Number(p.x)} y={Number(p.y) - 18} textAnchor="end" fill="var(--owned-ink)" fontSize={12} fontWeight={600}>
-                  With Ratchet
-                </text>
-              ) : (
-                <g key={`lo-${p.index}`} />
-              )
-            }
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
 }
 
 export function Learn() {
@@ -173,12 +43,30 @@ export function Learn() {
   }, []);
   useInterval(tick, playing ? 1150 : null);
 
+  // "Watch it learn" plays the ten days once, the first time the card is on screen, so the payoff is visible without a
+  // click. With reduced motion it shows the last day instead. Any choice the reader makes wins over the autoplay.
+  const reduce = useReducedMotion();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const seen = useInView(cardRef, { once: true, amount: 0.35 });
+  const touched = useRef(false);
+  useEffect(() => {
+    if (reduce && !touched.current) setDay(LAST);
+  }, [reduce]);
+  useEffect(() => {
+    if (!seen || reduce || touched.current) return;
+    touched.current = true;
+    setDay(1);
+    setPlaying(true);
+  }, [seen, reduce]);
+
   const onPlay = () => {
+    touched.current = true;
     if (playing) return setPlaying(false);
     if (day >= LAST) setDay(1);
     setPlaying(true);
   };
   const pick = (n: number) => {
+    touched.current = true;
     setPlaying(false);
     setDay(n);
   };
@@ -193,14 +81,14 @@ export function Learn() {
           title="Watch it learn."
           lead={
             <Lead>
-              Ten days of support tickets in the reference simulation. Drag through the days: cold start, a first student, a bad release caught,
-              a product launch that brings new questions, and a student that learns them overnight.
+              Ten days of support tickets in the reference simulation, played once as you arrive. Drag to any day: cold start, a first student, a
+              bad release caught, a product launch that brings new questions, and a student that learns them overnight.
             </Lead>
           }
         />
 
         <Reveal className="mt-12">
-          <div className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
+          <div ref={cardRef} className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
             {/* scrubber */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-line px-4 py-3.5 sm:flex-nowrap sm:px-6">
               <Button variant="outline" size="sm" onClick={onPlay} aria-label={playing ? "Pause" : "Play through the days"} className="shrink-0">
@@ -263,7 +151,9 @@ export function Learn() {
                     </span>
                   </div>
                 </div>
-                <CostChart day={day} onPick={pick} />
+                <Suspense fallback={<div className="h-[260px] w-full sm:h-[320px]" aria-hidden />}>
+                  <CostChart day={day} onPick={pick} />
+                </Suspense>
                 {/* A table grows to its content whatever its width, so the 1px sr-only box wraps it instead. */}
                 <div className="sr-only">
                   <table>

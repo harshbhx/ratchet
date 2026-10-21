@@ -2,7 +2,7 @@ import { motion } from "motion/react";
 import { ArrowRight, ArrowUpRight, Code2, ShieldCheck, Undo2 } from "lucide-react";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
-import { Container, Eyebrow } from "@/components/ui/section";
+import { Container } from "@/components/ui/section";
 import { REPO_URL } from "@/lib/utils";
 import { EASE } from "../shared";
 import { HeroFlow } from "./hero-flow";
@@ -41,25 +41,32 @@ export function Hero() {
         aria-hidden
         className="pointer-events-none absolute inset-x-0 -top-16 bottom-0 bg-grid [mask-image:radial-gradient(ellipse_75%_65%_at_50%_30%,black_35%,transparent_100%)]"
       />
-      <Container className="relative pb-14 pt-10 sm:pb-20 sm:pt-16 lg:pb-24 lg:pt-20">
-        <motion.div {...rise(0)}>
-          <Eyebrow className="text-balance text-[11px] leading-5 tracking-[0.12em] sm:text-[12px]">
-            Open source · Apache-2.0 · Built on NVIDIA Nemotron and Nebius
-          </Eyebrow>
-        </motion.div>
+      <Container className="relative pb-14 pt-8 sm:pb-20 sm:pt-14 lg:pb-20 lg:pt-14">
+        <motion.p
+          {...rise(0)}
+          className="inline-flex max-w-full items-center gap-2.5 rounded-full border border-line bg-surface/80 px-3 py-1 text-[12px] leading-5 text-ink-2 backdrop-blur-sm sm:text-[13px]"
+        >
+          <span className="shrink-0 font-medium text-ink">
+            Open source<span className="sr-only">.</span>
+          </span>
+          <span aria-hidden className="h-3 w-px shrink-0 bg-line-strong" />
+          <span className="min-w-0">Built on NVIDIA Nemotron and Nebius</span>
+        </motion.p>
         <motion.h1
           id="hero-title"
           {...rise(0.06)}
-          className="mt-6 text-balance text-[2.75rem] font-semibold leading-[1.04] tracking-[-0.04em] text-ink min-[400px]:text-[3rem] sm:text-[4.25rem] lg:text-[4.9rem] xl:text-[5.35rem]"
+          className="mt-5 text-balance text-[2.75rem] font-semibold leading-[1.04] tracking-[-0.04em] text-ink min-[400px]:text-[3rem] sm:text-[4.25rem] lg:text-[4.9rem] xl:text-[5.35rem]"
         >
           <span className="block text-muted">Rent intelligence today.</span>
           <span className="block">Own it tomorrow.</span>
         </motion.h1>
-        <div className="mt-10 grid grid-cols-1 items-start gap-10 sm:mt-12 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[auto_1fr] lg:gap-x-14 lg:gap-y-0">
+        <div className="mt-8 grid grid-cols-1 items-start gap-10 sm:mt-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[auto_1fr] lg:gap-x-14 lg:gap-y-0">
           <div className="lg:col-start-1 lg:row-start-1 lg:pt-1">
+            {/* What it is first, then the loop in two beats: answer by day, retrain by night. */}
             <motion.p {...rise(0.12)} className="max-w-[34rem] text-pretty text-[17px] leading-relaxed text-ink-2 sm:text-lg">
-              Ratchet is an OpenAI-compatible gateway. Your own traffic trains a Nemotron adapter you own (LoRA on NVIDIA's open Nano
-              base), so more of it is answered cheaply every night. It only learns from open teachers whose licenses allow it.
+              <strong className="font-semibold text-ink">Ratchet is an OpenAI-compatible gateway.</strong> A Nemotron adapter you own (LoRA on
+              NVIDIA's open Nano base) answers first; when it is unsure, Nemotron 3 Ultra answers. Every night, Ultra's answers train the
+              next adapter.
             </motion.p>
             <motion.div {...rise(0.18)} className="mt-8 flex flex-wrap items-center gap-3">
               <ButtonLink to="/scout" size="lg" className="w-full min-[440px]:w-auto">
@@ -74,9 +81,9 @@ export function Hero() {
                 href={REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[14px] text-muted transition-colors hover:text-ink"
+                className="inline-flex items-center gap-1 rounded-md text-[14px] font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
               >
-                View on GitHub <ArrowUpRight className="size-3.5" />
+                Read the code on GitHub <ArrowUpRight className="size-3.5 text-muted" />
               </a>
             </motion.div>
           </div>
@@ -89,7 +96,7 @@ export function Hero() {
           >
             <HeroFlow />
             <p className="mt-3 px-1 text-[12px] leading-relaxed text-muted">
-              Simulation, mock models: seed 7, 2,000 support tickets a day. It shows how the loop behaves, not real model quality.
+              Simulation, mock models, seed 7: how the loop behaves, not real model quality.
             </p>
           </motion.div>
           <motion.ul {...rise(0.26)} className="grid gap-4 border-t border-line pt-6 text-[14px] sm:grid-cols-3 lg:col-start-1 lg:row-start-2 lg:mt-10 lg:grid-cols-1 lg:self-start">
@@ -111,7 +118,7 @@ export function Hero() {
 export function OneLineChange() {
   return (
     <section aria-labelledby="one-line-title">
-      <Container className="pb-4 pt-14 sm:pt-20">
+      <Container className="pb-4 pt-10 sm:pt-14">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           whileInView={{ opacity: 1, y: 0 }}
