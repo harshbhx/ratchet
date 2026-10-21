@@ -1320,6 +1320,7 @@ RESERVED_ENV = {
     "RATCHET_BATCH_DISCOUNT": "0.4",
     "RATCHET_BACKFILL_MAX_TOKENS": "1024",
     "RATCHET_DB_SYNC": "NORMAL",
+    "RATCHET_GATEWAY_LEASE": "exclusive",
 }
 
 
@@ -1491,3 +1492,46 @@ def test_pinned_tasks_never_appear_in_replay_rows():
     tasks.register(tasks.Task("ticket-triage", pinned=True, source="file"))  # pinned now, after the traffic
     h = replay.load(led, vid)
     assert h.rows == () and h.excluded["pinned_now"] == 4
+
+
+# ---------- Scout's spend rows (ADR 0120) ----------
+def test_spend_index_on_old_files(tmp_path):
+    """A v0.4.0 file gains the index Scout's guard and credit meter restore through, and their query uses it."""
+    db = tmp_path / "v04.db"
+    con = sqlite3.connect(db)
+    con.executescript(V040_SCHEMA)
+    con.commit()
+    con.close()
+    led = Ledger(str(db))
+    assert "spend_kind_ts" in _objects(led, "index")
+    plan = " ".join(r[3] for r in led.db.execute("EXPLAIN QUERY PLAN SELECT id FROM spend WHERE kind IN ('tavily') AND ts >= 0"))
+    assert "spend_kind_ts" in plan
+    assert led.spend_rows(["scout_run", "tavily"], 0) == []
+
+
+def test_update_spend_detail_refuses_other_kinds():
+    """Only a running Scout run's row changes; a bill or a search is written once, and `usd` never moves."""
+    led = Ledger(":memory:")
+    run = led.add_spend("scout_run", "r1", detail={"judge": False, "llm_usd": 0.0, "status": "admitted"}, ts=10.0)
+    led.update_spend_detail(run, {"judge": False, "llm_usd": 0.25, "status": "done"})
+    for kind in ("backfill", "tavily"):
+        row = led.add_spend(kind, "x", 1.5 if kind == "backfill" else 0.0, detail={"credits": 1}, ts=11.0)
+        with pytest.raises(ValueError, match="written once"):
+            led.update_spend_detail(row, {"credits": 0})
+    with pytest.raises(ValueError, match="no spend row"):
+        led.update_spend_detail(999, {})
+    rows = led.spend_rows(["scout_run", "tavily", "backfill"], 0)
+    assert [(r["kind"], r["detail"]) for r in rows] == [
+        ("scout_run", {"judge": False, "llm_usd": 0.25, "status": "done"}),
+        ("backfill", {"credits": 1}),
+        ("tavily", {"credits": 1}),
+    ]
+    assert [r[0] for r in led.db.execute("SELECT usd FROM spend ORDER BY id")] == [0.0, 1.5, 0.0]
+    led.db.execute("INSERT INTO spend (ts, kind, ref, usd, detail) VALUES (12.0, 'tavily', 'y', 0, 'not json')")
+    assert len(led.spend_rows(["tavily"], 0)) == 1  # an unreadable row is skipped, never guessed at
+    assert led.spend_rows([], 0) == [] and led.spend_rows(["tavily"], 11.5) == []
+    for bad in ({"usd": -1.0}, {"usd": float("nan")}, {"realtime_usd": float("inf")}, {"ts": float("nan")}):
+        with pytest.raises(ValueError):
+            led.add_spend("backfill", "z", **bad)
+    with pytest.raises(ValueError):
+        led.add_spend("", "z")

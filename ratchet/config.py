@@ -6,8 +6,11 @@ day 1 with `GET https://api.tokenfactory.nebius.com/v1/models?verbose=true`.
 
 from __future__ import annotations
 
+import math
 import os
+import re
 from dataclasses import dataclass, field
+from datetime import date
 
 import httpx
 
@@ -73,6 +76,7 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
     "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
     "db_sync": ("RATCHET_DB_SYNC", "FULL", "live readiness (WAL journal)"),
+    "gateway_lease": ("RATCHET_GATEWAY_LEASE", "warn", "one gateway process per live ledger (NFR-60)"),
 }
 # Variables read through a helper the traceability check cannot see (scripts/reqtrace.py: every one needs a row in
 # docs/CONFIGURATION.md).
@@ -105,6 +109,13 @@ COST_MODELS = ("per_token", "gpu_hours")
 # turn the cost report into infinities.
 MAX_USD_PER_GPU_HOUR = 1000.0
 MAX_GPUS = 1024
+# Scout's judge access (ADR 0120): the code's length (`openssl rand -hex 16` gives 32 characters) and how long a judge's
+# session cookie may last.
+JUDGE_CODE_CHARS = (16, 256)
+JUDGE_SESSION_S = (60.0, 30 * 86400.0)
+# RATCHET_GATEWAY_LEASE (NFR-60, reserved until the leases land): what a second gateway process on a live ledger does.
+LEASE_MODES = ("warn", "exclusive", "off")
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
@@ -163,6 +174,26 @@ class CertPolicy:
     calibration: str
     target: float
     delta: float
+
+
+@dataclass(frozen=True)
+class ScoutPolicy:
+    """Scout's judge access and Tavily credit settings, checked (`Settings.scout_policy()`, ADR 0120). The judge budget
+    and judge credits are resolved: the variable's value, or the share of judge runs in the daily run cap when it is
+    unset. The code is kept out of `repr`."""
+
+    judge_code: str = field(repr=False)
+    judge_runs_per_day: int
+    judge_budget_usd: float
+    judge_session_s: float
+    monthly_credits: int
+    judge_credits: int
+    cycle_day: int
+    pace_until: date | None
+
+    @property
+    def judge_enabled(self) -> bool:
+        return bool(self.judge_code)
 
 
 DEFAULT_PRICES: dict[str, Price] = {
@@ -257,6 +288,19 @@ class Settings:
     scout_runs_per_hour: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_RUNS_PER_HOUR", "6")))
     scout_max_runs_per_day: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_MAX_RUNS_PER_DAY", "30")))
     scout_max_results: int = field(default_factory=lambda: int(_env("RATCHET_SCOUT_MAX_RESULTS", "4")))
+    # Judge access (ADR 0120): runs per UTC day held back for hackathon judges, unlocked by a code sent once by POST
+    # (`POST /scout/judge`) and then carried by a signed cookie. Empty code = off. The judge budget defaults to the judges'
+    # share of the run cap. Read with `scout_policy()`, which never echoes the code.
+    scout_judge_code: str = field(default_factory=lambda: _env("RATCHET_SCOUT_JUDGE_CODE", ""), repr=False)
+    scout_judge_runs_per_day: int = field(default_factory=lambda: _int("RATCHET_SCOUT_JUDGE_RUNS_PER_DAY", "0"))
+    scout_judge_budget_usd: float | None = field(default_factory=lambda: _float_or_none("RATCHET_SCOUT_JUDGE_BUDGET_USD"))
+    scout_judge_session_s: float = field(default_factory=lambda: _float("RATCHET_SCOUT_JUDGE_SESSION_S", "604800"))
+    # Tavily credits per cycle (0 = counted, not capped), the judges' share (unset = their share of the run cap), the
+    # day of the month the cycle starts (00:00 UTC) and the date until which the daily allowance spreads what is left.
+    tavily_monthly_credits: int = field(default_factory=lambda: _int("RATCHET_TAVILY_MONTHLY_CREDITS", "0"))
+    tavily_judge_credits: float | None = field(default_factory=lambda: _float_or_none("RATCHET_TAVILY_JUDGE_CREDITS"))
+    tavily_cycle_day: int = field(default_factory=lambda: _int("RATCHET_TAVILY_CYCLE_DAY", "1"))
+    tavily_pace_until: str = field(default_factory=lambda: _env("RATCHET_TAVILY_PACE_UNTIL", ""))
     # Behind a reverse proxy (Caddy on the demo VM), take the client IP from X-Forwarded-For.
     trust_proxy: bool = field(default_factory=lambda: _env("RATCHET_TRUST_PROXY", "0") == "1")
 
@@ -341,6 +385,8 @@ class Settings:
     batch_discount: float = field(default_factory=lambda: _float("RATCHET_BATCH_DISCOUNT", "0.5"))
     backfill_max_tokens: int = field(default_factory=lambda: _int("RATCHET_BACKFILL_MAX_TOKENS", "2048"))
     db_sync: str = field(default_factory=lambda: _env("RATCHET_DB_SYNC", "FULL"))
+    # NFR-60 (reserved until lane D's leases land): `warn`, `exclusive` or `off` for a second gateway on a live ledger.
+    gateway_lease: str = field(default_factory=lambda: _env("RATCHET_GATEWAY_LEASE", "warn"))
 
     # Mock mode only: simulate this many days of mixed traffic + nights at startup, so the
     # public demo opens with a trained student instead of a cold start.
@@ -478,6 +524,94 @@ class Settings:
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
                 raise ValueError(f"{env} must be a number strictly between 0 and 1, not {value!r}")
         return CertPolicy(mode, float(self.cert_target), float(self.cert_delta))
+
+    def scout_policy(self) -> ScoutPolicy:
+        """The judge access and Tavily credit settings, checked. A bad value raises ValueError naming the variable, so
+        the gateway stops at startup; no message ever shows the judge code's value (ADR 0120)."""
+        code = self.scout_judge_code if isinstance(self.scout_judge_code, str) else None
+        lo, hi = JUDGE_CODE_CHARS
+        if code is None or (code and not (lo <= len(code) <= hi and all(33 <= ord(ch) <= 126 for ch in code))):
+            raise ValueError(
+                f"RATCHET_SCOUT_JUDGE_CODE must be empty (off) or {lo} to {hi} printable ASCII characters with no spaces, "
+                "for example from `openssl rand -hex 16`; its value is not shown"
+            )
+        max_runs = self.scout_max_runs_per_day
+        if isinstance(max_runs, bool) or not isinstance(max_runs, int) or max_runs < 0:
+            raise ValueError(f"RATCHET_SCOUT_MAX_RUNS_PER_DAY must be a whole number, 0 or more, not {max_runs!r}")
+        runs = self.scout_judge_runs_per_day
+        if isinstance(runs, bool) or not isinstance(runs, int) or not 0 <= runs <= max_runs:
+            raise ValueError(
+                f"RATCHET_SCOUT_JUDGE_RUNS_PER_DAY must be a whole number from 0 to RATCHET_SCOUT_MAX_RUNS_PER_DAY "
+                f"({max_runs}), not {runs!r}"
+            )
+        if bool(code) != (runs > 0):
+            raise ValueError(
+                "RATCHET_SCOUT_JUDGE_CODE and RATCHET_SCOUT_JUDGE_RUNS_PER_DAY go together: set both (a code and 1 or more "
+                "runs) or neither"
+            )
+        enabled = bool(code)
+        share = runs / max_runs if max_runs else 0.0
+        budget = self.scout_daily_budget_usd
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 0 <= budget < math.inf:
+            raise ValueError(f"RATCHET_SCOUT_DAILY_BUDGET_USD must be a finite amount, 0 or more, not {budget!r}")
+        judge_usd = self.scout_judge_budget_usd
+        if judge_usd is None:
+            judge_usd = math.floor(budget * share * 100 + 1e-9) / 100  # rounded down to the cent
+        elif isinstance(judge_usd, bool) or not isinstance(judge_usd, (int, float)) or not 0 <= judge_usd <= budget:
+            raise ValueError(
+                f"RATCHET_SCOUT_JUDGE_BUDGET_USD must be from 0 to RATCHET_SCOUT_DAILY_BUDGET_USD ({budget}), not {judge_usd!r}"
+            )
+        elif judge_usd > 0 and not enabled:
+            raise ValueError("RATCHET_SCOUT_JUDGE_BUDGET_USD holds money back for judges, so it needs RATCHET_SCOUT_JUDGE_CODE")
+        session = self.scout_judge_session_s
+        slo, shi = JUDGE_SESSION_S
+        if isinstance(session, bool) or not isinstance(session, (int, float)) or not slo <= session <= shi:
+            raise ValueError(f"RATCHET_SCOUT_JUDGE_SESSION_S must be {slo:.0f} s to {shi:.0f} s (30 days), not {session!r}")
+        monthly = self.tavily_monthly_credits
+        if isinstance(monthly, bool) or not isinstance(monthly, int) or monthly < 0:
+            raise ValueError(f"RATCHET_TAVILY_MONTHLY_CREDITS must be a whole number, 0 or more, not {monthly!r}")
+        credits = self.tavily_judge_credits
+        if credits is None:
+            judge_credits = math.floor(monthly * share + 1e-9)
+        else:
+            if isinstance(credits, bool) or not isinstance(credits, (int, float)) or not math.isfinite(credits):
+                raise ValueError(f"RATCHET_TAVILY_JUDGE_CREDITS must be a whole number, not {credits!r}")
+            if credits != int(credits) or not 0 <= credits <= monthly:
+                raise ValueError(
+                    f"RATCHET_TAVILY_JUDGE_CREDITS must be a whole number from 0 to RATCHET_TAVILY_MONTHLY_CREDITS "
+                    f"({monthly}), not {credits!r}"
+                )
+            if credits > 0 and not enabled:
+                raise ValueError(
+                    "RATCHET_TAVILY_JUDGE_CREDITS holds credits back for judges, so it needs RATCHET_SCOUT_JUDGE_CODE"
+                )
+            judge_credits = int(credits)
+        day = self.tavily_cycle_day
+        if isinstance(day, bool) or not isinstance(day, int) or not 1 <= day <= 28:
+            raise ValueError(f"RATCHET_TAVILY_CYCLE_DAY must be a day of the month from 1 to 28, not {day!r}")
+        raw = self.tavily_pace_until
+        pace: date | None = None
+        if not isinstance(raw, str) or raw.strip():
+            try:
+                text = raw.strip() if isinstance(raw, str) else ""
+                pace = date.fromisoformat(text) if _ISO_DATE.fullmatch(text) else None
+            except ValueError:
+                pace = None
+            if pace is None:
+                raise ValueError(f"RATCHET_TAVILY_PACE_UNTIL must be a date as YYYY-MM-DD (UTC), or empty, not {raw!r}")
+        lease = self.gateway_lease.strip().lower() if isinstance(self.gateway_lease, str) else None
+        if lease not in (*LEASE_MODES, ""):
+            raise ValueError(f"RATCHET_GATEWAY_LEASE must be {', '.join(LEASE_MODES)}, not {self.gateway_lease!r}")
+        return ScoutPolicy(
+            judge_code=code,
+            judge_runs_per_day=runs,
+            judge_budget_usd=float(judge_usd),
+            judge_session_s=float(session),
+            monthly_credits=monthly,
+            judge_credits=judge_credits,
+            cycle_day=day,
+            pace_until=pace,
+        )
 
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a

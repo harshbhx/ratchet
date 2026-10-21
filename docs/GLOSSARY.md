@@ -64,7 +64,8 @@
 | **Workload** | The kind of simulated traffic in mock mode and the simulator: `tickets` (support tickets), `research` (Scout's triage and reader calls) or `mixed` (half each). Set with `--workload` or `?workload=`. |
 | **Warm-up** | In mock mode, simulated days and nights run at startup (`RATCHET_MOCK_WARMUP_DAYS`), so the demo opens with a trained student instead of a cold start. |
 | **Scout** | The multi-agent research demo. Five agents (planner, searcher, triage, reader, writer) answer a question from the web, and every LLM call goes through Ratchet. Triage and reader calls are distilled; planner and writer calls are pinned. See [SCOUT.md](SCOUT.md). |
-| **Budget guard** | The limits that protect the public Scout demo in live mode: a daily spend cap, a daily run cap and a per-IP hourly run limit (`ratchet/scout/guard.py`). |
+| **Budget guard** | The limits that protect the public Scout demo in live mode: a daily spend cap, a daily run cap and a per-IP hourly run limit (`ratchet/scout/guard.py`), with a share held back for judges; kept in the ledger and restored at startup (ADR 0120). |
+| **Judges' reserve** | Scout runs, spend and Tavily credits per day that the public cannot use, unlocked by a judge code sent once to `POST /scout/judge` and then carried by a signed cookie (ADR 0120). |
 | **Tavily** | The web search API Scout's searcher uses in live mode. |
 | **Live mode** | Running against real Token Factory and Nebius AI Cloud. |
 | **Token Factory** | Nebius's OpenAI-compatible inference service for open models. |

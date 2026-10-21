@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 788 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
+pytest -q                     # 821 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance), ~75 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -22,17 +22,17 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_nightschool.py` | 23 (19 functions; one has 5 cases) |
 | `tests/test_release.py` | 37 (28 functions; one has 8 cases, two have 2) |
 | `tests/test_system.py` | 18 |
-| `tests/test_hardening.py` | 87 (60 functions; one has 11 cases, one has 8, one has 6, one has 4, two have 2) |
+| `tests/test_hardening.py` | 89 (62 functions; one has 11 cases, one has 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 87 (49 functions; one has 20 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 15 |
+| `tests/test_scout.py` | 40 |
 | `tests/test_contract.py` | 46 (35 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 44 (22 functions; one has 23 cases) |
-| `tests/test_live.py` | 19 |
+| `tests/test_live.py` | 25 (3 of them strict xfails for NFR-60) |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
-| **Total** | **788** |
+| **Total** | **821** |
 
 There are three layers:
 

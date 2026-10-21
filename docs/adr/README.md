@@ -32,5 +32,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0026](0026-certified-thresholds-and-a-paired-release-gate.md) | Certified thresholds and a paired release gate: Clopper–Pearson certificates and a frontier in every BOM, opt-in Learn-then-Test and an exact paired champion/challenger gate | Accepted | 2026-10-20 |
 | [0027](0027-committed-training-sets.md) | Committed training sets: sparse Merkle roots in every BOM, with membership, non-membership and held-out proofs checked offline | Accepted | 2026-10-20 |
 | [0028](0028-designed-propensity-replay.md) | Designed-propensity replay: a ledger time machine for thresholds and audit rates, and a calibrated baseline | Accepted | 2026-10-21 |
+| [0120](0120-judge-access-and-a-persistent-scout-guard.md) | Judge access and a persistent Scout guard: spend rows restored at startup, a judges' reserve behind a POST-once code and a signed cookie, paced Tavily credits and a labelled search-unavailable path | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.
