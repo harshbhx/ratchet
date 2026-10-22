@@ -355,6 +355,32 @@ sequenceDiagram
 
 **Reading this diagram.** A request is checked first, and a broken rule is a 400 in OpenAI's envelope before anything is spent. Otherwise the student answers when it is sure, and the teacher answers and has its answer stored when it is not. Either way the response names the request in `ratchet.request_id`. Feedback comes later, as a separate call that quotes that id. The verdict is recorded in the ledger. It never promotes or rolls back a version; it is reported as human precision.
 
+## Where the reference pages come from
+
+The generated pages are not typed by hand, so they cannot drift from the code.
+
+```mermaid
+flowchart LR
+    code["Gateway code<br/>ratchet/gateway.py"] -->|"app.openapi(), mock mode"| script["export-reference.py"]
+    cfg["ratchet/config.py<br/>KNOWN_ENV, DEPLOY_ENV"] --> script
+    cli["Each python -m tool<br/>run with --help"] --> script
+    mk["Makefile targets"] --> script
+    script --> o["openapi/ratchet.json"]
+    script --> e["generated/env.json"]
+    script --> c["generated/cli.json"]
+    o --> h["HTTP API (generated) pages"]
+    e --> ep["Environment variables page"]
+    c --> cp["Command line page"]
+    hand["Hand-written endpoint map<br/>and guides"] --> site(["Docs site"])
+    h --> site
+    ep --> site
+    cp --> site
+    classDef gen fill:#dbeafe,stroke:#2563eb,color:#111
+    class o,e,c,h,ep,cp gen
+```
+
+**Reading this diagram.** The script on the left imports the gateway in mock mode, reads the settings registry, runs every command line tool with `--help` and reads the Makefile. It writes three committed data files. The site turns those files into the HTTP reference, the environment variable page and the command line page. This page and the guides are written by hand and link to the generated pages. After you change a route, a setting or a command, run `python docs-site/scripts/export-reference.py` and commit the result.
+
 ## Next steps
 
 - [HTTP API guide](/reference/api/): every field, header and error code.

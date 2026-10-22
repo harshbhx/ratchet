@@ -59,6 +59,8 @@ flowchart LR
     N["Night School"] --> L
 ```
 
+**Reading this diagram.** Your program owns two objects, `Ratchet` and `ReleaseGate`. `Ratchet` is built from the settings and holds the teacher, the student resolver, the off-path worker pool, the task registry and the ledger. The release gate and Night School never talk to `Ratchet` directly: they meet it in the ledger, which is why nothing breaks if the gate ticks in another process.
+
 One `handle` call, with the default inline checks (no `RequestMeta` passed):
 
 ```mermaid
@@ -98,6 +100,8 @@ sequenceDiagram
     R-->>A: Result
     A->>A: gate.tick
 ```
+
+**Reading this diagram.** Time runs downward. Before the student is asked, the call decides who may answer: a pinned, tool or unknown task goes to the teacher alone and is never stored, and a task with no trained version yet is a cold start. When a version serves, the student samples three times and the confidence score decides: unsure answers escalate to the teacher, confident ones are served, and a random share of those are audited by the teacher. One row is logged either way, and your code ticks the gate afterwards.
 
 The [request journey](/guides/request-journey/) walks through the same cascade from the HTTP side, and [escalation and audits](/guides/escalation-and-audits/) covers what happens on each branch.
 
