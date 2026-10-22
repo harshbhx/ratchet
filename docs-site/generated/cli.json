@@ -343,6 +343,11 @@
       "recipe": "python scripts/reference_check.py"
     },
     {
+      "name": "demo-check",
+      "comment": "The public demo as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat",
+      "recipe": "python scripts/demo_check.py $(URL) $(ARGS)"
+    },
+    {
       "name": "fmt",
       "comment": "",
       "recipe": "ruff format .\nruff check --fix ."

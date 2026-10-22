@@ -18,14 +18,16 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import date
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NamedTuple, TextIO
 from urllib.parse import urlsplit
 
 import httpx
 
-from . import licenses
+from . import licenses, reasoning, watch
 from .auth import MAX_RPM, MAX_USD, KeyLimits, KeyRing, Token, parse_key_limits
 from .certificate import CALIBRATIONS
+from .demo import DemoPolicy
+from .demo import check_policy as check_demo_policy
 from .kpis import check_window_days
 from .openai_compat import AUTO_TASK_MODES, DEFAULT_MAX_N, MODEL_POLICIES, Limits, ModelRouting, parse_aliases
 from .providers import (
@@ -243,7 +245,13 @@ RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
 }
 # Variables the live-run harness (ratchet/liverun.py) reads outside `Settings`: its gateway key, the code's commit in an
 # image without .git, and an optional Token Factory key for its own arms (docs/CONFIGURATION.md#live-run-harness).
-TOOL_ENV: tuple[str, ...] = ("RATCHET_LIVERUN_KEY", "RATCHET_GIT_SHA", "NEBIUS_API_KEY_LIVERUN")
+TOOL_ENV: tuple[str, ...] = (
+    "RATCHET_LIVERUN_KEY",
+    "RATCHET_GIT_SHA",
+    "NEBIUS_API_KEY_LIVERUN",
+    "RATCHET_DEMO_CHECK_KEY",  # scripts/demo_check.py (FR-11.34)
+    "RATCHET_WATCH_KEY",
+)
 # Every environment variable the package reads, but ReleasePolicy's RATCHET_<FIELD> (`known_env()` adds those). The
 # startup check calls any other RATCHET_* variable unknown (`Settings.validate`), so a variable a change starts reading
 # goes here: `python scripts/reqtrace.py --check` fails until it does, and until docs/CONFIGURATION.md documents it.
@@ -251,6 +259,23 @@ KNOWN_ENV: tuple[str, ...] = tuple(
     sorted(
         {
             "NEBIUS_API_KEY",
+            # The demo watchdog's host-side settings (ratchet/watch.py, FR-11.32), in the .env the gateway also reads.
+            "RATCHET_ALERT_KINDS",
+            "RATCHET_ALERT_WEBHOOK_SECRET",
+            "RATCHET_ALERT_WEBHOOK_URL",
+            "RATCHET_INSTANCE_NAME",
+            "RATCHET_WATCH",
+            "RATCHET_WATCH_CLIENT",
+            "RATCHET_WATCH_CONNECT",
+            "RATCHET_WATCH_FAILURES",
+            "RATCHET_WATCH_FLAG_MAX_AGE_S",
+            "RATCHET_WATCH_HEARTBEAT_URL",
+            "RATCHET_WATCH_MAX_RESTARTS_PER_HOUR",
+            "RATCHET_WATCH_PROBE_TIMEOUT_S",
+            "RATCHET_WATCH_REALERT_S",
+            "RATCHET_WATCH_RESTART_COOLDOWN_S",
+            "RATCHET_WATCH_START_GRACE_S",
+            "RATCHET_WATCH_STATE_DIR",
             "RATCHET_ADAPTER_ROOT",
             "RATCHET_ADMIN_KEYS",
             "RATCHET_ADMIN_TOKEN",
@@ -263,16 +288,24 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_BOM_SIGNING_KEY",
             "RATCHET_CONFIDENCE_THRESHOLD",
             "RATCHET_CSP",
+            "RATCHET_DEMO_IDLE_RESET_S",
+            "RATCHET_DEMO_MAX_DAYS",
+            "RATCHET_DEMO_MAX_REQUESTS",
+            "RATCHET_DEMO_RPM",
             "RATCHET_DASHBOARD_KEYS",
             "RATCHET_DATA_DIR",
             "RATCHET_DB",
+            "RATCHET_DOMAIN",
             "RATCHET_DB_SYNC",
+            "RATCHET_CHECK_REASONING",
             "RATCHET_FALLBACK_STUDENT",
+            "RATCHET_FALLBACK_STUDENT_REASONING",
             "RATCHET_FIXTURES_DIR",
             "RATCHET_GOLDEN_FRACTION",
             "RATCHET_IDEMPOTENCY_CACHE",
             "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
+            "RATCHET_LIVE_URL",
             "RATCHET_ADJUDICATE_MAX",
             "RATCHET_KPI_WINDOW_DAYS",
             "RATCHET_LOG_FORMAT",
@@ -299,8 +332,10 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SAMPLES",
             "RATCHET_SCOUT_DAILY_BUDGET_USD",
             "RATCHET_SCOUT_MAX_RESULTS",
+            "RATCHET_SCOUT_RECORDINGS_DIR",
             "RATCHET_SCOUT_MAX_RUNS_PER_DAY",
             "RATCHET_SCOUT_RUNS_PER_HOUR",
+            "RATCHET_SIM_URL",
             "RATCHET_SCRUB_STATS",
             "RATCHET_SEEN_DEDUP_S",
             "RATCHET_SIDECAR_DRAIN_S",
@@ -320,6 +355,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_STUDENT_KEY",
             "RATCHET_STUDENT_MAX_TOKENS",
             "RATCHET_STUDENT_PARAMS",
+            "RATCHET_STUDENT_REASONING",
             "RATCHET_STUDENT_TIMEOUT_S",
             "RATCHET_SYNC_CMD",
             "RATCHET_TASKS_FILE",
@@ -333,6 +369,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_TEACHER_MODALITIES",
             "RATCHET_TEACHER_MODEL",
             "RATCHET_TEACHER_PARAMS",
+            "RATCHET_TEACHER_REASONING",
+            "RATCHET_TEACHER_REASONING_FIELD",
             "RATCHET_TEACHER_REASONING_HEADROOM",
             "RATCHET_TEACHER_REASONING_TOKENS",
             "RATCHET_TEACHER_RETRIES",
@@ -408,9 +446,9 @@ DEPLOY_ENV: frozenset[str] = frozenset(
     {
         "RATCHET_BACKUP_DIR",
         "RATCHET_BACKUP_KEEP",
+        "RATCHET_BACKUP_TAG",
         "RATCHET_BUCKET_ID",
         "RATCHET_BUCKET_S3",
-        "RATCHET_DOMAIN",
         "RATCHET_ENDPOINT_ID",
         "RATCHET_ENDPOINT_NAME",
         "RATCHET_PYTHON",
@@ -418,6 +456,9 @@ DEPLOY_ENV: frozenset[str] = frozenset(
         "RATCHET_REGISTRY_SECRET",
         "RATCHET_REPO_URL",
         "RATCHET_S3_ENDPOINT",
+        "RATCHET_SIM",
+        "RATCHET_SIM_BOM_SIGNING_KEY",
+        "RATCHET_SIM_DOMAIN",
         "RATCHET_SERVE_MAX_LEN",
         "RATCHET_SERVE_MAX_SEQS",
         "RATCHET_SERVE_PLATFORM",
@@ -443,6 +484,10 @@ MOCK_ONLY_ENV: dict[str, str] = {
     "RATCHET_MOCK_PACE": "0.25",
     "RATCHET_MOCK_ENDPOINT_HOURS": "24",
     "RATCHET_MOCK_TEACHER_REASONING_MEAN": "",
+    "RATCHET_DEMO_RPM": "0",
+    "RATCHET_DEMO_MAX_DAYS": "0",
+    "RATCHET_DEMO_MAX_REQUESTS": "0",
+    "RATCHET_DEMO_IDLE_RESET_S": "0",
 }
 # 0/1 switches read as `== "1"` (or `!= "0"` for RATCHET_REDACT_PII, on unless 0): another value is not an error, for
 # v0.4 compatibility, but it is a warning, because `true` reads as off (and `false` as on for redaction).
@@ -809,6 +854,12 @@ class Settings:
     teacher_max_tokens: int = field(default_factory=lambda: _int("RATCHET_TEACHER_MAX_TOKENS", str(DEFAULT_TEACHER_MAX_TOKENS)))
     student_max_tokens: int = field(default_factory=lambda: _int("RATCHET_STUDENT_MAX_TOKENS", str(DEFAULT_STUDENT_MAX_TOKENS)))
     teacher_reasoning_headroom: int = field(default_factory=lambda: _int("RATCHET_TEACHER_REASONING_HEADROOM", "0"))
+    # Nemotron's thinking switch by role, sent as chat_template_kwargs (ADR 0130; reasoning.py). Empty = the default.
+    student_reasoning: str = field(default_factory=lambda: _env("RATCHET_STUDENT_REASONING", ""))
+    fallback_student_reasoning: str = field(default_factory=lambda: _env("RATCHET_FALLBACK_STUDENT_REASONING", ""))
+    teacher_reasoning: str = field(default_factory=lambda: _env("RATCHET_TEACHER_REASONING", ""))
+    check_reasoning: str = field(default_factory=lambda: _env("RATCHET_CHECK_REASONING", ""))
+    teacher_reasoning_field: str = field(default_factory=lambda: _env("RATCHET_TEACHER_REASONING_FIELD", ""))
 
     # Scout, the multi-agent research demo (docs/SCOUT.md).
     tavily_api_key: str = field(default_factory=lambda: _env("TAVILY_API_KEY", ""))
@@ -816,6 +867,8 @@ class Settings:
     scout_runs_per_hour: int = field(default_factory=lambda: _int("RATCHET_SCOUT_RUNS_PER_HOUR", "6"))
     scout_max_runs_per_day: int = field(default_factory=lambda: _int("RATCHET_SCOUT_MAX_RUNS_PER_DAY", "30"))
     scout_max_results: int = field(default_factory=lambda: _int("RATCHET_SCOUT_MAX_RESULTS", "4"))
+    # Recorded live runs (FR-10.40, ADR 0140): a folder of recordings the gateway lists and serves read-only. Empty = off.
+    scout_recordings_dir: str = field(default_factory=lambda: _env("RATCHET_SCOUT_RECORDINGS_DIR", ""))
     # Judge access (ADR 0120): runs per UTC day held back for hackathon judges, unlocked by a code sent once by POST
     # (`POST /scout/judge`) and then carried by a signed cookie. Empty code = off. The judge budget defaults to the judges'
     # share of the run cap. Read with `scout_policy()`, which never echoes the code.
@@ -823,6 +876,8 @@ class Settings:
     scout_judge_runs_per_day: int = field(default_factory=lambda: _int("RATCHET_SCOUT_JUDGE_RUNS_PER_DAY", "0"))
     scout_judge_budget_usd: float | None = field(default_factory=lambda: _float_or_none("RATCHET_SCOUT_JUDGE_BUDGET_USD"))
     scout_judge_session_s: float = field(default_factory=lambda: _float("RATCHET_SCOUT_JUDGE_SESSION_S", "604800"))
+    # How old the watchdog's last probe may be before the banner flag reads `stale` (FR-11.33); 600 s to 7 days.
+    watch_flag_max_age_s: int = field(default_factory=lambda: _int("RATCHET_WATCH_FLAG_MAX_AGE_S", "10800"))
     # Tavily credits per cycle (0 = counted, not capped), the judges' share (unset = their share of the run cap), the
     # day of the month the cycle starts (00:00 UTC) and the date until which the daily allowance spreads what is left.
     tavily_monthly_credits: int = field(default_factory=lambda: _int("RATCHET_TAVILY_MONTHLY_CREDITS", "0"))
@@ -1040,6 +1095,13 @@ class Settings:
     # Mock mode only: Scout's live stream waits this fraction of each call's simulated latency,
     # so the page shows agents working instead of finishing in 20 ms. 0 = no waiting.
     mock_pace: float = field(default_factory=lambda: _float("RATCHET_MOCK_PACE", "0.25"))
+    # The header switch's links (FR-11.30): empty, or an https URL. The simulation host's limits (mock mode only; 0 is off).
+    live_url: str = field(default_factory=lambda: _env("RATCHET_LIVE_URL", ""))
+    sim_url: str = field(default_factory=lambda: _env("RATCHET_SIM_URL", ""))
+    demo_rpm: int = field(default_factory=lambda: _int("RATCHET_DEMO_RPM", "0"))
+    demo_max_days: int = field(default_factory=lambda: _int("RATCHET_DEMO_MAX_DAYS", "0"))
+    demo_max_requests: int = field(default_factory=lambda: _int("RATCHET_DEMO_MAX_REQUESTS", "0"))
+    demo_idle_reset_s: float = field(default_factory=lambda: _float("RATCHET_DEMO_IDLE_RESET_S", "0"))
     # Mock mode only: answer just the demo's own requests (tickets, research calls), a 400 for anything else, as before
     # the generic mock world (sim/generic.py) answered every request.
     mock_strict: bool = field(default_factory=lambda: _env("RATCHET_MOCK_STRICT", "0") == "1")
@@ -1224,6 +1286,22 @@ class Settings:
             raise ValueError(f"RATCHET_EMBEDDINGS_MODEL must name the upstream model, not a Ratchet model id ({model!r})")
         return base
 
+    def reasoning_policy(self) -> reasoning.ReasoningPolicy:
+        """The thinking mode of each role and where Token Factory-bound calls carry it. A bad value raises ValueError
+        naming its variable, so startup stops. An empty RATCHET_CHECK_REASONING follows RATCHET_TEACHER_REASONING."""
+        serve = reasoning.parse(self.teacher_reasoning, "RATCHET_TEACHER_REASONING")
+        return reasoning.ReasoningPolicy(
+            student=reasoning.parse(self.student_reasoning, "RATCHET_STUDENT_REASONING", reasoning.STUDENT_MODES, "off"),
+            fallback_student=reasoning.parse(
+                self.fallback_student_reasoning, "RATCHET_FALLBACK_STUDENT_REASONING", reasoning.FALLBACK_STUDENT_MODES, "off"
+            ),
+            serve=serve,
+            check=reasoning.parse(self.check_reasoning, "RATCHET_CHECK_REASONING", default=serve),
+            field=reasoning.parse(
+                self.teacher_reasoning_field, "RATCHET_TEACHER_REASONING_FIELD", reasoning.FIELDS, "chat_template_kwargs"
+            ),
+        )
+
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises
         ValueError, so the gateway fails at startup."""
@@ -1234,7 +1312,11 @@ class Settings:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{env} must be a whole number of tokens, 0 or more, not {value!r}")
+        mode = self.reasoning_policy()
         return GenPolicy(
+            student_reasoning=mode.student,
+            serve_reasoning=mode.serve,
+            check_reasoning=mode.check,
             teacher_allow=parse_param_allowlist(self.teacher_params, DEFAULT_TEACHER_PARAMS, "RATCHET_TEACHER_PARAMS"),
             student_allow=parse_param_allowlist(self.student_params, DEFAULT_STUDENT_PARAMS, "RATCHET_STUDENT_PARAMS"),
             teacher_max_tokens=self.teacher_max_tokens,
@@ -1437,6 +1519,21 @@ class Settings:
         """RATCHET_TICK_INTERVAL_S: the least time between two release-gate ticks from the request path (unset: 5 s in
         live mode, 0 in mock mode, every request). A rollback can wait this long; the cron tick runs regardless."""
         return _seconds("RATCHET_TICK_INTERVAL_S", self.tick_interval_s, 0.0 if self.mode == "mock" else 5.0)
+
+    def links(self) -> Links:
+        """RATCHET_LIVE_URL and RATCHET_SIM_URL, checked (`public_url`): ValueError names the variable."""
+        return Links(public_url("RATCHET_LIVE_URL", self.live_url), public_url("RATCHET_SIM_URL", self.sim_url))
+
+    def demo_policy(self) -> DemoPolicy:
+        """The four RATCHET_DEMO_* settings, checked against the mock warm-up (ValueError names the variable)."""
+        return check_demo_policy(
+            self.demo_rpm,
+            self.demo_max_days,
+            self.demo_max_requests,
+            self.demo_idle_reset_s,
+            self.mock_warmup_days if isinstance(self.mock_warmup_days, int) else 0,
+            self.mock_warmup_requests if isinstance(self.mock_warmup_requests, int) else 0,
+        )
 
     def stats_ttl(self) -> float:
         """RATCHET_STATS_TTL_S: how long /ratchet/stats serves one computed payload (unset: 2 s in live mode, 0 in mock
@@ -1664,6 +1761,8 @@ class Settings:
             ("RATCHET_DB_SYNC", Settings.ledger_sync),
             ("RATCHET_TICK_INTERVAL_S", Settings.tick_interval),
             ("RATCHET_STATS_TTL_S", Settings.stats_ttl),
+            ("RATCHET_LIVE_URL", Settings.links),
+            ("RATCHET_DEMO_RPM", Settings.demo_policy),
             ("RATCHET_SIDECAR_WORKERS", Settings.sidecar),
             ("RATCHET_LOG_FORMAT", Settings.log_settings),
             ("RATCHET_PUBLIC_DASHBOARD", Settings.access),
@@ -1708,6 +1807,10 @@ class Settings:
             self._check_live(error, warning)
         self._check_prices(warning)
         _check_environ(env, live, warning)
+        if not 600 <= self.watch_flag_max_age_s <= 604800:
+            error("RATCHET_WATCH_FLAG_MAX_AGE_S", "RATCHET_WATCH_FLAG_MAX_AGE_S must be 600 to 604800 seconds")
+        for problem in watch.config_issues(env):  # the host watchdog's settings (FR-11.32): a warning in mock mode
+            (error if live else warning)("RATCHET_WATCH", problem)
         return issues
 
     def _check_keys(self, error: Callable[[str, str], None]) -> None:
@@ -1890,6 +1993,46 @@ def _bom_signer(settings: Settings) -> object:
         return bom.Signer(settings.bom_signing_key)
     except RuntimeError as e:  # `cryptography` is missing
         raise ValueError(str(e)) from e
+
+
+class Links(NamedTuple):
+    """The other surface's public URLs (`Settings.links`): the live gateway's and the simulation's, None when unset."""
+
+    live: str | None
+    sim: str | None
+
+
+MAX_PUBLIC_URL_CHARS = 300
+
+
+def public_url(name: str, raw: object) -> str | None:
+    """A URL a page may link to: empty (None), or `https://` with a host, at most 300 characters, no user info and no
+    whitespace or control characters. ValueError names the variable and never repeats the value."""
+    if not isinstance(raw, str):
+        raise ValueError(f"{name} must be empty or an https URL, not {type(raw).__name__}")
+    url = raw.strip()
+    if not url:
+        return None
+    problem = None
+    if len(url) > MAX_PUBLIC_URL_CHARS:
+        problem = f"is longer than {MAX_PUBLIC_URL_CHARS} characters"
+    elif any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        problem = "has whitespace or a control character"
+    else:
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname
+        except ValueError:
+            parts, host = None, None
+        if parts is None or parts.scheme != "https":
+            problem = "must start with https://"
+        elif not host:
+            problem = "must name a host"
+        elif parts.username is not None or parts.password is not None or "@" in parts.netloc:
+            problem = "must not hold a user name or password"
+    if problem:
+        raise ValueError(f"{name} must be empty or an https URL with a host: it {problem}")
+    return url
 
 
 def _number_in(value: object, lo: float, hi: float, low_open: bool) -> bool:

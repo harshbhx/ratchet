@@ -22,6 +22,7 @@ from . import calibration, licenses, metrics, tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
 from .idem import SeenWindow
 from .stats import wilson
+from .upstream import model_id
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -62,7 +63,12 @@ CREATE TABLE IF NOT EXISTS requests (
     -- The client's own request id (X-Request-Id or X-Client-Request-Id, validated; ADR 0062); NULL for internal calls and
     -- older rows.
     client_request_id TEXT,
-    retry_count INTEGER DEFAULT 0  -- the client SDK's attempt number (x-stainless-retry-count, ADR 0071); 0 when unsent
+    retry_count INTEGER DEFAULT 0, -- the client SDK's attempt number (x-stainless-retry-count, ADR 0071); 0 when unsent
+    -- Attribution (ADR 0073): the model the resolver named for the student's samples (set when they came back) and for the
+    -- shadow's (set with shadow_version): a version's adapter, or the hosted fallback student's id. A version's release
+    -- statistics count only rows its own adapter answered (OWN_STUDENT, OWN_SHADOW); NULL in older rows, which count.
+    student_model TEXT,
+    shadow_model TEXT
 );
 CREATE TABLE IF NOT EXISTS examples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -439,6 +445,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "wall_ms": "REAL",
         "client_request_id": "TEXT",
         "retry_count": "INTEGER DEFAULT 0",
+        "student_model": "TEXT",
+        "shadow_model": "TEXT",
     },
     "examples": {
         "seen": "INTEGER DEFAULT 1",
@@ -559,6 +567,9 @@ UNCHECKABLE = -1
 CONTESTED, UNRESOLVED = 1, 2
 CHECK_SOURCES = ("duplicate", "probe")  # teacher_checks.source: a stored request's first re-test, or a Night School probe
 MAX_MODEL_ID = 200  # characters of a response's model id kept in `meta` and events (the upstream chooses the string)
+# What `meta` and the events hold for a reported model id that is not an id (`upstream.model_id`: the pattern in full, no
+# `://`): the upstream chooses the string and /ratchet/stats shows the events, so a hostile value never reaches either.
+UNRECOGNIZED_MODEL_ID = "unrecognized-model-id"
 _META_UPSERT = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
 
 DAY_SECONDS = 86400
@@ -690,29 +701,35 @@ MAX_TALLIES = 64  # version_live_quality's incremental tallies kept, oldest drop
 # the routing keys on (`ts`, `day`, `served_by`, `route`, `student_version`, `wall_ms`, ...).
 # `student_agree` (FR-16.5) is an off-path audit's label of the student's answer, written with its verdict.
 AUDIT_VERDICT = ("audited", "audit_agree", "student_agree")
-SHADOW_VERDICT = ("shadow_version", "shadow_serve", "shadow_agree")
+SHADOW_VERDICT = ("shadow_version", "shadow_serve", "shadow_agree", "shadow_model")
 ADDABLE_COLUMNS = ("cost_usd", "student_cost_usd", "teacher_cost_usd", "student_in_tokens", "student_out_tokens")
 _IN_CHUNK = 500  # ids per `IN (...)` when the tally checks its pending audits
 
+# Whose answers a version's release statistics count (ADR 0073): its own adapter's. A row whose samples another model
+# wrote (the hosted fallback student, which answers for every version when RATCHET_STUDENT_BASE is empty) says nothing
+# about the version, so neither its audits nor its shadow verdicts count; a row logged before the columns (NULL) counts,
+# as it always did. `?1` is the version's id; the adapter is looked up once per query, by primary key.
+OWN_STUDENT = "(student_model IS NULL OR student_model = (SELECT adapter_uri FROM versions WHERE id=?1))"
+OWN_SHADOW = "(shadow_model IS NULL OR shadow_model = (SELECT adapter_uri FROM versions WHERE id=?1))"
 # The release gate's queries, named so tests can check their plans (each must search an index, never scan requests).
 # A version's audits of answers it served, above a request id (requests_version_audited): version_live_quality's tally.
 AUDIT_TALLY_SQL = (
     "SELECT COUNT(*) n, COUNT(audit_agree) k, COALESCE(SUM(audit_agree), 0) s, MAX(id) top FROM requests"
-    " WHERE student_version=? AND audited=1 AND served_by='student' AND id>?"
+    f" WHERE student_version=?1 AND audited=1 AND served_by='student' AND id>?2 AND {OWN_STUDENT}"
 )
 # A version's audits still pending (an off-path audit not done yet, ADR 0072) in the id range the tally just read.
 AUDIT_PENDING_SQL = (
-    "SELECT id FROM requests WHERE student_version=? AND audited=1 AND served_by='student' AND id>? AND id<=?"
-    " AND audit_agree IS NULL"
+    "SELECT id FROM requests WHERE student_version=?1 AND audited=1 AND served_by='student' AND id>?2 AND id<=?3"
+    f" AND audit_agree IS NULL AND {OWN_STUDENT}"
 )
 # A shadow candidate's verdicts (requests_shadow_version): shadow_quality.
-SHADOW_QUALITY_SQL = """SELECT COUNT(*) n, SUM(shadow_serve) served,
+SHADOW_QUALITY_SQL = f"""SELECT COUNT(*) n, SUM(shadow_serve) served,
                       AVG(CASE WHEN shadow_serve=1 THEN COALESCE(shadow_agree, 0) END) prec,
                       SUM(shadow_serve=1 AND shadow_agree IS NULL) unarbitrated,
                       AVG(CASE WHEN route IN ('student_breaker', 'student_error') THEN NULL
                                WHEN route = 'n_choices' THEN 1
                                ELSE served_by='student' END) live_cov
-               FROM requests WHERE shadow_version=? AND shadow_serve IS NOT NULL"""
+               FROM requests WHERE shadow_version=?1 AND shadow_serve IS NOT NULL AND {OWN_SHADOW}"""
 # The routing snapshot's rebuild (versions_state).
 ROUTED_SQL = f"SELECT * FROM versions WHERE state IN ({','.join('?' * len(ROUTED_STATES))}) ORDER BY id"
 # A release transition, compare-and-set (ADR 0064): it changes the row only while the version is still in the state and
@@ -800,7 +817,7 @@ def _day_range(day_from: int | None, day_to: int | None) -> tuple[str, list[Any]
 _EMPTY_STATS: dict[str, Any] = {
     "requests": 0, "student_served": None, "escalated": None, "cost": None, "baseline": None, "latency_ms": None,
     "latency_sum": None, "latency_n": 0, "audit_agree": None, "audit_sum": None, "audit_n": 0, "degraded": 0,
-    "fallback_teacher": 0, "end_users": 0, "stored_share": None, "stored_sum": None, "stored_n": 0,
+    "fallback_teacher": 0, "fallback_served": 0, "end_users": 0, "stored_share": None, "stored_sum": None, "stored_n": 0,
 }  # fmt: skip
 
 
@@ -1158,8 +1175,8 @@ class Ledger:
         """Finish a logged request's off-path checks (ADR 0072) in one transaction; True when the row exists.
 
         `audited` and `audit_agree` are written only while the row's audit is pending (`audited=1`, `audit_agree` NULL),
-        and `shadow_version`, `shadow_serve` and `shadow_agree` only while its shadow is (`shadow_version` set,
-        `shadow_serve` NULL), so a verdict is written once and never rewritten. `stored` only goes up; `baseline_cost_usd`
+        and `shadow_version`, `shadow_serve`, `shadow_agree` and `shadow_model` only while its shadow is (`shadow_version`
+        set, `shadow_serve` NULL), so a verdict is written once and never rewritten. `stored` only goes up; `baseline_cost_usd`
         is set. `add_<column>` adds to a cost or token column (ADDABLE_COLUMNS) a number, or a sequence of numbers one
         after the other, so the total is the float the request path would have summed call by call. Any other column
         raises ValueError before anything is written.
@@ -1320,7 +1337,7 @@ class Ledger:
         """The highest `requests.id` and `events.id`, 0 for an empty table. The live-run harness keys its rounds by
         request-id ranges and reads a night's outcome from the events after it (FR-8.20): a live ledger's day is wall
         time since the first request, not a round."""
-        r = self.db.execute(
+        r = self._rdb.execute(
             "SELECT (SELECT COALESCE(MAX(id), 0) FROM requests) req, (SELECT COALESCE(MAX(id), 0) FROM events) ev"
         ).fetchone()
         return {"requests": int(r["req"]), "events": int(r["ev"])}
@@ -2782,11 +2799,13 @@ class Ledger:
         epoch and differs from the last one recorded, start a new check epoch with a `teacher_model_changed` event and
         return the previous id; the first id ever seen is only recorded. An id already reported in this epoch (a teacher
         alternating between two backends) only becomes the last one: one epoch and one event per new id, not one per
-        response. None otherwise (and for an empty id). One transaction, so two processes that see the change write one
+        response. None otherwise (and for an empty id). A string that is not a model id (`upstream.model_id`) is recorded as
+        `UNRECOGNIZED_MODEL_ID`, never as itself. One transaction, so two processes that see the change write one
         event and one new epoch."""
         model = model[:MAX_MODEL_ID] if isinstance(model, str) else ""
         if not model:
             return None
+        model = model_id(model) or UNRECOGNIZED_MODEL_ID
         self._begin()
         try:
             r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL,)).fetchone()
@@ -3780,7 +3799,13 @@ class Ledger:
         verdict `update_request` writes later is counted then (a failed or invalid audit leaves as `audited=0`). Any
         other rewrite or deletion of a request on this connection (the `requests` generation) or any commit by another
         connection (PRAGMA data_version) starts the tally again from the first row. The numbers are exactly what one
-        `COUNT(audit_agree)`, `SUM(audit_agree)` over those rows gives."""
+        `COUNT(audit_agree)`, `SUM(audit_agree)` over those rows gives.
+
+        Only the version's own answers count (ADR 0073, `OWN_STUDENT`): a row whose `student_model` is another model than
+        the version's adapter (the hosted fallback student, answering for every version without a student endpoint)
+        counts in neither number, so another model's audits can never promote, roll back or alert on the version. A row
+        without a `student_model` (logged before the column) counts. `student_model` is written with the row and never
+        changed, so a tally never has to forget a row it counted."""
         since = since_id
         gen = (self._requests_gen(), int(self.db.execute("PRAGMA data_version").fetchone()[0]))
         key = (vid, since)
@@ -3982,7 +4007,9 @@ class Ledger:
         escalations would lower the bar the shadow's coverage is held to (ADR 0015). They stay in `n` and `coverage`.
         A request the live student was confident about but escalated only because fewer than the client's n samples
         agreed (route `n_choices`) counts as served: the shadow's verdict uses the one-choice rule, so the live student is
-        held to the same one (ADR 0020)."""
+        held to the same one (ADR 0020). Only verdicts the candidate's own adapter gave count (`OWN_SHADOW`, ADR 0073): a
+        verdict another model gave (the hosted fallback student) would compare the fallback with itself. The router does
+        not run such a shadow (`Ratchet._shadow_student`); the filter keeps any such row out all the same."""
         r = self.db.execute(SHADOW_QUALITY_SQL, (vid,)).fetchone()
         n = int(r["n"] or 0)
         served = int(r["served"] or 0)
@@ -3997,9 +4024,11 @@ class Ledger:
 
     @_reads
     def stats_by_day(self) -> list[dict[str, Any]]:
-        """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
+        """Per day: requests, shares, cost, savings, latency, audited agreement, how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
-        `fallback_teacher`: the fallback teacher; ADR 0019). Days whose request rows retention folded (FR-13.4) add
+        `fallback_teacher`: the fallback teacher; ADR 0019), how many student-served requests another model than
+        their version's adapter answered (`fallback_served`: the hosted fallback student, ADR 0073; they count in
+        `student_share` but toward no version's release statistics). Days whose request rows retention folded (FR-13.4) add
         their `daily_rollup` sums to the rows left; without folded rows every number is computed as before. Embeddings
         pass-through rows (`NOT_PASSTHROUGH`) are left out: they are not part of the distillation these figures
         describe; their spend is in `stats_by_task` and the cost report (`cost_by_day`).
@@ -4019,6 +4048,8 @@ class Ledger:
                       AVG(CASE WHEN audited=1 THEN audit_agree END) audit_agree,
                       SUM(route='degraded') degraded,
                       SUM(route='fallback_teacher') fallback_teacher,
+                      SUM(CASE WHEN served_by='student' AND student_model IS NOT NULL THEN student_model IS NOT
+                               (SELECT adapter_uri FROM versions WHERE id=requests.student_version) END) fallback_served,
                       SUM(latency_ms) latency_sum, COUNT(latency_ms) latency_n,
                       SUM(CASE WHEN audited=1 THEN audit_agree END) audit_sum,
                       COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n,
@@ -4050,6 +4081,7 @@ class Ledger:
                     "audit_agreement": r["audit_agree"],
                     "degraded": int(r["degraded"] or 0),
                     "fallback_teacher": int(r["fallback_teacher"] or 0),
+                    "fallback_served": int(r.get("fallback_served") or 0),
                     "p50_student_ms": p50_student,
                     "p95_ms": p95,
                 }

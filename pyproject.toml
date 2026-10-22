@@ -32,6 +32,9 @@ ratchet = ["dashboard.html", "web/*.html", "web/dist/*", "web/dist/assets/*"]
 testpaths = ["tests"]
 # A misspelled marker is an error, so a requirement marker can never be silently ignored.
 addopts = "--strict-markers"
+# A test that has not finished after 15 minutes is stuck (the slowest takes 14 s bare, a minute or two on a CI runner under
+# coverage): dump every thread's stack into the log, so a hang is diagnosed from it, not from a job that ends at its limit.
+faulthandler_timeout = 900
 markers = [
     "req(*ids): requirement ids this test proves",
     "slow: a long Monte Carlo run; skipped unless pytest is given --runslow (CI passes it)",

@@ -41,6 +41,14 @@ One function, `whoLabel` in `src/lib/who-model.ts`, gives every badge its words 
 
 While `student_serving.kind` is `hosted_fallback`: say "the student" or "the hosted Nano (untuned)", never "your model" (`studentCopy`); hide the live version's golden precision and say "not covered by the certificate" instead (`precisionShown`); the dashboard header names the serving student (`servingLine`). Never call the teacher "rented" in a badge; name where it runs.
 
+### Live and simulation: the switch, the strip and the shared notice (FR-11.30, FR-11.31)
+
+The demo VM serves a live gateway and a simulation ([ADR 0133](../docs/adr/0133-live-and-simulation-hosts.md)); `src/lib/surface-model.ts` (pure, tested in `tests/surface-model.test.mjs`) reads `/ratchet/stats` `links`, `demo` and `upstream`, and every field is optional so an older gateway just hides what needs it.
+
+- **Header switch.** A row under the header bar: "Live on Nebius Token Factory | Simulation". The surface this page is on is a highlighted label; the other is an external link when its URL is known (`links.sim` on the live host, `links.live` on the simulation), else it is left out. The label says "Nebius Token Factory" only when `upstream.token_factory` is true, else just "Live". The host name never appears in the build; both URLs come from the gateway. It wraps at 360 px and never scrolls the page sideways.
+- **Live strip.** In live mode, a row under the four numbers: "Last Token Factory call: 3 min ago · nvidia/Nemotron-3-Ultra-550b-a55b · 4.2 s" and the same for Tavily. A failure reads "failed 3 min ago (timeout)" or "(HTTP 429)", then "last success 40 min ago". With no call yet: "No Token Factory call since the gateway started N min ago". Never content, only a model id, a time and a status. Hidden in mock mode, where the strip already says "Simulation (mock models)". "Open the simulation" or "Open the live gateway" sits next to "Open the dashboard" when the link is known.
+- **Dashboard.** Live: the same last-call line in the header. Simulation: the notice "Shared simulation: every visitor sees and changes the same state. It resets after 2 h without activity, 30 simulated days or 200,000 requests." above the demo controls (only the limits that are set), and a note when a click reset it. A `demo_reset` event reads "Simulation reset".
+
 ## Type and layout
 
 - Inter Variable (sans) and JetBrains Mono Variable (mono) are bundled. Mono for model names, task names, code, small eyebrows.

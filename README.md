@@ -88,7 +88,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 1781 tests
+pytest -q                                                                # 1900 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -173,7 +173,7 @@ The [runbook](docs/RUNBOOK.md#live-measurement-run) covers the prerequisites (th
 
 ## Hosting the demo
 
-The public demo runs on one small Nebius CPU VM with Docker Compose and Caddy (automatic HTTPS). The gateway does no inference, so 2 vCPU / 8 GB is enough. Scripts are in `deploy/vm/`; the guide, with costs (estimate: about $72 for Oct 29 – Dec 15, 2026, before live-mode usage), security notes and teardown, is [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md).
+The public demo runs on one small Nebius CPU VM with Docker Compose and Caddy (automatic HTTPS), as two hosts: the live gateway at the root domain (real Token Factory and Tavily calls; the live strip shows the last of each) and the simulation at `sim.<domain>` (mock models: run days, break a deploy, watch the rollback; labelled simulation, shared by every visitor). The gateway does no inference, so 2 vCPU / 8 GB is expected to be enough; that both hosts fit under load is unverified. Scripts are in `deploy/vm/`; the guide, with costs (estimate: about $72 for Oct 29 – Dec 15, 2026, before live-mode usage), security notes and teardown, is [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md).
 
 ## How the economics work
 

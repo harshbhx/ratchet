@@ -3,6 +3,10 @@
  * All paths are absolute so the SPA works at /, /scout and /dashboard.
  */
 
+import type { DemoInfo, Links, Upstream } from "./surface-model";
+
+export type { DemoInfo, Links, Upstream, UpstreamCall } from "./surface-model";
+
 export type Mode = "mock" | "live";
 
 export interface DayStats {
@@ -128,6 +132,10 @@ export interface StudentServing {
 export interface Stats {
   mode: Mode;
   day: number;
+  /** v0.5: the other surface's URLs, the shared simulation's limits and the last real upstream call per role. Absent on an older gateway. */
+  links?: Links;
+  demo?: DemoInfo;
+  upstream?: Upstream;
   teacher: string;
   student_base: string;
   /** v0.5: the hosted, untuned model that answers student calls while the GPU endpoint is off (RATCHET_FALLBACK_STUDENT). */
@@ -299,8 +307,12 @@ export interface TaskEntry {
   description: string;
   format: string;
   fields: Record<string, FieldDoc>;
+  /** The SQL checker spec (format "sql"), else null. */
+  sql: Record<string, unknown> | null;
   pinned: boolean;
   store: boolean;
+  /** Per-task privacy settings (taskspec `privacy`), an empty object when none. */
+  privacy: Record<string, unknown>;
   match: Record<string, unknown>;
   routing: Record<string, unknown>;
   policy: Record<string, unknown>;
@@ -408,6 +420,8 @@ export interface ScoutTotals {
   wall_ms: number;
 }
 
+import type { Recording, RecordingSummary } from "@/lib/recording-model";
+
 export type ScoutEvent =
   | { type: "start"; run_id: string; question: string; mode: Mode }
   | ScoutStep
@@ -479,7 +493,7 @@ export const api = {
   /** 404 on a gateway older than v0.5 (the dashboard then hides its Economics panel). */
   cost: (days?: number) => json<CostReport>(days == null ? "/ratchet/cost" : `/ratchet/cost?days=${encodeURIComponent(days)}`),
   demoDay: (workload: Workload, requests = 1500) =>
-    json<{ day: number; workload: Workload; night: NightReport }>(
+    json<{ day: number; workload: Workload; night: NightReport; auto_reset?: string | null }>(
       `/ratchet/demo/day?workload=${encodeURIComponent(workload)}&requests=${requests}`,
       { method: "POST" },
     ),
@@ -500,6 +514,9 @@ export const api = {
   redact: (text: string) => json<RedactPreview>("/ratchet/redact", { method: "POST", body: JSON.stringify({ text }) }),
   scoutExamples: () => json<ScoutExamples>("/scout/examples"),
   scoutStatus: () => json<ScoutStatus>("/scout/status"),
+  /** Recorded live runs, newest first (FR-10.40): read-only, no model call, no budget. */
+  scoutRecordings: () => json<{ recordings: RecordingSummary[] }>("/scout/recorded"),
+  scoutRecording: (id: string) => json<Recording>(`/scout/recorded/${encodeURIComponent(id)}`),
   scoutRun: (question: string) =>
     json<{ events: ScoutEvent[] }>("/scout/run", { method: "POST", body: JSON.stringify({ question }) }),
 };

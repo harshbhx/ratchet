@@ -16,11 +16,34 @@ import sys
 import httpx
 
 from .agents import Scout, http_caller
+from .record import DEFAULT_DIR, RecordError, record, write
 from .search import MockSearch, TavilySearch
+
+
+def record_main(argv: list[str], client: httpx.Client | None = None) -> int:
+    """`python -m ratchet.scout record "<question>" --base-url URL`: save one run of a gateway as a recording that the
+    gateway plays back (FR-10.40). Writes nothing and exits 1 for a run that errors, does not finish or is a simulation."""
+    ap = argparse.ArgumentParser(prog="python -m ratchet.scout record", description="Record one Scout run for playback")
+    ap.add_argument("question")
+    ap.add_argument("--base-url", default="http://localhost:8000")
+    ap.add_argument("--judge-code", default=os.environ.get("RATCHET_SCOUT_JUDGE_CODE") or None)
+    ap.add_argument("--out", default=DEFAULT_DIR)
+    ap.add_argument("--allow-mock", action="store_true", help="keep a run from a mock-mode gateway (labelled as a simulation)")
+    args = ap.parse_args(argv)
+    try:
+        rec = record(args.base_url, args.question, client=client, judge_code=args.judge_code, allow_mock=args.allow_mock)
+        path = write(rec, args.out)
+    except RecordError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"recorded {rec['mode']} run, {rec['duration_ms'] / 1000:.1f} s, {len(rec['events'])} events -> {path}")
+    return 0
 
 
 def main(argv: list[str] | None = None, client: httpx.Client | None = None) -> int:
     """Returns the exit code. `client` replaces the HTTP client that talks to the gateway (tests only)."""
+    if argv and argv[0] == "record":
+        return record_main(argv[1:], client)
     ap = argparse.ArgumentParser(description="Scout: multi-agent research through Ratchet")
     ap.add_argument("question")
     ap.add_argument("--base-url", default="http://localhost:8000/v1")

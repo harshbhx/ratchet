@@ -163,7 +163,7 @@ export function storage(t: Pick<TaskEntry, "pinned" | "store">): "pinned" | "sto
 }
 
 /** The keys of a spec as a file holds it and PUT takes it back (taskspec.SPEC_KEYS), without `name`. */
-export const SPEC_KEYS = ["description", "format", "fields", "pinned", "store", "match", "routing", "policy", "tools", "clients"] as const;
+export const SPEC_KEYS = ["description", "format", "fields", "sql", "pinned", "store", "privacy", "match", "routing", "policy", "tools", "clients"] as const;
 
 /** A registered task's spec as an editable document: what PUT /ratchet/tasks/{name} takes back. */
 export function specDocument(t: TaskEntry, withName = false): Record<string, unknown> {
