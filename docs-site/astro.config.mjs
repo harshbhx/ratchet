@@ -157,7 +157,10 @@ export default defineConfig({
           label: 'Start here',
           items: [
             ...guide('what-is-ratchet', 'What is Ratchet'),
+            ...guide('why-it-matters', 'Why it matters'),
             ...guide('business', 'The business case'),
+            ...guide('text-to-sql', 'Text-to-SQL adapter'),
+            ...guide('results', 'Results'),
             ...guide('quickstart', 'Quickstart'),
             ...guide('for-judges', 'For judges'),
           ],
@@ -176,6 +179,7 @@ export default defineConfig({
             ...guide('licenses', 'Licenses'),
             ...guide('cost-and-savings', 'Cost and savings'),
             ...guide('evidence', 'Evidence you can check'),
+            ...guide('proof', 'Proof you can run'),
           ],
         },
         {
@@ -200,6 +204,7 @@ export default defineConfig({
           items: [
             httpOperations,
             ...page('reference/api', 'HTTP API guide'),
+            ...page('api/endpoints', 'Endpoint map'),
             ...page('api/environment', 'Environment variables'),
             ...page('api/cli', 'Command line'),
             ...page('api/python', 'Python API'),
