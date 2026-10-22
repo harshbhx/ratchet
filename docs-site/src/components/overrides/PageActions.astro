@@ -165,6 +165,18 @@ const items = [
     const menu = box.querySelector<HTMLDetailsElement>('details');
     const status = box.querySelector<HTMLElement>('[data-status]');
     if (!menu) return;
+    // The page address was written at build time from the configured site name. Use the address the reader is on instead, so the
+    // assistants always get a page that exists, whichever host serves the docs (pages.dev now, a custom domain later).
+    const here = location.origin + location.pathname;
+    box.dataset.url = here;
+    menu.querySelectorAll<HTMLAnchorElement>('a[role="menuitem"]').forEach((a) => {
+      const u = new URL(a.href);
+      const q = u.searchParams.get('q');
+      if (q) {
+        u.searchParams.set('q', q.replace(/https?:\/\/\S+/, here));
+        a.href = u.toString();
+      }
+    });
     const close = (focus = false) => {
       menu.open = false;
       if (focus) menu.querySelector<HTMLElement>('summary')?.focus();
