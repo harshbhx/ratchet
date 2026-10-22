@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
+import { TracingBeam } from "@/components/fx/tracing-beam";
 import { Container } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
-import { Chapter, ChapterHead, EASE, Lead } from "../shared";
+import { EASE } from "@/lib/motion";
+import { Chapter, ChapterHead, Lead } from "../shared";
 import { HowDiagram } from "./how-diagram";
+
+/** The colour behind the diagram follows the step: the student's blue, the teacher's orange, the night, the gate. */
+const TINTS = [
+  "radial-gradient(closest-side at 30% 25%, color-mix(in srgb, var(--owned) 18%, transparent), transparent 100%)",
+  "radial-gradient(closest-side at 75% 25%, color-mix(in srgb, var(--rented) 20%, transparent), transparent 100%)",
+  "radial-gradient(closest-side at 50% 60%, color-mix(in srgb, var(--ink) 10%, transparent), transparent 100%)",
+  "radial-gradient(closest-side at 50% 85%, color-mix(in srgb, var(--good) 16%, transparent), transparent 100%)",
+];
 
 const STEPS: { title: string; body: ReactNode; chips: string[] }[] = [
   {
@@ -62,7 +72,7 @@ function Step({ i, active, onActive }: { i: number; active: boolean; onActive: (
           <span
             className={cn(
               "inline-flex size-8 items-center justify-center rounded-full border font-mono text-[13px] tabular transition-colors duration-500",
-              active ? "border-ink bg-ink text-bg" : "border-line-strong text-muted",
+              active ? "border-ink bg-ink text-bg" : "border-line-strong bg-bg text-muted",
             )}
           >
             {i + 1}
@@ -103,14 +113,29 @@ export function How() {
           }
         />
         <div className="mt-10 lg:mt-6 lg:grid lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:gap-16">
-          <ol>
-            {STEPS.map((_, i) => (
-              <Step key={i} i={i} active={active === i} onActive={setActive} />
-            ))}
-          </ol>
+          {/* The beam lights the steps as far as the reader has scrolled; below lg it is hidden and the steps stand alone. */}
+          <TracingBeam lineClassName="hidden lg:block" contentClassName="lg:pl-12">
+            <ol>
+              {STEPS.map((_, i) => (
+                <Step key={i} i={i} active={active === i} onActive={setActive} />
+              ))}
+            </ol>
+          </TracingBeam>
           <div className="relative hidden lg:block">
             <div className="sticky top-[calc(50vh-260px)]">
-              <div className="rounded-[24px] border border-line bg-surface p-6 shadow-card">
+              {/* the tint behind the card follows the active step (the sticky-scroll idea) */}
+              {TINTS.map((bg, i) => (
+                <motion.div
+                  key={i}
+                  aria-hidden
+                  initial={false}
+                  animate={{ opacity: i === active ? 1 : 0 }}
+                  transition={{ duration: 0.8, ease: EASE }}
+                  className="pointer-events-none absolute -inset-20"
+                  style={{ background: bg }}
+                />
+              ))}
+              <div className="relative rounded-[24px] border border-line bg-surface p-6 shadow-card">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div className="flex gap-1.5" aria-hidden>
                     {STEPS.map((_, i) => (

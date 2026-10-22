@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { HoverGrid } from "@/components/fx/hover-grid";
 import { Container } from "@/components/ui/section";
 import { WhoBadge } from "@/components/ui/who";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
@@ -6,7 +7,15 @@ import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 /** `RATCHET_FALLBACK_STUDENT`'s default; its badge is the hosted one the pages show for its answers. */
 const FALLBACK_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B";
 
-const ROLES: { role: string; service: string; id?: string; why: string; badge?: ReactNode }[] = [
+interface Role {
+  role: string;
+  service: string;
+  id?: string;
+  why: string;
+  badge?: ReactNode;
+}
+
+const ROLES: Role[] = [
   {
     role: "Teacher",
     service: "Nemotron 3 Ultra on Nebius Token Factory",
@@ -49,6 +58,11 @@ const ROLES: { role: string; service: string; id?: string; why: string; badge?: 
     service: "Tavily Search API",
     why: "Scout's search tool only. Not an NVIDIA or Nebius service.",
   },
+  {
+    role: "Why two places",
+    service: "Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is trained and served on Nebius AI Cloud.",
+    why: "",
+  },
 ];
 
 export function Stack() {
@@ -65,26 +79,26 @@ export function Stack() {
             </Lead>
           }
         />
-        <ul className="mt-12 grid gap-px overflow-hidden rounded-[22px] border border-line bg-line shadow-card sm:grid-cols-2 lg:grid-cols-4">
-          {ROLES.map((r, i) => (
-            <Reveal as="li" key={r.role} delay={(i % 4) * 0.06} className="flex flex-col bg-surface p-5">
-              <div className="flex min-h-6 items-center justify-between gap-2">
-                <span className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-muted">{r.role}</span>
-                {r.badge}
+        <Reveal className="mt-12">
+          <HoverGrid
+            items={ROLES}
+            keyOf={(r) => r.role}
+            className="rounded-[22px] border border-line bg-surface p-1.5 shadow-card"
+            render={(r) => (
+              <div className="flex h-full flex-col rounded-2xl p-4 lg:p-5">
+                <div className="flex min-h-6 items-center justify-between gap-2">
+                  <span className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-muted">{r.role}</span>
+                  {r.badge}
+                </div>
+                <p className={r.why ? "mt-3 text-[15px] font-semibold leading-snug tracking-[-0.01em] text-ink" : "mt-3 text-[13.5px] leading-relaxed text-ink-2"}>
+                  {r.service}
+                </p>
+                {r.id && <code className="mt-2 block font-mono text-[12px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{r.id}</code>}
+                {r.why && <p className="mt-3 text-[13.5px] leading-relaxed text-muted">{r.why}</p>}
               </div>
-              <p className="mt-3 text-[15px] font-semibold leading-snug tracking-[-0.01em] text-ink">{r.service}</p>
-              {r.id && <code className="mt-2 block font-mono text-[12px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{r.id}</code>}
-              <p className="mt-3 text-[13.5px] leading-relaxed text-muted">{r.why}</p>
-            </Reveal>
-          ))}
-          <Reveal as="li" delay={0.18} className="flex flex-col justify-center bg-surface-2 p-5">
-            <span className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-muted">Why two places</span>
-            <p className="mt-3 text-[13.5px] leading-relaxed text-ink-2">
-              Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is trained and served on
-              Nebius AI Cloud.
-            </p>
-          </Reveal>
-        </ul>
+            )}
+          />
+        </Reveal>
       </Container>
     </Chapter>
   );

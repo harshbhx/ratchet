@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { ReactNode } from "react";
 import { motion } from "motion/react";
 import { ArrowUpRight, FlaskConical } from "lucide-react";
 import { Eyebrow, H2, Lead } from "@/components/ui/section";
 import { Badge } from "@/components/ui/badge";
+import { BlurText } from "@/components/fx/blur-text";
 import { cn } from "@/lib/utils";
+import { EASE } from "@/lib/motion";
 
-export const EASE = [0.22, 1, 0.36, 1] as const;
+export { EASE };
+export { useElementWidth, useOnScreen } from "@/lib/visibility";
 
 /** The story's chapters, in order. Used by the section ids and the progress rail. */
 export const CHAPTERS = [
@@ -66,6 +69,7 @@ export function Chapter({ id, children, className }: { id: ChapterId; children: 
   );
 }
 
+/** A chapter's title. A plain string comes into focus word by word as it scrolls in; a node (with a Highlight) rises whole. */
 export function ChapterHead({
   id,
   title,
@@ -80,13 +84,18 @@ export function ChapterHead({
   aside?: ReactNode;
 }) {
   const ch = CHAPTERS.find((c) => c.id === id)!;
+  const h2 = "mt-5 text-balance text-3xl font-semibold tracking-[-0.025em] text-ink sm:text-4xl lg:text-[2.75rem] lg:leading-[1.08]";
   return (
     <Reveal className={cn("grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end", className)}>
       <div className="max-w-3xl">
         <Eyebrow index={ch.index}>{ch.label}</Eyebrow>
-        <H2 id={`${id}-title`} className="mt-5">
-          {title}
-        </H2>
+        {typeof title === "string" ? (
+          <BlurText id={`${id}-title`} text={title} className={h2} />
+        ) : (
+          <H2 id={`${id}-title`} className="mt-5">
+            {title}
+          </H2>
+        )}
         {lead && <div className="mt-5 max-w-[64ch] space-y-4">{lead}</div>}
       </div>
       {aside}
@@ -127,51 +136,6 @@ export function ExampleBadge({ className }: { className?: string }) {
       Example
     </Badge>
   );
-}
-
-/** Width of an element, kept up to date with a ResizeObserver. */
-export function useElementWidth<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setWidth(el.getBoundingClientRect().width);
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0;
-      setWidth((prev) => (Math.abs(prev - w) > 0.5 ? w : prev));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width] as const;
-}
-
-/** True while the element is at least partly on screen and the tab is visible. */
-export function useOnScreen<T extends Element>(ref: RefObject<T | null>, rootMargin = "0px") {
-  const [on, setOn] = useState(true);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    let inView = true;
-    let visible = !document.hidden;
-    const sync = () => setOn(inView && visible);
-    const io = new IntersectionObserver((e) => {
-      inView = e[0]?.isIntersecting ?? true;
-      sync();
-    }, { rootMargin });
-    io.observe(el);
-    const onVis = () => {
-      visible = !document.hidden;
-      sync();
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      io.disconnect();
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [ref, rootMargin]);
-  return on;
 }
 
 /** 95% Wilson score interval, same formula as `ratchet/release.py`. */

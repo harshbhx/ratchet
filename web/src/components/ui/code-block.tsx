@@ -38,7 +38,7 @@ export function CodeBlock({ title, copy, children, className }: { title?: string
 /** Minimal token colouring for code samples. */
 export const tok = {
   k: (s: string) => <span className="text-owned-ink">{s}</span>,
-  s: (s: string) => <span className="text-good">{s}</span>,
+  s: (s: string) => <span className="text-good-ink">{s}</span>,
   c: (s: string) => <span className="text-muted">{s}</span>,
   h: (s: string) => <span className="rounded bg-owned-soft px-1 text-owned-ink">{s}</span>,
 };

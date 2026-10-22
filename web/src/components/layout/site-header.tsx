@@ -86,8 +86,9 @@ export function SiteHeader() {
         Skip to content
       </a>
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-        <NavLink to="/" aria-label="Ratchet home">
-          <Logo />
+        <NavLink to="/" aria-label="Ratchet home" className="rounded-lg">
+          {/* The header stays mounted across pages, so the mark clicks forward once per page load. */}
+          <Logo animate />
         </NavLink>
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
           {NAV.map((n) => (
@@ -109,9 +110,16 @@ export function SiteHeader() {
           >
             GitHub <ArrowUpRight className="size-3.5" />
           </a>
-          <ButtonLink to="/scout" size="sm" className="ml-1 hidden sm:inline-flex">
-            Try Scout
-          </ButtonLink>
+          {/* The call to action is the other demo: Scout from the story and the dashboard, the dashboard from Scout. */}
+          {loc.pathname.startsWith("/scout") ? (
+            <ButtonLink to="/dashboard" size="sm" className="ml-1 hidden sm:inline-flex">
+              Open dashboard
+            </ButtonLink>
+          ) : (
+            <ButtonLink to="/scout" size="sm" className="ml-1 hidden sm:inline-flex">
+              Try Scout
+            </ButtonLink>
+          )}
           <button
             type="button"
             className="inline-flex size-9 items-center justify-center rounded-full text-ink-2 hover:bg-surface-2 md:hidden"

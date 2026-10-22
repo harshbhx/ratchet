@@ -75,7 +75,22 @@ export function Learn() {
 
   return (
     <Chapter id="learn" className="border-t border-line bg-bg-sunken/60">
-      <Container>
+      {/* the day, written large behind the chapter, so the scrubber's position is visible from across the room */}
+      <div aria-hidden className="pointer-events-none absolute right-[2%] top-4 select-none overflow-hidden lg:top-0">
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={day}
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -24 }}
+            transition={{ duration: 0.45, ease: EASE }}
+            className="block font-mono text-[11rem] font-semibold leading-none tracking-[-0.08em] text-ink/[0.045] tabular sm:text-[17rem] lg:text-[24rem] dark:text-ink/[0.04]"
+          >
+            {String(day).padStart(2, "0")}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+      <Container className="relative">
         <ChapterHead
           id="learn"
           title="Watch it learn."

@@ -8,6 +8,10 @@ A ratchet turns only one way. Every night Ratchet clicks forward: more of your t
 
 Use this metaphor with restraint: a few deliberate moments, not on every heading.
 
+## The mark
+
+`@/components/ui/logo` draws it: a true sawtooth ratchet wheel in `owned` blue (the student) held by a pawl in `rented` orange (the teacher, whose audits stop it slipping back), on a rounded tile in `ink`. The teeth only let the wheel turn clockwise. `LogoMark` takes `animate` (the header's mark, once per page load: the wheel turns one tooth while the pawl rides up the slope and drops into the next notch; CSS keyframes in `globals.css`, 880 ms, at rest under reduced motion) and an optional `title`. `public/favicon.svg` is the same geometry in fixed colours. Keep the mark legible at 16 px: eight teeth, the halo around the pawl, no extra detail. Never draw a partner's logo next to it.
+
 ## Voice
 
 - Plain English, short sentences, concrete numbers. No hype words ("revolutionary", "seamless", "game-changing", "unleash", "supercharge", "magic").
@@ -72,8 +76,18 @@ The demo VM serves a live gateway and a simulation ([ADR 0133](../docs/adr/0133-
 
 ## Motion
 
-- Purposeful: reveal on scroll (fade + 12–24px rise, 0.5–0.7s, ease `[0.22, 1, 0.36, 1]`), animate state changes, count numbers up once. No parallax for its own sake, no bouncing, no infinite attention-seeking loops except one calm ambient element in the hero.
-- Everything must still read well with reduced motion (final state shown).
+- One system, `src/lib/motion.ts`: ease `[0.22, 1, 0.36, 1]`, durations 0.25 / 0.55 / 0.85 s, `rise()` for anything that enters on scroll, `enter()` for the hero, `list` for staggered lists. Reveal on scroll (fade + 12–24px rise), animate state changes, count numbers up once. No parallax for its own sake, no bouncing.
+- Three kinds of motion and nothing else: a one-time reveal; a response to the reader (hover, focus, drag, a tab, the scrubber); or an ambient loop that runs only while its element is on screen and the tab is visible (`useOnScreen` in `src/lib/visibility.ts`): the hero's aurora and flow, the Moving Border light, the closing card's beams, the drifting orbs, the live strip's edge light, the eyebrow's shine. A loop that keeps asking for frames while nothing is visible is a bug.
+- Everything must still read well with reduced motion (final state shown): `MotionConfig reducedMotion="user"` plus the base CSS rule; the WebGL aurora draws one still frame; CSS loops stop.
+- Anything that moves on its own starts only when the reader asks (the explorer's "Walk the path", the Scout run), except the ambient loops above and the logo's single click.
+
+## Effects (`src/components/fx/`)
+
+Decoration over content that reads the same without it: `Aurora`, `SplitText`, `BlurText`, `ShinyText`, `SpotlightCard`, `TiltCard`, `Magnet`, `GlareHover`, `GlowOrbs` (original), and `MovingBorderLink`, `TracingBeam`, `Timeline`, `Lamp`, `Compare`, `BentoGrid`, `TextGenerate`, `BackgroundBeams`, `Highlight`, `HoverGrid` (ported from Aceternity UI, MIT, adapted). Their licenses and changes are in `design/ASSET_AND_LICENSE_REGISTER.md`. Rules: every effect is `aria-hidden` or has a plain control underneath; pointer effects are mouse only; colours come from the tokens; a new effect pauses off screen like the others. Use one or two per section, each with a reason, never all of them.
+
+## Illustrations
+
+A page part that shows how Ratchet works without a live call (the "Follow one request" explorer, `sections/lifecycle.tsx`) carries an outline **Illustration** badge and says what is real in it (its stages, rules and files) and what is an example (the request). Its content lives in a pure `*-model.ts` file with a test that holds it to the repo (`web/tests/lifecycle-model.test.mjs`: every named file exists, every number is the Python default it quotes).
 
 ## Charts (dataviz rules)
 

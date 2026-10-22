@@ -125,7 +125,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
               </Badge>
             )}
             {!recording && mode === "mock" && (
-              <Badge tone="warn" className="text-[12.5px]" title="Mock models and simulated search results">
+              <Badge tone="outline" className="text-[12.5px]" title="Mock models and simulated search results">
                 <FlaskConical aria-hidden /> Simulation
               </Badge>
             )}

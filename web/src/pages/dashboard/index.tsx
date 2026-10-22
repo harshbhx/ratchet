@@ -4,7 +4,7 @@ import { FlaskConical, Play, Radio, RefreshCw, ServerOff, Terminal, TriangleAler
 import { ApiError, api, type LedgerEvent, type NightReport, type Stats, type Workload } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Container } from "@/components/ui/section";
+import { Container, Eyebrow } from "@/components/ui/section";
 import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { lastCall, lastCallLine, sharedNotice } from "@/lib/surface-model";
@@ -183,6 +183,7 @@ function Header({
   return (
     <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
       <div className="min-w-0">
+        <Eyebrow className="mb-3">Operator console</Eyebrow>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="text-[28px] font-semibold leading-none tracking-[-0.03em] text-ink sm:text-[32px]">Dashboard</h1>
           {stats &&

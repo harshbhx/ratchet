@@ -2,6 +2,9 @@ import { useRef } from "react";
 import { motion, useInView } from "motion/react";
 import { ArrowRight, BookOpen, Filter, ListTree, PenLine, Search, type LucideIcon } from "lucide-react";
 import type { ServedBy } from "@/lib/api";
+import { GlowOrbs } from "@/components/fx/glow-orbs";
+import { Magnet } from "@/components/fx/magnet";
+import { TiltCard } from "@/components/fx/tilt-card";
 import { ButtonLink } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 import { WhoBadge, useWho } from "@/components/ui/who";
@@ -47,25 +50,27 @@ function Pipeline() {
                 <ArrowRight className="size-3" />
               </span>
             )}
-            <div className="relative flex h-full gap-3.5 rounded-2xl border border-line bg-surface p-4 shadow-card md:flex-col md:gap-0 lg:p-5">
-              <span className={cn("absolute inset-y-4 left-0 w-[3px] rounded-r-full md:inset-x-5 md:inset-y-auto md:top-0 md:h-[3px] md:w-auto md:rounded-b-full md:rounded-r-none", tone)} aria-hidden />
-              <span className="relative z-10 inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-2">
-                <a.icon className="size-[18px]" aria-hidden />
-              </span>
-              <div className="min-w-0 flex-1 md:mt-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-                  <h3 className="text-[16px] font-semibold text-ink">{a.name}</h3>
-                  <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">{a.route}</span>
+            <TiltCard className="h-full" max={5}>
+              <div className="relative flex h-full gap-3.5 rounded-2xl border border-line bg-surface p-4 shadow-card md:flex-col md:gap-0 lg:p-5">
+                <span className={cn("absolute inset-y-4 left-0 w-[3px] rounded-r-full md:inset-x-5 md:inset-y-auto md:top-0 md:h-[3px] md:w-auto md:rounded-b-full md:rounded-r-none", tone)} aria-hidden />
+                <span className="relative z-10 inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-2">
+                  <a.icon className="size-[18px]" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1 md:mt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+                    <h3 className="text-[16px] font-semibold text-ink">{a.name}</h3>
+                    <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">{a.route}</span>
+                  </div>
+                  <code className="mt-1 block font-mono text-[12px] text-ink-2">{a.task ?? "tool call"}</code>
+                  <div className="mt-3">
+                    {/* Who answers this agent's calls now: our adapter, or the hosted fallback while the endpoint is off. */}
+                    <WhoBadge servedBy={a.who} model={a.who === "tool" ? "tavily" : a.who === "student" ? who.serving : undefined} />
+                  </div>
+                  <p className="mt-3 text-[13px] leading-relaxed text-ink-2">{a.why}</p>
+                  <p className="mt-2 font-mono text-[11.5px] text-muted">{a.calls}</p>
                 </div>
-                <code className="mt-1 block font-mono text-[12px] text-ink-2">{a.task ?? "tool call"}</code>
-                <div className="mt-3">
-                  {/* Who answers this agent's calls now: our adapter, or the hosted fallback while the endpoint is off. */}
-                  <WhoBadge servedBy={a.who} model={a.who === "tool" ? "tavily" : a.who === "student" ? who.serving : undefined} />
-                </div>
-                <p className="mt-3 text-[13px] leading-relaxed text-ink-2">{a.why}</p>
-                <p className="mt-2 font-mono text-[11.5px] text-muted">{a.calls}</p>
               </div>
-            </div>
+            </TiltCard>
           </Reveal>
         );
       })}
@@ -131,7 +136,8 @@ function RunStrip() {
 export function Scout() {
   return (
     <Chapter id="scout">
-      <Container>
+      <GlowOrbs tones={["owned", "rented", "owned"]} className="[mask-image:linear-gradient(to_bottom,transparent,black_30%,black_70%,transparent)]" />
+      <Container className="relative">
         <ChapterHead
           id="scout"
           title="On real agent traffic."
@@ -161,9 +167,11 @@ export function Scout() {
               Ask Scout a question and watch every call arrive, each tagged with who answered it and what it cost against Ultra alone.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <ButtonLink to="/scout" size="lg">
-                Try the Scout demo <ArrowRight />
-              </ButtonLink>
+              <Magnet>
+                <ButtonLink to="/scout" size="lg">
+                  Try the Scout demo <ArrowRight />
+                </ButtonLink>
+              </Magnet>
             </div>
           </Reveal>
         </div>
