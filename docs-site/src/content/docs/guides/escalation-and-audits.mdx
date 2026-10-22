@@ -46,6 +46,8 @@ flowchart TD
     I -->|no| K["Done"]
 ```
 
+**Reading this diagram.** Follow one request down the left side. Each diamond is a reason the student might not answer, and each one ends in a teacher box named after the route written to the ledger. Only the last two diamonds happen after the student has produced something: confidence and `n` choices. If the student does serve, the only thing left is the audit draw.
+
 Every teacher box after the version check is an escalation: a version was picked, but the teacher answers (`escalated` is true in the row and the response). The route says why:
 
 | Trigger | Route | Student called? |
@@ -144,6 +146,62 @@ sequenceDiagram
     Q->>L: update_request with the verdict and the cost
     Note over L: the gate counts only rows with a verdict
 ```
+
+**Reading this diagram.** The client gets its answer at the fourth arrow, before the teacher is called. The row is written first with the verdict marked pending, then the sidecar fills it in once. Because the gate counts only rows with a verdict, a request whose audit has not finished yet cannot move a release in either direction.
+
+### When the teacher or the student is down
+
+Every upstream call goes through a circuit breaker. The student and the teacher each have their own, and the shadow has a third, so a failing candidate cannot close the live student's path.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: 5 failed calls in a row
+    Open --> HalfOpen: wait 30 s for the student, doubling to 300 s per failed probe
+    HalfOpen --> Closed: probe call succeeds
+    HalfOpen --> Open: probe call fails
+    Closed --> Closed: success resets the count
+```
+
+**Reading this diagram.** While a breaker is closed, calls go through and a success resets the count. Five failures in a row open it: calls are refused at once, without waiting for a timeout. After a wait, one probe call is let through. A good probe closes the breaker, a bad one reopens it with a longer wait. The numbers shown are the student's; the teacher's breaker opens after 5 failures too and answers requests that need the teacher with a 503 `teacher_circuit_open` and `Retry-After`.
+
+What the request gets when its teacher is not available:
+
+```mermaid
+flowchart TD
+    A["Escalated request needs the teacher"] --> B{"Teacher answers?"}
+    B -->|yes| OK["Serve the teacher"]
+    B -->|"no: retries failed or breaker open"| C{"Fallback teacher set?"}
+    C -->|yes| F["Serve the fallback teacher: stored only if RATCHET_STORE_FALLBACK_TEACHER=1"]
+    C -->|no| D{"RATCHET_ON_TEACHER_FAILURE"}
+    D -->|"error (default)"| E["Mapped error: 502, 503 or 504, or 400 or 429 for client causes"]
+    D -->|serve_student| G["Serve the student's valid answer: route degraded, never stored"]
+```
+
+**Reading this diagram.** The three outcomes are chosen by the operator, not by the request. The default is an honest error. A licensed fallback teacher (`RATCHET_TEACHER_FALLBACK_MODEL`) can answer instead and keeps its own license in the provenance. Degraded mode serves the student's answer even though it was below the threshold; it is marked in the response (`ratchet.degraded`, `X-Ratchet-Degraded`) and in the route, and is never stored, audited or shadowed. Audits and arbitrations never use the fallback: they fail open as described below.
+
+### Retries do not pay twice
+
+Clients retry. Two mechanisms keep a retry from costing a second teacher call or from counting as a second sighting of the same example.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway
+    participant K as Idempotency cache
+    C->>G: request with Idempotency-Key abc
+    G->>K: seen abc for this API key?
+    K-->>G: no
+    G->>G: run the cascade once
+    G->>K: keep the answer
+    G-->>C: answer
+    C->>G: retry with Idempotency-Key abc
+    G->>K: seen abc?
+    K-->>G: yes, same body
+    G-->>C: same answer with Idempotent-Replayed true, no cascade, no row, no quota
+```
+
+**Reading this diagram.** The cache is per API key and lives in memory only, for `RATCHET_IDEMPOTENCY_TTL_S` (600 s by default), because answers contain request text and are never written to disk. A duplicate that arrives while the first is still running waits for the first's answer. The same key with a different body is a 400 `idempotency_key_reused`, and an error is never kept. Separately, a request marked as a retry (`x-stainless-retry-count` above 0) never adds to an example's `seen` count, and the same API client's repeat within `RATCHET_SEEN_DEDUP_S` (300 s live, 0 in mock mode) counts once, so retries cannot push a golden example to the frequent-request rule.
 
 What keeps it honest:
 

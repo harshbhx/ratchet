@@ -40,6 +40,8 @@ flowchart LR
   S --- B[("Object Storage bucket")]
 ```
 
+**Reading this diagram.** Every arrow that crosses the boundary of the VM is HTTPS with a credential. Inbound there is one door: Caddy on 443. Outbound there are three, each with its own key, and the dotted line is the one file of secrets, readable only by the service user. The gateway's port 8000 is not drawn as open because it is not: only Caddy can reach it.
+
 <Steps>
 
 1. **The edge.** On the demo VM, Caddy serves HTTPS with automatic certificates, adds security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, a referrer and a permissions policy) and, with `RATCHET_API_GUARD=guarded`, blocks the paid and management paths unless a request carries the edge token. The gateway's port 8000 is only reachable from Caddy.
@@ -74,6 +76,77 @@ flowchart TD
   Q -->|no| R5["403 or 429, costs nothing"]
   Q -->|yes| C["The cascade runs"]
 ```
+
+**Reading this diagram.** The checks run from cheapest to most expensive, and every refusal happens before a single model call, so a refused request costs nothing. The rate limit comes first, even before the body is read, so a flood of oversized bodies is turned away early. Quotas and budgets come last because they need the parsed request (its task, its size).
+
+The same path as a conversation between the parts, including what is written down:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant E as Caddy
+    participant G as Gateway
+    participant M as Spend meter
+    participant L as Ledger
+    C->>E: HTTPS request with Authorization Bearer key
+    E->>G: forwarded, edge token stripped
+    G->>G: key digest compared in constant time
+    G->>M: rate, in flight, quota, budget
+    M-->>G: allowed
+    G->>G: cascade runs
+    G->>L: one row: key NAME, ids, costs, no text
+    G-->>C: answer, x-request-id
+    G->>M: add the cost, budget event at 50, 80, 100 percent
+```
+
+**Reading this diagram.** The key is used once, to look up a name, and then it is gone: the ledger and the logs see only the name. The spend meter is in memory and is filled from the ledger at startup, so the request path never runs a query for it and a restart does not reset it. The last arrow is why a leaked key spends at most its own budget.
+
+### The access-level map
+
+```mermaid
+flowchart LR
+  subgraph Anyone["No key needed"]
+    P1["Pages, /healthz, /livez, /readyz"]
+    P2["/scout/* with the budget guard"]
+    P3["BOM public key"]
+  end
+  subgraph KeyAPI["API key"]
+    A1["/v1/chat/completions and the other /v1 endpoints"]
+    A2["Own request lookup, own feedback, own receipts"]
+  end
+  subgraph Reader["Dashboard key or admin key"]
+    D1["/ratchet/stats, cost, tasks, drift, teacher, replay"]
+    D2["BOMs, unless public"]
+  end
+  subgraph Admin["Admin key"]
+    M1["/ratchet/admin/*: rollback, retire, promote, freeze, pin, erase, export"]
+    M2["Task writes, training-set proofs, all receipts"]
+  end
+  subgraph Mock["Mock mode only"]
+    X1["/ratchet/demo/*"]
+  end
+  Admin --> Reader
+```
+
+**Reading this diagram.** Each box is an access level from `ratchet/access.py`. An admin key can do everything a dashboard key can, which is the arrow. An API key is deliberately a different kind of key: it can spend money but cannot read the dashboard or reach admin. A route nobody has classified falls into the reader level, so it is private in live mode by default. The mock-only box answers 403 in live mode.
+
+### The admin API leaves a trail
+
+Every manual change (rollback, retire, promote, freeze releases, turn the student off, pause training, set the audit rate, pin a task, erase) goes through `ratchet/admin.py`. It needs a reason of 3 to 500 characters, checks the move against a table, and writes the change, an `admin_actions` row (who, what, why, before and after) and an `admin` event in one transaction. The actor is the admin key's name, never the key. Two processes cannot make the same move twice, because each move is a compare-and-set. See [The release gate](/guides/release-gate/#operator-holds-and-the-admin-api).
+
+### What can go wrong
+
+| Failure | What the system does | Where you see it |
+|---|---|---|
+| A request has no valid key | 401 `invalid_api_key`, no model call | the response; no ledger row for spend |
+| A key passes its quota or budget | 429, no model call | `budget` events at 50, 80, 100% |
+| The gateway's daily budget is spent | `block`: 429 for every chat request. `student_only`: confident student answers still go out, anything needing the teacher is a 429 | the response, `budget` events |
+| Too many requests in flight | 503 at once, no queue | the response |
+| Caddy's edge token is missing or too short | Guarded paths are blocked for everyone | 403 from Caddy |
+| A live gateway starts without API keys | It refuses to start (unless `RATCHET_ALLOW_UNAUTHENTICATED=1`) | startup error |
+| A setting is wrong | One `ConfigError` lists every bad variable before anything opens | startup, `python -m ratchet.config check` |
+| The ledger cannot be written or no teacher can answer | `/readyz` answers 503 | `GET /readyz` |
+| Someone sends the same key twice with different bodies | 400 `idempotency_key_reused` | the response |
 
 On a gateway without API keys, the rate limit is per client address instead (`RATCHET_IP_RPM`, 120 a minute in live mode).
 
@@ -150,7 +223,7 @@ Separately, a retry never counts as a repeat of the request. A request whose `x-
 
 ### PII redaction and storage opt-outs
 
-Before a request and the teacher's answer are stored as a training example, `ratchet/redact.py` replaces emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar numbers, US SSNs, Indian PANs, IPv4 addresses and API secrets with placeholders such as `[EMAIL]` (`RATCHET_REDACT_PII=1`, the default; invariant 12). The teacher still sees the original. **Names and street addresses are not detected yet.** You can paste text into the dashboard's redactor (`POST /ratchet/redact`) to see what would be stored. Clients and end users can keep requests out of storage (`store: false`, a key's `store=0`, no-train end users), end users are kept only as keyed hashes, and stored examples can be erased for good. Ratchet cannot remove what an existing adapter already memorised; it lists the versions that may hold erased text.
+Before a request and the teacher's answer are stored as a training example, `ratchet/redact.py` replaces emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar numbers, US SSNs, Indian PANs and GSTINs, UPI ids, IPv4 addresses and API secrets with placeholders such as `[EMAIL]` (or `[EMAIL_1]` or a look-alike value, with `RATCHET_REDACT_STYLE`) (`RATCHET_REDACT_PII=1`, the default; invariant 12). The teacher still sees the original. **Names and street addresses are not detected by the patterns**; a detector plugin (`RATCHET_REDACT_PLUGIN`) can add them. You can paste text into the dashboard's redactor (`POST /ratchet/redact`) to see what would be stored. Clients and end users can keep requests out of storage (`store: false`, a key's `store=0`, no-train end users), end users are kept only as keyed hashes, and stored examples can be erased for good. Ratchet cannot remove what an existing adapter already memorised; it lists the versions that may hold erased text.
 
 ### Secrets and the host
 

@@ -7,7 +7,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import NightlyLoop from '../../../components/diagrams/NightlyLoop.astro';
 
 <Summary>The release gate decides, from held-out golden rows and teacher audits, whether a newly trained adapter may take traffic, how much, and when to send it back, so a bad night never quietly replaces a good student.</Summary>
 
@@ -28,7 +27,34 @@ The apprentice who already serves every table is never sent back automatically. 
 
 ## How it really works
 
-<NightlyLoop />
+```mermaid
+sequenceDiagram
+    participant N as Night School
+    participant G as Release gate
+    participant L as Ledger
+    participant R as Request path
+    participant T as Teacher
+    N->>L: write version, eval, signed BOM
+    N->>G: admit candidate
+    G->>G: golden gate against the re-scored live version
+    alt passes and a live version exists
+        G->>L: state shadow
+        loop each request
+            R->>G: shadow samples and scores, nothing served
+            G->>T: arbitrate a disagreement
+        end
+        G->>L: state canary 10 percent
+    else passes and none is live
+        G->>L: state canary 10 percent
+    end
+    loop each request in the canary
+        R->>T: random audit of a served answer
+        T-->>G: agree or not
+    end
+    G->>L: 50 percent, then live 100 percent, or rolled_back
+```
+
+**Reading this diagram.** Night School hands over a trained candidate and the gate does the rest. The first judge is the golden exam, run the same night for the candidate and the current live version. Then real traffic does the judging: first silently in shadow, then in the canary where the teacher audits a random sample of what the canary served. Every state change is a write to the ledger, which is why the whole history can be replayed from the events table.
 
 A version moves through a small set of states, stored in the ledger's `versions` table. The golden gate, the shadow decision, the default canary rule and every admin action write their moves with a compare-and-set, so two processes deciding at once make each decision only once.
 
@@ -47,6 +73,8 @@ stateDiagram-v2
     shadow --> retired: replaced or cancelled
     live --> retired: a canary is promoted over it
 ```
+
+**Reading this diagram.** Every version is born as a candidate and ends in one of three resting places: `rejected` (never served anyone), `rolled_back` (served some, then failed its audits) or `retired` (replaced). Only a canary can become live, and the only way out of live is to be replaced. There is no automatic arrow out of `live`, on purpose.
 
 | State | Traffic | Meaning |
 |---|---|---|
@@ -105,6 +133,8 @@ flowchart LR
   C50 -->|"audits clearly bad"| RB
 ```
 
+**Reading this diagram.** The same story as the state diagram, as a pipeline from Night School on the left. The shadow stage is skipped only on a cold start, when there is no live student to compare with. Both canary stages can end in a rollback, but only the 50% stage can lead to live.
+
 One canary tick under the default rule:
 
 ```mermaid
@@ -119,6 +149,8 @@ flowchart TD
   F -->|yes| Hold3["Hold"]
   F -->|no| Up["Advance a stage, or promote"]
 ```
+
+**Reading this diagram.** Three of the four exits are holds. The only way to move forward is to have enough audits, a point estimate at or above the floor and no operator freeze. A rollback needs the strongest evidence of all: not "the average looks bad" but "even the generous end of the interval is below the floor". Note that a freeze is checked last: a rollback is never blocked by it.
 
 ## The Wilson bound, precisely
 
@@ -196,6 +228,27 @@ When several tasks share one adapter, the golden gate also checks each task with
 
 On the live and canary versions, one `alert` per (version, task) fires when that task's audited precision has a Wilson upper bound below 0.92 with at least `min_audits` audits. Nothing is disabled automatically on a live version; pinning a task to the teacher is an operator's decision.
 
+## Two watchers beside the gate: drift and the teacher
+
+The gate's tick has two more steps that never promote or roll back a version. They watch for changes the golden exam cannot see.
+
+**The drift alarm** (`_tick_drift`) watches each (version, task) stream of the student's confidence scores for a shift, with no labels needed. When it alarms (`RATCHET_DRIFT_ALARM`, default 100, so at most a 1% false alarm per stream over its life), it writes a `drift` event and suspends that version's certificate, because the certificate no longer describes the traffic. Two opt-in actions can follow: a higher audit rate for the alarmed version (`RATCHET_DRIFT_AUDIT_BOOST`) and an earlier night (`RATCHET_DRIFT_EARLY_NIGHT`). How the score is built is in [Confidence](/guides/confidence/#watching-the-confidence-scores-over-time-the-drift-alarm).
+
+**The teacher watch** (`_tick_watchers`) asks whether the teacher itself is steady. The golden set and the audits both measure agreement with the teacher, so a teacher whose answers wander would make every number meaningless. Each stored label gets at most one re-test per check epoch (a repeated request that the teacher labels again, or one of the `RATCHET_TEACHER_PROBES` probes Night School sends each night, 20 by default). A disagreement puts the label in quarantine (`contested`): it is left out of both the training and the golden split until Night School adjudicates it, by asking the teacher twice more and keeping the strict majority of three. When the evidence that the teacher disagrees with itself more than `RATCHET_TEACHER_NOISE_MAX` (0.05) reaches 1/`RATCHET_ALPHA_TEACHER` (100), the gate writes a `teacher_drift` event and Night School stops training until an operator acknowledges it with `POST /ratchet/teacher/ack`. A new model id in the teacher's responses starts a new epoch. `GET /ratchet/teacher` shows the state, and `RATCHET_TEACHER_WATCH=0` turns the actions off while the free checks are still recorded.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Steady
+    Steady --> Steady: re-tests agree
+    Steady --> Quarantine: a re-test disagrees with a stored label
+    Quarantine --> Steady: adjudication, a majority of 3 settles the label
+    Steady --> Frozen: evidence reaches 1 over alpha
+    Frozen --> Steady: operator acknowledges
+    Steady --> Steady: new teacher model id starts a new epoch
+```
+
+**Reading this diagram.** One disagreement is not an emergency: it only quarantines one label until two more teacher answers settle it. Training stops only when many disagreements add up to strong evidence, and it stays stopped until a person looks. The freeze affects training, not serving: the live student keeps answering.
+
 ## No training while a release is in flight
 
 Night School skips the night while any version is in `shadow` or `canary` (invariant 5), with a `skip` event such as `v4 still in canary; no training tonight (saves GPU time)`. A new candidate would replace the one being judged and waste both the GPU time and the evidence gathered so far. An operator who wants tonight's training can retire the shadow first.
@@ -236,6 +289,8 @@ Every decision writes an event (the `events` table, shown in the dashboard's rel
 | `inconclusive` | Sequential rule only: a stage hit `max_stage_audits` without a decision |
 | `alert` | The live version (or one task of the live or canary version) is clearly below the floor |
 | `task_disabled` | One task of a candidate failed its own golden check |
+| `drift` | The drift alarm fired for a (version, task) stream |
+| `teacher_drift` | The teacher watch froze Night School |
 | `conflict` | A candidate changed by another process while the gate decided |
 | `admin` | An operator's change, with the actor and the reason |
 
@@ -279,7 +334,7 @@ As of Oct 21, 2026, the release gate has decided only on mock models: every prom
 | `RATCHET_REGRESSION_ALPHA` | 0.05 | The paired gate's McNemar level |
 | `RATCHET_MAX_NFR` | 1.0 | Negative flip rate cap; 1 is off |
 
-A typo or an out-of-range value stops startup with a message naming the variable. Fields reserved for the drift alarm and the teacher watch (FR-16.6, FR-16.7, not built yet) stop startup at any value but their default. Related settings: `RATCHET_AUDIT_RATE` (0.05; mock mode at least 0.10), `RATCHET_CANARY_AUDIT_RATE` (unset: a canary's own audit rate, so its evidence arrives sooner), `RATCHET_TICK_INTERVAL_S`.
+The drift alarm and the teacher watch add `RATCHET_DRIFT_ALARM` (100), `RATCHET_DRIFT_AUDIT_BOOST` (1), `RATCHET_DRIFT_EARLY_NIGHT` (0), `RATCHET_TEACHER_WATCH` (1), `RATCHET_TEACHER_NOISE_MAX` (0.05), `RATCHET_ALPHA_TEACHER` (0.01), `RATCHET_TEACHER_PROBES` (20) and `RATCHET_ADJUDICATE_MAX` (50). A typo or an out-of-range value stops startup with a message naming the variable. Related settings: `RATCHET_AUDIT_RATE` (0.05; mock mode at least 0.10), `RATCHET_CANARY_AUDIT_RATE` (unset: a canary's own audit rate, so its evidence arrives sooner), `RATCHET_TICK_INTERVAL_S`.
 
 Endpoints ([API](/reference/api/)):
 
@@ -324,9 +379,21 @@ Not under the default rule. The gateway's tick, the cron tick and an admin can r
 
 No. Human verdicts are reported and can raise a `human_alert`, but the gate never reads them (invariant 26): clients report what they notice, so the sample is biased. Audited precision stays the release signal.
 
-### What is not built yet?
+### What has not been run yet?
 
-The drift alarm (FR-16.6) and the teacher watch (FR-16.7) have their tick steps in place but empty, so a certificate's `suspended` status never appears today. And the whole gate has run only on mock models, not on a real Nebius deployment.
+The whole gate, including the drift alarm and the teacher watch, has run only on mock models and in offline tests, not on a real Nebius deployment.
+
+## What can go wrong
+
+| Failure | What the system does | Where you see it |
+|---|---|---|
+| The candidate fails the golden gate | `rejected` with the reason; the live version stays | `rejected` event, `GET /ratchet/stats` |
+| The shadow's teacher arbitration fails | Counted as a disagreement, so a flaky teacher can reject a candidate but never promote one | rejection reason names the count |
+| The canary's audits are clearly below the floor | `rolled_back`, traffic returns to the live version (or the teacher) | `rollback` event with the evidence |
+| Two processes decide at once | One compare-and-set wins; the other changes nothing | `conflict` event when a candidate was moved meanwhile |
+| An operator freezes releases | No version takes more traffic; rollbacks and alerts keep running | `admin` event, `controls` in the stats |
+| The live version gets worse | An `alert`; no automatic action | `alert` event, then `python -m ratchet.admin rollback` or `student/disable` |
+| The teacher's labels turn unstable | Contested labels leave training; training freezes at strong evidence | `teacher_drift` event, `GET /ratchet/teacher` |
 
 ## Related
 
