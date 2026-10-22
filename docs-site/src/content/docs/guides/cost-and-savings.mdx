@@ -64,6 +64,23 @@ The two views answer different questions.
 | Per token (`per_token`, the default headline) | Σ `cost_usd` | The student costs what the hosted Nano costs per token ($0.06 in, $0.24 out per 1M). Cheap per answer, but it ignores an idle GPU |
 | By GPU-hours (`gpu_hours`) | teacher spend + endpoint GPU cost + training GPU cost + student per-token spend in hours with no recorded uptime | You pay for every hour the endpoint and the training jobs ran, busy or idle |
 
+```mermaid
+flowchart LR
+  subgraph PT["Per token view"]
+    P1["Each student answer priced<br/>at the hosted Nano token price"] --> P2["Sum of cost_usd"]
+  end
+  subgraph GH["GPU-hours view"]
+    G1["Teacher spend"] --> G5["Total paid"]
+    G2["Endpoint hours x GPU rate<br/>busy or idle"] --> G5
+    G3["Training hours x GPU rate"] --> G5
+    G4["Student tokens in hours<br/>with no recorded uptime"] --> G5
+  end
+  P2 --> SAV1["Savings = all-teacher baseline minus total"]
+  G5 --> SAV2["Savings = all-teacher baseline minus total<br/>can be negative"]
+```
+
+**Reading this diagram.** Both views start from the same baseline, what an all-teacher run would have cost, and subtract what you actually pay. They differ in what counts as paid. The per-token view charges only for tokens, so an idle GPU costs nothing in it. The GPU-hours view charges for every hour the endpoint and the training jobs ran, so at low traffic the same requests can show a saving in one view and a loss in the other. Neither is clamped to zero.
+
 `RATCHET_STUDENT_COST_MODEL` picks which one is the report's `headline`. It changes nothing else: both views are always in the report, and each request's `cost_usd` stays per token, so history never moves.
 
 ### Where the GPU-hours come from
@@ -89,6 +106,19 @@ break-even student answers per endpoint hour = GPU price per hour ÷ teacher spe
 ```
 
 The README rounds that to **about 1,500 student answers an hour, roughly 36,000 a day**. The reference simulation's exact figure is 1,575. Below that line, a 24/7 endpoint costs more than the teacher spend it saves.
+
+```mermaid
+flowchart TD
+  R["GPU price per hour<br/>$1.55 assumed, or $1.35 per the Nebius pricing page"] --> BE["Break-even answers per hour<br/>= price per hour / avoided teacher spend per answer"]
+  S["Teacher spend avoided per student answer<br/>about $0.001 in the simulation"] --> BE
+  BE --> CMP{"Student answers actually served<br/>per endpoint hour"}
+  CMP -->|"at or above break-even"| WIN["The endpoint pays for its hours"]
+  CMP -->|"below break-even"| LOSE["The endpoint costs more than it saves"]
+  LOSE --> OPT["Use the hosted fallback,<br/>or run the endpoint only while traffic arrives"]
+  WIN --> UP["Keep it, and scale to zero when idle"]
+```
+
+**Reading this diagram.** The top two boxes are the only inputs: what an hour of GPU costs and how much teacher money one student answer avoids. Dividing one by the other gives the number of answers an hour the student must serve before the endpoint is worth its rent. Everything after that is a comparison with the traffic you really have. Because the price sits on top of the division, a cheaper GPU lowers the bar in proportion: at $1.35 the same arithmetic gives about 1,350 answers an hour. Both prices are estimates until a bill confirms them.
 
 ### Break-even, precisely
 
@@ -200,7 +230,7 @@ The same run's cost report (simulation, the endpoint up 24 hours a day, unverifi
 | Recommendation | `hosted_fallback` ("Self-hosting does not pay at this volume.") |
 
 <Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Every cost figure on this page is either a simulation output or an estimate from list prices. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
+As of Oct 22, 2026, no student endpoint has been run on Nebius. Every cost figure on this page is either a simulation output or an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
 </Aside>
 
 ### Spend and rate limits

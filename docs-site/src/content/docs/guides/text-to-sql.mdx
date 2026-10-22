@@ -1,0 +1,233 @@
+---
+title: A text-to-SQL adapter you can check
+description: A small model that turns a question and a database schema into one SQLite query, trained only on queries that were run, and scored on whole databases it never saw.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+import Summary from '../../../components/Summary.astro';
+import Eli10 from '../../../components/Eli10.astro';
+import Who from '../../../components/Who.astro';
+import SqlResults from '../../../components/SqlResults.astro';
+
+<Summary>A small open model learned to write SQLite queries from a bigger open model's answers, but only from answers that were actually run on a database, and its score comes from whole databases it never trained on, so anyone can recompute that score.</Summary>
+
+<Eli10>
+
+Think of a new analyst joining a company. People ask them questions like "which five customers spent the most last quarter?", and they must write the query that answers it.
+
+A senior analyst (the teacher) writes practice questions and model answers. Before an answer goes into the study pile, someone **runs it** on the practice database. If it crashes, changes data, or returns nothing, it is thrown away.
+
+Then comes the exam. It uses databases the new analyst has never seen, and some of them come from industries that were never in the study pile. The exam is marked by running the new analyst's query and the senior's query on the same database and comparing the rows they return.
+
+Anyone who gets the answer sheet can mark the exam again and must get the same score.
+
+</Eli10>
+
+## The problem
+
+Teams that keep data in a SQL database get questions all day. A large model can answer them, but two things hurt:
+
+- **Cost.** Every question is a paid call to a big model.
+- **Exposure.** Every call carries your table and column names to someone else's endpoint.
+
+A small model that runs on a GPU you control fixes both, if it is good enough. The honest question is "good enough at what, measured how?" This page and the [Results](/guides/results/) page answer that in a way you can repeat.
+
+## What was built
+
+- A **teacher**, Nemotron 3 Ultra on Nebius Token Factory, that invents SQLite databases, business questions and SQL answers. See [Licenses](/guides/licenses/) for why this teacher is allowed.
+- A **checker** that runs every SQL answer and keeps only the ones that pass.
+- A **student**: Nemotron 3 Nano 4B with a small LoRA adapter, trained on the kept rows.
+- An **exam** made of databases that are never in training, and a **scorer** that anyone can rerun on a CPU.
+- A **confidence gate**: the adapter answers only when it is confident, and the rest go to the teacher.
+
+## How it really works
+
+<Steps>
+
+1. **The teacher invents a database.** For each industry (online retail, retail banking, clinic appointments, freight and logistics and 26 others) the teacher is asked for 3 to 5 SQLite tables with keys and 10 to 15 realistic rows each. The script runs the teacher's `CREATE` and `INSERT` statements in memory and drops the database unless it ends up with 3 to 7 tables of at least 5 rows each.
+
+2. **The teacher writes questions and SQL.** For each database it writes questions a business user might ask, mixed across four levels: `simple` (one table), `join`, `aggregate` and `hard` (subquery, `HAVING`, three tables, `CASE` or a date calculation).
+
+3. **Every SQL is run.** The SQL goes into a sandbox on that database. It is kept only if it is one read-only `SELECT` (or `WITH`) that finishes inside 2 seconds and returns 1 to 100 rows. Duplicate questions on the same database are dropped. Everything else is counted as rejected and thrown away.
+
+4. **The exam is kept apart by database.** Training uses 25 industries. The exam uses whole databases that never appear in training: 60% come from industries that are in training (but a different, new database) and 40% from five industries that are never in training (airline operations, pharmacy inventory, ride sharing, construction projects, IoT sensor readings). The script stops if one database ends up on both sides.
+
+5. **The student is trained.** QLoRA on a free Colab T4: the Nano 4B base loaded in 4-bit, LoRA rank 16, fp16, two epochs, with the loss counted on the SQL only.
+
+6. **The exam is answered, then scored on a CPU.** The base model alone and the base model with the adapter each answer every exam question, and the raw answers are saved. A separate step runs each student query and the teacher's query on the same database and compares the rows.
+
+7. **The confidence gate is set and measured on different rows.** Half of the exam rows (the even ones) set the confidence threshold. The other half (the odd ones) measure it. Nothing is graded on rows that tuned it.
+
+8. **The score is recomputed by `verify`.** It reads the raw answers again and fails if any number in `results.json` differs, or if an input file is not the one the results were computed from.
+
+</Steps>
+
+```mermaid
+flowchart LR
+  T["Teacher: Nemotron 3 Ultra on Token Factory"] --> D["Invents a SQLite database<br/>3 to 7 tables, 5+ rows each"]
+  D --> Q["Writes questions and SQL<br/>simple, join, aggregate, hard"]
+  Q --> C{"Run the SQL on that database<br/>one read-only SELECT?<br/>finishes in 2 s?<br/>1 to 100 rows?"}
+  C -->|"yes"| K["Kept"]
+  C -->|"no"| X["Thrown away and counted"]
+  K --> S{"Which side?"}
+  S -->|"training databases<br/>25 industries"| TR["Training set"]
+  S -->|"exam databases<br/>new databases, 5 more industries"| EX["Exam set"]
+  TR --> L["QLoRA on a free T4<br/>4-bit base, LoRA rank 16, fp16"]
+  L --> A["Adapter"]
+  A --> M["Answer every exam question"]
+  EX --> M
+  M --> R["Run student SQL and teacher SQL<br/>on the same database, compare rows"]
+```
+
+**Reading this diagram.** Read left to right. The teacher writes everything, but nothing it writes is trusted: the diamond in the middle runs each query on the database it was written for, and only queries that pass reach the training or exam pile. The split between training and exam happens by database, not by row, so the student cannot have seen the exam's tables. The last box is the only place a number is made, and it is made by running queries, not by asking a model whether they look right.
+
+### The sandbox
+
+A model's SQL is untrusted code, so it runs in a locked room.
+
+- **Read only.** An SQLite authorizer allows reading, `SELECT`, functions and recursive queries, and denies every other action. An `INSERT`, `UPDATE`, `DELETE`, `DROP` or `ATTACH` is refused by the database itself.
+- **Fast.** A progress handler stops any query that runs longer than 2 seconds.
+- **In memory.** Each database is built from its script in memory and thrown away.
+- **Small answers.** Training rows must return 1 to 100 rows, so a query that returns everything or nothing is not a good example.
+
+The Ratchet gateway has the same idea built in for tasks of format `sql`: [`ratchet/sqlcheck.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/sqlcheck.py) runs two answers on a fixture database and calls them the same when they return the same rows. The data scripts for this run are standalone and enforce the same rules for the same reason.
+
+### How an answer is scored
+
+Two queries are the same answer when they return the same rows on the same database. This is called execution match.
+
+- Column names are ignored, because `total` and `sum_spent` can mean the same thing.
+- Decimal numbers are compared after rounding to 6 places.
+- Row order matters only when the teacher's query has an `ORDER BY`. Otherwise the rows are compared as a set, sorted.
+- A query that does not run, is not a read-only `SELECT`, or takes more than 2 seconds counts as wrong.
+
+```mermaid
+flowchart TD
+  E["One exam question<br/>and its database"] --> TQ["Teacher SQL"]
+  E --> SQ["Student SQL"]
+  TQ --> TR["Run it: rows and 'does it order?'"]
+  SQ --> SR["Run it: rows or failure"]
+  TR --> CMP{"Compare"}
+  SR --> CMP
+  CMP -->|"student failed to run"| W["Wrong"]
+  CMP -->|"teacher orders: same rows, same order"| OK1["Match"]
+  CMP -->|"teacher does not order: same rows in any order"| OK2["Match"]
+  CMP -->|"different rows"| W
+```
+
+**Reading this diagram.** Both queries are run on the same database, so the only thing that can make them match is giving the same rows. The branch in the middle is the order rule: if the teacher's query sorts, the student must sort the same way, and if it does not, order is ignored. A student query that crashes never gets as far as the comparison.
+
+### The confidence gate
+
+The adapter's confidence in an answer is the average probability of its tokens. The threshold is the lowest confidence at which the answers on the calibration half reach the target precision (95% unless set otherwise). On the measured half, an answer above the threshold is served by the student, and the rest would go to the teacher. Three numbers come out: **coverage** (how much the student answers), **precision when it answers** (how often those answers match the teacher) and an **estimated cost** against sending everything to the teacher.
+
+If no threshold reaches the target on the calibration half, the report says so. In that case the adapter would answer nothing on its own at that target.
+
+```mermaid
+sequenceDiagram
+  participant U as User question
+  participant S as Student adapter
+  participant G as Confidence gate
+  participant T as Teacher
+  U->>S: schema and question
+  S->>G: SQL and average token probability
+  alt at or above the threshold
+    G-->>U: student SQL
+  else below the threshold
+    G->>T: same prompt
+    T-->>U: teacher SQL
+  end
+  Note over G: The threshold is set on one half of the exam and measured on the other
+```
+
+**Reading this diagram.** The student always tries first. The gate compares its confidence with the threshold. A confident answer goes straight back, and an unsure one is handed to the teacher, which costs more but is the safer answer. The note at the bottom is the honesty rule: the rows that set the threshold are never the rows that grade it.
+
+## What it scored
+
+The numbers below are read from the run's `results.json` when the site is built. Nothing here is typed by hand.
+
+<SqlResults />
+
+More on how to read them is on the [Results](/guides/results/) page, and the full chain of checks is on [Proof you can run](/guides/proof/).
+
+## Reproduce it and check it
+
+Where the code lives: the data, training and scoring scripts for this run are standalone files published next to the adapter. They are not part of the Ratchet package. The three commands that matter:
+
+```bash
+# 1. Build the data (needs a Token Factory key; the teacher is paid per token)
+python gen_sql_data.py --out out --max-usd 5
+
+# 2. Train on a Colab T4 and answer the exam (GPU)
+#    train_t4.py trains the adapter, then runs: measure_adapter.py generate ...
+
+# 3. Score and verify (CPU only; this is the part anyone can rerun)
+python measure_adapter.py report --raw raw.jsonl --golden golden.jsonl --dbs dbs.json \
+  --adapter ./adapter --out results.json
+python measure_adapter.py verify --raw raw.jsonl --results results.json \
+  --golden golden.jsonl --dbs dbs.json
+```
+
+`verify` prints `OK: every number in results.json was recomputed from raw.jsonl and matches`, or exits with a line starting `FAIL:` that says which file is wrong or which numbers differ. The report holds the SHA-256 of the raw answers, the exam, the exam databases and the adapter, so a swapped file is caught.
+
+## What it does not show
+
+- **The data is synthetic.** A model wrote the databases and the questions. Real schemas are messier.
+- **The exam is small, so the ranges are wide.** The 95% range shown on each bar is the honest size of the doubt.
+- **Only SQLite.** Other dialects are not tested.
+- **"Matches the teacher" is not "is what the user meant".** The teacher is a model too and can be wrong. The score measures how well the student copies the teacher, on queries that run.
+- **Small slices mean little.** The split by difficulty or by industry has few questions per cell.
+- **The cost is an estimate.** Token counts are measured. Prices are inputs. No student endpoint was run, so no GPU-hour bill is included. See [Cost and savings](/guides/cost-and-savings/).
+- **The adapter was not trained on Nebius GPUs.** It was trained on a free Colab T4. The teacher ran on Nebius Token Factory. The training script is written to run unchanged as a Nebius Serverless Job, but it has not been run there.
+
+## The license chain
+
+| Piece | License or terms | Where it is recorded |
+|---|---|---|
+| Base model, Nemotron 3 Nano 4B | NVIDIA Nemotron Open Model License | The adapter's model card and its `NOTICE.md` |
+| Labels (the SQL answers) | Written by Nemotron 3 Ultra, OpenMDW-1.1 | The data manifest (`teacher_manifest.json`) |
+| Other models' outputs | None used: no closed-model output is in the data | Ratchet refuses closed teachers, see [Licenses](/guides/licenses/) |
+
+## For engineers
+
+| What | Where |
+|---|---|
+| Data generation and sandbox | `gen_sql_data.py`: `build_db`, `run_select`, `make_db`, `HELD_OUT_DOMAINS`, the `teacher_manifest.json` it writes |
+| Training | `train_t4.py` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss) and `pipeline.sh` (drives a free Colab T4) |
+| Scoring | `measure_adapter.py`: `sql_same`, `annotate`, `calibrate`, `build_report`, `verify` |
+| In-gateway SQL tasks | [`ratchet/sqlcheck.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/sqlcheck.py): `SqlSpec`, `Sandbox`, `parse_query` |
+| Statistics used for the ranges | Wilson 95% interval in `measure_adapter.py`; exact intervals in [`ratchet/stats.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/stats.py) |
+
+## Common questions
+
+### Why run the SQL instead of asking a model if it looks right?
+
+A model that judges SQL can be fooled by SQL that looks right and returns the wrong rows. Running it on a database gives a fact. A query either returns those rows or it does not.
+
+### Why are some exam databases from industries the student never saw?
+
+To test whether it learned to write SQL or just learned the shape of its training databases. The results page splits the score by seen and unseen industry for this reason.
+
+### Can a query in the training data change a database or read a file?
+
+No. The sandbox's authorizer refuses anything that is not a read, and a query over 2 seconds is stopped. The databases are built in memory from the teacher's script.
+
+### Why only half the exam measures the confidence gate?
+
+If the same rows set the threshold and graded it, the result would look better than it is. Even rows set the threshold and odd rows measure it.
+
+### Is this the same code the gateway uses?
+
+Not the same file. The gateway's `sql` task format in `ratchet/sqlcheck.py` follows the same rules (read-only, time limit, same rows). The scripts for this run are standalone so that anyone can rerun the scoring without the gateway.
+
+### Where do the numbers come from?
+
+From `results.json`, made by `measure_adapter.py report`, and copied into the site at build time. If the results panel says they are pending, the run has not finished.
+
+## Related
+
+- [Results](/guides/results/)
+- [Proof you can run](/guides/proof/)
+- [Confidence](/guides/confidence/)
+- [Licenses](/guides/licenses/)
+- [Night School](/guides/night-school/)

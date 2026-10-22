@@ -1,0 +1,193 @@
+{
+  "sample": true,
+  "mode": "sql",
+  "breakdown_answering_every_row": {
+    "difficulty=aggregate": {
+      "base": {
+        "n": 22,
+        "agree": 8,
+        "rate": 0.3636,
+        "wilson95": [
+          0.1973,
+          0.5705
+        ]
+      },
+      "adapter": {
+        "n": 22,
+        "agree": 17,
+        "rate": 0.7727,
+        "wilson95": [
+          0.5656,
+          0.8988
+        ]
+      }
+    },
+    "difficulty=hard": {
+      "base": {
+        "n": 19,
+        "agree": 3,
+        "rate": 0.1579,
+        "wilson95": [
+          0.0552,
+          0.3757
+        ]
+      },
+      "adapter": {
+        "n": 19,
+        "agree": 9,
+        "rate": 0.4737,
+        "wilson95": [
+          0.2733,
+          0.6829
+        ]
+      }
+    },
+    "difficulty=join": {
+      "base": {
+        "n": 28,
+        "agree": 9,
+        "rate": 0.3214,
+        "wilson95": [
+          0.1793,
+          0.5066
+        ]
+      },
+      "adapter": {
+        "n": 28,
+        "agree": 21,
+        "rate": 0.75,
+        "wilson95": [
+          0.5664,
+          0.8732
+        ]
+      }
+    },
+    "difficulty=simple": {
+      "base": {
+        "n": 31,
+        "agree": 16,
+        "rate": 0.5161,
+        "wilson95": [
+          0.3484,
+          0.6803
+        ]
+      },
+      "adapter": {
+        "n": 31,
+        "agree": 27,
+        "rate": 0.871,
+        "wilson95": [
+          0.7115,
+          0.9487
+        ]
+      }
+    },
+    "domain=seen": {
+      "base": {
+        "n": 61,
+        "agree": 21,
+        "rate": 0.3443,
+        "wilson95": [
+          0.2375,
+          0.4695
+        ]
+      },
+      "adapter": {
+        "n": 61,
+        "agree": 50,
+        "rate": 0.8197,
+        "wilson95": [
+          0.7053,
+          0.8962
+        ]
+      }
+    },
+    "domain=unseen": {
+      "base": {
+        "n": 39,
+        "agree": 15,
+        "rate": 0.3846,
+        "wilson95": [
+          0.2489,
+          0.541
+        ]
+      },
+      "adapter": {
+        "n": 39,
+        "agree": 24,
+        "rate": 0.6154,
+        "wilson95": [
+          0.459,
+          0.7511
+        ]
+      }
+    }
+  },
+  "rows": {
+    "total": 200,
+    "calibration": 100,
+    "measured": 100
+  },
+  "base_model_agreement": {
+    "n": 100,
+    "agree": 36,
+    "rate": 0.36,
+    "wilson95": [
+      0.2727,
+      0.4576
+    ]
+  },
+  "adapter_agreement": {
+    "n": 100,
+    "agree": 74,
+    "rate": 0.74,
+    "wilson95": [
+      0.6463,
+      0.816
+    ]
+  },
+  "confidence_threshold": 0.8123,
+  "target_precision": 0.95,
+  "coverage": {
+    "answered": 52,
+    "of": 100,
+    "rate": 0.52
+  },
+  "precision_when_answered": {
+    "n": 52,
+    "agree": 49,
+    "rate": 0.9423,
+    "wilson95": [
+      0.8436,
+      0.9802
+    ]
+  },
+  "cost_usd_on_measured_rows": {
+    "all_teacher": 0.101,
+    "with_student": 0.0562,
+    "saved_pct": 44.36,
+    "prices_per_million_tokens": {
+      "teacher_in": 1.0,
+      "teacher_out": 3.0,
+      "student": 0.06
+    }
+  },
+  "label": "estimate: token counts are measured, prices are inputs (see prices_per_million_tokens)",
+  "provenance": {
+    "raw_sha256": "d6c5bb29d308331afd1c8c6cfce71a61f33a3ad45cad2bc516e971b17efc13bc",
+    "golden_sha256": "3084b174fda723fc37a68ec4312c34584c7bb096a615876e35bfcf924bce56a2",
+    "dbs_sha256": "86ec025483e3bdacf9ec60714424ee1f0a97ccd7f4cfc5af10c3ab962167bc0c",
+    "adapter_sha256": "bb08bdba8fd8363377540f30617c404f31fe2ce70cc0fe5f14afdb1ea9d8e3ee",
+    "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "python": "3.12.0",
+    "platform": "sample",
+    "gpu": "Tesla T4 (free Colab)",
+    "run_note": "SAMPLE DATA, not a real run",
+    "args": {
+      "target_precision": 0.95,
+      "teacher_in_per_m": 1.0,
+      "teacher_out_per_m": 3.0,
+      "student_per_m": 0.06
+    }
+  }
+}
