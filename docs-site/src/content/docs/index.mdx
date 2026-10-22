@@ -42,7 +42,7 @@ import Closing from '../../components/home/Closing.astro';
 
 <Section id="proof" index="01" eyebrow="Facts you can check" title="Built to be checked, not taken on trust" lead="Every tile is a fact you can check in the repository. Numbers from the simulator appear elsewhere in these docs, and each one is labelled Simulation.">
   <StatRow cols={3} label="Facts about Ratchet">
-    <Stat value={1781} label="tests in the suite" note="They run offline, with no network and no GPU." />
+    <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
     <Stat value={95} suffix="%" label="held-out precision floor" note="A new adapter must reach it on golden rows it never trained on." tone="owned" />
     <Stat value="Open teachers only" label="license-clean, in code" note="A teacher's license must be on an allowlist; closed models are refused." />
     <Stat value="Signed" label="bill of materials per adapter" note="Ed25519-signed, from the exact training and golden rows, with each teacher and license." tone="owned" />
@@ -71,7 +71,7 @@ import Closing from '../../components/home/Closing.astro';
     <RealToday
       asOf="Status as of Oct 22, 2026. The For judges guide keeps the full list."
       items={[
-        { status: 'live', title: 'Teacher calls on Nebius Token Factory', text: 'NVIDIA Nemotron 3 Ultra answers the requests the student is unsure about.' },
+        { status: 'done', title: 'Teacher calls on Nebius Token Factory built the text-to-SQL training data (22 Oct)', text: 'NVIDIA Nemotron 3 Ultra answered the questions whose SQL was checked on a database. The gateway’s own live mode and the day-1 checks have not been run yet.' },
         { status: 'done', title: 'A text-to-SQL adapter, trained on a free Colab T4', text: 'A LoRA on Nemotron 3 Nano 4B, trained from teacher answers that were run on a database. See the <a href="/guides/results/">results</a>.' },
         { status: 'next', title: 'The student on a Nebius GPU', text: 'The Serverless Endpoint and the nightly training job are written and tested against fakes. They have not run on a Nebius GPU yet.' },
         { status: 'sim', title: 'Day-by-day savings and releases', text: 'These curves come from mock models in the simulator, and every such number is labelled Simulation.' },

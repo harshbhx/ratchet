@@ -235,7 +235,7 @@ import Stat from '../../../components/Stat.astro';
 import StatRow from '../../../components/StatRow.astro';
 
 <StatRow cols={3}>
-  <Stat value={1781} label="tests in the suite" note="They run offline, with no network and no GPU." />
+  <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
   <Stat value={95} suffix="%" label="held-out precision floor" tone="owned" />
   <Stat value={0.42} decimals={2} prefix="$" label="per 1,000 requests" tone="sim" note="Simulation, seed 7." />
 </StatRow>
@@ -347,7 +347,7 @@ sentence or a custom tile (`<Stat>` already uses it).
 ```mdx
 import CountUp from '../../../components/ui/CountUp.astro';
 
-The suite has <CountUp to={1781} /> tests.
+The suite has <CountUp to={1900} /> tests.
 ```
 
 **`<SpotlightCard>`**: any card whose border and surface light up under the pointer or keyboard focus. `tone`: `owned`,

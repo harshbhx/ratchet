@@ -78,6 +78,8 @@ export default defineConfig({
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       expressiveCode: {
+        // Shiki has no grammar for crontab lines (the runbook uses ```cron); show them as shell.
+        shiki: { langAlias: { cron: 'bash' } },
         styleOverrides: {
           codeFontFamily: '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
           uiFontFamily: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',

@@ -486,16 +486,16 @@ Thresholds are the `ReleasePolicy` defaults in `release.py`: `min_precision=0.95
 ```mermaid
 stateDiagram-v2
     [*] --> candidate: run_night trains
-    candidate --> rejected: golden precision < 0.95\nor coverage < 0.25\nor regresses vs live (>0.02)
-    candidate --> canary: admit, no live version (cold start)\ntraffic 10%
+    candidate --> rejected: golden precision < 0.95<br/>or coverage < 0.25<br/>or regresses vs live (>0.02)
+    candidate --> canary: admit, no live version (cold start)<br/>traffic 10%
     candidate --> shadow: admit, live version exists
-    shadow --> rejected: ≥100 would-serve answers and\nprecision < 0.95 or coverage < live − 0.02
-    shadow --> canary: ≥100 would-serve answers,\nprecision ≥ 0.95, coverage ≥ live − 0.02\ntraffic 10%
-    canary --> canary: ≥20 audits this stage,\naudited precision ≥ 0.92 → 10% → 50%
-    canary --> live: at 50%, ≥20 audits, precision ≥ 0.92\n(old live → retired)
-    canary --> rolled_back: ≥20 audits and Wilson upper bound < 0.92\n(sequential: e-value over its life ≥ 20, any count)
+    shadow --> rejected: ≥100 would-serve answers and<br/>precision < 0.95 or coverage < live − 0.02
+    shadow --> canary: ≥100 would-serve answers,<br/>precision ≥ 0.95, coverage ≥ live − 0.02<br/>traffic 10%
+    canary --> canary: ≥20 audits this stage,<br/>audited precision ≥ 0.92 → 10% → 50%
+    canary --> live: at 50%, ≥20 audits, precision ≥ 0.92<br/>(old live → retired)
+    canary --> rolled_back: ≥20 audits and Wilson upper bound < 0.92<br/>(sequential: e-value over its life ≥ 20, any count)
     shadow --> retired: newer candidate admitted
-    canary --> retired: newer candidate admitted\n(sequential: 400 audits in a stage, no decision: inconclusive)
+    canary --> retired: newer candidate admitted<br/>(sequential: 400 audits in a stage, no decision: inconclusive)
     live --> retired: a canary is promoted
 ```
 

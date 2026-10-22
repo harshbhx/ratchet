@@ -466,7 +466,9 @@ def public_text(text: str) -> str:
     text = REF_PAREN.sub("", text)
     text = REF_TAIL.sub("", text)
     text = REF_HEAD.sub("", text)
-    text = text.replace("NFR-1's latency target", "the latency target").replace("SM-1 to SM-3 and NFR-1", "The first three metrics and the latency target")
+    text = text.replace("NFR-1's latency target", "the latency target").replace(
+        "SM-1 to SM-3 and NFR-1", "The first three metrics and the latency target"
+    )
     text = text.replace("PRD §8.1's success metrics", "The success metrics")
     return re.sub(r"\(\s*\)", "", text)
 
