@@ -1,0 +1,8 @@
+{
+  "name": "ratchet-demo-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": { "deploy": "wrangler deploy" },
+  "dependencies": { "@cloudflare/containers": "latest" },
+  "devDependencies": { "wrangler": "4.129.0", "@cloudflare/workers-types": "latest", "typescript": "latest" }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ratchet-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-10-01",
+  "containers": [
+    {
+      "class_name": "RatchetDemo",
+      "image": "../../Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "RatchetDemo", "name": "RATCHET_DEMO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RatchetDemo"] }],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "routes": [{ "pattern": "demo-cf.ratchet.dualmindlab.tech", "custom_domain": true }]
+}
