@@ -7,7 +7,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import RequestJourney from '../../../components/diagrams/RequestJourney.astro';
 
 <Summary>Confidence is the score that decides, on every request, whether the student's answer goes out or the teacher is asked, and each adapter version gets its own threshold, set on half of the golden set and checked on the other half.</Summary>
 
@@ -25,7 +24,30 @@ Every new notebook gets its own bar, and each kind of dish can get its own bar t
 
 ## How it really works
 
-<RequestJourney />
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway router
+    participant S as Student
+    participant T as Teacher
+    C->>G: chat request
+    G->>S: ask for 3 samples with logprobs
+    S-->>G: 3 answers and token logprobs
+    G->>G: clean, key, agree, confidence
+    alt confidence at or above the threshold
+        G-->>C: student answer
+        opt audit drawn
+            G->>T: same request, temperature 0
+            T-->>G: teacher answer, compared later
+        end
+    else below the threshold
+        G->>T: escalate
+        T-->>G: teacher answer
+        G-->>C: teacher answer
+    end
+```
+
+**Reading this diagram.** The student is always asked first, three times. Only the gateway looks at the samples: it cleans them, counts agreement and computes one confidence number. That number alone decides who answers. When the student answers, the teacher may still be called in the background for a random audit, but the client never waits for it in live mode. When the student does not answer, the teacher's answer goes to the client and is stored as training data if it is valid.
 
 The student (<Who as="student" />) answers first. The gateway samples it several times, scores the samples, and compares the score with a threshold that belongs to the version that answered and, since per-task calibration, to the task.
 
@@ -57,6 +79,8 @@ flowchart TD
   T -->|yes| Serve["Serve the student's answer"]
   T -->|no| Esc["Escalate to the teacher"]
 ```
+
+**Reading this diagram.** Read it top to bottom. The first gate is validity: with no valid sample, confidence is 0 and the threshold is never consulted. Otherwise two signals are computed (agreement among samples, probability of the best sample) and merged with weights 0.6 and 0.4. One comparison with the version's threshold for this task ends the path in either "serve" or "escalate".
 
 A worked toy example (arithmetic only, not a result): three samples that all agree, best token probability 0.9, give `0.4 × 0.9 + 0.6 × 1.0 = 0.96`. If only two of three agree, the same sample scores `0.4 × 0.9 + 0.6 × 2/3 = 0.76`. Agreement carries more weight than probability on purpose.
 
@@ -128,6 +152,8 @@ flowchart TD
   O --> M
 ```
 
+**Reading this diagram.** Every teacher answer is first split by a hash of the request, so no model's opinion decides which rows are held out. The golden rows are scored with the new adapter and then split again by position: the even half picks the threshold, the odd half measures it. The dotted arrow is the one exception, a request seen three or more times, which moves from golden to training.
+
 Which requests are golden is decided by a hash of the request (`RATCHET_GOLDEN_FRACTION`, default 0.10), which acts like a coin flip: it does not look at difficulty or at any model's answer. A request seen 3 or more times (`FREQUENT`) moves to training and leaves the golden set, so a frequent question is never held out forever.
 
 Golden rows are teacher answers to escalations, audits and arbitrations, so they lean towards requests the student found hard. Precision measured on them means agreement with Nemotron 3 Ultra, not ground truth.
@@ -177,6 +203,45 @@ Testing a fixed order and stopping at the first failure spends the error budget 
 
 Learn-then-Test is opt-in because it is conservative early on. Ten calibration rows cannot certify 95%, since `0.95^10 = 0.60`, far above 0.05. In the toy table above only two calibration rows are at 0.95 or more, so Learn-then-Test would serve nothing. In the seed-7 reference configuration it serves nothing from v1 and v3 and saves 55.4% instead of 69.2% (simulation, mock models, one seed).
 
+## Watching the confidence scores over time: the drift alarm
+
+A threshold is set once per version, on a fixed golden set. Real traffic can change afterwards: new kinds of requests, a new customer, a changed prompt. The student's confidence scores often move before anyone has labels to show a drop in quality, so Ratchet also watches them without labels.
+
+For each (version, task) pair the gate keeps a **conformal test martingale** over the stream of confidence scores the student produced while it served. In plain words: each new score is ranked against the scores seen so far. If the traffic is unchanged, the ranks look random and the running evidence stays near 1. If the scores start to shift, the evidence grows. When it passes `RATCHET_DRIFT_ALARM` (default 100), the alarm fires. A stream whose traffic never changes fires with probability at most 1/100 over its whole life.
+
+```mermaid
+flowchart LR
+  L["Ledger: confidence of each served request"] --> R["Rank each score against earlier ones"]
+  R --> M["Test martingale per version and task"]
+  M --> Q{"Evidence above 100?"}
+  Q -->|no| W["Keep watching"]
+  Q -->|yes| D["Write a drift event"]
+  D --> C["Suspend the version's certificate"]
+  D --> B["Optional: raise the audit rate"]
+  D --> N["Optional: start Night School earlier"]
+```
+
+**Reading this diagram.** Data flows left to right from the ledger, never from the request path. The alarm has one mandatory effect (the certificate is marked suspended) and two optional ones that are off by default. No arrow leads to a promotion, a rollback or a threshold change: a human or the next night decides what to do.
+
+What an alarm does and does not do:
+
+- It writes one `drift` event and marks the version's certificate as suspended, because the certificate was measured on traffic that may no longer look like the live traffic.
+- With `RATCHET_DRIFT_AUDIT_BOOST` above 1 (default 1, off), the alarmed version's audit rate is multiplied by that factor while it serves, up to 0.5. With `RATCHET_DRIFT_EARLY_NIGHT=1` (default 0), Night School needs half the usual number of new examples to train.
+- It never promotes, rolls back or changes a threshold by itself. It runs in the gate's tick, reads the ledger and never touches the request path.
+
+`GET /ratchet/drift` reports each stream and the chance that any stream alarms by luck (with K streams, at most K/100). A version holds at most 17 streams: 16 task streams and one shared stream for every later task name, so a client that sends many task names cannot grow memory. The code is in [`ratchet/drift.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/drift.py) (`Stream`, `DriftMonitor`), fed by `ReleaseGate._tick_drift`.
+
+## What can go wrong
+
+| Failure | What the system does | Where you see it |
+|---|---|---|
+| The student endpoint returns no logprobs | Confidence is the agreement alone | `ratchet.confidence` in the response |
+| No valid sample | Confidence 0, the teacher answers | route `confidence` |
+| The task's spec changed after the version was scored | Every request of the task escalates until a night re-scores | route `confidence`, events `rescored` or `rescore_failed` |
+| A task's record serves nothing | The student is not called for it | route `task_disabled` |
+| The confidence scores of live traffic shift | A `drift` event and a suspended certificate; nothing is rolled back | `GET /ratchet/drift`, the event log |
+| Too few calibration rows for Learn-then-Test | It serves nothing (1.01) until there is more data | per-task `threshold` in `GET /ratchet/stats` |
+
 ## The hosted fallback's fixed threshold
 
 When the student's GPU endpoint is off (`RATCHET_STUDENT_BASE` unset), a trained version's calls go to an untuned, hosted model instead: Nemotron 3 Nano 30B on Token Factory (<Who as="fallback" />). In the restaurant, a different cook from the agency takes the easy orders, and the menu says so: the response's `model` field names the model that wrote the answer, though `served_by` still says `student`.
@@ -211,6 +276,9 @@ Settings (read in [`ratchet/config.py`](https://github.com/harshbhx/ratchet/blob
 | `RATCHET_CALIBRATION` | `point` | `ltt`: Learn-then-Test over the fixed grid |
 | `RATCHET_CERT_TARGET` | `0.95` | The precision a certificate must show, and Learn-then-Test's target |
 | `RATCHET_CERT_DELTA` | `0.05` | The certificate's error rate |
+| `RATCHET_DRIFT_ALARM` | `100` | Drift alarm threshold per stream; `0` turns the alarm off |
+| `RATCHET_DRIFT_AUDIT_BOOST` | `1.0` | Audit-rate multiplier after a drift alarm (`1` is off) |
+| `RATCHET_DRIFT_EARLY_NIGHT` | `0` | `1`: a drift alarm halves the new examples Night School needs |
 | `RATCHET_AUDIT_RATE` | `0.05` | Share of served student answers the teacher audits (mock mode raises it to at least 0.10) |
 
 Constants in the code: weights 0.4 (token probability) and 0.6 (agreement); student temperature 0.7; calibration target 0.97 (a task's `policy.target_precision` overrides it); floor 0.5; `SERVE_NOTHING` 1.01; `CERT_GRID` 0.95 down to 0.50 in steps of 0.05.
@@ -222,7 +290,8 @@ Where to see it:
 - `GET /ratchet/versions/{id}/certificate` serves the signed and the latest certificate.
 - `GET /ratchet/replay?threshold=0.4` replays a version's logged traffic at another threshold ([Evidence you can check](/guides/evidence/)).
 - Routes in `requests.route`: `student`, `confidence`, `cold_start`, `task_disabled`, `n_choices` (the student was sure, but fewer than the client's `n` samples agreed).
-- Events: `rescored`, `rescore_failed`, `task_disabled`.
+- `GET /ratchet/drift` reports the drift alarm's streams.
+- Events: `rescored`, `rescore_failed`, `task_disabled`, `drift`.
 
 ```bash
 python -m ratchet.stats plan --target 0.95 --delta 0.05   # 0 errors: 59 rows, 1: 93, 2: 124, 3: 153
