@@ -9,7 +9,14 @@ export const DROP_SECTIONS = {
 };
 
 export const EDITS = {
+  'API.md': [
+    // Inside a code block, where the id scrubber does not look: the metric's key in the sample reply.
+    [/"NFR-1": \{/, '"latency": {'],
+  ],
   'ARCHITECTURE.md': [
+    [/written once \(append-only, INV-17\)/, 'written once (append-only)'],
+    [/^NFR-1   = median latency/m, 'latency  = median latency'],
+    [/^SM-(\d)    =/gm, 'metric $1 ='],
     [/Product context is in \[PRD\.md\]\(PRD\.md\); the reasoning behind each choice is in the \[ADRs\]\(adr\/README\.md\)\./, 'The reasoning behind each choice is in [Design decisions](#9-design-decisions).'],
     [/^\| ADR \| Decision \|$/m, '| # | Decision |'],
     [/^\| \[0011\]\(.*\n/m, ''],
