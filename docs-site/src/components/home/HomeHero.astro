@@ -1,0 +1,362 @@
+---
+/**
+ * The home page's first screen. Title: React Bits BlurText (CSS only, no JavaScript), with "Rent" underlined in
+ * the rented orange and "Own" in the owned blue once the words land. Background: the CSS grid with React Bits
+ * ShapeGrid on top (wide screens with a mouse only) and two soft glows. Right: the loop card.
+ */
+import BlurText from '../ui/BlurText.astro';
+import ShinyText from '../ui/ShinyText.astro';
+import ShapeGrid from '../ui/ShapeGrid.astro';
+import LoopCard from './LoopCard.astro';
+
+interface Props {
+  title: string;
+  tagline?: string;
+  announcement?: { text: string; link: string };
+  actions: { text: string; link: string; variant: string }[];
+}
+
+const { title, tagline, announcement, actions } = Astro.props;
+// "Rent intelligence today. Own it tomorrow." -> two lines, split after the first full stop.
+const titleText = title.includes('. ') ? title.replace('. ', '.\n') : title;
+const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v === 'minimal' ? 'ghost' : 'primary');
+const FACTS = ['OpenAI-compatible', 'Open teachers only', 'Apache-2.0'];
+---
+
+<section class="rt-home-hero rt-ui" aria-labelledby="_top">
+  <div class="rt-home-hero__bg" aria-hidden="true">
+    <div class="rt-home-hero__glow rt-home-hero__glow--owned"></div>
+    <div class="rt-home-hero__glow rt-home-hero__glow--rented"></div>
+    <ShapeGrid cellSize={44} />
+  </div>
+
+  <div class="rt-home-hero__inner">
+    <div class="rt-home-hero__head">
+      {
+        announcement && (
+          <a class="rt-home-hero__pill" href={announcement.link}>
+            <span class="rt-home-hero__pill-tag">Open source</span>
+            <span class="rt-home-hero__pill-sep" aria-hidden="true" />
+            <ShinyText text={announcement.text} />
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" class="rt-home-hero__pill-arrow">
+              <path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </a>
+        )
+      }
+
+      <BlurText
+        as="h1"
+        id="_top"
+        trigger="load"
+        text={titleText}
+        class="rt-home-hero__title"
+        lineClasses={['rt-home-hero__l1', 'rt-home-hero__l2']}
+        marks={{ Rent: 'rt-mark rt-mark--rented', Own: 'rt-mark rt-mark--owned' }}
+        delay={85}
+        duration={0.8}
+        blur={12}
+        distance={18}
+        startDelay={60}
+      />
+    </div>
+
+    <div class="rt-home-hero__copy">
+      {tagline && <p class="rt-home-hero__lead" set:html={tagline} />}
+
+      {
+        actions.length > 0 && (
+          <div class="rt-home-hero__actions">
+            {actions.map((a, i) => (
+              <a class={`rt-button rt-button--${variant(a.variant)} rt-home-hero__action`} href={a.link}>
+                {a.text}
+                {i === 0 && (
+                  <svg class="rt-button__arrow" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                )}
+              </a>
+            ))}
+          </div>
+        )
+      }
+
+      <ul class="rt-home-hero__facts">
+        {
+          FACTS.map((f) => (
+            <li>
+              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                <path d="m5 12.5 4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              {f}
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+
+    <div class="rt-home-hero__visual">
+      <LoopCard />
+    </div>
+  </div>
+</section>
+
+<style>
+  .rt-home-hero {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    overflow: clip;
+    border-bottom: 1px solid var(--rt-line);
+  }
+  .rt-home-hero__bg {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .rt-home-hero__glow {
+    position: absolute;
+    border-radius: 999px;
+    filter: blur(70px);
+  }
+  .rt-home-hero__glow--owned {
+    width: 44rem;
+    height: 30rem;
+    right: -8rem;
+    top: -10rem;
+    background: var(--rt-glow-owned);
+  }
+  .rt-home-hero__glow--rented {
+    width: 30rem;
+    height: 22rem;
+    left: -10rem;
+    bottom: -12rem;
+    background: var(--rt-glow-rented);
+  }
+
+  .rt-home-hero__inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'head' 'copy' 'visual';
+    gap: 2.25rem;
+    width: 100%;
+    max-width: 76rem;
+    margin-inline: auto;
+    padding: 2.25rem 1rem 3rem;
+  }
+  .rt-home-hero__head {
+    grid-area: head;
+  }
+  .rt-home-hero__copy {
+    grid-area: copy;
+  }
+  .rt-home-hero__visual {
+    grid-area: visual;
+  }
+  @media (min-width: 40rem) {
+    .rt-home-hero__inner {
+      padding: 3.5rem 2rem 4rem;
+    }
+  }
+  @media (min-width: 64rem) {
+    .rt-home-hero__inner {
+      grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+      grid-template-areas:
+        'head head'
+        'copy visual';
+      align-items: start;
+      column-gap: 3.5rem;
+      row-gap: 2.75rem;
+      padding: 4.5rem 2.5rem 5rem;
+    }
+    .rt-home-hero__copy {
+      padding-top: 0.35rem;
+    }
+  }
+
+  .rt-home-hero__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 100%;
+    padding: 0.3rem 0.75rem 0.3rem 0.35rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--rt-surface) 80%, transparent);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    color: var(--rt-ink-2);
+    font-size: 0.8rem;
+    line-height: 1.3;
+    text-decoration: none;
+    transition:
+      border-color var(--rt-dur) ease,
+      background-color var(--rt-dur) ease;
+  }
+  .rt-home-hero__pill:hover {
+    border-color: var(--rt-muted);
+  }
+  .rt-home-hero__pill-tag {
+    flex: none;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    background: var(--rt-ink);
+    color: var(--rt-bg);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .rt-home-hero__pill-sep {
+    width: 1px;
+    height: 0.85rem;
+    background: var(--rt-line-strong);
+  }
+  .rt-home-hero__pill-arrow {
+    flex: none;
+    color: var(--rt-muted);
+    transition: transform 0.25s var(--rt-ease);
+  }
+  .rt-home-hero__pill:hover .rt-home-hero__pill-arrow {
+    transform: translateX(2px);
+  }
+  @media (max-width: 26rem) {
+    .rt-home-hero__pill-tag,
+    .rt-home-hero__pill-sep {
+      display: none;
+    }
+    .rt-home-hero__pill {
+      padding-left: 0.75rem;
+    }
+  }
+
+  .rt-home-hero :global(.rt-home-hero__title) {
+    margin: 1.4rem 0 0;
+    color: var(--rt-ink);
+    font-size: var(--rt-text-display);
+    font-weight: 650;
+    letter-spacing: -0.04em;
+    line-height: 1.03;
+    text-wrap: balance;
+  }
+  .rt-home-hero :global(.rt-home-hero__l1) {
+    color: var(--rt-muted);
+  }
+  .rt-home-hero :global(.rt-home-hero__l2) {
+    color: var(--rt-ink);
+  }
+  /* The two words that carry the colours: an underline that draws in after the words land. */
+  .rt-home-hero :global(.rt-mark) {
+    position: relative;
+  }
+  .rt-home-hero :global(.rt-mark::after) {
+    content: '';
+    position: absolute;
+    left: 0.02em;
+    right: 0.06em;
+    bottom: -0.02em;
+    height: 0.075em;
+    border-radius: 999px;
+    background: var(--mark);
+    transform-origin: left center;
+  }
+  .rt-home-hero :global(.rt-mark--rented) {
+    --mark: var(--rt-rented);
+  }
+  .rt-home-hero :global(.rt-mark--owned) {
+    --mark: var(--rt-owned);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-home-hero :global(.rt-mark::after) {
+      animation: rt-mark-draw 0.7s var(--rt-ease) 1.15s both;
+    }
+    .rt-home-hero :global(.rt-mark--owned::after) {
+      animation-delay: 1.5s;
+    }
+  }
+  @keyframes rt-mark-draw {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  .rt-home-hero__lead {
+    max-width: 36rem;
+    margin: 0;
+    color: var(--rt-ink-2);
+    font-size: clamp(1.05rem, 0.98rem + 0.35vw, 1.2rem);
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+  .rt-home-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 2rem;
+  }
+  .rt-home-hero__action {
+    min-height: 2.75rem;
+    padding-inline: 1.3rem;
+    font-size: 0.95rem;
+  }
+  @media (max-width: 26rem) {
+    .rt-home-hero__action {
+      flex: 1 1 100%;
+    }
+  }
+  .rt-home-hero__facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    margin: 1.75rem 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--rt-muted);
+    font-size: 0.85rem;
+  }
+  .rt-home-hero__facts li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0;
+  }
+  .rt-home-hero__facts svg {
+    color: var(--rt-good);
+  }
+
+  .rt-home-hero__visual {
+    min-width: 0;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-home-hero__pill,
+    .rt-home-hero__lead,
+    .rt-home-hero__actions,
+    .rt-home-hero__facts {
+      animation: rt-hero-rise 0.7s var(--rt-ease) both;
+    }
+    .rt-home-hero__lead {
+      animation-delay: 0.45s;
+    }
+    .rt-home-hero__actions {
+      animation-delay: 0.55s;
+    }
+    .rt-home-hero__facts {
+      animation-delay: 0.65s;
+    }
+    .rt-home-hero__visual {
+      animation: rt-hero-rise 0.8s var(--rt-ease) 0.2s both;
+    }
+  }
+  @keyframes rt-hero-rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+</style>

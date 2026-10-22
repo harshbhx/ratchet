@@ -1,0 +1,140 @@
+---
+/** The home page's "why it matters" strip: four short reasons in a row, each linking to the guide that proves it. */
+import RtIcon from '../RtIcon.astro';
+
+interface Item {
+  icon: string;
+  title: string;
+  text: string;
+  href: string;
+  tone?: 'owned' | 'rented' | 'neutral';
+}
+interface Props {
+  items: Item[];
+}
+const { items } = Astro.props;
+---
+
+<ul class="rt-why rt-ui">
+  {
+    items.map((item) => (
+      <li class={`rt-why__item rt-why__item--${item.tone ?? 'neutral'}`}>
+        <span class="rt-why__icon">
+          <RtIcon name={item.icon as any} size={18} />
+        </span>
+        <p class="rt-why__title">{item.title}</p>
+        <p class="rt-why__text">{item.text}</p>
+        <a class="rt-why__link" href={item.href}>
+          Read more<span class="rt-sr-only">: {item.title}</span>
+          <RtIcon name="start" size={14} />
+        </a>
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .rt-why {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--rt-line);
+  }
+  @media (min-width: 40rem) {
+    .rt-why {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (min-width: 64rem) {
+    .rt-why {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  .rt-why__item {
+    --tone: var(--rt-ink-2);
+    --tone-soft: var(--rt-surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0 !important;
+    padding: 1.6rem 1.4rem 1.5rem 0;
+    border-bottom: 1px solid var(--rt-line);
+  }
+  @media (min-width: 40rem) {
+    .rt-why__item {
+      padding-left: 1.4rem;
+      border-left: 1px solid var(--rt-line);
+    }
+    .rt-why__item:nth-child(odd) {
+      border-left: 0;
+      padding-left: 0;
+    }
+  }
+  @media (min-width: 64rem) {
+    .rt-why__item {
+      border-bottom: 0;
+    }
+    .rt-why__item:nth-child(odd) {
+      border-left: 1px solid var(--rt-line);
+      padding-left: 1.4rem;
+    }
+    .rt-why__item:first-child {
+      border-left: 0;
+      padding-left: 0;
+    }
+  }
+  .rt-why__item--owned {
+    --tone: var(--rt-owned-ink);
+    --tone-soft: var(--rt-owned-soft);
+  }
+  .rt-why__item--rented {
+    --tone: var(--rt-rented-ink);
+    --tone-soft: var(--rt-rented-soft);
+  }
+  .rt-why__icon {
+    display: inline-grid;
+    place-items: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    margin-bottom: 0.4rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--rt-line);
+    background: var(--tone-soft);
+    color: var(--tone);
+  }
+  .rt-why .rt-why__title {
+    margin: 0;
+    color: var(--rt-ink);
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+  }
+  .rt-why .rt-why__text {
+    margin: 0;
+    color: var(--rt-muted);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+  .rt-why .rt-why__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: auto;
+    padding-top: 0.5rem;
+    color: var(--rt-ink-2);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .rt-why .rt-why__link:hover {
+    color: var(--rt-ink);
+  }
+  .rt-why__link :global(svg) {
+    transition: transform 0.25s var(--rt-ease);
+  }
+  .rt-why__link:hover :global(svg) {
+    transform: translateX(2px);
+  }
+</style>
