@@ -5,6 +5,7 @@
  * Replaces Lucode's PageTitle (its previous/next buttons are kept, smaller, on the right).
  */
 import { Icon } from '@astrojs/starlight/components';
+import PageActions from './PageActions.astro';
 
 const route = Astro.locals.starlightRoute;
 const { entry, sidebar, pagination, editUrl } = route;
@@ -65,11 +66,13 @@ const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0
       </p>
     )
   }
+  <PageActions />
 </div>
 
 <style>
   .rt-page-title {
     position: relative;
+    z-index: 5; /* above the page body, so the Ask AI menu opens over the first block */
     isolation: isolate;
     padding-top: 0.5rem;
     padding-bottom: 1.6rem;
