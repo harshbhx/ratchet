@@ -54,6 +54,28 @@ jobs:
       - name: Built UI is committed and up to date
         run: git diff --stat --exit-code -- ../ratchet/web/dist || (echo "Run 'make web' and commit ratchet/web/dist" && exit 1)
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - run: pip install -e ".[dev]"
+      - name: Docs reference data (OpenAPI, environment, commands) matches the code
+        run: python docs-site/scripts/export-reference.py --check
+      - run: npm ci
+        working-directory: docs-site
+      - name: Docs site builds (syncs ../docs, validates every internal link)
+        run: npm run build
+        working-directory: docs-site
+
   docker:
     runs-on: ubuntu-latest
     steps:
