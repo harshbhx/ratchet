@@ -1,0 +1,91 @@
+---
+/**
+ * The Ratchet mark (the logo's wheel and pawl) drawn with theme tokens, so it follows light and dark.
+ * `click` turns the wheel one tooth (36 degrees) once, after `delay` ms: the ratchet clicking forward.
+ * Decorative: aria-hidden.
+ */
+interface Props {
+  size?: number;
+  click?: boolean;
+  delay?: number;
+  class?: string;
+}
+const { size = 64, click = false, delay = 2600, class: className } = Astro.props;
+const teeth = Array.from({ length: 10 }, (_, i) => i * 36);
+---
+
+<svg
+  class:list={['rt-mark-svg', className]}
+  viewBox="0 0 40 40"
+  width={size}
+  height={size}
+  aria-hidden="true"
+  focusable="false"
+  data-click={click ? '' : undefined}
+  style={`--rt-click-delay:${delay}ms`}
+>
+  <rect width="40" height="40" rx="10" class="rt-mark-svg__bg"></rect>
+  <g transform="translate(20 21)">
+    <g class="rt-mark-svg__wheel">
+      {teeth.map((a) => <path d="M0 -12.5 L3.4 -9.2 L0 -8.6 Z" transform={`rotate(${a})`} class="rt-mark-svg__tooth" />)}
+      <circle r="9" class="rt-mark-svg__tooth"></circle>
+      <circle r="3.4" class="rt-mark-svg__bg"></circle>
+    </g>
+  </g>
+  <path d="M31.5 6.5 L25 14.4" class="rt-mark-svg__pawl"></path>
+  <circle cx="31.5" cy="6.5" r="2" class="rt-mark-svg__pawl-dot"></circle>
+</svg>
+
+<style>
+  .rt-mark-svg {
+    display: block;
+  }
+  .rt-mark-svg__bg {
+    fill: var(--rt-ink);
+  }
+  .rt-mark-svg__tooth {
+    fill: var(--rt-owned);
+  }
+  .rt-mark-svg__pawl {
+    fill: none;
+    stroke: var(--rt-rented);
+    stroke-width: 2.6;
+    stroke-linecap: round;
+    transform-box: fill-box;
+    transform-origin: 100% 0%;
+  }
+  .rt-mark-svg__pawl-dot {
+    fill: var(--rt-rented);
+  }
+  .rt-mark-svg__wheel {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-mark-svg[data-click] .rt-mark-svg__wheel {
+      animation: rt-click 0.55s cubic-bezier(0.34, 1.45, 0.64, 1) var(--rt-click-delay) 1 both;
+    }
+    .rt-mark-svg[data-click] .rt-mark-svg__pawl {
+      animation: rt-pawl 0.55s cubic-bezier(0.34, 1.45, 0.64, 1) var(--rt-click-delay) 1 both;
+    }
+  }
+  @keyframes rt-click {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(36deg);
+    }
+  }
+  @keyframes rt-pawl {
+    0% {
+      transform: rotate(0deg);
+    }
+    45% {
+      transform: rotate(-14deg);
+    }
+    100% {
+      transform: rotate(0deg);
+    }
+  }
+</style>

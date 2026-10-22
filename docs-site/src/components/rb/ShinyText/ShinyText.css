@@ -1,0 +1,62 @@
+/* Adapted from React Bits "ShinyText" (MIT + Commons Clause, see ../LICENSE.md). */
+.rb-shiny-text {
+  display: inline-block;
+  color: var(--rb-shiny-base);
+  background-image: linear-gradient(
+    var(--rb-shiny-angle),
+    var(--rb-shiny-base) 0%,
+    var(--rb-shiny-base) 38%,
+    var(--rb-shiny-shine) 50%,
+    var(--rb-shiny-base) 62%,
+    var(--rb-shiny-base) 100%
+  );
+  background-size: 260% 100%;
+  background-position: 100% 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Two names, so a replay restarts the animation. */
+.rb-shiny-text[data-run='a'] {
+  animation: rb-shine-a var(--rb-shiny-speed) cubic-bezier(0.45, 0, 0.25, 1) var(--rb-shiny-delay) 1 both;
+}
+.rb-shiny-text[data-run='b'] {
+  animation: rb-shine-b var(--rb-shiny-speed) cubic-bezier(0.45, 0, 0.25, 1) var(--rb-shiny-delay) 1 both;
+}
+@keyframes rb-shine-a {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+@keyframes rb-shine-b {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rb-shiny-text[data-run] {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .rb-shiny-text {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+@media print {
+  .rb-shiny-text {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: inherit;
+  }
+}

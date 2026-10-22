@@ -185,7 +185,7 @@
     "/readyz": {
       "get": {
         "summary": "Readyz",
-        "description": "Readiness for load balancers and deploy scripts (FR-12.30, ADR 0070): 200 `ready` or `degraded` while requests can\nbe answered, 503 `not_ready` when the ledger cannot be written or no teacher can answer. The probes run on their own\ntwo threads, never the request pool, each awaited at most 2 s and reused for 15 s (`readiness.Readiness`). Public;\nthe answer names states, statuses and exception classes, never URLs, keys or messages. A 503 here is an answer, not a\nfailed request: it writes no failures row, however often a load balancer asks.",
+        "description": "Readiness for load balancers and deploy scripts: 200 `ready` or `degraded` while requests can\nbe answered, 503 `not_ready` when the ledger cannot be written or no teacher can answer. The probes run on their own\ntwo threads, never the request pool, each awaited at most 2 s and reused for 15 s (`readiness.Readiness`). Public;\nthe answer names states, statuses and exception classes, never URLs, keys or messages. A 503 here is an answer, not a\nfailed request: it writes no failures row, however often a load balancer asks.",
         "operationId": "readyz_readyz_get",
         "responses": {
           "200": {
@@ -380,7 +380,7 @@
     "/v1/chat/completions": {
       "post": {
         "summary": "Chat",
-        "description": "Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the key's or the\nclient IP's requests a minute (`_rate`: 429), the body read and counted (413 for a chunked body over the limit), the\nin-flight caps (`_hold`: 503 at the gateway's, 429 at the key's), the Idempotency-Key and JSON (400), a stored answer\nfor that key (sent again at once, ADR 0071), request validation (400, including `X-Ratchet-Store`), the model (404\nunder RATCHET_MODEL_POLICY=strict), the task (400 unknown, 403 not allowed for the key), the daily request quota\n(429), the US dollar budgets (429), then the cascade. A refused request writes no ledger row and uses no quota or\nbudget, and neither does a replay; past the rate it has taken its key's (or IP's) token. The in-flight slots are\ntaken only once the body is in, so a client that trickles its body holds none. Everything after reading the body\nruns in a worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks\nthe event loop.",
+        "description": "Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the key's or the\nclient IP's requests a minute (`_rate`: 429), the body read and counted (413 for a chunked body over the limit), the\nin-flight caps (`_hold`: 503 at the gateway's, 429 at the key's), the Idempotency-Key and JSON (400), a stored answer\nfor that key (sent again at once), request validation (400, including `X-Ratchet-Store`), the model (404\nunder RATCHET_MODEL_POLICY=strict), the task (400 unknown, 403 not allowed for the key), the daily request quota\n(429), the US dollar budgets (429), then the cascade. A refused request writes no ledger row and uses no quota or\nbudget, and neither does a replay; past the rate it has taken its key's (or IP's) token. The in-flight slots are\ntaken only once the body is in, so a client that trickles its body holds none. Everything after reading the body\nruns in a worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks\nthe event loop.",
         "operationId": "chat_v1_chat_completions_post",
         "parameters": [
           {
@@ -764,7 +764,7 @@
     "/v1/ratchet/no-train": {
       "post": {
         "summary": "No Train Add",
-        "description": "Register an end user (`{\"end_user\": \"<user or safety_identifier>\"}`) as no-train: from now on that user's\nrequests are answered as usual but never stored (FR-13.2), whether a request names the user in `user` or in\n`safety_identifier`. Only the HMAC is kept, and it is not returned: the endpoint must not become a way to compute\nhashes. Open where chat completions are (an opt-out only removes storage); an admin may name a `client`, or\nregister the user for every client, also those added later (the every-client scope). Whether the end user was\nregistered before (`created`) is told to an API key or an admin key only: without keys anyone may call this.",
+        "description": "Register an end user (`{\"end_user\": \"<user or safety_identifier>\"}`) as no-train: from now on that user's\nrequests are answered as usual but never stored, whether a request names the user in `user` or in\n`safety_identifier`. Only the HMAC is kept, and it is not returned: the endpoint must not become a way to compute\nhashes. Open where chat completions are (an opt-out only removes storage); an admin may name a `client`, or\nregister the user for every client, also those added later (the every-client scope). Whether the end user was\nregistered before (`created`) is told to an API key or an admin key only: without keys anyone may call this.",
         "operationId": "no_train_add_v1_ratchet_no_train_post",
         "parameters": [
           {
@@ -896,7 +896,7 @@
     "/v1/ratchet/examples": {
       "delete": {
         "summary": "Erase Examples",
-        "description": "Erase the stored examples of one of the caller's end users (`{\"end_user\": \"<user or safety_identifier>\"}`, as\nfor no-train; optional `reason` and `dry_run`, default false): their text goes for good, their hashes are never\nstored again, and the end user's hash is cleared from its request rows (FR-13.3). An API key erases its own end\nusers; an admin key a named client's, or with no `client` every client's (each configured key, every scope the\nledger holds end users in, and the keyless one). Open where chat completions are, like registering no-train: it\nonly removes data. A keyless caller (API keys off) gets the counts as null, so the endpoint cannot tell anyone\nwhether an identifier had stored examples. The end user is read from the body only: a URL with `end_user` is a 400,\nbecause access logs keep URLs.",
+        "description": "Erase the stored examples of one of the caller's end users (`{\"end_user\": \"<user or safety_identifier>\"}`, as\nfor no-train; optional `reason` and `dry_run`, default false): their text goes for good, their hashes are never\nstored again, and the end user's hash is cleared from its request rows. An API key erases its own end\nusers; an admin key a named client's, or with no `client` every client's (each configured key, every scope the\nledger holds end users in, and the keyless one). Open where chat completions are, like registering no-train: it\nonly removes data. A keyless caller (API keys off) gets the counts as null, so the endpoint cannot tell anyone\nwhether an identifier had stored examples. The end user is read from the body only: a URL with `end_user` is a 400,\nbecause access logs keep URLs.",
         "operationId": "erase_examples_v1_ratchet_examples_delete",
         "parameters": [
           {
@@ -1608,7 +1608,7 @@
     "/ratchet/stats": {
       "get": {
         "summary": "Stats",
-        "description": "Everything the dashboard shows. Computed at most once per RATCHET_STATS_TTL_S (live mode: 2 s) by one caller at a\ntime (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests. A\nscrubbed read (`_scrubbed`: by default an anonymous reader of a public live dashboard) gets a scrubbed copy, with\nclient pseudonyms and no URLs or error messages in the events (ADR 0061).",
+        "description": "Everything the dashboard shows. Computed at most once per RATCHET_STATS_TTL_S (live mode: 2 s) by one caller at a\ntime (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests. A\nscrubbed read (`_scrubbed`: by default an anonymous reader of a public live dashboard) gets a scrubbed copy, with\nclient pseudonyms and no URLs or error messages in the events.",
         "operationId": "stats_ratchet_stats_get",
         "responses": {
           "200": {
@@ -1631,7 +1631,7 @@
     "/ratchet/requests/{request_id}": {
       "get": {
         "summary": "Request Lookup",
-        "description": "One request's metadata and failures (`_lookup`), whoever sent it. Read like /ratchet/stats; a scrubbed read gets\nclient pseudonyms (ADR 0061).",
+        "description": "One request's metadata and failures (`_lookup`), whoever sent it. Read like /ratchet/stats; a scrubbed read gets\nclient pseudonyms.",
         "operationId": "request_lookup_ratchet_requests__request_id__get",
         "parameters": [
           {
@@ -1773,7 +1773,7 @@
     "/ratchet/kpis": {
       "get": {
         "summary": "Kpi",
-        "description": "PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, each with its value, target, whether it is\nmet (None when there is not enough data yet) and the counts behind it, computed from the ledger as in the simulator.\nSM-1 to SM-3 and NFR-1 use the last `days` ledger days with traffic (default RATCHET_KPI_WINDOW_DAYS). Public, like\n/ratchet/stats; `simulated` is true in mock mode, where every number comes from mock models.",
+        "description": "The success metrics and the latency target, each with its value, target, whether it is\nmet (None when there is not enough data yet) and the counts behind it, computed from the ledger as in the simulator.\nThe first three metrics and the latency target use the last `days` ledger days with traffic (default RATCHET_KPI_WINDOW_DAYS). Public, like\n/ratchet/stats; `simulated` is true in mock mode, where every number comes from mock models.",
         "operationId": "kpi_ratchet_kpis_get",
         "parameters": [
           {
@@ -1824,7 +1824,7 @@
     "/ratchet/drift": {
       "get": {
         "summary": "Drift",
-        "description": "The label-free drift monitor (FR-16.6, ADR 0032): its threshold, the false-alarm bound per stream and across\nevery stream it holds, and each (version, task) stream's test martingale with its trajectory; `version` narrows the\nstreams to one version. Read-only: the gateway feeds the monitor after every request.",
+        "description": "The label-free drift monitor: its threshold, the false-alarm bound per stream and across\nevery stream it holds, and each (version, task) stream's test martingale with its trajectory; `version` narrows the\nstreams to one version. Read-only: the gateway feeds the monitor after every request.",
         "operationId": "drift_ratchet_drift_get",
         "parameters": [
           {
@@ -1875,7 +1875,7 @@
     "/ratchet/bom": {
       "get": {
         "summary": "Bom",
-        "description": "Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard\nAPI, or by anyone with RATCHET_PUBLIC_BOM=1 (ADR 0061).",
+        "description": "Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard\nAPI, or by anyone with RATCHET_PUBLIC_BOM=1.",
         "operationId": "bom_ratchet_bom_get",
         "responses": {
           "200": {
@@ -1898,7 +1898,7 @@
     "/ratchet/redact": {
       "post": {
         "summary": "Redact Preview",
-        "description": "Show what the redactor would store for a piece of text: in the gateway's style (RATCHET_REDACT_STYLE) or\n`?style=` (ADR 0082). Nothing is logged or stored. The endpoint is public, so the detector plugin, which may be an\nNER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key; anyone else\ngets the patterns alone (`plugin_skipped`).",
+        "description": "Show what the redactor would store for a piece of text: in the gateway's style (RATCHET_REDACT_STYLE) or\n`?style=`. Nothing is logged or stored. The endpoint is public, so the detector plugin, which may be an\nNER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key; anyone else\ngets the patterns alone (`plugin_skipped`).",
         "operationId": "redact_preview_ratchet_redact_post",
         "parameters": [
           {
@@ -2059,7 +2059,7 @@
     "/ratchet/versions/{vid}/certificate": {
       "get": {
         "summary": "Version Certificate",
-        "description": "What a version's golden evals certify about the answers it serves (FR-16.3, ADR 0026): the certificate signed in\nits BOM at training time, the one from the latest re-score (`current`; a live version is re-scored every training\nnight), the release gate's evidence from its audits, and what every certificate assumes. Check the signed numbers\nwith `python -m ratchet.stats check`.",
+        "description": "What a version's golden evals certify about the answers it serves: the certificate signed in\nits BOM at training time, the one from the latest re-score (`current`; a live version is re-scored every training\nnight), the release gate's evidence from its audits, and what every certificate assumes. Check the signed numbers\nwith `python -m ratchet.stats check`.",
         "operationId": "version_certificate_ratchet_versions__vid__certificate_get",
         "parameters": [
           {
@@ -2239,7 +2239,7 @@
       },
       "delete": {
         "summary": "Delete Task",
-        "description": "Remove an API task or an auto task (from a response_format schema, ADR 0042, or a system prompt with\nRATCHET_AUTO_TASK=system_prompt, ADR 0048), which frees its place under RATCHET_MAX_AUTO_TASKS. Its stored examples\nstay, for provenance; requests that name it then get the unknown-task policy (RATCHET_UNKNOWN_TASKS), and a request\nwith its schema or system prompt makes it again while there is room.",
+        "description": "Remove an API task or an auto task (from a response_format schema, or a system prompt with\nRATCHET_AUTO_TASK=system_prompt), which frees its place under RATCHET_MAX_AUTO_TASKS. Its stored examples\nstay, for provenance; requests that name it then get the unknown-task policy (RATCHET_UNKNOWN_TASKS), and a request\nwith its schema or system prompt makes it again while there is room.",
         "operationId": "delete_task_ratchet_tasks__name__delete",
         "parameters": [
           {
@@ -2459,7 +2459,7 @@
     "/ratchet/admin/export/{kind}": {
       "get": {
         "summary": "Admin Export",
-        "description": "One table as NDJSON (`privacy.export_lines`, FR-13.5): `examples` (those that still have their text, with their\nprovenance: teacher, license, license URL, hash, split, seen, redactions, clients), `requests`, `versions` (with\ntheir BOMs as stored), `events` or `erasures` (with their items). Filters: `task`, `split`, `since` (epoch seconds or\nan ISO 8601 date) and `client`, where the kind has them (400 otherwise). Needs an admin key, like the other\nmanagement calls. End-user hashes are left out; API keys are never stored.",
+        "description": "One table as NDJSON (`privacy.export_lines`): `examples` (those that still have their text, with their\nprovenance: teacher, license, license URL, hash, split, seen, redactions, clients), `requests`, `versions` (with\ntheir BOMs as stored), `events` or `erasures` (with their items). Filters: `task`, `split`, `since` (epoch seconds or\nan ISO 8601 date) and `client`, where the kind has them (400 otherwise). Needs an admin key, like the other\nmanagement calls. End-user hashes are left out; API keys are never stored.",
         "operationId": "admin_export_ratchet_admin_export__kind__get",
         "parameters": [
           {
@@ -2596,7 +2596,7 @@
     "/ratchet/cost": {
       "get": {
         "summary": "Cost",
-        "description": "The cost report (`ratchet.cost.cost_report`): savings per token and by GPU-hours paid, the break-even volume, the\ncrossover with the hosted fallback, observed utilization and a recommendation, for every day or the last `days`\nledger days. Read like /ratchet/stats (ADR 0061).",
+        "description": "The cost report (`ratchet.cost.cost_report`): savings per token and by GPU-hours paid, the break-even volume, the\ncrossover with the hosted fallback, observed utilization and a recommendation, for every day or the last `days`\nledger days. Read like /ratchet/stats.",
         "operationId": "cost_ratchet_cost_get",
         "parameters": [
           {
@@ -2724,7 +2724,7 @@
     "/ratchet/teacher": {
       "get": {
         "summary": "Teacher",
-        "description": "The teacher watch (FR-16.7, ADR 0033): the check epoch, whether Night School is frozen, the model id the teacher\nlast reported, the rule (H0's disagreement rate, alpha, the e-value threshold), the epoch's first re-tests with the\nteacher's self-agreement, its 95% interval, the agreement ceiling and the e-value, by source and by task, and the\ncontested labels. Public and read-only, like /ratchet/stats.",
+        "description": "The teacher watch: the check epoch, whether Night School is frozen, the model id the teacher\nlast reported, the rule (H0's disagreement rate, alpha, the e-value threshold), the epoch's first re-tests with the\nteacher's self-agreement, its 95% interval, the agreement ceiling and the e-value, by source and by task, and the\ncontested labels. Public and read-only, like /ratchet/stats.",
         "operationId": "teacher_ratchet_teacher_get",
         "responses": {
           "200": {
@@ -2747,7 +2747,7 @@
     "/ratchet/replay": {
       "get": {
         "summary": "Replay Version",
-        "description": "Replay one version's logged traffic (FR-16.5, ADR 0028): what happened (`actual`), what would have happened at\n`threshold` (default: the version's threshold now) and `audit_rate` (default: as logged), and the calibrated\nbaseline. Read-only and public, like /ratchet/stats: aggregates only, never request text.",
+        "description": "Replay one version's logged traffic: what happened (`actual`), what would have happened at\n`threshold` (default: the version's threshold now) and `audit_rate` (default: as logged), and the calibrated\nbaseline. Read-only and public, like /ratchet/stats: aggregates only, never request text.",
         "operationId": "replay_version_ratchet_replay_get",
         "parameters": [
           {
@@ -2846,7 +2846,7 @@
     "/ratchet/replay/frontier": {
       "get": {
         "summary": "Replay Frontier",
-        "description": "The cost-precision frontier of one version's logged traffic over thresholds 0.30 to 1.00, the suggested threshold\nfor `target` (advisory: an approximate interval, never applied by itself) and the money the current threshold leaves\non the table (FR-16.5, ADR 0028).",
+        "description": "The cost-precision frontier of one version's logged traffic over thresholds 0.30 to 1.00, the suggested threshold\nfor `target` (advisory: an approximate interval, never applied by itself) and the money the current threshold leaves\non the table.",
         "operationId": "replay_frontier_ratchet_replay_frontier_get",
         "parameters": [
           {
@@ -2939,7 +2939,7 @@
     "/ratchet/versions/{vid}/proof": {
       "post": {
         "summary": "Version Proof",
-        "description": "Whether an example is in version `vid`'s committed training (or golden) set, with an O(log n) membership or\nnon-membership proof against the root its signed BOM carries (FR-16.4, ADR 0027). The body names the example by\n`key` (its hash) or as the chat request it came from (`task`, `messages`, and any other `/v1/chat/completions`\nfield), which is validated, normalised and redacted as the gateway stores it. An admin call: with guessable texts\nthe endpoint is a membership oracle for the training data. Check the answer offline with `python -m ratchet.proof\nverify`.",
+        "description": "Whether an example is in version `vid`'s committed training (or golden) set, with an O(log n) membership or\nnon-membership proof against the root its signed BOM carries. The body names the example by\n`key` (its hash) or as the chat request it came from (`task`, `messages`, and any other `/v1/chat/completions`\nfield), which is validated, normalised and redacted as the gateway stores it. An admin call: with guessable texts\nthe endpoint is a membership oracle for the training data. Check the answer offline with `python -m ratchet.proof\nverify`.",
         "operationId": "version_proof_ratchet_versions__vid__proof_post",
         "parameters": [
           {
@@ -3035,7 +3035,7 @@
     "/ratchet/versions/{vid}/heldout": {
       "get": {
         "summary": "Version Heldout",
-        "description": "The held-out certificate of version `vid` (FR-16.4, INV-3, INV-6): its golden set's leaves and, for each golden\nkey, a non-membership proof against the training root its signed BOM carries. `python -m ratchet.proof heldout`\nrebuilds the golden root from the leaves and checks every proof, so nobody has to trust that the golden rows were\nnever trained on. An admin call, like the proofs.",
+        "description": "The held-out certificate of version `vid`: its golden set's leaves and, for each golden\nkey, a non-membership proof against the training root its signed BOM carries. `python -m ratchet.proof heldout`\nrebuilds the golden root from the leaves and checks every proof, so nobody has to trust that the golden rows were\nnever trained on. An admin call, like the proofs.",
         "operationId": "version_heldout_ratchet_versions__vid__heldout_get",
         "parameters": [
           {
@@ -3111,7 +3111,7 @@
     "/ratchet/receipts": {
       "get": {
         "summary": "List Receipts",
-        "description": "The sealed savings receipts a caller may read, by day (FR-15.5, ADR 0029), after sealing every day that has\nended: an admin sees the gateway's (`global`) and every client's, an API client its own only.",
+        "description": "The sealed savings receipts a caller may read, by day, after sealing every day that has\nended: an admin sees the gateway's (`global`) and every client's, an API client its own only.",
         "operationId": "list_receipts_ratchet_receipts_get",
         "parameters": [
           {
@@ -4702,7 +4702,7 @@
     "/ratchet/teacher/ack": {
       "post": {
         "summary": "Teacher Ack",
-        "description": "Acknowledge the teacher watch (FR-6.42): a new check epoch, Night School unfrozen, and a `teacher_ack` event naming\nthe admin key (never the key). Needs an admin key; open in mock mode without admin keys, like the other management\ncalls. Check the teacher's model id first (docs/RUNBOOK.md).",
+        "description": "Acknowledge the teacher watch: a new check epoch, Night School unfrozen, and a `teacher_ack` event naming\nthe admin key (never the key). Needs an admin key; open in mock mode without admin keys, like the other management\ncalls. Check the teacher's model id first (docs/RUNBOOK.md).",
         "operationId": "teacher_ack_ratchet_teacher_ack_post",
         "parameters": [
           {
@@ -5045,7 +5045,7 @@
     "/scout/recorded": {
       "get": {
         "summary": "Scout Recorded",
-        "description": "Recorded live runs, newest first (FR-10.40): read-only, no model call, no guard budget, no ledger row.",
+        "description": "Recorded live runs, newest first: read-only, no model call, no guard budget, no ledger row.",
         "operationId": "scout_recorded_scout_recorded_get",
         "responses": {
           "200": {
@@ -5111,7 +5111,7 @@
     "/scout/status": {
       "get": {
         "summary": "Scout Status",
-        "description": "The guard's state, judge access and search credits (ADR 0120), and which model answers student calls (FR-7.40),\nso the page labels each call without a stats call: a step whose `model` is `fallback_student` came from the hosted\nfallback, not our adapter.",
+        "description": "The guard's state, judge access and search credits, and which model answers student calls,\nso the page labels each call without a stats call: a step whose `model` is `fallback_student` came from the hosted\nfallback, not our adapter.",
         "operationId": "scout_status_scout_status_get",
         "responses": {
           "200": {

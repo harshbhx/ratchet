@@ -1,156 +1,190 @@
 /*
-  Diagrams. Mermaid renders in the browser (astro-mermaid, bundled, no CDN) with its default or dark theme picked
-  from data-theme; the rules below repaint it in the site's neutral tokens so diagrams match the page in both modes.
-  Mermaid writes id-scoped styles into each SVG, hence !important. Brand colours (owned blue, rented orange) are kept
-  for the hand-drawn SVG components, where they carry meaning.
+  Diagrams. Every diagram on the site is a ```mermaid block, rendered in the browser by astro-mermaid from a bundled copy
+  of Mermaid (no CDN), with the `base` theme. What is inside the SVG (node, edge, cluster, actor and state colours, and
+  the type, which Mermaid measures before it sizes a box) comes from src/config/mermaid.mjs: rules written in the
+  tokens of theme.css, so a diagram follows light and dark without a re-render. This file is the frame around it: the
+  card, an optional caption with a key, and sideways scrolling on narrow screens instead of shrinking the text.
+
+  Two ways to place a diagram in a page:
+    a bare ```mermaid block                     -> a card on its own
+    <figure class="rt-diagram"> block + <figcaption> </figure>   -> the card with a caption under a hairline
+  How to write one, and the class kit, are in docs-site/README.md ("Diagrams").
 */
 
+/* ---------- The card ---------- */
 .sl-markdown-content pre.mermaid,
 pre.mermaid {
+  display: flex !important;
+  justify-content: safe center !important;
+  align-items: flex-start !important;
   margin: 1.75rem 0 !important;
-  padding: 1.25rem 1rem !important;
+  /* 1rem at the sides leaves about 734 px of diagram in the 48rem column. */
+  padding: 1.5rem 1rem !important;
   border: 1px solid var(--rt-line) !important;
   border-radius: 1rem !important;
-  background: var(--rt-surface) !important;
-  overflow-x: auto;
-  font-family: var(--__sl-font);
-  /* `safe`: a diagram wider than the column starts at its left edge and scrolls, instead of being cut on both sides. */
-  justify-content: safe center !important;
+  color: var(--rt-ink);
+  font-family: var(--__sl-font, 'Inter Variable', ui-sans-serif, system-ui, sans-serif);
+  line-height: 1.4;
+  white-space: normal;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rt-line-strong) transparent;
+  /* Scroll shadows: a soft edge appears on the side that has more diagram to scroll to (no script). */
+  background:
+    linear-gradient(to right, var(--rt-surface) 40%, transparent) left center / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--rt-surface) 40%, transparent) right center / 2.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--rt-scroll-shade), transparent) left center / 0.9rem 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--rt-scroll-shade), transparent) right center / 0.9rem 100% no-repeat scroll,
+    var(--rt-surface) !important;
+  --rt-scroll-shade: rgb(18 18 18 / 0.14);
 }
+:root[data-theme='dark'] pre.mermaid,
+:root:not([data-theme='light']) pre.mermaid {
+  --rt-scroll-shade: rgb(0 0 0 / 0.55);
+}
+
+/* Before Mermaid has drawn it: hold the space, hide the source text. */
 pre.mermaid:not([data-processed]) {
-  color: transparent;
-  min-height: 12rem;
+  min-height: 14rem;
+  color: transparent !important;
+  font-size: 0 !important;
+  animation: none !important;
 }
+
 pre.mermaid svg {
-  font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif !important;
+  display: block;
+  flex: none;
   max-width: none !important;
   height: auto;
-  flex: none;
+  margin: 0;
+  font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  overflow: visible;
+}
+/* A label measured before the web font arrived can be a pixel wider than its box: let it show, never clip it. */
+pre.mermaid svg foreignObject {
+  overflow: visible;
 }
 
-/* Text */
-pre.mermaid svg :is(.nodeLabel, .label, .cluster-label, .label text, .nodeLabel p, .edgeLabel p) {
-  color: var(--rt-ink) !important;
-  fill: var(--rt-ink) !important;
-}
-pre.mermaid svg :is(span.edgeLabel, .edgeLabel p, .labelBkg) {
-  background-color: var(--rt-surface) !important;
-  color: var(--rt-ink-2) !important;
-}
-pre.mermaid svg .edgeLabel rect {
-  fill: var(--rt-surface) !important;
-  opacity: 1 !important;
+/* Keyboard users can scroll a wide diagram once it has focus (astro-mermaid renders into the <pre>). */
+pre.mermaid:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
-/* Flowchart and state nodes */
-pre.mermaid svg .node :is(rect, polygon, path.basic, .label-container, ellipse),
-pre.mermaid svg .node circle:not(.state-start):not(.state-end),
-pre.mermaid svg .statediagram-state :is(rect, .basic) {
-  fill: var(--rt-surface-2) !important;
-  stroke: var(--rt-line-strong) !important;
-  stroke-width: 1px !important;
-}
-pre.mermaid svg .cluster rect {
-  fill: transparent !important;
-  stroke: var(--rt-line-strong) !important;
-  stroke-dasharray: 4 3;
-  rx: 12px;
-}
-pre.mermaid svg .cluster :is(.cluster-label, .nodeLabel, span) {
-  color: var(--rt-muted) !important;
-  fill: var(--rt-muted) !important;
+/* Mermaid's own error box, if a diagram ever fails to parse: readable in both themes. */
+pre.mermaid > div[style*='color: red'] {
+  color: var(--rt-bad) !important;
+  border-color: var(--rt-bad) !important;
+  background: var(--rt-bad-soft);
+  font-size: var(--sl-text-sm);
+  white-space: pre-wrap;
 }
 
-/* Edges and arrowheads */
-pre.mermaid svg :is(.flowchart-link, .edgePath .path, .transition, path.relation) {
-  stroke: var(--rt-muted) !important;
+/* ---------- The figure: the card with a caption ---------- */
+.sl-markdown-content figure.rt-diagram {
+  margin: 1.75rem 0;
+  border: 1px solid var(--rt-line);
+  border-radius: 1rem;
+  background: var(--rt-surface);
+  overflow: hidden;
 }
-pre.mermaid svg :is(marker path, .marker, .arrowheadPath, #arrowhead path, #crosshead path) {
-  fill: var(--rt-muted) !important;
-  stroke: var(--rt-muted) !important;
+.sl-markdown-content figure.rt-diagram > pre.mermaid {
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
 }
-
-/* State diagram start and end dots */
-pre.mermaid svg :is(.state-start, .start-state, circle.state-start) {
-  fill: var(--rt-ink) !important;
-  stroke: var(--rt-ink) !important;
+.sl-markdown-content figure.rt-diagram > figcaption {
+  margin: 0;
+  border-top: 1px solid var(--rt-line);
+  padding: 0.85rem 1.15rem 0.95rem;
+  color: var(--rt-ink-2);
+  font-size: var(--sl-text-sm);
+  line-height: 1.6;
 }
-pre.mermaid svg .state-end {
-  fill: var(--rt-ink) !important;
-  stroke: var(--rt-surface) !important;
+.sl-markdown-content figure.rt-diagram > figcaption > * {
+  margin: 0;
 }
-pre.mermaid svg .end-state-outer {
-  fill: var(--rt-surface) !important;
-  stroke: var(--rt-ink) !important;
+.sl-markdown-content figure.rt-diagram > figcaption > * + * {
+  margin-top: 0.5rem;
 }
-pre.mermaid svg .end-state-inner {
-  fill: var(--rt-ink) !important;
-}
-pre.mermaid svg :is(.statediagram-cluster rect, .statediagram-cluster .inner) {
-  fill: var(--rt-surface) !important;
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg :is(.stateLabel .box, .statediagram-note rect) {
-  fill: var(--rt-surface-2) !important;
-  stroke: var(--rt-line-strong) !important;
-}
-
-/* Sequence diagrams */
-pre.mermaid svg :is(rect.actor, .actor-box, rect.actor-top, rect.actor-bottom) {
-  fill: var(--rt-surface-2) !important;
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg :is(text.actor, text.actor > tspan) {
-  fill: var(--rt-ink) !important;
+.sl-markdown-content figure.rt-diagram > figcaption strong {
+  color: var(--rt-ink);
   font-weight: 600;
 }
-pre.mermaid svg :is(.actor-line, line.actor-line) {
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg :is(.messageLine0, .messageLine1) {
-  stroke: var(--rt-muted) !important;
-}
-pre.mermaid svg :is(.messageText, .labelText, .labelText > tspan, .loopText, .loopText > tspan, .noteText, .noteText > tspan) {
-  fill: var(--rt-ink-2) !important;
-  stroke: none !important;
-}
-pre.mermaid svg :is(.note, rect.note) {
-  fill: var(--rt-owned-soft) !important;
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg :is(.labelBox) {
-  fill: var(--rt-surface-2) !important;
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg .loopLine {
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg :is(.activation0, .activation1, .activation2) {
-  fill: var(--rt-surface) !important;
-  stroke: var(--rt-line-strong) !important;
-}
-pre.mermaid svg :is(.sequenceNumber) {
-  fill: var(--rt-bg) !important;
+.sl-markdown-content figure.rt-diagram > figcaption code {
+  font-size: 0.86em;
 }
 
-/* ER and class diagrams */
-pre.mermaid svg :is(.er.entityBox, .er.attributeBoxOdd, .er.attributeBoxEven, g.classGroup rect) {
-  fill: var(--rt-surface-2) !important;
-  stroke: var(--rt-line-strong) !important;
+/* The key: one chip per kit class used in the diagram, in the caption. Colour never stands alone: each chip has a word. */
+.sl-markdown-content .rt-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  padding: 0;
+  list-style: none;
+  color: var(--rt-muted);
+  font-size: var(--sl-text-xs);
 }
-pre.mermaid svg .er.attributeBoxEven {
-  fill: var(--rt-surface) !important;
+.sl-markdown-content .rt-key > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
 }
-pre.mermaid svg :is(.er.relationshipLine) {
-  stroke: var(--rt-muted) !important;
+.sl-markdown-content .rt-key > li::before {
+  content: '';
+  flex: none;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 0.22rem;
+  border: 1.5px solid var(--rt-line-strong);
+  background: var(--rt-surface-2);
 }
-pre.mermaid svg :is(.er.entityLabel, .er.relationshipLabel) {
-  fill: var(--rt-ink) !important;
+.sl-markdown-content .rt-key > li.student::before { border-color: var(--rt-owned); background: var(--rt-owned-soft); }
+.sl-markdown-content .rt-key > li.teacher::before { border-color: var(--rt-rented); background: var(--rt-rented-soft); }
+.sl-markdown-content .rt-key > li.store::before { border-color: var(--rt-muted); background: var(--rt-bg-sunken); }
+.sl-markdown-content .rt-key > li.gate::before { border-color: var(--rt-ink-2); background: var(--rt-surface); transform: rotate(45deg) scale(0.85); }
+.sl-markdown-content .rt-key > li.ok::before { border-color: var(--rt-good); background: var(--rt-good-soft); }
+.sl-markdown-content .rt-key > li.danger::before { border-color: var(--rt-bad); background: var(--rt-bad-soft); }
+.sl-markdown-content .rt-key > li.pending::before { border-color: var(--rt-warn); border-style: dashed; background: var(--rt-warn-soft); }
+.sl-markdown-content .rt-key > li.outline::before { border-color: var(--rt-muted); border-style: dashed; background: var(--rt-surface); }
+.sl-markdown-content .rt-key > li.edge-main::before,
+.sl-markdown-content .rt-key > li.edge-optional::before {
+  width: 1.4rem;
+  height: 0;
+  border-radius: 0;
+  border-width: 2px 0 0;
+  border-color: var(--rt-ink-2);
+  background: none;
 }
-pre.mermaid svg .er.relationshipLabelBox {
-  fill: var(--rt-surface) !important;
-  opacity: 1 !important;
+.sl-markdown-content .rt-key > li.edge-optional::before {
+  border-top-style: dashed;
+  border-color: var(--rt-muted);
+}
+
+/* On a phone most diagrams are wider than the screen: say so once, at the top of the figure. */
+.sl-markdown-content figure.rt-diagram::before {
+  content: 'Scroll sideways to see the whole diagram';
+  display: none;
+  padding: 0.6rem 0.9rem 0;
+  color: var(--rt-muted);
+  font-size: var(--sl-text-xs);
+}
+
+@media (max-width: 40rem) {
+  .sl-markdown-content figure.rt-diagram::before {
+    display: block;
+  }
+  .sl-markdown-content pre.mermaid,
+  pre.mermaid {
+    padding: 1rem 0.75rem !important;
+  }
+  .sl-markdown-content figure.rt-diagram > figcaption {
+    padding: 0.75rem 0.9rem 0.85rem;
+  }
 }
 
 /* Hand-drawn SVG figures (src/components/diagrams/*). */

@@ -1,0 +1,135 @@
+---
+title: Results
+description: What the text-to-SQL adapter scored on databases it never saw, how to read the numbers, and how the simulation numbers differ from them.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+import Summary from '../../../components/Summary.astro';
+import Eli10 from '../../../components/Eli10.astro';
+import SqlResults from '../../../components/SqlResults.astro';
+
+<Summary>This page shows what the text-to-SQL adapter measured on an exam of databases it never trained on, read straight from the run's results file, and keeps those numbers apart from the simulation numbers used elsewhere in these docs.</Summary>
+
+<Eli10>
+
+A report card is only useful if you know what test it came from. Here the test is a set of questions about databases the student has never opened. The score is "how often does the student's query return the same rows as the teacher's query".
+
+Every score comes with a range, like "somewhere between 64% and 82%". A small exam gives a wide range. That is not a flaw in the report. It is the honest size of the doubt.
+
+</Eli10>
+
+## The adapter's results
+
+<SqlResults />
+
+## How it really works
+
+<Steps>
+
+1. **A run ends with a `results.json`.** `measure_adapter.py report` reads the raw answers and writes every number into that file, with the SHA-256 of each input file.
+
+2. **The file is copied into the docs site.** The site reads `src/data/sql-results.json` when it is built, so no number on this page is typed by hand. If the file says the run is pending, the panel above says so.
+
+3. **`verify` recomputes it.** Anyone with the raw answers, the exam and the exam databases can run `measure_adapter.py verify` and get `OK` or a `FAIL:` line. See [Proof you can run](/guides/proof/).
+
+</Steps>
+
+```mermaid
+flowchart LR
+  RAW["raw.jsonl<br/>teacher, base and adapter answers"] --> REP["measure_adapter.py report<br/>(CPU)"]
+  GOLD["golden.jsonl and dbs.json<br/>the exam and its databases"] --> REP
+  REP --> RES["results.json<br/>numbers and SHA-256 of the inputs"]
+  RES --> SITE["docs-site/src/data/sql-results.json"]
+  SITE --> PAGE["This page, at build time"]
+  RAW --> VER["measure_adapter.py verify"]
+  GOLD --> VER
+  RES --> VER
+  VER --> OUT{"Every number recomputed and equal?"}
+  OUT -->|"yes"| OK["OK"]
+  OUT -->|"no"| BAD["FAIL: names the file or the numbers that differ"]
+```
+
+**Reading this diagram.** The top row makes the numbers and the bottom row checks them, and both start from the same three files. The page is fed from the results file by a build step, not by hand. The check at the end does not trust the results file at all: it throws it away, recomputes everything from the raw answers and compares.
+
+## How to read the numbers
+
+- **Match with the teacher** is execution match: the student's query and the teacher's query return the same rows on the same database. It is not "the answer is right".
+- **The 95% range** is a Wilson interval. If the exam were drawn again many times, about 19 of 20 such ranges would contain the true rate. With a small exam it is wide, and two bars whose ranges overlap should not be called different.
+- **Base model against adapter** is the point of the work. Both answer the same questions with the same prompt and the same limits. The gap is what the adapter added.
+- **The split by difficulty and by industry** shows where the adapter helps. Each cell has few questions, so read the ranges before the bars. "Industry never seen in training" is the fairest test of whether it learned SQL or memorised.
+- **Coverage and precision when it answers** describe the confidence gate. Coverage is the share of questions the student answers on its own. Precision is how often those answers match the teacher. A higher threshold raises precision and lowers coverage.
+- **The estimated cost** is an estimate: token counts are measured, the prices are inputs (Nemotron 3 Ultra at $1 and $3 per million tokens in and out, and a student price you set), and no student endpoint was run, so no GPU-hour bill is in it. See [Cost and savings](/guides/cost-and-savings/).
+- **The data is synthetic.** The teacher wrote the databases and the questions. These numbers say how well the adapter copies the teacher on queries that run, not how well it serves your real users.
+
+<Aside type="caution" title="What this page cannot tell you">
+It cannot tell you how the adapter does on your schema, in another SQL dialect, or on questions a person would phrase badly. Run your own held-out questions through `measure_adapter.py` to find out.
+</Aside>
+
+## Simulation numbers are a different thing
+
+Elsewhere in these docs you will see numbers such as "69% saved per token". Those come from **mock models** in the simulator (`python -m sim.simulate`). They show that the loop works: the student starts at zero share of traffic, takes over as nights pass, a corrupted version is rolled back, and a launch day sends new questions to the teacher. They say nothing about how good a real model is.
+
+| | The adapter results above | The simulation |
+|---|---|---|
+| Models | A real student and a real teacher | Mock models with scripted behaviour |
+| Data | Synthetic databases, every SQL executed | Synthetic support tickets |
+| Measures | Execution match on unseen databases | Student share, escalations, audit agreement, cost |
+| Reproduce | `measure_adapter.py verify` | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` (seed 7) |
+| Shown as | Measured | Always labelled simulation |
+
+The reference run's headline figures are on the [cost page](/guides/cost-and-savings/#what-it-looks-like-in-the-simulation): student share 0% on day 1 and 98% on day 3, a corrupted version 3 rolled back on day 4, and a per-token saving of 69% over ten days that turns into a loss by GPU-hours at that volume. These are simulation outputs.
+
+```mermaid
+flowchart TD
+  subgraph REAL["Measured on real models"]
+    A1["Exam of unseen databases"] --> A2["Execution match, base vs adapter"]
+    A2 --> A3["Coverage and precision of the gate"]
+  end
+  subgraph SIM["Simulation with mock models"]
+    B1["Synthetic tickets, 10 days"] --> B2["Loop behaviour: nights, release, rollback"]
+    B2 --> B3["Cost in a pinned reference run"]
+  end
+  A3 --> Q["Is the adapter good?"]
+  B3 --> Q2["Does the system behave as designed?"]
+```
+
+**Reading this diagram.** The two boxes answer two different questions. The measured side tells you about model quality and is the only side that can support a claim about the adapter. The simulation side tests the machinery around the model and never claims model quality. Mixing them would make the simulation's tidy percentages look like a result.
+
+## For engineers
+
+| What | Where |
+|---|---|
+| The panel | `docs-site/src/components/SqlResults.astro`, reads `docs-site/src/data/sql-results.json` |
+| Layout test data | `docs-site/src/data/sql-results.sample.json` (made up, never shown unless copied over, and then bannered `SAMPLE DATA`) |
+| Feed a real run | `cp run/out/results.json docs-site/src/data/sql-results.json`, then rebuild |
+| The numbers' code | `measure_adapter.py`: `agreement`, `wilson`, `calibrate`, `build_report` |
+| Simulation | `python -m sim.simulate`, `make reference`; see the repository's `docs/TESTING.md` |
+
+## Common questions
+
+### The panel says results are pending. Is something broken?
+
+No. It means the training run has not produced a `results.json` yet. Nothing on the page is a stand-in for it.
+
+### Why not just show one accuracy number?
+
+One number hides the sample size and the slices. The range shows how much to trust it, and the slice by unseen industry shows whether it generalises.
+
+### Why is the exam only partly used for scoring?
+
+Half of the exam rows set the confidence threshold and the other half grade it. The comparison between the base model and the adapter is also scored on the graded half, so both are measured on the same questions.
+
+### Can I check these numbers without a GPU?
+
+Yes. Scoring and `verify` run on a CPU from the raw answers. Only generating the raw answers needs a GPU.
+
+### Are the simulation numbers a forecast?
+
+No. They come from mock models and a pinned seed. Use them to understand how the loop behaves, not to predict savings.
+
+## Related
+
+- [A text-to-SQL adapter you can check](/guides/text-to-sql/)
+- [Proof you can run](/guides/proof/)
+- [Cost and savings](/guides/cost-and-savings/)
+- [Evidence you can check](/guides/evidence/)

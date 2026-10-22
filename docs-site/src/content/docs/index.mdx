@@ -4,17 +4,19 @@ description: Ratchet is an OpenAI-compatible gateway that turns your traffic int
 template: splash
 editUrl: false
 tableOfContents: false
+head:
+  - tag: title
+    content: 'Ratchet docs: rent intelligence today, own it tomorrow'
 hero:
   layout: split-left
   title: Rent intelligence today. Own it tomorrow.
-  tagline: Ratchet is an OpenAI-compatible gateway. A small student model answers first, the teacher answers when the student is unsure, and every night the student learns from the teacher's answers. You end up owning the LoRA adapter and its signed training lineage, learned only from teachers whose license allows it.
+  tagline: <strong>Ratchet is an OpenAI-compatible gateway.</strong> A small student model answers first, the teacher answers when the student is unsure, and every night the student learns from the teacher's answers. You end up owning the LoRA adapter and its signed training lineage, learned only from teachers whose license allows it.
   announcement:
-    text: Built on Nebius and NVIDIA open models
+    text: Built on NVIDIA Nemotron and Nebius
     link: /guides/for-judges/
   actions:
     - text: Start here
       link: /guides/what-is-ratchet/
-      icon: right-arrow
       variant: default
     - text: Quickstart
       link: /guides/quickstart/
@@ -22,134 +24,117 @@ hero:
     - text: For judges
       link: /guides/for-judges/
       variant: ghost
-  image:
-    html: |
-      <svg class="rt-svg rt-hero-loop" viewBox="0 0 440 400" role="img" aria-labelledby="hero-loop-title hero-loop-desc">
-        <title id="hero-loop-title">The Ratchet loop</title>
-        <desc id="hero-loop-desc">Four steps in a loop: the student answers first; the teacher answers when the student is unsure; the teacher's answers are recorded with their license; every night a new student is trained and released only through the gates. The loop turns one way: a bad release is rolled back.</desc>
-        <circle cx="220" cy="200" r="132" class="rt-hero-ring"></circle>
-        <path class="rt-hero-arc owned" d="M 220 68 A 132 132 0 0 1 352 200"></path>
-        <path class="rt-hero-arc rented" d="M 352 200 A 132 132 0 0 1 220 332"></path>
-        <path class="rt-hero-arc neutral" d="M 220 332 A 132 132 0 0 1 88 200"></path>
-        <path class="rt-hero-arc neutral" d="M 88 200 A 132 132 0 0 1 220 68"></path>
-        <polygon class="head-owned" points="317.6,110.9 303.8,106.3 313.0,97.1"></polygon>
-        <polygon class="head-rented" points="309.1,297.6 313.7,283.8 322.9,293.0"></polygon>
-        <polygon class="head" points="122.4,289.1 136.2,293.7 127.0,302.9"></polygon>
-        <polygon class="head" points="130.9,102.4 126.3,116.2 117.1,107.0"></polygon>
-        <g transform="translate(220 200)">
-          <rect x="-46" y="-46" width="92" height="92" rx="22" class="rt-hero-mark-bg"></rect>
-          <g transform="translate(0 3)">
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(0)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(36)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(72)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(108)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(144)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(180)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(216)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(252)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(288)"></path>
-            <path d="M0 -26 L7 -19 L0 -18 Z" class="rt-hero-mark" transform="rotate(324)"></path>
-            <circle r="18.5" class="rt-hero-mark"></circle>
-            <circle r="7" class="rt-hero-mark-bg"></circle>
-          </g>
-          <path d="M 24 -33 L 11 -16" class="rt-hero-pawl"></path>
-          <circle cx="24" cy="-33" r="4" class="rt-hero-pawl-dot"></circle>
-        </g>
-        <g class="rt-hero-node" transform="translate(220 40)">
-          <rect x="-92" y="-26" width="184" height="52" rx="12" class="rt-hero-under"></rect>
-          <rect x="-92" y="-26" width="184" height="52" rx="12" class="owned"></rect>
-          <text class="t" text-anchor="middle" y="-3">Student answers first</text>
-          <text class="tm owned-t" text-anchor="middle" y="15">Nano + your adapter</text>
-        </g>
-        <g class="rt-hero-node" transform="translate(352 200)">
-          <rect x="-76" y="-26" width="152" height="52" rx="12" class="rt-hero-under"></rect>
-          <rect x="-76" y="-26" width="152" height="52" rx="12" class="rented"></rect>
-          <text class="t" text-anchor="middle" y="-3">Teacher if unsure</text>
-          <text class="tm rented-t" text-anchor="middle" y="15">Ultra, rented</text>
-        </g>
-        <g class="rt-hero-node" transform="translate(220 360)">
-          <rect x="-96" y="-26" width="192" height="52" rx="12" class="rt-hero-under"></rect>
-          <rect x="-96" y="-26" width="192" height="52" rx="12" class="box-plain"></rect>
-          <text class="t" text-anchor="middle" y="-3">Recorded with its license</text>
-          <text class="tm" text-anchor="middle" y="15">teacher answers only</text>
-        </g>
-        <g class="rt-hero-node" transform="translate(88 200)">
-          <rect x="-76" y="-26" width="152" height="52" rx="12" class="rt-hero-under"></rect>
-          <rect x="-76" y="-26" width="152" height="52" rx="12" class="box-plain"></rect>
-          <text class="t" text-anchor="middle" y="-3">Trained each night</text>
-          <text class="tm" text-anchor="middle" y="15">released through gates</text>
-        </g>
-      </svg>
 ---
 
-import { Card, CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
-import BigPicture from '../../components/diagrams/BigPicture.astro';
-import { ContainerSection } from 'lucode-starlight/components';
+import Section from '../../components/home/Section.astro';
+import RealToday from '../../components/home/RealToday.astro';
+import WhyStrip from '../../components/home/WhyStrip.astro';
+import LinkRow from '../../components/home/LinkRow.astro';
+import Stat from '../../components/Stat.astro';
+import StatRow from '../../components/StatRow.astro';
+import PathCard from '../../components/PathCard.astro';
+import PathGrid from '../../components/PathGrid.astro';
+import Flow from '../../components/Flow.astro';
+import FlowStep from '../../components/FlowStep.astro';
+import FadeContent from '../../components/ui/FadeContent.astro';
+import LogoLoop from '../../components/ui/LogoLoop.astro';
+import Closing from '../../components/home/Closing.astro';
 
-<ContainerSection width="lg">
+<Section id="proof" index="01" eyebrow="Facts you can check" title="Built to be checked, not taken on trust" lead="Every tile is a fact you can check in the repository. Numbers from the simulator appear elsewhere in these docs, and each one is labelled Simulation.">
+  <StatRow cols={3} label="Facts about Ratchet">
+    <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
+    <Stat value={95} suffix="%" label="held-out precision floor" note="A new adapter must reach it on golden rows it never trained on." tone="owned" />
+    <Stat value="Open teachers only" label="license-clean, in code" note="A teacher's license must be on an allowlist; closed models are refused." />
+    <Stat value="Signed" label="bill of materials per adapter" note="Ed25519-signed, from the exact training and golden rows, with each teacher and license." tone="owned" />
+    <Stat value={4} count={false} label="release stages" note="Shadow, then 10%, 50% and 100% of traffic, with automatic rollback." />
+    <Stat value="Apache-2.0" label="open source" note="The gateway, Night School and the deploy kit." />
+  </StatRow>
+</Section>
 
-## Start here
+<Section id="paths" index="02" eyebrow="Where to go" title="Pick a path" lead="Short guides first, then the reference. Every guide opens with one sentence and an everyday analogy.">
+  <FadeContent distance={16}>
+    <PathGrid cols={4} label="Guides">
+      <PathCard title="Start here" href="/guides/what-is-ratchet/" icon="book" eyebrow="Overview" description="The problem, the idea, how it differs, and what is real versus simulated today." />
+      <PathCard title="Quickstart" href="/guides/quickstart/" icon="start" eyebrow="No keys" tone="neutral" description="Run the whole loop on your laptop in mock mode: no API keys, no GPU, no bill." />
+      <PathCard title="How it works" href="/guides/big-picture/" icon="loop" eyebrow="Concepts" tone="neutral" description="Every part and how they connect: one request, confidence, the ledger, Night School and the release gate." />
+      <PathCard title="Text-to-SQL adapter" href="/guides/text-to-sql/" icon="database" eyebrow="Worked example" description="A small model that writes SQLite queries, trained only on teacher answers that were run on a database." />
+      <PathCard title="Text-to-SQL adapter: results" href="/guides/results/" icon="chart" eyebrow="Measured" description="The exam on databases it never trained on: how it is scored, and what the run's results file says." />
+      <PathCard title="Host it" href="/guides/host-on-nebius/" icon="server" eyebrow="Deploy" tone="neutral" description="Every Nebius piece, step by step: the CPU VM, Token Factory, the GPU endpoint, the training job and the bucket." />
+      <PathCard title="API reference" href="/api/http/" icon="code" eyebrow="Reference" tone="neutral" description="Every HTTP route, generated from the gateway's OpenAPI schema, plus every setting and command." />
+      <PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Hackathon" tone="neutral" description="Where the demo is, what to try in five minutes, and which numbers are live and which are simulation." />
+    </PathGrid>
+  </FadeContent>
+</Section>
 
-<CardGrid>
-  <LinkCard
-    title="What is Ratchet"
-    href="/guides/what-is-ratchet/"
-    description="The problem, the idea, how it differs, and what is real versus simulated today. A two-minute read."
+<Section id="today" index="03" eyebrow="Honest status" title="What is real today" lead="What has run, what has not, and where the numbers come from.">
+  <FadeContent distance={16}>
+    <RealToday
+      asOf="Status as of Oct 22, 2026. The For judges guide keeps the full list."
+      items={[
+        { status: 'done', title: 'Teacher calls on Nebius Token Factory built the text-to-SQL training data (22 Oct)', text: 'NVIDIA Nemotron 3 Ultra answered the questions whose SQL was checked on a database. The gateway’s own live mode and the day-1 checks have not been run yet.' },
+        { status: 'done', title: 'A text-to-SQL adapter, trained on a free Colab T4', text: 'A LoRA on Nemotron 3 Nano 4B, trained from teacher answers that were run on a database. See the <a href="/guides/results/">results</a>.' },
+        { status: 'next', title: 'The student on a Nebius GPU', text: 'The Serverless Endpoint and the nightly training job are written and tested against fakes. They have not run on a Nebius GPU yet.' },
+        { status: 'sim', title: 'Day-by-day savings and releases', text: 'These curves come from mock models in the simulator, and every such number is labelled Simulation.' },
+      ]}
+    />
+  </FadeContent>
+</Section>
+
+<Section id="speeds" index="04" eyebrow="How it works" title="One loop, three speeds" lead="The same gateway runs three loops at different speeds. The student and the teacher wear the same colours on every page.">
+  <FadeContent distance={16}>
+    <Flow label="The three loops">
+      <FlowStep title="Every request" meta="milliseconds to seconds" tone="owned">
+        The student samples its answer three times. If the samples agree and the confidence reaches the version's threshold, its answer is served; if not, the teacher answers. A few served answers are audited by the teacher.
+      </FlowStep>
+      <FlowStep title="Every few minutes" meta="the release gate">
+        The gate reads the audits and moves a new version forward (shadow, then 10%, 50% and 100% of traffic) or rolls it back.
+      </FlowStep>
+      <FlowStep title="Every night" meta="Night School">
+        A fresh adapter is trained on the teacher's answers only, tested on a held-out golden set, and handed to the gate.
+      </FlowStep>
+    </Flow>
+  </FadeContent>
+</Section>
+
+<Section id="why" index="05" eyebrow="Why it matters" title="Cheaper, yours, license-clean and safe to release" tint>
+  <a slot="aside" class="rt-button rt-button--outline" href="/guides/why-it-matters/">Why it matters</a>
+  <WhyStrip
+    items={[
+      { icon: 'coin', title: 'Cost', text: 'Pay the teacher only when the student is unsure. Savings are reported per token and by GPU-hours paid, and the report says when an endpoint costs more than it saves.', href: '/guides/cost-and-savings/' },
+      { icon: 'key', title: 'Ownership', tone: 'owned', text: 'You keep the LoRA adapter and its signed training lineage. The Nano base model keeps NVIDIA’s license.', href: '/guides/evidence/' },
+      { icon: 'scale', title: 'License-clean', text: 'Only teachers whose license allows training are accepted. Each stored example records its teacher and license.', href: '/guides/licenses/' },
+      { icon: 'gate', title: 'Safe releases', text: 'A new adapter passes a held-out exam, a shadow run and a 10%, 50%, 100% canary, with automatic rollback.', href: '/guides/release-gate/' },
+    ]}
   />
-  <LinkCard
-    title="How it works"
-    href="/guides/big-picture/"
-    description="Every part and how they connect, then one request, confidence, the ledger, Night School and the release gate."
+</Section>
+
+<Section id="built-with" index="06" eyebrow="Built with" title="Open models and open tools">
+  <LogoLoop
+    label="Built with"
+    items={[
+      { label: 'NVIDIA Nemotron 3', note: 'Nano 4B, Ultra' },
+      { label: 'Nebius Token Factory', note: 'teacher' },
+      { label: 'vLLM', note: 'student server' },
+      { label: 'Hugging Face PEFT', note: 'LoRA' },
+      { label: 'TRL', note: 'training' },
+      { label: 'Transformers', note: 'models' },
+      { label: 'FastAPI', note: 'gateway' },
+      { label: 'SQLite', note: 'ledger' },
+      { label: 'Tavily', note: 'Scout search' },
+      { label: 'Starlight', note: 'these docs' },
+    ]}
   />
-  <LinkCard
-    title="Host on Nebius"
-    href="/guides/host-on-nebius/"
-    description="Every Nebius piece, step by step: the CPU VM, Token Factory, the GPU endpoint, the training job and the bucket."
+  <LinkRow
+    label="Ratchet links"
+    items={[
+      { label: 'Source on GitHub', href: 'https://github.com/harshbhx/ratchet', icon: 'repo' },
+      { label: 'Live site', href: 'https://ratchet.dualmindlab.tech', icon: 'spark' },
+      { label: 'Scout demo', href: 'https://ratchet.dualmindlab.tech/scout', icon: 'search' },
+      { label: 'Dashboard', href: 'https://ratchet.dualmindlab.tech/dashboard', icon: 'chart' },
+      { label: 'Changelog', href: 'https://github.com/harshbhx/ratchet/blob/main/CHANGELOG.md', icon: 'file' },
+      { label: 'License', href: 'https://github.com/harshbhx/ratchet/blob/main/LICENSE', icon: 'scale' },
+    ]}
   />
-  <LinkCard
-    title="For judges"
-    href="/guides/for-judges/"
-    description="Where the demo is, what is simulation and what is live, and a five-minute tour of Scout and the dashboard."
-  />
-</CardGrid>
+</Section>
 
-</ContainerSection>
-
-<ContainerSection width="lg">
-
-## The loop at a glance
-
-<BigPicture />
-
-Three loops run at different speeds:
-
-- **Every request** (milliseconds to seconds): the student samples its answer three times. If the samples agree and the confidence score reaches the version's threshold, the student's answer is served. If not, the teacher answers. A few served answers are audited by the teacher.
-- **Every few minutes**: the release gate looks at the audits and moves a new version forward (shadow, then 10%, 50% and 100% of traffic) or rolls it back.
-- **Every night**: Night School trains a fresh adapter on the teacher's answers only, tests it on a held-out golden set, and hands it to the release gate.
-
-<Aside type="caution" title="What is real today">
-The loop is built and tested offline, with mock models in a simulator. Simulation numbers in these docs come from mock models and are labelled. As of Oct 21, 2026, live mode, the GPU endpoint, the training job and the demo VM kit are written and tested against fakes, but have not run on a real Nebius account. Live numbers will come from a measured live run.
-</Aside>
-
-</ContainerSection>
-
-<ContainerSection width="lg">
-
-## API and reference
-
-<CardGrid>
-  <LinkCard title="HTTP API" href="/api/http/" description="Every route, generated from the gateway's OpenAPI schema." />
-  <LinkCard title="Environment variables" href="/api/environment/" description="Every setting with its default and where it matters." />
-  <LinkCard title="Command line" href="/api/cli/" description="Every command and Make target, with its help text." />
-  <LinkCard title="Python API" href="/api/python/" description="Embed the cascade in a Python program without HTTP." />
-</CardGrid>
-
-</ContainerSection>
-
-<ContainerSection width="lg">
-
-## Why "Ratchet"
-
-A ratchet turns only one way. Every night more of your traffic moves from the model you rent to the adapter you own, and the gates are the pawl that stops it from slipping back: a bad release is rolled back automatically.
-
-</ContainerSection>
+<Closing />

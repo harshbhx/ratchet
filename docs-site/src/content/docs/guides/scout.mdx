@@ -82,6 +82,33 @@ sequenceDiagram
   G->>D: add the run's spend
 ```
 
+**Reading this diagram.** The run is a pipeline with two fan-out stages. The guard is asked once at the start and told once at the end, and in between the gateway never calls a model without going through the cascade. Notice who answers: the planner and writer lines go straight to Ultra, while triage and reader lines try the student first. The page sees each step as soon as it finishes, which is why triage steps appear out of order.
+
+### The agents and what they pass on
+
+```mermaid
+flowchart LR
+  Q["Question"] --> PL
+  subgraph Pinned["Pinned to the teacher: never stored, never trained on"]
+    PL["Planner: research-plan"]
+    WR["Writer: research-write"]
+  end
+  subgraph Tool["A tool, not a model"]
+    SE["Searcher: Tavily or simulated"]
+  end
+  subgraph Dist["Distilled: student first, teacher when unsure"]
+    TR["Triage x up to 12: source-triage"]
+    RD["Reader x up to 6: page-read"]
+  end
+  PL -->|"3 queries"| SE
+  SE -->|"up to 12 results"| TR
+  TR -->|"relevant results"| RD
+  RD -->|"numbered facts"| WR
+  WR --> A["Answer with citations"]
+```
+
+**Reading this diagram.** The three boxes are the three kinds of call. Only the bottom box is where Ratchet's student works, and it is where most calls are: up to 18 of up to 20 in a run. Each arrow is also a size: three queries become up to twelve results, then up to six facts, then one answer. Because the pinned box is the planner and writer only, the savings a run shows are honest about the part that cannot move.
+
 In the gateway each agent call is `Ratchet.handle` in the same process. From outside, the [Scout CLI](#for-engineers) sends the same calls to `/v1/chat/completions` with an `X-Ratchet-Task` header, like any OpenAI client.
 
 ### Pinned and distilled calls, and why
@@ -98,6 +125,8 @@ flowchart TD
   E --> T["Stored as training data, with provenance"]
   SV --> AU["A random few audited by Ultra"]
 ```
+
+**Reading this diagram.** The first question decides everything: is the task pinned? A pinned call never touches the student and never reaches the training data. A distilled call is the normal cascade. Notice that both of the lower branches end with Ultra involved: either because the student was unsure, or because an audit checks it afterwards. That is how the student's quality stays measured.
 
 **Pinned** (`research-plan`, `research-write`): planning queries and writing an answer are open-ended. There are no label fields to compare, so the student and the teacher would almost never "agree", calibration would end up serving nothing, and every call would still pay for student samples. Training a 4B model on long free text would also dilute what it learns for the labelled tasks. So a pinned task goes straight to the teacher, with no student sample, audit or shadow. It is logged in the ledger like any other call, so the cost and the all-teacher baseline stay complete, but it is **never stored as a training example**. That is invariant 10. Only an operator's task spec can pin a task, never a request header.
 
@@ -145,6 +174,28 @@ Scout is the one public path on the demo that spends money, so live mode guards 
 - **An access code**: a judge sends `RATCHET_SCOUT_JUDGE_CODE` once, in the body of `POST /scout/judge`, never in a URL or header (access logs record both). The gateway keeps only its SHA-256 digest and a derived key, allows 10 attempts per IP per hour, and answers with a signed `ratchet_judge` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` in live mode, 7 days by default). Rotating the code ends every session. No refusal message hints that a code exists. The code goes in the submission's testing instructions only.
 - **Paced Tavily credits**: with `RATCHET_TAVILY_MONTHLY_CREDITS` set, every search reserves its credits first and settles them after the call. The public's allowance is spread evenly per UTC day until `RATCHET_TAVILY_PACE_UNTIL`, with a share held for judges. After Tavily answers 432 or 433 (plan or pay-as-you-go limit), searching pauses for an hour.
 
+```mermaid
+flowchart TD
+  A["Scout request in live mode"] --> J{"Valid judge cookie?"}
+  J -->|yes| JP{"P plus U below T?"}
+  J -->|no| PB{"P plus max 0, U minus J below T minus J?"}
+  JP -->|no| R1["Refused: day's budget used"]
+  PB -->|no| R2["Refused: public share used"]
+  JP -->|yes| H{"Under the IP hourly limit and run cap?"}
+  PB -->|yes| H
+  H -->|no| R3["Refused: 429"]
+  H -->|yes| CR{"Tavily credits available?"}
+  CR -->|no| NS["Run without search, labelled search unavailable"]
+  CR -->|yes| OK["Admit, write a scout_run row"]
+  OK --> RUN["Run the agents"]
+  NS --> RUN
+  RUN --> END["add_spend in a finally block, also on failure"]
+```
+
+**Reading this diagram.** T is the day's total, J the judges' reserve, P the public use so far and U the judge use so far. A visitor with the judge cookie is checked against the whole day, so the reserve is theirs. A public visitor is checked against what is left after the reserve, plus any reserve judges did not use. Credits are the last check, and failing it does not refuse the run: it only removes the search. Every admitted run ends in `add_spend`, even when it fails.
+
+A worked example (made-up round numbers, not a measurement): with a daily budget T of $0.50 and a reserve J of $0.10, the public can spend up to $0.40 before public runs are refused. If judges have used nothing, a judge can still start a run until the whole $0.50 is spent. If judges have used $0.15 (more than their reserve), the extra $0.05 counts against the public side, so public runs stop at $0.35.
+
 The guard's limits: it covers Scout only, not `/v1/chat/completions` (API keys or the Caddy guard protect that, see [Security](/guides/security/)). Many IP addresses can still use up the public share early; the judges' reserve is held back from them. And the cap is checked when a run starts, so the worst case is the cap plus the runs already in flight (a few cents each).
 
 ### When search fails
@@ -156,6 +207,18 @@ A search that fails (any HTTP or transport error, such as a revoked key's 401 or
 - The writer still answers, without (some) sources, and its step says `search_unavailable: true`. The `done` event's `search` is `{"available": false, "partial": ..., "reason": ...}`, and the page labels the run "search unavailable".
 - The planner, pinned to the teacher, ran before any search, so every admitted run makes a real Token Factory call in live mode, with or without search.
 - Failures (not credit refusals) are counted in `/scout/status` and written as a `search_error` event on the 1st, 10th, 100th and 1000th, so a broken key stays visible.
+
+### What can go wrong
+
+| Failure | What the system does | Where you see it |
+|---|---|---|
+| The question is empty, over 300 characters, or (in mock mode) not an example | The stream sends an `error` event; `POST /scout/run` answers 400 | the `error` event or status |
+| The guard refuses (budget, runs, IP hour) | Nothing starts, nothing is spent | an `error` event; 429 from `POST /scout/run` |
+| No Tavily key in live mode | 503 before any model call | `GET /scout/status` |
+| Search fails or credits run out | The run goes on, labelled search unavailable; the planner's call is still paid | `detail.unavailable`, `search_error` or `tavily_exhausted` events |
+| A model call fails mid-run | The run ends with an `error` event; the spend so far is counted | `Guard.add_spend` runs in a `finally` block |
+| The gateway restarts | Today's counters are rebuilt from `scout_run` rows | `GET /scout/status` |
+| Someone guesses the judge code | 10 attempts per IP per hour, then refused; no message says a code exists | `judge` events only for success |
 
 ### What the simulation shows
 

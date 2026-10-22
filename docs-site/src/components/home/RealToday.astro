@@ -1,0 +1,154 @@
+---
+/**
+ * "What is real today": one line per part of the system with its status (live, done, not yet, simulation), so a
+ * reader never has to guess which numbers were measured. Edit the items in index.mdx when the status changes.
+ */
+interface Item {
+  status: 'live' | 'done' | 'next' | 'sim';
+  title: string;
+  text: string;
+}
+interface Props {
+  items: Item[];
+  asOf?: string;
+}
+const WORD = { live: 'Live', done: 'Done', next: 'Not yet', sim: 'Simulation' } as const;
+const { items, asOf } = Astro.props;
+---
+
+<div class="rt-real rt-ui">
+  <ul class="rt-real__list">
+    {
+      items.map((item) => (
+        <li class={`rt-real__item rt-real__item--${item.status}`}>
+          <span class="rt-real__badge">
+            <span class="rt-real__dot" aria-hidden="true" />
+            {WORD[item.status]}
+          </span>
+          <div>
+            <p class="rt-real__title">{item.title}</p>
+            <p class="rt-real__text" set:html={item.text} />
+          </div>
+        </li>
+      ))
+    }
+  </ul>
+  {asOf && <p class="rt-real__asof">{asOf}</p>}
+</div>
+
+<style>
+  .rt-real {
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-xl);
+    background: var(--rt-surface);
+    overflow: hidden;
+  }
+  .rt-real__list {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  @media (min-width: 52rem) {
+    .rt-real__list {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .rt-real__item {
+    --tone: var(--rt-muted);
+    --tone-soft: var(--rt-surface-2);
+    display: grid;
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+    margin: 0 !important;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid var(--rt-line);
+  }
+  @media (min-width: 52rem) {
+    .rt-real__item:nth-child(odd) {
+      border-right: 1px solid var(--rt-line);
+    }
+    .rt-real__item:nth-last-child(-n + 2):nth-child(odd),
+    .rt-real__item:nth-last-child(-n + 2):nth-child(odd) + .rt-real__item {
+      border-bottom: 0;
+    }
+  }
+  .rt-real__item:last-child {
+    border-bottom: 0;
+  }
+  .rt-real__item--live {
+    --tone: var(--rt-good-ink);
+    --tone-soft: var(--rt-good-soft);
+  }
+  .rt-real__item--done {
+    --tone: var(--rt-owned-ink);
+    --tone-soft: var(--rt-owned-soft);
+  }
+  .rt-real__item--next {
+    --tone: var(--rt-muted);
+    --tone-soft: var(--rt-surface-2);
+  }
+  .rt-real__item--sim {
+    --tone: var(--rt-warn-ink);
+    --tone-soft: var(--rt-warn-soft);
+  }
+  .rt-real__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 0.4rem;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+    border-radius: 999px;
+    background: var(--tone-soft);
+    color: var(--tone);
+    font-family: var(--rt-font-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .rt-real__dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    background: currentColor;
+  }
+  .rt-real__item--next .rt-real__dot {
+    background: transparent;
+    border: 1.5px solid currentColor;
+  }
+  .rt-real .rt-real__title {
+    margin: 0;
+    color: var(--rt-ink);
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .rt-real .rt-real__text {
+    margin: 0.2rem 0 0;
+    color: var(--rt-muted);
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+  .rt-real .rt-real__text :global(a) {
+    color: var(--rt-ink-2);
+  }
+  .rt-real .rt-real__asof {
+    margin: 0;
+    padding: 0.7rem 1.25rem;
+    border-top: 1px solid var(--rt-line);
+    background: var(--rt-surface-2);
+    color: var(--rt-muted);
+    font-size: 0.78rem;
+  }
+  @media (max-width: 26rem) {
+    .rt-real__item {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+  }
+</style>

@@ -1,0 +1,72 @@
+---
+/**
+ * <Flow>: a numbered flow of <FlowStep>s, as connected cards in a row when there is room and a numbered column
+ * when there is not. `loop` adds a return line ("back to step 1") for a cycle such as Ratchet's own loop.
+ * For long, prose-heavy sequences use Starlight's <Steps>; for a click-through use <Stepper>.
+ *
+ *   <Flow loop loopLabel="Every night, again">
+ *     <FlowStep title="Student answers first" tone="owned">Nano with your adapter, sampled three times.</FlowStep>
+ *     <FlowStep title="Teacher if unsure" tone="rented">Ultra on Token Factory answers the rest.</FlowStep>
+ *     <FlowStep title="Recorded">The teacher's answer, with its license.</FlowStep>
+ *   </Flow>
+ */
+interface Props {
+  loop?: boolean;
+  loopLabel?: string;
+  label?: string;
+}
+const { loop = false, loopLabel = 'Back to step 1', label } = Astro.props;
+---
+
+<div class="rt-flow rt-ui not-content" data-loop={loop ? '' : undefined}>
+  <ol class="rt-flow__list" aria-label={label}>
+    <slot />
+  </ol>
+  {
+    loop && (
+      <p class="rt-flow__loop">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <path d="M4 12a8 8 0 0 1 13.7-5.6L20 9M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        {loopLabel}
+      </p>
+    )
+  }
+</div>
+
+<style>
+  .rt-flow {
+    container-type: inline-size;
+    margin: 1.75rem 0;
+  }
+  .rt-flow__list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: rt-flow;
+  }
+  @container (min-width: 44rem) {
+    .rt-flow__list {
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+      gap: 1.6rem;
+    }
+  }
+  .rt-flow__loop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    margin: 0.85rem 0 0;
+    padding-top: 0.75rem;
+    border-top: 1px dashed var(--rt-line-strong);
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+</style>

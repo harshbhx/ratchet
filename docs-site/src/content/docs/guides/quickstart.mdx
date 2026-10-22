@@ -24,6 +24,34 @@ Nothing in the practice kitchen tells you how good a real chef is. Every number 
 
 </Eli10>
 
+## The one-minute path
+
+You need Python 3.10 or newer and `git`. Nothing else: no keys, no GPU, no Node.
+
+```bash
+git clone https://github.com/harshbhx/ratchet.git && cd ratchet
+pip install -e ".[dev]"
+python -m sim.simulate --days 3 --requests 300      # three simulated days, about ten seconds
+RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000
+```
+
+The simulation prints a table of days, who answered, what it cost and the release log. The gateway then serves on `http://localhost:8000`. In a second terminal, send it a request with the OpenAI SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+resp = client.chat.completions.create(
+    model="ratchet",
+    messages=[{"role": "user", "content": "I was charged twice this month."}],
+    extra_headers={"X-Ratchet-Task": "ticket-triage"},
+)
+print(resp.choices[0].message.content)
+print(resp.model_extra["ratchet"]["served_by"])  # student or teacher
+```
+
+Then open `http://localhost:8000/` (the story), `/scout` (the research demo) and `/dashboard` (savings, releases, versions). Everything below explains these steps in more detail. Every number in mock mode is a simulation.
+
 ## How it really works
 
 <Steps>
@@ -253,7 +281,7 @@ The variables stay set for that PowerShell window; `Remove-Item Env:RATCHET_MOCK
 | `make demo` | `RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000` |
 | `make sim` | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` |
 | `make test` | `pytest -q`: no network, no GPU, about two minutes; real APIs are never called |
-| `make lint` | `ruff check`, `ruff format --check`, `python scripts/reqtrace.py --check` |
+| `make lint` | `ruff check`, `ruff format --check` and the repository's consistency checks |
 | `make reference` | The three pinned workloads must reproduce v0.4.0's behaviour |
 | `make web`, `make web-dev` | Rebuild the React app into `ratchet/web/dist` (needs Node), or hot reload on port 5173 against the gateway on 8000 |
 | `make clean` | Remove caches, build output, `sim_results.json` and `ratchet.db` |
@@ -299,6 +327,14 @@ Run the line `make demo` stands for with another port, for example `--port 8001`
 ### How do I go from here to real models?
 
 Run the day-1 checks with a Token Factory key, then follow [Host it on Nebius](/guides/host-on-nebius/). Live mode spends money on every request the teacher answers, so start with the guards described there.
+
+## Next steps
+
+- Send a verdict back on an answer, and see every route: the [endpoint map](/api/endpoints/).
+- Run the loop on your own tasks: [Training on your data](/guides/training-on-your-data/) and the task registry (see the [glossary](/guides/glossary/)).
+- Read the other tools you have now: [Command line](/api/cli/) and [environment variables](/api/environment/).
+- Embed the cascade in a Python program: [Python API](/api/python/).
+- Move to real models: [Host it on Nebius](/guides/host-on-nebius/).
 
 ## Related
 

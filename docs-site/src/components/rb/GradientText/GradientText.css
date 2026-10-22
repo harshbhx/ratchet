@@ -1,0 +1,70 @@
+/* Adapted from React Bits "GradientText" (MIT + Commons Clause, see ../LICENSE.md). */
+.rb-gradient-text {
+  position: relative;
+  display: inline;
+  isolation: isolate;
+}
+
+.rb-gradient-text__content {
+  background-image: var(--rb-gt-gradient);
+  background-size: 300% 100%;
+  background-position: 0% 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.rb-gradient-text[data-run] .rb-gradient-text__content {
+  animation: rb-gt-glide var(--rb-gt-duration) cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+}
+@keyframes rb-gt-glide {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0% 50%;
+  }
+}
+
+.rb-gradient-text--border {
+  display: inline-flex;
+  padding: 0.3em 0.75em;
+  border-radius: 999px;
+}
+.rb-gradient-text--border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1.5px;
+  border-radius: inherit;
+  background-image: var(--rb-gt-gradient);
+  background-size: 300% 100%;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rb-gradient-text[data-run] .rb-gradient-text__content {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .rb-gradient-text__content {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+@media print {
+  .rb-gradient-text__content {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

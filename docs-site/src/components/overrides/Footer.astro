@@ -1,0 +1,187 @@
+---
+/**
+ * The end of every doc page: "Was this page right?" with the edit and issue links, previous and next pages as
+ * cards, and a short site line (license and credits). Replaces Lucode's Footer; on splash pages Lucode's site
+ * footer shows instead.
+ */
+import { Icon } from '@astrojs/starlight/components';
+import { REPO_URL } from '../../../scripts/doc-map.mjs';
+
+const route = Astro.locals.starlightRoute;
+const { entry, editUrl, pagination } = route;
+const { prev, next } = pagination;
+const issueUrl = `${REPO_URL}/issues/new?title=${encodeURIComponent(`Docs: ${entry.data.title}`)}&body=${encodeURIComponent(
+  `Page: ${Astro.url.pathname}\n\nWhat is wrong or missing:\n`,
+)}`;
+---
+
+{
+  entry.data.template === 'doc' && (
+    <footer class="rt-page-footer">
+      <div class="rt-page-footer__edit">
+        <p class="rt-page-footer__ask">Was this page right?</p>
+        <div class="rt-page-footer__links">
+          {editUrl && (
+            <a href={editUrl.toString()}>
+              <Icon name="pencil" size="0.95rem" />
+              Edit it on GitHub
+            </a>
+          )}
+          <a href={issueUrl}>
+            <Icon name="error" size="0.95rem" />
+            Report a problem
+          </a>
+        </div>
+      </div>
+
+      {(prev || next) && (
+        <nav class="rt-page-footer__nav" aria-label="Previous and next pages">
+          {prev ? (
+            <a class="rt-page-footer__card" href={prev.href} rel="prev">
+              <span class="rt-page-footer__dir">
+                <Icon name="left-arrow" size="0.9rem" />
+                Previous
+              </span>
+              <span class="rt-page-footer__label">{prev.label}</span>
+            </a>
+          ) : (
+            <span />
+          )}
+          {next && (
+            <a class="rt-page-footer__card rt-page-footer__card--next" href={next.href} rel="next">
+              <span class="rt-page-footer__dir">
+                Next
+                <Icon name="right-arrow" size="0.9rem" />
+              </span>
+              <span class="rt-page-footer__label">{next.label}</span>
+            </a>
+          )}
+        </nav>
+      )}
+
+      <p class="rt-page-footer__site">
+        Ratchet is open source under <a href={`${REPO_URL}/blob/main/LICENSE`}>Apache-2.0</a>. Simulation numbers come from mock
+        models and are labelled. Built with Starlight, the Lucode theme and{' '}
+        <a href="https://reactbits.dev">React Bits</a> components (MIT + Commons Clause).
+      </p>
+    </footer>
+  )
+}
+
+<style>
+  .rt-page-footer {
+    margin-top: 4rem;
+  }
+  .rt-page-footer__edit {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-lg);
+    background: var(--rt-surface);
+  }
+  .rt-page-footer__ask {
+    margin: 0;
+    color: var(--rt-ink);
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .rt-page-footer__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .rt-page-footer__links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.25rem;
+    padding: 0 0.85rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 999px;
+    background: var(--rt-surface);
+    color: var(--rt-ink-2);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition:
+      background-color var(--rt-dur) ease,
+      border-color var(--rt-dur) ease,
+      color var(--rt-dur) ease;
+  }
+  .rt-page-footer__links a:hover {
+    border-color: var(--rt-muted);
+    background: var(--rt-surface-2);
+    color: var(--rt-ink);
+  }
+  .rt-page-footer__nav {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+  @media (min-width: 40rem) {
+    .rt-page-footer__nav {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .rt-page-footer__card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.95rem 1.1rem 1.05rem;
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-lg);
+    background: var(--rt-surface);
+    color: var(--rt-ink);
+    text-decoration: none;
+    transition:
+      border-color var(--rt-dur) ease,
+      transform 0.25s var(--rt-ease),
+      box-shadow 0.25s var(--rt-ease);
+  }
+  .rt-page-footer__card:hover {
+    border-color: var(--rt-line-strong);
+    box-shadow: var(--rt-shadow);
+    transform: translateY(-2px);
+  }
+  .rt-page-footer__card--next {
+    align-items: flex-end;
+    text-align: right;
+  }
+  .rt-page-footer__dir {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .rt-page-footer__label {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .rt-page-footer__site {
+    margin: 2rem 0 0;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rt-line);
+    color: var(--rt-muted);
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+  .rt-page-footer__site a {
+    color: var(--rt-ink-2);
+    text-decoration: underline;
+    text-decoration-color: var(--rt-line-strong);
+    text-underline-offset: 0.2em;
+  }
+  .rt-page-footer__site a:hover {
+    color: var(--rt-ink);
+  }
+</style>

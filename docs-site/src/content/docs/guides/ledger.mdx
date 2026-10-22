@@ -64,6 +64,8 @@ flowchart LR
 
 Every path writes the metadata row. Only the bottom path writes text, and that text is redacted first.
 
+**Reading this diagram.** Start at the left with one chat request. Four questions can send it to the "metadata only" box: the teacher never answered, an opt-out or a pinned or tool request applies, or the teacher's answer was incomplete or invalid. Only a request that passes all four reaches redaction, and only then does text enter the ledger. The last split is by a hash of the redacted text, so it never depends on any model's opinion.
+
 ### The main tables
 
 ```mermaid
@@ -91,6 +93,58 @@ flowchart LR
   NT -.->|"looked up per request"| REQ
   VER -.->|"moves logged"| EV
 ```
+
+**Reading this diagram.** Boxes are tables and arrows are the column that links them. `requests` is the busiest table and holds no text. `examples` is the only table with (redacted) text. Three tables are special: `version_leaves` and `receipts` can only be appended to, and `tombstones` remembers erased hashes so that they can never be stored again. Dotted arrows are lookups at run time rather than stored links.
+
+### The evidence tables, append-only
+
+Two tables exist so that someone else can check Ratchet's claims later. `version_leaves` holds, for each adapter, one leaf per training and golden example (the example's hash and a hash of its label, teacher, license and redaction count). The adapter's signed BOM carries the Merkle roots over those leaves, so a leaf can be proven to be in, or absent from, the set the adapter was trained on. `receipts` holds one signed savings receipt per ledger day and API client, sealed once the day is over and chained to the previous one. SQLite triggers refuse UPDATE, DELETE and a replacing INSERT on both tables, on every connection, because a changed row would silently break the roots and chains built from it. [Evidence you can check](/guides/evidence/) shows how to verify them offline.
+
+### Human labels: feedback and imports
+
+Teachers are not the only source of a stored answer. Every chat response carries `ratchet.request_id`, and the caller can send `POST /v1/ratchet/feedback` with a verdict on one of its own requests (any other id is the same 404 as an unknown one).
+
+```mermaid
+flowchart TD
+  V["Verdict on a request id"] --> K{"Verdict"}
+  K -->|correct| R1["Counts toward the task's human agreement. Nothing stored"]
+  K -->|"incorrect, no answer given"| R2["Counted only"]
+  K -->|"incorrect, with the right answer"| G{"Opt-out, pinned task, or corrections off?"}
+  G -->|yes| R3["Counted only"]
+  G -->|no| P["Check against the task spec, redact, hash"]
+  P --> S["store_label: example with provenance human, verified"]
+  I["python -m ratchet.importer file"] --> A["Attested human labels, or an open teacher's outputs"]
+  A --> P
+```
+
+**Reading this diagram.** A verdict is never a label: "correct" stores nothing, because that would be the student's own answer coming back as a training target. Only a correction, a human's own answer, can become an example, and it goes through the same checks and redaction as a teacher's answer. The importer enters at the same point with an attestation from the operator, or with an open teacher's outputs, and refuses closed-model families. A stronger label replaces a weaker one for the same prompt (teacher, then a client's correction, then an operator's import). Verdicts feed each task's human agreement and each version's human precision, which are reported and alerted on, and never promote or roll back a version.
+
+### Where each kind of data lives, and who can read it
+
+```mermaid
+flowchart LR
+  subgraph Public["Anyone with the API key"]
+    A1["Own request lookup"]
+    A2["Own receipts"]
+    A3["Own feedback"]
+  end
+  subgraph Dash["Dashboard or admin key"]
+    B1["Stats, cost, BOM, redaction preview"]
+  end
+  subgraph Adm["Admin key"]
+    C1["Erase, export, no-train for all clients"]
+    C2["Training-set proofs, all receipts"]
+  end
+  subgraph Disk["Ledger file, private"]
+    D1["requests: metadata"]
+    D2["examples: redacted text"]
+  end
+  Public --> Disk
+  Dash --> Disk
+  Adm --> Disk
+```
+
+**Reading this diagram.** The three groups on the left are access levels, from narrowest to widest. An API key sees only what it sent. The dashboard key reads aggregates and never writes. Only an admin key can export, erase or open proofs. All three read from the same private file, which is why the file and its backups must be protected as much as the keys.
 
 ### What is stored
 
@@ -153,6 +207,8 @@ Hi, I am Priya. Email [EMAIL], phone [PHONE], card [CARD], order 1234.
 
 with `redactions` = 3. The name stays: **names and street addresses are not detected yet**. That needs a named-entity model (Presidio is the planned option), which would add a large dependency and latency, so v0 uses patterns. Redaction covers message content (strings and text parts), `name`, an assistant's `refusal`, tool and function call arguments, and every string value in the stored conditions. It is **on by default**; `RATCHET_REDACT_PII=0` stores examples verbatim. You can test it on your own text with `POST /ratchet/redact` or the dashboard's **Try the redactor** box; nothing is stored by the preview.
 
+By default a placeholder is just the label (`[EMAIL]`, `RATCHET_REDACT_STYLE=label`). Extraction tasks need to know which of two addresses an answer names, so a task can ask for another style (`privacy.redact_style` in its spec, or the setting for all tasks): `numbered` writes `[EMAIL_1]` and `[EMAIL_2]`, one number per distinct value across the messages, the conditions and the answer; `surrogate` writes reserved look-alike values such as `person1@example.com`. Indian GSTINs and UPI ids are matched too (as `[GSTIN]` and `[UPI]`), and `RATCHET_REDACT_PLUGIN` (`module:function`) can add a detector for what patterns cannot find, such as names. If the plugin fails when an example is being stored, nothing is stored.
+
 Two consequences worth knowing. The example hash, the golden split and the frequent-request count are computed on the redacted text, so two requests that differ only in an email address become one example. And the student learns to write a placeholder where the teacher repeated an identifier from the request; for label tasks that does not matter, for free-text replies it can.
 
 ### Storage opt-outs and no-train end users
@@ -180,6 +236,33 @@ Opt-outs keep new data out; these remove or hand over what is there.
 - **Erasure is final.** `privacy.erase` selects by `client`, `end_user`, `hashes` or `contains` (each narrows the scope), purges the text and the end-user hash, and writes each hash to `tombstones`: `add_example` refuses it from then on, from any client. The record (`erasures`, `erasure_items`, an `erase` event) holds hashes, counts, names and a redacted reason, never text. `RATCHET_ERASURE_SHARED` decides what happens to an example another client also sent (`delete`, the default, or `keep` and unlink). Admin erasures are dry runs unless asked otherwise.
 - **Adapters are reported, never edited.** An erasure lists `affected_versions`: exactly, from a version's committed training set when it has one; otherwise every version created after the example was stored while it counted as a training row. Their signed BOMs stay as written. Ratchet cannot remove what an existing adapter memorised; the next night trains without the purged rows, and retiring an affected version is the operator's decision.
 - **Export.** `GET /ratchet/admin/export/{kind}` (admin key) or `python -m ratchet.admin export` streams NDJSON: examples that still have text with their provenance and every client that sent them, request metadata, versions with their BOMs, events, erasures. End-user hashes are left out.
+
+An erased example goes through a short life cycle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Stored: teacher answer stored, redacted
+    Stored --> Purged: retention window passes
+    Purged --> Stored: a storable duplicate arrives
+    Stored --> Erased: erase by client, end user, hashes or text
+    Purged --> Erased: erase
+    Erased --> Erased: add_example refuses the hash from any client
+```
+
+**Reading this diagram.** A purge is reversible in one way only: if the same request arrives again and may be stored, its text comes back. An erasure is not. From the moment the hash is a tombstone, no client can store it again, and the row keeps only hashes and counts. The adapters that may have learned from it are reported but their signed BOMs are never rewritten.
+
+### What can go wrong
+
+| Failure | What the system does | Where you see it |
+|---|---|---|
+| A teacher answer is cut off, empty or invalid for the task | Served, not stored | `skip_example` event, `requests.stored = 0` |
+| A placeholder breaks a structured answer | Served, not stored | `skip_example` with `invalid after redaction` |
+| The redaction plugin raises at store time | Nothing is stored for that request | `skip_example`, the request still succeeds |
+| An erased request is sent again | Served as usual, never stored | `requests.stored = 0` |
+| A name or street address is in the text | It is stored as written (not detected by patterns) | Use an opt-out, a retention window or a detector plugin |
+| Two gateway processes share one ledger | Not supported; caches and the gate are per process | Run one worker |
+| Power cut with `RATCHET_DB_SYNC=NORMAL` | The last commits may be lost, the file is intact | Use `FULL` if that matters |
+| Something tries to change a leaf or a receipt | The trigger refuses it | A SQLite error |
 
 ### SQLite, WAL and one process
 
@@ -223,6 +306,8 @@ Schema changes add the column to `SCHEMA` **and** `MIGRATIONS`; an old file is m
 | `RATCHET_DB_SYNC` | `NORMAL` | `NORMAL`: WAL with `synchronous=NORMAL`. `FULL`: rollback journal with `synchronous=FULL` |
 | `RATCHET_GOLDEN_FRACTION` | `0.10` | Share of new examples assigned to the golden split (above 0, at most 0.5) |
 | `RATCHET_REDACT_PII` | `1` | Redact before storing; `0` stores verbatim |
+| `RATCHET_REDACT_STYLE` | `label` | `label`, `numbered` or `surrogate` placeholders |
+| `RATCHET_REDACT_PLUGIN` | empty | `module:function` detector for names and addresses |
 | `RATCHET_STORE_EXAMPLES` | `1` | `0` is zero retention: nothing stored, Night School skips |
 | `RATCHET_NO_STORE_TASKS` | empty | Comma-separated tasks whose answers are never stored |
 | `RATCHET_KEY_LIMITS` | empty | Per-key settings by key name; `store=0` keeps a key's requests out |

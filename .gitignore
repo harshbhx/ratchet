@@ -4,6 +4,7 @@ __pycache__/
 *.db
 sim_results.json
 data/
+!docs-site/src/data/
 .env
 
 # Web app

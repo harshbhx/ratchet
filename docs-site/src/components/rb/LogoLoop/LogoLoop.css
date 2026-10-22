@@ -1,0 +1,153 @@
+/* Adapted from React Bits "LogoLoop" (MIT + Commons Clause, see ../LICENSE.md). */
+.rb-logoloop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.rb-logoloop__viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+}
+.rb-logoloop__track {
+  display: flex;
+  width: max-content;
+  animation: rb-logoloop var(--rb-loop-duration) linear infinite;
+}
+.rb-logoloop[data-paused] .rb-logoloop__track,
+.rb-logoloop:hover .rb-logoloop__track,
+.rb-logoloop:focus-within .rb-logoloop__track {
+  animation-play-state: paused;
+}
+@keyframes rb-logoloop {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.rb-logoloop__list {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rb-logoloop__item {
+  flex: 0 0 auto;
+  margin: 0 var(--rb-loop-gap) 0 0;
+  padding: 0;
+}
+.rb-logoloop__item + .rb-logoloop__item {
+  margin-top: 0;
+}
+.rb-logoloop__content {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  color: var(--rt-ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.rb-logoloop__content:hover {
+  color: var(--rt-ink);
+}
+.rb-logoloop__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.rb-logoloop__note {
+  color: var(--rt-muted);
+  font-family: var(--__sl-font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-logoloop__toggle {
+  all: unset;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--rt-line-strong);
+  border-radius: 999px;
+  color: var(--rt-ink-2);
+  background: var(--rt-surface);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+.rb-logoloop__toggle:hover {
+  background: var(--rt-surface-2);
+  color: var(--rt-ink);
+}
+.rb-logoloop__toggle:focus-visible {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: 2px;
+}
+
+/* Static row: reduced motion, no script, print. */
+@media (prefers-reduced-motion: reduce) {
+  .rb-logoloop__track {
+    animation: none;
+    width: auto;
+  }
+  .rb-logoloop__list[aria-hidden='true'],
+  .rb-logoloop__toggle {
+    display: none;
+  }
+  .rb-logoloop__list {
+    flex-wrap: wrap;
+    row-gap: 0.6rem;
+  }
+  .rb-logoloop__viewport {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+@media (scripting: none) {
+  .rb-logoloop__track {
+    animation: none;
+    width: auto;
+  }
+  .rb-logoloop__list[aria-hidden='true'],
+  .rb-logoloop__toggle {
+    display: none;
+  }
+  .rb-logoloop__list {
+    flex-wrap: wrap;
+    row-gap: 0.6rem;
+  }
+  .rb-logoloop__viewport {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+@media print {
+  .rb-logoloop__track {
+    animation: none !important;
+    width: auto;
+  }
+  .rb-logoloop__list[aria-hidden='true'],
+  .rb-logoloop__toggle {
+    display: none !important;
+  }
+  .rb-logoloop__list {
+    flex-wrap: wrap;
+  }
+  .rb-logoloop__viewport {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}

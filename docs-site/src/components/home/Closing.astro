@@ -1,0 +1,93 @@
+---
+/** The home page's last band: why the name, in one gradient line (React Bits GradientText) and two actions. */
+import GradientText from '../ui/GradientText.astro';
+import RatchetMark from './RatchetMark.astro';
+---
+
+<section class="rt-home-close rt-ui" aria-labelledby="why-ratchet">
+  <div class="rt-home-close__inner">
+    <RatchetMark size={44} class="rt-home-close__mark" />
+    <p class="rt-home-close__eyebrow">Why "Ratchet"</p>
+    <h2 id="why-ratchet" class="rt-home-close__title">
+      <GradientText tone="rent-to-own" text="A ratchet turns only one way." />
+    </h2>
+    <p class="rt-home-close__text">
+      Every night more of your traffic moves from the model you rent to the adapter you own, and the gates are the pawl that
+      stops it from slipping back: a bad release is rolled back automatically.
+    </p>
+    <div class="rt-home-close__actions">
+      <a class="rt-button rt-button--primary" href="/guides/what-is-ratchet/">
+        Start here
+        <svg class="rt-button__arrow" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </a>
+      <a class="rt-button rt-button--outline" href="/guides/quickstart/">Run it in mock mode</a>
+    </div>
+  </div>
+</section>
+
+<style>
+  .rt-home-close {
+    position: relative;
+    isolation: isolate;
+    margin: 0 !important;
+    padding: 4.5rem 1rem 5rem;
+    border-top: 1px solid var(--rt-line);
+    text-align: center;
+    overflow: hidden;
+    overflow: clip;
+  }
+  .rt-home-close::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background:
+      radial-gradient(50% 70% at 50% 0%, var(--rt-glow-owned), transparent 70%),
+      linear-gradient(to right, var(--rt-grid) 1px, transparent 1px) 0 0 / 44px 44px,
+      linear-gradient(to bottom, var(--rt-grid) 1px, transparent 1px) 0 0 / 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 60% 80% at 50% 20%, #000 30%, transparent 100%);
+    mask-image: radial-gradient(ellipse 60% 80% at 50% 20%, #000 30%, transparent 100%);
+  }
+  .rt-home-close__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 44rem;
+    margin-inline: auto;
+  }
+  .rt-home-close :global(.rt-home-close__mark) {
+    margin-bottom: 1.25rem;
+  }
+  .rt-home-close .rt-home-close__eyebrow {
+    margin: 0;
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .rt-home-close .rt-home-close__title {
+    margin: 0.75rem 0 0;
+    font-size: clamp(1.9rem, 1.3rem + 2.4vw, 3.2rem);
+    font-weight: 650;
+    letter-spacing: -0.035em;
+    line-height: 1.08;
+    text-wrap: balance;
+  }
+  .rt-home-close .rt-home-close__text {
+    max-width: 36rem;
+    margin: 1.1rem 0 0;
+    color: var(--rt-ink-2);
+    font-size: 1.075rem;
+    line-height: 1.65;
+  }
+  .rt-home-close__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-top: 2rem;
+  }
+</style>

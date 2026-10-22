@@ -89,7 +89,8 @@ function headingText(raw) {
     .replace(/<[^>]+>/g, '')
     .replace(/(\*\*|__)(.*?)\1/g, '$2')
     .replace(/(^|\W)[*_](\S.*?)[*_](?=\W|$)/g, '$1$2')
-    .trim();
+    .trim()
+    .replace(/^(.*)$/, (all) => scrubAdr(all).trim()); // the published heading has no ids, so its anchor has none either
 }
 
 /** Every heading id a doc will have, as GitHub (and Astro) slug them. */
@@ -156,6 +157,8 @@ function relink(line, link) {
  * ", ADR 0042" and "(see ADR 0023)". Text inside code fences is left alone.
  */
 const ADR_LIST = String.raw`ADRs? \d{3,4}(?:(?:,|, and| and|/)\s*(?:ADR )?\d{3,4})*`;
+/** Requirement and invariant ids (FR-2.55, NFR-60, INV-9, SM-1 to SM-5) are maintainers' pointers; the site publishes none. */
+const REQS = String.raw`(?:N?FR|INV|SM)-[\d.]+(?: to (?:N?FR|INV|SM)-[\d.]+)?(?:(?:,| and)\s*(?:N?FR|INV|SM)-[\d.]+)*`;
 function scrubAdr(line) {
   return line
     .replace(/^ADRs? \d+(?:, (?:N?FR|INV)-[\d.]+(?: to (?:N?FR)-[\d.]+)?)*[.:]\s*/, '')
@@ -164,7 +167,23 @@ function scrubAdr(line) {
     .replace(new RegExp(String.raw`\(([^()]*?)(?:;|,)\s*(?:see )?${ADR_LIST}\)`, 'g'), '($1)')
     .replace(new RegExp(String.raw`\((?:see )?${ADR_LIST}[;,]\s*`, 'g'), '(')
     .replace(new RegExp(String.raw`,\s*(?:see )?${ADR_LIST}`, 'g'), '')
-    .replace(new RegExp(String.raw`\s*(?:see |per |from )${ADR_LIST}`, 'g'), '');
+    .replace(new RegExp(String.raw`\s*(?:see |per |from )${ADR_LIST}`, 'g'), '')
+    .replace(new RegExp(String.raw`\s*\((?:see )?${REQS}\)`, 'g'), '')
+    .replace(new RegExp(String.raw`\(([^()]*?)[;,]\s*(?:see )?${REQS}\)`, 'g'), '($1)')
+    .replace(new RegExp(String.raw`\((?:see )?${REQS}[;,]\s*`, 'g'), '(')
+    .replace(new RegExp(String.raw`[,;]\s*${REQS}`, 'g'), '')
+    // What is left is a bare id in a sentence: name the metric, or drop the pointer.
+    .replace(/PRD §[\d.]+'s success metrics/g, 'The success metrics')
+    .replace(/ADRs? \d{3,4} has a Presidio example/g, 'a Presidio detector is a typical plug-in')
+    .replace(/NFR-1's latency target/g, 'the latency target')
+    .replace(/NFR-1's/g, "the latency target's")
+    .replace(/SM-(\d) to SM-(\d) and NFR-1/g, 'success metrics $1 to $2 and the latency target')
+    .replace(/SM-(\d) to SM-(\d)/g, 'success metrics $1 to $2')
+    .replace(/SM-(\d)/g, 'success metric $1')
+    .replace(/\bNFR-1\b/g, 'the latency target')
+    .replace(new RegExp(String.raw`\b(?:since|Since) ${REQS}\s+`, 'g'), '')
+    .replace(new RegExp(String.raw`\s*\b${REQS}\b`, 'g'), '')
+    .replace(/\bPRD\b/g, 'product requirements');
 }
 
 function escapeTags(part) {

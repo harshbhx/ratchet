@@ -1,0 +1,414 @@
+---
+/**
+ * The home page's picture of the loop, built from HTML and CSS (not a diagram): four steps around the ratchet
+ * mark. The owned blue is the student, the rented orange the teacher. On first paint the steps light up once in
+ * order and the wheel clicks one tooth; then it rests. Reduced motion shows the resting state. In a narrow box the
+ * steps stack in one column.
+ */
+import RatchetMark from './RatchetMark.astro';
+import Who from '../Who.astro';
+---
+
+<figure class="rt-loop rt-ui" aria-labelledby="rt-loop-title">
+  <div class="rt-loop__head">
+    <p class="rt-loop__eyebrow" id="rt-loop-title">The loop</p>
+    <p class="rt-loop__legend">
+      <span class="rt-loop__key rt-loop__key--owned">You own</span>
+      <span class="rt-loop__key rt-loop__key--rented">You rent</span>
+    </p>
+  </div>
+
+  <div class="rt-loop__grid" role="list">
+    <div class="rt-loop__node rt-loop__node--owned" role="listitem" style="--n:0">
+      <span class="rt-loop__num" aria-hidden="true">1</span>
+      <p class="rt-loop__title">The student answers first</p>
+      <p class="rt-loop__meta"><Who as="student" /></p>
+    </div>
+    <span class="rt-loop__arrow rt-loop__arrow--a1" aria-hidden="true" style="--n:0"><i></i><b>if unsure</b></span>
+    <div class="rt-loop__node rt-loop__node--rented" role="listitem" style="--n:1">
+      <span class="rt-loop__num" aria-hidden="true">2</span>
+      <p class="rt-loop__title">The teacher answers the rest</p>
+      <p class="rt-loop__meta"><Who as="teacher" /></p>
+    </div>
+    <span class="rt-loop__arrow rt-loop__arrow--a2" aria-hidden="true" style="--n:1"><i></i><b>stored</b></span>
+    <div class="rt-loop__node" role="listitem" style="--n:2">
+      <span class="rt-loop__num" aria-hidden="true">3</span>
+      <p class="rt-loop__title">Its answer is recorded</p>
+      <p class="rt-loop__meta">with the teacher and its license</p>
+    </div>
+    <span class="rt-loop__arrow rt-loop__arrow--a3" aria-hidden="true" style="--n:2"><i></i><b>each night</b></span>
+    <div class="rt-loop__node" role="listitem" style="--n:3">
+      <span class="rt-loop__num" aria-hidden="true">4</span>
+      <p class="rt-loop__title">A new student is trained</p>
+      <p class="rt-loop__meta">and released only through the gates</p>
+    </div>
+    <span class="rt-loop__arrow rt-loop__arrow--a4" aria-hidden="true" style="--n:3"><i></i><b>if it passes</b></span>
+    <div class="rt-loop__hub" aria-hidden="true">
+      <RatchetMark size={58} click delay={2350} />
+    </div>
+  </div>
+
+  <figcaption class="rt-loop__caption">
+    It turns one way: a release that fails its checks is rolled back, so the student never slips back.
+  </figcaption>
+</figure>
+
+<style>
+  .rt-loop {
+    container-type: inline-size;
+    position: relative;
+    margin: 0;
+    padding: 1rem 1.1rem 1.05rem;
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-xl);
+    background: color-mix(in srgb, var(--rt-surface) 86%, transparent);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    box-shadow: var(--rt-shadow-lift);
+  }
+  .rt-loop__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 0.85rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--rt-line);
+  }
+  .rt-loop .rt-loop__eyebrow {
+    margin: 0;
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .rt-loop .rt-loop__legend {
+    display: flex;
+    gap: 0.9rem;
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--rt-muted);
+  }
+  .rt-loop__key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .rt-loop__key::before {
+    content: '';
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 3px;
+    border: 1.5px solid currentColor;
+  }
+  .rt-loop__key--owned::before {
+    color: var(--rt-owned);
+    background: var(--rt-owned-soft);
+  }
+  .rt-loop__key--rented::before {
+    color: var(--rt-rented);
+    background: var(--rt-rented-soft);
+  }
+
+  /* Wide: four steps around the mark. */
+  .rt-loop__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 4.75rem minmax(0, 1fr);
+    grid-template-rows: auto 5.25rem auto;
+    grid-template-areas:
+      'n1 a1 n2'
+      'a4 hub a2'
+      'n4 a3 n3';
+    align-items: stretch;
+  }
+  .rt-loop__node:nth-of-type(1) {
+    grid-area: n1;
+  }
+  .rt-loop__node:nth-of-type(2) {
+    grid-area: n2;
+  }
+  .rt-loop__node:nth-of-type(3) {
+    grid-area: n3;
+  }
+  .rt-loop__node:nth-of-type(4) {
+    grid-area: n4;
+  }
+  .rt-loop__arrow--a1 {
+    grid-area: a1;
+  }
+  .rt-loop__arrow--a2 {
+    grid-area: a2;
+  }
+  .rt-loop__arrow--a3 {
+    grid-area: a3;
+  }
+  .rt-loop__arrow--a4 {
+    grid-area: a4;
+  }
+  .rt-loop__hub {
+    grid-area: hub;
+    display: grid;
+    place-items: center;
+  }
+
+  .rt-loop__node {
+    --tone: var(--rt-line-strong);
+    --tone-soft: var(--rt-surface-2);
+    --tone-ink: var(--rt-ink-2);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.8rem 0.85rem 0.85rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 0.9rem;
+    background: linear-gradient(to bottom, var(--tone-soft), var(--rt-surface) 85%);
+  }
+  .rt-loop__node--owned {
+    --tone: var(--rt-owned);
+    --tone-soft: var(--rt-owned-soft);
+    --tone-ink: var(--rt-owned-ink);
+    border-color: color-mix(in srgb, var(--rt-owned) 55%, transparent);
+  }
+  .rt-loop__node--rented {
+    --tone: var(--rt-rented);
+    --tone-soft: var(--rt-rented-soft);
+    --tone-ink: var(--rt-rented-ink);
+    border-color: color-mix(in srgb, var(--rt-rented) 55%, transparent);
+  }
+  .rt-loop__num {
+    display: inline-grid;
+    place-items: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    border: 1px solid var(--tone);
+    background: var(--rt-surface);
+    color: var(--tone-ink);
+    font-family: var(--rt-font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+  }
+  .rt-loop .rt-loop__title {
+    margin: 0.15rem 0 0;
+    color: var(--rt-ink);
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+  }
+  .rt-loop .rt-loop__meta {
+    margin: 0;
+    color: var(--rt-muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  /* Arrows: a line and a head, drawn in CSS. */
+  .rt-loop__arrow {
+    position: relative;
+    display: grid;
+    place-items: center;
+    color: var(--rt-muted);
+  }
+  .rt-loop__arrow i {
+    position: absolute;
+    background: currentColor;
+  }
+  .rt-loop__arrow i::after {
+    content: '';
+    position: absolute;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-top: 1.5px solid currentColor;
+    border-right: 1.5px solid currentColor;
+  }
+  .rt-loop__arrow b {
+    position: relative;
+    z-index: 1;
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+    background: var(--rt-surface);
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .rt-loop__arrow--a1 {
+    color: var(--rt-rented);
+  }
+  .rt-loop__arrow--a1 i,
+  .rt-loop__arrow--a3 i {
+    left: 0.4rem;
+    right: 0.4rem;
+    top: 50%;
+    height: 1.5px;
+  }
+  .rt-loop__arrow--a1 i::after {
+    right: 0.05rem;
+    top: calc(0.75px - 0.25rem);
+    transform: rotate(45deg);
+  }
+  .rt-loop__arrow--a3 i::after {
+    left: 0.05rem;
+    top: calc(0.75px - 0.25rem);
+    transform: rotate(-135deg);
+  }
+  .rt-loop__arrow--a2 i,
+  .rt-loop__arrow--a4 i {
+    top: 0.4rem;
+    bottom: 0.4rem;
+    left: 50%;
+    width: 1.5px;
+  }
+  .rt-loop__arrow--a2 i::after {
+    bottom: 0.05rem;
+    left: calc(0.75px - 0.25rem);
+    transform: rotate(135deg);
+  }
+  .rt-loop__arrow--a4 {
+    color: var(--rt-owned);
+  }
+  .rt-loop__arrow--a4 i::after {
+    top: 0.05rem;
+    left: calc(0.75px - 0.25rem);
+    transform: rotate(-45deg);
+  }
+  /* Horizontal arrows: the label sits above the line, so the whole line and its head show. */
+  .rt-loop__arrow--a1 b,
+  .rt-loop__arrow--a3 b {
+    transform: translateY(-0.95rem);
+    padding: 0;
+    background: transparent;
+  }
+
+  .rt-loop .rt-loop__caption {
+    margin: 1rem 0 0;
+    padding-top: 0.8rem;
+    border-top: 1px solid var(--rt-line);
+    color: var(--rt-muted);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  /* Narrow: one column, top to bottom, with the way back at the end. */
+  @container (max-width: 27rem) {
+    .rt-loop__grid {
+      grid-template-columns: 1fr;
+      grid-template-rows: none;
+      grid-template-areas: 'n1' 'a1' 'n2' 'a2' 'n3' 'a3' 'n4' 'a4';
+    }
+    .rt-loop__hub {
+      display: none;
+    }
+    .rt-loop__arrow {
+      height: 2.1rem;
+    }
+    .rt-loop__arrow i,
+    .rt-loop__arrow--a1 i,
+    .rt-loop__arrow--a3 i {
+      left: 50%;
+      right: auto;
+      top: 0.3rem;
+      bottom: 0.3rem;
+      width: 1.5px;
+      height: auto;
+    }
+    .rt-loop__arrow i::after,
+    .rt-loop__arrow--a1 i::after,
+    .rt-loop__arrow--a3 i::after {
+      left: calc(0.75px - 0.25rem);
+      right: auto;
+      top: auto;
+      bottom: 0.05rem;
+      transform: rotate(135deg);
+    }
+    .rt-loop__arrow b,
+    .rt-loop__arrow--a1 b,
+    .rt-loop__arrow--a3 b {
+      margin-left: 5.5rem;
+      transform: none;
+    }
+    .rt-loop__arrow--a4 {
+      height: auto;
+      margin-top: 0.5rem;
+      padding-top: 0.6rem;
+      border-top: 1px dashed color-mix(in srgb, var(--rt-owned) 50%, transparent);
+    }
+    .rt-loop__arrow--a4 i {
+      display: none;
+    }
+    .rt-loop__arrow--a4 b {
+      margin: 0;
+      color: var(--rt-owned-ink);
+    }
+    .rt-loop__arrow--a4 b::before {
+      content: 'Back to 1, ';
+    }
+  }
+
+  /* One pass of light around the loop on first paint, then rest. */
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-loop__node {
+      animation: rt-node-in 0.6s var(--rt-ease) calc(0.35s + var(--n) * 0.42s) both;
+    }
+    .rt-loop__arrow i {
+      animation: rt-arrow-in 0.4s var(--rt-ease) calc(0.6s + var(--n) * 0.42s) both;
+    }
+    .rt-loop__arrow b {
+      animation: rt-fade-in 0.4s ease calc(0.7s + var(--n) * 0.42s) both;
+    }
+    .rt-loop__node::after {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 40%, transparent);
+      opacity: 0;
+      pointer-events: none;
+      animation: rt-node-ping 0.9s ease calc(0.5s + var(--n) * 0.42s) 1 both;
+    }
+  }
+  @keyframes rt-node-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+      filter: blur(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      filter: none;
+    }
+  }
+  @keyframes rt-arrow-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes rt-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes rt-node-ping {
+    0% {
+      opacity: 0;
+    }
+    35% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+</style>

@@ -1,0 +1,769 @@
+/*
+  The page body: type, rhythm, links, lists, code, tables, asides, cards, steps, badges, callouts and buttons.
+
+  Lucode sets `font-size: 15px` on every element inside the Markdown (`.sl-markdown-content *`) from 40rem up.
+  The reset below gives that back to inheritance with zero specificity, so the 16px body size flows down and any
+  component class still sets its own size. Code, SVG and Expressive Code keep theirs.
+*/
+
+/* ---------- Base type ---------- */
+.sl-markdown-content {
+  font-size: var(--rt-text-body);
+  line-height: var(--rt-leading);
+  color: var(--rt-ink-2);
+}
+:where(.sl-markdown-content)
+  :where(
+    *:not(
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6,
+        code,
+        kbd,
+        samp,
+        pre,
+        sup,
+        sub,
+        small,
+        svg,
+        svg *,
+        pre *,
+        .expressive-code,
+        .expressive-code *,
+        .mermaid *
+      )
+  ) {
+  font-size: inherit;
+}
+
+.sl-markdown-content :is(p, li, dd, td, blockquote) {
+  text-wrap: pretty;
+}
+/* Running text keeps a readable line length; components inside the page set their own widths. */
+.sl-markdown-content > :is(p, ul, ol, dl) {
+  max-width: var(--rt-measure);
+}
+.sl-markdown-content strong {
+  color: var(--rt-ink);
+  font-weight: 600;
+}
+
+/* Headings */
+.sl-markdown-content :is(h2, h3, h4, h5, h6) {
+  color: var(--rt-ink);
+  text-wrap: balance;
+  scroll-margin-top: calc(var(--header-height, 3.5rem) + 1.5rem);
+}
+.sl-markdown-content h2 {
+  font-size: var(--rt-text-h2);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  line-height: 1.3;
+  padding-top: 0;
+  margin-top: 0;
+}
+.sl-markdown-content h3 {
+  font-size: var(--rt-text-h3);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.4;
+}
+.sl-markdown-content h4 {
+  font-size: var(--rt-text-h4);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.45;
+}
+.sl-markdown-content :is(h5, h6) {
+  font-size: 0.8rem;
+  font-family: var(--rt-font-mono);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rt-muted);
+}
+.sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + :is(.sl-heading-wrapper.level-h2, h2) {
+  margin-top: 3.25rem;
+}
+.sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + :is(.sl-heading-wrapper.level-h3, h3) {
+  margin-top: 2.25rem;
+}
+.sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + :is(.sl-heading-wrapper.level-h4, h4) {
+  margin-top: 1.75rem;
+}
+.sl-markdown-content :is(.sl-heading-wrapper, h2, h3, h4) + * {
+  margin-top: 0.75rem;
+}
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  line-height: 1.3;
+}
+.sl-markdown-content .sl-heading-wrapper:is(.level-h3, .level-h4) {
+  line-height: 1.4;
+}
+.sl-markdown-content .sl-anchor-link {
+  color: var(--rt-muted);
+  opacity: 0.7;
+}
+.sl-markdown-content .sl-anchor-link:hover,
+.sl-markdown-content .sl-anchor-link:focus-visible {
+  color: var(--rt-owned-ink);
+  opacity: 1;
+}
+
+/* Links */
+.sl-markdown-content a:not([class]) {
+  color: var(--rt-ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--rt-line-strong);
+  text-underline-offset: 0.22em;
+  transition: text-decoration-color var(--rt-dur) ease;
+}
+.sl-markdown-content a:not([class]):hover {
+  text-decoration-color: var(--rt-owned);
+}
+.sl-markdown-content a:not([class])[href^='http']:not([href*='docs.ratchet.dualmindlab.tech'])::after {
+  content: '\2197';
+  content: '\2197' / '';
+  display: inline-block;
+  margin-left: 0.12em;
+  color: var(--rt-muted);
+  font-size: 0.8em;
+  font-weight: 400;
+  text-decoration: none;
+}
+
+/* Lists */
+.sl-markdown-content :is(ul, ol):not(.sl-steps, [class]) {
+  padding-inline-start: 1.35rem;
+}
+.sl-markdown-content :is(ul, ol):not([class]) > li + li {
+  margin-top: 0.4rem;
+}
+.sl-markdown-content ul:not([class]) > li::marker {
+  color: var(--rt-muted);
+}
+.sl-markdown-content ol:not([class]) > li::marker {
+  color: var(--rt-muted);
+  font-family: var(--rt-font-mono);
+  font-size: 0.85em;
+}
+
+/* Inline code, kbd, mark */
+.sl-markdown-content :not(pre) > code {
+  padding: 0.12em 0.4em;
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius-sm);
+  background: var(--rt-surface-2);
+  color: var(--rt-ink);
+  font-family: var(--rt-font-mono);
+  font-size: 0.86em;
+  font-weight: 450;
+  overflow-wrap: anywhere;
+}
+.sl-markdown-content a:not([class]) > code {
+  color: inherit;
+}
+.sl-markdown-content kbd,
+.rt-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5em;
+  padding: 0.1em 0.45em;
+  border: 1px solid var(--rt-line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--rt-radius-sm);
+  background: var(--rt-surface);
+  color: var(--rt-ink);
+  font-family: var(--rt-font-mono);
+  font-size: 0.78em;
+  font-weight: 500;
+  line-height: 1.5;
+  vertical-align: 0.08em;
+}
+.sl-markdown-content mark {
+  padding: 0 0.15em;
+  border-radius: 3px;
+  background: var(--rt-warn-soft);
+  color: var(--rt-ink);
+}
+
+/* Quotes and rules */
+.sl-markdown-content blockquote {
+  margin-inline: 0;
+  padding: 0.25rem 0 0.25rem 1.1rem;
+  border-inline-start: 3px solid var(--rt-line-strong);
+  color: var(--rt-ink-2);
+  font-style: normal;
+}
+.sl-markdown-content hr {
+  border: 0;
+  height: 1px;
+  margin-block: 2.5rem;
+  background: var(--rt-line);
+}
+
+/* Images and figures */
+.sl-markdown-content img {
+  border-radius: var(--rt-radius);
+}
+.sl-markdown-content figure > figcaption {
+  margin-top: 0.5rem;
+  color: var(--rt-muted);
+  font-size: var(--rt-text-sm);
+}
+
+/* ---------- Tables ----------
+   A table is its own scroll box (Starlight makes it display: block), as wide as its content up to the column:
+   a wide table scrolls sideways inside the column, never the page. A table with 12 or more rows is held to
+   a height and scrolls inside it, with its header row stuck to the top. */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin-block: 1.5rem;
+  overflow: auto;
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius-lg);
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--rt-surface);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.sl-markdown-content table:not(:where(.not-content *)):has(> tbody > tr:nth-child(12)) {
+  max-height: min(72vh, 42rem);
+}
+.sl-markdown-content table:not(:where(.not-content *)):focus-visible {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: 2px;
+}
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  padding: 0.65rem 0.95rem;
+  border: 0;
+  border-bottom: 1px solid var(--rt-line);
+  vertical-align: top;
+  text-align: start;
+}
+.sl-markdown-content :is(th:first-child, td:first-child):not(:where(.not-content *)) {
+  padding-inline-start: 1rem;
+}
+.sl-markdown-content :is(th:last-child, td:last-child):not(:where(.not-content *)) {
+  padding-inline-end: 1rem;
+}
+.sl-markdown-content th:not(:where(.not-content *)) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--rt-surface-2);
+  color: var(--rt-ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--rt-line);
+  border-bottom: 0;
+}
+.sl-markdown-content td:not(:where(.not-content *)) {
+  color: var(--rt-ink-2);
+  min-width: 6.5rem;
+}
+.sl-markdown-content td:first-child:not(:where(.not-content *)) {
+  color: var(--rt-ink);
+}
+.sl-markdown-content tbody tr:nth-child(even) td:not(:where(.not-content *)) {
+  background: color-mix(in srgb, var(--rt-surface-2) 70%, var(--rt-surface));
+}
+.sl-markdown-content tbody tr:last-child td:not(:where(.not-content *)) {
+  border-bottom: 0;
+}
+.sl-markdown-content tbody tr:hover td:not(:where(.not-content *)) {
+  background: color-mix(in srgb, var(--rt-owned-soft) 70%, var(--rt-surface));
+}
+.sl-markdown-content td code:not(:where(.not-content *)) {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+@media (max-width: 40rem) {
+  .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+    padding: 0.55rem 0.75rem;
+  }
+  .sl-markdown-content td:not(:where(.not-content *)) {
+    min-width: 8rem;
+  }
+}
+
+/* ---------- Code blocks (Expressive Code) ---------- */
+.sl-markdown-content > .expressive-code {
+  margin-block: 1.5rem;
+}
+.expressive-code .frame {
+  box-shadow: none;
+}
+.expressive-code .frame.has-title .header,
+.expressive-code .frame.is-terminal .header {
+  font-family: var(--rt-font-mono);
+  font-size: 0.75rem;
+}
+
+/* ---------- Asides (Note, Tip, Caution, Danger) ---------- */
+.sl-markdown-content .starlight-aside {
+  --aside-accent: var(--rt-owned);
+  --aside-tint: var(--rt-owned-soft);
+  --aside-title: var(--rt-owned-ink);
+  position: relative;
+  margin-block: 1.5rem;
+  padding: 1rem 1.15rem 1.05rem 1.15rem;
+  border: 1px solid color-mix(in srgb, var(--aside-accent) 32%, var(--rt-line));
+  border-inline-start: 3px solid var(--aside-accent);
+  border-radius: var(--rt-radius);
+  background: linear-gradient(to right, var(--aside-tint), color-mix(in srgb, var(--aside-tint) 35%, var(--rt-surface)) 60%);
+  color: var(--rt-ink-2);
+}
+.sl-markdown-content .starlight-aside--tip {
+  --aside-accent: var(--rt-good);
+  --aside-tint: var(--rt-good-soft);
+  --aside-title: var(--rt-good-ink);
+}
+.sl-markdown-content .starlight-aside--caution {
+  --aside-accent: var(--rt-warn);
+  --aside-tint: var(--rt-warn-soft);
+  --aside-title: var(--rt-warn-ink);
+}
+.sl-markdown-content .starlight-aside--danger {
+  --aside-accent: var(--rt-bad);
+  --aside-tint: var(--rt-bad-soft);
+  --aside-title: var(--rt-bad-ink);
+}
+.sl-markdown-content .starlight-aside__title {
+  gap: 0.55rem;
+  margin: 0;
+  color: var(--aside-title);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+.sl-markdown-content .starlight-aside__icon {
+  box-sizing: content-box;
+  width: 0.85rem;
+  height: 0.85rem;
+  padding: 0.28rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--aside-accent) 18%, transparent);
+  color: var(--aside-title);
+}
+.sl-markdown-content .starlight-aside__title + .starlight-aside__content {
+  margin-top: 0.45rem;
+}
+.sl-markdown-content .starlight-aside__content {
+  color: var(--rt-ink-2);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.sl-markdown-content .starlight-aside__content a {
+  color: var(--rt-ink);
+  text-decoration-color: color-mix(in srgb, var(--aside-accent) 55%, transparent);
+}
+.sl-markdown-content .starlight-aside__content a:hover {
+  text-decoration-color: var(--aside-accent);
+}
+
+/* ---------- Callouts: CSS classes a page can use on a <div> ----------
+   <div class="rt-callout rt-callout--sim"><p><strong>Simulation.</strong> ...</p></div>
+   Variants: --note (blue), --sim (simulation numbers), --live (measured live), --owned, --rented, --warn. */
+.sl-markdown-content .rt-callout,
+.rt-callout {
+  --c-accent: var(--rt-line-strong);
+  --c-tint: var(--rt-surface-2);
+  --c-ink: var(--rt-ink);
+  --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 11v5M12 8h.01'/%3E%3C/svg%3E");
+  position: relative;
+  margin-block: 1.5rem;
+  padding: 0.95rem 1.1rem 0.95rem 3rem;
+  border: 1px solid color-mix(in srgb, var(--c-accent) 40%, var(--rt-line));
+  border-radius: var(--rt-radius);
+  background: var(--c-tint);
+  color: var(--rt-ink-2);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.rt-callout::before {
+  content: '';
+  position: absolute;
+  left: 1rem;
+  top: 1.05rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  background: var(--c-ink);
+  -webkit-mask: var(--c-icon) center / contain no-repeat;
+  mask: var(--c-icon) center / contain no-repeat;
+}
+.rt-callout > :first-child {
+  margin-top: 0;
+}
+.rt-callout > :last-child {
+  margin-bottom: 0;
+}
+.rt-callout strong {
+  color: var(--c-ink);
+}
+.rt-callout.rt-callout--note,
+.rt-callout.rt-callout--owned {
+  --c-accent: var(--rt-owned);
+  --c-tint: var(--rt-owned-soft);
+  --c-ink: var(--rt-owned-ink);
+}
+.rt-callout.rt-callout--rented {
+  --c-accent: var(--rt-rented);
+  --c-tint: var(--rt-rented-soft);
+  --c-ink: var(--rt-rented-ink);
+  --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h16v10H4zM8 7V5h8v2M9 12h6'/%3E%3C/svg%3E");
+}
+.rt-callout.rt-callout--sim {
+  --c-accent: var(--rt-warn);
+  --c-tint: var(--rt-warn-soft);
+  --c-ink: var(--rt-warn-ink);
+  --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 3h6M10 3v6l-5.5 9.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3'/%3E%3Cpath d='M7.5 15h9'/%3E%3C/svg%3E");
+}
+.rt-callout.rt-callout--live {
+  --c-accent: var(--rt-good);
+  --c-tint: var(--rt-good-soft);
+  --c-ink: var(--rt-good-ink);
+  --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l3-8 4 16 3-8h4'/%3E%3C/svg%3E");
+}
+.rt-callout.rt-callout--warn {
+  --c-accent: var(--rt-bad);
+  --c-tint: var(--rt-bad-soft);
+  --c-ink: var(--rt-bad-ink);
+  --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 2 20h20L12 3z'/%3E%3Cpath d='M12 10v4M12 17h.01'/%3E%3C/svg%3E");
+}
+@media (forced-colors: active) {
+  .rt-callout::before {
+    background: CanvasText;
+  }
+}
+
+/* ---------- Badges ---------- */
+.sl-markdown-content .sl-badge,
+.rt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.1em 0.55em;
+  border: 1px solid var(--rt-line-strong);
+  border-radius: 999px;
+  background: var(--rt-surface-2);
+  color: var(--rt-ink-2);
+  font-family: var(--rt-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  white-space: nowrap;
+  vertical-align: 0.12em;
+}
+.sl-markdown-content .sl-badge.note,
+.rt-badge--owned {
+  border-color: color-mix(in srgb, var(--rt-owned) 45%, transparent);
+  background: var(--rt-owned-soft);
+  color: var(--rt-owned-ink);
+}
+.rt-badge--rented {
+  border-color: color-mix(in srgb, var(--rt-rented) 45%, transparent);
+  background: var(--rt-rented-soft);
+  color: var(--rt-rented-ink);
+}
+.sl-markdown-content .sl-badge.success,
+.sl-markdown-content .sl-badge.tip,
+.rt-badge--live {
+  border-color: color-mix(in srgb, var(--rt-good) 45%, transparent);
+  background: var(--rt-good-soft);
+  color: var(--rt-good-ink);
+}
+.sl-markdown-content .sl-badge.caution,
+.rt-badge--sim {
+  border-color: color-mix(in srgb, var(--rt-warn) 45%, transparent);
+  background: var(--rt-warn-soft);
+  color: var(--rt-warn-ink);
+}
+.sl-markdown-content .sl-badge.danger,
+.rt-badge--bad {
+  border-color: color-mix(in srgb, var(--rt-bad) 45%, transparent);
+  background: var(--rt-bad-soft);
+  color: var(--rt-bad-ink);
+}
+
+/* ---------- Starlight cards and link cards ---------- */
+.sl-markdown-content .card-grid {
+  gap: 0.9rem;
+}
+.sl-markdown-content :is(.card, .sl-link-card) {
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius-lg);
+  background: var(--rt-surface);
+  box-shadow: var(--rt-shadow);
+  transition:
+    border-color var(--rt-dur) ease,
+    transform 0.25s var(--rt-ease),
+    box-shadow 0.25s var(--rt-ease);
+}
+.sl-markdown-content .sl-link-card:hover {
+  border-color: var(--rt-line-strong);
+  background: var(--rt-surface);
+  box-shadow: var(--rt-shadow-lift);
+  transform: translateY(-2px);
+}
+.sl-markdown-content .sl-link-card:focus-within {
+  border-color: var(--rt-focus);
+}
+.sl-markdown-content :is(.card, .sl-link-card) .title {
+  color: var(--rt-ink);
+  font-size: 0.975rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.sl-markdown-content :is(.card .body, .sl-link-card .description) {
+  color: var(--rt-muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.sl-markdown-content .card .icon {
+  border: 1px solid var(--rt-line);
+  background: var(--rt-surface-2);
+  color: var(--rt-ink-2);
+}
+.sl-markdown-content .sl-link-card .icon {
+  color: var(--rt-muted);
+  transition:
+    transform 0.25s var(--rt-ease),
+    color var(--rt-dur) ease;
+}
+.sl-markdown-content .sl-link-card:hover .icon {
+  color: var(--rt-ink);
+  transform: translateX(3px);
+}
+
+/* ---------- Steps ---------- */
+.sl-markdown-content .sl-steps {
+  --bullet-size: 1.75rem;
+}
+.sl-markdown-content .sl-steps > li::before {
+  border: 1px solid var(--rt-line-strong);
+  background: var(--rt-surface);
+  color: var(--rt-ink);
+  font-family: var(--rt-font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: 0 0 0 4px var(--rt-bg);
+}
+.sl-markdown-content .sl-steps > li::after {
+  width: 1px;
+  background: linear-gradient(to bottom, var(--rt-line-strong), var(--rt-line));
+}
+.sl-markdown-content .sl-steps > li > p {
+  color: var(--rt-ink-2);
+}
+.sl-markdown-content .sl-steps > li:hover::before {
+  border-color: var(--rt-ink);
+}
+
+/* ---------- Tabs ---------- */
+.sl-markdown-content starlight-tabs .tablist-wrapper {
+  background: var(--rt-surface-2);
+  border: 1px solid var(--rt-line);
+  border-bottom: 0;
+}
+.sl-markdown-content starlight-tabs .tablist-wrapper ~ [role='tabpanel'] {
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-line);
+}
+.sl-markdown-content starlight-tabs .tab > [role='tab'] {
+  font-size: 0.85rem;
+}
+
+/* ---------- Details (FAQ) ---------- */
+.sl-markdown-content details:not(.entry-group) {
+  margin-block: 0.6rem;
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius);
+  background: var(--rt-surface);
+  transition: border-color var(--rt-dur) ease;
+}
+.sl-markdown-content details:not(.entry-group)[open] {
+  border-color: var(--rt-line-strong);
+}
+.sl-markdown-content details:not(.entry-group) > summary {
+  padding: 0.75rem 1rem;
+  color: var(--rt-ink);
+  font-weight: 550;
+  cursor: pointer;
+}
+.sl-markdown-content details:not(.entry-group) > :not(summary) {
+  margin-inline: 1rem;
+}
+.sl-markdown-content details:not(.entry-group) > :last-child:not(summary) {
+  margin-bottom: 0.9rem;
+}
+
+/* ---------- Buttons (for pages that need a call to action) ---------- */
+.rt-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0 1.1rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 550;
+  line-height: 1;
+  text-decoration: none !important;
+  white-space: nowrap;
+  transition:
+    background-color var(--rt-dur) ease,
+    border-color var(--rt-dur) ease,
+    color var(--rt-dur) ease,
+    transform 0.15s ease,
+    box-shadow var(--rt-dur) ease;
+}
+.rt-button:active {
+  transform: scale(0.98);
+}
+.rt-button svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  transition: transform 0.25s var(--rt-ease);
+}
+.rt-button:hover svg.rt-button__arrow {
+  transform: translateX(2px);
+}
+.rt-button--primary {
+  background: var(--rt-ink);
+  color: var(--rt-bg) !important;
+  box-shadow: var(--rt-shadow);
+}
+.rt-button--primary:hover {
+  background: var(--rt-ink-2);
+}
+.rt-button--outline {
+  border-color: var(--rt-line-strong);
+  background: var(--rt-surface);
+  color: var(--rt-ink) !important;
+}
+.rt-button--outline:hover {
+  border-color: var(--rt-muted);
+  background: var(--rt-surface-2);
+}
+.rt-button--ghost {
+  color: var(--rt-ink-2) !important;
+}
+.rt-button--ghost:hover {
+  background: var(--rt-surface-2);
+  color: var(--rt-ink) !important;
+}
+.rt-button--owned {
+  background: var(--rt-owned);
+  color: var(--rt-on-owned) !important;
+}
+
+/* Starlight LinkButton in Markdown */
+.sl-markdown-content .sl-link-button {
+  border-radius: 999px;
+}
+
+/* ---------- Generated HTTP reference (starlight-openapi) ---------- */
+html .sl-openapi-operation-method-badge {
+  --m: var(--rt-muted);
+  --m-soft: var(--rt-surface-2);
+  align-self: center;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--m) 45%, transparent);
+  border-radius: var(--rt-radius-sm);
+  background: var(--m-soft);
+  color: var(--m-ink, var(--m));
+  font-family: var(--rt-font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
+html .sl-openapi-operation-method-badge.get {
+  --m: var(--rt-good);
+  --m-ink: var(--rt-good-ink);
+  --m-soft: var(--rt-good-soft);
+}
+html .sl-openapi-operation-method-badge.post {
+  --m: var(--rt-warn);
+  --m-ink: var(--rt-warn-ink);
+  --m-soft: var(--rt-warn-soft);
+}
+html .sl-openapi-operation-method-badge.delete {
+  --m: var(--rt-bad);
+  --m-ink: var(--rt-bad-ink);
+  --m-soft: var(--rt-bad-soft);
+}
+html .sl-openapi-overview-navigation-link {
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius);
+  background: var(--rt-surface);
+  box-shadow: none;
+  transition:
+    border-color var(--rt-dur) ease,
+    background-color var(--rt-dur) ease;
+}
+html .sl-openapi-overview-navigation-link:is(:hover, :focus-within) {
+  border-color: var(--rt-line-strong);
+  background: var(--rt-surface-2);
+}
+html .sl-openapi-overview-navigation-link a {
+  color: var(--rt-ink);
+}
+html .sl-openapi-overview-navigation-links {
+  row-gap: 0.5rem;
+}
+html .sl-openapi-operation-description {
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius-lg);
+  background: var(--rt-surface);
+  overflow: hidden;
+}
+html .sl-openapi-operation-description-header {
+  border-bottom-color: var(--rt-line);
+  background: var(--rt-surface-2);
+}
+html .sl-openapi-operation-description-button,
+html .sl-openapi-snippet-picker select {
+  border: 1px solid var(--rt-line-strong);
+  border-radius: var(--rt-radius-sm);
+  background: var(--rt-surface);
+  color: var(--rt-ink);
+}
+html .sl-openapi-operation-description .expressive-code .frame {
+  border-radius: 0;
+  border-inline: 0;
+  border-bottom: 0;
+}
+html .sl-openapi-section-panel {
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius-lg);
+  background: var(--rt-surface);
+}
+html .sl-openapi-operation-description-urls {
+  border-color: var(--rt-line-strong);
+  border-radius: var(--rt-radius);
+  background: var(--rt-surface);
+}
+.sidebar .entry-badge {
+  text-transform: uppercase;
+}

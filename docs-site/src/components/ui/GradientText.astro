@@ -1,0 +1,45 @@
+---
+/**
+ * GradientText (React Bits): text painted with a gradient that glides once into place when it scrolls into view.
+ * When: one emphasised phrase in a display heading ("Own it tomorrow."). Use the owned blues for the student
+ * and what you own, the rented oranges only where the teacher is meant. Never for body text.
+ * Reduced motion, no script and print show the resting gradient (print: plain ink).
+ */
+import GradientTextRB from '../rb/GradientText/GradientText.tsx';
+
+interface Props {
+  text?: string;
+  tone?: 'owned' | 'rented' | 'rent-to-own';
+  /** Overrides tone: two or more CSS colours. */
+  colors?: string[];
+  angle?: number;
+  duration?: number;
+  showBorder?: boolean;
+  class?: string;
+}
+
+const TONES: Record<string, string[]> = {
+  owned: ['var(--rt-owned-ink)', 'var(--rt-owned)', 'var(--rt-ink)'],
+  rented: ['var(--rt-rented-ink)', 'var(--rt-rented)', 'var(--rt-ink)'],
+  'rent-to-own': ['var(--rt-rented-ink)', 'var(--rt-owned)', 'var(--rt-owned-ink)'],
+};
+const { text, tone = 'owned', colors, angle, duration, showBorder, class: className } = Astro.props;
+---
+
+{
+  text ? (
+    <GradientTextRB
+      client:visible
+      text={text}
+      colors={colors ?? TONES[tone]}
+      angle={angle}
+      duration={duration}
+      showBorder={showBorder}
+      className={className}
+    />
+  ) : (
+    <GradientTextRB client:visible colors={colors ?? TONES[tone]} angle={angle} duration={duration} showBorder={showBorder} className={className}>
+      <slot />
+    </GradientTextRB>
+  )
+}

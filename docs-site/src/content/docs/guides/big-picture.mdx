@@ -7,7 +7,6 @@ import { Steps, Aside, FileTree, LinkCard, CardGrid } from '@astrojs/starlight/c
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import BigPicture from '../../../components/diagrams/BigPicture.astro';
 
 <Summary>Ratchet is one small gateway process with one SQLite ledger, plus a few Nebius services it calls: Token Factory for the teacher, a GPU endpoint for the student, a nightly training job and a storage bucket that carries data and adapters between them.</Summary>
 
@@ -29,7 +28,61 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 ## How it really works
 
-<BigPicture />
+<figure class="rt-diagram">
+
+```mermaid
+flowchart TB
+  app(["Your app · any OpenAI SDK"]) ==>|"POST /v1/chat/completions"| caddy["Caddy on the demo VM<br/>HTTPS, edge guard"]
+  caddy ==> gw
+  subgraph gw["Gateway · one process, no GPU"]
+    direction LR
+    router["Cascade<br/>Ratchet.handle"] --> ledger[("SQLite ledger")]
+    ledger <--> gate{{"Release gate"}}
+  end
+  subgraph tf["Token Factory · per token"]
+    direction TB
+    teacher["Nemotron 3 Ultra<br/>teacher"]
+    teacher ~~~ others["Super: judge<br/>Nano 30B: fallback"]
+  end
+  subgraph ep["Serverless Endpoint"]
+    student["Nano 4B + LoRA<br/>adapter, on vLLM"]
+  end
+  subgraph ns["Night School"]
+    direction TB
+    night["ratchet.live night<br/>cron, gateway host"] --> job["Serverless Job<br/>LoRA training"]
+  end
+  bucket[("Object Storage<br/>bucket at /data")]
+  gw ==>|"escalate, audit"| tf
+  gw ==>|"3 samples"| ep
+  gw -->|"rows"| ns
+  ns -->|"adapter"| bucket
+  ep ---|"loads adapters"| bucket
+
+  class app,router,night,job neutral
+  class caddy,others outline
+  class gate gate
+  class ledger,bucket store
+  class student student
+  class teacher teacher
+  class ep studentZone
+  class tf teacherZone
+```
+
+<figcaption>
+
+**Reading this diagram.** Start at the top. The thick arrows are the request path: your app's call passes Caddy (only on the demo VM), then the cascade asks the student endpoint for 3 samples, and the teacher on Token Factory when the student is unsure, an audit is drawn or no student may answer (a cold start, a pinned task). Every request writes one row to the SQLite ledger; the release gate reads the audits there and writes version states back. At night, Night School reads the rows, a Serverless Job trains a new adapter into the Object Storage bucket, and the endpoint loads adapters from that bucket at `/data`. Not drawn, to keep it readable: the night also loads the candidate into vLLM, grades it there (the judge scores free-text rows) and hands it to the release gate. The hosted fallback answers student calls only when no endpoint is set.
+
+<ul class="rt-key">
+  <li class="student">The student you own</li>
+  <li class="teacher">Rented per token</li>
+  <li class="store">Keeps data</li>
+  <li class="gate">Decides releases</li>
+  <li class="outline">Optional or fallback</li>
+  <li class="edge-main">Request path</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### The components
 
@@ -72,21 +125,71 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 As of Oct 21, 2026, steps 2, 3 and 6 to 8 have run only against mock models and fake HTTP transports in the tests. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
+### What a request leaves behind
+
+Every request leaves exactly one row of metadata. Text is kept only when a teacher answer passes every check below, and then only after PII redaction.
+
+<figure class="rt-diagram">
+
+```mermaid
+flowchart TB
+  req(["A chat request"]) --> ans{{"A teacher answer?"}}
+  req --> row[("Request row, always<br/>metadata only")]
+  ans -->|"no: the student served"| x1["Nothing to store"]
+  ans -->|yes| only{{"Pinned, tool or<br/>teacher-only?"}}
+  only -->|yes| x2["Never stored"]
+  only -->|no| opt{{"A storage opt-out?"}}
+  opt -->|yes| x3["Not stored<br/>the row says which"]
+  opt -->|no| valid{{"Complete and valid?"}}
+  valid -->|no| x4["Served, not stored<br/>skip_example event"]
+  valid -->|yes| red["PII redaction"]
+  red --> ex[("Training example<br/>teacher, license, split")]
+
+  class req,red neutral
+  class row,ex store
+  class ans,only,opt,valid gate
+  class x1,x2,x3,x4 outline
+```
+
+<figcaption>
+
+**Reading this diagram.** The left branch always happens: one request row with the route, cost, confidence and ids, never the prompt or the answer. The API key appears in it by name only, and an end user only as a keyed hash. The chain on the right decides whether any text is kept. A teacher answer exists after an escalation, a cold start, an audit or a shadow arbitration; the student's own answers are never stored. Pinned tasks, tool requests and other teacher-only requests are never stored (the one exception is an over-length request on a task that sets `store_ineligible`). Any storage opt-out stops it next: `store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`, a key with `store=0`, a no-store task, a no-train end user or zero retention. Then the answer must be complete and valid under the task's spec. Only then are the messages, the stored conditions and the answer redacted and written as a training example with the teacher's model id and license, in the golden or the train split. An erased example's hash is refused from then on.
+
+</figcaption>
+</figure>
+
 ### Mock mode and live mode
 
 `RATCHET_MODE` picks one of two runtimes, built in `Runtime.reset` in `ratchet/gateway.py`:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-    M{"RATCHET_MODE"} -->|"mock (default)"| A["In-memory ledger"]
-    A --> B["Mock teacher and mock students from sim/"]
-    B --> C["Demo controls on, simulated search"]
-    M -->|live| D["SQLite file at RATCHET_DB"]
-    D --> E["Teacher on Token Factory"]
-    E --> F{"RATCHET_STUDENT_BASE set?"}
-    F -->|yes| G["Student on your vLLM endpoint"]
-    F -->|no| H["Hosted fallback: Nano 30B"]
+flowchart TB
+  mode{{"RATCHET_MODE"}}
+  mode -->|"mock, the default"| m1[("In-memory ledger<br/>gone on restart")]
+  m1 --> m2["Mock teacher and students<br/>from sim/, no network"]
+  m2 --> m3["Demo controls on<br/>simulated search"]
+  mode -->|live| l1[("SQLite file<br/>at RATCHET_DB")]
+  l1 --> l2["Teacher on<br/>Token Factory"]
+  l2 --> sb{{"RATCHET_STUDENT_BASE<br/>set?"}}
+  sb -->|yes| l3["Your adapter on<br/>your vLLM endpoint"]
+  sb -->|no| l4["Hosted fallback<br/>Nano 30B, untuned"]
+
+  class mode,sb gate
+  class m1,l1 store
+  class m2,m3 neutral
+  class l2 teacher
+  class l3 student
+  class l4 outline
 ```
+
+<figcaption>
+
+**Reading this diagram.** One setting picks the runtime when the gateway starts (`Runtime.reset`). The left branch needs no network and no keys, and every number it shows is simulation. The right branch keeps a real ledger file and calls the teacher on Token Factory. Its student is your adapter on your own vLLM endpoint when `RATCHET_STUDENT_BASE` is set, and otherwise the untuned Nano 30B on Token Factory, drawn dashed because it is a stand-in, not the adapter you own.
+
+</figcaption>
+</figure>
 
 | | Mock mode | Live mode |
 |---|---|---|
@@ -105,14 +208,27 @@ With no `RATCHET_STUDENT_BASE`, a trained version's student calls go to the untu
 
 ### Three loops at three speeds
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-    R["Every request: the cascade"] -->|"rows, audits, examples"| L["Ledger"]
-    L -->|"audits, shadow verdicts"| G["Every few seconds to minutes: gate tick"]
-    G -->|"version states"| R
-    L -->|"train and golden rows"| N["Every night: Night School"]
-    N -->|"a new candidate"| G
+flowchart TB
+  R["Every request<br/>the cascade"] ==>|"rows, audits, examples"| L[("Ledger")]
+  L ==>|"audits, shadow verdicts"| G{{"Seconds to minutes<br/>the gate tick"}}
+  G ==>|"version states"| R
+  L -->|"train and golden rows"| N["Every night<br/>Night School"]
+  N -->|"a new candidate"| G
+
+  class R,N neutral
+  class L store
+  class G gate
 ```
+
+<figcaption>
+
+**Reading this diagram.** The thick loop turns fastest: requests write rows, the gate tick reads the audits and shadow verdicts in them, and the version states it writes decide which student the next request meets. The thin path turns once a night: Night School reads the training and golden rows from the same ledger and hands a new candidate to the gate. In live mode cron can also run the tick, so a quiet gateway still moves its releases.
+
+</figcaption>
+</figure>
 
 | Loop | How often | What it does | Entry point |
 |---|---|---|---|
