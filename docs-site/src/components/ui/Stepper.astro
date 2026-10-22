@@ -1,0 +1,68 @@
+---
+/**
+ * Stepper (React Bits): a walk-through, one step at a time, with Back and Next and clickable step numbers.
+ * When: a sequence the reader should take in order and that reads better one step at a time (the release stages,
+ * one request's journey). For a reference list the reader scans, use Starlight's <Steps> instead.
+ * Each step: { title, body, tone? }. body is plain text with `code`, **bold**, [links](/path/) and blank lines
+ * between paragraphs. tone: 'owned' (the student), 'rented' (the teacher) or 'neutral'.
+ * Print and no-script readers get every step as a numbered list.
+ */
+import StepperRB from '../rb/Stepper/Stepper.tsx';
+
+interface StepInput {
+  title: string;
+  body: string;
+  tone?: 'owned' | 'rented' | 'neutral';
+}
+interface Props {
+  steps: StepInput[];
+  label?: string;
+  initialStep?: number;
+  backLabel?: string;
+  nextLabel?: string;
+  restartLabel?: string;
+  class?: string;
+}
+
+const { steps, label, initialStep, backLabel, nextLabel, restartLabel, class: className } = Astro.props;
+
+const escape = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const safeHref = (href: string) => (/^(https?:\/\/|\/|#|mailto:)/.test(href) ? href : '#');
+const inline = (text: string) => {
+  // Code spans first, so nothing inside them is formatted.
+  const parts = text.split(/(`[^`]+`)/g);
+  return parts
+    .map((part) => {
+      if (/^`[^`]+`$/.test(part)) return `<code>${escape(part.slice(1, -1))}</code>`;
+      let out = escape(part);
+      out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label: string, href: string) => {
+        const target = safeHref(href.replace(/&amp;/g, '&'));
+        const external = /^https?:\/\//.test(target);
+        return `<a href="${escape(target)}"${external ? ' rel="noopener"' : ''}>${label}</a>`;
+      });
+      return out;
+    })
+    .join('');
+};
+const toHtml = (body: string) =>
+  body
+    .trim()
+    .split(/\n\s*\n/)
+    .map((p) => `<p>${inline(p.replace(/\s*\n\s*/g, ' '))}</p>`)
+    .join('');
+
+const data = steps.map((s) => ({ title: s.title, html: toHtml(s.body), tone: s.tone ?? 'neutral' }));
+---
+
+<StepperRB
+  client:visible={{ rootMargin: '200px' }}
+  steps={data}
+  label={label}
+  initialStep={initialStep}
+  backLabel={backLabel}
+  nextLabel={nextLabel}
+  restartLabel={restartLabel}
+  className={className}
+/>

@@ -1,0 +1,14 @@
+/* Adapted from React Bits "ShapeGrid" (MIT + Commons Clause, see ../LICENSE.md). */
+.rb-shape-grid {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.rb-shape-grid__canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  background: transparent;
+}

@@ -1,0 +1,27 @@
+---
+/**
+ * FadeContent (React Bits): a block that fades and rises into place once, when it scrolls into view.
+ * When: whole sections of a landing-style page (the home page's bands). Not inside a guide's running text: readers
+ * of docs jump to anchors and search hits, and text must already be there.
+ * stagger > 0 animates direct children one after another (a grid of cards).
+ * Visible without script, with reduced motion and in print.
+ */
+import FadeContentRB from '../rb/FadeContent/FadeContent.tsx';
+
+interface Props {
+  blur?: boolean | number;
+  duration?: number;
+  delay?: number;
+  distance?: number;
+  stagger?: number;
+  threshold?: number;
+  class?: string;
+  as?: 'div' | 'section';
+}
+
+const { class: className, ...rest } = Astro.props;
+---
+
+<FadeContentRB client:visible={{ rootMargin: '320px' }} {...rest} className={className}>
+  <slot />
+</FadeContentRB>

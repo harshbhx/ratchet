@@ -1,0 +1,25 @@
+---
+/**
+ * CountUp (React Bits): a number that counts up once when it scrolls into view.
+ * When: a real number in a stat tile (test count, a gate threshold). Only numbers from the repo or a measured run;
+ * a simulation number must say "Simulation" next to it.
+ * The final number is in the HTML (search, no script, print, reduced motion) and holds its width, so nothing moves.
+ */
+import CountUpRB from '../rb/CountUp/CountUp.tsx';
+
+interface Props {
+  to: number;
+  from?: number;
+  duration?: number;
+  delay?: number;
+  separator?: string;
+  decimals?: number;
+  prefix?: string;
+  suffix?: string;
+  class?: string;
+}
+
+const { class: className, ...rest } = Astro.props;
+---
+
+<CountUpRB client:visible={{ rootMargin: '240px' }} {...rest} className={className} />

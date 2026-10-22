@@ -1,0 +1,26 @@
+---
+/**
+ * LogoLoop (React Bits): a slow, endless row of names (text only, no logos) with a pause button.
+ * When: one "built with" strip. Each item: { label, note?, href? }. Name only what the code really uses.
+ * Pauses on hover, on keyboard focus, off screen and with its button; a static wrapped row with reduced motion,
+ * without script and in print.
+ */
+import LogoLoopRB from '../rb/LogoLoop/LogoLoop.tsx';
+
+interface Item {
+  label: string;
+  note?: string;
+  href?: string;
+}
+interface Props {
+  items: Item[];
+  label?: string;
+  duration?: number;
+  gap?: number;
+  class?: string;
+}
+
+const { items, label = 'Built with', duration, gap, class: className } = Astro.props;
+---
+
+<LogoLoopRB client:visible items={items} ariaLabel={label} duration={duration} gap={gap} className={className} />

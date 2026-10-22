@@ -1,0 +1,66 @@
+/* Adapted from React Bits "BlurText" (MIT + Commons Clause, see ../LICENSE.md). */
+.rb-blur-text__line {
+  display: block;
+}
+.rb-blur-text__word {
+  display: inline-block;
+  white-space: nowrap;
+}
+.rb-blur-text__piece {
+  display: inline-block;
+}
+
+.rb-blur-text[data-state='from'] .rb-blur-text__piece {
+  opacity: 0;
+  filter: blur(var(--rb-blur));
+  transform: translateY(var(--rb-from-y));
+}
+
+.rb-blur-text[data-state='in'] .rb-blur-text__piece {
+  animation: rb-blur-in var(--rb-dur) cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--rb-start) + var(--i, 0) * var(--rb-stagger));
+}
+
+@keyframes rb-blur-in {
+  0% {
+    opacity: 0;
+    filter: blur(var(--rb-blur));
+    transform: translateY(var(--rb-from-y));
+  }
+  55% {
+    opacity: 0.85;
+    filter: blur(calc(var(--rb-blur) * 0.2));
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+
+/* Final state, no motion: reduced motion, no script, print. */
+@media (prefers-reduced-motion: reduce) {
+  .rb-blur-text .rb-blur-text__piece,
+  .rb-blur-text[data-state] .rb-blur-text__piece {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+@media (scripting: none) {
+  .rb-blur-text[data-state] .rb-blur-text__piece {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+@media print {
+  .rb-blur-text[data-state] .rb-blur-text__piece {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}

@@ -1,0 +1,40 @@
+---
+/**
+ * BlurText (React Bits): words arrive out of a soft blur, once.
+ * When: a display heading or a lead line on a landing-style page (home, a section opener). Not for the h2/h3 of a
+ * guide: those must stay plain so they show in "On this page".
+ *
+ * trigger="load" ships no JavaScript (a CSS animation on the server-rendered text, for the first screen).
+ * trigger="view" (default) hydrates near the screen and plays when the text scrolls in.
+ * Reduced motion, no script and print show the text as is.
+ */
+import BlurTextRB from '../rb/BlurText/BlurText.tsx';
+
+interface Props {
+  text: string;
+  as?: 'h1' | 'h2' | 'h3' | 'p' | 'span' | 'div';
+  id?: string;
+  trigger?: 'load' | 'view';
+  class?: string;
+  /** One class per line when the text holds "\n". */
+  lineClasses?: string[];
+  animateBy?: 'words' | 'letters';
+  delay?: number;
+  duration?: number;
+  blur?: number;
+  distance?: number;
+  startDelay?: number;
+  /** Extra classes for given words, e.g. { Own: 'rt-mark rt-mark--owned' }. */
+  marks?: Record<string, string>;
+}
+
+const { class: className, lineClasses, trigger = 'view', ...rest } = Astro.props;
+---
+
+{
+  trigger === 'load' ? (
+    <BlurTextRB {...rest} trigger="load" className={className} lineClassNames={lineClasses} />
+  ) : (
+    <BlurTextRB client:visible={{ rootMargin: '160px' }} {...rest} trigger="view" className={className} lineClassNames={lineClasses} />
+  )
+}

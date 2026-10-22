@@ -1,0 +1,21 @@
+---
+/**
+ * SpotlightCard (React Bits): a card whose border and surface light up under the pointer or keyboard focus.
+ * When: a card someone will click or tab to (path cards, link grids, feature tiles). tone="owned" (blue, default)
+ * for the student / what you own, "rented" (orange) for the teacher, "neutral" for everything else.
+ * Static and fully readable before hydration; the light only follows a pointer or focus, it never moves on its own.
+ */
+import SpotlightCardRB from '../rb/SpotlightCard/SpotlightCard.tsx';
+
+interface Props {
+  tone?: 'owned' | 'rented' | 'neutral';
+  class?: string;
+  spotlightSize?: number;
+}
+
+const { tone = 'owned', class: className, spotlightSize } = Astro.props;
+---
+
+<SpotlightCardRB client:visible={{ rootMargin: '200px' }} tone={tone} spotlightSize={spotlightSize} className={className}>
+  <slot />
+</SpotlightCardRB>

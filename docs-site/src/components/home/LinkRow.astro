@@ -1,0 +1,86 @@
+---
+/** A row of pill links (repository, live site, license...). External links say so to screen readers. */
+import RtIcon from '../RtIcon.astro';
+
+interface Item {
+  label: string;
+  href: string;
+  icon?: string;
+}
+interface Props {
+  items: Item[];
+  label?: string;
+}
+const { items, label = 'Links' } = Astro.props;
+---
+
+<nav class="rt-links rt-ui" aria-label={label}>
+  <ul>
+    {
+      items.map((item) => {
+        const external = /^https?:\/\//.test(item.href);
+        return (
+          <li>
+            <a href={item.href}>
+              {item.icon && <RtIcon name={item.icon as any} size={16} />}
+              <span>{item.label}</span>
+              {external && (
+                <>
+                  <RtIcon name="external" size={13} class="rt-links__ext" />
+                  <span class="rt-sr-only"> (another site)</span>
+                </>
+              )}
+            </a>
+          </li>
+        );
+      })
+    }
+  </ul>
+</nav>
+
+<style>
+  .rt-links {
+    margin-top: 2.25rem;
+  }
+  .rt-links ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .rt-links li {
+    margin: 0 !important;
+  }
+  .rt-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.5rem;
+    padding: 0 1rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 999px;
+    background: var(--rt-surface);
+    color: var(--rt-ink-2);
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition:
+      border-color var(--rt-dur) ease,
+      background-color var(--rt-dur) ease,
+      color var(--rt-dur) ease,
+      transform 0.15s ease;
+  }
+  .rt-links a:hover {
+    border-color: var(--rt-muted);
+    background: var(--rt-surface-2);
+    color: var(--rt-ink);
+  }
+  .rt-links a:active {
+    transform: scale(0.98);
+  }
+  .rt-links :global(.rt-links__ext) {
+    color: var(--rt-muted);
+  }
+</style>

@@ -1,0 +1,46 @@
+---
+/**
+ * <PathGrid>: a responsive grid of <PathCard>s that follows its own width (1, 2, then `cols` columns).
+ */
+interface Props {
+  cols?: 2 | 3 | 4;
+  label?: string;
+}
+const { cols = 3, label } = Astro.props;
+---
+
+<div class="rt-path-grid rt-ui not-content" style={`--cols:${cols};--cols-mid:${Math.min(cols, 3)}`}>
+  <div class="rt-path-grid__grid" role={label ? 'group' : undefined} aria-label={label}>
+    <slot />
+  </div>
+</div>
+
+<style>
+  .rt-path-grid {
+    container-type: inline-size;
+    margin-block: 1.5rem;
+  }
+  .rt-path-grid__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+  @container (min-width: 34rem) {
+    .rt-path-grid__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @container (min-width: 52rem) {
+    .rt-path-grid__grid {
+      grid-template-columns: repeat(var(--cols-mid), minmax(0, 1fr));
+    }
+  }
+  @container (min-width: 68rem) {
+    .rt-path-grid__grid {
+      grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    }
+  }
+  .rt-path-grid__grid > :global(*) {
+    margin: 0 !important;
+  }
+</style>
