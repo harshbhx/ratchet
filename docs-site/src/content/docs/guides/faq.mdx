@@ -187,6 +187,26 @@ The `requests` table holds metadata only (task, route, confidence, cost, tokens)
 
 Yes. Stored examples can be erased for good by client, end user, hash or text (`DELETE /v1/ratchet/examples` for a client's own end users, `POST /ratchet/admin/privacy/erase` and `python -m ratchet.admin erase`, both dry runs unless told otherwise). An erased example leaves only a hash, so it is never stored again. Versions that may have trained on it are reported, and their signed BOMs are left as written; the next nights retrain from the base without it. Retention windows and storage opt-outs keep data from piling up or being stored at all. [Security](/guides/security/)
 
+### Which key do I need for which route?
+
+Four kinds of key exist. An API key (`RATCHET_API_KEYS`) calls `/v1/*`. A dashboard key (`RATCHET_DASHBOARD_KEYS`) reads stats, costs and other management data. An admin key (`RATCHET_ADMIN_KEYS`) also writes: versions, switches, tasks, erasure. Mock-only demo controls need no key and answer 403 in live mode. The [endpoint map](/api/endpoints/) lists every route with its level.
+
+### How do I send feedback on an answer?
+
+Every chat response carries `ratchet.request_id`. Send it to `POST /v1/ratchet/feedback` with a verdict, `correct` or `incorrect`, and for `incorrect` optionally the right answer and the request's messages. A stored correction becomes a human-labelled training example. A verdict never promotes or rolls back a version. See the [examples](/api/endpoints/#three-examples).
+
+### How do I retry a request safely?
+
+Send an `Idempotency-Key` header. The first answer is kept in memory for a short time (`RATCHET_IDEMPOTENCY_TTL_S`) and sent again, marked `Idempotent-Replayed: true`, without a second cascade, a second charge or a second row. Retries also never push an example toward the frequent-request rule that moves it out of the golden set.
+
+### What is the difference between a pinned task and an auto task?
+
+A pinned task always goes to the teacher and is never stored as training data. Only an operator can pin one, never a request. An auto task is made by the gateway from a request's `response_format` JSON schema when the request names no registered task; it is stored and distilled like any other task. Both are listed in the [glossary](/guides/glossary/).
+
+### How does Ratchet notice that things have changed?
+
+Three watchers, none of them a release signal on its own. The audits measure precision against the teacher. The drift alarm watches the student's confidence scores without any labels. The teacher watch compares the teacher's new answers with its stored ones and freezes training if they disagree too much, until an operator acknowledges it. See [evidence](/guides/evidence/) and the [release gate](/guides/release-gate/).
+
 ### Why SQLite?
 
 Zero setup, easy backups, easy to inspect, and fast enough for one gateway process at demo scale. It runs in WAL mode so dashboard reads do not block writes. The price is one gateway process with one worker; a Postgres ledger is planned. [The ledger](/guides/ledger/)

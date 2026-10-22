@@ -72,6 +72,7 @@ flowchart LR
 - **Comparator (field comparator)**: how one field of a task's answer is normalised and compared (`label`, `number`, `date`, `set`, `records`, ...); a missing required field makes the whole answer invalid. ([Confidence](/guides/confidence/))
 - **Confidence**: a score from 0 to 1: 0.4 × the token probability of the best majority sample plus 0.6 × the agreement among the student's samples; an invalid sample gets no vote. ([Confidence](/guides/confidence/))
 - **Confidence sequence**: a range for a rate that holds at every sample size at once, so it can be checked after every audit; release events show a 95% one. ([Release gate](/guides/release-gate/))
+- **Contested label**: a stored teacher answer that the teacher contradicted when it saw the same request again. It is kept out of training and out of the golden set until Night School asks the teacher again and two of three answers agree. ([Evidence](/guides/evidence/))
 - **Coverage**: the share of requests a student serves, or would serve; more coverage means more savings. ([Release gate](/guides/release-gate/))
 
 ### D
@@ -81,6 +82,7 @@ flowchart LR
 - **Degraded mode**: an opt-in (`RATCHET_ON_TEACHER_FAILURE=serve_student`): when the teacher cannot answer an escalation, the student's own below-threshold answer is served, marked `degraded`, and never stored. ([Escalation and audits](/guides/escalation-and-audits/))
 - **Distillation**: training a small model to copy a larger model's answers. ([What is Ratchet?](/guides/what-is-ratchet/))
 - **Drift**: new kinds of requests the student has never seen, for example after a product launch; escalations rise, then fall as Night School learns them. ([Night School](/guides/night-school/))
+- **Drift alarm**: a label-free alarm on each version's confidence scores. If the scores of a version's answers shift away from how they looked before, it raises one `drift` event and suspends the version's certificate. It needs no audits, and an unchanged stream triggers it with probability at most 1 in 100 over its whole life. `GET /ratchet/drift`. ([Evidence](/guides/evidence/))
 
 ### E
 
@@ -93,6 +95,7 @@ flowchart LR
 
 - **Fallback student**: another name for the hosted fallback (`RATCHET_FALLBACK_STUDENT`). ([Host it on Nebius](/guides/host-on-nebius/))
 - **Fallback teacher**: an opt-in second licensed teacher (`RATCHET_TEACHER_FALLBACK_MODEL`) that answers when the primary teacher is unavailable; its answers are stored only with `RATCHET_STORE_FALLBACK_TEACHER=1`. ([Escalation and audits](/guides/escalation-and-audits/))
+- **Freeze**: an operator's switch (`POST /ratchet/admin/releases/freeze`) that stops promotions and new stages. Rollbacks and alerts keep running. Also what the teacher watch does to training when the teacher's answers drift. ([Release gate](/guides/release-gate/))
 - **FREQUENT rule**: a request seen 3 or more times leaves the golden set and goes to training, so frequent questions are never held out forever. ([Night School](/guides/night-school/))
 - **Frontier**: the certificate at every threshold from 0.95 down to 0.50, corrected so all of them hold at once: the certified trade-off between precision and coverage. ([Evidence](/guides/evidence/))
 
@@ -107,6 +110,7 @@ flowchart LR
 - **Held-out certificate**: every golden example's proof of absence from an adapter's committed training set, checkable from the BOM alone. ([Evidence](/guides/evidence/))
 - **Hosted fallback**: the untuned Nemotron 3 Nano 30B on Token Factory that answers student calls while no student endpoint is set; paid per token, held to the default threshold of 0.80, and covered by no certificate. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Human label**: a customer's correction (`POST /v1/ratchet/feedback`) or an attested import, stored as a training example with the provenance `human`; a verdict on its own stores nothing. ([Training on your data](/guides/training-on-your-data/))
+- **Human precision**: the share of `correct` verdicts on the answers a version served itself, reported next to the audited precision. It is never used to promote or roll back a version, because people report what they notice. ([Training on your data](/guides/training-on-your-data/))
 
 ### I
 
@@ -163,6 +167,7 @@ flowchart LR
 - **Receipt (savings receipt)**: a signed record per ledger day, for the gateway and for each API client, of what was saved, with a Merkle tree over the day's request metadata and the fee taken on the 95% lower bound of the savings. ([Cost and savings](/guides/cost-and-savings/))
 - **Release gate**: the checks a new version must pass before it serves traffic: the golden gate, shadow, canary at 10% and 50%, then live, with automatic rollback of a bad canary. ([Release gate](/guides/release-gate/))
 - **Replay (ledger replay)**: recomputing one version's coverage, precision and cost from its logged traffic at another threshold or audit rate, with no new model call. ([Evidence](/guides/evidence/))
+- **Request id**: `req_` and 32 hex digits, sent in every response (`x-request-id`, `ratchet.request_id`). It names the request in feedback calls and request lookups; it never holds text. ([The request journey](/guides/request-journey/))
 - **Retention**: how long stored examples and request rows are kept (`RATCHET_EXAMPLE_RETENTION_DAYS`, `RATCHET_REQUEST_RETENTION_DAYS`; 0 keeps them forever). ([Security](/guides/security/))
 - **Rollback**: pulling a canary automatically when the 95% upper bound of its audited precision falls below 92% (or, with the sequential rule, when its e-value reaches 20). ([Release gate](/guides/release-gate/))
 - **Route**: the recorded reason a request was answered the way it was: `student`, `confidence` (escalated), `cold_start`, `pinned`, `tools`, `student_breaker` and others. ([The request journey](/guides/request-journey/))
@@ -184,6 +189,7 @@ flowchart LR
 - **Task**: a named kind of request, such as `ticket-triage`, that says which answer fields must match, which answers are valid and whether it is pinned; set with the `X-Ratchet-Task` header. ([Training on your data](/guides/training-on-your-data/))
 - **Task registry**: the tasks a request can name: the built-in ones, those in `RATCHET_TASKS_FILE` and those written through the admin API. ([Training on your data](/guides/training-on-your-data/))
 - **Teacher**: the large model that answers what the student cannot: NVIDIA Nemotron 3 Ultra on Token Factory; only its answers and attested human labels become training data. ([The big picture](/guides/big-picture/))
+- **Teacher watch**: a check that the teacher still gives the same labels. A repeated request, or one of Night School's probes, is compared with its stored label, once per request per check epoch. Enough disagreement freezes training until an operator acknowledges it (`POST /ratchet/teacher/ack`). A new model id in the teacher's responses starts a new epoch. `GET /ratchet/teacher`. ([Evidence](/guides/evidence/))
 - **Threshold**: the confidence at or above which a student answer is served, calibrated per version and per task. ([Confidence](/guides/confidence/))
 - **Token Factory**: Nebius's OpenAI-compatible inference service for open models, billed per token; Ratchet's teacher, judge and hosted fallback run there. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Tombstone**: the hash an erased example leaves behind, so the same example is refused from then on, from any client. ([Security](/guides/security/))
