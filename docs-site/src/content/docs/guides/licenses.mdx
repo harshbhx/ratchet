@@ -154,6 +154,24 @@ Labels a person wrote (a correction sent with `POST /v1/ratchet/feedback`, or a 
 - The BOM lists human labels apart from the teachers (`label_sources`), and NOTICE.md gets its Human labels section.
 - An import of a teacher's outputs (`--source teacher:<model>`) must pass `require_distillable` and the closed-family check; a closed model is refused with its clause quoted, and Ratchet's own `train.jsonl` rows cannot be re-imported as human labels.
 
+### A worked example: the text-to-SQL adapter
+
+The [text-to-SQL adapter](/guides/text-to-sql/) is the clearest case of the chain, because every link is a file you can read.
+
+```mermaid
+flowchart LR
+  BASE["Base model<br/>Nemotron 3 Nano 4B<br/>NVIDIA Nemotron Open Model License"] --> AD["LoRA adapter"]
+  TEA["Teacher<br/>Nemotron 3 Ultra on Token Factory<br/>OpenMDW-1.1"] --> LAB["Labels: SQL the teacher wrote<br/>and that was run and kept"]
+  LAB --> AD
+  NONE["Closed-model outputs"] -.->|"none used"| LAB
+  AD --> CARD["Model card and NOTICE.md<br/>name both licenses"]
+  LAB --> MAN["teacher_manifest.json<br/>records the teacher, its license and the data hashes"]
+```
+
+**Reading this diagram.** Two licenses meet in the adapter. The base model's license comes with the weights it sits on, so a copy of it ships with the adapter. The teacher's license covers the labels, and its terms place no restrictions on using the outputs. The dotted line is the rule that matters: no output from a closed model is in the data, so there is no closed-model clause to breach. The manifest and the model card are where a reader can check each claim.
+
+The adapter was trained on a free Colab T4, not on Nebius GPUs. Only the teacher ran on Nebius Token Factory, so the Token Factory terms question below applies to the labels, not to the training.
+
 ### The open question: Token Factory's terms
 
 Token Factory's Terms of Service §5(f) is about using the service to "Develop a product or service that competes with the Service" (as quoted in the [threat model](/reference/threat-model/), T7). That wording is broad. The project asked Nebius support about it in writing on **Oct 19, 2026**; as of Oct 21, 2026 there is no final answer, so treat the question as **open**. Ratchet runs on Nebius end to end (the teacher on Token Factory, the student on Nebius AI Cloud), which is how it is positioned, but that is not a legal answer. Not legal advice.

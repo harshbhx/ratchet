@@ -50,6 +50,25 @@ The evidence is written at fixed moments, by code that draws no random numbers a
 | Ledger replay | An estimate of precision, coverage and cost at another threshold or audit rate | Anything signed: it reads the ledger as it is, and its interval is approximate | `python -m ratchet.replay` |
 | Savings receipt | The day's leaves were not edited after sealing, and the bill follows from them | That the costs written at request time were right | `python -m ratchet.receipt verify` |
 
+```mermaid
+sequenceDiagram
+  participant N as Night School
+  participant L as Ledger
+  participant G as Gateway
+  participant C as Customer or auditor
+  N->>L: commit training and golden rows (Merkle roots)
+  N->>N: train, score with certificate, re-score live, sign the BOM
+  N->>L: write leaves once (append-only)
+  G->>L: log every request with its label probability
+  G->>L: seal each ended day into a signed receipt
+  C->>G: fetch BOM, proofs, receipts and the public key
+  C->>C: run bom, stats, proof, receipt checks offline
+```
+
+**Reading this diagram.** The first three arrows happen once a night and the next two happen all day, so the evidence is made by the same system that does the work but at fixed moments that cannot change a decision. The last two arrows are the point: the customer takes the files and checks them without calling the gateway again. [Proof you can run](/guides/proof/) lists the one command for each check, what it proves and what a failure looks like.
+
+A separate, simpler check exists for the text-to-SQL adapter: its exam is scored by running queries, and `measure_adapter.py verify` recomputes every number from the raw answers. That one does not need a gateway at all. See [A text-to-SQL adapter you can check](/guides/text-to-sql/) and [Results](/guides/results/).
+
 All the arithmetic comes from two standard-library modules, [`ratchet/stats.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/stats.py) and [`ratchet/merkle.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/merkle.py), checked against hand-computed values and seeded Monte Carlo runs in `tests/test_stats.py` and `tests/test_provenance.py`.
 
 ## Signed bills of materials
@@ -329,7 +348,7 @@ Not on the request path beyond logging a few values per request: no model call, 
 
 ### Has any of it run on real traffic?
 
-No. As of Oct 21, 2026, every document described here has been produced only by the mock gateway and the simulator. The live-run harness (`python -m ratchet.liverun`) is the planned way to produce the first real numbers.
+Not the signed documents on this page. As of Oct 22, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the mock gateway, the simulator and the tests. The one real-model measurement is the text-to-SQL adapter's exam, scored by a standalone script (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) is the planned way to produce the first real numbers through the gateway.
 
 ## Related
 
