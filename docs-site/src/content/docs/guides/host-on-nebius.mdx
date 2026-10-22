@@ -7,7 +7,6 @@ import { Steps, Tabs, TabItem, Aside, FileTree } from '@astrojs/starlight/compon
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import NebiusDeployment from '../../../components/diagrams/NebiusDeployment.astro';
 
 <Summary>Ratchet runs on one small Nebius CPU VM that does no model inference, calls its teacher, judge and hosted fallback on Token Factory, and rents an L40S GPU only while you serve or train the student, so GPU money is spent only when you decide to spend it.</Summary>
 
@@ -24,8 +23,8 @@ Think of the whole restaurant as a set of rented rooms.
 
 </Eli10>
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026 none of this has run against a real Nebius account. The scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command, but every Nebius call is unverified until the day-1 checks pass. Run every script with `DRY_RUN=1` first.
+<Aside type="caution" title="The GPU side has not run on Nebius yet">
+The teacher runs on Nebius Token Factory. As of Oct 22, 2026 the GPU parts have not: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the first SQL adapter was trained on a free Colab T4). The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command, so every call they make is unverified until it runs. Run every script with `DRY_RUN=1` first.
 </Aside>
 
 ## How it really works
@@ -34,7 +33,7 @@ As of Oct 21, 2026 none of this has run against a real Nebius account. The scrip
 
 | Piece | Nebius product and size | What runs there | How it bills |
 |---|---|---|---|
-| Front room | Compute VM, platform `cpu-e2`, preset `2vcpu-8gb`, region `eu-north1` | Docker Compose with Caddy (`caddy:2.11.7-alpine`) and the gateway (one uvicorn worker), the SQLite ledger in the `ratchet-data` volume at `/data/ratchet.db`, and cron | While it runs. A stopped VM keeps billing for its disk |
+| Front room | Compute VM, platform `cpu-e2`, preset `2vcpu-8gb`, region `eu-north1` | Docker Compose with Caddy (`caddy:2.11.7-alpine`), the gateway (one uvicorn worker), a second gateway in mock mode for the simulation at `sim.<domain>` (capped at 1 vCPU and 1 GiB, no keys), the SQLite ledger in the `ratchet-data` volume at `/data/ratchet.db`, and cron | While it runs. A stopped VM keeps billing for its disk |
 | Teacher, judge, hosted fallback | Token Factory | Nemotron 3 Ultra (`nvidia/Nemotron-3-Ultra-550b-a55b`), Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`), Nemotron 3 Nano 30B (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`) | Per token |
 | Student | Serverless Endpoint, platform `gpu-l40s-a`, preset `1gpu-8vcpu-32gb` | vLLM `v0.18.0` serving `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`, with LoRA adapters loaded at runtime | While it runs. A stopped endpoint is not billed for compute or its own storage |
 | Night School training | Serverless Job, platform `gpu-l40s-a` | `python -m ratchet.nightschool.train` (Transformers, PEFT and TRL), capped at 2 hours | While it runs |
@@ -43,28 +42,54 @@ As of Oct 21, 2026 none of this has run against a real Nebius account. The scrip
 
 The gateway does no inference. It routes requests, writes the ledger and serves the web pages, so a 2 vCPU / 8 GB VM is enough. The models run elsewhere: the teacher on Token Factory, the student on the endpoint, or the hosted fallback when the endpoint is off.
 
-<NebiusDeployment />
-
-The same picture as a flowchart. Dotted lines are the parts that are off on the stock demo VM (the Night School cron, below).
+<figure class="rt-diagram">
 
 ```mermaid
-flowchart LR
-  subgraph vm["CPU VM in eu-north1"]
-    caddy["Caddy, HTTPS"]
-    gw["Gateway, 1 worker"]
-    ledger[("SQLite ledger")]
-    cron["cron"]
+flowchart TB
+  user(["Judges, browsers, your app"]) --> dns["DNS"]
+  dns --> pages["Cloudflare Pages<br/>site and docs"]
+  dns --> vm
+  subgraph vm["Nebius CPU VM · 2 vCPU, 8 GB"]
+    direction TB
+    caddy["Caddy<br/>HTTPS, edge guard"] ==> live["Live gateway<br/>SQLite ledger"]
+    caddy --> sim["Simulation<br/>gateway, mock"]
   end
-  client["Your app or a browser"] --> caddy
-  caddy --> gw
-  gw --> ledger
-  gw -->|"teacher, judge, fallback"| tf["Token Factory"]
-  gw -->|"student calls"| ep["Serverless Endpoint, vLLM + LoRA"]
-  gw -->|"Scout search"| tavily["Tavily"]
-  cron -.->|"Night School"| job["Serverless Job, L40S"]
-  job -->|"writes adapters"| bucket[("Object Storage bucket")]
-  ep -->|"reads adapters"| bucket
+  subgraph tf["Nebius Token Factory · in use, per token"]
+    teacher["Ultra: teacher<br/>Super: judge<br/>Nano 30B: fallback"]
+  end
+  tavily["Tavily<br/>live Scout search"]
+  subgraph gpu["Nebius AI Cloud · L40S · not run yet"]
+    direction TB
+    ep["Serverless Endpoint<br/>vLLM, only while on"] --- bucket[("Object Storage<br/>bucket at /data")]
+    job["Serverless Job<br/>LoRA training"] --> bucket
+  end
+  vm ==> tf
+  tf ~~~ tavily
+  tavily ~~~ gpu
+  vm -.-> tavily
+  vm -.-> gpu
+
+  class user,dns,caddy,live,sim neutral
+  class pages,teacher ok
+  class tavily outline
+  class ep,job,bucket pending
+  class gpu pendingZone
+  class tf okZone
 ```
+
+<figcaption>
+
+**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs, and the teacher runs on Nebius Token Factory, paid per token. Amber and dashed is the GPU side, which has not run on Nebius yet: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the first SQL adapter was trained on a free Colab T4). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger, and a second gateway in mock mode for the simulation at `sim.<domain>`. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
+
+<ul class="rt-key">
+  <li class="ok">In use</li>
+  <li class="pending">Not run on Nebius yet</li>
+  <li class="outline">Optional</li>
+  <li class="neutral">Set up by this guide</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### What lives in the bucket
 
@@ -338,21 +363,32 @@ The student endpoint is the largest cost: about $32 to $37 for every full day it
 - **Never stop the endpoint while `RATCHET_STUDENT_BASE` still points at it.** Student calls would fail, the student's circuit breaker would open after 5 failures in a row, and the teacher would answer those requests at Ultra prices instead of the cheaper hosted fallback. `/readyz` reports `degraded` meanwhile.
 - **Record the uptime for the cost report.** `student_endpoint.sh` runs `python -m ratchet.cost endpoint up|down` after `create`, `start` and `stop`, but that needs the ledger file; on your laptop it prints a note instead. Record it where the ledger is, on the VM, from `/opt/ratchet/deploy/vm`: `sudo -u ratchet docker compose exec -T ratchet python -m ratchet.cost endpoint up --usd-per-hour <your rate>` (and `down` after), or `POST /ratchet/cost/endpoint` with an admin key. `GET /ratchet/cost` then reports savings by GPU-hours actually paid.
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-  participant You
+  autonumber
+  actor You
   participant CLI as Nebius CLI
-  participant GW as Gateway on the VM
-  participant EP as Student endpoint
+  participant Gateway as Gateway<br/>on the VM
+  participant Student as Student<br/>endpoint
   You->>CLI: student_endpoint.sh start
-  CLI->>EP: start the same endpoint
-  You->>GW: set RATCHET_STUDENT_BASE and KEY, compose up
-  You->>GW: record endpoint up
-  GW->>EP: student calls, adapters reloaded on 404
-  You->>GW: clear both settings, compose up
+  CLI->>Student: start the same endpoint
+  You->>Gateway: set STUDENT_BASE and KEY, compose up
+  You->>Gateway: record endpoint up
+  Gateway->>Student: student calls, reload on a 404
+  Note over Gateway,Student: the window: your adapter answers
+  You->>Gateway: clear both settings, compose up
   You->>CLI: student_endpoint.sh stop
-  You->>GW: record endpoint down
+  You->>Gateway: record endpoint down
 ```
+
+<figcaption>
+
+**Reading this diagram.** A GPU window is eight manual steps, in this order. Start the endpoint you created once (1, 2), so its URL and token stay the same. Point the gateway at it with `RATCHET_STUDENT_BASE` and `RATCHET_STUDENT_KEY` and recreate the container (3), then record the uptime for the cost report (4). During the window the student calls go to your adapter, and an adapter vLLM lost on a restart is loaded again on its first 404 (5). To close the window, clear both settings before you stop the endpoint (6, 7), so student calls fall back to the hosted Nano 30B and not to the teacher at Ultra prices, and record the downtime (8).
+
+</figcaption>
+</figure>
 
 Automatic daily endpoint windows (`student_serving.window`, item W10) are referenced in the web app's copy but not built on this branch: they are planned. Until then a window is the manual procedure above.
 
@@ -489,7 +525,7 @@ A rough estimate for a short evaluation period, at $1.55 an hour, is about **$40
 
 ### Has any of this run on a real Nebius account?
 
-No, not as of Oct 21, 2026. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
+Token Factory, yes: the teacher runs there. The GPU endpoint and the training job, no, not as of Oct 22, 2026; the first SQL adapter was trained on a free Colab T4 instead. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
 
 ### Do I need a GPU to host the demo?
 
