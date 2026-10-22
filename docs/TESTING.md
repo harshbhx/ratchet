@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1781 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
+pytest -q                     # 1900 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -28,28 +28,30 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 88 (50 functions; one has 20 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 40 |
-| `tests/test_contract.py` | 56 (45 functions; one has 9 cases, one has 4) |
+| `tests/test_scout.py` | 45 |
+| `tests/test_contract.py` | 57 (45 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
-| `tests/test_live.py` | 76 (3 of them strict xfails for NFR-60) |
+| `tests/test_live.py` | 78 (3 of them strict xfails for NFR-60) |
+| `tests/test_livesim.py` | 19 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 44 (32 functions; one has 8 cases, one has 5) |
 | `tests/test_privacy.py` | 26 |
-| `tests/test_erasure.py` | 57 (36 functions; one has 13 cases, one has 4, three have 2) |
+| `tests/test_erasure.py` | 58 (37 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
 | `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
 | `tests/test_feedback.py` | 32 |
 | `tests/test_docs_claims.py` | 10 |
-| `tests/test_perf.py` | 22 |
+| `tests/test_perf.py` | 24 |
 | `tests/test_security.py` | 12 |
 | `tests/test_observability.py` | 28 |
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
 | `tests/test_idempotency.py` | 25 |
-| `tests/test_offpath.py` | 31 |
+| `tests/test_offpath.py` | 32 |
+| `tests/test_attribution.py` | 10 |
 | `tests/test_limits.py` | 29 |
 | `tests/test_admin.py` | 38 (26 functions; one has 13 cases) |
 | `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
@@ -61,8 +63,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_adjacent_endpoints.py` | 22 |
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
-| `tests/test_teacher_watch.py` | 48 (44 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
-| **Total** | **1781** |
+| `tests/test_teacher_watch.py` | 49 (45 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
+| **Total** | **1900** |
 
 There are three layers:
 
@@ -591,6 +593,20 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_metric_target_rule_catches_drift` | FR-7.9: with a swapped target table, a changed number, operator or unit, a missing entry, an extra entry, an unparseable PRD cell and a broken import each give exactly one error; `parse_target` reads `≥ 70%`, `0`, `≤ 3 nights` and `< 1 s` |
 | `test_clip_keeps_table_cells_valid` | Matrix text is at most 100 characters, ends in an ellipsis, never leaves an open code span or half an escaped pipe |
 
+### `tests/test_livesim.py`
+
+Live and simulation side by side (FR-11.30, FR-11.31, NFR-67, [ADR 0133](adr/0133-live-and-simulation-hosts.md)), offline: live mode runs over `httpx.MockTransport` and the janitor over a `FakeClock`, with no thread and no server. The compose file, the Caddyfile and `update.sh` are checked in `tests/test_live.py` (`test_compose_and_caddy_run_a_keyless_simulation_beside_the_live_gateway`, `test_update_script_checks_both_hosts` with stub `git`, `docker` and `curl`), and INV-8 with the limits set in `tests/test_contract.py` (`test_demo_limits_never_answer_before_the_mode_check`).
+
+| Test | Covers |
+|---|---|
+| `test_upstream_recorder_is_content_free` | FR-11.31, INV-12, INV-13, INV-15: a sentinel in the prompt, in an upstream 400's message and code and in a URL-shaped `model` reaches nothing in `/ratchet/stats` `upstream`, read as an admin and as the scrubbed anonymous reader; the 400 is `UpstreamError`, `http`, 400; the URL-shaped model id becomes `null` |
+| `test_upstream_calls_shape_and_roles` | The call items' exact keys; teacher, endpoint student (`student_endpoint`), hosted Nano (`token_factory`, the fallback model's id) and the fallback teacher by role; `token_factory` false for another base |
+| `test_upstream_failures_record_class_status_and_last_success`, `test_classify_never_returns_a_message`, `test_age_grows_with_the_clock` | 429, timeout, connect error and a non-JSON body classified; the first success kept; an observer that raises and junk records change no call; ages follow the clock |
+| `test_tavily_calls_are_recorded_without_content`, `test_providers_take_observe_as_keyword_only` | The Tavily hook (200 and 432) holds no query, URL or key; `observe` is keyword-only and changes no request body or completion |
+| `test_demo_actions_are_limited_per_ip`, `test_demo_limit_off_by_default` | A second action from one IP is a 429 with `Retry-After` and writes no event; another IP passes; reads are never limited |
+| `test_demo_caps_reset_on_click`, `test_janitor_resets_when_idle_and_dirty_only`, `test_janitor_thread_starts_once_and_only_when_asked`, `test_janitor_stop_ends_its_thread_and_it_is_never_started_again`, `test_reloading_the_gateway_ends_the_janitor_it_replaces`, `test_janitor_thread_starts_in_mock_mode_on_a_demo_action_only`, `test_demo_lock_held_blocks_the_janitor_reset` | The day and request caps reset on a click with `auto_reset` and one `demo_reset` event; the idle reset runs once, only when dirty, and never while a demo action holds the lock; the thread starts once, in mock mode, on a demo action; `stop()` ends the real thread at once and for good (twice and without a thread are fine), and so do `gw_env`'s reload and the app's lifespan: a janitor that survived its test reset the next test's gateway (the scout simulation lost its live version) |
+| `test_link_and_demo_settings_are_checked`, `test_token_factory_host_is_the_default_teacher_base`, `test_stats_links_demo_and_upstream_blocks` | Bad URLs and `RATCHET_DEMO_*` values name their variable; the deploy variables are known; the stats blocks |
+
 ### `tests/test_live.py`
 
 The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: model endpoints are `FakeOpenAIServer` behind `httpx.MockTransport`, commands go to `RecordingRun`, and the Scout CLI reaches the gateway through `AppTransport`.
@@ -818,6 +834,7 @@ Retention, erasure and export (FR-13.3 to FR-13.5, FR-4.4, NFR-4, [ADR 0081](adr
 | `test_an_erased_committed_example_keeps_its_leaf_and_is_never_sampled` | FR-13.3, FR-16.4, INV-17, INV-24: erasing the example behind a version's first committed leaf leaves the leaves unchanged, and `Ledger.leaf_example` (the mock demo's sample) moves to the next leaf that still has its text, and to None once every one is purged |
 | `test_day_numbers_survive_folding_the_rows_that_defined_day_one` | FR-13.4: a live file ledger keeps its day numbers and day 1's start after folding the oldest rows, and after folding all of them |
 | `test_run_night_applies_retention_before_reading_the_ledger` | FR-13.4, FR-4.4: `run_night(retention=)` purges expired rows before the dataset is built: the trainer gets 60 of 70 |
+| `test_the_purge_thread_never_touches_the_release_gates_lock` | FR-13.4: the purge thread, started while a tick holds the gate lock, leaves it held and raises nothing; a tick still takes and gives back its own (a merge once left `tick`'s `finally: release()` in `_purge`) |
 | `test_live_gateway_purges_hourly_off_the_request_path` | FR-13.4: a live `Runtime` purges on its first tick on a background thread, not again within the hour, again after it; a failure is a `purge_failed` event with the class only; mock mode and zero windows never purge |
 | `test_bad_retention_settings_stop_startup` | FR-13.4 (4 cases): a negative or too large window, a bool, or an unknown `RATCHET_ERASURE_SHARED` stop `Settings.retention()` and the `Runtime`; spaces and case are forgiven, empty is the default |
 | `test_retention_days_must_be_whole_numbers_in_the_environment` | A non-number in `RATCHET_REQUEST_RETENTION_DAYS` stops startup naming it |
@@ -966,6 +983,8 @@ The hot path ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), FR-12.
 | `test_bom_digest_is_cached_until_examples_change` | The BOM digest is recomputed after an insert, a rewritten or deleted hash, or another connection's insert, not after a duplicate; never cached against an uncommitted write; always equal to a fresh computation |
 | `test_events_last_reads_only_the_newest` | `events(last=n)` is `events()[-n:]`; 0 gives none; a bad `n` raises |
 | `test_stats_reads_skip_the_writer_lock` | On a WAL file every stats query returns while another thread holds the writer's lock |
+| `test_reader_methods_use_only_the_reader_connection` | FR-12.8, FR-12.31: no `@_reads` method touches `self.db` (the writer's connection, which a reader holds no lock for; `last_ids` did) |
+| `test_reads_and_an_offpath_writer_never_deadlock` | FR-12.8, FR-12.31: in a child process (the freeze takes the interpreter with it), every `_reads` method that needs no arguments against a thread running `update_request` and logging requests on a WAL file for a second; a deadlock dumps every stack after 30 s and fails the test |
 | `test_tick_throttle_runs_the_gate_once_per_interval` | With a 5 s interval on a fake clock: one gate tick per interval, none while another thread ticks (without waiting), `force` and simulated days always tick, a failing tick is not retried on every request, interval 0 ticks every call |
 | `test_request_path_ticks_at_most_once_per_interval` | Through `/v1/chat/completions`: three requests within the interval share one tick; the next one after it ticks |
 | `test_snapshot_cache_ttl_and_single_flight` | `SnapshotCache`: one value per TTL; during a recompute other callers get the previous value at once, and the very first callers wait; a failed recompute raises and keeps the old value; TTL 0 computes every time |
@@ -1031,6 +1050,10 @@ Request ids, the failures table, structured logs, Prometheus metrics, trace forw
 | `test_metrics_module_format` | Label and help escaping, a counter refusing to go down or take the wrong label count, duplicate names refused, bad buckets refused, `Gauge.replace` dropping old series, NaN observations ignored, cumulative buckets, `number()` formatting, relabelled series added together, `client_label` |
 | `test_a_failure_never_starts_the_live_ledgers_day_one` | On a fresh live (`auto_day`) file a 401 leaves the origin unset (day 0); day 1 starts at the first request 20 h later; a later failure is filed under day 2; after reopening the file the origin is the same and the next request is still day 1 |
 | `test_old_ledger_gains_request_ids_and_the_failures_table` | An old file gains `request_id`, `client_request_id` and the `failures` table; the lookup uses `requests_request_id`; the stage list; `spend_since` adds answered and failed spend per client since a time |
+
+### `tests/test_watch.py`
+
+The demo watchdog (FR-11.32 to FR-11.34, NFR-66, [ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)), offline through the seams of `ratchet.watch.Env` (`fetch`, `run`, `clock`, `sleep`, `out`): the module's import without site-packages; the settings and their checks; the signed alert, its retries and de-duplication; the classification table (a 502 with `upstream 402` is a different code from the same 502 with `upstream 503`); the restart rule on a fake `docker` (a teacher outage and a busy ledger never restart; a hung gateway and a broken ledger do; the grace, cooldown, hourly cap, pause and update lock; a stopped container is never started); the probe (the pinned-task preflight, the request's headers and size, retry once, the flag, no leak of a key or an upstream message); `flag_view`, `Runtime.live_check` and `inside flag|inspect` on a real ledger; `scripts/demo_check.py`; the cron file and cloud-init; and `update.sh`, `backup.sh` and `restore.sh` run with a fake `docker` and `sleep` first on `PATH` (the dry run, the backup-first order, the rollback, the restore only when the old image cannot open the ledger, no rollback for a teacher outage, a refused config check).
 
 ### `tests/test_readiness.py`
 
@@ -1105,6 +1128,7 @@ Off-path quality checks (FR-12.31, NFR-1, NFR-3, INV-15; [ADR 0072](adr/0072-off
 | `test_sidecar_close_drains_then_gives_up_and_refuses_late_jobs` | `close` waits, gives up on a queued job (returned by tag), refuses a job handed over after it, lets a running job finish; a second `close` gives up on nothing more |
 | `test_update_request_writes_each_verdict_once_and_adds_costs_call_by_call` | A verdict written only while pending, `stored` only raised, costs summed in order to the same float as Python's, a missing row, refused columns and values that write nothing |
 | `test_update_request_does_not_invalidate_the_hot_path_caches` | Finishing a row leaves the `requests` generation alone; any other rewrite moves it |
+| `test_the_ledger_connection_is_used_only_under_its_lock_once_a_sidecar_took_a_job` | FR-12.31: `LedgerGuard` (tests/conftest.py): no sidecar job, any use is fine; once one was queued, `ledger.db.execute` without `ledger.locked()` is refused with how to fix it (the writer connection's Python callback against the GIL deadlocks otherwise), under the lock or after `drain` it is not |
 | `test_live_quality_ignores_pending_audits_until_their_verdict` | Pending audits count in neither number; a verdict counts once written, a failed audit is forgotten; the day's audit agreement; a fresh tally reads the same |
 | `test_shadow_quality_ignores_pending_shadow_rows` | A pending shadow row counts once its verdict is written |
 | `test_an_audited_answer_returns_before_the_teachers_audit_ends` | With the teacher blocked, the answer returns with `overhead_pending`, the serving cost and no audit in the breakdown, the row pending; once released, the row has the verdict, the audit's cost and baseline, `stored`, and the gate counts it |
@@ -1265,7 +1289,7 @@ Structured outputs (FR-1.40, FR-14.2, [ADR 0042](adr/0042-auto-tasks-from-respon
 | `test_validator_resolves_refs_and_guards_against_loops` | FR-1.40: a recursive `$defs` tree, a `$ref` loop that reaches no value, an unresolved or remote `$ref` (an error, never valid), `~1` escapes, `#` |
 | `test_validator_combinators_const_items_and_bounds` | FR-1.40: `oneOf` (an integer matches both `integer` and `number`), `allOf`, `const` and `enum` with JSON equality, `items`, `minItems`/`maxItems`, `maxLength`, exclusive and inclusive bounds on a 10^400 integer; `pattern`, `format` and `multipleOf` ignored |
 | `test_validator_tuples_and_pattern_properties` | FR-1.40: `prefixItems` with and without `items` (also `items: false`), the old list form ignored; `additionalProperties: false` not enforced next to `patternProperties` |
-| `test_validator_never_raises_and_is_bounded` | FR-1.40: `MAX_DEPTH` on a recursive schema; an exploding `anyOf` over 200 items stops at `MAX_STEPS` in under 2 s as a mismatch; junk schemas never raise |
+| `test_validator_never_raises_and_is_bounded` | FR-1.40: `MAX_DEPTH` on a recursive schema; an exploding `anyOf` over 200 items stops at `MAX_STEPS` as a mismatch in under 20 times an ordinary 20,000-item check (timed in the same rounds, so a slow or traced run does not fail it); junk schemas never raise |
 | `test_json_equal_is_json_equality` | FR-1.40: `1 == 1.0`, `true != 1`, nested values |
 | `test_derive_takes_enums_and_ignores_free_text` | FR-14.2, FR-2.14: the spec's example gives `category` and `priority` labels and ignores `reply`; required follows the schema; no object root, or nothing comparable, gives no fields |
 | `test_derive_resolves_refs_nullable_nested_records_and_formats` | FR-14.2, FR-2.14: a Pydantic-shaped schema: `bool`, nullable `date`, `date-time`, exact `text` for `email`, `number` with its relative tolerance, `records` through a `$ref` (free text left out), sets of labels, booleans and dates, a nullable parent's children not required, an integer enum with null; consts, integer lists, bad names and two-way `anyOf` left out; the task accepts what the schema accepts; key order changes nothing |
@@ -1487,7 +1511,7 @@ The label-free drift alarm (FR-16.6, FR-6.40, FR-6.41, NFR-55, NFR-56, [ADR 0032
 | `test_rising_confidence_makes_the_capital_fall` | One-sided: confidence that rises after n = 1,000 never alarms and the capital ends below where it was |
 | `test_a_late_change_is_caught_as_fast_as_an_early_one` | The switching rate falls as 1/n after 100 points: before a drop at 20,000 the capital stays above 10^-6, and the drop alarms within 1,000 points |
 | `test_alarm_latches_and_the_trajectory_stays_small` | Only the first crossing reports, with its request id and day; the trajectory keeps under 200 evenly spaced points by stride doubling; the summary's fields |
-| `test_ten_thousand_observations_take_under_150_ms` | NFR-55: 10,000 `observe` calls in under 150 ms (best of three) |
+| `test_ten_thousand_observations_take_under_150_ms` | NFR-55: 10,000 `observe` calls in under 150 ms at the speed of the laptop the bound was set on: best of five rounds, each scaled by how much slower a fixed loop of the betting arithmetic ran just before (coverage's tracer and a slow runner made it 156 to 163 ms on CI) |
 | `test_boosted_rate_is_capped_and_never_lowers_a_rate` | `boosted_rate`: the rate times the boost, at most 0.5, never below the rate itself |
 | `test_confidence_stream_reads_only_student_confidences_in_id_order` | `Ledger.confidence_stream` returns rows with a confidence and a student version only (no cold start, no failed student call, no pinned task), in id order, after an id, up to a limit, and narrowed by version, task and an id bound; `version_states` |
 | `test_events_once_and_the_last_event` | `Ledger.event_keyed` writes an event under a key once, also from a second connection to the same file, and records its id in `meta` with extra entries; `day` dates it; `last_event` is `None` without one; `request_ts` |

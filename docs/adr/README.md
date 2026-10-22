@@ -33,22 +33,8 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0027](0027-committed-training-sets.md) | Committed training sets: sparse Merkle roots in every BOM, with membership, non-membership and held-out proofs checked offline | Accepted | 2026-10-20 |
 | [0028](0028-designed-propensity-replay.md) | Designed-propensity replay: a ledger time machine for thresholds and audit rates, and a calibrated baseline | Accepted | 2026-10-21 |
 | [0029](0029-verified-savings-receipts.md) | Verified savings receipts: an audit-calibrated baseline billed on its lower bound, in signed, chained RFC 9162 receipts | Accepted | 2026-10-21 |
-| [0080](0080-storage-opt-outs-and-pseudonymous-end-users.md) | Storage opt-outs at every level, and end users kept only as scoped keyed hashes | Accepted | 2026-10-20 |
-| [0081](0081-retention-tombstones-erasure-and-export.md) | Retention: tombstones, erasure and export | Accepted | 2026-10-20 |
-| [0090](0090-licenses-travel-with-the-adapter.md) | Licenses travel with the adapter (base-model license in the BOM, NOTICE.md, export), and open teachers addable by configuration without weakening invariant 1 | Accepted | 2026-10-20 |
-| [0091](0091-human-labels-as-a-provenance-source.md) | Human labels as a provenance source: request ids, verdicts and corrections (`POST /v1/ratchet/feedback`), labelled-data import that refuses closed-model labels, golden-only rows | Accepted | 2026-10-21 |
-| [0100](0100-dashboard-task-writes-and-derived-breaker-state.md) | The dashboard writes API tasks with a key it holds in memory, and reads breaker states from the event log | Accepted | 2026-10-20 |
-| [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
-| [0120](0120-judge-access-and-a-persistent-scout-guard.md) | Judge access and a persistent Scout guard: spend rows restored at startup, a judges' reserve behind a POST-once code and a signed cookie, paced Tavily credits and a labelled search-unavailable path | Accepted | 2026-10-21 |
-| [0121](0121-live-measurement-method.md) | Live measurement method: synthetic traffic through the public API in rounds, a measured all-Ultra control arm and one results file behind every live number | Accepted | 2026-10-21 |
-| [0060](0060-hot-path-caches-and-throttled-tick.md) | The hot path: a WAL ledger, a version routing snapshot, incremental tallies, a throttled tick and cached stats | Accepted | 2026-10-20 |
-| [0061](0061-endpoint-access-levels.md) | Endpoint access levels: a private dashboard API in live mode, scrubbed public reads and a live auth guard | Accepted | 2026-10-20 |
-| [0062](0062-request-ids-failures-logs-and-metrics.md) | Request ids end to end, a failures table with spent cost, structured logs without content, and Prometheus metrics | Accepted | 2026-10-20 |
-| [0070](0070-configuration-checks-and-readiness.md) | Configuration checks that list every bad variable, a config check CLI, liveness apart from readiness, and `/readyz` with bounded dependency probes | Accepted | 2026-10-21 |
-| [0071](0071-idempotency-keys-and-retry-de-duplication.md) | Idempotency keys, and retries that never count as repeats | Accepted | 2026-10-21 |
-| [0072](0072-off-path-audits-and-shadow.md) | Off-path audits and shadow: a bounded sidecar, the same draws and calls, pending rows the gate ignores, and audits that are never dropped | Accepted | 2026-10-21 |
-| [0063](0063-spend-and-rate-limits.md) | Spend and rate limits: per-key budgets, a gateway budget with a student-only mode, and limits that refuse instead of queueing | Accepted | 2026-10-21 |
-| [0064](0064-admin-api-compare-and-set-and-audit-trail.md) | Admin API, compare-and-set transitions, audit trail: one module for manual changes (HTTP and CLI), runtime switches and pins, and release moves that two processes make once | Accepted | 2026-10-21 |
+| [0032](0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions | Accepted | 2026-10-21 |
+| [0033](0033-teacher-watch.md) | Teacher watch: free self-consistency checks with a first-re-test rule, quarantine and adjudication, a training freeze by e-process, and the sqrt(A) ceiling | Accepted | 2026-10-21 |
 | [0040](0040-per-task-calibration.md) | Per-task calibration when several tasks share one adapter: thresholds, a per-task golden gate, and per-task alerts | Accepted | 2026-10-20 |
 | [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
 | [0042](0042-auto-tasks-from-response-format-schemas.md) | Structured outputs: a response_format is a contract, and a json_schema names an auto task | Accepted | 2026-10-21 |
@@ -58,10 +44,29 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0050](0050-adjacent-openai-endpoints.md) | The other OpenAI endpoints: an embeddings pass-through, completions and stateless responses on the chat path, typed 404s | Accepted | 2026-10-21 |
 | [0054](0054-free-text-similarity-and-a-judge-gate.md) | Free-text tasks: a similarity comparator, per-task sample counts and a judge gate; long-form stays pinned | Accepted | 2026-10-21 |
 | [0055](0055-sql-tasks-compared-by-execution.md) | Text-to-SQL tasks compared by what their queries return, in a sandboxed in-memory SQLite fixture | Accepted | 2026-10-21 |
+| [0060](0060-hot-path-caches-and-throttled-tick.md) | The hot path: a WAL ledger, a version routing snapshot, incremental tallies, a throttled tick and cached stats | Accepted | 2026-10-20 |
+| [0061](0061-endpoint-access-levels.md) | Endpoint access levels: a private dashboard API in live mode, scrubbed public reads and a live auth guard | Accepted | 2026-10-20 |
+| [0062](0062-request-ids-failures-logs-and-metrics.md) | Request ids end to end, a failures table with spent cost, structured logs without content, and Prometheus metrics | Accepted | 2026-10-20 |
+| [0063](0063-spend-and-rate-limits.md) | Spend and rate limits: per-key budgets, a gateway budget with a student-only mode, and limits that refuse instead of queueing | Accepted | 2026-10-21 |
+| [0064](0064-admin-api-compare-and-set-and-audit-trail.md) | Admin API, compare-and-set transitions, audit trail: one module for manual changes (HTTP and CLI), runtime switches and pins, and release moves that two processes make once | Accepted | 2026-10-21 |
+| [0070](0070-configuration-checks-and-readiness.md) | Configuration checks that list every bad variable, a config check CLI, liveness apart from readiness, and `/readyz` with bounded dependency probes | Accepted | 2026-10-21 |
+| [0071](0071-idempotency-keys-and-retry-de-duplication.md) | Idempotency keys, and retries that never count as repeats | Accepted | 2026-10-21 |
+| [0072](0072-off-path-audits-and-shadow.md) | Off-path audits and shadow: a bounded sidecar, the same draws and calls, pending rows the gate ignores, and audits that are never dropped | Accepted | 2026-10-21 |
+| [0073](0073-fallback-attribution.md) | Fallback attribution: an answer is a version's only when its own adapter wrote it; the hosted fallback is served, recorded and never counted toward a release | Accepted | 2026-10-21 |
+| [0080](0080-storage-opt-outs-and-pseudonymous-end-users.md) | Storage opt-outs at every level, and end users kept only as scoped keyed hashes | Accepted | 2026-10-20 |
+| [0081](0081-retention-tombstones-erasure-and-export.md) | Retention: tombstones, erasure and export | Accepted | 2026-10-20 |
 | [0082](0082-placeholder-styles-detector-plugin-and-indian-identifiers.md) | Placeholder styles for extraction tasks, a detector plugin, and Indian identifiers and amounts | Accepted | 2026-10-21 |
 | [0083](0083-success-metrics-from-the-ledger.md) | Success metrics computed from the ledger, the same way in mock and live mode | Accepted | 2026-10-21 |
-| [0032](0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions | Accepted | 2026-10-21 |
-| [0033](0033-teacher-watch.md) | Teacher watch: free self-consistency checks with a first-re-test rule, quarantine and adjudication, a training freeze by e-process, and the sqrt(A) ceiling | Accepted | 2026-10-21 |
+| [0090](0090-licenses-travel-with-the-adapter.md) | Licenses travel with the adapter (base-model license in the BOM, NOTICE.md, export), and open teachers addable by configuration without weakening invariant 1 | Accepted | 2026-10-20 |
+| [0091](0091-human-labels-as-a-provenance-source.md) | Human labels as a provenance source: request ids, verdicts and corrections (`POST /v1/ratchet/feedback`), labelled-data import that refuses closed-model labels, golden-only rows | Accepted | 2026-10-21 |
+| [0100](0100-dashboard-task-writes-and-derived-breaker-state.md) | The dashboard writes API tasks with a key it holds in memory, and reads breaker states from the event log | Accepted | 2026-10-20 |
+| [0120](0120-judge-access-and-a-persistent-scout-guard.md) | Judge access and a persistent Scout guard: spend rows restored at startup, a judges' reserve behind a POST-once code and a signed cookie, paced Tavily credits and a labelled search-unavailable path | Accepted | 2026-10-21 |
+| [0121](0121-live-measurement-method.md) | Live measurement method: synthetic traffic through the public API in rounds, a measured all-Ultra control arm and one results file behind every live number | Accepted | 2026-10-21 |
+| [0130](0130-reasoning-by-role.md) | Reasoning by role: Nemotron thinking off for the student, set per role for the teacher | Accepted | 2026-10-21 |
 | [0131](0131-golden-prompts-are-golden-in-every-task.md) | A prompt that is golden under one task is golden under every task, and occurrences count across tasks | Accepted | 2026-10-22 |
+| [0132](0132-demo-watchdog-and-rollback-first-updates.md) | A host watchdog (restart rule that ignores teacher outages), an hourly live probe on a pinned task with a signed webhook and a content-free flag, and updates that back up first and roll back | Accepted | 2026-10-22 |
+| [0133](0133-live-and-simulation-hosts.md) | Live and simulation hosts: a keyless mock gateway beside the live one, limits for the shared simulation, and a content-free last-call record per role | Accepted | 2026-10-22 |
+| [0140](0140-recorded-scout-run.md) | A recorded live Scout run, recorded by the operator and played back read-only at its real pace when live runs are refused or failing | Accepted | 2026-10-21 |
+| [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

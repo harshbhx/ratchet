@@ -1,0 +1,69 @@
+---
+/**
+ * Who answered: the same words and colours as the web app's WhoBadge (web/DESIGN.md, "Who answered").
+ * student = our adapter (owned blue), teacher = Ultra on Token Factory (rented orange),
+ * fallback = the untuned hosted Nano 30B (outline, never blue), judge and tool = neutral.
+ */
+interface Props {
+  as: 'student' | 'teacher' | 'fallback' | 'judge' | 'tool';
+  label?: string;
+}
+const WORDS = {
+  student: { text: 'Nano · yours', title: 'Nemotron 3 Nano 4B with your LoRA adapter, on a Nebius Serverless Endpoint' },
+  teacher: { text: 'Ultra · Token Factory', title: 'Nemotron 3 Ultra on Nebius Token Factory' },
+  fallback: { text: 'Nano 30B · hosted', title: 'Untuned Nemotron 3 Nano 30B on Token Factory, used while the endpoint is off. Not covered by the adapter’s precision certificate.' },
+  judge: { text: 'Super · judge', title: 'Nemotron 3 Super on Token Factory, scoring free-text answers in the golden eval' },
+  tool: { text: 'Tavily · search', title: 'Tavily Search API, the Scout searcher’s tool' },
+} as const;
+const { as, label } = Astro.props;
+const word = WORDS[as];
+---
+
+<span class:list={['rt-who', `rt-who--${as}`]} title={word.title}>{label ?? word.text}</span>
+
+<style>
+  .rt-who {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.05em 0.55em 0.1em;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 999px;
+    font-family: var(--__sl-font-mono);
+    font-size: 0.78em;
+    font-weight: 500;
+    line-height: 1.6;
+    white-space: nowrap;
+    vertical-align: 0.08em;
+    color: var(--rt-ink-2);
+    background: var(--rt-surface-2);
+  }
+  .rt-who::before {
+    content: '';
+    width: 0.5em;
+    height: 0.5em;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.9;
+  }
+  .rt-who--student {
+    color: var(--rt-owned-ink);
+    background: var(--rt-owned-soft);
+    border-color: color-mix(in srgb, var(--rt-owned) 45%, transparent);
+  }
+  .rt-who--teacher {
+    color: var(--rt-rented-ink);
+    background: var(--rt-rented-soft);
+    border-color: color-mix(in srgb, var(--rt-rented) 45%, transparent);
+  }
+  .rt-who--fallback {
+    color: var(--rt-ink-2);
+    background: transparent;
+    border-style: dashed;
+    border-color: var(--rt-muted);
+  }
+  .rt-who--fallback::before {
+    background: transparent;
+    border: 1px solid currentColor;
+  }
+</style>

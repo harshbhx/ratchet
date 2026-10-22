@@ -1,0 +1,11 @@
+{
+  "tasks": [
+    {
+      "name": "watchdog-probe",
+      "pinned": true,
+      "store": false,
+      "clients": ["watchdog"],
+      "description": "The demo watchdog's hourly live check (python3 -m ratchet.watch probe): always the teacher, never stored"
+    }
+  ]
+}

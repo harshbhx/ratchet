@@ -678,7 +678,7 @@ def test_the_gateways_purge_never_folds_a_day_that_has_not_been_sealed(monkeypat
     for ts in (t0, t0 + 50_000, t0 + day + 5, t0 + day + 60_000, t0 + 2 * day + 30):  # days 1, 1, 2, 2, 3
         req(ts)
     lock = threading.Lock()
-    lock.acquire()
+    lock.acquire()  # a tick is running: the purge thread holds no lock of its own and must leave this one alone
     runtime = types.SimpleNamespace(
         ledger=led, receipt_config=receipts.SealConfig(), retention=Retention(request_days=1), gate_lock=lock
     )
@@ -688,9 +688,9 @@ def test_the_gateways_purge_never_folds_a_day_that_has_not_been_sealed(monkeypat
         gw.Runtime._purge(runtime)  # type: ignore[arg-type]
     assert set(led.receipt_periods()) == {(1, None)}  # day 1 sealed; day 2 is not closed yet
     assert not led.period_folded(2) and led.period_folded(1)  # day 1 folded, day 2 untouched
-    lock.acquire()
     with mock.patch("time.time", return_value=now + 3600):
         gw.Runtime._purge(runtime)  # type: ignore[arg-type]
+    assert lock.locked()  # both purges left the tick's lock held (they used to release it, and the test worked around that)
     assert led.receipt(2) is not None and led.receipt(2)["manifest"]["n"] == 2  # from both of its rows
     assert not [e for e in led.events() if e["kind"] == "receipt_skipped"]
 

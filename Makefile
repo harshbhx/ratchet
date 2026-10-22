@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt trace reference sim demo day1 docker clean web web-dev live-plan live-smoke live-run
+.PHONY: demo-check install test lint fmt trace reference sim demo day1 docker clean web web-dev live-plan live-smoke live-run
 
 install:
 	pip install -e ".[dev]" ruff
@@ -18,6 +18,10 @@ trace:
 # Three pinned workloads (tickets, mixed, research) must still reproduce v0.4.0's behaviour (about 25 s; CI runs it).
 reference:
 	python scripts/reference_check.py
+
+# The public demo as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat
+demo-check:
+	python scripts/demo_check.py $(URL) $(ARGS)
 
 fmt:
 	ruff format .

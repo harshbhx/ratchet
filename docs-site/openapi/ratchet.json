@@ -1,0 +1,5373 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ratchet gateway",
+    "version": "0.4.0",
+    "description": "The HTTP API of the Ratchet gateway (`ratchet.gateway:app`), generated from the code with `python docs-site/scripts/export-reference.py`. The chat route speaks OpenAI's format, so any OpenAI SDK works. Examples, error envelopes and access levels are in the [hand-written API guide](https://docs.ratchet.dualmindlab.tech/reference/api/). Mock-only demo controls answer 404 in live mode, and in live mode most `/ratchet/*` routes need an admin or dashboard key unless the dashboard is public.",
+    "license": {
+      "name": "Apache-2.0",
+      "url": "https://github.com/harshbhx/ratchet/blob/main/LICENSE"
+    }
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Landing",
+        "operationId": "landing__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "summary": "Dashboard",
+        "operationId": "dashboard_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
+    "/scout": {
+      "get": {
+        "summary": "Scout Page",
+        "operationId": "scout_page_scout_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
+    "/lite": {
+      "get": {
+        "summary": "Lite Landing",
+        "operationId": "lite_landing_lite_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
+    "/lite/dashboard": {
+      "get": {
+        "summary": "Lite Dashboard",
+        "operationId": "lite_dashboard_lite_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
+    "/lite/scout": {
+      "get": {
+        "summary": "Lite Scout",
+        "operationId": "lite_scout_lite_scout_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Healthz",
+        "description": "Liveness for Docker: the process answers. Public, even when API keys protect /v1/*. Async, so it answers while\nevery worker thread is busy (a full thread pool is not a dead process); readiness is /readyz.",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health and metrics"
+        ]
+      }
+    },
+    "/livez": {
+      "get": {
+        "summary": "Livez",
+        "description": "Liveness under its Kubernetes name: the same answer as /healthz.",
+        "operationId": "livez_livez_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Livez Livez Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health and metrics"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readyz",
+        "description": "Readiness for load balancers and deploy scripts (FR-12.30, ADR 0070): 200 `ready` or `degraded` while requests can\nbe answered, 503 `not_ready` when the ledger cannot be written or no teacher can answer. The probes run on their own\ntwo threads, never the request pool, each awaited at most 2 s and reused for 15 s (`readiness.Readiness`). Public;\nthe answer names states, statuses and exception classes, never URLs, keys or messages. A 503 here is an answer, not a\nfailed request: it writes no failures row, however often a load balancer asks.",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health and metrics"
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "summary": "Models",
+        "description": "The model ids a client can send (`_models`). Each passes the OpenAI SDK's `Model`.",
+        "operationId": "models_v1_models_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Models V1 Models Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/models/{model_id}": {
+      "get": {
+        "summary": "Retrieve Model",
+        "description": "One model (`_model`; `ratchet:<task>` finds `ratchet/<task>`), or 404 `model_not_found`. The id may hold a slash:\nthe OpenAI SDK sends `ratchet/ticket-triage` as `ratchet%2Fticket-triage`, which arrives decoded.",
+        "operationId": "retrieve_model_v1_models__model_id__get",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Retrieve Model V1 Models  Model Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "summary": "Chat",
+        "description": "Checks run in this order: a declared body size (413, `BodyLimitMiddleware`), API key (401), the key's or the\nclient IP's requests a minute (`_rate`: 429), the body read and counted (413 for a chunked body over the limit), the\nin-flight caps (`_hold`: 503 at the gateway's, 429 at the key's), the Idempotency-Key and JSON (400), a stored answer\nfor that key (sent again at once, ADR 0071), request validation (400, including `X-Ratchet-Store`), the model (404\nunder RATCHET_MODEL_POLICY=strict), the task (400 unknown, 403 not allowed for the key), the daily request quota\n(429), the US dollar budgets (429), then the cascade. A refused request writes no ledger row and uses no quota or\nbudget, and neither does a replay; past the rate it has taken its key's (or IP's) token. The in-flight slots are\ntaken only once the body is in, so a client that trickles its body holds none. Everything after reading the body\nruns in a worker thread (the default pool, as for sync routes), so neither a large body nor the ledger lock blocks\nthe event loop.",
+        "operationId": "chat_v1_chat_completions_post",
+        "parameters": [
+          {
+            "name": "x-ratchet-task",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ratchet-Task"
+            }
+          },
+          {
+            "name": "x-ratchet-store",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ratchet-Store"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "x-stainless-retry-count",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Stainless-Retry-Count"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/openai/deployments/{deployment}/chat/completions": {
+      "post": {
+        "summary": "Azure Chat",
+        "description": "Azure OpenAI's URL shape, for clients written against it (`AzureOpenAI`): the same handler and checks as\n/v1/chat/completions, with the deployment as the task (a model alias, `ratchet` or a task name; the body's `model`\nis not read) and the key in `api-key`. The `api-version` query parameter is accepted and ignored.",
+        "operationId": "azure_chat_openai_deployments__deployment__chat_completions_post",
+        "parameters": [
+          {
+            "name": "deployment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Deployment"
+            }
+          },
+          {
+            "name": "x-ratchet-task",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ratchet-Task"
+            }
+          },
+          {
+            "name": "x-ratchet-store",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ratchet-Store"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "x-stainless-retry-count",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Stainless-Retry-Count"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/ratchet/feedback": {
+      "post": {
+        "summary": "Feedback Post",
+        "description": "A verdict on an answer this gateway served: `{\"request_id\", \"verdict\": \"correct\"|\"incorrect\"}`, the request id\nfrom the response's `ratchet.request_id` (or its completion id). With `incorrect`, `corrected` (the right answer)\nand the request's `messages` (and the conditions and end user it carried) store a human-labelled training example,\nunless a storage opt-out or the task's pinning keeps it out; a `correct` verdict never stores anything. An API key\nreaches its own requests only (any other request id is a 404); open where chat completions are.",
+        "operationId": "feedback_post_v1_ratchet_feedback_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Feedback Post V1 Ratchet Feedback Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "End users and feedback"
+        ]
+      }
+    },
+    "/v1/ratchet/no-train": {
+      "post": {
+        "summary": "No Train Add",
+        "description": "Register an end user (`{\"end_user\": \"<user or safety_identifier>\"}`) as no-train: from now on that user's\nrequests are answered as usual but never stored (FR-13.2), whether a request names the user in `user` or in\n`safety_identifier`. Only the HMAC is kept, and it is not returned: the endpoint must not become a way to compute\nhashes. Open where chat completions are (an opt-out only removes storage); an admin may name a `client`, or\nregister the user for every client, also those added later (the every-client scope). Whether the end user was\nregistered before (`created`) is told to an API key or an admin key only: without keys anyone may call this.",
+        "operationId": "no_train_add_v1_ratchet_no_train_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response No Train Add V1 Ratchet No Train Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "End users and feedback"
+        ]
+      },
+      "delete": {
+        "summary": "No Train Remove",
+        "description": "Remove a no-train registration (the same JSON body as POST; never a query string, which access logs keep). An API\nkey removes its own end users' registrations, not one an admin made; an admin removes any: for a named `client`, or\nwith none in every scope (each configured key, the keyless one, every scope a registration is stored in and the\nevery-client one). While an admin's every-client registration stays, the other scopes report `kept`. Without API\nkeys this needs an admin key in live mode, so nobody can switch storage back on for someone else's users; the\nmock demo's keyless callers get no status, as they get no `created` from POST.",
+        "operationId": "no_train_remove_v1_ratchet_no_train_delete",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response No Train Remove V1 Ratchet No Train Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "End users and feedback"
+        ]
+      }
+    },
+    "/v1/ratchet/examples": {
+      "delete": {
+        "summary": "Erase Examples",
+        "description": "Erase the stored examples of one of the caller's end users (`{\"end_user\": \"<user or safety_identifier>\"}`, as\nfor no-train; optional `reason` and `dry_run`, default false): their text goes for good, their hashes are never\nstored again, and the end user's hash is cleared from its request rows (FR-13.3). An API key erases its own end\nusers; an admin key a named client's, or with no `client` every client's (each configured key, every scope the\nledger holds end users in, and the keyless one). Open where chat completions are, like registering no-train: it\nonly removes data. A keyless caller (API keys off) gets the counts as null, so the endpoint cannot tell anyone\nwhether an identifier had stored examples. The end user is read from the body only: a URL with `end_user` is a 400,\nbecause access logs keep URLs.",
+        "operationId": "erase_examples_v1_ratchet_examples_delete",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Erase Examples V1 Ratchet Examples Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "End users and feedback"
+        ]
+      }
+    },
+    "/v1/embeddings": {
+      "post": {
+        "summary": "Embeddings",
+        "description": "Embeddings, passed through to RATCHET_EMBEDDINGS_MODEL: no cascade, no student, nothing stored (`_embed`). Checks\nrun in this order: API key (401), the endpoint on (404 `unsupported_endpoint` under RATCHET_EMBEDDINGS_BASE=off), the\nbody read, JSON and validation (400), the model (404 under RATCHET_MODEL_POLICY=strict), the daily quota (429).",
+        "operationId": "embeddings_v1_embeddings_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/completions": {
+      "post": {
+        "summary": "Completions",
+        "description": "The legacy completions API: each prompt runs the chat path as one user message (`_serve`), with the same checks,\ntask resolution, cascade, quota and storage as /v1/chat/completions; `n`, `stream`, `stop`, `max_tokens` and the rest\nare the chat fields of the same name. A batch of prompts needs that many requests of the daily quota, checked before\nthe first runs; a batch that stops after its first prompt is an error that names the prompts already answered and\ncarries `X-Should-Retry: false` (`_batch_stopped`). A `suffix`, `echo` or `best_of` that would change the answer,\nand token-array prompts, are a 400.",
+        "operationId": "completions_v1_completions_post",
+        "parameters": [
+          {
+            "name": "x-ratchet-task",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ratchet-Task"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "summary": "Responses",
+        "description": "The stateless subset of the Responses API: the body becomes a chat request (`validate_responses_request`) and\nruns the chat path (`_serve`) with the same checks, task resolution, cascade, quota and storage; the answer comes\nback as a `response` object. Ratchet keeps no response state, so what needs it (`previous_response_id`,\n`conversation`, `background`) and `stream` are a 400 `unsupported_parameter`.",
+        "operationId": "responses_v1_responses_post",
+        "parameters": [
+          {
+            "name": "x-ratchet-task",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ratchet-Task"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/moderations": {
+      "post": {
+        "summary": "Moderations",
+        "description": "Not served: a 404 `unsupported_endpoint` that says so and links the endpoint table, so a library that screens\nevery request through the base URL fails with a clear reason (after the key check, as every /v1 route).",
+        "operationId": "moderations_v1_moderations_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/v1/responses/{response_id}": {
+      "get": {
+        "summary": "Response State",
+        "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
+        "operationId": "response_state_v1_responses__response_id__get",
+        "parameters": [
+          {
+            "name": "response_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Response Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      },
+      "post": {
+        "summary": "Response State",
+        "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
+        "operationId": "response_state_v1_responses__response_id__post",
+        "parameters": [
+          {
+            "name": "response_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Response Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      },
+      "delete": {
+        "summary": "Response State",
+        "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
+        "operationId": "response_state_v1_responses__response_id__delete",
+        "parameters": [
+          {
+            "name": "response_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Response Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenAI-compatible"
+        ]
+      }
+    },
+    "/ratchet/stats": {
+      "get": {
+        "summary": "Stats",
+        "description": "Everything the dashboard shows. Computed at most once per RATCHET_STATS_TTL_S (live mode: 2 s) by one caller at a\ntime (`SnapshotCache`), from the ledger's read-only connection on a WAL file, so dashboards never slow requests. A\nscrubbed read (`_scrubbed`: by default an anonymous reader of a public live dashboard) gets a scrubbed copy, with\nclient pseudonyms and no URLs or error messages in the events (ADR 0061).",
+        "operationId": "stats_ratchet_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Stats Ratchet Stats Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/requests/{request_id}": {
+      "get": {
+        "summary": "Request Lookup",
+        "description": "One request's metadata and failures (`_lookup`), whoever sent it. Read like /ratchet/stats; a scrubbed read gets\nclient pseudonyms (ADR 0061).",
+        "operationId": "request_lookup_ratchet_requests__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Request Lookup Ratchet Requests  Request Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/v1/ratchet/requests/{request_id}": {
+      "get": {
+        "summary": "Own Request",
+        "description": "One request this API key sent (`_lookup` with `own`): 404 for an id it did not send, so a key cannot tell another\nclient's request from one that never existed.",
+        "operationId": "own_request_v1_ratchet_requests__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Own Request V1 Ratchet Requests  Request Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "End users and feedback"
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Metrics Endpoint",
+        "description": "Prometheus metrics in the text format 0.0.4 (`ratchet/metrics.py`). Read with an admin or dashboard key or\nRATCHET_METRICS_TOKEN, or by anyone when the dashboard is public; a scrubbed read (an anonymous reader of a public\nlive dashboard) gets client pseudonyms in the client labels.",
+        "operationId": "metrics_endpoint_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health and metrics"
+        ]
+      }
+    },
+    "/ratchet/kpis": {
+      "get": {
+        "summary": "Kpi",
+        "description": "PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, each with its value, target, whether it is\nmet (None when there is not enough data yet) and the counts behind it, computed from the ledger as in the simulator.\nSM-1 to SM-3 and NFR-1 use the last `days` ledger days with traffic (default RATCHET_KPI_WINDOW_DAYS). Public, like\n/ratchet/stats; `simulated` is true in mock mode, where every number comes from mock models.",
+        "operationId": "kpi_ratchet_kpis_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Kpi Ratchet Kpis Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/drift": {
+      "get": {
+        "summary": "Drift",
+        "description": "The label-free drift monitor (FR-16.6, ADR 0032): its threshold, the false-alarm bound per stream and across\nevery stream it holds, and each (version, task) stream's test martingale with its trajectory; `version` narrows the\nstreams to one version. Read-only: the gateway feeds the monitor after every request.",
+        "operationId": "drift_ratchet_drift_get",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Drift Ratchet Drift Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/bom": {
+      "get": {
+        "summary": "Bom",
+        "description": "Model bill of materials: proof of which teachers and licenses produced the training data. Read like the dashboard\nAPI, or by anyone with RATCHET_PUBLIC_BOM=1 (ADR 0061).",
+        "operationId": "bom_ratchet_bom_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Bom Ratchet Bom Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/redact": {
+      "post": {
+        "summary": "Redact Preview",
+        "description": "Show what the redactor would store for a piece of text: in the gateway's style (RATCHET_REDACT_STYLE) or\n`?style=` (ADR 0082). Nothing is logged or stored. The endpoint is public, so the detector plugin, which may be an\nNER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key; anyone else\ngets the patterns alone (`plugin_skipped`).",
+        "operationId": "redact_preview_ratchet_redact_post",
+        "parameters": [
+          {
+            "name": "style",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Style"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Redact Preview Ratchet Redact Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/bom/public-key": {
+      "get": {
+        "summary": "Bom Public Key",
+        "description": "The Ed25519 public key that verifies per-adapter BOMs (null when signing is off). Always public.",
+        "operationId": "bom_public_key_ratchet_bom_public_key_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Bom Public Key Ratchet Bom Public Key Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/versions/{vid}/bom": {
+      "get": {
+        "summary": "Version Bom",
+        "description": "One adapter's bill of materials, written when it was trained. Check it with `python -m ratchet.bom verify`. Read\nlike /ratchet/bom.",
+        "operationId": "version_bom_ratchet_versions__vid__bom_get",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Version Bom Ratchet Versions  Vid  Bom Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Versions and evidence"
+        ]
+      }
+    },
+    "/ratchet/versions/{vid}/certificate": {
+      "get": {
+        "summary": "Version Certificate",
+        "description": "What a version's golden evals certify about the answers it serves (FR-16.3, ADR 0026): the certificate signed in\nits BOM at training time, the one from the latest re-score (`current`; a live version is re-scored every training\nnight), the release gate's evidence from its audits, and what every certificate assumes. Check the signed numbers\nwith `python -m ratchet.stats check`.",
+        "operationId": "version_certificate_ratchet_versions__vid__certificate_get",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Version Certificate Ratchet Versions  Vid  Certificate Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Versions and evidence"
+        ]
+      }
+    },
+    "/ratchet/tasks": {
+      "get": {
+        "summary": "List Tasks",
+        "description": "Every registered task (`_task_entry`), the unknown-task policy, the registry's cap, and the names requests used\nthat are not registered (candidates to register or pin).",
+        "operationId": "list_tasks_ratchet_tasks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response List Tasks Ratchet Tasks Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/ratchet/tasks/{name}": {
+      "get": {
+        "summary": "Get Task",
+        "description": "One registered task; an API task also says when it was written and by which admin (the key's name).",
+        "operationId": "get_task_ratchet_tasks__name__get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Task Ratchet Tasks  Name  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tasks"
+        ]
+      },
+      "put": {
+        "summary": "Put Task",
+        "description": "Create or replace an API task: 200 `{task, spec_hash, changed, created}`, 422 `{errors}` for a bad spec, 403 for\na built-in or file task, 409 when the registry (or the mock demo's share of it) is full.",
+        "operationId": "put_task_ratchet_tasks__name__put",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tasks"
+        ]
+      },
+      "delete": {
+        "summary": "Delete Task",
+        "description": "Remove an API task or an auto task (from a response_format schema, ADR 0042, or a system prompt with\nRATCHET_AUTO_TASK=system_prompt, ADR 0048), which frees its place under RATCHET_MAX_AUTO_TASKS. Its stored examples\nstay, for provenance; requests that name it then get the unknown-task policy (RATCHET_UNKNOWN_TASKS), and a request\nwith its schema or system prompt makes it again while there is room.",
+        "operationId": "delete_task_ratchet_tasks__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Delete Task Ratchet Tasks  Name  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/ratchet/tasks/validate": {
+      "post": {
+        "summary": "Validate Tasks",
+        "description": "A dry run: the errors a body would get, with no side effects. `{\"tasks\": [...]}` is checked as startup reads\nRATCHET_TASKS_FILE (it may adjust or extend a built-in task, never extend an API task, and must fit in the registry\nwith the built-in tasks); one task spec is checked as PUT would take it.",
+        "operationId": "validate_tasks_ratchet_tasks_validate_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Validate Tasks Ratchet Tasks Validate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Tasks"
+        ]
+      }
+    },
+    "/ratchet/admin/privacy/erase": {
+      "post": {
+        "summary": "Admin Erase",
+        "description": "Erase stored examples for good (`privacy.erase`): by `client`, `end_user` (in `client`'s scope, or with no client\nin every API key's scope, every scope the ledger holds end users in and the keyless one), `hashes` and `contains`,\neach narrowing the scope; `reason` is required. A dry run unless `dry_run` is false. Needs an admin key (open in\nmock mode without admin keys, like the other management calls).",
+        "operationId": "admin_erase_ratchet_admin_privacy_erase_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Erase Ratchet Admin Privacy Erase Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/export/{kind}": {
+      "get": {
+        "summary": "Admin Export",
+        "description": "One table as NDJSON (`privacy.export_lines`, FR-13.5): `examples` (those that still have their text, with their\nprovenance: teacher, license, license URL, hash, split, seen, redactions, clients), `requests`, `versions` (with\ntheir BOMs as stored), `events` or `erasures` (with their items). Filters: `task`, `split`, `since` (epoch seconds or\nan ISO 8601 date) and `client`, where the kind has them (400 otherwise). Needs an admin key, like the other\nmanagement calls. End-user hashes are left out; API keys are never stored.",
+        "operationId": "admin_export_ratchet_admin_export__kind__get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task"
+            }
+          },
+          {
+            "name": "split",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Split"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/cost": {
+      "get": {
+        "summary": "Cost",
+        "description": "The cost report (`ratchet.cost.cost_report`): savings per token and by GPU-hours paid, the break-even volume, the\ncrossover with the hosted fallback, observed utilization and a recommendation, for every day or the last `days`\nledger days. Read like /ratchet/stats (ADR 0061).",
+        "operationId": "cost_ratchet_cost_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Cost Ratchet Cost Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Cost"
+        ]
+      }
+    },
+    "/ratchet/cost/endpoint": {
+      "post": {
+        "summary": "Cost Endpoint",
+        "description": "Record the student endpoint going up or down (`{\"state\": \"up\" | \"down\"}`, optionally `usd_per_hour` per GPU,\n`gpus` and a `note`), as `python -m ratchet.cost endpoint` does. Needs an admin key (open in mock mode without\nadmin keys, like the other management calls). `up` while up and `down` while down change nothing (`changed`\nfalse).",
+        "operationId": "cost_endpoint_ratchet_cost_endpoint_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Cost Endpoint Ratchet Cost Endpoint Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Cost"
+        ]
+      }
+    },
+    "/ratchet/teacher": {
+      "get": {
+        "summary": "Teacher",
+        "description": "The teacher watch (FR-16.7, ADR 0033): the check epoch, whether Night School is frozen, the model id the teacher\nlast reported, the rule (H0's disagreement rate, alpha, the e-value threshold), the epoch's first re-tests with the\nteacher's self-agreement, its 95% interval, the agreement ceiling and the e-value, by source and by task, and the\ncontested labels. Public and read-only, like /ratchet/stats.",
+        "operationId": "teacher_ratchet_teacher_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Teacher Ratchet Teacher Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/replay": {
+      "get": {
+        "summary": "Replay Version",
+        "description": "Replay one version's logged traffic (FR-16.5, ADR 0028): what happened (`actual`), what would have happened at\n`threshold` (default: the version's threshold now) and `audit_rate` (default: as logged), and the calibrated\nbaseline. Read-only and public, like /ratchet/stats: aggregates only, never request text.",
+        "operationId": "replay_version_ratchet_replay_get",
+        "parameters": [
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Threshold"
+            }
+          },
+          {
+            "name": "audit_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Audit Rate"
+            }
+          },
+          {
+            "name": "since_day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since Day"
+            }
+          },
+          {
+            "name": "until_day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Replay Version Ratchet Replay Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Ledger replay"
+        ]
+      }
+    },
+    "/ratchet/replay/frontier": {
+      "get": {
+        "summary": "Replay Frontier",
+        "description": "The cost-precision frontier of one version's logged traffic over thresholds 0.30 to 1.00, the suggested threshold\nfor `target` (advisory: an approximate interval, never applied by itself) and the money the current threshold leaves\non the table (FR-16.5, ADR 0028).",
+        "operationId": "replay_frontier_ratchet_replay_frontier_get",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 0.97,
+              "title": "Target"
+            }
+          },
+          {
+            "name": "audit_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Audit Rate"
+            }
+          },
+          {
+            "name": "since_day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since Day"
+            }
+          },
+          {
+            "name": "until_day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Replay Frontier Ratchet Replay Frontier Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Ledger replay"
+        ]
+      }
+    },
+    "/ratchet/versions/{vid}/proof": {
+      "post": {
+        "summary": "Version Proof",
+        "description": "Whether an example is in version `vid`'s committed training (or golden) set, with an O(log n) membership or\nnon-membership proof against the root its signed BOM carries (FR-16.4, ADR 0027). The body names the example by\n`key` (its hash) or as the chat request it came from (`task`, `messages`, and any other `/v1/chat/completions`\nfield), which is validated, normalised and redacted as the gateway stores it. An admin call: with guessable texts\nthe endpoint is a membership oracle for the training data. Check the answer offline with `python -m ratchet.proof\nverify`.",
+        "operationId": "version_proof_ratchet_versions__vid__proof_post",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          },
+          {
+            "name": "split",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "train",
+              "title": "Split"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Version Proof Ratchet Versions  Vid  Proof Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Versions and evidence"
+        ]
+      }
+    },
+    "/ratchet/versions/{vid}/heldout": {
+      "get": {
+        "summary": "Version Heldout",
+        "description": "The held-out certificate of version `vid` (FR-16.4, INV-3, INV-6): its golden set's leaves and, for each golden\nkey, a non-membership proof against the training root its signed BOM carries. `python -m ratchet.proof heldout`\nrebuilds the golden root from the leaves and checks every proof, so nobody has to trust that the golden rows were\nnever trained on. An admin call, like the proofs.",
+        "operationId": "version_heldout_ratchet_versions__vid__heldout_get",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Version Heldout Ratchet Versions  Vid  Heldout Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Versions and evidence"
+        ]
+      }
+    },
+    "/ratchet/receipts": {
+      "get": {
+        "summary": "List Receipts",
+        "description": "The sealed savings receipts a caller may read, by day (FR-15.5, ADR 0029), after sealing every day that has\nended: an admin sees the gateway's (`global`) and every client's, an API client its own only.",
+        "operationId": "list_receipts_ratchet_receipts_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response List Receipts Ratchet Receipts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Savings receipts"
+        ]
+      }
+    },
+    "/ratchet/receipts/{period}": {
+      "get": {
+        "summary": "Get Receipt",
+        "description": "One day's signed savings receipt: the gateway's, or `client`'s (an API client gets its own). Check it offline\nwith `python -m ratchet.receipt verify` and the key from `/ratchet/bom/public-key`.",
+        "operationId": "get_receipt_ratchet_receipts__period__get",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Receipt Ratchet Receipts  Period  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Savings receipts"
+        ]
+      }
+    },
+    "/ratchet/receipts/{period}/proof/{request_id}": {
+      "get": {
+        "summary": "Receipt Proof",
+        "description": "That request `request_id` (`X-Ratchet-Request-Id`) is in the day's receipt: its leaf and RFC 9162 audit path\nagainst the root the receipt signs. `python -m ratchet.receipt verify r.json --proof p.json` checks it offline.",
+        "operationId": "receipt_proof_ratchet_receipts__period__proof__request_id__get",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Receipt Proof Ratchet Receipts  Period  Proof  Request Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Savings receipts"
+        ]
+      }
+    },
+    "/ratchet/receipts/{period}/leaves": {
+      "get": {
+        "summary": "Receipt Leaves",
+        "description": "The receipt's leaves as JSON lines, in tree order: `python -m ratchet.receipt verify r.json --rows leaves.jsonl`\nrebuilds the root and recomputes every total, estimate and the fee from them.",
+        "operationId": "receipt_leaves_ratchet_receipts__period__leaves_get",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Savings receipts"
+        ]
+      }
+    },
+    "/ratchet/admin/versions": {
+      "get": {
+        "summary": "Admin Versions",
+        "description": "Every version (newest first) with its golden eval and its current stage's audits or shadow verdicts, and the\nruntime switches (`controls`).",
+        "operationId": "admin_versions_ratchet_admin_versions_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Versions Ratchet Admin Versions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/flags": {
+      "get": {
+        "summary": "Admin Flags",
+        "description": "The runtime switches with who set each one last, and the task pins with who set them and why.",
+        "operationId": "admin_flags_ratchet_admin_flags_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Flags Ratchet Admin Flags Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/versions/{vid}/rollback": {
+      "post": {
+        "summary": "Admin Rollback",
+        "description": "Roll a canary back (body `{reason}`): its traffic returns to the live version, or the teacher.",
+        "operationId": "admin_rollback_ratchet_admin_versions__vid__rollback_post",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Rollback Ratchet Admin Versions  Vid  Rollback Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/versions/{vid}/retire": {
+      "post": {
+        "summary": "Admin Retire",
+        "description": "Retire a live, canary or shadow version (body `{reason}`).",
+        "operationId": "admin_retire_ratchet_admin_versions__vid__retire_post",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Retire Ratchet Admin Versions  Vid  Retire Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/versions/{vid}/promote": {
+      "post": {
+        "summary": "Admin Promote",
+        "description": "Promote a version (body `{reason, to: canary|live, traffic_pct, force, load_adapter}`): to a canary stage, or to\nlive over the live version, which is retired in the same transaction.",
+        "operationId": "admin_promote_ratchet_admin_versions__vid__promote_post",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Vid"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Promote Ratchet Admin Versions  Vid  Promote Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/student/disable": {
+      "post": {
+        "summary": "Admin Student Disable",
+        "description": "Set `student_disabled` to true (body `{reason}`).",
+        "operationId": "admin_student_disable_ratchet_admin_student_disable_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Student Disable Ratchet Admin Student Disable Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/student/enable": {
+      "post": {
+        "summary": "Admin Student Enable",
+        "description": "Set `student_disabled` to false (body `{reason}`).",
+        "operationId": "admin_student_enable_ratchet_admin_student_enable_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Student Enable Ratchet Admin Student Enable Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/releases/freeze": {
+      "post": {
+        "summary": "Admin Releases Freeze",
+        "description": "Set `releases_frozen` to true (body `{reason}`).",
+        "operationId": "admin_releases_freeze_ratchet_admin_releases_freeze_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Releases Freeze Ratchet Admin Releases Freeze Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/releases/unfreeze": {
+      "post": {
+        "summary": "Admin Releases Unfreeze",
+        "description": "Set `releases_frozen` to false (body `{reason}`).",
+        "operationId": "admin_releases_unfreeze_ratchet_admin_releases_unfreeze_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Releases Unfreeze Ratchet Admin Releases Unfreeze Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/training/pause": {
+      "post": {
+        "summary": "Admin Training Pause",
+        "description": "Set `training_paused` to true (body `{reason}`).",
+        "operationId": "admin_training_pause_ratchet_admin_training_pause_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Training Pause Ratchet Admin Training Pause Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/training/resume": {
+      "post": {
+        "summary": "Admin Training Resume",
+        "description": "Set `training_paused` to false (body `{reason}`).",
+        "operationId": "admin_training_resume_ratchet_admin_training_resume_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Training Resume Ratchet Admin Training Resume Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/settings": {
+      "put": {
+        "summary": "Admin Settings",
+        "description": "Set the runtime audit rate (body `{audit_rate, reason, force}`; `audit_rate` 0 to 1, or null for\nRATCHET_AUDIT_RATE). 0 while a canary is in flight needs `force`.",
+        "operationId": "admin_settings_ratchet_admin_settings_put",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Settings Ratchet Admin Settings Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/tasks/{name}/pin": {
+      "post": {
+        "summary": "Admin Pin",
+        "description": "Pin a registered task to the teacher at runtime (body `{reason}`): nothing of it is stored or trained on.",
+        "operationId": "admin_pin_ratchet_admin_tasks__name__pin_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Pin Ratchet Admin Tasks  Name  Pin Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      },
+      "delete": {
+        "summary": "Admin Unpin",
+        "description": "Remove a task's runtime pin (body `{reason}`); a task its spec pins stays pinned.",
+        "operationId": "admin_unpin_ratchet_admin_tasks__name__pin_delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Unpin Ratchet Admin Tasks  Name  Pin Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/tick": {
+      "post": {
+        "summary": "Admin Tick",
+        "description": "Run the release gate now, as the cron tick does (body `{reason}`, optional), recorded as an admin action; the\nrouted versions before and after. The gate's own events say what it decided.",
+        "operationId": "admin_tick_ratchet_admin_tick_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Tick Ratchet Admin Tick Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/admin/audit-log": {
+      "get": {
+        "summary": "Admin Audit Log",
+        "description": "The newest admin actions, newest first (`limit` 1 to 1000).",
+        "operationId": "admin_audit_log_ratchet_admin_audit_log_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Admin Audit Log Ratchet Admin Audit Log Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/ratchet/teacher/ack": {
+      "post": {
+        "summary": "Teacher Ack",
+        "description": "Acknowledge the teacher watch (FR-6.42): a new check epoch, Night School unfrozen, and a `teacher_ack` event naming\nthe admin key (never the key). Needs an admin key; open in mock mode without admin keys, like the other management\ncalls. Check the teacher's model id first (docs/RUNBOOK.md).",
+        "operationId": "teacher_ack_ratchet_teacher_ack_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Teacher Ack Ratchet Teacher Ack Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
+    "/ratchet/demo/day": {
+      "post": {
+        "summary": "Demo Day",
+        "description": "Simulate one day of traffic (support tickets, Scout research calls, both, structured outputs or tool requests),\nthen one night of training. Mock models: `simulation` says so in the response.",
+        "operationId": "demo_day_ratchet_demo_day_post",
+        "parameters": [
+          {
+            "name": "requests",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1500,
+              "title": "Requests"
+            }
+          },
+          {
+            "name": "workload",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "tickets",
+              "title": "Workload"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Demo Day Ratchet Demo Day Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Demo controls (mock only)"
+        ]
+      }
+    },
+    "/ratchet/demo/break-next": {
+      "post": {
+        "summary": "Demo Break Next",
+        "description": "Fault injection: the next trained student is deployed corrupted, to show automatic rollback.",
+        "operationId": "demo_break_next_ratchet_demo_break_next_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Demo Break Next Ratchet Demo Break Next Post"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Demo controls (mock only)"
+        ]
+      }
+    },
+    "/ratchet/demo/student-outage": {
+      "post": {
+        "summary": "Demo Student Outage",
+        "description": "Fault injection: the student endpoint refuses connections for `seconds` (5 to 300), to show the circuit breaker\nopen, the teacher answer meanwhile, and a half-open probe close it again (`circuit` events).",
+        "operationId": "demo_student_outage_ratchet_demo_student_outage_post",
+        "parameters": [
+          {
+            "name": "seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 60,
+              "title": "Seconds"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Demo Student Outage Ratchet Demo Student Outage Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Demo controls (mock only)"
+        ]
+      }
+    },
+    "/ratchet/demo/sample-example": {
+      "get": {
+        "summary": "Demo Sample Example",
+        "description": "A committed example of `version` (default: the live version) from its `split` set, as a body for\n`POST /ratchet/versions/{id}/proof`: its task, its stored (redacted) messages and the conditions it was stored under,\nnever its answer. The first leaf, in key order, whose example is still stored.",
+        "operationId": "demo_sample_example_ratchet_demo_sample_example_get",
+        "parameters": [
+          {
+            "name": "split",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "train",
+              "title": "Split"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Demo Sample Example Ratchet Demo Sample Example Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Demo controls (mock only)"
+        ]
+      }
+    },
+    "/ratchet/demo/teacher-drift": {
+      "post": {
+        "summary": "Demo Teacher Drift",
+        "description": "Fault injection: from now on the mock teacher changes a label with probability `noise` (0 to 1; 0 makes it\nstable again), to show the teacher watch contest labels, freeze Night School (`teacher_drift`) and resume after\n`POST /ratchet/teacher/ack`.",
+        "operationId": "demo_teacher_drift_ratchet_demo_teacher_drift_post",
+        "parameters": [
+          {
+            "name": "noise",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 0.15,
+              "title": "Noise"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Demo Teacher Drift Ratchet Demo Teacher Drift Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Demo controls (mock only)"
+        ]
+      }
+    },
+    "/ratchet/demo/reset": {
+      "post": {
+        "summary": "Demo Reset",
+        "operationId": "demo_reset_ratchet_demo_reset_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Demo Reset Ratchet Demo Reset Post"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Demo controls (mock only)"
+        ]
+      }
+    },
+    "/scout/examples": {
+      "get": {
+        "summary": "Scout Examples",
+        "operationId": "scout_examples_scout_examples_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Examples Scout Examples Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/recorded": {
+      "get": {
+        "summary": "Scout Recorded",
+        "description": "Recorded live runs, newest first (FR-10.40): read-only, no model call, no guard budget, no ledger row.",
+        "operationId": "scout_recorded_scout_recorded_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Recorded Scout Recorded Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/recorded/{rid}": {
+      "get": {
+        "summary": "Scout Recorded One",
+        "operationId": "scout_recorded_one_scout_recorded__rid__get",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Recorded One Scout Recorded  Rid  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/status": {
+      "get": {
+        "summary": "Scout Status",
+        "description": "The guard's state, judge access and search credits (ADR 0120), and which model answers student calls (FR-7.40),\nso the page labels each call without a stats call: a step whose `model` is `fallback_student` came from the hosted\nfallback, not our adapter.",
+        "operationId": "scout_status_scout_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Status Scout Status Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/judge": {
+      "post": {
+        "summary": "Scout Judge",
+        "description": "Open a judge session: `{\"code\": \"...\"}` in the body (never in a URL or a header, which access logs record).\nThe body is parsed by hand, so no validation error can echo it. 400 for another shape, 404 when judge access is\noff, 429 past 10 attempts per IP per rolling hour, 401 for a wrong code (no cookie); 200 sets a signed HttpOnly,\nSameSite=Strict cookie scoped to /scout (Secure in live mode) and writes a `judge` event without the IP or the code.",
+        "operationId": "scout_judge_scout_judge_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      },
+      "delete": {
+        "summary": "Scout Judge End",
+        "description": "End a judge session on this browser: clears the cookie. Idempotent.",
+        "operationId": "scout_judge_end_scout_judge_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/stream": {
+      "get": {
+        "summary": "Scout Stream",
+        "description": "Server-Sent Events. Always HTTP 200: problems arrive as an `error` event (EventSource cannot read status codes).",
+        "operationId": "scout_stream_scout_stream_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/run": {
+      "post": {
+        "summary": "Scout Run",
+        "description": "One run, answered when it finishes: 200 also when search was unavailable (`done.search`), 502 only when a\nmodel call failed.",
+        "operationId": "scout_run_scout_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Run Scout Run Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local mock mode (make demo)"
+    },
+    {
+      "url": "https://{host}",
+      "description": "Your gateway (the public demo's host by default)",
+      "variables": {
+        "host": {
+          "default": "ratchet.dualmindlab.tech"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "OpenAI-compatible",
+      "description": "Chat completions and models: the routes your app calls. Any OpenAI SDK works."
+    },
+    {
+      "name": "End users and feedback",
+      "description": "Opt-outs, erasure of an end user's examples, and feedback on served answers."
+    },
+    {
+      "name": "Health and metrics",
+      "description": "Liveness, readiness and Prometheus metrics."
+    },
+    {
+      "name": "Stats and provenance",
+      "description": "The dashboard's data: stats, the bill of materials, request lookups and the redactor."
+    },
+    {
+      "name": "Versions and evidence",
+      "description": "Per-version bills of materials, certificates and committed training sets."
+    },
+    {
+      "name": "Cost",
+      "description": "Savings per token and by GPU-hours paid, and endpoint uptime records."
+    },
+    {
+      "name": "Ledger replay",
+      "description": "Past traffic at another threshold or audit rate."
+    },
+    {
+      "name": "Savings receipts",
+      "description": "Signed daily receipts per client and their inclusion proofs."
+    },
+    {
+      "name": "Tasks",
+      "description": "The task registry: list, inspect, validate, add and remove tasks."
+    },
+    {
+      "name": "Admin",
+      "description": "Operator actions with an audit trail: versions, switches, pins, erasure and export."
+    },
+    {
+      "name": "Demo controls (mock only)",
+      "description": "Buttons of the mock demo. They answer 404 in live mode."
+    },
+    {
+      "name": "Scout",
+      "description": "The multi-agent research demo: runs, the event stream and the budget guard's status."
+    },
+    {
+      "name": "Pages",
+      "description": "The web pages the gateway serves."
+    }
+  ]
+}

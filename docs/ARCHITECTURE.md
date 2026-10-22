@@ -351,6 +351,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `shadow_version` | INTEGER | Shadow candidate that ran, if any |
 | `shadow_serve` | INTEGER | 1 if the shadow would have served; NULL with `shadow_version` set while an off-path shadow is pending |
 | `shadow_agree` | INTEGER | 1 if the shadow agreed with the best available reference; NULL when its disagreement could not be arbitrated, or the teacher's reference could not be stored |
+| `student_model`, `shadow_model` | TEXT | The model the resolver named for the student's samples (set when they came back) and for the shadow's (set with `shadow_version`): the version's adapter, or the hosted fallback student's id without `RATCHET_STUDENT_BASE`. A version's release statistics count only rows whose model is its adapter, or NULL (rows written before v0.5) ([§16](#16-fallback-attribution)) |
 | `latency_ms` | REAL | The providers' time: student latency (max over samples) plus teacher latency if called (as each provider measured or reported it) |
 | `cost_usd` | REAL | Actual cost of this request (student + teacher + audit + shadow + arbitration), the student priced per token. With off-path checks, the serving cost until they end, then the same total an inline run writes ([§15](#15-off-path-quality-checks)) |
 | `baseline_cost_usd` | REAL | Estimated cost if the teacher had answered alone |
@@ -533,7 +534,7 @@ Run from the request path (at most once per `RATCHET_TICK_INTERVAL_S`: 5 s in li
    - precision < 0.95 → `rejected` (the reason adds "N unarbitrated counted as disagreements" when N > 0);
    - coverage < live_coverage − 0.02 → `rejected`;
    - otherwise → `canary` at 10%.
-4. **Canary:** `version_live_quality(id)` counts audits of answers this version served since `stage_since`. With `n ≥ min_audits` (20) and audited precision `p`:
+4. **Canary:** `version_live_quality(id)` counts audits of answers this version's own adapter served since `stage_since` (never the hosted fallback's, [§16](#16-fallback-attribution)). With `n ≥ min_audits` (20) and audited precision `p`:
    - Wilson upper bound of `p` below `live_floor` (0.92) → `rolled_back` (event `rollback`). Traffic returns to the live version, or to the teacher on cold start.
    - else if `p < 0.92` → hold (no change; keep auditing).
    - else if releases are frozen (`releases_frozen`) → hold (a rollback above still runs).
@@ -973,3 +974,28 @@ Manual interventions go through one module, `ratchet/admin.py` ([ADR 0064](adr/0
 | Runtime pins | `flags()` publishes the names to `tasks.OVERRIDES`; `tasks.get` and `tasks.effective` return a pinned copy of the registered task (its spec's `spec_hash` kept), so the router's pinned path (`_teacher_only`, nothing stored) and Night School's read-time exclusion (`excluded_pinned`) apply as for a spec pin (invariant 10) |
 
 A switch is seen by every process that shares the ledger on its next request, tick or night: no restart. `/ratchet/stats` shows them under `controls`.
+
+## 16. Fallback attribution
+
+Which answers a version's release statistics count ([ADR 0073](adr/0073-fallback-attribution.md), FR-12.32, FR-8.3, NFR-8).
+
+**Why.** Without `RATCHET_STUDENT_BASE` the live resolver returns the hosted, untuned fallback model (`RATCHET_FALLBACK_STUDENT`) for every version, canary and shadow included. Its audited answers used to count as the routed version's, so a canary could be promoted or rolled back, and the live alert fire, on another model's answers; the shadow compared the fallback with itself.
+
+**The rule.** An answer is a version's only when the model the resolver named for it is the version's `adapter_uri` (`Ratchet._own`). Ratchet's resolvers (the vLLM endpoint, the mock fleet) name the adapter; the fallback names its own id.
+
+**The request path.** `handle` records the student's model (`requests.student_model`) beside the routed `student_version`. An answer another model wrote is served under the global threshold (`Ratchet.threshold`, as before) and audited as drawn, but its `Result` names no version (`version` None), `model` is the configured fallback id, and its fingerprint is `student|<model>|<threshold>` (`_student_fingerprint`). The shadow is resolved once, before any sidecar place (`_shadow_student`): if it resolves to another model it does not run; if the resolver raises, that is a failed shadow sample (INV-15). `shadow_model` is set exactly when `shadow_version` is, and an off-path shadow whose samples fail clears it with its verdict (`update_request` treats it as a verdict column). A throttled `unattributed` event names the version and the model.
+
+**The ledger.** `OWN_STUDENT` and `OWN_SHADOW` (`student_model IS NULL OR student_model = (SELECT adapter_uri FROM versions WHERE id=?1)`) are part of `AUDIT_TALLY_SQL`, `AUDIT_PENDING_SQL` and `SHADOW_QUALITY_SQL`: the adapter is read once per query by primary key, and the requests indexes are searched as before. `stats_by_day` adds `fallback_served`.
+
+**What follows.** While the fallback serves, no version gets evidence: the canary and the shadow hold, the live alert stays quiet, and Night School skips while that release is in flight (INV-5). Rows from before v0.5 have no model and count as they did; the reference runs are unchanged.
+## Demo hosting: live and simulation
+
+The demo VM serves two gateways from one image behind one Caddy: the live one at the root domain, and `ratchet-sim` (mock mode, in-memory ledger, no keys, 1 vCPU and 1 GiB) at `sim.<domain>`. INV-8 stays in the app, so the live host answers every demo route 403 whatever Caddy does ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
+
+```
+Caddy ─┬─ <domain>      ─▶ ratchet      (live; Token Factory, student endpoint, Tavily)
+       └─ sim.<domain>  ─▶ ratchet-sim  (mock; demo controls open, per-IP limit, self-reset)
+```
+
+- `ratchet/demo.py` (mock mode only): `DemoPolicy`, and the `DemoJanitor` that resets the shared simulation after N simulated days or requests (on a click) or idle time (a daemon thread). `gateway._demo_limit` is an app-level dependency after `_access`: a per-IP bucket (`ratelimit.RateLimiter`) on non-GET `/ratchet/demo/*` calls.
+- `ratchet/upstream.py`: the last real upstream call per role, content-free. The provider and the Tavily client report to an `observe` callback in a `finally`; the recorder sits beside the metrics (`ratchet_upstream_*`, counters by purpose) and keeps a model id, status, latency and time instead. `/ratchet/stats` carries it as `upstream`, with `links` and `demo`.

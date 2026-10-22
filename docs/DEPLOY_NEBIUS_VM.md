@@ -1,6 +1,6 @@
 # Hosting the public demo on a Nebius CPU VM
 
-This guide puts the Ratchet demo on one small Nebius AI Cloud virtual machine, so judges can use it from **Oct 29 to Dec 15, 2026**. The VM runs two containers: the Ratchet gateway and [Caddy](https://caddyserver.com/), which gets an HTTPS certificate automatically.
+This guide puts the Ratchet demo on one small Nebius AI Cloud virtual machine, so judges can use it from **Oct 29 to Dec 15, 2026**. The VM runs three containers: the live Ratchet gateway, a second gateway in mock mode for the simulation, and [Caddy](https://caddyserver.com/), which gets HTTPS certificates automatically. The live gateway is at your domain (the URL for Stage One); the simulation, where judges can run days, break a deploy and watch the rollback for free, is at `sim.<your domain>` ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
 
 Files: [`deploy/vm/`](../deploy/vm/). Facts about Nebius below were checked on docs.nebius.com and nebius.com on **Oct 20, 2026**. Anything marked **verify on day 1** has not been run against a real account yet.
 
@@ -9,12 +9,16 @@ Files: [`deploy/vm/`](../deploy/vm/). Facts about Nebius below were checked on d
 The gateway does no model inference. It routes requests, keeps the SQLite ledger and serves the web pages. The models run elsewhere: the teacher on Token Factory, the student on a Serverless Endpoint (or the hosted fallback). So a 2 vCPU / 8 GB VM is enough, and it costs about a tenth of the cheapest GPU.
 
 ```
-judge's browser ──HTTPS──▶ Caddy :443 ──▶ ratchet:8000 (gateway, 1 worker, SQLite in a volume)
-                                              │ live mode only
-                                              ├──▶ Token Factory (teacher, judge, fallback student)
-                                              ├──▶ Serverless Endpoint (student, optional)
-                                              └──▶ Tavily (Scout search)
+judge's browser ──HTTPS──▶ Caddy :443 ─┬─ https://<domain>/      ──▶ ratchet:8000 (live gateway, 1 worker, SQLite in a volume)
+                                       │                                    │ live mode only
+                                       │                                    ├──▶ Token Factory (teacher, judge, fallback student)
+                                       │                                    ├──▶ Serverless Endpoint (student, optional)
+                                       │                                    └──▶ Tavily (Scout search)
+                                       └─ https://sim.<domain>/  ──▶ ratchet-sim:8000 (mock mode, in-memory ledger,
+                                                                      no keys, no network calls, demo controls open)
 ```
+
+The simulation container has its own environment (no `env_file`, no volume, no published port, never a live key, token or signing key) and is capped at 1 vCPU and 1 GiB, so nobody hammering it can starve the live gateway. Its demo controls work because the app runs in mock mode; the live host keeps the app's 403 on every demo route (INV-8) and the optional edge guard. `RATCHET_SIM=off` leaves the simulation out.
 
 ## What you need
 
@@ -75,6 +79,7 @@ Optional settings: `RATCHET_VM_NAME`, `RATCHET_VM_PRESET` (for example `4vcpu-16
   ```
 
   Set the DNS record **before** switching. Caddy retries failed certificate requests, but repeated failures can hit Let's Encrypt rate limits.
+- **The simulation's name** is `sim.<RATCHET_DOMAIN>` unless you set `RATCHET_SIM_DOMAIN`. With sslip.io it resolves by itself (`sim.203.0.113.7.sslip.io` resolves to 203.0.113.7, checked Oct 21, 2026). With your own domain, add a second A record (or a wildcard `*.ratchet.dualmindlab.tech`) for `sim.<name>` too, before `docker compose up -d`. The first certificate for it is verify-on-day-1. `RATCHET_SIM=off` in `.env` drops the host (then add an empty `RATCHET_SIM_URL=`).
 
 ### 3. Edit `.env`
 
@@ -94,6 +99,8 @@ The file starts in `RATCHET_MODE=mock` with `RATCHET_MOCK_WARMUP_DAYS=4`, so the
 | `https://<domain>/dashboard` | Ratchet dashboard (simulation) |
 | `https://<domain>/ratchet/stats` | JSON stats |
 | `https://<domain>/healthz` | `{"status":"ok",...}` (always public) |
+| `https://sim.<domain>/`, `/dashboard`, `/scout`, `/ratchet/stats` | The simulation: the same pages, labelled "Simulation (mock models)", with the demo controls working |
+| `https://sim.<domain>/healthz` | `{"status":"ok","mode":"mock",...}`. Any other mode means the simulation container holds a live setting: `update.sh` fails on it |
 | `https://<domain>/readyz` | 200 with `"status": "ready"` (or `degraded`, with the reason under `checks`); 503 `not_ready` when the ledger cannot be written or no teacher can answer (always public; see [API.md](API.md#get-readyz)) |
 | `https://<domain>/v1/models` | `{"object":"list","data":[{"id":"ratchet",...}]}` (403 if the Caddy guard is on, 401 if `RATCHET_API_KEYS` is set and you send no key; see Security) |
 
@@ -102,6 +109,8 @@ curl -sN "https://<domain>/scout/stream?q=What%20is%20LoRA%20fine-tuning%3F"   #
 ```
 
 ## Switching from mock to live
+
+Only the root domain's gateway switches. The simulation stays in mock mode by its own environment in `docker-compose.yml`, so it needs no change and holds no key.
 
 Live mode spends real money on every Scout run and every `/v1/chat/completions` call. Do it only after the checks in [DAY1.md](DAY1.md) pass.
 
@@ -137,6 +146,17 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
 4. Check, then apply: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check` lists every problem with `.env` at once (exit 2: the gateway would not start; it also warns that `RATCHET_MOCK_WARMUP_DAYS` does nothing in live mode, so remove that line), then `sudo -u ratchet docker compose up -d` (or `update.sh`, which runs the same check first) and `curl -s https://<domain>/readyz` should say `ready`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
 5. Watch the Token Factory usage page and the Tavily dashboard daily for the first week, and check `curl -s https://<domain>/scout/status | jq .search` shows `"available": true`.
 
+### Record one Scout run after each deploy
+
+The compose file mounts `evidence/scout` read-only and sets `RATCHET_SCOUT_RECORDINGS_DIR`, so a recorded run plays when the guard refuses live runs ([ADR 0140](adr/0140-recorded-scout-run.md)). After the VM is live (and after each deploy that changes a model, a prompt or a price), record one run, commit it and run `update.sh`:
+
+```bash
+python -m ratchet.scout record "What is LoRA fine-tuning?" --base-url https://<domain> --judge-code <code>
+git add evidence/scout && git commit -m "Record a live Scout run"
+```
+
+The command refuses a run that errors, does not finish or comes from a mock-mode gateway. The judge code is sent once in a POST body and is not written to the file.
+
 ### Night School cron (off by default)
 
 `/etc/cron.d/ratchet` contains two commented lines: `python -m ratchet.live night` at 02:30 UTC and `... tick` every 5 minutes, both through `docker compose exec -T ratchet`. Leave them off for the judging period unless all of these hold:
@@ -156,6 +176,7 @@ Prices from [Compute pricing](https://docs.nebius.com/compute/resources/pricing)
 |---|---|---|---|
 | VM `cpu-e2` `2vcpu-8gb` (eu-north1) | $0.012/vCPU-h + $0.0045/GiB-h = **$0.060/h** | $43.80 | **$69.12** |
 | or VM `cpu-d3` `2vcpu-8gb` (other regions) | $0.015/vCPU-h + $0.0045/GiB-h = $0.066/h | $48.18 | $76.03 |
+| Simulation host (`ratchet-sim`) | Same VM, same IP, free certificate | $0 extra | $0 extra: at most 1 vCPU and 1 GiB of the VM |
 | Boot disk, 30 GiB network SSD | $0.071 per GiB per 730 h | $2.13 | $3.36 |
 | Public IP | Free | $0 | $0 |
 | Network egress from the VM | Free | $0 | $0 |
@@ -166,6 +187,8 @@ Notes:
 
 - The CPU rates above took effect on **Oct 1, 2026**. Before that they were $0.012/vCPU-h and $0.0032/GiB-h. Check the pricing page again before you rely on these numbers.
 - The VM bills while it runs. A stopped VM keeps billing for its disk; the static IP is kept while stopped.
+
+**Whether both gateways fit is unverified.** Measured offline only (a 4-CPU authoring container, Oct 21, 2026): the mock warm-up (4 days of 1,500 mixed requests) took 3.9 s with a 69 MB peak, and each further 1,000 simulated requests add about 1.2 MB, so the cap of 200,000 requests stays under 0.3 GB. That the live and the simulation gateways fit in 2 vCPU / 8 GB under judging load, or on a smaller VM, is **not verified**: measure it on day 1 ([RUNBOOK.md](RUNBOOK.md#simulation-host)). If it does not fit, `RATCHET_VM_PRESET=4vcpu-16gb` costs $0.120/h on `cpu-e2` ($0.048 for 4 vCPUs plus $0.072 for 16 GiB), $138.24 for the 1,152 hours of Oct 29 to Dec 15 against $69.12 now (`cpu-d3`: $0.132/h, $152.06; list rates checked Oct 21, 2026), or set `RATCHET_SIM=off` and keep the recorded video as the loop's evidence.
 
 Usage costs in live mode (on top of the infrastructure):
 
@@ -182,26 +205,50 @@ To keep Tavily at $0, stay on the free plan without pay-as-you-go: once the 1,00
 
 ```bash
 cd /opt/ratchet/deploy/vm
-sudo -u ratchet docker compose ps                    # both "running", ratchet "healthy"
+sudo -u ratchet docker compose ps                    # all three "running", the gateways "healthy"
+sudo -u ratchet docker stats --no-stream             # memory and CPU of ratchet and ratchet-sim (the simulation is capped at 1 CPU, 1 GiB)
 sudo -u ratchet docker compose logs -f --tail=100 ratchet
 sudo -u ratchet docker compose logs -f --tail=100 caddy   # certificate problems show here
+curl -s https://sim.<domain>/healthz                  # the simulation: "mode":"mock"
 curl -s https://<domain>/scout/status                 # live mode: spend today vs budget, judges' reserve, search and credits
 ```
 
 - `/scout/status` keeps today's runs and spend across `update.sh`: the counters are restored from the ledger. `search.available` false, a `search_error` event or a `tavily_exhausted` event: see [RUNBOOK.md](RUNBOOK.md#tavily-credits-running-low-or-search-unavailable).
 - One gateway process per ledger: the compose file pins `--workers 1`. Detection of a second process (`gateway_lease`, NFR-60) waits for the leases table; until then see [RUNBOOK.md](RUNBOOK.md#two-gateway-processes-on-one-ledger).
 
-- The ratchet container has a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
+- The live page's strip "Last Token Factory call" and the dashboard header read `/ratchet/stats` `upstream`: the newest real call per role, with its model id, latency and age, never content. An old age means no traffic since ([RUNBOOK.md](RUNBOOK.md#reading-the-last-call-strip)).
+- The ratchet and ratchet-sim containers have a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
-- For an outside check, point a free uptime monitor at `https://<domain>/readyz` (always public; 200 while requests can be answered, 503 when they cannot) and, for "is the process up", `https://<domain>/healthz`. A load balancer in front of the VM should use `/readyz` too; keep restarts on `/healthz`, so a teacher outage never becomes a restart loop. `/ratchet/stats` needs a key when the dashboard is private.
+- For an outside check, point a free uptime monitor at `https://<domain>/healthz` ("is the process up"; always public) and, for "can it serve", `https://<domain>/readyz` (200 while requests can be answered, 503 when they cannot). A keyword monitor on `https://<domain>/scout/status` for `"state":"failing"` catches failing live model calls. `scripts/demo_check.py https://<domain>` (`make demo-check URL=https://<domain> ARGS=--chat`) checks what a judge sees from your laptop. A load balancer in front of the VM should use `/readyz` too; keep restarts on `/healthz`, so a teacher outage never becomes a restart loop. `/ratchet/stats` needs a key when the dashboard is private.
+
+### Watchdog
+
+Stage One needs a runtime Token Factory call from this VM until judging ends (Dec 15), so a hung gateway or exhausted credit must not go unnoticed. [`python3 -m ratchet.watch`](../ratchet/watch.py) runs on the VM host from `/etc/cron.d/ratchet-watch` (cloud-init installs it; on an older VM: `sudo install -m 0644 -o root -g root /opt/ratchet/deploy/vm/ratchet-watch.cron /etc/cron.d/ratchet-watch`). It uses the host's own Python 3 and no packages, so it is safe on a 1 GB VM. ADR: [0132](adr/0132-demo-watchdog-and-rollback-first-updates.md).
+
+- **`tick`, every 2 minutes.** Asks the container's `/healthz` (through `docker compose exec`, which works while uvicorn is hung) and `/readyz`'s `checks.ledger`. After 3 failed liveness checks, or 3 failed ledger checks, in a row it runs `docker compose restart ratchet` (a start grace of 240 s, a 10 minute cooldown, at most 2 restarts an hour, never while `update.sh` runs or after `pause`). **It never restarts for the teacher or the student:** `/readyz` answers 503 when Token Factory is down, and a restart would fix nothing and drop the breakers' state. It never starts a container you stopped on purpose; it alerts instead.
+- **`probe`, hourly (live mode only).** One 16-token completion through `https://<domain>/v1/chat/completions` with the `watchdog` key on the pinned task `watchdog-probe`: always the teacher, never stored (INV-10), about $0.0001 and at most 24 calls a day. It alerts on any non-200 answer, naming the gateway's error code and the upstream status (`upstream_402`, `upstream_auth` for a teacher 401 or 403, `upstream_rate_limited`, ...). **Which status Token Factory returns for exhausted credit is unverified**: the alert says "may be exhausted credit or a suspended account" and the Token Factory console decides. It sets the `live_check` flag on `/scout/status` and reads Scout's search state from it for free.
+- **Alerts** go to `RATCHET_ALERT_WEBHOOK_URL` as a signed JSON body (the gateway's own alerting is not built; this module sends its own). One alert when a check starts failing or changes code, a repeat every 6 h, one on recovery.
+
+Set up, once, on the VM:
+
+1. Add a `watchdog:<random key>` entry to `RATCHET_API_KEYS` (`openssl rand -hex 24`), and, to cap it, `RATCHET_KEY_LIMITS` (room for 24 calls a day).
+2. Set `RATCHET_TASKS_FILE=/config/tasks.json` in `.env` (compose mounts `deploy/vm/config` there read-only). It pins `watchdog-probe` for the `watchdog` client only; setting it without the `watchdog` key stops startup, by design.
+3. Set `RATCHET_ALERT_WEBHOOK_URL` (and `RATCHET_ALERT_WEBHOOK_SECRET`), then `cd /opt/ratchet && python3 -m ratchet.watch test-alert`. Slack takes the body's `text`; whether it ignores the other keys, and Discord with `/slack` appended, are unverified.
+4. Optionally set `RATCHET_WATCH_HEARTBEAT_URL` to a dead-man's-switch URL (period 1 h, grace 30 min): it alerts when the VM or cron is dead, which nothing on the VM can report.
+5. `python3 -m ratchet.watch probe --once --force` after `update.sh`, then read `python3 -m ratchet.watch status`. If the probe reports `unreachable` or `probe_timeout` from the VM while the site works from outside, the VM may not reach its own public IP (hairpin NAT, unverified on Nebius): set `RATCHET_WATCH_CONNECT=local`.
+
+Commands: `status`, `pause --minutes N` (no restarts for N minutes, up to 1,440), `resume`, `test-alert`, `probe --once --no-flag --no-alert`. Switch it all off with `RATCHET_WATCH=off`. Subtract the probe's tokens from your credit estimate: about 24 calls a day.
 
 ### Updating
 
 ```bash
-sudo -u ratchet /opt/ratchet/deploy/vm/update.sh
+sudo -u ratchet /opt/ratchet/deploy/vm/update.sh        # flags: --skip-backup  --no-rollback  --no-probe
+DRY_RUN=1 /opt/ratchet/deploy/vm/update.sh                # prints every command that changes something: rehearse it first
 ```
 
-It runs `git pull --ff-only` and builds the new image, then runs `python -m ratchet.config check` in it with your `.env` ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks)): on errors (exit 2) it stops and leaves the running gateway as it is, so a typo in `.env` never takes the demo down; warnings are printed and the update goes on. Then `docker compose up -d`, waits for the Docker health check (`/healthz`) and for `/readyz` to answer 200 inside the container (printing its checks), fetches `/`, `/healthz`, `/readyz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public) and exits non-zero if any of them fail. Run the check yourself after editing `.env`: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check`.
+`update.sh` first takes a lock (the watchdog never restarts while it is held), saves the running git SHA, makes a ledger backup tagged `pre-update` (live mode) and tags the running image `ratchet-gateway:previous` (a tagged image survives `docker image prune -f`). If the new version is unhealthy, answers `/readyz` with a broken ledger, reports the wrong mode, or fails the live probe on the gateway side, it moves the checkout (`git reset --hard` to the old SHA; your `.env` is untouched) and the image back and recreates the container, then alerts. If Token Factory is the problem, it does not roll back: an older image would not fix it. It restores the ledger from the pre-update backup (`restore.sh`; requests logged after the backup are lost; the replaced file stays as `ratchet.db.before-restore-<time>`) only when the old image also cannot open the ledger. Migrations only add columns and tables, so the previous image reads a migrated ledger.
+
+It runs `git pull --ff-only` and builds the new image, then runs `python -m ratchet.config check` in it with your `.env` ([CONFIGURATION.md](CONFIGURATION.md#configuration-checks)): on errors (exit 2) it stops and leaves the running gateway as it is, so a typo in `.env` never takes the demo down; warnings are printed and the update goes on. Then `docker compose up -d`, waits for the Docker health check (`/healthz`) and for `/readyz` to answer 200 inside the container (printing its checks), fetches `/`, `/healthz`, `/readyz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public) and exits non-zero if any of them fail. It checks both hosts: before it builds anything it refuses a `RATCHET_SIM` other than `on` or `off`, a simulation domain equal to the live one, and a simulation signing key equal to the live one; it runs the configuration check for `ratchet-sim` too (a bad `RATCHET_DEMO_*` value stops the update), waits for both containers, and fetches the same paths plus `/ratchet/stats` on `https://sim.<domain>`, failing unless that host's `/healthz` says `"mode":"mock"`. Run the check yourself after editing `.env`: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check`.
 
 ### Backups
 
@@ -213,7 +260,7 @@ To also copy each backup to Nebius Object Storage:
 2. On the VM: `sudo snap install aws-cli --classic`, then `sudo -u ratchet -H aws configure` with that key.
 3. Set `RATCHET_BUCKET_S3=s3://<bucket>/ratchet` and `RATCHET_S3_ENDPOINT` in `.env`. Copy the endpoint URL from the console (verify on day 1).
 
-Restore: stop the gateway, remove the old WAL files, copy the file into the volume, start it again. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), so recent commits sit in `ratchet.db-wal` until a checkpoint: a stale `-wal` or `-shm` file left next to a restored copy would be replayed onto it. The backup script uses SQLite's backup API, which includes them; never copy the live file with `cp`.
+Restore with the script: `docker compose stop ratchet && deploy/vm/restore.sh /var/backups/ratchet/ratchet-<time>.db.gz && docker compose start ratchet` (it checks the backup, then moves the old `ratchet.db`, `-wal` and `-shm` aside together as `ratchet.db.before-restore-<time>`). By hand: stop the gateway, remove the old WAL files, copy the file into the volume, start it again. The ledger runs in SQLite's WAL journal (`RATCHET_DB_SYNC=NORMAL`, the default; [ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md)), so recent commits sit in `ratchet.db-wal` until a checkpoint: a stale `-wal` or `-shm` file left next to a restored copy would be replayed onto it. The backup script uses SQLite's backup API, which includes them; never copy the live file with `cp`.
 
 ```bash
 cd /opt/ratchet/deploy/vm
@@ -236,7 +283,7 @@ sudo -u ratchet docker compose start ratchet
   - If the token is empty or shorter than 32 characters, the guarded paths are blocked for everyone. Caddy strips the token header before it reaches the gateway.
   - In mock mode the guard also disables the dashboard's **Run day**, **Break next deploy** and **Reset** buttons, which call `/ratchet/demo/*`. Use `open` for the mock demo and `guarded` for live mode.
   - Using the API yourself while guarded: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or pass `default_headers={"X-Ratchet-Admin-Token": TOKEN}` to the OpenAI SDK.
-- **The mock demo is shared.** All visitors see the same simulated state, and one visitor's Reset affects everyone. That is acceptable for a demo, and it costs nothing.
+- **The mock demo is shared.** It lives on the simulation host (`sim.<domain>`), and all visitors see and change the same simulated state: one visitor's Reset affects everyone. That is acceptable for a demo, and it costs nothing. The simulation limits itself: `RATCHET_DEMO_RPM` demo actions a minute per client IP (429), a reset after `RATCHET_DEMO_MAX_DAYS` simulated days or `RATCHET_DEMO_MAX_REQUESTS` requests or `RATCHET_DEMO_IDLE_RESET_S` seconds idle (compose sets 30 a minute, 30 days, 200,000 requests, 2 h), and its container is capped at 1 vCPU and 1 GiB. It holds no key, no admin or judge code and no volume; mock admin writes (task registration, capped at 50) are open there and an automatic reset clears them.
 - **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence API keys or the edge guard), and it does not stop someone with many IP addresses from using up the public share early; the judges' reserve is held back from them. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
 - **Judge code.** Never put `RATCHET_SCOUT_JUDGE_CODE` on the public project page, in the video or in a URL. Judges type it into the Scout page, which sends it once in a POST body; the session then lives in an `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Rotating the code ends every session ([THREAT_MODEL.md](THREAT_MODEL.md) T24).
 - **Access logs.** Caddy logs request headers and redacts only Cookie, Set-Cookie, Authorization and Proxy-Authorization, so the Caddyfile's log filter deletes `X-Ratchet-Admin-Token` (guarded mode). Check it once on the VM with `docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile`. Scout questions stay in both access logs (`/scout/stream?q=`): they are public demo questions.
@@ -277,8 +324,9 @@ Verify on day 1:
 - Tavily's `usage.credits` in a search response (`include_usage`), its 432 and 433 answers and its monthly reset day, against the Tavily dashboard (FR-10.22).
 - The judge cookie through Caddy over HTTPS: `POST /scout/judge` from the Scout page, then `/scout/status` shows `"session": true` (FR-10.21).
 - `caddy validate` with the log filter for `X-Ratchet-Admin-Token`.
+- The simulation host's certificate on the first try, and the fit of both gateways in the VM's memory and CPU under load ([the measurement](RUNBOOK.md#simulation-host)).
 
 - `nebius compute disk list --parent-id ...` in the teardown.
 - Public IP detection from inside the VM (`api.ipify.org`), used only for the sslip.io default.
-- Let's Encrypt issuing for `*.sslip.io` names on the first try.
+- Let's Encrypt issuing for `*.sslip.io` names on the first try (a `sim.` prefix resolves: `sim.203.0.113.7.sslip.io` gave 203.0.113.7 through dns.google and Cloudflare DNS, Oct 21, 2026).
 - The Object Storage S3 endpoint URL.

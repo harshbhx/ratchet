@@ -1,0 +1,11 @@
+# Ratchet demo watchdog (FR-11.32, docs/DEPLOY_NEBIUS_VM.md#watchdog). Install as root, never as a symlink:
+#   sudo install -m 0644 -o root -g root /opt/ratchet/deploy/vm/ratchet-watch.cron /etc/cron.d/ratchet-watch
+# cron.d file names hold no dots, the file names its user and is owned by root. The host runs these with its own Python 3
+# (standard library only); they need the docker group, which the ratchet user is in. Each is a no-op while RATCHET_WATCH=off.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Liveness and the restart rule, every 2 minutes. Never restarts for a teacher outage.
+*/2 * * * * ratchet cd /opt/ratchet && python3 -m ratchet.watch tick >> /var/log/ratchet/watch.log 2>&1
+# One tiny live completion an hour through the public URL (about $0.0001 each; live mode only).
+17 * * * * ratchet cd /opt/ratchet && python3 -m ratchet.watch probe >> /var/log/ratchet/watch.log 2>&1

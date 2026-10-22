@@ -53,7 +53,8 @@ def _ask(tag: object) -> list[dict[str, Any]]:
 
 
 def _row(led: Ledger, rid: int) -> dict[str, Any]:
-    return dict(led.db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone())
+    with led.locked():  # also while a job is queued or running: it writes through the same connection (`LedgerGuard`)
+        return dict(led.db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone())
 
 
 def _events(led: Ledger, kind: str) -> list[str]:
@@ -243,6 +244,28 @@ def test_sidecar_close_drains_then_gives_up_and_refuses_late_jobs():
     assert car.close(0) == {}  # again: nothing more to give up
 
 
+@pytest.mark.req("FR-12.31")
+def test_the_ledger_connection_is_used_only_under_its_lock_once_a_sidecar_took_a_job(ledger_lock_guard):
+    """The writer connection has a Python callback on it (the cache triggers), which SQLite runs with the connection's
+    mutex held and the GIL released; a thread that holds the GIL and reads the same connection waits for that mutex, and
+    both wait forever. A test that read `rt.ledger.db` unsynchronised after a live request hung the suite this way.
+    tests/conftest.py's `LedgerGuard` makes it a failure at the first unsynchronised use, not an unlucky interleaving."""
+    led = Ledger(":memory:")
+    assert led.db.execute("SELECT 1").fetchone()[0] == 1  # no job yet: nothing can be writing
+    car, gate = SideCar(1, 4), threading.Event()
+    slot = car.reserve()
+    assert slot is not None and slot.submit(lambda: gate.wait(WAIT_S))
+    with pytest.raises(AssertionError, match="unsynchronised use of a ledger's connection"):
+        led.db.execute("SELECT 1")
+    ledger_lock_guard.violations.clear()  # this one was expected: the fixture fails a test that leaves any
+    with led.locked():
+        assert led.db.execute("SELECT 1").fetchone()[0] == 1  # under the lock it is safe
+    assert led.totals()["requests"] == 0  # and the ledger's own methods take it themselves
+    gate.set()
+    assert car.drain(WAIT_S)
+    assert led.db.execute("SELECT 1").fetchone()[0] == 1  # drained: nothing is writing any more
+
+
 # ---------- the ledger ----------
 def test_update_request_writes_each_verdict_once_and_adds_costs_call_by_call():
     led = Ledger(":memory:")
@@ -308,8 +331,10 @@ def test_live_quality_ignores_pending_audits_until_their_verdict(tmp_path):
     fresh = Ledger(str(tmp_path / "q.db"))  # a new tally (another process, a restart) reads the same numbers
     assert fresh.version_live_quality(vid) == (3, 2 / 3)
     # Finding a stage's pending audits searches the gate's index, never the whole table (ADR 0060).
-    (plan,) = [r[-1] for r in led.db.execute("EXPLAIN QUERY PLAN " + AUDIT_PENDING_SQL, (vid, 0, 10))]
-    assert plan == "SEARCH requests USING INDEX requests_version_audited (student_version=? AND audited=? AND id>? AND id<?)"
+    plan = [r[-1] for r in led.db.execute("EXPLAIN QUERY PLAN " + AUDIT_PENDING_SQL, (vid, 0, 10))]
+    assert plan[0] == "SEARCH requests USING INDEX requests_version_audited (student_version=? AND audited=? AND id>? AND id<?)"
+    # The version's adapter (attribution, ADR 0073) is read once, by primary key; nothing scans a table.
+    assert "SEARCH versions USING INTEGER PRIMARY KEY (rowid=?)" in plan and not any("SCAN" in p for p in plan)
 
 
 @pytest.mark.req("FR-12.31")

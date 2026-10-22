@@ -11,3 +11,7 @@ Invariants lane W proposes for the numbered list in [CLAUDE.md](../../CLAUDE.md#
 **Enforcing code.** `ratchet/gateway.py`: `Runtime.student_serving`, `stats`, `scout_status`; `web/src/lib/who-model.ts`: `whoLabel`, `studentCopy`, `precisionShown`, `servingLine`, `studentShareCopy`; `web/src/components/ui/who.tsx`: `WhoBadge`; `web/src/pages/scout/state.ts`: `derive`.
 
 **Proving tests.** `tests/test_live.py::test_hosted_fallback_is_never_certified`, `test_stats_student_serving_kinds`, `test_hosted_fallback_response_names_the_fallback_model`; `tests/test_contract.py::test_who_model_helpers` (`web/tests/who-model.test.mjs`), `test_student_serving_kinds_match_the_ui`.
+
+## Recorded Scout runs (item W2-SCOUT-RECORDED-RUN, FR-10.40, NFR-71)
+
+**Proposed:** The gateway never writes a Scout recording and never stores a visitor's question; a recording holds the operator's question, the run's events, the host name and the totals, never a header, an API key or a judge code. Enforced by `ratchet.scout.record` (only the CLI writes; the endpoints only read) and proved by `test_recording_never_holds_secrets`, `test_recorded_endpoints` and `test_recorded_endpoints_spend_nothing` in `tests/test_scout.py`.

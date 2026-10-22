@@ -536,6 +536,13 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_envelope",
         "sim.mock_models:MockTeacher",
     ),
+    "FR-1.90": (
+        "ratchet.reasoning:template_kwargs",
+        "ratchet.providers:GenPolicy.student",
+        "ratchet.providers:OpenAICompatProvider.complete",
+        "ratchet.config:Settings.reasoning_policy",
+        "ratchet.router:Ratchet._sample",
+    ),
     "FR-1.13": (
         "ratchet.providers:GenParams",
         "ratchet.providers:GenPolicy",
@@ -934,7 +941,7 @@ CODE: dict[str, tuple[str, ...]] = {
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
-    "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold"),
+    "FR-8.3": ("ratchet.gateway:Runtime.reset", "ratchet.router:Ratchet.threshold", "ratchet.router:Ratchet._own"),
     "FR-8.4": ("ratchet.live:main",),
     "FR-8.5": ("scripts/day1_check.py",),
     "FR-8.20": (
@@ -977,9 +984,48 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-10.20": ("ratchet.scout.guard:Guard.restore", "ratchet.ledger:Ledger.spend_rows"),
     "FR-10.21": ("ratchet.scout.judge:JudgeAccess", "ratchet.gateway:scout_judge"),
     "FR-10.22": ("ratchet.scout.credits:CreditMeter", "ratchet.scout.credits:MeteredSearch", "ratchet.scout.agents:Scout.run"),
+    "FR-10.40": (
+        "ratchet.scout.record:record",
+        "ratchet.scout.record:listing",
+        "ratchet.scout.record:get",
+        "ratchet.scout.__main__:record_main",
+        "ratchet.gateway:scout_recorded",
+        "ratchet.gateway:scout_recorded_one",
+        "web/src/lib/recording-model.ts",
+    ),
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
+    "FR-11.32": (
+        "ratchet.watch:tick",
+        "ratchet.watch:_maybe_restart",
+        "ratchet.watch:send_alert",
+        "ratchet.watch:alert_body",
+        "ratchet.watch:signature",
+        "deploy/vm/ratchet-watch.cron",
+    ),
+    "FR-11.33": (
+        "ratchet.watch:probe",
+        "ratchet.watch:classify",
+        "ratchet.watch:flag_view",
+        "ratchet.gateway:Runtime.live_check",
+        "ratchet.gateway:scout_status",
+        "deploy/vm/config/tasks.json",
+    ),
+    "FR-11.34": ("deploy/vm/update.sh", "deploy/vm/restore.sh", "deploy/vm/backup.sh", "scripts/demo_check.py"),
+    "FR-11.30": (
+        "deploy/vm/docker-compose.yml",
+        "deploy/vm/Caddyfile",
+        "deploy/vm/update.sh",
+        "ratchet.demo:DemoJanitor",
+        "ratchet.gateway:_demo_limit",
+        "ratchet.config:public_url",
+    ),
+    "FR-11.31": (
+        "ratchet.upstream:UpstreamRecorder",
+        "ratchet.upstream:classify",
+        "ratchet.providers:OpenAICompatProvider.complete",
+    ),
     # 6.13 Data governance
     "FR-13.1": (
         "ratchet.router:Ratchet.store_opt_out",
@@ -1218,6 +1264,21 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:stats",
     ),
     "FR-13.8": ("ratchet.redact:PATTERNS", "ratchet.compare:parse_number"),
+    "FR-12.32": (
+        "ratchet.router:Ratchet._own",
+        "ratchet.router:Ratchet._shadow_student",
+        "ratchet.router:Ratchet._unattributed",
+        "ratchet.router:Ratchet._student_fingerprint",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.router:Ratchet._finish_offpath",
+        "ratchet.ledger:OWN_STUDENT",
+        "ratchet.ledger:OWN_SHADOW",
+        "ratchet.ledger:Ledger.version_live_quality",
+        "ratchet.ledger:Ledger.shadow_quality",
+        "ratchet.ledger:Ledger.stats_by_day",
+        "ratchet.ledger:SCHEMA",
+        "ratchet.ledger:MIGRATIONS",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -1405,10 +1466,11 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.obs:log",
     ),
     "NFR-7": ("ratchet.providers:OpenAICompatProvider", "ratchet.live:export"),
-    "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval"),
+    "NFR-8": ("ratchet.release:wilson", "ratchet.nightschool.evaluate:cascade_eval", "ratchet.ledger:OWN_STUDENT"),
     "NFR-9": ("ratchet.bom:manifest", "ratchet.nightschool.notices:render", "ratchet.live:publish_bom", "LICENSE"),
     "NFR-10": ("scripts/reqtrace.py",),
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
+    "NFR-71": ("ratchet.scout.record:record", "ratchet.scout.record:get"),
     "NFR-70": ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "ratchet/web/landing.html"),
     "NFR-35": ("ratchet.config:check", "ratchet.gateway:Runtime._check_config", "ratchet.readiness:Readiness.report"),
     # 8.1 Success metrics (ratchet/kpis.py; their targets are checked against the PRD by rule_metric_targets)
@@ -1417,7 +1479,9 @@ CODE: dict[str, tuple[str, ...]] = {
     "SM-3": ("ratchet.kpis:student_share",),
     "SM-4": ("ratchet.kpis:bad_deploys", "ratchet.ledger:Ledger.events_of"),
     "SM-5": ("ratchet.kpis:drift_recovery", "ratchet.kpis:drift_episodes", "ratchet.kpis:escalation_rates"),
+    "NFR-67": ("deploy/vm/docker-compose.yml", "deploy/vm/update.sh"),
     "NFR-55": ("ratchet.release:ReleaseGate._tick_drift", "ratchet.drift:DriftMonitor._update", "ratchet.drift:Stream"),
+    "NFR-66": ("ratchet.watch:WatchConfig", "ratchet.watch:urllib_fetch", "ratchet.watch:PROBE_BODY"),
     "NFR-56": ("ratchet.drift:Ranks", "ratchet.drift:DriftMonitor._stream", "ratchet.drift:DriftMonitor.counts"),
     "NFR-57": (
         "ratchet.teacher_watch:Watch.refresh",
@@ -1589,6 +1653,22 @@ EXEMPT: dict[str, Exempt] = {
     ),
     "FR-11.1": Exempt("live", "deploy/vm/create_vm.sh", "needs a Nebius project; DRY_RUN=1 prints the commands"),
     "FR-11.2": Exempt("live", "deploy/vm/backup.sh", "runs on the demo VM"),
+    "FR-11.32": Exempt(
+        "live", "docs/DEPLOY_NEBIUS_VM.md", "the restart rule and the webhook run on the demo VM: step 5 of the watchdog setup"
+    ),
+    "FR-11.33": Exempt(
+        "live", "docs/DEPLOY_NEBIUS_VM.md", "the probe calls Token Factory through the VM: `probe --once --force` on day 1"
+    ),
+    "FR-11.34": Exempt(
+        "live", "scripts/demo_check.py", "`update.sh` needs Docker on the VM; the check runs against the public demo"
+    ),
+    "FR-11.30": Exempt("live", "docs/DEPLOY_NEBIUS_VM.md", "two gateways and two certificates on one VM run only on the demo VM"),
+    "FR-11.31": Exempt(
+        "live",
+        "docs/DEPLOY_NEBIUS_VM.md",
+        "real Token Factory and Tavily calls need keys; recording is tested with fake transports",
+    ),
+    "NFR-67": Exempt("live", "docs/DEPLOY_NEBIUS_VM.md", "the caps and the fit in 2 vCPU / 8 GB are measured on the demo VM"),
     "FR-15.2": Exempt(
         "live",
         "deploy/student_endpoint.sh",

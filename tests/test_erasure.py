@@ -857,6 +857,46 @@ def expired_in(rows: list[dict[str, Any]], hashes: list[str]) -> bool:
 
 
 @pytest.mark.req("FR-13.4")
+def test_the_purge_thread_never_touches_the_release_gates_lock(gw_env, tmp_path, monkeypatch):
+    """The purge runs in a thread of its own and holds no lock, so it must not release the tick's. A stray release there
+    (a merge once left the end of `tick` at the end of `_purge`) raised in the thread when no tick was running, and when
+    one was, unlocked it: a second tick then started beside the first, and the first one's own release failed inside a
+    request."""
+    gw = gw_env()
+    settings = Settings(
+        mode="live",
+        db_path=str(tmp_path / "gate.db"),
+        teacher_base="https://teacher.test/v1",
+        teacher_api_key="tf-key",
+        teacher_model=OPEN_TEACHER,
+        student_base="",
+        api_keys="",
+        admin_keys="",
+        bom_signing_key="",
+        mock_warmup_days=0,
+        end_user_key=END_USER_KEY,
+        example_retention_days=30,
+        request_retention_days=60,
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",
+        public_dashboard=True,
+        ip_rpm=0,
+    )
+    rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("hi").transport}, clock=FakeClock())
+    crashes: list[BaseException] = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: crashes.append(args.exc_value))
+    with rt.gate_lock:  # a request's tick is running
+        thread = rt.maybe_purge()
+        assert thread is not None
+        thread.join(5)
+        assert not thread.is_alive() and rt.gate_lock.locked()  # the purge left the tick's lock alone
+    assert crashes == []
+    assert not rt.gate_lock.locked()  # and a tick still takes and gives back its own
+    assert rt.tick(force=True) is True and not rt.gate_lock.locked()
+
+
+@pytest.mark.req("FR-13.4")
 def test_live_gateway_purges_hourly_off_the_request_path(gw_env, tmp_path, monkeypatch):
     gw = gw_env()
     clock = FakeClock()
