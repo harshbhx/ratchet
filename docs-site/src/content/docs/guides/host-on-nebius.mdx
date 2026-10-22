@@ -54,7 +54,7 @@ flowchart TB
     caddy["Caddy<br/>HTTPS, edge guard"] ==> live["Live gateway<br/>SQLite ledger"]
     caddy --> sim["Simulation<br/>gateway, mock"]
   end
-  subgraph tf["Nebius Token Factory · in use, per token"]
+  subgraph tf["Token Factory · in use"]
     teacher["Ultra: teacher<br/>Super: judge<br/>Nano 30B: fallback"]
   end
   tavily["Tavily<br/>live Scout search"]

@@ -97,20 +97,20 @@ flowchart TB
 sequenceDiagram
   autonumber
   participant Night as Gateway host<br/>live night
-  participant Job as Serverless<br/>Job, L40S
-  participant Bucket as Bucket<br/>at /data
   participant Student as Student<br/>endpoint
+  participant Bucket as Bucket<br/>at /data
+  participant Job as Serverless<br/>Job, L40S
   participant Judge as Judge<br/>Super
-  Note right of Night: 02:30. Checks, then the<br/>train and golden rows
-  Night->>Student: re-score the live version
+  Note over Night: 02:30: checks,<br/>then the rows
+  Night->>Student: re-score live
   Night->>Bucket: night/train.jsonl
   Night->>Job: nebius ai job create
-  Job->>Bucket: adapters/student-vN
+  Job->>Bucket: student-vN/
   Night->>Student: load_lora_adapter
   Night->>Student: golden eval
   Night->>Judge: free-text rows
-  Note right of Night: candidate, eval,<br/>signed BOM, gate.admit
-  Night->>Bucket: BOM and NOTICE.md
+  Note over Night: candidate, BOM,<br/>gate.admit
+  Night->>Bucket: BOM, NOTICE.md
 ```
 
 <figcaption>
@@ -261,32 +261,33 @@ The reference run breaks v3 on purpose (`--bad-deploy-version 3`): the mock flee
 <figure class="rt-diagram">
 
 ```mermaid
-flowchart TB
-  subgraph d3["Day 3 · night"]
-    t3["v3 trained<br/>passes the golden gate"]
+flowchart LR
+  subgraph d3["Day 3, night"]
+    direction TB
+    t3["v3 trained"] --> g3{{"Golden gate<br/>passes"}}
   end
   subgraph d4["Day 4"]
-    sh["Shadow, on staging<br/>v3 looks healthy"]
-    c10["Canary 10%, on production<br/>v3 deployed corrupted"]
-    bad{{"Audits disagree<br/>upper bound below 0.92"}}
-    rb["Rolled back at 10%<br/>v1 takes all traffic again"]
+    direction TB
+    sh["Shadow, staging<br/>v3 looks healthy"] --> c10["Canary 10%<br/>production: v3 corrupted"]
+    c10 --> bad{{"Audits disagree<br/>bound below 0.92"}}
+    bad --> rb["Rolled back at 10%<br/>v1 serves everyone"]
   end
-  subgraph n4["Day 4 · night"]
-    t4["v4 trained, into shadow"]
+  subgraph d6["Day 4 night to day 6"]
+    direction TB
+    t4["v4 trained<br/>into shadow"] --> live(["Day 6: v4 live"])
   end
-  live(["Day 6 · v4 live"])
-  t3 --> sh --> c10 --> bad --> rb --> t4 --> live
+  d3 ==> d4 ==> d6
 
   class t3,t4 neutral
+  class g3,bad gate
   class sh,c10 student
-  class bad gate
   class rb danger
   class live ok
 ```
 
 <figcaption>
 
-**Reading this diagram.** Read down, one band per day of the run. v3 passed every check that does not need live traffic: the golden gate on day 3, then the shadow comparison on day 4. The canary is where its answers met real requests and real audits. While v3 served 1 request in 10, v1 stayed live for the rest; when the audits showed v3's precision could not reach the 0.92 floor, the gate rolled it back the same day, and v3 never reached 100% of traffic. The loop went on: v4 was trained that night and went live on day 6.
+**Reading this diagram.** Read left to right, one box per stretch of the run, and down inside each. v3 passed every check that does not need live traffic: the golden gate on day 3, then the shadow comparison on day 4. The canary is where its answers met real requests and real audits. While v3 served 1 request in 10, v1 stayed live for the rest; when the audits showed v3's precision could not reach the 0.92 floor, the gate rolled it back the same day, and v3 never reached 100% of traffic. The loop went on: v4 was trained that night and went live on day 6.
 
 </figcaption>
 </figure>

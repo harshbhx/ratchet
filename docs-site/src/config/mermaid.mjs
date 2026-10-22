@@ -102,8 +102,13 @@ const themeCSS = `
 :is(.label, .nodeLabel, .edgeLabel, .cluster-label, .stateLabel, .messageText, .noteText, .loopText, .labelText, text) {
   font-family: ${FONT};
 }
-.nodeLabel, .nodeLabel p { line-height: 1.4; }
-.nodeLabel p, .edgeLabel p { margin: 0; }
+/* The page's prose rules (paragraph size, line height, margins, text-wrap: pretty) reach the <p> inside a label once the
+   diagram sits in the page, but not while Mermaid measures it: pin them here so both agree. */
+:is(.nodeLabel, .edgeLabel, .cluster-label, .label) :is(p, span, div) {
+  margin: 0; padding: 0; font-size: inherit; line-height: inherit; letter-spacing: inherit; white-space: inherit;
+  text-wrap: inherit; text-indent: 0; max-width: none;
+}
+.nodeLabel, .nodeLabel p { font-size: 14px; line-height: 1.4; }
 .nodeLabel code, .edgeLabel code, .cluster-label code { font-family: ${MONO}; font-size: 0.88em; }
 .edgeLabel, .edgeLabel p, .edgeLabel span { font-size: 12.5px; line-height: 1.35; }
 .cluster-label .nodeLabel, .cluster-label span, .cluster-label p { font-size: 12.5px; font-weight: 600; letter-spacing: 0.01em; }
@@ -262,9 +267,9 @@ export const mermaidConfig = {
     mirrorActors: false,
     showSequenceNumbers: false,
     width: 104,
-    height: 50,
+    height: 54,
     actorMargin: 24,
-    boxMargin: 8,
+    boxMargin: 12,
     boxTextMargin: 6,
     noteMargin: 10,
     messageMargin: 34,

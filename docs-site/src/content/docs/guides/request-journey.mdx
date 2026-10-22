@@ -264,9 +264,9 @@ stateDiagram-v2
   direction LR
   [*] --> closed
   closed --> open: 5 failures in a row
-  open --> half_open: after 30 s, one probe
-  half_open --> closed: the probe succeeds
-  half_open --> open: the probe fails,<br/>the wait doubles up to 300 s
+  open --> half_open: 30 s later, one probe
+  half_open --> closed: probe succeeds
+  half_open --> open: probe fails, wait doubles
 
   class closed ok
   class open danger
