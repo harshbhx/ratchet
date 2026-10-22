@@ -1612,6 +1612,9 @@ def _update_stubs(tmp: Path, **opts: str) -> tuple[Path, dict[str, str]]:
 def _run_update(tmp: Path, env_lines: list[str], **opts: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     assert BASH is not None
     vm, env = _update_stubs(tmp, **opts)
+    # The lock lives in RATCHET_WATCH_STATE_DIR (default /var/lib/ratchet, which a non-root CI runner cannot create).
+    if not any(ln.startswith("RATCHET_WATCH_STATE_DIR=") for ln in env_lines):
+        env_lines = [*env_lines, f"RATCHET_WATCH_STATE_DIR={tmp}/state"]
     (vm / ".env").write_text(chr(10).join(env_lines) + chr(10), encoding="utf-8")
     r = subprocess.run(
         [BASH, str(vm / "update.sh"), "--skip-backup", "--no-probe"], env=env, capture_output=True, text=True, timeout=60
