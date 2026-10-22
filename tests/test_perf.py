@@ -745,6 +745,13 @@ def test_perf_guard_200k_requests(tmp_path):
     shadow = _version(led, "shadow", {"threshold": 0.5})
     _bulk(led, 200_000, live, canary, shadow)
     gate = ReleaseGate(led, ReleasePolicy(min_shadow=10**6, min_audits=10**6))  # gathers evidence, decides nothing
+    # The drift monitor replays every logged confidence once (ADR 0032: about 10 us each). The gateway does it at startup
+    # (`Runtime.reset` calls `check_drift`), "so the replay of the ledger does not fall on the first request", so it is
+    # timed apart from the first tick, which guards the tallies. Bound: 60 us a row, six times the ADR's figure.
+    started = time.perf_counter()
+    gate.check_drift()
+    replay_ms = (time.perf_counter() - started) * 1000
+    assert replay_ms < 200_000 * 0.060, replay_ms
     started = time.perf_counter()
     gate.tick()
     cold_ms = (time.perf_counter() - started) * 1000

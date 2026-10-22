@@ -934,8 +934,12 @@ def test_public_live_metrics_scrub_client_labels(gw_env, tmp_path, monkeypatch):
     c = TestClient(gw.app)
     assert c.post(CHAT, json={"messages": _ask()}, headers=GLOBEX).status_code == 200
     anonymous = c.get("/metrics").text
-    assert "globex" not in anonymous and "acme" not in anonymous
+    # The client label is what is scrubbed. The metrics registry is process-wide, so another test's task named
+    # "globex-only" can still be in the text under a `task` label (a task name is public): look at client labels only.
     _, samples = parse_metrics(anonymous)
+    clients = {v for _, labels in samples for k, v in labels if k == "client"}
+    assert not clients & {"globex", "acme"}, clients
+    assert 'client="globex"' not in anonymous and 'client="acme"' not in anonymous
     assert _value(samples, "ratchet_cost_usd_total", client="client-2") > 0  # globex sorts after acme
     keyed = c.get("/metrics", headers={"X-API-Key": DASH_KEY}).text
     assert 'client="globex"' in keyed

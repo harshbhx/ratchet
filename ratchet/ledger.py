@@ -22,6 +22,7 @@ from . import calibration, licenses, metrics, tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
 from .idem import SeenWindow
 from .stats import wilson
+from .upstream import model_id
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -566,6 +567,9 @@ UNCHECKABLE = -1
 CONTESTED, UNRESOLVED = 1, 2
 CHECK_SOURCES = ("duplicate", "probe")  # teacher_checks.source: a stored request's first re-test, or a Night School probe
 MAX_MODEL_ID = 200  # characters of a response's model id kept in `meta` and events (the upstream chooses the string)
+# What `meta` and the events hold for a reported model id that is not an id (`upstream.model_id`: the pattern in full, no
+# `://`): the upstream chooses the string and /ratchet/stats shows the events, so a hostile value never reaches either.
+UNRECOGNIZED_MODEL_ID = "unrecognized-model-id"
 _META_UPSERT = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
 
 DAY_SECONDS = 86400
@@ -2795,11 +2799,13 @@ class Ledger:
         epoch and differs from the last one recorded, start a new check epoch with a `teacher_model_changed` event and
         return the previous id; the first id ever seen is only recorded. An id already reported in this epoch (a teacher
         alternating between two backends) only becomes the last one: one epoch and one event per new id, not one per
-        response. None otherwise (and for an empty id). One transaction, so two processes that see the change write one
+        response. None otherwise (and for an empty id). A string that is not a model id (`upstream.model_id`) is recorded as
+        `UNRECOGNIZED_MODEL_ID`, never as itself. One transaction, so two processes that see the change write one
         event and one new epoch."""
         model = model[:MAX_MODEL_ID] if isinstance(model, str) else ""
         if not model:
             return None
+        model = model_id(model) or UNRECOGNIZED_MODEL_ID
         self._begin()
         try:
             r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL,)).fetchone()
