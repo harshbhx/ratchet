@@ -6,12 +6,12 @@ import { MovingBorderLink } from "@/components/fx/moving-border";
 import { ShinyText } from "@/components/fx/shiny-text";
 import { SplitText } from "@/components/fx/split-text";
 import { TiltCard } from "@/components/fx/tilt-card";
-import { ButtonLink } from "@/components/ui/button";
+import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { tok } from "@/components/ui/code-block";
 import { LogoMark } from "@/components/ui/logo";
 import { Container } from "@/components/ui/section";
 import { enter } from "@/lib/motion";
-import { REPO_URL } from "@/lib/utils";
+import { DEMO_URL, REPO_URL } from "@/lib/utils";
 import { HeroFlow } from "./hero-flow";
 
 // The aurora is a WebGL shader: it loads after the hero's text has painted, and the page is complete without it.
@@ -119,6 +119,9 @@ export function Hero() {
               <BaseUrlDiff />
             </motion.div>
             <motion.div {...enter(0.66)} className="mt-6 flex flex-wrap items-center gap-3">
+              <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg" className="w-full min-[440px]:w-auto">
+                Try the live demo (simulation) <ArrowUpRight aria-hidden />
+              </ButtonA>
               <MovingBorderLink to="/scout" containerClassName="w-full min-[440px]:w-auto">
                 Try the Scout demo <ArrowRight aria-hidden />
               </MovingBorderLink>

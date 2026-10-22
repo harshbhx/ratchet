@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router";
 import { Menu, Moon, Sun, X, ArrowUpRight } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
-import { ButtonLink } from "@/components/ui/button";
+import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { useStats, useTheme } from "@/lib/hooks";
 import { surfaceSwitch, type SurfaceSwitch as Switch } from "@/lib/surface-model";
-import { cn, DOCS_URL, REPO_URL } from "@/lib/utils";
+import { cn, DEMO_URL, DOCS_URL, REPO_URL } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "Story", end: true },
@@ -110,6 +110,9 @@ export function SiteHeader() {
           >
             GitHub <ArrowUpRight className="size-3.5" />
           </a>
+          <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="sm" className="ml-1" aria-label="Live demo (simulation), opens in a new tab">
+            Live demo
+          </ButtonA>
           {/* The call to action is the other demo: Scout from the story and the dashboard, the dashboard from Scout. */}
           {loc.pathname.startsWith("/scout") ? (
             <ButtonLink to="/dashboard" size="sm" className="ml-1 hidden sm:inline-flex">

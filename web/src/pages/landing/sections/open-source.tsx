@@ -6,7 +6,7 @@ import { TextGenerate } from "@/components/fx/text-generate";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
-import { DOCS_URL, REPO_URL } from "@/lib/utils";
+import { DEMO_URL, DOCS_URL, REPO_URL } from "@/lib/utils";
 import { LogoMark } from "@/components/ui/logo";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 
@@ -105,6 +105,9 @@ export function OpenSource() {
                 Run Scout and watch each call get routed. Then open the dashboard to see every version, gate and rollback.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
+                <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg">
+                  Try the live demo (simulation) <ArrowUpRight aria-hidden />
+                </ButtonA>
                 <MovingBorderLink to="/scout">
                   Try the Scout demo <ArrowRight aria-hidden />
                 </MovingBorderLink>
