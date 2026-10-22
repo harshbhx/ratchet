@@ -117,11 +117,41 @@ def _stable(node: Any) -> None:
             _stable(value)
 
 
+METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"]  # the order OpenAPI lists them in
+
+
+def _own_operation_ids(schema: dict[str, Any]) -> None:
+    """Give each method of a multi-method route its own operationId, in a fixed order.
+
+    `app.api_route(path, methods=[...])` makes FastAPI name every method after one of them (`list(methods)[0]`) and list
+    the methods in set order, which changes with the hash seed. The result is a duplicate operationId and a file that
+    differs from run to run, so `--check` would fail at random.
+    """
+    paths = schema.get("paths", {})
+    count: dict[str, int] = {}
+    for item in paths.values():
+        for method in METHODS:
+            op_id = (item.get(method) or {}).get("operationId")
+            if op_id:
+                count[op_id] = count.get(op_id, 0) + 1
+    for path, item in paths.items():
+        if not any(count.get((item.get(m) or {}).get("operationId"), 0) > 1 for m in METHODS):
+            continue
+        for method in METHODS:
+            if method in item and item[method].get("operationId") in count and count[item[method]["operationId"]] > 1:
+                item[method]["operationId"] = re.sub(r"_[a-z]+$", f"_{method}", item[method]["operationId"])
+        paths[path] = {
+            **{m: item[m] for m in METHODS if m in item},
+            **{k: v for k, v in item.items() if k not in METHODS},
+        }
+
+
 def export_openapi(gateway: Any) -> tuple[dict[str, Any], list[dict[str, str]]]:
     app = gateway.app
     schema = app.openapi()
     schema = json.loads(json.dumps(schema))  # a copy, so the app's cached schema stays as it was
     _stable(schema)
+    _own_operation_ids(schema)
     schema["info"] = {
         "title": "Ratchet gateway",
         "version": version(),

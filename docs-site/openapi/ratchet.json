@@ -1433,7 +1433,7 @@
       "post": {
         "summary": "Response State",
         "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
-        "operationId": "response_state_v1_responses__response_id__get",
+        "operationId": "response_state_v1_responses__response_id__post",
         "parameters": [
           {
             "name": "response_id",
@@ -1520,7 +1520,7 @@
       "delete": {
         "summary": "Response State",
         "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
-        "operationId": "response_state_v1_responses__response_id__get",
+        "operationId": "response_state_v1_responses__response_id__delete",
         "parameters": [
           {
             "name": "response_id",
