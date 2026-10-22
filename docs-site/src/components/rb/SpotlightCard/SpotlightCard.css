@@ -1,0 +1,63 @@
+/* Adapted from React Bits "SpotlightCard" (MIT + Commons Clause, see ../LICENSE.md). Colours are theme tokens. */
+.rb-spotlight-card {
+  --rb-spot-presence: 0;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--rt-radius-lg, 1rem);
+  background-color: var(--rt-surface);
+  box-shadow: var(--rt-shadow);
+  transition:
+    transform 0.25s var(--rt-ease, ease),
+    box-shadow 0.25s var(--rt-ease, ease);
+}
+.rb-spotlight-card[data-tone='owned'] {
+  --rb-spot: var(--rb-spot-owned);
+}
+.rb-spotlight-card[data-tone='rented'] {
+  --rb-spot: var(--rb-spot-rented);
+}
+.rb-spotlight-card[data-tone='neutral'] {
+  --rb-spot: var(--rb-spot-neutral);
+}
+
+.rb-spotlight-card__light,
+.rb-spotlight-card__border,
+.rb-spotlight-card__edge {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.rb-spotlight-card__light {
+  z-index: -1;
+  opacity: calc(var(--rb-spot-presence) * var(--rb-spot-strength, 0.2));
+}
+
+.rb-spotlight-card__border,
+.rb-spotlight-card__edge {
+  z-index: 1;
+  padding: 1px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+}
+
+.rb-spotlight-card__border {
+  background: var(--rt-line);
+}
+
+.rb-spotlight-card__edge {
+  opacity: calc(var(--rb-spot-presence) * var(--rb-spot-edge, 0.8));
+}
+
+@media (forced-colors: active) {
+  .rb-spotlight-card {
+    border: 1px solid CanvasText;
+  }
+}

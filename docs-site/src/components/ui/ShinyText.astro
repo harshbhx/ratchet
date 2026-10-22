@@ -1,0 +1,31 @@
+---
+/**
+ * ShinyText (React Bits): one band of light crosses the text when it first scrolls into view, and again on hover.
+ * When: a short label that should catch the eye once: an eyebrow, an announcement pill, a "New" tag.
+ * Never on body text. It never loops. Reduced motion, no script and print show plain text.
+ */
+import ShinyTextRB from '../rb/ShinyText/ShinyText.tsx';
+
+interface Props {
+  text?: string;
+  /** Base colour, any CSS colour or var(); defaults to the secondary ink. */
+  color?: string;
+  /** Colour of the band; defaults to the main ink. */
+  shine?: string;
+  speed?: number;
+  delay?: number;
+  class?: string;
+}
+
+const { text, color, shine, speed, delay, class: className } = Astro.props;
+---
+
+{
+  text ? (
+    <ShinyTextRB client:visible text={text} color={color} shineColor={shine} speed={speed} delay={delay} className={className} />
+  ) : (
+    <ShinyTextRB client:visible color={color} shineColor={shine} speed={speed} delay={delay} className={className}>
+      <slot />
+    </ShinyTextRB>
+  )
+}

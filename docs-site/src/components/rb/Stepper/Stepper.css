@@ -1,0 +1,281 @@
+/* Adapted from React Bits "Stepper" (MIT + Commons Clause, see ../LICENSE.md). Colours are theme tokens. */
+.rb-stepper {
+  container-type: inline-size;
+  margin: 1.75rem 0;
+}
+
+.rb-stepper__ui {
+  position: relative;
+  border: 1px solid var(--rt-line);
+  border-radius: var(--rt-radius-lg, 1rem);
+  background: var(--rt-surface);
+  box-shadow: var(--rt-shadow);
+  overflow: hidden;
+}
+
+/* Header: a row of numbered indicators with a gliding highlight. */
+.rb-stepper__header {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--rt-line);
+  background: var(--rt-surface-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.rb-stepper__header::-webkit-scrollbar {
+  display: none;
+}
+.rb-stepper__track {
+  position: relative;
+  display: flex;
+  gap: 0.25rem;
+  min-width: max-content;
+}
+.rb-stepper__glider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: 0.65rem;
+  background: var(--rt-surface);
+  box-shadow:
+    0 0 0 1px var(--rt-line-strong),
+    0 1px 2px rgb(0 0 0 / 0.06);
+  opacity: 0;
+  pointer-events: none;
+}
+.rb-stepper__segment {
+  all: unset;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem 0.45rem 0.45rem;
+  border-radius: 0.65rem;
+  color: var(--rt-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.rb-stepper__segment:hover {
+  color: var(--rt-ink);
+}
+.rb-stepper__segment:focus-visible {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: 1px;
+}
+.rb-stepper__segment[data-status='active'] {
+  color: var(--rt-ink);
+}
+.rb-stepper__badge {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--rt-line-strong);
+  background: var(--rt-surface);
+  color: var(--rt-ink-2);
+  font-family: var(--__sl-font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease;
+}
+.rb-stepper__badge[data-status='active'] {
+  border-color: var(--rt-ink);
+  background: var(--rt-ink);
+  color: var(--rt-bg);
+}
+.rb-stepper__badge[data-status='complete'] {
+  border-color: color-mix(in srgb, var(--rt-owned) 55%, transparent);
+  background: var(--rt-owned-soft);
+  color: var(--rt-owned-ink);
+}
+.rb-stepper__segment[data-tone='owned'] .rb-stepper__badge[data-status='active'] {
+  border-color: var(--rt-owned);
+  background: var(--rt-owned);
+  color: var(--rt-on-owned);
+}
+.rb-stepper__segment[data-tone='rented'] .rb-stepper__badge[data-status='active'] {
+  border-color: var(--rt-rented);
+  background: var(--rt-rented);
+  color: var(--rt-on-rented);
+}
+.rb-stepper__title {
+  white-space: nowrap;
+}
+
+/* Pane */
+.rb-stepper__viewport {
+  overflow: hidden;
+}
+.rb-stepper__pane {
+  padding: 1.25rem 1.35rem 0.5rem;
+}
+.rb-stepper__pane:focus {
+  outline: none;
+}
+.rb-stepper .rb-stepper__count {
+  margin: 0 0 0.35rem;
+  color: var(--rt-muted);
+  font-family: var(--__sl-font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.rb-stepper .rb-stepper__pane[data-tone='owned'] .rb-stepper__count {
+  color: var(--rt-owned-ink);
+}
+.rb-stepper .rb-stepper__pane[data-tone='rented'] .rb-stepper__count {
+  color: var(--rt-rented-ink);
+}
+.rb-stepper .rb-stepper__pane-title {
+  margin: 0 0 0.4rem;
+  color: var(--rt-ink);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+.rb-stepper .rb-stepper__body {
+  color: var(--rt-ink-2);
+  font-size: 0.9688rem;
+  line-height: 1.7;
+}
+.rb-stepper .rb-stepper__body > :first-child {
+  margin-top: 0;
+}
+.rb-stepper .rb-stepper__body > :last-child {
+  margin-bottom: 0;
+}
+.rb-stepper .rb-stepper__body p {
+  margin: 0 0 0.6rem;
+}
+.rb-stepper .rb-stepper__body :is(p, li, a, strong, em, code) {
+  font-size: inherit;
+}
+.rb-stepper .rb-stepper__body code {
+  font-size: 0.875em;
+}
+
+/* Footer */
+.rb-stepper__footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.35rem 1.1rem;
+}
+.rb-stepper__button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.25rem;
+  padding: 0 0.95rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.15s ease;
+}
+.rb-stepper__button:active {
+  transform: scale(0.98);
+}
+.rb-stepper__button:focus-visible {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: 2px;
+}
+.rb-stepper__button--back {
+  color: var(--rt-ink-2);
+}
+.rb-stepper__button--back:hover {
+  background: var(--rt-surface-2);
+  color: var(--rt-ink);
+}
+.rb-stepper__button--back[data-hidden] {
+  visibility: hidden;
+}
+.rb-stepper__button--next {
+  margin-left: auto;
+  background: var(--rt-ink);
+  color: var(--rt-bg);
+}
+.rb-stepper__button--next:hover {
+  background: var(--rt-ink-2);
+}
+
+/* Narrow: only the current step's title shows in the header. */
+@container (max-width: 34rem) {
+  .rb-stepper__segment:not([data-status='active']) .rb-stepper__title {
+    display: none;
+  }
+  .rb-stepper__segment:not([data-status='active']) {
+    padding-right: 0.45rem;
+  }
+  .rb-stepper__pane {
+    padding-inline: 1rem;
+  }
+  .rb-stepper__footer {
+    padding-inline: 1rem;
+  }
+}
+
+/* Every step as a list: print and no script. */
+.rb-stepper__all {
+  display: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: rb-step;
+}
+.rb-stepper__all > li {
+  counter-increment: rb-step;
+  position: relative;
+  margin: 0;
+  padding: 0 0 1rem 2.6rem;
+}
+.rb-stepper__all > li::before {
+  content: counter(rb-step);
+  position: absolute;
+  left: 0;
+  top: 0.05rem;
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid var(--rt-line-strong);
+  border-radius: 999px;
+  color: var(--rt-ink-2);
+  font-size: 0.8rem;
+}
+
+@media (scripting: none) {
+  .rb-stepper__ui {
+    display: none;
+  }
+  .rb-stepper__all {
+    display: block;
+  }
+}
+@media print {
+  .rb-stepper__ui {
+    display: none !important;
+  }
+  .rb-stepper__all {
+    display: block !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rb-stepper * {
+    transition: none !important;
+  }
+}

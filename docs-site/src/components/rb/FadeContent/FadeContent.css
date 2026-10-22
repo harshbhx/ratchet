@@ -1,0 +1,33 @@
+/* Adapted from React Bits "FadeContent" (MIT + Commons Clause, see ../LICENSE.md).
+   States: shown (server render, visible) -> from (hidden, below the fold, set after hydration) -> in (revealed). */
+.rb-fade-content[data-state='in']:not([data-stagger]),
+.rb-fade-content[data-state='in'][data-stagger] > :is(astro-slot, astro-static-slot) > *,
+.rb-fade-content[data-state='in'][data-stagger] > :not(astro-slot, astro-static-slot) {
+  transition:
+    opacity var(--rb-fade-dur) cubic-bezier(0.22, 1, 0.36, 1),
+    filter var(--rb-fade-dur) cubic-bezier(0.22, 1, 0.36, 1),
+    transform var(--rb-fade-dur) cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--rb-fade-delay) + var(--rb-fade-i, 0) * var(--rb-fade-stagger));
+}
+
+.rb-fade-content[data-state='from']:not([data-stagger]),
+.rb-fade-content[data-state='from'][data-stagger] > :is(astro-slot, astro-static-slot) > *,
+.rb-fade-content[data-state='from'][data-stagger] > :not(astro-slot, astro-static-slot) {
+  opacity: var(--rb-fade-from);
+  filter: blur(var(--rb-fade-blur));
+  transform: translateY(var(--rb-fade-y));
+}
+
+@media (prefers-reduced-motion: reduce), print {
+  .rb-fade-content,
+  .rb-fade-content * {
+    transition: none !important;
+  }
+  .rb-fade-content[data-state='from']:not([data-stagger]),
+  .rb-fade-content[data-state='from'][data-stagger] > :is(astro-slot, astro-static-slot) > *,
+  .rb-fade-content[data-state='from'][data-stagger] > :not(astro-slot, astro-static-slot) {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
