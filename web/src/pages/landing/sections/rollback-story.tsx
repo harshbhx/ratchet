@@ -183,7 +183,13 @@ export function RollbackStory() {
   const v3Share = done ? 0 : 10;
 
   return (
-    <div ref={ref} className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
+    <div
+      ref={ref}
+      className={cn(
+        "overflow-hidden rounded-[24px] border bg-surface shadow-card transition-[box-shadow,border-color] duration-700",
+        done ? "border-bad/40 shadow-[0_0_90px_-30px_var(--bad)]" : "border-line",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-[13px] font-semibold text-ink">A bad release, caught</p>
@@ -233,11 +239,11 @@ export function RollbackStory() {
               </span>
             </div>
             <div className="mt-2.5 flex h-6 overflow-hidden rounded-md text-[11px] font-medium" aria-hidden>
-              <div className="flex items-center bg-owned px-2 text-white transition-[width] duration-700 dark:text-[#06101f]" style={{ width: `${100 - v3Share}%` }}>
+              <div className="flex items-center bg-owned-ink px-2 text-white transition-[width] duration-700 dark:bg-owned dark:text-[#06101f]" style={{ width: `${100 - v3Share}%` }}>
                 v1 live · {100 - v3Share}%
               </div>
               <div
-                className="flex items-center justify-center overflow-hidden whitespace-nowrap border-l-2 border-surface bg-owned/40 text-owned-ink transition-[width] duration-700"
+                className="flex items-center justify-center overflow-hidden whitespace-nowrap border-l-2 border-surface bg-owned-soft text-owned-ink transition-[width] duration-700"
                 style={{ width: `${v3Share}%` }}
               >
                 v3

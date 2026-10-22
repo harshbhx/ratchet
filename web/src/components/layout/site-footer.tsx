@@ -9,7 +9,7 @@ export function SiteFooter() {
         <div className="space-y-3">
           <Logo />
           <p className="max-w-sm text-[14px] leading-relaxed text-muted">
-            License-clean distillation on open models. Built by Harsh Bhanushali (DualMind Labs) for the Nebius x NVIDIA Global AI Hackathon.
+            License-clean distillation on open models. Rent intelligence today, own it tomorrow. Built by Harsh Bhanushali (DualMind Labs) for the Nebius x NVIDIA Global AI Hackathon.
           </p>
           <p className="text-[13px] text-muted">Code under Apache-2.0. Model weights keep their own licenses.</p>
         </div>

@@ -1,8 +1,12 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router";
+import { motion } from "motion/react";
 import { ArrowRight, ArrowUpRight, FlaskConical, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Container } from "@/components/ui/section";
+import { CountUp } from "@/components/ui/stat";
 import type { Stats } from "@/lib/api";
+import { rise } from "@/lib/motion";
 import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { fmtAge, lastCall, lastCallLine } from "@/lib/surface-model";
 import { studentShareCopy } from "@/lib/who-model";
@@ -29,15 +33,15 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const since = stats.upstream?.since;
   const other = mock ? stats.links?.live : stats.links?.sim;
 
-  const items = [
+  const items: { label: string; value: ReactNode; sub: string }[] = [
     {
       label: "Saved vs all-Ultra",
-      value: fmtPct(stats.totals.savings_pct),
+      value: <CountUp value={stats.totals.savings_pct} format={(v) => fmtPct(v)} />,
       sub: `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
     },
     {
       label: share.label,
-      value: latest ? fmtPct(latest.student_share) : "–",
+      value: latest ? <CountUp value={latest.student_share} format={(v) => fmtPct(v)} /> : "–",
       sub: share.sub ?? (latest ? `day ${latest.day} · ${fmtPct(latest.escalation_rate)} to the teacher` : "no traffic yet"),
     },
     {
@@ -47,15 +51,16 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
     },
     {
       label: "Requests",
-      value: fmtInt(stats.totals.requests),
+      value: <CountUp value={stats.totals.requests} format={(v) => fmtInt(v)} />,
       sub: `over ${stats.days.length} ${stats.days.length === 1 ? "day" : "days"}`,
     },
   ];
 
   return (
-    <section aria-labelledby="live-title">
+    <section aria-labelledby="live-title" className="relative">
       <Container>
-        <div className="rounded-2xl border border-line bg-surface shadow-card">
+        <motion.div {...rise(0.1, 14)} className="relative overflow-hidden rounded-[22px] border border-line bg-surface/85 shadow-card backdrop-blur-md">
+          <div aria-hidden className="edge-light pointer-events-none absolute inset-x-0 top-0 h-px opacity-80" />
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-4 py-3 sm:px-5">
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 id="live-title" className="text-[13px] font-semibold text-ink">
@@ -67,6 +72,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
                 </Badge>
               ) : (
                 <Badge tone="good">
+                  <span className="live-dot relative inline-flex size-2 rounded-full bg-good" aria-hidden />
                   <Radio aria-hidden /> Live traffic
                 </Badge>
               )}
@@ -94,7 +100,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
                 ].join(" ")}
               >
                 <dt className="min-h-[2.5em] text-[12px] leading-tight text-muted sm:min-h-0">{it.label}</dt>
-                <dd className="mt-1.5 text-[22px] font-semibold leading-none tracking-[-0.025em] text-ink tabular sm:text-[24px]">{it.value}</dd>
+                <dd className="mt-1.5 text-[22px] font-semibold leading-none tracking-[-0.025em] text-ink tabular sm:text-[26px]">{it.value}</dd>
                 <dd className="mt-1.5 text-[12px] leading-snug text-muted [overflow-wrap:anywhere]">{it.sub}</dd>
               </div>
             ))}
@@ -111,7 +117,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
               </div>
             </dl>
           )}
-        </div>
+        </motion.div>
       </Container>
     </section>
   );

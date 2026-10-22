@@ -62,6 +62,7 @@ export function HeroFlow() {
   const running = !reduce && !paused && onScreen;
   const runningRef = useRef(running);
   runningRef.current = running;
+  const wakeRef = useRef<(() => void) | null>(null);
   const nightRef = useRef(night);
   nightRef.current = night;
 
@@ -124,12 +125,19 @@ export function HeroFlow() {
     let nightIdx = nightRef.current - 1;
     let nightT = 0;
     let raf = 0;
-    let last = performance.now();
+    let last = 0;
 
+    // The loop runs only while the card is on screen, the tab is visible and the reader has not paused it; otherwise
+    // it stops asking for frames and `wake` (below) starts it again.
     const frame = (now: number) => {
-      const dt = Math.min(64, now - last);
+      raf = 0;
+      if (!runningRef.current) {
+        last = 0;
+        return;
+      }
+      const dt = last ? Math.min(64, now - last) : 16;
       last = now;
-      if (runningRef.current) {
+      {
         clock += dt;
         nightT += dt;
         const limit = nightIdx === NIGHTS - 1 ? HOLD_MS : NIGHT_MS;
@@ -171,9 +179,21 @@ export function HeroFlow() {
       }
       raf = requestAnimationFrame(frame);
     };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    const wake = () => {
+      if (!raf && runningRef.current) raf = requestAnimationFrame(frame);
+    };
+    wakeRef.current = wake;
+    wake();
+    return () => {
+      cancelAnimationFrame(raf);
+      wakeRef.current = null;
+    };
   }, [g, W, reduce]);
+
+  // Back on screen, tab visible again, or un-paused: start the loop again.
+  useEffect(() => {
+    if (running) wakeRef.current?.();
+  }, [running]);
 
   const day = SIM_DAYS[night - 1];
   const share = day.student;

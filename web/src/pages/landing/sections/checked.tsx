@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowRight, EyeOff, FileSignature, FlaskConical, ListChecks, ShieldAlert, ShieldCheck, Sigma, type LucideIcon } from "lucide-react";
 import type { Stats } from "@/lib/api";
+import { GlowOrbs } from "@/components/fx/glow-orbs";
+import { Highlight } from "@/components/fx/highlight";
+import { SpotlightCard } from "@/components/fx/spotlight-card";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
@@ -40,26 +43,28 @@ function Claim({
   delay: number;
 }) {
   return (
-    <Reveal as="li" delay={delay} className="flex min-w-0 flex-col rounded-2xl border border-line bg-surface shadow-card">
-      <div className="flex flex-1 flex-col p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="inline-flex size-9 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-2">
-            <Icon className="size-[18px]" aria-hidden />
-          </span>
-          {status}
+    <Reveal as="li" delay={delay} className="min-w-0">
+      <SpotlightCard tone="owned" className="h-full">
+        <div className="flex flex-1 flex-col p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="inline-flex size-9 items-center justify-center rounded-xl border border-line bg-surface-2 text-ink-2">
+              <Icon className="size-[18px]" aria-hidden />
+            </span>
+            {status}
+          </div>
+          <h3 className="mt-5 text-balance text-[18px] font-semibold leading-snug tracking-[-0.015em] text-ink">{title}</h3>
+          <div className="mt-3 text-pretty text-[14.5px] leading-relaxed text-ink-2">{children}</div>
+          <div className="mt-5 flex-1">{check}</div>
         </div>
-        <h3 className="mt-5 text-balance text-[18px] font-semibold leading-snug tracking-[-0.015em] text-ink">{title}</h3>
-        <div className="mt-3 text-pretty text-[14.5px] leading-relaxed text-ink-2">{children}</div>
-        <div className="mt-5 flex-1">{check}</div>
-      </div>
-      <p className="border-t border-line px-5 py-3 font-mono text-[11.5px] leading-relaxed text-muted [overflow-wrap:anywhere] sm:px-6">
-        {code.map((c, i) => (
-          <span key={c}>
-            {i > 0 && <span aria-hidden> · </span>}
-            {c}
-          </span>
-        ))}
-      </p>
+        <p className="border-t border-line px-5 py-3 font-mono text-[11.5px] leading-relaxed text-muted [overflow-wrap:anywhere] sm:px-6">
+          {code.map((c, i) => (
+            <span key={c}>
+              {i > 0 && <span aria-hidden> · </span>}
+              {c}
+            </span>
+          ))}
+        </p>
+      </SpotlightCard>
     </Reveal>
   );
 }
@@ -101,10 +106,15 @@ export function Checked({ stats }: { stats: Stats | null }) {
 
   return (
     <Chapter id="trust" className="border-t border-line bg-bg-sunken/60">
-      <Container>
+      <GlowOrbs tones={["good", "owned"]} className="[mask-image:linear-gradient(to_bottom,black_30%,transparent)]" />
+      <Container className="relative">
         <ChapterHead
           id="trust"
-          title="Built to be checked."
+          title={
+            <>
+              Built to be <Highlight>checked.</Highlight>
+            </>
+          }
           lead={
             <Lead>
               A page like this should not ask for trust. Each item below is in the code today, with a way to check it yourself: a page to try,

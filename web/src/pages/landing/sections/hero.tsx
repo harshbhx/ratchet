@@ -1,105 +1,173 @@
+import { Suspense, lazy, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, ArrowUpRight, Code2, ShieldCheck, Undo2 } from "lucide-react";
-import { ButtonA, ButtonLink } from "@/components/ui/button";
-import { CodeBlock, tok } from "@/components/ui/code-block";
+import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, LayoutDashboard, ShieldCheck, Undo2 } from "lucide-react";
+import { Magnet } from "@/components/fx/magnet";
+import { MovingBorderLink } from "@/components/fx/moving-border";
+import { ShinyText } from "@/components/fx/shiny-text";
+import { SplitText } from "@/components/fx/split-text";
+import { TiltCard } from "@/components/fx/tilt-card";
+import { ButtonLink } from "@/components/ui/button";
+import { tok } from "@/components/ui/code-block";
+import { LogoMark } from "@/components/ui/logo";
 import { Container } from "@/components/ui/section";
+import { enter } from "@/lib/motion";
 import { REPO_URL } from "@/lib/utils";
-import { EASE } from "../shared";
 import { HeroFlow } from "./hero-flow";
 
-const SNIPPET = `from openai import OpenAI
+// The aurora is a WebGL shader: it loads after the hero's text has painted, and the page is complete without it.
+const Aurora = lazy(() => import("@/components/fx/aurora"));
 
-client = OpenAI(
-    base_url="http://localhost:8000/v1",
-    api_key="unused",
-)
-r = client.chat.completions.create(
-    model="ratchet",
-    messages=messages,
-    extra_headers={
-        "X-Ratchet-Task": "ticket-triage",
-    },
-)
-print(r.ratchet)  # served_by, cost_usd, ...`;
+/** The line a team changes, as the hero's diff shows it. */
+const BASE_URL_LINE = 'client = OpenAI(base_url="http://localhost:8000/v1")';
 
 const POINTS = [
-  { icon: Code2, title: "One-line switch", body: "Change base_url and name the task." },
   { icon: ShieldCheck, title: "License-clean", body: "Closed models are refused as teachers." },
   { icon: Undo2, title: "Gated releases", body: "Shadow, canary, automatic rollback." },
+  { icon: FileSignature, title: "Signed lineage", body: "Each adapter carries a signed bill of materials: where its training data came from, under which license." },
 ];
 
-const rise = (delay: number) => ({
-  initial: { opacity: 0, y: 16 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.7, ease: EASE, delay },
-});
+/** The integration in one diff: the default OpenAI client, then the same client pointed at Ratchet. */
+export function BaseUrlDiff() {
+  const [done, setDone] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(BASE_URL_LINE);
+      setDone(true);
+      window.setTimeout(() => setDone(false), 1600);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+  return (
+    <figure className="overflow-hidden rounded-xl border border-line bg-surface/85 shadow-card backdrop-blur-md">
+      <figcaption className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-1.5">
+        <span className="font-mono text-[11.5px] text-muted">
+          your_app.py <span className="hidden text-ink-2 min-[400px]:inline">· the one line that changes</span>
+        </span>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          aria-label="Copy the changed line"
+        >
+          {done ? <Check className="size-3.5 text-good" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+          <span aria-live="polite">{done ? "Copied" : "Copy"}</span>
+        </button>
+      </figcaption>
+      <pre className="whitespace-pre-wrap px-3.5 py-2.5 font-mono text-[12px] leading-[1.7] [overflow-wrap:anywhere]">
+        <code>
+          <span className="block text-muted">
+            <span aria-hidden className="mr-2 select-none text-bad">−</span>
+            <span className="sr-only">Before: </span>client = OpenAI()
+          </span>
+          <span className="block rounded bg-owned-soft/70 text-ink">
+            <span aria-hidden className="mr-2 select-none text-owned-ink">+</span>
+            <span className="sr-only">After: </span>
+            {"client = OpenAI("}
+            <wbr />
+            {tok.k("base_url")}=<span className="font-medium">"http://localhost:8000/v1"</span>)
+          </span>
+        </code>
+      </pre>
+    </figure>
+  );
+}
 
 export function Hero() {
   return (
     <section aria-labelledby="hero-title" className="relative overflow-hidden">
+      {/* the ambient wash, then the grid through it */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[560px] sm:h-[640px]">
+        <Suspense fallback={null}>
+          <Aurora className="[mask-image:linear-gradient(to_bottom,black_55%,transparent)]" />
+        </Suspense>
+      </div>
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 -top-16 bottom-0 bg-grid [mask-image:radial-gradient(ellipse_75%_65%_at_50%_30%,black_35%,transparent_100%)]"
       />
-      <Container className="relative pb-14 pt-8 sm:pb-20 sm:pt-14 lg:pb-20 lg:pt-14">
+      <Container className="relative pb-14 pt-10 sm:pb-20 sm:pt-14 lg:pb-20 lg:pt-16">
         <motion.p
-          {...rise(0)}
-          className="inline-flex max-w-full items-center gap-2.5 rounded-full border border-line bg-surface/80 px-3 py-1 text-[12px] leading-5 text-ink-2 backdrop-blur-sm sm:text-[13px]"
+          {...enter(0)}
+          className="inline-flex max-w-full items-center gap-2.5 rounded-full border border-line bg-surface/80 py-1 pl-1.5 pr-3.5 text-[12px] leading-5 text-ink-2 shadow-card backdrop-blur-md sm:text-[13px]"
         >
+          <LogoMark className="size-5" />
           <span className="shrink-0 font-medium text-ink">
             Open source<span className="sr-only">.</span>
           </span>
           <span aria-hidden className="h-3 w-px shrink-0 bg-line-strong" />
-          <span className="min-w-0">Built on NVIDIA Nemotron and Nebius</span>
+          <ShinyText className="min-w-0">Built on NVIDIA Nemotron and Nebius</ShinyText>
         </motion.p>
-        <motion.h1
+        <SplitText
           id="hero-title"
-          {...rise(0.06)}
-          className="mt-5 text-balance text-[2.75rem] font-semibold leading-[1.04] tracking-[-0.04em] text-ink min-[400px]:text-[3rem] sm:text-[4.25rem] lg:text-[4.9rem] xl:text-[5.35rem]"
-        >
-          <span className="block text-muted">Rent intelligence today.</span>
-          <span className="block">Own it tomorrow.</span>
-        </motion.h1>
-        <div className="mt-8 grid grid-cols-1 items-start gap-10 sm:mt-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:grid-rows-[auto_1fr] lg:gap-x-14 lg:gap-y-0">
+          className="mt-6 max-w-[15ch] text-balance text-[2.6rem] font-semibold leading-[1.03] tracking-[-0.04em] text-ink min-[400px]:text-[2.9rem] sm:max-w-none sm:text-[4rem] lg:text-[4.6rem] xl:text-[5rem]"
+          delay={0.08}
+          segments={[
+            { text: "Stop paying frontier prices ", className: "text-muted" },
+            { text: "for repetitive work.", className: "text-ink" },
+          ]}
+        />
+        <div className="mt-7 grid grid-cols-1 items-start gap-10 sm:mt-9 lg:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)] lg:grid-rows-[auto_1fr] lg:gap-x-12 lg:gap-y-0">
           <div className="lg:col-start-1 lg:row-start-1 lg:pt-1">
-            {/* What it is first, then the loop in two beats: answer by day, retrain by night. */}
-            <motion.p {...rise(0.12)} className="max-w-[34rem] text-pretty text-[17px] leading-relaxed text-ink-2 sm:text-lg">
+            {/* What it is, what the customer keeps, then the one line they change. */}
+            <motion.p {...enter(0.5)} className="max-w-[34rem] text-pretty text-[17px] leading-relaxed text-ink-2 sm:text-lg">
               <strong className="font-semibold text-ink">Ratchet is an OpenAI-compatible gateway.</strong> A Nemotron adapter you own (LoRA on
-              NVIDIA's open Nano base) answers first; when it is unsure, Nemotron 3 Ultra answers. Every night, Ultra's answers train the
+              NVIDIA's open Nano base) answers what it is sure of. Nemotron 3 Ultra answers the rest, and every night its answers train the
               next adapter.
             </motion.p>
-            <motion.div {...rise(0.18)} className="mt-8 flex flex-wrap items-center gap-3">
-              <ButtonLink to="/scout" size="lg" className="w-full min-[440px]:w-auto">
-                Try the Scout demo <ArrowRight />
-              </ButtonLink>
-              <ButtonA href="#learn" variant="outline" size="lg" className="w-full min-[440px]:w-auto">
-                Watch it learn
-              </ButtonA>
+            <motion.div {...enter(0.58)} className="mt-6 max-w-[34rem]">
+              <BaseUrlDiff />
             </motion.div>
-            <motion.div {...rise(0.22)} className="mt-5">
+            <motion.div {...enter(0.66)} className="mt-6 flex flex-wrap items-center gap-3">
+              <MovingBorderLink to="/scout" containerClassName="w-full min-[440px]:w-auto">
+                Try the Scout demo <ArrowRight aria-hidden />
+              </MovingBorderLink>
+              <Magnet className="w-full min-[440px]:w-auto">
+                <ButtonLink to="/dashboard" variant="outline" size="lg" className="w-full bg-surface/80 backdrop-blur-md min-[440px]:w-auto">
+                  <LayoutDashboard aria-hidden /> Open the dashboard
+                </ButtonLink>
+              </Magnet>
+            </motion.div>
+            <motion.p {...enter(0.74)} className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
+              <a
+                href="#learn"
+                className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
+              >
+                Watch it learn
+              </a>
               <a
                 href={REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-md text-[14px] font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
+                className="inline-flex items-center gap-1 rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
               >
-                Read the code on GitHub <ArrowUpRight className="size-3.5 text-muted" />
+                Read the code on GitHub <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
               </a>
-            </motion.div>
+            </motion.p>
           </div>
 
           <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, ease: EASE, delay: 0.15 }}
-            className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
+            initial={{ opacity: 0, y: 24, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: 0.55 }}
+            className="relative lg:col-start-2 lg:row-span-2 lg:row-start-1"
           >
-            <HeroFlow />
+            {/* a pool of the two colours under the card, so it sits in the light rather than on the page */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -inset-x-10 -top-10 bottom-2 rounded-[40px] bg-[radial-gradient(60%_60%_at_30%_30%,color-mix(in_srgb,var(--owned)_14%,transparent),transparent_70%),radial-gradient(50%_60%_at_80%_80%,color-mix(in_srgb,var(--rented)_14%,transparent),transparent_70%)]"
+            />
+            <TiltCard max={4} scale={1.008}>
+              <HeroFlow />
+            </TiltCard>
             <p className="mt-3 px-1 text-[12px] leading-relaxed text-muted">
               Simulation, mock models, seed 7: how the loop behaves, not real model quality.
             </p>
           </motion.div>
-          <motion.ul {...rise(0.26)} className="grid gap-4 border-t border-line pt-6 text-[14px] sm:grid-cols-3 lg:col-start-1 lg:row-start-2 lg:mt-10 lg:grid-cols-1 lg:self-start">
+          <motion.ul
+            {...enter(0.82)}
+            className="grid gap-4 border-t border-line pt-6 text-[14px] sm:grid-cols-3 lg:col-start-1 lg:row-start-2 lg:mt-9 lg:grid-cols-1 lg:self-start"
+          >
             {POINTS.map((pt) => (
               <li key={pt.title} className="flex gap-3">
                 <pt.icon className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden />
@@ -110,65 +178,6 @@ export function Hero() {
             ))}
           </motion.ul>
         </div>
-      </Container>
-    </section>
-  );
-}
-
-export function OneLineChange() {
-  return (
-    <section aria-labelledby="one-line-title">
-      <Container className="pb-4 pt-10 sm:pt-14">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "0px 0px -8% 0px" }}
-          transition={{ duration: 0.7, ease: EASE }}
-          className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-14"
-        >
-          <div className="lg:pt-2">
-            <p className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">The only change in your app</p>
-            <h2 id="one-line-title" className="mt-3 text-balance text-2xl font-semibold tracking-[-0.025em] text-ink sm:text-[1.75rem]">
-              Point your OpenAI SDK at Ratchet. Name the task.
-            </h2>
-            <p className="mt-4 max-w-[46ch] text-pretty text-[16px] leading-relaxed text-ink-2">
-              Same request, same response shape. Each response also says who answered it, how confident it was, what it cost, and what it
-              would have cost on Ultra alone.
-            </p>
-            <ul className="mt-5 space-y-2 text-[14.5px] text-ink-2">
-              <li className="flex gap-2.5">
-                <span className="mt-[9px] size-1.5 shrink-0 rounded-full bg-owned" aria-hidden />
-                <span>
-                  <code className="font-mono text-[13px] text-ink">base_url</code> points at your Ratchet gateway
-                </span>
-              </li>
-              <li className="flex gap-2.5">
-                <span className="mt-[9px] size-1.5 shrink-0 rounded-full bg-owned" aria-hidden />
-                <span>
-                  <code className="font-mono text-[13px] text-ink">X-Ratchet-Task</code> groups requests the student can learn
-                </span>
-              </li>
-            </ul>
-          </div>
-          <CodeBlock title="your_app.py" copy={SNIPPET} className="shadow-card">
-            {tok.k("from")} openai {tok.k("import")} OpenAI{"\n\n"}
-            client = OpenAI({"\n"}
-            {"    "}
-            {tok.h('base_url="http://localhost:8000/v1"')},{"\n"}
-            {"    "}api_key={tok.s('"unused"')},{"\n"}){"\n"}
-            r = client.chat.completions.create({"\n"}
-            {"    "}model={tok.s('"ratchet"')},{"\n"}
-            {"    "}messages=messages,{"\n"}
-            {"    "}extra_headers={"{"}
-            {"\n"}
-            {"        "}
-            {tok.h('"X-Ratchet-Task": "ticket-triage"')},{"\n"}
-            {"    "}
-            {"},"}
-            {"\n"}){"\n"}
-            {tok.k("print")}(r.ratchet)  {tok.c("# served_by, cost_usd, ...")}
-          </CodeBlock>
-        </motion.div>
       </Container>
     </section>
   );

@@ -30,8 +30,10 @@
   --rented-ink: #b4461a;
   --rented-soft: #fdeae1;
   --good: #1f8f3a;
+  --good-ink: #17722e;
   --good-soft: #e3f4e7;
   --warn: #a86400;
+  --warn-ink: #8a5200;
   --warn-soft: #fbf0dc;
   --bad: #c92a2a;
   --bad-soft: #fbe4e4;
@@ -58,8 +60,10 @@
   --rented-ink: #f29a72;
   --rented-soft: rgb(217 89 38 / 0.16);
   --good: #51cf66;
+  --good-ink: #51cf66;
   --good-soft: rgb(81 207 102 / 0.14);
   --warn: #f0b13f;
+  --warn-ink: #f0b13f;
   --warn-soft: rgb(240 177 63 / 0.14);
   --bad: #ff6b6b;
   --bad-soft: rgb(255 107 107 / 0.14);
@@ -85,8 +89,10 @@
   --color-rented-ink: var(--rented-ink);
   --color-rented-soft: var(--rented-soft);
   --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
   --color-good-soft: var(--good-soft);
   --color-warn: var(--warn);
+  --color-warn-ink: var(--warn-ink);
   --color-warn-soft: var(--warn-soft);
   --color-bad: var(--bad);
   --color-bad-soft: var(--bad-soft);
@@ -133,6 +139,194 @@
   }
 }
 
+/*
+  The logo's one-shot click (components/ui/logo.tsx): the wheel turns one tooth (45deg) clockwise while the pawl rides
+  up the slope, then drops into the next notch. 780 ms after a 100 ms delay; never repeats. Both use linear segments
+  between the same keyframe times, so the pawl's lift follows the wheel's angle. Reduced motion: drawn at rest.
+*/
+.logo-wheel,
+.logo-pawl {
+  transform-box: view-box;
+}
+.logo-click .logo-wheel {
+  animation: logo-wheel 780ms linear 100ms both;
+}
+.logo-click .logo-pawl {
+  animation: logo-pawl 780ms linear 100ms both;
+}
+@keyframes logo-wheel {
+  0% { transform: rotate(-45deg); }
+  30% { transform: rotate(-24deg); }
+  55% { transform: rotate(-10deg); }
+  72% { transform: rotate(-3deg); }
+  80% { transform: rotate(0.8deg); }
+  90% { transform: rotate(-0.3deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes logo-pawl {
+  0% { transform: rotate(0deg); }
+  30% { transform: rotate(-7.9deg); }
+  55% { transform: rotate(-13.2deg); }
+  72% { transform: rotate(-15.8deg); }
+  76% { transform: rotate(0.6deg); }
+  82% { transform: rotate(-1.4deg); }
+  100% { transform: rotate(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .logo-click .logo-wheel,
+  .logo-click .logo-pawl {
+    animation: none;
+  }
+}
+
+/*
+  Effects (components/fx). Each is decoration over content that reads the same without it, and each stops under
+  reduced motion: the shine keeps its base colour, the spotlight stays off, the aurora shows one still frame.
+*/
+.aurora-fallback {
+  background:
+    radial-gradient(55% 50% at 28% 0%, color-mix(in srgb, var(--owned) 24%, transparent), transparent 72%),
+    radial-gradient(50% 45% at 76% 0%, color-mix(in srgb, var(--rented) 18%, transparent), transparent 72%);
+}
+.aurora-fallback canvas {
+  display: none;
+}
+
+.shiny-text {
+  color: var(--ink-2);
+  background-image: linear-gradient(
+    110deg,
+    var(--ink-2) 0%,
+    var(--ink-2) 42%,
+    var(--ink) 50%,
+    var(--ink-2) 58%,
+    var(--ink-2) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 160% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shine 6s ease-in-out 1.2s infinite;
+}
+@keyframes shine {
+  0% { background-position: 160% 0; }
+  45% { background-position: -60% 0; }
+  100% { background-position: -60% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shiny-text {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+.spotlight-card {
+  --sx: 50%;
+  --sy: 40%;
+  --so: 0;
+  --spot: var(--ink);
+}
+.spotlight-glow {
+  background: radial-gradient(360px circle at var(--sx) var(--sy), color-mix(in srgb, var(--spot) 12%, transparent), transparent 72%);
+  opacity: var(--so);
+  transition: opacity 0.4s;
+}
+.dark .spotlight-glow {
+  background: radial-gradient(360px circle at var(--sx) var(--sy), color-mix(in srgb, var(--spot) 16%, transparent), transparent 72%);
+}
+.spotlight-ring {
+  padding: 1px;
+  background: radial-gradient(300px circle at var(--sx) var(--sy), color-mix(in srgb, var(--spot) 60%, transparent), transparent 70%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: var(--so);
+  transition: opacity 0.4s;
+}
+.spotlight-card:focus-within .spotlight-glow,
+.spotlight-card:focus-within .spotlight-ring {
+  --sx: 50%;
+  --sy: 30%;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-glow,
+  .spotlight-ring {
+    transition: none;
+  }
+}
+
+/* A band of light that sweeps a card once on hover or focus (components/fx/glare-hover). */
+.glare-light {
+  background: linear-gradient(105deg, transparent 20%, color-mix(in srgb, #fff 55%, transparent) 50%, transparent 80%);
+  transform: translateX(-160%) skewX(-14deg);
+  opacity: 0;
+  transition: transform 0.75s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s;
+}
+.dark .glare-light {
+  background: linear-gradient(105deg, transparent 20%, color-mix(in srgb, #fff 16%, transparent) 50%, transparent 80%);
+}
+.glare:hover .glare-light,
+.glare:focus-within .glare-light {
+  transform: translateX(320%) skewX(-14deg);
+  opacity: 1;
+}
+
+/* Slow pools of colour behind a section (components/fx/glow-orbs); they move only while on screen. */
+.orb {
+  --orb: var(--owned);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--orb) 20%, transparent), transparent 72%);
+  will-change: transform;
+}
+.dark .orb {
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--orb) 26%, transparent), transparent 72%);
+}
+.orbs-on .orb-0 { animation: orb-a 26s ease-in-out infinite alternate; }
+.orbs-on .orb-1 { animation: orb-b 32s ease-in-out infinite alternate; }
+.orbs-on .orb-2 { animation: orb-c 29s ease-in-out infinite alternate; }
+@keyframes orb-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(9%, 7%, 0) scale(1.12); }
+}
+@keyframes orb-b {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  to { transform: translate3d(-8%, -9%, 0) scale(0.94); }
+}
+@keyframes orb-c {
+  from { transform: translate3d(0, 0, 0) scale(0.96); }
+  to { transform: translate3d(6%, -8%, 0) scale(1.08); }
+}
+
+/* A line of light that runs along the live strip's top edge. */
+.edge-light {
+  background: linear-gradient(90deg, transparent 0%, var(--owned) 35%, var(--rented) 65%, transparent 100%);
+  background-size: 200% 100%;
+  animation: edge-light 7s linear infinite;
+}
+@keyframes edge-light {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+/* A dot at the end of a live badge: breathes once a second, still under reduced motion. */
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0;
+  animation: live-ping 2.2s ease-out infinite;
+}
+@keyframes live-ping {
+  0% { transform: scale(0.6); opacity: 0.8; }
+  70% { transform: scale(1.6); opacity: 0; }
+  100% { opacity: 0; }
+}
+
 @layer utilities {
   /* Faint engineering grid used behind hero and story sections. */
   .bg-grid {
@@ -140,6 +334,11 @@
       linear-gradient(to right, var(--grid) 1px, transparent 1px),
       linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
     background-size: 44px 44px;
+  }
+  /* Faint dot field, for one or two moments between chapters. */
+  .bg-dots {
+    background-image: radial-gradient(var(--grid) 1.2px, transparent 1.3px);
+    background-size: 22px 22px;
   }
   .text-balance {
     text-wrap: balance;

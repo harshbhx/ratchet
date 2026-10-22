@@ -13,6 +13,8 @@ const LABELS: Record<string, string> = {
   EMAIL: "email",
   PHONE: "phone",
   CARD: "card",
+  UPI: "UPI id",
+  GSTIN: "GSTIN",
   IBAN: "IBAN",
   AADHAAR: "Aadhaar",
   SSN: "SSN",
