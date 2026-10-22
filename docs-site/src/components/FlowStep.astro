@@ -1,0 +1,120 @@
+---
+/**
+ * <FlowStep>: one step of a <Flow>. tone: 'owned' (the student), 'rented' (the teacher) or 'neutral' (default).
+ * `meta` is a short mono line under the title (a model, a file, a time scale).
+ */
+interface Props {
+  title: string;
+  tone?: 'owned' | 'rented' | 'neutral';
+  meta?: string;
+}
+const { title, tone = 'neutral', meta } = Astro.props;
+---
+
+<li class={`rt-flow-step rt-flow-step--${tone}`}>
+  <span class="rt-flow-step__num" aria-hidden="true"></span>
+  <p class="rt-flow-step__title">{title}</p>
+  {meta && <p class="rt-flow-step__meta">{meta}</p>}
+  <div class="rt-flow-step__body"><slot /></div>
+</li>
+
+<style>
+  .rt-flow-step {
+    --tone: var(--rt-line-strong);
+    --tone-soft: var(--rt-surface-2);
+    --tone-ink: var(--rt-ink);
+    counter-increment: rt-flow;
+    position: relative;
+    margin: 0;
+    padding: 1rem 1.05rem 1.05rem;
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-lg);
+    background: var(--rt-surface);
+  }
+  .rt-flow-step--owned {
+    --tone: var(--rt-owned);
+    --tone-soft: var(--rt-owned-soft);
+    --tone-ink: var(--rt-owned-ink);
+    border-color: color-mix(in srgb, var(--rt-owned) 35%, var(--rt-line));
+    background: linear-gradient(to bottom, var(--rt-owned-soft), var(--rt-surface) 75%);
+  }
+  .rt-flow-step--rented {
+    --tone: var(--rt-rented);
+    --tone-soft: var(--rt-rented-soft);
+    --tone-ink: var(--rt-rented-ink);
+    border-color: color-mix(in srgb, var(--rt-rented) 35%, var(--rt-line));
+    background: linear-gradient(to bottom, var(--rt-rented-soft), var(--rt-surface) 75%);
+  }
+  .rt-flow-step__num {
+    display: inline-grid;
+    place-items: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-bottom: 0.55rem;
+    border: 1px solid var(--tone);
+    border-radius: 999px;
+    background: var(--tone-soft);
+    color: var(--tone-ink);
+    font-family: var(--rt-font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .rt-flow-step__num::before {
+    content: counter(rt-flow);
+  }
+  .rt-flow-step__title {
+    margin: 0;
+    color: var(--rt-ink);
+    font-size: 0.98rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+  }
+  .rt-flow-step__meta {
+    margin: 0.2rem 0 0;
+    color: var(--tone-ink);
+    font-family: var(--rt-font-mono);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .rt-flow-step--neutral .rt-flow-step__meta {
+    color: var(--rt-muted);
+  }
+  .rt-flow-step__body {
+    margin-top: 0.45rem;
+    color: var(--rt-ink-2);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+  .rt-flow-step__body :global(> *) {
+    margin: 0;
+  }
+  .rt-flow-step__body :global(> * + *) {
+    margin-top: 0.5rem;
+  }
+  /* Connectors: arrows between cards in a row, a short line in a column. */
+  .rt-flow-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 1.85rem;
+    bottom: -0.65rem;
+    width: 1px;
+    height: 0.65rem;
+    background: var(--rt-line-strong);
+  }
+  @container (min-width: 44rem) {
+    .rt-flow-step:not(:last-child)::after {
+      left: auto;
+      right: -1.35rem;
+      bottom: auto;
+      top: 1.8rem;
+      width: 1.1rem;
+      height: 0.7rem;
+      background: var(--rt-muted);
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 14' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 7h19M14 1.5 20 7l-6 5.5'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 14' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 7h19M14 1.5 20 7l-6 5.5'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    }
+  }
+</style>

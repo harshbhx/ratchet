@@ -1,0 +1,185 @@
+---
+/**
+ * Page header for every doc page: the sidebar group as an eyebrow, the title, the one-line summary (frontmatter
+ * `description`), reading time and the edit link, over a faint owned-blue wash and the landing page's grid.
+ * Replaces Lucode's PageTitle (its previous/next buttons are kept, smaller, on the right).
+ */
+import { Icon } from '@astrojs/starlight/components';
+
+const route = Astro.locals.starlightRoute;
+const { entry, sidebar, pagination, editUrl } = route;
+const { title, description } = entry.data;
+
+type Entry = { type: 'link'; label: string; isCurrent: boolean } | { type: 'group'; label: string; entries: Entry[] };
+const holds = (entries: Entry[]): boolean =>
+  entries.some((e) => (e.type === 'link' ? e.isCurrent : holds(e.entries)));
+const group = (sidebar as Entry[]).find((e) => e.type === 'group' && holds(e.entries))?.label;
+
+const body: string = typeof entry.body === 'string' ? entry.body : '';
+const words = body
+  .replace(/^---[\s\S]*?---/, ' ')
+  .replace(/```[\s\S]*?```/g, ' ')
+  .replace(/^import .*$/gm, ' ')
+  .replace(/<[^>]+>/g, ' ')
+  .split(/\s+/)
+  .filter((w) => /[A-Za-z0-9]/.test(w)).length;
+// Reading time helps on guides; on reference pages (long tables, generated lists) it would only mislead.
+const isGuide = String(route.id ?? '').startsWith('guides/');
+const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0;
+---
+
+<header class="rt-page-title">
+  <div class="rt-page-title__wash" aria-hidden="true"></div>
+  <div class="rt-page-title__top">
+    <p class="rt-page-title__eyebrow">{group ?? 'Ratchet docs'}</p>
+    <div class="rt-page-title__actions">
+      {
+        pagination.prev && (
+          <a class="rt-page-title__nav" href={pagination.prev.href} rel="prev" aria-label={`Previous page: ${pagination.prev.label}`}>
+            <Icon name="left-arrow" size="1rem" />
+          </a>
+        )
+      }
+      {
+        pagination.next && (
+          <a class="rt-page-title__nav" href={pagination.next.href} rel="next" aria-label={`Next page: ${pagination.next.label}`}>
+            <Icon name="right-arrow" size="1rem" />
+          </a>
+        )
+      }
+    </div>
+  </div>
+  <h1 id="_top" data-page-title>{title}</h1>
+  {description && <p class="rt-page-title__desc">{description}</p>}
+  {
+    (minutes > 0 || editUrl) && (
+      <p class="rt-page-title__meta">
+        {minutes > 0 && <span>{minutes} min read</span>}
+        {minutes > 0 && editUrl && <span aria-hidden="true">·</span>}
+        {editUrl && (
+          <a href={editUrl.toString()} class="rt-page-title__edit">
+            Edit on GitHub
+          </a>
+        )}
+      </p>
+    )
+  }
+</header>
+
+<style>
+  .rt-page-title {
+    position: relative;
+    isolation: isolate;
+    padding-top: 0.5rem;
+    padding-bottom: 1.6rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rt-line);
+  }
+  .rt-page-title__wash {
+    position: absolute;
+    z-index: -1;
+    inset: -3rem -2rem 0 -2rem;
+    background:
+      radial-gradient(60% 90% at 0% 0%, var(--rt-glow-owned), transparent 70%),
+      linear-gradient(to right, var(--rt-grid) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(to bottom, var(--rt-grid) 1px, transparent 1px) 0 0 / 32px 32px;
+    -webkit-mask-image: radial-gradient(ellipse 75% 100% at 15% 0%, #000 25%, transparent 80%);
+    mask-image: radial-gradient(ellipse 75% 100% at 15% 0%, #000 25%, transparent 80%);
+    pointer-events: none;
+  }
+  .rt-page-title__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 2rem;
+    margin-bottom: 0.6rem;
+  }
+  .rt-page-title__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin: 0;
+    color: var(--rt-owned-ink);
+    font-family: var(--rt-font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .rt-page-title__eyebrow::before {
+    content: '';
+    width: 1.5rem;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.6;
+  }
+  .rt-page-title__actions {
+    display: flex;
+    gap: 0.35rem;
+  }
+  .rt-page-title__nav {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--rt-line);
+    border-radius: 999px;
+    background: var(--rt-surface);
+    color: var(--rt-ink-2);
+    transition:
+      background-color var(--rt-dur) ease,
+      color var(--rt-dur) ease,
+      border-color var(--rt-dur) ease;
+  }
+  .rt-page-title__nav:hover {
+    border-color: var(--rt-line-strong);
+    background: var(--rt-surface-2);
+    color: var(--rt-ink);
+  }
+  h1 {
+    margin: 0;
+    color: var(--rt-ink);
+    font-size: var(--rt-text-h1);
+    font-weight: 650;
+    letter-spacing: -0.032em;
+    line-height: 1.12;
+    text-wrap: balance;
+    scroll-margin-top: 6rem;
+  }
+  .rt-page-title__desc {
+    max-width: 44rem;
+    margin: 0.85rem 0 0;
+    color: var(--rt-ink-2);
+    font-size: var(--rt-text-lead);
+    line-height: 1.6;
+    text-wrap: pretty;
+  }
+  .rt-page-title__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 1rem 0 0;
+    color: var(--rt-muted);
+    font-size: 0.82rem;
+  }
+  .rt-page-title__edit {
+    color: var(--rt-muted);
+    text-decoration: underline;
+    text-decoration-color: var(--rt-line-strong);
+    text-underline-offset: 0.2em;
+  }
+  .rt-page-title__edit:hover {
+    color: var(--rt-ink);
+    text-decoration-color: var(--rt-ink);
+  }
+  @media (max-width: 40rem) {
+    .rt-page-title__actions {
+      display: none;
+    }
+    .rt-page-title__wash {
+      inset: -2rem -1rem 0 -1rem;
+    }
+  }
+</style>

@@ -1,0 +1,52 @@
+---
+/**
+ * <StatRow>: a responsive row of <Stat> tiles. It follows the width it is given (container query), not the
+ * window: 1 column when narrow, then 2, then `cols`.
+ *
+ *   <StatRow cols={3}>
+ *     <Stat value={1781} label="tests" />
+ *     ...
+ *   </StatRow>
+ */
+interface Props {
+  cols?: 2 | 3 | 4;
+  label?: string;
+}
+const { cols = 3, label } = Astro.props;
+---
+
+<div class="rt-stat-row rt-ui not-content" style={`--cols:${cols};--cols-mid:${Math.min(cols, 3)}`}>
+  <div class="rt-stat-row__grid" role={label ? 'group' : undefined} aria-label={label}>
+    <slot />
+  </div>
+</div>
+
+<style>
+  .rt-stat-row {
+    container-type: inline-size;
+    margin-block: 1.5rem;
+  }
+  .rt-stat-row__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  @container (min-width: 26rem) {
+    .rt-stat-row__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @container (min-width: 40rem) {
+    .rt-stat-row__grid {
+      grid-template-columns: repeat(var(--cols-mid), minmax(0, 1fr));
+    }
+  }
+  @container (min-width: 56rem) {
+    .rt-stat-row__grid {
+      grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    }
+  }
+  .rt-stat-row__grid > :global(*) {
+    margin: 0;
+  }
+</style>

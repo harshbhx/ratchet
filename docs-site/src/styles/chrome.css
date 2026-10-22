@@ -1,0 +1,258 @@
+/*
+  The frame around every page: header, navigation, search, sidebar, "On this page" and the site footer.
+  Lucode's component styles are scoped with :where(), so a class selector here (one class or more) wins; the
+  extra `html` in a few selectors only lifts specificity over Lucode's own element selectors.
+*/
+
+/* ---------- Header ---------- */
+html [data-slot='layout'] > header {
+  background: var(--rt-header-bg);
+  -webkit-backdrop-filter: saturate(1.5) blur(14px);
+  backdrop-filter: saturate(1.5) blur(14px);
+  border-bottom: 1px solid var(--rt-line);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html [data-slot='layout'] > header {
+    background: var(--rt-bg);
+  }
+}
+
+.site-title {
+  gap: 0.6rem;
+  color: var(--rt-ink);
+}
+.site-title img,
+.site-title .logo {
+  width: 1.75rem;
+  height: 1.75rem;
+  max-width: none;
+  max-height: none;
+}
+.site-title .title-text {
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+/* Top navigation: Docs / Guides / API / GitHub / Live site */
+.nav-bar {
+  gap: 0.125rem;
+}
+.nav-bar a {
+  position: relative;
+  color: var(--rt-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition:
+    color var(--rt-dur) ease,
+    background-color var(--rt-dur) ease;
+}
+.nav-bar a:hover {
+  color: var(--rt-ink);
+  background-color: var(--rt-surface-2);
+}
+.nav-bar a.active {
+  color: var(--rt-ink);
+}
+.nav-bar a.active::after {
+  content: '';
+  position: absolute;
+  left: 0.625rem;
+  right: 0.625rem;
+  bottom: -0.68rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--rt-owned);
+}
+/* Links that leave the docs carry an arrow. */
+.nav-bar a[href^='http']::after {
+  content: '';
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-left: 0.3rem;
+  background: currentColor;
+  opacity: 0.6;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17 17 7M8 7h9v9'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17 17 7M8 7h9v9'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+/* Search button */
+site-search button[data-open-modal] {
+  border-color: var(--rt-line-strong);
+  background-color: var(--rt-surface);
+  color: var(--rt-muted);
+  border-radius: 999px;
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.02);
+}
+site-search button[data-open-modal]:hover {
+  border-color: var(--rt-muted);
+  background-color: var(--rt-surface-2);
+  color: var(--rt-ink);
+}
+site-search button[data-open-modal] kbd {
+  font-family: var(--rt-font-mono);
+}
+
+/* Search dialog (Pagefind) */
+site-search dialog {
+  border: 1px solid var(--rt-line-strong);
+  border-radius: var(--rt-radius-lg);
+  background: var(--rt-surface);
+  box-shadow: var(--rt-shadow-lift);
+}
+site-search dialog::backdrop {
+  background: color-mix(in srgb, var(--rt-bg) 70%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+site-search #starlight__search {
+  --pagefind-ui-primary: var(--rt-ink);
+  --pagefind-ui-text: var(--rt-ink-2);
+  --pagefind-ui-background: var(--rt-surface);
+  --pagefind-ui-border: var(--rt-line-strong);
+  --pagefind-ui-tag: var(--rt-surface-2);
+  --pagefind-ui-font: var(--rt-font-sans);
+  --sl-search-result-bg: var(--rt-surface-2);
+  --sl-search-result-hover-bg: var(--rt-owned-soft);
+  --sl-search-result-pad-inline-start: 1rem;
+}
+site-search #starlight__search mark {
+  background: var(--rt-owned-soft);
+  color: var(--rt-ink);
+  border-radius: 3px;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar .entry-title {
+  font-family: var(--rt-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rt-muted);
+  padding-bottom: 0.35rem;
+}
+.sidebar .container-sidebar-entry {
+  gap: 0.1rem;
+}
+.sidebar .entry-link {
+  color: var(--rt-ink-2);
+  font-size: 0.875rem;
+  height: 2rem;
+}
+.sidebar .entry-link-inner {
+  position: relative;
+  width: 100%;
+  border-radius: 0.5rem;
+}
+.sidebar .entry-link:hover:not([aria-current='page']) .entry-link-inner {
+  background-color: var(--rt-surface-2);
+  color: var(--rt-ink);
+}
+.sidebar .entry-link[aria-current='page'] .entry-link-inner {
+  background-color: var(--rt-surface-2);
+  color: var(--rt-ink);
+  font-weight: 550;
+  box-shadow: inset 0 0 0 1px var(--rt-line);
+}
+.sidebar .entry-link[aria-current='page'] .entry-link-inner::before {
+  content: '';
+  position: absolute;
+  left: -0.45rem;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--rt-owned);
+}
+.sidebar .entry-group-summary {
+  font-size: 0.875rem;
+  color: var(--rt-ink-2);
+  padding-left: 0.5rem;
+}
+.sidebar .entry-group-summary:hover {
+  background-color: var(--rt-surface-2);
+  color: var(--rt-ink);
+}
+.sidebar .entry-badge {
+  font-family: var(--rt-font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--rt-surface-2);
+  color: var(--rt-muted);
+  border: 1px solid var(--rt-line);
+}
+.sidebar .entry-link:focus-visible {
+  outline: none;
+}
+.sidebar .entry-link:focus-visible .entry-link-inner {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: -2px;
+}
+
+/* ---------- On this page ---------- */
+starlight-toc nav > p {
+  font-family: var(--rt-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rt-muted);
+}
+starlight-toc nav > ul {
+  border-left: 1px solid var(--rt-line);
+}
+starlight-toc a {
+  display: block;
+  margin-left: -1px;
+  padding: 0.15rem 0 0.15rem 0.85rem;
+  border-left: 2px solid transparent;
+  color: var(--rt-muted);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  transition:
+    color var(--rt-dur) ease,
+    border-color var(--rt-dur) ease;
+}
+starlight-toc ul ul a {
+  padding-left: 1.6rem;
+}
+starlight-toc ul > li > ul {
+  padding-inline: 0;
+}
+starlight-toc a:hover {
+  color: var(--rt-ink);
+}
+starlight-toc a[aria-current='true'] {
+  color: var(--rt-ink);
+  font-weight: 500;
+  border-left-color: var(--rt-owned);
+}
+
+/* ---------- Site footer (splash pages) ---------- */
+[data-slot='footer-text'] {
+  color: var(--rt-muted);
+}
+html [data-slot='layout'] > footer {
+  border-top: 1px solid var(--rt-line);
+  height: auto;
+  min-height: 6rem;
+  padding-block: 1.5rem;
+}
+
+/* ---------- Mobile drawer ---------- */
+#drawer {
+  background: var(--rt-bg);
+}
+
+/* ---------- Scrollbars ---------- */
+@supports (scrollbar-color: auto) {
+  html {
+    scrollbar-color: var(--rt-line-strong) transparent;
+  }
+}

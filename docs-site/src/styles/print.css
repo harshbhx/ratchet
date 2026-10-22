@@ -1,0 +1,96 @@
+/* Print: the page body only, in black on white, with every step and table row visible. */
+@media print {
+  :root,
+  :root[data-theme='dark'],
+  :root[data-theme='light'] {
+    --rt-bg: #fff;
+    --rt-surface: #fff;
+    --rt-surface-2: #f5f5f5;
+    --rt-ink: #000;
+    --rt-ink-2: #1a1a1a;
+    --rt-muted: #444;
+    --rt-line: #ccc;
+    --rt-line-strong: #999;
+    --background: #fff;
+    --foreground: #000;
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000;
+    font-size: 11pt;
+  }
+
+  /* Chrome off */
+  [data-slot='layout'] > header,
+  [data-slot='layout'] > footer,
+  .aside,
+  .toc,
+  .sl-skip-link,
+  site-search,
+  #drawer,
+  .rt-page-footer__nav,
+  .rt-page-footer__edit,
+  .rt-page-title__actions,
+  .rt-home-hero__bg,
+  .rt-print-hide,
+  starlight-toc,
+  .sl-anchor-link {
+    display: none !important;
+  }
+
+  .container-main,
+  .main,
+  .container-wrapper-main {
+    display: block !important;
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .sl-markdown-content {
+    font-size: 11pt;
+    line-height: 1.55;
+    color: #000;
+  }
+  .sl-markdown-content :is(p, ul, ol, dl) {
+    max-width: none;
+  }
+
+  /* Say where links go. */
+  .sl-markdown-content a:not([class])[href^='http']::after {
+    content: ' (' attr(href) ')';
+    color: #444;
+    font-size: 0.85em;
+    font-weight: 400;
+    word-break: break-all;
+  }
+
+  /* Keep blocks whole. */
+  .sl-markdown-content :is(pre, figure, .expressive-code, .starlight-aside, .rt-callout, .rt-stat, details, img) {
+    break-inside: avoid;
+  }
+  .sl-markdown-content :is(h2, h3, h4) {
+    break-after: avoid;
+  }
+
+  /* Tables print in full. */
+  .sl-markdown-content table {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .sl-markdown-content th {
+    position: static;
+  }
+
+  /* No shadows, no tints that waste ink. */
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  .rb-spotlight-card__light,
+  .rb-spotlight-card__edge {
+    display: none !important;
+  }
+}

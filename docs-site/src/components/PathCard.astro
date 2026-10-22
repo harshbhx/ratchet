@@ -1,0 +1,159 @@
+---
+/**
+ * <PathCard>: a link card on a React Bits SpotlightCard. The whole card is the link; the title is the link text.
+ * Use inside <PathGrid>. tone: 'owned' (default), 'rented' or 'neutral' sets the spotlight colour and the icon chip.
+ *
+ *   <PathGrid>
+ *     <PathCard title="Quickstart" href="/guides/quickstart/" icon="start" eyebrow="5 minutes">
+ *       Run the gateway with mock models and send your first request.
+ *     </PathCard>
+ *   </PathGrid>
+ */
+import SpotlightCard from './ui/SpotlightCard.astro';
+import RtIcon from './RtIcon.astro';
+
+interface Props {
+  title: string;
+  href: string;
+  eyebrow?: string;
+  description?: string;
+  /** An RtIcon name: start, book, loop, database, chart, server, code, check, shield, coin, key, gate, scale, file, repo, external, search, spark, flask, layers. */
+  icon?: any;
+  tone?: 'owned' | 'rented' | 'neutral';
+}
+
+const { title, href, eyebrow, description, icon, tone = 'owned' } = Astro.props;
+const external = /^https?:\/\//.test(href);
+---
+
+<SpotlightCard tone={tone} class={`rt-path-card rt-path-card--${tone}`}>
+  <div class="rt-path-card__inner rt-ui">
+    <div class="rt-path-card__top">
+      {
+        icon && (
+          <span class="rt-path-card__icon">
+            <RtIcon name={icon} size={18} />
+          </span>
+        )
+      }
+      {eyebrow && <span class="rt-path-card__eyebrow">{eyebrow}</span>}
+    </div>
+    <a class="rt-path-card__link" href={href} rel={external ? 'noopener' : undefined}>
+      {title}
+      {external && <span class="rt-sr-only"> (opens another site)</span>}
+    </a>
+    {description && <p class="rt-path-card__desc">{description}</p>}
+    {Astro.slots.has('default') && <div class="rt-path-card__desc"><slot /></div>}
+    <span class="rt-path-card__go" aria-hidden="true">
+      <RtIcon name={external ? 'external' : 'start'} size={16} />
+    </span>
+  </div>
+</SpotlightCard>
+
+<style is:global>
+  .rt-path-card {
+    height: 100%;
+    transition:
+      transform 0.25s var(--rt-ease),
+      box-shadow 0.25s var(--rt-ease);
+  }
+  .rt-path-card:hover,
+  .rt-path-card:focus-within {
+    transform: translateY(-2px);
+    box-shadow: var(--rt-shadow-lift);
+  }
+  .rt-path-card__inner {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    height: 100%;
+    padding: 1.15rem 1.2rem 1.25rem;
+  }
+  .rt-path-card__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2rem;
+    margin-bottom: 0.35rem;
+  }
+  .rt-path-card__icon {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.6rem;
+    border: 1px solid var(--rt-line);
+    background: var(--rt-surface-2);
+    color: var(--rt-ink-2);
+  }
+  .rt-path-card--owned .rt-path-card__icon {
+    border-color: color-mix(in srgb, var(--rt-owned) 35%, var(--rt-line));
+    background: var(--rt-owned-soft);
+    color: var(--rt-owned-ink);
+  }
+  .rt-path-card--rented .rt-path-card__icon {
+    border-color: color-mix(in srgb, var(--rt-rented) 35%, var(--rt-line));
+    background: var(--rt-rented-soft);
+    color: var(--rt-rented-ink);
+  }
+  .rt-path-card__eyebrow {
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-align: right;
+  }
+  .sl-markdown-content .rt-path-card__link,
+  .rt-path-card__link {
+    color: var(--rt-ink);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+    line-height: 1.35;
+    text-decoration: none;
+  }
+  /* The whole card is the link's hit area. */
+  .rt-path-card__link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: var(--rt-radius-lg);
+  }
+  .rt-path-card__link:focus-visible {
+    outline: none;
+  }
+  .rt-path-card__link:focus-visible::after {
+    outline: 2px solid var(--rt-focus);
+    outline-offset: 2px;
+  }
+  .sl-markdown-content .rt-path-card__desc,
+  .rt-path-card__desc {
+    margin: 0;
+    color: var(--rt-muted);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+  .rt-path-card__desc > :first-child {
+    margin-top: 0;
+  }
+  .rt-path-card__desc > :last-child {
+    margin-bottom: 0;
+  }
+  .rt-path-card__go {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    color: var(--rt-muted);
+    transition:
+      transform 0.25s var(--rt-ease),
+      color var(--rt-dur) ease;
+  }
+  .rt-path-card:hover .rt-path-card__go {
+    color: var(--rt-ink);
+    transform: translateX(3px);
+  }
+</style>

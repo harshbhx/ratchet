@@ -1,43 +1,56 @@
 ---
-/** "In one sentence": the first thing on every guide page. */
+/** "In one sentence": the first thing on every guide page. Props: label (default "In one sentence"). */
 interface Props {
   label?: string;
 }
 const { label = 'In one sentence' } = Astro.props;
 ---
 
-<aside class="rt-summary" aria-label={label}>
+<aside class="rt-summary rt-ui" aria-label={label}>
   <p class="rt-summary-label">{label}</p>
   <div class="rt-summary-body"><slot /></div>
 </aside>
 
 <style>
   .rt-summary {
-    margin: 0 0 1.5rem;
-    padding: 1rem 1.25rem 1.1rem;
+    position: relative;
+    margin: 0 0 1.75rem;
+    padding: 1.05rem 1.3rem 1.15rem 1.45rem;
     border: 1px solid var(--rt-line);
-    border-left: 3px solid var(--rt-owned);
-    border-radius: 0.875rem;
-    background: var(--rt-surface);
+    border-radius: var(--rt-radius-lg);
+    background: linear-gradient(105deg, var(--rt-owned-soft), transparent 55%), var(--rt-surface);
+    overflow: hidden;
   }
-  .rt-summary-label {
-    margin: 0 0 0.35rem;
-    color: var(--rt-muted);
-    font-family: var(--__sl-font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
+  .rt-summary::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.9rem;
+    bottom: 0.9rem;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--rt-owned);
+  }
+  .rt-summary .rt-summary-label {
+    margin: 0 0 0.4rem;
+    color: var(--rt-owned-ink);
+    font-family: var(--rt-font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
   }
   .rt-summary-body {
     color: var(--rt-ink);
-    font-size: clamp(1.05rem, 1.8vw, 1.2rem);
+    font-size: clamp(1.05rem, 0.98rem + 0.35vw, 1.2rem);
     line-height: 1.55;
     font-weight: 500;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.012em;
     text-wrap: pretty;
   }
   .rt-summary-body :global(p) {
     margin: 0;
+    max-width: none;
   }
   .rt-summary-body :global(p + p) {
     margin-top: 0.5rem;

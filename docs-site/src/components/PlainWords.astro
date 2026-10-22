@@ -1,0 +1,15 @@
+---
+/**
+ * <PlainWords>: the "In plain words" box, the same component and API as <Eli10>.
+ *
+ *   <PlainWords>Imagine your app is a busy restaurant...</PlainWords>
+ *   <PlainWords title="Like a sealed exam">...</PlainWords>
+ */
+import Eli10 from './Eli10.astro';
+
+interface Props {
+  title?: string;
+}
+---
+
+<Eli10 {...Astro.props}><slot /></Eli10>
