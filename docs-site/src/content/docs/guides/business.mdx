@@ -1,69 +1,92 @@
 ---
 title: The business case
-description: Who Ratchet is for, what it saves, how it could earn money, why now, how it differs from other approaches, and what is not proven yet.
+description: Who Ratchet is for, what it saves, how it could earn money, why now, how it differs from other categories of tool, and what is not proven yet.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
-import Eli10 from '../../../components/Eli10.astro';
 
-<Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model they own, only learns from teachers whose license allows it, and ships each new model only if it passes a gate. Today it is proven in simulation, not on live traffic.</Summary>
-
-<Eli10>
-
-A shop rents a master craftsperson by the hour for every job, including the same simple repair a hundred times a week. Ratchet trains an apprentice from the craftsperson's finished work, hands over the easy repairs once the apprentice is reliably good, and keeps calling the master for the hard ones. The shop ends up owning the apprentice, and a signed logbook shows whose work the apprentice learned from and that copying it was allowed.
-
-</Eli10>
+<Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Its savings are shown in simulation today, not on live traffic.</Summary>
 
 ## The problem
 
 - **LLM bills grow with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), 2025 report). Much of what teams send is narrow and repetitive: classification, extraction, ticket triage, steps inside agents.
-- **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors: [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms D.4(a)](https://www.anthropic.com/legal/commercial-terms) both forbid using outputs to train competing models. A tool that distills that traffic puts its users at risk.
-- **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one of them.
+- **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors: [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) (both read Oct 21, 2026) forbid using outputs to train competing models. Not legal advice.
+- **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
 
 ## Who it is for
 
-Teams with steady, repetitive LLM traffic on tasks a small model can learn, for example support triage, field extraction, routing and classification, or the many small steps inside an agent. It is a poor fit for open-ended work where every request is different, and for very low volume (see [Cost and savings](/guides/cost-and-savings/) for the break-even).
+Teams with steady, repetitive LLM traffic on tasks a small model can learn: support triage, field extraction, routing, classification, text-to-SQL, or the many small steps inside an agent. It is a poor fit for open-ended work where every request differs, and for very low volume, where a GPU endpoint costs more than it saves (see [Why it matters](/guides/why-it-matters/) and [Cost and savings](/guides/cost-and-savings/)).
 
 ## The value
 
-- **Cost falls as the student takes over.** The student answers when it is confident and the open teacher answers the rest. Every request records what it cost and what the teacher alone would have cost.
-- **You own the result.** The product is a LoRA adapter on an open base model, plus a signed bill of materials that lists the teacher and license of every training example.
-- **License-clean by design.** Closed teachers are refused in code, and each example's teacher and license are recorded when it is captured. See [Licenses](/guides/licenses/).
-- **Releases are gated.** A new student must beat the current one on held-out data, then pass shadow and canary stages, and rolls back automatically if it slips. See [The release gate](/guides/release-gate/).
-- **Savings are measured, not promised.** In the reference simulation (mock models, ticket triage), the all-teacher cost was about $1.09 per 1,000 requests and Ratchet's steady-state cost about $0.15 to $0.16, a saving of 85 to 87% (simulation, see [Cost and savings](/guides/cost-and-savings/)). Real savings depend on the traffic mix and on GPU utilization, and Ratchet's cost report says when a GPU endpoint would cost more than it saves.
+```mermaid
+flowchart LR
+  T["Steady, narrow LLM traffic"] --> R["Ratchet"]
+  R --> V1["Lower bill as the student takes over"]
+  R --> V2["A model you own: adapter plus signed lineage"]
+  R --> V3["License-clean: closed teachers refused"]
+  R --> V4["Safe releases: gate, canary, rollback"]
+  V1 --> M["Measured per request, by token and by GPU-hours"]
+  classDef core fill:#1e3a8a,stroke:#3b82f6,color:#fff
+  classDef out fill:#14532d,stroke:#22c55e,color:#fff
+  class R core
+  class V1,V2,V3,V4,M out
+```
+
+**Reading this diagram.** One input, steady narrow traffic, produces four separate benefits, and the first is measured rather than assumed. Each request records what it cost and what the teacher alone would have cost, in two views: per token and by the GPU-hours actually paid. The other three benefits are about risk: who owns the model, whether its training data was allowed, and whether a bad version can reach everyone.
+
+- **Cost falls as the student takes over.** In the reference simulation (mock models, ticket triage), the all-teacher cost was about $1.09 per 1,000 requests and Ratchet's steady-state cost about $0.15 to $0.16, a saving of 85 to 87% (**simulation**, unverified list prices). Real savings depend on the traffic mix and on GPU utilization.
+- **You own the result.** A LoRA adapter on an open base model, plus a signed bill of materials listing the teacher and license of every training example.
+- **Releases are gated.** A new student must beat the current one on held-out data, then pass shadow and canary stages. See [The release gate](/guides/release-gate/).
 
 ## How it could make money
 
-The plan is an open-source core (Apache-2.0: gateway, ledger, Night School, release gate, dashboard) that anyone can self-host, plus a managed or enterprise offering for teams that do not want to run the nightly loop and GPUs themselves. The idea for the managed tier is to charge a share of savings that Ratchet can verify, with no fee when there are no savings; the code already produces signed daily savings receipts for this (see [Evidence](/guides/evidence/)). This is a plan, not a product: nothing is sold today.
+The plan is an open-source core (Apache-2.0: gateway, ledger, Night School, release gate, dashboard) that anyone can self-host, plus a managed offering for teams that do not want to run the nightly loop and GPUs themselves. The managed idea is to charge a share of savings that Ratchet can verify, with no fee when there are none. The code already produces signed daily savings receipts for this (see [Evidence](/guides/evidence/)). This is a plan: nothing is sold today.
 
 ## Why now
 
 - **A deadline for fine-tuning customers.** OpenAI lists no new self-serve fine-tuning jobs after Jan 6, 2027 ([OpenAI deprecations](https://developers.openai.com/api/docs/deprecations), checked Oct 21, 2026). Teams with fine-tunes there need somewhere else to run them.
 - **Small models are being used for narrow tasks.** NVIDIA Research estimates that 40 to 70% of LLM calls in agent systems could go to small models ([arXiv 2506.02153](https://arxiv.org/abs/2506.02153), an estimate, not a measurement).
 
-## How it differs
+## How it differs from other categories
 
-| Approach | What it does well | What it does not do | Ratchet |
+| Category | What it does well | What it does not do | Ratchet |
 |---|---|---|---|
 | Routers and gateways | Pick a model per request, log and govern traffic | Learn from the traffic; every call stays rented | Learns from the traffic and trains a student |
 | Fine-tuning and distillation services | Train a model when you start a job | Run by themselves every night, or record each example's teacher license | Retrains nightly and signs the lineage into the adapter |
 | Reference blueprints and tutorials | Show the pattern and its parts | Run unattended; promotion is left to a person | Gates, canaries and rolls back automatically |
 
-Each of these exists in good form; the pieces are prior art. What Ratchet adds is the combination in one loop that runs by itself, with license-checked teachers and a statistical release gate. Sources are listed in [What is Ratchet](/guides/what-is-ratchet/).
+```mermaid
+flowchart TB
+  subgraph Prior["Existing categories"]
+    A["Routing and gateways"]
+    B["Distillation services"]
+    C["Blueprints and papers"]
+  end
+  A --> X["One loop that runs by itself"]
+  B --> X
+  C --> X
+  X --> O["Per-request escalation, nightly retrain, gated release, signed license lineage"]
+  classDef new fill:#1e3a8a,stroke:#3b82f6,color:#fff
+  class X,O new
+```
+
+**Reading this diagram.** Each category on top is real and useful, and Ratchet uses their ideas. The claim is only about the combination: routing, retraining and release safety joined in one loop, with each example's teacher license recorded. Sources for the prior art are listed in [What is Ratchet](/guides/what-is-ratchet/).
 
 ## Honest limits
 
-<Aside type="caution" title="As of Oct 21, 2026">
-- **Simulation only.** Ratchet has not run on a real Nebius account. All savings figures above come from mock models and are labelled as simulation. Live numbers will replace them after a published live run.
-- **One developer.** There is no team, no customer and no revenue.
-- **Savings depend on the traffic mix.** Per-token savings against the cheapest tiers of closed models are small; the large savings come from moving traffic off top-tier models, and only for tasks a small model can learn.
+<Aside type="caution" title="As of Oct 22, 2026">
+- **Not proven on live traffic.** The teacher calls are real on Nebius Token Factory, but the student endpoint has not been served on a Nebius GPU. Savings figures come from mock models and are labelled simulation. A text-to-SQL adapter trained on a free Colab T4 is the first real training result ([Results](/guides/results/)).
+- **Early stage.** There is no customer and no revenue.
+- **Savings depend on the traffic mix.** Per-token savings against the cheapest tiers of closed models are small. The large savings come from moving traffic off top-tier models, and only for tasks a small model can learn.
 - **A Token Factory terms question is open.** A question about its Terms of Service §5(f) was sent to Nebius support on Oct 19, 2026. This is not legal advice.
 </Aside>
 
 ## Related
 
 - [What is Ratchet](/guides/what-is-ratchet/)
+- [Why it matters](/guides/why-it-matters/)
 - [Cost and savings](/guides/cost-and-savings/)
 - [Licenses](/guides/licenses/)
 - [For judges](/guides/for-judges/)
