@@ -1,6 +1,29 @@
+<p align="center">
+  <img src="docs/img/banner.svg" alt="Ratchet: rent intelligence today, own it tomorrow" width="100%">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
+  <a href="https://github.com/harshbhx/ratchet/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/ci.yml?branch=main&label=CI"></a>
+  <img alt="Nebius Token Factory" src="https://img.shields.io/badge/Nebius-Token%20Factory-1f6feb">
+  <img alt="NVIDIA Nemotron" src="https://img.shields.io/badge/NVIDIA-Nemotron-76b900">
+</p>
+
 # Ratchet
 
 **License-clean distillation on open models. Rent intelligence today, own it tomorrow.**
+
+An OpenAI-compatible gateway: a small student model answers first, a teacher answers when the student is unsure, and every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
+
+<!-- TODO: add the "Model on Hugging Face" link here once the text-to-SQL adapter is published. -->
+[Live site](https://ratchet.dualmindlab.tech) · [Docs](https://ratchet-docs.pages.dev) · [Quick start](#quick-start-no-keys-1-minute) · [Scout](#scout-ratchet-on-agent-traffic) · [Status](#status-honestly)
+
+## Contents
+
+[At a glance](#at-a-glance) · [Status, honestly](#status-honestly) · [Quick start](#quick-start-no-keys-1-minute) · [Why license-clean](#why-license-clean) · [NVIDIA and Nebius](#how-it-uses-nvidia-and-nebius) · [NVIDIA lineage](#nvidia-lineage) · [Scout](#scout-ratchet-on-agent-traffic) · [Live mode](#live-mode-real-token-factory--nebius) · [Economics](#how-the-economics-work) · [Safety](#how-the-safety-works) · [Evidence](#what-a-certificate-means) · [Privacy](#privacy-and-security) · [Comparison](#why-not-a-router-or-a-distillation-api) · [Prior art](#prior-art-and-what-is-new) · [Limitations](#limitations) · [Docs](#documentation) · [License](#license)
+
+## At a glance
 
 Ratchet is an OpenAI-compatible gateway. Change one line (your base URL) and:
 
@@ -11,7 +34,29 @@ Ratchet is an OpenAI-compatible gateway. Change one line (your base URL) and:
 
 Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.
 
-![Ratchet: the story page](docs/img/landing.jpg)
+```mermaid
+flowchart LR
+    app([Your app]) --> gw[Ratchet gateway]
+    gw --> st["Student: Nemotron Nano 4B + your LoRA"]
+    st -->|confident| out([Answer])
+    st -->|unsure| te["Teacher: Nemotron 3 Ultra"]
+    te --> out
+    te --> led[("Ledger: answer, teacher, license")]
+    led --> ns[Night School: nightly LoRA training]
+    ns --> rel["Gated release: golden set, shadow, canary 10/50/100, rollback"]
+    rel --> st
+    classDef owned fill:#1e3a8a,stroke:#3b82f6,color:#fff
+    classDef rented fill:#7c2d12,stroke:#f97316,color:#fff
+    class st owned
+    class te rented
+```
+
+The pages below show the simulation (mock models, labelled as such on every page):
+
+| The story page | Scout | The dashboard |
+|---|---|---|
+| ![Ratchet: the story page](docs/img/landing.jpg) | ![Scout run (simulation)](docs/img/scout.jpg) | ![Dashboard (simulation)](docs/img/dashboard.jpg) |
+| `/` the story, with a replay of the reference simulation | `/scout` the multi-agent demo | `/dashboard` savings, releases, trust |
 
 The gateway serves a React web app ([web/](web/CLAUDE.md)):
 
@@ -21,23 +66,52 @@ The gateway serves a React web app ([web/](web/CLAUDE.md)):
 
 The original no-build pages stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
 
-| Scout | Dashboard |
-|---|---|
-| ![Scout run (simulation)](docs/img/scout.jpg) | ![Dashboard (simulation)](docs/img/dashboard.jpg) |
+## Status, honestly
 
-## Scout: Ratchet on agent traffic
+- **Simulation numbers are mock.** Every figure from `python -m sim.simulate` comes from mock models and is labelled simulation. It shows how the loop behaves, not real model quality.
+- **Live mode runs against Token Factory.** The teacher and the judge are real calls; the live-run harness measures them.
+- **The student endpoint has not been served on Nebius GPUs yet** (no compute credit). Until it is, a trained version's calls go to a hosted, untuned Nano model (see [Limitations](#limitations)).
+- **A text-to-SQL adapter was trained on a free Colab T4.** Its results will be published separately on Hugging Face.
 
-[Scout](docs/SCOUT.md) is a small multi-agent research demo. It answers a question from the web, and every one of its LLM calls goes through Ratchet with a task name:
+## Quick start (no keys, 1 minute)
 
-| Agent | Task | Route |
+```bash
+pip install -e ".[dev]"            # or: make install
+python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3   # full loop, mock models
+RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http://localhost:8000 (/, /scout, /dashboard)
+make web                                                                 # optional: rebuild the React UI (Node 22)
+RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
+python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
+pytest -q                                                                # 1781 tests
+```
+
+`RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
+
+The simulation uses **mock models**: it shows how the loop behaves (cold start, drift, rollback), not real model quality. Typical run (seed 7, 2,000 tickets/day, product launch on day 5, corrupted deploy of v3):
+
+```
+day  student  escal. audit ok     $/1k all-Ultra  saved
+  1       0%      0%        -    1.093     1.093     0%     <- cold start: all teacher
+  3      98%      2%     100%    0.160     1.093    85%     <- first student live
+  4      98%      2%      93%    0.160     1.093    85%     <- v3 deployed corrupted -> rolled back automatically
+  5      86%     14%      97%    0.272     1.093    75%     <- product launch: new questions escalate
+  9      98%      2%      97%    0.162     1.093    85%     <- learned overnight
+ 10      98%      2%      99%    0.147     1.093    87%
+```
+
+Success metrics for that run (PRD §8.1, computed by `ratchet/kpis.py` over the last three days; simulation, mock models, not real model quality):
+
+| Metric | Target | Simulation (seed 7) |
 |---|---|---|
-| Planner | `research-plan` | **Pinned** to Nemotron 3 Ultra (open-ended) |
-| Searcher | none (a tool) | [Tavily Search API](https://docs.tavily.com) in live mode, simulated results in mock mode |
-| Triage | `source-triage` | **Distilled**: one short labelling call per search result |
-| Reader | `page-read` | **Distilled**: one call per relevant result, pulls out the key fact |
-| Writer | `research-write` | **Pinned** to Nemotron 3 Ultra (open-ended) |
+| SM-1 cost reduction vs all-teacher | ≥ 70% | 84.5%, met |
+| SM-2 audited precision (585 audits pooled) | ≥ 95% | 98.5%, met (Wilson 97.1–99.2%) |
+| SM-3 student share | ≥ 80% | 96.9%, met |
+| SM-4 bad deploys reaching 100% traffic | 0 | 0, met (v3 rolled back at 10%) |
+| SM-5 time to recover from drift | ≤ 3 nights | 4 nights, **not met** |
 
-Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a share held back for hackathon judges and a paced Tavily credit budget; a run whose search fails still finishes, labelled.
+`GET /ratchet/kpis` computes the same metrics from a live ledger, and `python -m sim.simulate` prints them. No live run has been measured yet.
+
+`--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 92% of research calls on day 8 (81% saved that day, 62% over all 8 days), and 94% of mixed calls (82% saved that day, 51% overall), with per-task calibration on (the default: each task held to its own threshold and golden check). With `RATCHET_PER_TASK_CALIBRATION=0` (one pooled threshold, as in v0.4) the same runs give 96% of research calls (85% that day, 63% overall) and 98% of mixed calls (86%, 54%). See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed). `--workload schema` sends structured-output requests and `--workload tools` support requests with tool definitions, from the generic mock world, which also answers any other request the mock gateway gets (free text, an instance of the request's JSON schema, or a mock tool call) instead of refusing it ([docs/TESTING.md](docs/TESTING.md#workloads-schema-and-tools)). Tool calls pass through to the teacher and come back as `message.tool_calls` (also streamed, and in the legacy `function_call` form); a tool request is answered by the teacher alone and never stored, so the `tools` workload saves nothing until tool-call distillation ([ADR 0043](docs/adr/0043-tool-calls-teacher-only-by-default.md)).
 
 ## Why "license-clean"
 
@@ -79,45 +153,19 @@ NVIDIA's [Data Flywheel Blueprint](https://developer.nvidia.com/blog/build-effic
 
 The student's base has its own NVIDIA lineage: Nemotron 3 Nano 4B "has been compressed from NVIDIA-Nemotron-Nano-9B-v2 using the Nemotron Elastic framework", released Mar 16, 2026 ([model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16), read Oct 21, 2026).
 
-## Quick start (no keys, 1 minute)
+## Scout: Ratchet on agent traffic
 
-```bash
-pip install -e ".[dev]"            # or: make install
-python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3   # full loop, mock models
-RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http://localhost:8000 (/, /scout, /dashboard)
-make web                                                                 # optional: rebuild the React UI (Node 22)
-RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
-python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 1781 tests
-```
+[Scout](docs/SCOUT.md) is a small multi-agent research demo. It answers a question from the web, and every one of its LLM calls goes through Ratchet with a task name:
 
-`RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
-
-The simulation uses **mock models**: it shows how the loop behaves (cold start, drift, rollback), not real model quality. Typical run (seed 7, 2,000 tickets/day, product launch on day 5, corrupted deploy of v3):
-
-```
-day  student  escal. audit ok     $/1k all-Ultra  saved
-  1       0%      0%        -    1.093     1.093     0%     <- cold start: all teacher
-  3      98%      2%     100%    0.160     1.093    85%     <- first student live
-  4      98%      2%      93%    0.160     1.093    85%     <- v3 deployed corrupted -> rolled back automatically
-  5      86%     14%      97%    0.272     1.093    75%     <- product launch: new questions escalate
-  9      98%      2%      97%    0.162     1.093    85%     <- learned overnight
- 10      98%      2%      99%    0.147     1.093    87%
-```
-
-Success metrics for that run (PRD §8.1, computed by `ratchet/kpis.py` over the last three days; simulation, mock models, not real model quality):
-
-| Metric | Target | Simulation (seed 7) |
+| Agent | Task | Route |
 |---|---|---|
-| SM-1 cost reduction vs all-teacher | ≥ 70% | 84.5%, met |
-| SM-2 audited precision (585 audits pooled) | ≥ 95% | 98.5%, met (Wilson 97.1–99.2%) |
-| SM-3 student share | ≥ 80% | 96.9%, met |
-| SM-4 bad deploys reaching 100% traffic | 0 | 0, met (v3 rolled back at 10%) |
-| SM-5 time to recover from drift | ≤ 3 nights | 4 nights, **not met** |
+| Planner | `research-plan` | **Pinned** to Nemotron 3 Ultra (open-ended) |
+| Searcher | none (a tool) | [Tavily Search API](https://docs.tavily.com) in live mode, simulated results in mock mode |
+| Triage | `source-triage` | **Distilled**: one short labelling call per search result |
+| Reader | `page-read` | **Distilled**: one call per relevant result, pulls out the key fact |
+| Writer | `research-write` | **Pinned** to Nemotron 3 Ultra (open-ended) |
 
-`GET /ratchet/kpis` computes the same metrics from a live ledger, and `python -m sim.simulate` prints them. No live run has been measured yet.
-
-`--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 92% of research calls on day 8 (81% saved that day, 62% over all 8 days), and 94% of mixed calls (82% saved that day, 51% overall), with per-task calibration on (the default: each task held to its own threshold and golden check). With `RATCHET_PER_TASK_CALIBRATION=0` (one pooled threshold, as in v0.4) the same runs give 96% of research calls (85% that day, 63% overall) and 98% of mixed calls (86%, 54%). See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed). `--workload schema` sends structured-output requests and `--workload tools` support requests with tool definitions, from the generic mock world, which also answers any other request the mock gateway gets (free text, an instance of the request's JSON schema, or a mock tool call) instead of refusing it ([docs/TESTING.md](docs/TESTING.md#workloads-schema-and-tools)). Tool calls pass through to the teacher and come back as `message.tool_calls` (also streamed, and in the legacy `function_call` form); a tool request is answered by the teacher alone and never stored, so the `tools` workload saves nothing until tool-call distillation ([ADR 0043](docs/adr/0043-tool-calls-teacher-only-by-default.md)).
+Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a share held back for hackathon judges and a paced Tavily credit budget; a run whose search fails still finishes, labelled.
 
 ## Live mode (real Token Factory + Nebius)
 
@@ -371,3 +419,4 @@ python -m ratchet.live export --version 3 --out ./student-v3-export   # weights 
 ```
 
 Keep `NOTICE.md` with the adapter wherever you copy, share or deploy it, and keep the base model's license with any copy of the base model. For a base model Ratchet does not know, the notice says so instead of naming a license: add that license yourself. Not legal advice.
+
