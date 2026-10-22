@@ -6,6 +6,11 @@ description: What Ratchet keeps in its SQLite ledger and what it never keeps, ho
 import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>The ledger is one SQLite file that logs every request's metadata, keeps every stored teacher answer with its provenance (teacher, license, hash, redactions), and records every adapter version and release decision, so the training data behind an adapter can be checked later.</Summary>
 
@@ -20,6 +25,12 @@ The recipe book only gets a page when the **head chef from the agency** cooks a 
 The **apprentice chef's** own dishes are never copied into the book. A customer can also say "please don't keep my order": the dish is cooked as usual, but no page is written. And a page can be torn out on request: a stub with a fingerprint stays behind, so the same recipe is never written again.
 
 </Eli10>
+
+<StatRow cols={3} label="The ledger at a glance">
+  <Stat value="Metadata only" label="in every request row" note="Task, route, who served it, confidence and cost. Never the prompt or the answer." />
+  <Stat value="Redacted" label="before any text is stored" note="Emails, phone and card numbers and similar become placeholders. Names are not caught yet." />
+  <Stat value="Append-only" label="committed sets and receipts" note="Triggers refuse any change to an adapter's committed leaves or a sealed savings receipt." />
+</StatRow>
 
 ## How it really works
 
@@ -47,54 +58,72 @@ The **apprentice chef's** own dishes are never copied into the book. A customer 
 
 ### The privacy path, in one picture
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  A["Chat request"] --> B{"Did the teacher answer?"}
-  B -->|"no"| M["requests row: metadata only"]
-  B -->|"yes"| C{"Opt-out, pinned or tool request?"}
-  C -->|"yes"| M
-  C -->|"no"| D{"Complete and valid?"}
-  D -->|"no"| M
-  D -->|"yes"| R["Redact messages, answer, conditions"]
-  R --> E["examples row with provenance"]
-  E --> S{"Split by hash"}
-  S -->|"train, or seen 3+ times"| T["night/train.jsonl"]
-  S -->|"golden"| G["Golden eval only"]
+flowchart TB
+  A(["A chat request"]) --> B{{"Did the teacher answer?"}}
+  B -->|no| M[("requests row<br/>metadata only")]
+  B -->|yes| C{{"Opt-out, pinned<br/>or tool request?"}}
+  C -->|yes| M
+  C -->|no| D{{"Complete and valid?"}}
+  D -->|no| M
+  D -->|yes| R["Redact the messages,<br/>answer and conditions"]
+  R --> E[("examples row<br/>with provenance")]
+  E --> S{{"Split by hash"}}
+  S -->|"train, or seen<br/>3 or more times"| T["night/train.jsonl"]
+  S -->|golden| G["Golden eval only"]
+
+  class A neutral
+  class B,C,D,S gate
+  class M,E store
+  class R neutral
 ```
 
-Every path writes the metadata row. Only the bottom path writes text, and that text is redacted first.
+<figcaption>
 
-**Reading this diagram.** Start at the left with one chat request. Four questions can send it to the "metadata only" box: the teacher never answered, an opt-out or a pinned or tool request applies, or the teacher's answer was incomplete or invalid. Only a request that passes all four reaches redaction, and only then does text enter the ledger. The last split is by a hash of the redacted text, so it never depends on any model's opinion.
+**Reading this diagram.** Start at the top with one chat request. Every path writes the metadata row; the arrows into it show the three ways a request ends there and nowhere else: the teacher never answered, an opt-out or a pinned or tool request applies, or the teacher's answer was incomplete or invalid. Only a request that passes all three checks reaches redaction, and only then does text enter the ledger. The last split is by a hash of the redacted text, so it never depends on any model's opinion.
+
+</figcaption>
+</figure>
 
 ### The main tables
 
+<figure class="rt-diagram">
+
 ```mermaid
 flowchart LR
-  REQ["requests (metadata)"]
-  EX["examples (redacted text + provenance)"]
-  VER["versions (adapters, eval, BOM)"]
-  EV["events (release log)"]
-  LEAF["version_leaves (committed sets)"]
-  EC["example_clients"]
-  NT["no_train (end-user hashes)"]
-  TS["tombstones, erasures, erasure_items"]
-  RU["daily_rollup (folded sums)"]
-  RC["receipts (sealed days)"]
-  FB["feedback (verdicts)"]
-  REQ -->|"student_version"| VER
-  LEAF -->|"version_id"| VER
-  LEAF -->|"key = example hash"| EX
-  EC -->|"hash"| EX
-  TS -->|"erased hashes"| EX
-  FB -->|"request_id"| REQ
-  FB -->|"example_hash"| EX
-  REQ -->|"folded by retention"| RU
-  REQ -->|"sealed per day"| RC
-  NT -.->|"looked up per request"| REQ
-  VER -.->|"moves logged"| EV
+  EC["example_clients"] --> EX
+  TS["tombstones<br/>and erasures"] --> EX
+  LEAF["version_leaves<br/>committed sets"] --> EX
+  LEAF --> VER
+  FB["feedback<br/>verdicts"] --> EX
+  FB --> REQ
+  NT["no_train<br/>end-user hashes"] -.-> REQ
+  EX[("examples<br/>redacted text")]
+  REQ[("requests<br/>metadata")] --> VER[("versions<br/>adapters, BOMs")]
+  REQ --> RU["daily_rollup<br/>folded sums"]
+  REQ --> RC["receipts<br/>sealed days"]
+  VER -.-> EV["events<br/>release log"]
+
+  class REQ,EX,VER store
+  class RC,LEAF ok
+  class TS danger
 ```
 
-**Reading this diagram.** Boxes are tables and arrows are the column that links them. `requests` is the busiest table and holds no text. `examples` is the only table with (redacted) text. Three tables are special: `version_leaves` and `receipts` can only be appended to, and `tombstones` remembers erased hashes so that they can never be stored again. Dotted arrows are lookups at run time rather than stored links.
+<figcaption>
+
+**Reading this diagram.** Cylinders are the three core tables, boxes the others, and arrows the column that links them (`request_id`, `example_hash`, `version_id`, `student_version`). `requests` is the busiest table and holds no text; `examples` is the only table with text, redacted. Three tables are special: `version_leaves` and `receipts` (green) can only be appended to, and `tombstones` (red) remembers erased hashes so they can never be stored again. Retention folds old request rows into `daily_rollup`, and each ledger day is sealed into `receipts`. Dotted arrows are not stored links: `no_train` is looked up for each request, and every move of a version is logged in `events`.
+
+<ul class="rt-key">
+  <li class="store">Core table</li>
+  <li class="ok">Append-only</li>
+  <li class="danger">Erased hashes</li>
+  <li class="edge-optional">Not a stored link</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### The evidence tables, append-only
 
@@ -104,47 +133,61 @@ Two tables exist so that someone else can check Ratchet's claims later. `version
 
 Teachers are not the only source of a stored answer. Every chat response carries `ratchet.request_id`, and the caller can send `POST /v1/ratchet/feedback` with a verdict on one of its own requests (any other id is the same 404 as an unknown one).
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  V["Verdict on a request id"] --> K{"Verdict"}
-  K -->|correct| R1["Counts toward the task's human agreement. Nothing stored"]
-  K -->|"incorrect, no answer given"| R2["Counted only"]
-  K -->|"incorrect, with the right answer"| G{"Opt-out, pinned task, or corrections off?"}
-  G -->|yes| R3["Counted only"]
-  G -->|no| P["Check against the task spec, redact, hash"]
-  P --> S["store_label: example with provenance human, verified"]
-  I["python -m ratchet.importer file"] --> A["Attested human labels, or an open teacher's outputs"]
+flowchart TB
+  V(["A verdict on a request id"]) --> K{{"Which verdict?"}}
+  K -->|"correct, or incorrect<br/>with no answer"| R["Counted toward human<br/>agreement, nothing stored"]
+  K -->|"incorrect, with<br/>the right answer"| G{{"Opt-out, pinned task<br/>or corrections off?"}}
+  G -->|yes| R
+  G -->|no| P["Check against the spec,<br/>redact, hash"]
+  I(["python -m ratchet.importer"]) --> A["Attested human labels, or<br/>an open teacher's outputs"]
   A --> P
+  P --> S[("store_label writes the<br/>example, with provenance")]
+
+  class V,I neutral
+  class K,G gate
+  class R outline
+  class S store
 ```
 
-**Reading this diagram.** A verdict is never a label: "correct" stores nothing, because that would be the student's own answer coming back as a training target. Only a correction, a human's own answer, can become an example, and it goes through the same checks and redaction as a teacher's answer. The importer enters at the same point with an attestation from the operator, or with an open teacher's outputs, and refuses closed-model families. A stronger label replaces a weaker one for the same prompt (teacher, then a client's correction, then an operator's import). Verdicts feed each task's human agreement and each version's human precision, which are reported and alerted on, and never promote or roll back a version.
+<figcaption>
+
+**Reading this diagram.** A verdict is never a label: "correct" stores nothing, because that would be the student's own answer coming back as a training target. Only a correction, a human's own answer, can become an example, and it goes through the same checks and redaction as a teacher's answer. The importer enters at the same point with an attestation from the operator, or with an open teacher's outputs, and refuses closed-model families. A stronger label replaces a weaker one for the same prompt (teacher, then a client's correction, then an operator's import). Human corrections are stored with the provenance `human`; an open teacher's imported outputs keep that teacher and its license. Verdicts feed each task's human agreement and each version's human precision, which are reported and alerted on, and never promote or roll back a version.
+
+<ul class="rt-key">
+  <li class="gate">A check</li>
+  <li class="outline">Counted, nothing stored</li>
+  <li class="store">Stored as an example</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### Where each kind of data lives, and who can read it
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  subgraph Public["Anyone with the API key"]
-    A1["Own request lookup"]
-    A2["Own receipts"]
-    A3["Own feedback"]
-  end
-  subgraph Dash["Dashboard or admin key"]
-    B1["Stats, cost, BOM, redaction preview"]
-  end
-  subgraph Adm["Admin key"]
-    C1["Erase, export, no-train for all clients"]
-    C2["Training-set proofs, all receipts"]
-  end
-  subgraph Disk["Ledger file, private"]
-    D1["requests: metadata"]
-    D2["examples: redacted text"]
-  end
-  Public --> Disk
-  Dash --> Disk
-  Adm --> Disk
+flowchart TB
+  A1["<b>An API key</b><br/>its own lookups,<br/>receipts, feedback"]
+  B1["<b>A dashboard key</b><br/>stats, cost, BOMs,<br/>redaction preview"]
+  C1["<b>An admin key</b><br/>erase, export, no-train,<br/>proofs, all receipts"]
+  D[("The ledger file, private<br/>requests: metadata<br/>examples: redacted text")]
+  A1 --> D
+  B1 --> D
+  C1 --> D
+
+  class D store
 ```
 
-**Reading this diagram.** The three groups on the left are access levels, from narrowest to widest. An API key sees only what it sent. The dashboard key reads aggregates and never writes. Only an admin key can export, erase or open proofs. All three read from the same private file, which is why the file and its backups must be protected as much as the keys.
+<figcaption>
+
+**Reading this diagram.** The three groups at the top are access levels, from narrowest to widest. An API key sees only what it sent. The dashboard key reads aggregates and never writes. Only an admin key can export, erase or open proofs. All three read from the same private file, which is why the file and its backups must be protected as much as the keys.
+
+</figcaption>
+</figure>
 
 ### What is stored
 
@@ -164,16 +207,18 @@ The `origin` of an example says where it came from. Teacher answers from the gat
 
 ### What is never stored
 
+<div class="rt-callout rt-callout--owned"><p><strong>Teacher answers and human labels only.</strong> Training targets are teacher answers or customer-attested human labels, never the student's own answers.</p></div>
+
 | Never stored | Why | Where it is enforced |
 |---|---|---|
-| The student's answers, as training targets or at all | Training on a model's own outputs causes collapse | Invariant 2: only `_store_example` (teacher answers) and `feedback.store_label` (attested human labels) may call `add_example`; a test fails on any other caller |
-| Pinned tasks' answers | Open-ended tasks (Scout's planner and writer) stay on the teacher for good | Invariant 10: `_teacher_only` never calls `add_example`, and Night School leaves out rows of a task that is pinned now |
+| The student's answers, as training targets or at all | Training on a model's own outputs causes collapse | Only `_store_example` (teacher answers) and `feedback.store_label` (attested human labels) may call `add_example`; a test fails on any other caller |
+| Pinned tasks' answers | Open-ended tasks (Scout's planner and writer) stay on the teacher for good | `_teacher_only` never calls `add_example`, and Night School leaves out rows of a task that is pinned now |
 | Tool requests, multimodal requests | A tool request is answered by the teacher alone (route `tools`) until tool-call distillation exists | |
-| Opted-out requests | The client, its key, the task, the end user or the operator said so | Invariant 22: opt-outs only reduce storage |
-| Incomplete or invalid teacher answers | A cut-off or malformed answer would teach the wrong thing | Invariant 16 |
+| Opted-out requests | The client, its key, the task, the end user or the operator said so | `Ratchet.store_opt_out`, asked again before every write: opt-outs only reduce storage |
+| Incomplete or invalid teacher answers | A cut-off or malformed answer would teach the wrong thing | `Ratchet._store_example` checks `finish_reason` and the task's spec first |
 | Answers written under label-altering client sampling | A client may choose its own answer, not the label everyone's student learns | `GenParams.unstorable`, threat model T2 |
-| Raw end-user identifiers, API keys | Privacy and key safety | Invariants 13 and 23: key names and keyed hashes only |
-| Request text in `requests`, `failures`, logs or `/metrics` | Metadata is enough to run the system | Invariant 12 |
+| Raw end-user identifiers, API keys | Privacy and key safety | Key names and keyed hashes only |
+| Request text in `requests`, `failures`, logs or `/metrics` | Metadata is enough to run the system | `requests` holds metadata only; logs and metrics carry ids, names and numbers |
 
 A fallback teacher's answers are stored only with `RATCHET_STORE_FALLBACK_TEACHER=1`, and then under that model's own license. A request for `n` choices stores only the teacher's choice 0.
 
@@ -239,17 +284,37 @@ Opt-outs keep new data out; these remove or hand over what is there.
 
 An erased example goes through a short life cycle:
 
+<figure class="rt-diagram">
+
 ```mermaid
 stateDiagram-v2
-    [*] --> Stored: teacher answer stored, redacted
-    Stored --> Purged: retention window passes
-    Purged --> Stored: a storable duplicate arrives
-    Stored --> Erased: erase by client, end user, hashes or text
-    Purged --> Erased: erase
-    Erased --> Erased: add_example refuses the hash from any client
+  [*] --> Stored: a teacher answer
+  Stored --> Purged: retention
+  Purged --> Stored: a duplicate
+  Stored --> Erased: erased by client,<br/>end user, hash or text
+  Purged --> Erased: erased
+  note right of Erased
+    add_example refuses
+    the hash from any client
+  end note
+
+  class Stored ok
+  class Purged pending
+  class Erased danger
 ```
 
-**Reading this diagram.** A purge is reversible in one way only: if the same request arrives again and may be stored, its text comes back. An erasure is not. From the moment the hash is a tombstone, no client can store it again, and the row keeps only hashes and counts. The adapters that may have learned from it are reported but their signed BOMs are never rewritten.
+<figcaption>
+
+**Reading this diagram.** A purge is reversible in one way only: if the same request arrives again and may be stored, its text comes back. An erasure is not. From the moment the hash is a tombstone, no client can store it again, and the row keeps only hashes and counts. The adapters that may have learned from it are reported, but their signed BOMs are never rewritten.
+
+<ul class="rt-key">
+  <li class="ok">Text kept</li>
+  <li class="pending">Text purged, may come back</li>
+  <li class="danger">Erased for good</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### What can go wrong
 
@@ -380,8 +445,13 @@ Not from a live gateway's public endpoints: the training-set proof endpoints nee
 
 ## Related
 
-- [The request journey](/guides/request-journey/): where the teacher answers come from
-- [Night School](/guides/night-school/): how the stored examples become an adapter
-- [Licenses](/guides/licenses/): why every example records its teacher's license
-- [Security](/guides/security/) and the [threat model](/reference/threat-model/)
-- [Architecture: data model](/reference/architecture/#4-data-model-sqlite)
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="start" eyebrow="Where answers come from" tone="neutral" description="Where the teacher answers in the ledger come from, one request at a time." />
+  <PathCard title="Night School" href="/guides/night-school/" icon="loop" eyebrow="Where they go" description="How the stored examples become an adapter you own." />
+  <PathCard title="Licenses" href="/guides/licenses/" icon="scale" eyebrow="Provenance" tone="neutral" description="Why every example records its teacher's license." />
+  <PathCard title="Security and safety" href="/guides/security/" icon="shield" eyebrow="Who may read it" tone="neutral" description="Keys, access levels and what is logged, with the threat model." />
+</PathGrid>
+</FadeContent>
+
+More detail: the [threat model](/reference/threat-model/) and the [architecture's data model](/reference/architecture/#4-data-model-sqlite).

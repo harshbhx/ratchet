@@ -3,10 +3,14 @@ title: Quickstart
 description: Run Ratchet on your own machine in mock mode in a few minutes, with no keys, no GPU and no cost, then send it requests and watch it learn.
 ---
 
-import { Steps, Tabs, TabItem, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
 
 <Summary>Mock mode runs the whole Ratchet loop on your laptop with simulated models, so you can watch every part of it work in a few minutes without API keys, a GPU or a bill.</Summary>
 
@@ -23,6 +27,12 @@ The **Break next deploy** button secretly swaps the next notebook of techniques 
 Nothing in the practice kitchen tells you how good a real chef is. Every number it shows is labelled simulation.
 
 </Eli10>
+
+<StatRow cols={3} label="What mock mode needs">
+  <Stat value="No keys" label="no API keys" note="Mock models stand in for the student and the teacher." />
+  <Stat value="No GPU" label="runs on a laptop" note="Python 3.10 or newer and git; no Node." />
+  <Stat value="No bill" label="no paid calls" note="Mock mode calls no model and no web search." />
+</StatRow>
 
 ## The one-minute path
 
@@ -69,15 +79,30 @@ Then open `http://localhost:8000/` (the story), `/scout` (the research demo) and
 
 What is running on your machine:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  you["Your code, curl or the Scout CLI"] -->|"POST /v1/chat/completions"| gw["Gateway, mock mode"]
-  browser["Your browser"] -->|"/, /scout, /dashboard"| gw
-  gw --> fleet["Mock student and mock teacher"]
+flowchart TB
+  you(["Your code, curl<br/>or the Scout CLI"]) ==>|"/v1/chat/completions"| gw["Gateway, mock mode"]
+  browser(["Your browser"]) -->|"/, /scout, /dashboard"| gw
+  subgraph sim["Simulated, from sim/"]
+    fleet["Mock student<br/>and mock teacher"]
+    night["Mock Night School"]
+  end
+  gw ==> fleet
+  gw -->|"Run 1 day + night"| night
   gw --> ledger[("Ledger in memory")]
-  gw -->|"Run 1 day + night"| night["Mock Night School"]
   night --> ledger
+  class ledger store
+  class sim outlineZone
 ```
+
+<figcaption>
+
+**Reading this diagram.** Everything here runs on your machine. Requests come in at the top, from your code or your browser, and reach the same gateway code that live mode runs. Only what sits in the dashed box is simulated: the models and the nightly training. The ledger lives in memory, so a restart starts over.
+
+</figcaption>
+</figure>
 
 The gateway is the same code as in live mode. Only the models are swapped: in mock mode the student, the teacher and the trainer are simulations from [`sim/`](https://github.com/harshbhx/ratchet/tree/main/sim), and the ledger is an in-memory SQLite database, so every restart starts over.
 
@@ -196,6 +221,12 @@ Install the SDK first with `npm install openai`.
 
 Every answer is a standard `chat.completion` plus a `ratchet` block. The fields you will read most:
 
+<div class="rt-callout rt-callout--sim">
+
+**Simulation.** In mock mode every number in the response comes from mock models.
+
+</div>
+
 | Field | Meaning |
 |---|---|
 | `served_by` | `student` or `teacher` |
@@ -228,7 +259,11 @@ make sim
 
 That runs `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3`: ten days of 2,000 support tickets a day through the real cascade, the real release gate and Night School, with mock models. A product launch on day 5 brings questions the student has never seen, and version 3 is deployed corrupted. It prints a day table and the event log, and writes `sim_results.json`.
 
+<div class="rt-callout rt-callout--sim">
+
 **Simulation, mock models, seed 7.** This is the pinned reference run ([TESTING.md](/reference/testing/)), so it reproduces exactly:
+
+</div>
 
 ```text
 day  student  escal. audit ok     $/1k all-Ultra  saved
@@ -298,7 +333,7 @@ The variables stay set for that PowerShell window; `Remove-Item Env:RATCHET_MOCK
 | `RATCHET_MOCK_ENDPOINT_HOURS` | `24` | Hours a day the simulated student endpoint runs, for the cost report (a simulation assumption) |
 | `RATCHET_API_KEYS` | empty | Turn on gateway API keys locally too: `RATCHET_API_KEYS="me:$(openssl rand -hex 24)" make demo` |
 
-**Endpoints used here** ([API reference](/reference/api/)): `POST /v1/chat/completions`, `GET /v1/models`, `GET /ratchet/stats`, `GET /ratchet/cost`, `GET /healthz`, and the mock-only demo controls `POST /ratchet/demo/day?requests=1500&workload=tickets`, `POST /ratchet/demo/break-next`, `POST /ratchet/demo/student-outage?seconds=60` and `POST /ratchet/demo/reset`, which answer 403 in live mode (invariant 8).
+**Endpoints used here** ([API reference](/reference/api/)): `POST /v1/chat/completions`, `GET /v1/models`, `GET /ratchet/stats`, `GET /ratchet/cost`, `GET /healthz`, and the mock-only demo controls `POST /ratchet/demo/day?requests=1500&workload=tickets`, `POST /ratchet/demo/break-next`, `POST /ratchet/demo/student-outage?seconds=60` and `POST /ratchet/demo/reset`, which answer 403 in live mode.
 
 **Files**: the gateway is [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) (FastAPI app `ratchet.gateway:app`); the cascade is `Ratchet.handle` in [`ratchet/router.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/router.py); the simulator is [`sim/simulate.py`](https://github.com/harshbhx/ratchet/blob/main/sim/simulate.py), with traffic in `sim/tickets.py`, `sim/research.py` and `sim/generic.py`. To keep a simulated run's ledger for the replay tools, run `python -m sim.simulate --db sim.db`.
 
@@ -314,7 +349,7 @@ Because it is not one of the requests the mock world was scripted for. The gener
 
 ### Are the numbers real?
 
-No. Every number in mock mode, `make sim` included, comes from mock models and shows how the loop behaves: cold start, drift, rollback, savings over time. As of Oct 21, 2026 there are no live numbers yet; see [evidence](/guides/evidence/).
+No. Every number in mock mode, `make sim` included, comes from mock models and shows how the loop behaves: cold start, drift, rollback, savings over time. As of Oct 22, 2026 the only measured numbers are the text-to-SQL adapter's, read from its results file on [Results](/guides/results/); there is no live run of the full loop yet. See [evidence](/guides/evidence/).
 
 ### Where is my data?
 
@@ -338,9 +373,9 @@ Run the day-1 checks with a Token Factory key, then follow [Host it on Nebius](/
 
 ## Related
 
-<CardGrid>
-  <LinkCard title="What is Ratchet?" href="/guides/what-is-ratchet/" description="The idea in plain words." />
-  <LinkCard title="The request journey" href="/guides/request-journey/" description="What happens to one request, step by step." />
-  <LinkCard title="Night School" href="/guides/night-school/" description="How a new student is trained every night." />
-  <LinkCard title="Host it on Nebius" href="/guides/host-on-nebius/" description="The demo VM, the GPU endpoint and training." />
-</CardGrid>
+<PathGrid cols={2} label="Related pages">
+  <PathCard title="What is Ratchet?" href="/guides/what-is-ratchet/" icon="book" tone="neutral" description="The idea in plain words." />
+  <PathCard title="The request journey" href="/guides/request-journey/" icon="loop" description="What happens to one request, step by step." />
+  <PathCard title="Night School" href="/guides/night-school/" icon="layers" description="How a new student is trained every night." />
+  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" tone="neutral" eyebrow="Not run yet" description="The demo VM, the GPU endpoint and training, written and tested offline." />
+</PathGrid>

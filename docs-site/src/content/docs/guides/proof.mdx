@@ -6,6 +6,9 @@ description: Every claim Ratchet makes comes with a command that checks it, what
 import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import Stepper from '../../../components/ui/Stepper.astro';
 
 <Summary>Each claim about an adapter or a bill has a document and a command that checks it on your own machine, so you do not have to trust the gateway that made it.</Summary>
 
@@ -18,6 +21,12 @@ Ratchet gives you a chain of such receipts. The first says how well the model di
 Each link has one command. When a link is broken, the command says `FAIL` and why.
 
 </Eli10>
+
+<StatRow cols={3} label="The chain at a glance">
+  <Stat value={6} count={false} label="links in the chain" note="Each with one command you run on your own machine." />
+  <Stat value={1} count={false} label="run on a real model" tone="owned" note="The text-to-SQL exam and its verify step." />
+  <Stat value="No gateway" label="needed to check" note="Only the documents, a public key and this repository's tools." />
+</StatRow>
 
 ## How it really works
 
@@ -37,22 +46,39 @@ Each link has one command. When a link is broken, the command says `FAIL` and wh
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  EXAM["Exam on unseen databases<br/>measure_adapter.py verify"] --> CERT
-  DATA["Training and golden rows"] --> ROOTS["Merkle roots over each set"]
-  ROOTS --> BOM["Signed bill of materials<br/>python -m ratchet.bom verify"]
-  ROOTS --> PROOF["Membership and held-out proofs<br/>python -m ratchet.proof"]
-  BOM --> CERT["Certified precision<br/>python -m ratchet.stats check"]
-  BOM --> LIC["Licenses and NOTICE.md"]
-  CERT --> GATE["Release gate decision"]
-  GATE --> LEDGER["Ledger of served requests"]
-  LEDGER --> REPLAY["Replay at another threshold<br/>python -m ratchet.replay"]
-  LEDGER --> REC["Sealed daily receipts<br/>python -m ratchet.receipt verify"]
-  REC --> CHAIN["Chained to the previous day"]
+flowchart TB
+  DATA[("Training and<br/>golden rows")] --> ROOTS["Merkle roots<br/>over each set"]
+  ROOTS --> PROOF["Membership and<br/>held-out proofs<br/>ratchet.proof"]
+  ROOTS --> BOM["Signed bill of materials<br/>ratchet.bom verify"]
+  EXAM["Exam on unseen databases<br/>measure_adapter.py verify"]
+  BOM --> LIC["Licenses and<br/>NOTICE.md"]
+  BOM --> CERT["Certified precision<br/>ratchet.stats check"]
+  EXAM --> CERT
+  CERT --> GATE{{"Release gate decision"}}
+  GATE --> LEDGER[("Ledger of<br/>served requests")]
+  LEDGER --> REPLAY["Replay at another threshold<br/>ratchet.replay"]
+  LEDGER --> REC["Sealed daily receipts<br/>ratchet.receipt verify"]
+  REC --> CHAIN["Chained to the<br/>previous day"]
+  class DATA,LEDGER store
+  class GATE gate
+  class EXAM student
 ```
 
-**Reading this diagram.** Follow the arrows from the data. The training and golden rows are committed first, then the signed document is built on top of those commitments, and the certificate is read from the signed document. Once the version is serving, the ledger fills with request metadata, and both the replay and the receipts read from the ledger. A command sits on every box, so each step down the chain can be checked on its own, and a change anywhere above breaks the checks below it.
+<figcaption>
+
+**Reading this diagram.** Follow the arrows from the data. The training and golden rows are committed first, then the signed document is built on top of those commitments, and the certificate is read from the signed document. Once the version is serving, the ledger fills with request metadata, and both the replay and the receipts read from the ledger. A command sits on every box (each `ratchet.*` one runs as `python -m ratchet.*`), so each step down the chain can be checked on its own, and a change anywhere above breaks the checks below it. The blue box is the one link that has run on a real model.
+
+<ul class="rt-key">
+  <li class="store">Stored data</li>
+  <li class="gate">A release decision</li>
+  <li class="student">Run on a real model</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ## What exists today, and what has run for real
 
@@ -70,6 +96,20 @@ Only the text-to-SQL adapter has been run on real models, and only its exam and 
 | Savings receipts | `ratchet/receipts.py`, `ratchet/receipt.py` | Tests and simulation | No |
 
 ## The checks, one by one
+
+The short version, one claim at a time; the full text for each follows below.
+
+<Stepper
+  label="Check it yourself"
+  steps={[
+    { title: 'The exam score', body: 'Run `measure_adapter.py verify` with the raw answers, the results, the exam and its databases.\n\nIt prints `OK` when every number is recomputed and matches, or a line starting `FAIL:` that names the file that changed or the numbers that differ.', tone: 'owned' },
+    { title: 'The signed bill of materials', body: 'Run `python -m ratchet.bom verify bom.json --public-key <key>`, and add `--notice NOTICE.md` to check the notice next to the adapter.\n\nA failure starts with `FAIL:`: a signature that does not match, or a hash that differs.' },
+    { title: 'The training set', body: 'Run `python -m ratchet.proof verify` for one example, or `python -m ratchet.proof heldout` for every golden example.\n\nA failure starts with `FAIL:`, for example when a proof does not rebuild the signed root.' },
+    { title: 'Certified precision', body: 'Run `python -m ratchet.stats check bom.json --public-key <key>`.\n\nIt recomputes the bound from the signed counts and prints a line for each number that differs from the signed one.' },
+    { title: 'The time machine', body: 'Run `python -m ratchet.replay --db ratchet.db --version 3`.\n\nIt is an estimate, not a signed document: a `null` column means the logged data cannot support an estimate at that setting.' },
+    { title: 'The savings receipts', body: 'Run `python -m ratchet.receipt verify r.json --public-key <key> --prev p.json`.\n\nA changed receipt fails with a line such as `FAIL: chain: prev_sha256 is not the sha256 of day N\'s receipt`.' },
+  ]}
+/>
 
 ### 1. The exam: `measure_adapter.py verify`
 
@@ -149,17 +189,26 @@ python -m ratchet.receipt verify r.json --public-key <key> [--prev p.json] [--pr
 
 ## What a failure looks like, in one picture
 
+<figure class="rt-diagram">
+
 ```mermaid
 flowchart LR
-  F["A file is changed after it was made"] --> W{"Which file?"}
-  W -->|"raw answers or results"| E1["exam verify: FAIL, recomputed numbers differ"]
-  W -->|"the BOM"| E2["bom verify: FAIL, signature or hash does not match"]
-  W -->|"the training set"| E3["proof verify: FAIL, proof does not rebuild the signed root"]
-  W -->|"a past receipt"| E4["receipt verify: FAIL: chain, prev_sha256 differs"]
-  W -->|"a request row"| E5["receipt proof: FAIL: proof, the leaf is not in the root"]
+  F(["A file is changed<br/>after it was made"]) --> W{{"Which file?"}}
+  W -->|"raw answers<br/>or results"| E1["exam verify:<br/>numbers differ"]
+  W -->|"the BOM"| E2["bom verify: signature<br/>or hash fails"]
+  W -->|"training set"| E3["proof verify: root<br/>does not rebuild"]
+  W -->|"past receipt"| E4["receipt verify:<br/>chain broken"]
+  W -->|"request row"| E5["receipt proof:<br/>leaf not in the root"]
+  class W gate
+  class E1,E2,E3,E4,E5 danger
 ```
 
-**Reading this diagram.** Each file has its own alarm. Changing a file never goes unnoticed by the check next to it, and because later documents commit to earlier ones, a change to an old receipt shows up in the next day's receipt as well. The failure text names the file and the reason, so you know where to look.
+<figcaption>
+
+**Reading this diagram.** Each file has its own alarm, and every alarm prints a line starting `FAIL:`. Changing a file never goes unnoticed by the check next to it, and because later documents commit to earlier ones, a change to an old receipt shows up in the next day's receipt as well. The failure text names the file and the reason, so you know where to look.
+
+</figcaption>
+</figure>
 
 ## For engineers
 
@@ -172,7 +221,7 @@ flowchart LR
 | Replay | [`ratchet/replay.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/replay.py) | `tests/test_system.py`, `tests/test_core.py` |
 | Receipts | [`ratchet/receipts.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/receipts.py) | `tests/test_receipts.py` |
 
-Signing uses an Ed25519 key from `RATCHET_BOM_SIGNING_KEY`. Generate one with `python -m ratchet.bom keygen`, keep the seed secret and publish the public key somewhere other than the gateway. The tables that hold committed leaves and sealed receipts refuse `UPDATE` and `DELETE` by trigger (invariant 17).
+Signing uses an Ed25519 key from `RATCHET_BOM_SIGNING_KEY`. Generate one with `python -m ratchet.bom keygen`, keep the seed secret and publish the public key somewhere other than the gateway. The tables that hold committed leaves and sealed receipts refuse `UPDATE` and `DELETE` by trigger.
 
 ## Common questions
 

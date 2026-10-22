@@ -7,8 +7,16 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import Flow from '../../../components/Flow.astro';
+import FlowStep from '../../../components/FlowStep.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
+import GradientText from '../../../components/ui/GradientText.astro';
 
-<Summary>Night School is the nightly job that trains a fresh LoRA adapter from the base model on every teacher answer stored so far, grades it on a sealed golden set it never studied, and hands it to the release gate.</Summary>
+<Summary>Night School is the nightly job that trains <GradientText text="a fresh LoRA adapter" tone="owned" /> from the base model on every teacher answer stored so far, grades it on a sealed golden set it never studied, and hands it to the release gate.</Summary>
 
 <Eli10>
 
@@ -21,6 +29,13 @@ Some recipes are kept in a **sealed exam** envelope. The apprentice never studie
 Night school is skipped when there is nothing new to learn, when the new apprentice from last night is still on a **trial shift**, or when the manager says "no class tonight". If the apprentice passes the exam, they start their trial shift. If not, the notebook goes in the bin.
 
 </Eli10>
+
+<Flow loop loopLabel="Every night, again" label="One night">
+  <FlowStep title="Build the sets" meta="dataset.build">Training rows and the sealed golden rows, split by a hash of each request.</FlowStep>
+  <FlowStep title="Train from the base" tone="owned" meta="Nano 4B + a new LoRA">A fresh adapter on every training row so far, never on student answers.</FlowStep>
+  <FlowStep title="Grade on the golden set" meta="cascade_eval">Even rows set the threshold, odd rows it never saw grade it.</FlowStep>
+  <FlowStep title="Sign and hand over" meta="BOM, then gate.admit">A bill of materials, signed when a key is set, then shadow, canary or rejected.</FlowStep>
+</Flow>
 
 ## How it really works
 
@@ -124,6 +139,14 @@ The live commands, file paths and polling are on [Training on your data](/guides
 
 ### The golden set: the sealed exam
 
+<div class="rt-callout rt-callout--note"><p><strong>Golden examples are never trained on.</strong> The one exception is a request seen 3 or more times, which moves to training and leaves the golden set.</p></div>
+
+<StatRow cols={3} label="The night's numbers">
+  <Stat value={10} suffix="%" count={false} label="held out as golden" note="RATCHET_GOLDEN_FRACTION: a hash of each request decides, not a model." />
+  <Stat value={3} count={false} label="sightings move a row to training" note="The FREQUENT rule: common questions are learned, not held out forever." />
+  <Stat value={50} count={false} label="new training rows to train" note="Below that the night skips and spends no GPU time." />
+</StatRow>
+
 - **Split by hash.** When an example is first stored, its split is fixed: `golden` if the first 8 hex digits of its hash, divided by `0xFFFFFFFF`, are below `RATCHET_GOLDEN_FRACTION` (default 0.10), else `train`. The hash is over the task and the redacted messages, so the split never changes and nothing leaks from re-splitting.
 - **Variants share a split.** The same prompt stored under other conditions (a `stop`, a JSON schema) is another example, but it lands in the same split. The trainer only sees the messages, so a golden prompt stored again in train would be trained on.
 - **Never trained on**, with one exception, the FREQUENT rule below. Golden rows are only ever used to calibrate and grade.
@@ -189,7 +212,7 @@ Before the model loads, `train.py` checks every row (`check_rows`) and stops on 
 | Row | Left out of | Why | Counted as |
 |---|---|---|---|
 | Purged by retention or erasure | Both sets | No text left; its `seen` still counts toward FREQUENT | |
-| Task pinned now | Both sets | Pinned tasks never train the student (invariant 10), even when pinned after rows were stored | `excluded_pinned` |
+| Task pinned now | Both sets | Pinned tasks never train the student, even when pinned after rows were stored | `excluded_pinned` |
 | Teacher unknown or not distillable | Both sets | Only distillable provenance is used ([licenses](/guides/licenses/)) | |
 | Stored with a client's `stop` | Training (stays golden) | `train.py` renders messages only, so the cut answer would teach the bare prompt to stop there | |
 | Answer invalid under the task's current spec | Training (stays golden; the eval skips an invalid reference) | The spec tightened since it was stored | `skipped_invalid`, `golden_invalid_refs` |
@@ -287,13 +310,13 @@ flowchart LR
 
 <figcaption>
 
-**Reading this diagram.** Read left to right, one box per stretch of the run, and down inside each. v3 passed every check that does not need live traffic: the golden gate on day 3, then the shadow comparison on day 4. The canary is where its answers met real requests and real audits. While v3 served 1 request in 10, v1 stayed live for the rest; when the audits showed v3's precision could not reach the 0.92 floor, the gate rolled it back the same day, and v3 never reached 100% of traffic. The loop went on: v4 was trained that night and went live on day 6.
+**Reading this diagram.** Simulation, mock models, seed 7. Read left to right, one box per stretch of the run, and down inside each. v3 passed every check that does not need live traffic: the golden gate on day 3, then the shadow comparison on day 4. The canary is where its answers met real requests and real audits. While v3 served 1 request in 10, v1 stayed live for the rest; when the audits showed v3's precision could not reach the 0.92 floor, the gate rolled it back the same day, and v3 never reached 100% of traffic. The loop went on: v4 was trained that night and went live on day 6.
 
 </figcaption>
 </figure>
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter on a real Nebius account. The checks to run first are in DAY1.md.
+<Aside type="caution" title="Not run on a Nebius GPU yet">
+As of Oct 22, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter in a Nebius job. The one adapter trained so far, for text-to-SQL, was trained on a free Colab T4 outside Night School. The day-1 checks (`scripts/day1_check.py`) come first.
 </Aside>
 
 ## For engineers
@@ -326,7 +349,7 @@ The rules are tested one by one in `tests/test_nightschool.py` (skip reasons, he
 | `RATCHET_JUDGE_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Judge for free-text tasks |
 | `RATCHET_STUDENT_BASE_MODEL` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | The base every adapter is trained from |
 | `RATCHET_BOM_SIGNING_KEY` | empty | Signs each BOM (Ed25519); empty means unsigned with a SHA-256 |
-| `RATCHET_TRAIN_GPU_USD_PER_HOUR`, `RATCHET_TRAIN_GPUS` | `1.55`, `1` | Prices the training interval for the cost report (unverified list price) |
+| `RATCHET_TRAIN_GPU_USD_PER_HOUR`, `RATCHET_TRAIN_GPUS` | `1.55`, `1` | Prices the training interval for the cost report. The code's default; these docs use 1.35 USD per GPU-hour, Nebius's list price for an L40S. Set the rate on your bill |
 
 The live-mode variables (`RATCHET_DATA_DIR`, `RATCHET_SYNC_CMD`, `RATCHET_TRAIN_CMD`, `RATCHET_ADAPTER_ROOT`) are on [Training on your data](/guides/training-on-your-data/). The release policy's thresholds are on [the release gate](/guides/release-gate/).
 
@@ -350,7 +373,7 @@ Continuing piles up drift and forgetting, and makes rollback harder. Retraining 
 
 ### What does a night cost?
 
-An estimate from the repo's [deployment guide](/reference/deployment/#4-cost-estimates), with unverified on-demand list prices (October 2026): an L40S at about $1.55 an hour for 30 to 60 minutes is about $0.80 to $1.60 per training night. Skipped nights cost nothing. Night School also needs the student endpoint running while it loads and grades the new adapter. Real costs are recorded once it runs: `python -m ratchet.cost report`.
+An estimate from the repo's [deployment guide](/reference/deployment/#4-cost-estimates): an L40S at about $1.35 per GPU-hour on demand ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026) for 30 to 60 minutes is about $0.70 to $1.35 per training night. Skipped nights cost nothing. Night School also needs the student endpoint running while it loads and grades the new adapter. Real costs are recorded once it runs: `python -m ratchet.cost report`.
 
 ### What happens if training fails halfway?
 
@@ -370,12 +393,17 @@ Big enough for the certificate to mean something. With about 200 golden rows, pr
 
 ### Has a real adapter been trained yet?
 
-Not as of Oct 21, 2026. The loop is tested in simulation and the live path offline. The first real night follows the day-1 checks.
+One, outside Night School: the [text-to-SQL adapter](/guides/text-to-sql/) was trained on a free Colab T4, not on Nebius. Night School itself has not trained an adapter on a real Nebius account as of Oct 22, 2026: the loop is tested in simulation and the live path offline, and the first real night follows the day-1 checks.
 
 ## Related
 
-- [The release gate](/guides/release-gate/): what happens after `admit`
-- [Training on your data](/guides/training-on-your-data/): the live commands, bucket and endpoint
-- [The ledger](/guides/ledger/): where the rows come from
-- [Confidence](/guides/confidence/): what the threshold means
-- [Architecture: nightly loop](/reference/architecture/#3-nightly-loop-night-school)
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="The release gate" href="/guides/release-gate/" icon="gate" eyebrow="After admit" tone="neutral" description="Shadow, canary 10%, 50%, live, and the rollback that guards them." />
+  <PathCard title="Training on your data" href="/guides/training-on-your-data/" icon="server" eyebrow="Live mode" description="The live commands, the bucket and the endpoint that loads each adapter." />
+  <PathCard title="The ledger" href="/guides/ledger/" icon="database" eyebrow="Where rows come from" tone="neutral" description="The stored teacher answers, their provenance and what is never kept." />
+  <PathCard title="Confidence" href="/guides/confidence/" icon="scale" eyebrow="The threshold" tone="neutral" description="What the threshold the night calibrates means on every request." />
+</PathGrid>
+</FadeContent>
+
+The nightly loop in full: [Architecture, nightly loop](/reference/architecture/#3-nightly-loop-night-school).

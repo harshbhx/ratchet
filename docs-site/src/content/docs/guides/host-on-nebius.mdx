@@ -7,6 +7,11 @@ import { Steps, Tabs, TabItem, Aside, FileTree } from '@astrojs/starlight/compon
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>Ratchet runs on one small Nebius CPU VM that does no model inference, calls its teacher, judge and hosted fallback on Token Factory, and rents an L40S GPU only while you serve or train the student, so GPU money is spent only when you decide to spend it.</Summary>
 
@@ -216,7 +221,7 @@ export NEBIUS_API_KEY=...        # a Token Factory key from its console
 python scripts/day1_check.py     # or: make day1
 ```
 
-The script confirms that the four model IDs exist and that the teacher answers, returns logprobs and supports JSON mode. It also prints each model's `finish_reason` and whether the teacher takes the strict `json_schema` format. If an ID differs, set `RATCHET_TEACHER_MODEL` (and update `ratchet/licenses.py` and `DEFAULT_PRICES`). Model IDs and prices in `ratchet/config.py` stay unverified until this passes (invariant 9). The full checklist, each check with its fallback, is in the day-1 checklist.
+The script confirms that the four model IDs exist and that the teacher answers, returns logprobs and supports JSON mode. It also prints each model's `finish_reason` and whether the teacher takes the strict `json_schema` format. If an ID differs, set `RATCHET_TEACHER_MODEL` (and update `ratchet/licenses.py` and `DEFAULT_PRICES`). Model IDs and prices in `ratchet/config.py` stay unverified until this passes. The full checklist, each check with its fallback, is in the day-1 checklist.
 
 The Nebius Builder Program's terms say $25 of Token Factory credit, expiring after 90 days ([DEPLOYMENT.md](/reference/deployment/)).
 
@@ -343,7 +348,7 @@ Then apply it:
 What each guard is for:
 
 - **`/v1/*` is a paid endpoint.** Without a guard anyone could send unlimited requests on your Token Factory credit. Live mode refuses to start without `RATCHET_API_KEYS`, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says that something in front checks callers. On the VM that something is Caddy's edge guard: `RATCHET_API_GUARD=guarded` with a hex `RATCHET_ADMIN_TOKEN` of at least 32 characters. An empty or shorter token blocks the guarded paths for everyone, and Caddy strips the header before it reaches the gateway. To use the API yourself: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or `default_headers` in the OpenAI SDK.
-- **The Scout budget guard stays on in live mode** (invariant 11). Every Scout run is admitted against a daily dollar cap, a daily run cap and a per-IP hourly limit, and its spend is added after it ends, also on failure. The counters are kept in the ledger, so a restart, a crash or `update.sh` does not reset them. The code's default cap is $3.00 a day; the VM example sets $0.50, so the worst case over the 48 days from Oct 29 to Dec 15 is about $24 (estimate, [DEPLOY_NEBIUS_VM.md](/reference/deploy-nebius-vm/#switching-from-mock-to-live)). The budget guard does not cover `/v1/chat/completions`; the edge guard or API keys do.
+- **The Scout budget guard stays on in live mode**. Every Scout run is admitted against a daily dollar cap, a daily run cap and a per-IP hourly limit, and its spend is added after it ends, also on failure. The counters are kept in the ledger, so a restart, a crash or `update.sh` does not reset them. The code's default cap is $3.00 a day; the VM example sets $0.50, so the worst case over the 48 days from Oct 29 to Dec 15 is about $24 (estimate, [DEPLOY_NEBIUS_VM.md](/reference/deploy-nebius-vm/#switching-from-mock-to-live)). The budget guard does not cover `/v1/chat/completions`; the edge guard or API keys do.
 - **A reserve for judges.** `RATCHET_SCOUT_JUDGE_CODE` (generate it with `openssl rand -hex 16`) and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's runs, spend and Tavily credits back from the public. `RATCHET_TAVILY_MONTHLY_CREDITS` and `RATCHET_TAVILY_PACE_UNTIL=2026-12-15` spread the credits over the judging period. The code goes in the submission's testing instructions only, never on a public page, in the video or in a URL.
 - **The dashboard.** With `RATCHET_PUBLIC_DASHBOARD=1` judges see the live dashboard, and anonymous readers get client pseudonyms and events without URLs or error messages.
 - **Signed BOMs (optional).** Run `python -m ratchet.bom keygen` on your laptop, put the `RATCHET_BOM_SIGNING_KEY=` line in `.env`, and publish the public key it prints.
@@ -356,7 +361,7 @@ Switching to live mode starts a new ledger file, so there is no trained version 
 
 #### GPU windows
 
-The student endpoint is the largest cost: about $32 to $37 for every full day it runs (estimates, below). So:
+The student endpoint is the largest cost: about $32 for every full day it runs (an estimate, below). So:
 
 - **Most of the time, keep the endpoint stopped** and leave `RATCHET_STUDENT_BASE` and `RATCHET_STUDENT_KEY` empty. Student calls for a trained version then go to the hosted fallback, Nemotron 3 Nano 30B on Token Factory, paid per token. Be honest about it in the demo: it is untuned, it is held to the default threshold (`RATCHET_CONFIDENCE_THRESHOLD`, 0.80) instead of a calibrated one, and no certificate covers it. The pages say so: student answers carry the <Who as="fallback" /> badge, the dashboard header reads "Nano 30B · hosted on Token Factory (endpoint off)", and the live version's golden precision is hidden. `curl -s https://<domain>/ratchet/stats | jq .student_serving` shows what the pages read.
 - **Start the endpoint for fixed windows** (`bash deploy/student_endpoint.sh start`), such as recording the video or a judging window you announced, and stop it right after (`bash deploy/student_endpoint.sh stop`). A stopped endpoint is not billed for compute or its own storage; the mounted bucket still is.
@@ -390,7 +395,7 @@ sequenceDiagram
 </figcaption>
 </figure>
 
-Automatic daily endpoint windows (`student_serving.window`, item W10) are referenced in the web app's copy but not built on this branch: they are planned. Until then a window is the manual procedure above.
+Automatic daily endpoint windows (`student_serving.window`) are referenced in the web app's copy but not built yet: they are planned. Until then a window is the manual procedure above.
 
 #### The Night School cron (off by default)
 
@@ -451,6 +456,12 @@ Then remove the DNS record and stop the student endpoint if it still runs. The b
 
 Every figure here is an **estimate** from the repo docs or the Nebius pricing page, with its date. Check the pricing pages again before you rely on them.
 
+<StatRow cols={3} label="The main costs, estimated">
+  <Stat value="≈ $72.50" label="the CPU VM, Oct 29 to Dec 15" note="cpu-e2, 2 vCPU and 8 GB, with its disk. Prices as of Oct 20, 2026." />
+  <Stat value="≈ $32" label="per full day of GPU endpoint" note="An L40S at about $1.35 per GPU-hour. Stop it when idle." tone="owned" />
+  <Stat value="$0.70 to $1.35" label="per training night" note="30 to 60 minutes on one L40S. Skipped nights cost nothing." tone="owned" />
+</StatRow>
+
 **The VM**, from [DEPLOY_NEBIUS_VM.md](/reference/deploy-nebius-vm/#cost-estimate), prices as of Oct 20, 2026, USD before tax, for Oct 29 to Dec 15, 2026 (48 days, 1,152 hours):
 
 | Item | Rate | Oct 29 to Dec 15 |
@@ -469,16 +480,16 @@ Every figure here is an **estimate** from the repo docs or the Nebius pricing pa
 | Token Factory, `/v1/chat/completions` | Not covered by the Scout budget: the edge guard or API keys with a daily quota | $0 with the guard on and no shared keys |
 | Tavily | 3 basic searches a run, 1 credit each | 1,000 free credits a month, about 330 runs |
 
-**The GPU.** The repo docs price an L40S at about $1.55 per GPU-hour, an unverified list price ([DEPLOYMENT.md](/reference/deployment/#4-cost-estimates)). Nebius's [compute pricing page](https://docs.nebius.com/compute/resources/pricing) listed the L40S at about $1.35 per GPU-hour when read on Oct 22, 2026. Both columns are estimates:
+**The GPU.** Nebius's [compute pricing page](https://docs.nebius.com/compute/resources/pricing) listed the L40S at about $1.35 per GPU-hour on demand when read on Oct 22, 2026. Every GPU figure below is an estimate at that price ([deployment guide](/reference/deployment/#4-cost-estimates)):
 
-| Item | At about $1.55 an hour (repo docs, unverified) | At about $1.35 an hour (Nebius pricing page, Oct 22, 2026) |
-|---|---|---|
-| Student endpoint left on for a full day | about $37 | about $32 |
-| One training run, 30 to 60 minutes | about $0.80 to $1.60 | about $0.70 to $1.35 |
+| Item | At about $1.35 per GPU-hour |
+|---|---|
+| Student endpoint left on for a full day | about $32 |
+| One training run, 30 to 60 minutes | about $0.70 to $1.35 |
 
 The code still defaults `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR` to 1.55. Set them (or pass `--usd-per-hour`) to the rate on your bill so the cost report prices the hours right, and set `RATCHET_PRICES_VERIFIED=1` only once the bill confirms them.
 
-A rough estimate for a short evaluation period, at $1.55 an hour, is about **$40 to $80**: 6 to 8 training runs, the endpoint on a few hours a day, and $20 to $30 of teacher calls (estimate, [DEPLOYMENT.md](/reference/deployment/#4-cost-estimates)). Whether a 24/7 endpoint pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
+A rough estimate for a short evaluation period is about **$35 to $75**: 6 to 8 training runs, the endpoint on a few hours a day, and $20 to $30 of teacher calls (estimate, [deployment guide](/reference/deployment/#4-cost-estimates)). Whether a 24/7 endpoint pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
 
 ## For engineers
 
@@ -512,7 +523,7 @@ A rough estimate for a short evaluation period, at $1.55 an hour, is about **$40
 | `RATCHET_BUCKET_ID`, `RATCHET_BUCKET_S3`, `RATCHET_S3_ENDPOINT` | empty | The bucket for `--volume`, for polling and backups, and its S3 URL |
 | `RATCHET_SYNC_CMD`, `RATCHET_TRAIN_CMD`, `RATCHET_DATA_DIR` | empty, `bash deploy/train_job.sh {version}`, `data` | How a night uploads data and runs (and waits for) training |
 | `RATCHET_ENDPOINT_NAME`, `RATCHET_ENDPOINT_ID` | `ratchet-student`, empty | How `student_endpoint.sh` finds the endpoint |
-| `RATCHET_STUDENT_GPU_USD_PER_HOUR`, `RATCHET_TRAIN_GPU_USD_PER_HOUR` | `1.55` | GPU rates the cost report uses (unverified list price) |
+| `RATCHET_STUDENT_GPU_USD_PER_HOUR`, `RATCHET_TRAIN_GPU_USD_PER_HOUR` | `1.55` | GPU rates the cost report uses. The code's default; these docs use 1.35, Nebius's on-demand price for an L40S. Set the rate on your bill |
 | `DRY_RUN` | `0` | `1` validates without creating; any value but 0 or 1 is refused, so a typo never starts a paid GPU |
 
 **Endpoints**: `GET /healthz` and `/livez` (liveness), `GET /readyz` (readiness, [API reference](/reference/api/#get-readyz)), `GET /ratchet/stats` (`student_serving`, `cost`), `GET /ratchet/cost?days=N`, `POST /ratchet/cost/endpoint` (admin key), `GET /scout/status`.
@@ -533,7 +544,7 @@ No. The gateway does no inference, so the demo runs on a 2 vCPU / 8 GB CPU VM. I
 
 ### What happens if I forget to stop the endpoint?
 
-It bills for every hour it runs: about $32 to $37 a day at the rates above (estimates). `bash deploy/student_endpoint.sh status` shows its state, and the cost report's `idle_hours` shows paid hours in which no request reached the student.
+It bills for every hour it runs: about $32 a day at about $1.35 per GPU-hour (an estimate). `bash deploy/student_endpoint.sh status` shows its state, and the cost report's `idle_hours` shows paid hours in which no request reached the student.
 
 ### Why would a live demo VM serve no student at all?
 
@@ -553,7 +564,12 @@ It closes the paid API, the demo controls and the admin API to anyone without th
 
 ## Related
 
-- [Quickstart](/guides/quickstart/): the same gateway in mock mode on your laptop.
-- [Cost and savings](/guides/cost-and-savings/): break-even, the cost report and when self-hosting does not pay.
-- [The big picture](/guides/big-picture/): every component and how a request moves between them.
-- Reference: [demo VM guide](/reference/deploy-nebius-vm/), [deployment](/reference/deployment/), [runbook](/reference/runbook/).
+<FadeContent distance={16}>
+<PathGrid cols={3} label="Related guides">
+  <PathCard title="Quickstart" href="/guides/quickstart/" icon="start" eyebrow="No keys" tone="neutral" description="The same gateway in mock mode on your laptop." />
+  <PathCard title="Cost and savings" href="/guides/cost-and-savings/" icon="coin" eyebrow="When it pays" tone="neutral" description="Break-even, the cost report and when self-hosting does not pay." />
+  <PathCard title="The big picture" href="/guides/big-picture/" icon="layers" eyebrow="Every part" tone="neutral" description="Every component and how a request moves between them." />
+</PathGrid>
+</FadeContent>
+
+Reference: the [demo VM guide](/reference/deploy-nebius-vm/), [deployment](/reference/deployment/) and the [runbook](/reference/runbook/).

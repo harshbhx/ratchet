@@ -7,6 +7,12 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import SqlResults from '../../../components/SqlResults.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import sqlResults from '../../../data/sql-results.json';
+
+export const run = sqlResults;
+export const measured = run?.status !== 'pending' && run?.mode === 'sql';
 
 <Summary>This page shows what the text-to-SQL adapter measured on an exam of databases it never trained on, read straight from the run's results file, and keeps those numbers apart from the simulation numbers used elsewhere in these docs.</Summary>
 
@@ -18,7 +24,19 @@ Every score comes with a range, like "somewhere between 64% and 82%". A small ex
 
 </Eli10>
 
+<StatRow cols={3} label="What these results are">
+  <Stat value="Unseen databases" label="the exam" note="Whole databases, some from industries never in training." />
+  <Stat value="Free Colab T4" label="where the adapter trained" note="Not on Nebius GPUs. The teacher ran on Token Factory." />
+  <Stat value="CPU only" label="to recompute every number" note="From the raw answers, with one command." />
+</StatRow>
+
 ## The adapter's results
+
+<p>Status: {run?.sample === true
+  ? <span class="rt-badge rt-badge--bad">Sample data, not a result</span>
+  : measured
+    ? <span class="rt-badge rt-badge--live">Measured, read from the run's results file</span>
+    : <span class="rt-badge rt-badge--sim">Pending: the run's results file is not in yet</span>}</p>
 
 <SqlResults />
 
@@ -34,22 +52,38 @@ Every score comes with a range, like "somewhere between 64% and 82%". A small ex
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  RAW["raw.jsonl<br/>teacher, base and adapter answers"] --> REP["measure_adapter.py report<br/>(CPU)"]
-  GOLD["golden.jsonl and dbs.json<br/>the exam and its databases"] --> REP
-  REP --> RES["results.json<br/>numbers and SHA-256 of the inputs"]
-  RES --> SITE["docs-site/src/data/sql-results.json"]
-  SITE --> PAGE["This page, at build time"]
-  RAW --> VER["measure_adapter.py verify"]
-  GOLD --> VER
-  RES --> VER
-  VER --> OUT{"Every number recomputed and equal?"}
-  OUT -->|"yes"| OK["OK"]
-  OUT -->|"no"| BAD["FAIL: names the file or the numbers that differ"]
+flowchart TB
+  RAW[("raw.jsonl<br/>teacher, base and<br/>adapter answers")] ==> REP["measure_adapter.py report<br/>on a CPU"]
+  GOLD[("golden.jsonl, dbs.json<br/>the exam and<br/>its databases")] ==> REP
+  REP ==> RES[("results.json<br/>numbers and the<br/>inputs' SHA-256")]
+  RES ==>|"copied in"| PAGE["This page,<br/>at build time"]
+  RAW -.-> VER{{"measure_adapter.py verify:<br/>every number recomputed<br/>and equal?"}}
+  GOLD -.-> VER
+  RES -.-> VER
+  VER -->|"yes"| OK["OK"]
+  VER -->|"no"| BAD["FAIL: names the file<br/>or the numbers"]
+  class RAW,GOLD,RES store
+  class VER gate
+  class OK ok
+  class BAD danger
 ```
 
-**Reading this diagram.** The top row makes the numbers and the bottom row checks them, and both start from the same three files. The page is fed from the results file by a build step, not by hand. The check at the end does not trust the results file at all: it throws it away, recomputes everything from the raw answers and compares.
+<figcaption>
+
+**Reading this diagram.** The thick arrows make the numbers and the dotted ones check them, and both start from the same three files. The page is fed from the results file by a build step (it is copied to `docs-site/src/data/sql-results.json`), not by hand. The check does not trust the results file at all: it recomputes everything from the raw answers and compares.
+
+<ul class="rt-key">
+  <li class="store">A file</li>
+  <li class="gate">The check</li>
+  <li class="edge-main">Makes the numbers</li>
+  <li class="edge-optional">Checks them</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ## How to read the numbers
 
@@ -77,23 +111,43 @@ Elsewhere in these docs you will see numbers such as "69% saved per token". Thos
 | Reproduce | `measure_adapter.py verify` | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` (seed 7) |
 | Shown as | Measured | Always labelled simulation |
 
-The reference run's headline figures are on the [cost page](/guides/cost-and-savings/#what-it-looks-like-in-the-simulation): student share 0% on day 1 and 98% on day 3, a corrupted version 3 rolled back on day 4, and a per-token saving of 69% over ten days that turns into a loss by GPU-hours at that volume. These are simulation outputs.
+<div class="rt-callout rt-callout--sim">
+
+**Simulation.** The reference run's headline figures are on the [cost page](/guides/cost-and-savings/#what-it-looks-like-in-the-simulation): student share 0% on day 1 and 98% on day 3, a corrupted version 3 rolled back on day 4, and a per-token saving of 69% over ten days that turns into a loss by GPU-hours at that volume. These are simulation outputs.
+
+</div>
+
+<figure class="rt-diagram">
 
 ```mermaid
-flowchart TD
+flowchart TB
   subgraph REAL["Measured on real models"]
-    A1["Exam of unseen databases"] --> A2["Execution match, base vs adapter"]
-    A2 --> A3["Coverage and precision of the gate"]
+    A1["Exam of unseen<br/>databases"] --> A2["Execution match,<br/>base vs adapter"]
+    A2 --> A3["Coverage and<br/>precision of the gate"]
   end
   subgraph SIM["Simulation with mock models"]
-    B1["Synthetic tickets, 10 days"] --> B2["Loop behaviour: nights, release, rollback"]
-    B2 --> B3["Cost in a pinned reference run"]
+    B1["Synthetic tickets,<br/>10 days"] --> B2["Loop behaviour: nights,<br/>release, rollback"]
+    B2 --> B3["Cost in a pinned<br/>reference run"]
   end
-  A3 --> Q["Is the adapter good?"]
-  B3 --> Q2["Does the system behave as designed?"]
+  A3 --> Q{{"Is the adapter good?"}}
+  B3 --> Q2{{"Does the system<br/>behave as designed?"}}
+  class A1,A2,A3 student
+  class B1,B2,B3 outline
+  class REAL studentZone
+  class SIM outlineZone
 ```
 
+<figcaption>
+
 **Reading this diagram.** The two boxes answer two different questions. The measured side tells you about model quality and is the only side that can support a claim about the adapter. The simulation side tests the machinery around the model and never claims model quality. Mixing them would make the simulation's tidy percentages look like a result.
+
+<ul class="rt-key">
+  <li class="student">The adapter, measured on real models</li>
+  <li class="outline">Simulation, mock models</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ## For engineers
 

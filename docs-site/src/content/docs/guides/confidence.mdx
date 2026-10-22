@@ -7,6 +7,11 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>Confidence is the score that decides, on every request, whether the student's answer goes out or the teacher is asked, and each adapter version gets its own threshold, set on half of the golden set and checked on the other half.</Summary>
 
@@ -22,32 +27,50 @@ Every new notebook gets its own bar, and each kind of dish can get its own bar t
 
 </Eli10>
 
+<StatRow cols={3} label="Confidence at a glance">
+  <Stat value={3} count={false} label="samples per request" note="One call to the student, at temperature 0.7 with token logprobs." tone="owned" />
+  <Stat value={0.97} count={false} label="calibration target" note="The lowest threshold whose served answers reach it on the even golden rows." />
+  <Stat value={0.5} count={false} label="lowest threshold allowed" note="So the student never serves coin-flip answers. 1.01 means serve nothing." />
+</StatRow>
+
 ## How it really works
+
+<figure class="rt-diagram">
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant G as Gateway router
-    participant S as Student
-    participant T as Teacher
-    C->>G: chat request
-    G->>S: ask for 3 samples with logprobs
-    S-->>G: 3 answers and token logprobs
-    G->>G: clean, key, agree, confidence
-    alt confidence at or above the threshold
-        G-->>C: student answer
-        opt audit drawn
-            G->>T: same request, temperature 0
-            T-->>G: teacher answer, compared later
-        end
-    else below the threshold
-        G->>T: escalate
-        T-->>G: teacher answer
-        G-->>C: teacher answer
+  participant C as Client
+  participant G as Gateway
+  participant Student as Student<br/>Nano 4B + LoRA
+  participant Teacher as Teacher<br/>Ultra
+  C->>G: chat request
+  G->>Student: 3 samples, with logprobs
+  Student-->>G: 3 answers, token logprobs
+  Note over G: clean, key, agree,<br/>one confidence number
+  alt at or above the threshold
+    G-->>C: the student's answer
+    opt audit drawn
+      G->>Teacher: same request, temperature 0
+      Teacher-->>G: answer, compared
     end
+  else below the threshold
+    G->>Teacher: escalate
+    Teacher-->>G: answer
+    G-->>C: the teacher's answer
+  end
 ```
 
-**Reading this diagram.** The student is always asked first, three times. Only the gateway looks at the samples: it cleans them, counts agreement and computes one confidence number. That number alone decides who answers. When the student answers, the teacher may still be called in the background for a random audit, but the client never waits for it in live mode. When the student does not answer, the teacher's answer goes to the client and is stored as training data if it is valid.
+<figcaption>
+
+**Reading this diagram.** Time runs downward. The student is always asked first, three times in one call. Only the gateway looks at the samples: it cleans them, counts agreement and computes one confidence number, and that number alone decides who answers. When the student answers, the teacher may still be called for a random audit (the `opt` block), but in live mode the client never waits for it. When the student does not answer, the teacher's answer goes to the client and is stored as training data if it is valid.
+
+<ul class="rt-key">
+  <li class="student">The student you own</li>
+  <li class="teacher">The teacher you rent</li>
+</ul>
+
+</figcaption>
+</figure>
 
 The student (<Who as="student" />) answers first. The gateway samples it several times, scores the samples, and compares the score with a threshold that belongs to the version that answered and, since per-task calibration, to the task.
 
@@ -67,26 +90,43 @@ The student (<Who as="student" />) answers first. The gateway samples it several
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  S["Student samples: 3 by default"] --> K["Clean each answer and compute its key"]
-  K --> V{"Any valid sample?"}
-  V -->|no| Z["Confidence 0: escalate"]
-  V -->|yes| A["Agreement: votes of the majority / samples"]
-  A --> P["Token probability of the best majority sample"]
-  P --> C["Confidence = 0.4 x p + 0.6 x agreement"]
-  C --> T{"At least the threshold?"}
+flowchart TB
+  S["3 student samples"] --> K["Clean each answer<br/>and compute its key"]
+  K --> V{{"Any valid sample?"}}
+  V -->|no| Z["Confidence 0<br/>escalate"]
+  V -->|yes| A["Agreement<br/>majority votes / samples"]
+  A --> P["Token probability p<br/>of the best majority sample"]
+  P --> C["Confidence =<br/>0.4 × p + 0.6 × agreement"]
+  C --> T{{"At least the threshold?"}}
   T -->|yes| Serve["Serve the student's answer"]
   T -->|no| Esc["Escalate to the teacher"]
+
+  class S,Serve student
+  class V,T gate
+  class Z,Esc teacher
 ```
 
-**Reading this diagram.** Read it top to bottom. The first gate is validity: with no valid sample, confidence is 0 and the threshold is never consulted. Otherwise two signals are computed (agreement among samples, probability of the best sample) and merged with weights 0.6 and 0.4. One comparison with the version's threshold for this task ends the path in either "serve" or "escalate".
+<figcaption>
+
+**Reading this diagram.** Read it top to bottom. The first check is validity: with no valid sample, confidence is 0 and the threshold is never consulted. Otherwise two signals are computed, agreement among the samples and the token probability of the best agreeing sample, and merged with weights 0.6 and 0.4. One comparison with the version's threshold for this task ends the path in either "serve" (the student, blue) or "escalate" (the teacher, orange).
+
+</figcaption>
+</figure>
 
 A worked toy example (arithmetic only, not a result): three samples that all agree, best token probability 0.9, give `0.4 × 0.9 + 0.6 × 1.0 = 0.96`. If only two of three agree, the same sample scores `0.4 × 0.9 + 0.6 × 2/3 = 0.76`. Agreement carries more weight than probability on purpose.
 
 ### Why one signal is not enough
 
 Small models are poorly calibrated: a 4B model can put a high probability on a wrong answer. Token probability alone does not separate right from wrong, and agreement alone cannot tell three confident samples from three lucky ones. Ratchet combines them, because a single fixed bar was not enough: in early simulation runs, one global threshold of 0.80 let about 10% wrong answers through (simulation, mock models).
+
+<StatRow cols={3} label="The three signals">
+  <Stat value="Agreement" label="across the 3 samples, weight 0.6" note="Answers that agree are a sign the student knows; answers that differ are a sign it guesses." />
+  <Stat value="Token probability" label="of the best agreeing sample, weight 0.4" note="How sure the student was of each token it wrote. With agreement, it separates confident right answers from confident wrong ones." />
+  <Stat value="Validity" label="no vote without it" note="A sample the task's spec refuses never counts, whatever its probability." />
+</StatRow>
 
 Validity is the third signal. A label outside the task's vocabulary, or a JSON answer missing a field, is not a vote at all, so the student cannot "agree with itself" on an answer the task would refuse.
 
@@ -128,7 +168,7 @@ Each trained adapter version carries its own threshold in its eval (`versions.ev
 
 1. **Score every golden row** with the new adapter, sampled exactly as in production, under the generation conditions stored with the row. Each row becomes a point: (confidence, agreed with the teacher's stored answer). A row whose stored reference is no longer valid under the task's spec is skipped (`golden_invalid_refs`), and so is a row of a task that is pinned now (`excluded_pinned`). A row the student endpoint refuses (HTTP 400, 413 or 422) counts as confidence 0 and wrong, because production would escalate it.
 
-2. **Split by position.** Even-indexed scored rows form the calibration half; odd-indexed rows form the held-out half (invariant 6).
+2. **Split by position.** Even-indexed scored rows form the calibration half; odd-indexed rows form the held-out half.
 
 3. **Calibrate on the even half.** By default (`RATCHET_CALIBRATION=point`), `calibrate_threshold` sorts the points by confidence, highest first, walks down in groups of equal confidence (ties included before checking) and keeps the lowest confidence at which cumulative precision is still at least the target: 0.97 (`calibration.DEFAULT_TARGET_PRECISION`). If no confidence reaches it, the result is infinity.
 
@@ -138,21 +178,34 @@ Each trained adapter version carries its own threshold in its eval (`versions.ev
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  T["Teacher answers stored as examples"] --> H{"Hash of the request"}
-  H -->|"about 90%"| Train["Training set"]
-  H -->|"about 10%"| G["Golden set: never trained on"]
-  F["Seen 3 or more times"] -.->|"moves to training"| Train
-  G --> Sc["Score each row with the new adapter"]
-  Sc --> E["Even rows: calibration half"]
-  Sc --> O["Odd rows: held-out half"]
+flowchart TB
+  T["Teacher answers<br/>stored as examples"] --> H{{"Hash of the request"}}
+  H -->|"about 90%"| Train[("Training set")]
+  H -->|"about 10%"| G[("Golden set<br/>never trained on")]
+  G -.->|"seen 3 or more times"| Train
+  G --> Sc["Score each row<br/>with the new adapter"]
+  Sc --> E["Even rows<br/>calibration half"]
+  Sc --> O["Odd rows<br/>held-out half"]
   E --> Thr["Pick the threshold"]
-  Thr --> M["Measure precision and coverage"]
+  Thr --> M["Measure precision<br/>and coverage"]
   O --> M
+
+  class T teacher
+  class H gate
+  class Train,G store
+  class Sc student
+  class M ok
 ```
 
-**Reading this diagram.** Every teacher answer is first split by a hash of the request, so no model's opinion decides which rows are held out. The golden rows are scored with the new adapter and then split again by position: the even half picks the threshold, the odd half measures it. The dotted arrow is the one exception, a request seen three or more times, which moves from golden to training.
+<figcaption>
+
+**Reading this diagram.** Every teacher answer is first split by a hash of the request, so no model's opinion decides which rows are held out. The golden rows are scored with the new adapter and then split again by position: the even half picks the threshold and the odd half measures it, so the grade comes from rows the threshold never saw. The dotted arrow is the one exception: a request seen three or more times moves from golden to training.
+
+</figcaption>
+</figure>
 
 Which requests are golden is decided by a hash of the request (`RATCHET_GOLDEN_FRACTION`, default 0.10), which acts like a coin flip: it does not look at difficulty or at any model's answer. A request seen 3 or more times (`FREQUENT`) moves to training and leaves the golden set, so a frequent question is never held out forever.
 
@@ -209,19 +262,38 @@ A threshold is set once per version, on a fixed golden set. Real traffic can cha
 
 For each (version, task) pair the gate keeps a **conformal test martingale** over the stream of confidence scores the student produced while it served. In plain words: each new score is ranked against the scores seen so far. If the traffic is unchanged, the ranks look random and the running evidence stays near 1. If the scores start to shift, the evidence grows. When it passes `RATCHET_DRIFT_ALARM` (default 100), the alarm fires. A stream whose traffic never changes fires with probability at most 1/100 over its whole life.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  L["Ledger: confidence of each served request"] --> R["Rank each score against earlier ones"]
-  R --> M["Test martingale per version and task"]
-  M --> Q{"Evidence above 100?"}
+flowchart TB
+  L[("Ledger: the confidence<br/>of each served answer")] --> R["Rank each score<br/>against earlier ones"]
+  R --> M["Test martingale<br/>per version and task"]
+  M --> Q{{"Evidence above 100?"}}
   Q -->|no| W["Keep watching"]
   Q -->|yes| D["Write a drift event"]
-  D --> C["Suspend the version's certificate"]
-  D --> B["Optional: raise the audit rate"]
-  D --> N["Optional: start Night School earlier"]
+  D --> C["Suspend the version's<br/>certificate"]
+  D -.->|"opt-in"| B["Raise the<br/>audit rate"]
+  D -.->|"opt-in"| N["Start Night School<br/>earlier"]
+
+  class L store
+  class Q gate
+  class C danger
+  class B,N outline
 ```
 
-**Reading this diagram.** Data flows left to right from the ledger, never from the request path. The alarm has one mandatory effect (the certificate is marked suspended) and two optional ones that are off by default. No arrow leads to a promotion, a rollback or a threshold change: a human or the next night decides what to do.
+<figcaption>
+
+**Reading this diagram.** Data flows top to bottom from the ledger, never from the request path. The alarm has one fixed effect, the certificate marked suspended, and two opt-in ones on dotted arrows that are off by default. No arrow leads to a promotion, a rollback or a threshold change: a person or the next night decides what to do.
+
+<ul class="rt-key">
+  <li class="store">Keeps data</li>
+  <li class="gate">A check</li>
+  <li class="danger">Certificate suspended</li>
+  <li class="outline">Opt-in, off by default</li>
+</ul>
+
+</figcaption>
+</figure>
 
 What an alarm does and does not do:
 
@@ -248,8 +320,8 @@ When the student's GPU endpoint is off (`RATCHET_STUDENT_BASE` unset), a trained
 
 That model never sat the exam, so no calibrated threshold or per-task record applies to it. `Ratchet.threshold` returns the fixed `Settings.confidence_threshold` (`RATCHET_CONFIDENCE_THRESHOLD`, default 0.80) for it, and its answers are **not covered by the adapter's certificate**. The same 0.80 is used for a version whose eval has no calibrated threshold.
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, Ratchet has not run against a real Nebius account. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure in the repository so far comes from mock models (simulation). No live threshold has been calibrated on real Nemotron 3 Nano 4B logprobs.
+<Aside type="caution" title="No student has run on a Nebius GPU yet">
+As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but no student has been served from a Nebius GPU endpoint and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure from the simulator comes from mock models (simulation). The text-to-SQL adapter, trained on a free Colab T4, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
 </Aside>
 
 ## For engineers
@@ -328,7 +400,11 @@ Nothing is scored. On a cold start there is no version, so every request goes to
 
 ## Related
 
-- [The request journey](/guides/request-journey/): where the confidence check sits in one request.
-- [Escalation and audits](/guides/escalation-and-audits/): what happens after the threshold says no, and how audits are drawn.
-- [The release gate](/guides/release-gate/): what the held-out precision and coverage are used for.
-- [Evidence you can check](/guides/evidence/): the certificate and the replay in detail.
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="start" eyebrow="Where it sits" tone="neutral" description="Where the confidence check sits in one request." />
+  <PathCard title="Escalation and audits" href="/guides/escalation-and-audits/" icon="check" eyebrow="When it says no" tone="rented" description="What happens after the threshold says no, and how audits are drawn." />
+  <PathCard title="The release gate" href="/guides/release-gate/" icon="gate" eyebrow="What it feeds" tone="neutral" description="What the held-out precision and coverage are used for." />
+  <PathCard title="Evidence you can check" href="/guides/evidence/" icon="file" eyebrow="Recompute it" description="The certificate and the replay in detail." />
+</PathGrid>
+</FadeContent>

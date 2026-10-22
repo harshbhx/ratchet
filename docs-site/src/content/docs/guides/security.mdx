@@ -3,10 +3,14 @@ title: Security and safety
 description: Who may call what, how spend is capped, what is logged and stored, how the demo VM is locked down, and the rules the learning loop never breaks.
 ---
 
-import { Steps, Tabs, TabItem, Card, CardGrid, LinkCard, Aside, Badge, FileTree } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
-import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>This page covers the controls that keep a Ratchet gateway from being used, billed or read by the wrong people, and the safety rules that keep its learning loop honest.</Summary>
 
@@ -22,25 +26,47 @@ The restaurant has a door to the street, and a doorman stands there (Caddy). Beh
 
 </Eli10>
 
+<StatRow cols={3} label="Security at a glance">
+  <Stat value={4} count={false} label="kinds of secret, one role each" note="API, admin and dashboard keys and a metrics token. A key in two roles stops startup." />
+  <Stat value={7} count={false} label="access levels" note="Every route has one. A route nobody classified counts as dashboard level, so it starts private." />
+  <Stat value={0} count={false} label="prompt text in logs and metrics" note="Logs, metrics and request rows carry ids, names, numbers and statuses only." />
+</StatRow>
+
 ## How it really works
 
 A request to the demo crosses several boundaries. Each one has its own check.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  U["Internet: apps, browsers, judges"] -->|"HTTPS 443"| C["Caddy"]
+flowchart TB
+  U(["Internet: apps,<br/>browsers, judges"]) -->|"HTTPS 443"| VM
   subgraph VM["Nebius CPU VM, ufw allows 22, 80, 443"]
-    C -->|"port 8000, never published"| G["Gateway"]
-    G --> L[("Ledger, SQLite")]
+    direction LR
+    C["Caddy"] -->|"port 8000,<br/>never published"| G["Gateway"]
+    G --> L[("Ledger<br/>SQLite")]
     E[".env, mode 0600"] -.-> G
   end
-  G -->|"HTTPS, bearer key"| T["Token Factory"]
-  G -->|"HTTPS, endpoint token"| S["Student endpoint, vLLM"]
-  G -->|"HTTPS, bearer key"| V["Tavily, live Scout only"]
-  S --- B[("Object Storage bucket")]
+  VM ==>|"HTTPS, each with its own credential"| Out
+  subgraph Out["Outside the VM"]
+    direction LR
+    T["Token Factory<br/>bearer key"]
+    S["Student endpoint<br/>endpoint token"] --- B[("Object Storage<br/>bucket")]
+    V["Tavily, live Scout<br/>bearer key"]
+  end
+
+  class T teacher
+  class S student
+  class V outline
+  class L,B store
 ```
 
-**Reading this diagram.** Every arrow that crosses the boundary of the VM is HTTPS with a credential. Inbound there is one door: Caddy on 443. Outbound there are three, each with its own key, and the dotted line is the one file of secrets, readable only by the service user. The gateway's port 8000 is not drawn as open because it is not: only Caddy can reach it.
+<figcaption>
+
+**Reading this diagram.** Every arrow that crosses the boundary of the VM is HTTPS with a credential. Inbound there is one door: Caddy on 443. Outbound, the thick arrow stands for three connections, each with its own key: a bearer key for Token Factory and for Tavily, the endpoint token for the student endpoint. The dotted line is the one file of secrets, readable only by the service user. The gateway's port 8000 has no way in from outside: only Caddy can reach it.
+
+</figcaption>
+</figure>
 
 <Steps>
 
@@ -62,73 +88,88 @@ flowchart LR
 
 Here is the order of checks on one `/v1` chat request:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  A["POST /v1/chat/completions"] --> K{"Valid API key?"}
-  K -->|no| R1["401 invalid_api_key"]
-  K -->|yes| RT{"Under the key's rate?"}
-  RT -->|no| R2["429 rate_limit_exceeded"]
-  RT -->|yes| IF{"Room in flight?"}
-  IF -->|no| R3["503 overloaded, or 429 for the key"]
-  IF -->|yes| V{"Valid request?"}
-  V -->|no| R4["400, costs nothing"]
-  V -->|yes| Q{"Task scope, quota and budgets allow it?"}
-  Q -->|no| R5["403 or 429, costs nothing"]
-  Q -->|yes| C["The cascade runs"]
+flowchart TB
+  A(["POST /v1/chat/completions"]) ==> K{{"Valid API key?"}}
+  K ==>|yes| RT{{"Under the key's rate?"}}
+  RT ==>|yes| IF{{"Room in flight?"}}
+  IF ==>|yes| V{{"Valid request?"}}
+  V ==>|yes| Q{{"Task scope, quota<br/>and budgets allow it?"}}
+  Q ==>|yes| C(["The cascade runs"])
+  K -->|"no: 401"| R["Refused before any<br/>model call, costs nothing"]
+  RT -->|"no: 429"| R
+  IF -->|"no: 503, or 429<br/>for the key"| R
+  V -->|"no: 400"| R
+  Q -->|"no: 403 or 429"| R
+
+  class K,RT,IF,V,Q gate
+  class R danger
+  class C ok
 ```
 
-**Reading this diagram.** The checks run from cheapest to most expensive, and every refusal happens before a single model call, so a refused request costs nothing. The rate limit comes first, even before the body is read, so a flood of oversized bodies is turned away early. Quotas and budgets come last because they need the parsed request (its task, its size).
+<figcaption>
+
+**Reading this diagram.** Follow the thick path down. The checks run from cheapest to most expensive, and every refusal happens before a single model call, so a refused request costs nothing; the status on each arrow is what the client gets. The key and the rate limit come first, even before the body is read, so a flood of oversized bodies is turned away early. Quotas and budgets come last because they need the parsed request (its task, its size).
+
+</figcaption>
+</figure>
 
 The same path as a conversation between the parts, including what is written down:
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant E as Caddy
-    participant G as Gateway
-    participant M as Spend meter
-    participant L as Ledger
-    C->>E: HTTPS request with Authorization Bearer key
-    E->>G: forwarded, edge token stripped
-    G->>G: key digest compared in constant time
-    G->>M: rate, in flight, quota, budget
-    M-->>G: allowed
-    G->>G: cascade runs
-    G->>L: one row: key NAME, ids, costs, no text
-    G-->>C: answer, x-request-id
-    G->>M: add the cost, budget event at 50, 80, 100 percent
+  autonumber
+  participant C as Client
+  participant E as Caddy
+  participant G as Gateway
+  participant M as Spend<br/>meter
+  participant Ledger as Ledger
+  C->>E: HTTPS,<br/>Bearer key
+  E->>G: forwarded, edge<br/>token stripped
+  Note over G: key digest compared<br/>in constant time
+  G->>M: rate, in flight,<br/>quota, budget
+  M-->>G: allowed
+  Note over G: the cascade runs
+  G->>Ledger: one row: the key's NAME,<br/>ids, costs, no text
+  G-->>C: answer, x-request-id
+  G->>M: add the cost
+  Note over M: budget events<br/>at 50, 80, 100%
 ```
 
-**Reading this diagram.** The key is used once, to look up a name, and then it is gone: the ledger and the logs see only the name. The spend meter is in memory and is filled from the ledger at startup, so the request path never runs a query for it and a restart does not reset it. The last arrow is why a leaked key spends at most its own budget.
+<figcaption>
+
+**Reading this diagram.** The key is used once, to look up a name, and then it is gone: the ledger and the logs see only the name. The spend meter is in memory and is filled from the ledger at startup, so the request path never runs a query for it and a restart does not reset it. The last step is why a leaked key spends at most its own budget.
+
+</figcaption>
+</figure>
 
 ### The access-level map
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  subgraph Anyone["No key needed"]
-    P1["Pages, /healthz, /livez, /readyz"]
-    P2["/scout/* with the budget guard"]
-    P3["BOM public key"]
-  end
-  subgraph KeyAPI["API key"]
-    A1["/v1/chat/completions and the other /v1 endpoints"]
-    A2["Own request lookup, own feedback, own receipts"]
-  end
-  subgraph Reader["Dashboard key or admin key"]
-    D1["/ratchet/stats, cost, tasks, drift, teacher, replay"]
-    D2["BOMs, unless public"]
-  end
-  subgraph Admin["Admin key"]
-    M1["/ratchet/admin/*: rollback, retire, promote, freeze, pin, erase, export"]
-    M2["Task writes, training-set proofs, all receipts"]
-  end
-  subgraph Mock["Mock mode only"]
-    X1["/ratchet/demo/*"]
-  end
-  Admin --> Reader
+flowchart TB
+  P["<b>No key</b><br/>pages, health checks,<br/>/scout/* with its guard,<br/>the BOM public key"]
+  A["<b>An API key</b><br/>/v1/*, its own lookups,<br/>feedback and receipts"]
+  M["<b>An admin key</b><br/>/ratchet/admin/*, task<br/>writes, proofs, receipts"]
+  X["<b>Mock mode only</b><br/>/ratchet/demo/*"]
+  D["<b>A dashboard key</b><br/>stats, cost, tasks,<br/>drift, replay, BOMs"]
+  P ~~~ X
+  M -->|"also reads"| D
+
+  class X outline
 ```
 
-**Reading this diagram.** Each box is an access level from `ratchet/access.py`. An admin key can do everything a dashboard key can, which is the arrow. An API key is deliberately a different kind of key: it can spend money but cannot read the dashboard or reach admin. A route nobody has classified falls into the reader level, so it is private in live mode by default. The mock-only box answers 403 in live mode.
+<figcaption>
+
+**Reading this diagram.** Each box is an access level from `ratchet/access.py`. An admin key can do everything a dashboard key can, which is the arrow. An API key is deliberately a different kind of key: it can spend money but cannot read the dashboard or reach admin. A route nobody has classified falls into the reader level, so it is private in live mode by default. The mock-only box answers 403 in live mode. The full table, with the `bom` and `metrics` levels, is under [Keys and who may call what](#keys-and-who-may-call-what).
+
+</figcaption>
+</figure>
 
 ### The admin API leaves a trail
 
@@ -161,7 +202,7 @@ Four kinds of secret, each with one role. A key that appears in two roles stops 
 | Dashboard key | `RATCHET_DASHBOARD_KEYS` | Reads the dashboard API, writes nothing |
 | Metrics token | `RATCHET_METRICS_TOKEN` | `GET /metrics` only, for a Prometheus scraper |
 
-Keys are at least 16 characters, sent as `Authorization: Bearer <key>` or `X-API-Key`, and compared as SHA-256 digests in constant time (`KeyRing.identify`). The ledger, the logs and `/ratchet/stats` see the key's **name** only (`acme`), never the key (invariant 13).
+Keys are at least 16 characters, sent as `Authorization: Bearer <key>` or `X-API-Key`, and compared as SHA-256 digests in constant time (`KeyRing.identify`). The ledger, the logs and `/ratchet/stats` see the key's **name** only (`acme`), never the key.
 
 Every route has one access level:
 
@@ -173,7 +214,7 @@ Every route has one access level:
 | `bom` | As `dashboard`, or anyone with `RATCHET_PUBLIC_BOM=1` | `/ratchet/bom`, `/ratchet/versions/{id}/bom` |
 | `metrics` | As `dashboard`, or the metrics token | `/metrics` |
 | `admin` | An admin key; nobody in live mode without admin keys | `/ratchet/admin/*`, task writes |
-| `mock` | Anyone, in mock mode only (invariant 8) | `/ratchet/demo/*` |
+| `mock` | Anyone, in mock mode only | `/ratchet/demo/*` |
 
 A route the table does not know counts as `dashboard`, so a new endpoint is private in live mode until someone classifies it, and a test fails until they do. When a live dashboard is public, anonymous readers get client pseudonyms (`client-1`, ...), event details without URLs or error messages, and no dollar caps. `/docs` and `/openapi.json` are off in live mode. Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; `RATCHET_CSP` adds a Content-Security-Policy.
 
@@ -204,7 +245,7 @@ The meter lives in memory and reads the ledger at startup, so a restart forgets 
 
 ### The Scout budget guard and the judge code
 
-Scout is public and spends money, so in live mode it has its own guard (invariant 11): a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a reserve for evaluators unlocked by an access code. The code is sent once in a POST body, kept only as a digest, limited to 10 attempts per IP per hour, and turned into a signed `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Never put it on the public project page, in the video or in a URL. Full details: [Scout](/guides/scout/).
+Scout is public and spends money, so in live mode it has its own guard: a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a reserve for evaluators unlocked by an access code. The code is sent once in a POST body, kept only as a digest, limited to 10 attempts per IP per hour, and turned into a signed `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Never put it on the public project page, in the video or in a URL. Full details: [Scout](/guides/scout/).
 
 ### Request ids, logs and metrics
 
@@ -223,7 +264,7 @@ Separately, a retry never counts as a repeat of the request. A request whose `x-
 
 ### PII redaction and storage opt-outs
 
-Before a request and the teacher's answer are stored as a training example, `ratchet/redact.py` replaces emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar numbers, US SSNs, Indian PANs and GSTINs, UPI ids, IPv4 addresses and API secrets with placeholders such as `[EMAIL]` (or `[EMAIL_1]` or a look-alike value, with `RATCHET_REDACT_STYLE`) (`RATCHET_REDACT_PII=1`, the default; invariant 12). The teacher still sees the original. **Names and street addresses are not detected by the patterns**; a detector plugin (`RATCHET_REDACT_PLUGIN`) can add them. You can paste text into the dashboard's redactor (`POST /ratchet/redact`) to see what would be stored. Clients and end users can keep requests out of storage (`store: false`, a key's `store=0`, no-train end users), end users are kept only as keyed hashes, and stored examples can be erased for good. Ratchet cannot remove what an existing adapter already memorised; it lists the versions that may hold erased text.
+Before a request and the teacher's answer are stored as a training example, `ratchet/redact.py` replaces emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar numbers, US SSNs, Indian PANs and GSTINs, UPI ids, IPv4 addresses and API secrets with placeholders such as `[EMAIL]` (or `[EMAIL_1]` or a look-alike value, with `RATCHET_REDACT_STYLE`) (`RATCHET_REDACT_PII=1`, the default). The teacher still sees the original. **Names and street addresses are not detected by the patterns**; a detector plugin (`RATCHET_REDACT_PLUGIN`) can add them. You can paste text into the dashboard's redactor (`POST /ratchet/redact`) to see what would be stored. Clients and end users can keep requests out of storage (`store: false`, a key's `store=0`, no-train end users), end users are kept only as keyed hashes, and stored examples can be erased for good. Ratchet cannot remove what an existing adapter already memorised; it lists the versions that may hold erased text.
 
 ### Secrets and the host
 
@@ -261,27 +302,28 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Prompt injection from search results (T15) | Results are data in a user message, never a system prompt; the writer is pinned to the teacher; no agent runs tools or code from model output | Stricter delimiting, shorter excerpts |
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, live mode, the student endpoint, the training job and the demo VM kit are written and tested offline, not run against a real Nebius account. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM yet.
+<Aside type="caution" title="What has not run yet">
+As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but the student endpoint and the training job have not run on a Nebius GPU, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. As of Oct 21, 2026, items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, had not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks
 
-The project keeps a numbered list of invariants that tests and code enforce. These are the first eleven, in plain words:
+The project keeps a list of rules that code and tests enforce. The ones about the learning loop and the demo, in plain words:
 
-1. **Only teachers whose license allows training on their outputs.** Every teacher passes `licenses.require_distillable`. Closed models such as GPT are refused, because their terms forbid training competing models ([OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/)).
-2. **The student never learns from its own answers.** Training targets are teacher answers or customer-attested human labels, never student outputs, which avoids model collapse.
-3. **The sealed exam stays sealed.** Golden examples are never trained on, except requests seen 3 or more times, which move to training and leave the golden set.
-4. **Champion and challenger sit the same exam.** Each night the live version is re-scored on the current golden set before a candidate is compared with it.
-5. **No training while a release is in flight.** Nothing trains while a version is in shadow or canary.
-6. **Precision is measured on held-out data.** The threshold is calibrated on even golden rows and precision measured on odd rows.
-7. **A student failure never fails the request.** It falls back to the teacher. A teacher failure on the serving path returns a mapped status (400 or 429 for client causes, 502, 503 or 504 otherwise).
-8. **Demo controls stay mock-only.** `/ratchet/demo/*` answers 403 in live mode.
-9. **Model ids and prices are unverified until the day-1 check passes** with a real key.
-10. **Pinned tasks never become training data** and never reach the student.
-11. **The demo budget guard stays on in live mode.** Every Scout run goes through the guard before it starts and adds its spend after it ends, also on failure.
+<div class="rt-callout rt-callout--owned"><p><strong>The student never learns from its own answers.</strong> Training targets are teacher answers or customer-attested human labels, never student outputs, which avoids model collapse.</p></div>
 
-The list has grown to 26. Later ones that matter for security include: redact before storing (12); API keys never stored or logged (13); committed training sets and sealed receipts are append-only (17); an admin key typed into the dashboard stays in the page's memory (18); opt-outs only reduce storage (22); end-user identifiers are never stored or logged (23); an erased example is gone for good (24). The full list, each mapped to its code and tests, is in the requirements matrix.
+- **Only teachers whose license allows training on their outputs.** Every teacher passes `licenses.require_distillable`. Closed models such as GPT are refused, because their terms forbid training competing models ([OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/)).
+- **The sealed exam stays sealed.** Golden examples are never trained on, except requests seen 3 or more times, which move to training and leave the golden set.
+- **Champion and challenger sit the same exam.** Each night the live version is re-scored on the current golden set before a candidate is compared with it.
+- **No training while a release is in flight.** Nothing trains while a version is in shadow or canary.
+- **Precision is measured on held-out data.** The threshold is calibrated on even golden rows and precision measured on odd rows.
+- **A student failure never fails the request.** It falls back to the teacher. A teacher failure on the serving path returns a mapped status (400 or 429 for client causes, 502, 503 or 504 otherwise).
+- **Demo controls stay mock-only.** `/ratchet/demo/*` answers 403 in live mode.
+- **Model ids and prices are unverified until the day-1 check passes** with a real key.
+- **Pinned tasks never become training data** and never reach the student.
+- **The demo budget guard stays on in live mode.** Every Scout run goes through the guard before it starts and adds its spend after it ends, also on failure.
+
+Others that matter for security: text is redacted before it is stored; API keys are never stored or logged; committed training sets and sealed receipts are append-only; an admin key typed into the dashboard stays in the page's memory; opt-outs only reduce storage; end-user identifiers are never stored or logged; and an erased example is gone for good. The repository maps every rule to its code and tests.
 
 ## For engineers
 
@@ -353,9 +395,13 @@ Closed teachers and unknown models are refused at startup, and an open teacher a
 
 ## Related
 
-- [Scout and its budget guard](/guides/scout/)
-- [Host it on Nebius](/guides/host-on-nebius/)
-- [Licenses](/guides/licenses/)
-- [Threat model](/reference/threat-model/)
-- [Demo VM: security notes](/reference/deploy-nebius-vm/#security-notes)
-- [API: access levels](/reference/api/#access-levels)
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="Scout and its budget guard" href="/guides/scout/" icon="search" eyebrow="The public path" tone="neutral" description="The daily caps, the judges' reserve and the access code." />
+  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="The demo VM" tone="neutral" description="Caddy's edge guard, the firewall and secrets on the VM." />
+  <PathCard title="Licenses" href="/guides/licenses/" icon="scale" eyebrow="Which teachers" tone="neutral" description="Why closed teachers are refused, and what travels with the adapter." />
+  <PathCard title="Threat model" href="/reference/threat-model/" icon="shield" eyebrow="Reference" tone="neutral" description="Assets, trust boundaries and every threat, present and planned." />
+</PathGrid>
+</FadeContent>
+
+More detail: [Demo VM security notes](/reference/deploy-nebius-vm/#security-notes) and [API access levels](/reference/api/#access-levels).

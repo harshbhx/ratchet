@@ -6,68 +6,106 @@ description: "A ten-minute tour for an evaluator of Ratchet: what to open first,
 import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Who from '../../../components/Who.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import Stepper from '../../../components/ui/Stepper.astro';
 
 <Summary>You have ten minutes. Open the live site, run one Scout question, look at the dashboard, then read the proof and results pages and run one command to check a number yourself. This page says what each step shows and what is simulation.</Summary>
 
 ## Where things are
 
-| What | Address |
-|---|---|
-| Live site: story page, `/scout`, `/dashboard` | https://ratchet.dualmindlab.tech |
-| These docs | https://ratchet-docs.pages.dev (the final address will be docs.ratchet.dualmindlab.tech) |
-| Code, Apache-2.0 | https://github.com/harshbhx/ratchet |
+<PathGrid cols={2} label="The live demo and the code">
+  <PathCard title="The live site" href="https://ratchet.dualmindlab.tech" icon="spark" eyebrow="Start here" description="The story page: how Ratchet works, why it is license-clean and why releases are safe." />
+  <PathCard title="Scout" href="https://ratchet.dualmindlab.tech/scout" icon="search" tone="neutral" eyebrow="/scout" description="Five agents answer one research question; each call shows who answered it." />
+  <PathCard title="The dashboard" href="https://ratchet.dualmindlab.tech/dashboard" icon="chart" tone="neutral" eyebrow="/dashboard" description="Versions, releases, economics, and a redactor you can try." />
+  <PathCard title="The code" href="https://github.com/harshbhx/ratchet" icon="repo" tone="neutral" eyebrow="Apache-2.0" description="The gateway, Night School, the release gate and the tests, on GitHub." />
+</PathGrid>
+
+These docs are at https://ratchet-docs.pages.dev (the final address will be docs.ratchet.dualmindlab.tech).
 
 {/* TODO: add the Hugging Face model link here once the text-to-SQL adapter is published. */}
 
 ## Try it in five steps
 
+<figure class="rt-diagram">
+
 ```mermaid
 flowchart LR
-  S1["1. Story page"] --> S2["2. Scout demo"]
-  S2 --> S3["3. Dashboard"]
-  S3 --> S4["4. Proof you can run"]
-  S4 --> S5["5. Text-to-SQL results"]
-  classDef live fill:#14532d,stroke:#22c55e,color:#fff
-  classDef docs fill:#1e3a8a,stroke:#3b82f6,color:#fff
-  class S1,S2,S3 live
-  class S4,S5 docs
+  S1(["1 Story page"]) ==> S2(["2 Scout"])
+  S2 ==> S3(["3 Dashboard"])
+  S3 ==> S4["4 Proof"]
+  S4 ==> S5["5 SQL results"]
 ```
 
-**Reading this diagram.** Green steps are on the live site and blue steps are in these docs. The order goes from the idea, to a running system, to the books, to evidence you can recompute, to the one real training result. Each step is about two minutes.
+<figcaption>
 
-1. **The story page**, https://ratchet.dualmindlab.tech. Look at "The catch" (why closed models cannot be distilled), "One way only" (the release gate) and "The honest bill" (when self-hosting does not pay). "Watch it learn" is a replay of the reference **simulation**.
-2. **The Scout demo**, `/scout`. Pick an example question and watch five agents work. Each call shows who answered it, what it cost and what the teacher alone would have cost. The planner and the writer are pinned to the teacher by design; triage and reader calls are the repetitive ones the student learns to take over.
-3. **The dashboard**, `/dashboard`. Read the by-task table, the versions with their signed bills of materials, the release log and the economics panel (savings per token and by GPU-hours, the break-even, a recommendation). Paste an email and a card number into the redactor in the trust panel.
-4. **Proof you can run**, [/guides/proof/](/guides/proof/). Commands that recompute a number from a signed record.
-5. **Text-to-SQL results**, [/guides/results/](/guides/results/). The one adapter trained on real data (see [Text-to-SQL](/guides/text-to-sql/)).
+**Reading this diagram.** The three rounded steps are on the live site and the two square ones are in these docs. The order goes from the idea, to a running system, to the books, to evidence you can recompute, to the one real training result. Each step is about two minutes; the walk-through below has the detail.
+
+</figcaption>
+</figure>
+
+<Stepper
+  label="A five-minute tour"
+  steps={[
+    { title: 'The story page', body: 'Open [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech). Look at "The catch" (why closed models cannot be distilled), "One way only" (the release gate) and "The honest bill" (when self-hosting does not pay).\n\n"Watch it learn" is a replay of the reference **simulation**.' },
+    { title: 'The Scout demo', body: 'Open `/scout` and pick an example question to watch five agents work. Each call shows who answered it, what it cost and what the teacher alone would have cost.\n\nThe planner and the writer are pinned to the teacher by design; triage and reader calls are the repetitive ones the student learns to take over.', tone: 'owned' },
+    { title: 'The dashboard', body: 'Open `/dashboard`. Read the by-task table, the versions with their signed bills of materials, the release log and the economics panel (savings per token and by GPU-hours, the break-even, a recommendation).\n\nPaste an email and a card number into the redactor in the trust panel.' },
+    { title: 'Proof you can run', body: 'Read [Proof you can run](/guides/proof/): commands that recompute a number from a signed record.' },
+    { title: 'Text-to-SQL results', body: 'Read [Results](/guides/results/): the one adapter trained on real data (see [Text-to-SQL](/guides/text-to-sql/)).' },
+  ]}
+/>
 
 ## What is simulation and what is live
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
+flowchart TB
   subgraph Real["Real"]
-    R1["Teacher calls: Nemotron 3 Ultra on Nebius Token Factory"]
-    R2["Scout web search"]
-    R3["Text-to-SQL adapter trained on a free Colab T4"]
-    R4["Code and tests, no GPU needed"]
+    direction LR
+    R1["Teacher calls on Token<br/>Factory, Scout search"] ~~~ R3["SQL adapter,<br/>free Colab T4"] ~~~ R4["Code and tests,<br/>no GPU needed"]
   end
-  subgraph Sim["Simulation, labelled on every page"]
-    S1["Story page replay and savings figures"]
-    S2["Mock mode on your machine: make demo"]
+  subgraph Sim["Simulation"]
+    direction LR
+    S1["Story page replay<br/>and savings figures"] ~~~ S2["Mock mode on<br/>your machine"]
   end
   subgraph Not["Not done yet"]
-    N1["Student endpoint on a Nebius GPU"]
-    N2["Measured live savings"]
+    direction LR
+    N1["Student endpoint<br/>on a Nebius GPU"] ~~~ N2["Measured<br/>live savings"]
   end
-  classDef real fill:#14532d,stroke:#22c55e,color:#fff
-  classDef sim fill:#713f12,stroke:#eab308,color:#fff
-  classDef not fill:#7c2d12,stroke:#f97316,color:#fff
-  class R1,R2,R3,R4 real
-  class S1,S2 sim
-  class N1,N2 not
+  Real ~~~ Sim ~~~ Not
+  class R1,R3,R4 ok
+  class S1,S2 outline
+  class N1,N2 pending
+  class Real okZone
+  class Sim outlineZone
+  class Not pendingZone
 ```
 
-**Reading this diagram.** Green is real, yellow is simulation and orange is not done. The teacher side runs for real. The numbers on the story page come from mock models that show how the loop behaves, not how good a real model is. The student endpoint has not been served on a Nebius GPU, so on the live demo student calls go to a hosted, untuned Nano model, and the pages say so with a badge. Live savings numbers do not exist yet and are not shown.
+<figcaption>
+
+**Reading this diagram.** Three rows: what runs for real (green), what is simulation (dashed outline) and what is not done yet (amber, dashed). The teacher side runs for real; the student side has not run on a Nebius GPU. The two notes below say the same in words.
+
+<ul class="rt-key">
+  <li class="ok">Real</li>
+  <li class="outline">Simulation</li>
+  <li class="pending">Not done yet</li>
+</ul>
+
+</figcaption>
+</figure>
+
+<div class="rt-callout rt-callout--note">
+
+**Real, as of Oct 22, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The text-to-SQL adapter was trained on a free Colab T4, not on Nebius, and its results are read from its own results file. The code and its 1,900 tests run with no GPU. No live run of the full loop has been published yet, and live mode stays unverified until `scripts/day1_check.py` passes with a real key.
+
+</div>
+
+<div class="rt-callout rt-callout--sim">
+
+**Simulation.** The numbers on the story page come from mock models that show how the loop behaves, not how good a real model is. The student endpoint has not been served on a Nebius GPU, so on the live demo student calls go to a hosted, untuned Nano model, and the pages say so with a badge. Live savings numbers do not exist yet and are not shown.
+
+</div>
 
 Every answer on Scout and the dashboard carries a badge:
 

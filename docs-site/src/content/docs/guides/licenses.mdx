@@ -9,6 +9,8 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
 
 <Summary>Ratchet distills only from teachers whose license allows training other models on their outputs, refuses closed models in code, records the license on every training example, and ships the licenses with every adapter, because the terms of closed models such as GPT forbid using their outputs to train competing models.</Summary>
 
@@ -48,37 +50,79 @@ The apprentice's own schooling came from NVIDIA, under NVIDIA's license. The not
 
 ### The startup check
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  A["Teacher, judge or fallback teacher id"] --> B{"A provenance source, like human?"}
-  B -->|"yes"| X1["Refused: not a teacher"]
-  B -->|"no"| C{"In the registry?"}
-  C -->|"no"| D{"Starts with a closed prefix?"}
-  D -->|"yes, like gpt"| X2["Refused: the terms are quoted"]
-  D -->|"no"| X3["Refused: unknown teacher"]
-  C -->|"yes"| E{"distill_ok?"}
+flowchart TB
+  A(["Teacher, judge or<br/>fallback teacher id"]) --> B{{"A provenance source,<br/>like human?"}}
+  B -->|"yes"| X1["Refused:<br/>not a teacher"]
+  B -->|"no"| C{{"In the registry?"}}
+  C -->|"no"| D{{"Starts with a<br/>closed prefix?"}}
+  D -->|"yes, like gpt"| X2["Refused:<br/>the terms are quoted"]
+  D -->|"no"| X3["Refused:<br/>unknown teacher"]
+  C -->|"yes"| E{{"distill_ok?"}}
   E -->|"no"| X2
-  E -->|"yes"| OK["Starts: license kept for every example"]
+  E -->|"yes"| OK["Starts: the license is<br/>kept for every example"]
+  class B,C,D,E gate
+  class X1,X2,X3 danger
+  class OK ok
 ```
+
+<figcaption>
+
+**Reading this diagram.** Every model that writes or judges answers passes these checks before the gateway starts. There is one way through: a registered model whose license allows distillation. Every other path ends in a refusal, and a refusal stops startup with the reason; for a closed family such as GPT the reason quotes the terms that forbid it.
+
+<ul class="rt-key">
+  <li class="gate">A check</li>
+  <li class="danger">Refused: the gateway does not start</li>
+  <li class="ok">Starts</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### From a teacher answer to the adapter's paperwork
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  T["Teacher answer"] --> E["Example row: teacher, license, URL"]
+flowchart TB
+  T["Teacher answer"] --> E[("Example row:<br/>teacher, license, URL")]
   E --> R["Night School rows"]
-  R --> L["Set leaf: answer, teacher, license"]
-  R --> J["Job writes NOTICE.md and manifest"]
-  L --> B["Signed BOM: sources, base license, NOTICE text"]
-  B --> N["NOTICE.md replaced by the signed text"]
+  R --> L["Set leaf: answer,<br/>teacher, license"]
+  R --> J["Job writes NOTICE.md<br/>and manifest"]
+  L --> B["Signed BOM: sources,<br/>base license, NOTICE text"]
+  J -.->|"replaced by<br/>the signed text"| N["NOTICE.md next<br/>to the weights"]
+  B --> N
   B --> X["ratchet.live export"]
+  class T teacher
+  class E store
+  class B student
 ```
+
+<figcaption>
+
+**Reading this diagram.** The license is written down once, when the teacher's answer is stored, and then carried forward: into the rows Night School trains on, into each leaf of the committed training set, and into the signed bill of materials. The training job writes a first `NOTICE.md`; after the night it is replaced by the exact text the BOM signed, and `python -m ratchet.live export` hands over the adapter with both.
+
+<ul class="rt-key">
+  <li class="teacher">The teacher's answer</li>
+  <li class="store">The ledger row</li>
+  <li class="student">The signed lineage you own</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### Why closed teachers are refused
 
+<StatRow cols={2} label="Closed and open teachers">
+  <Stat value="Refused" label="a closed teacher" note="Terms such as OpenAI's Business Terms §3.3(e) forbid training competing models on the outputs. Ratchet refuses these teachers in code." />
+  <Stat value="Allowed" label="an open teacher" tone="owned" note="Nemotron 3 Ultra is released under OpenMDW-1.1, which places no restrictions on outputs. Each stored example records the teacher and its license." />
+</StatRow>
+
 The terms of the most used closed models forbid using their outputs to train competing models. OpenAI's [Business Terms §3.3(e)](https://openai.com/policies/business-terms/) forbid using Output "to develop artificial intelligence models that compete with OpenAI". A distillation tool that learns from GPT traffic would put its users in breach of terms like these. The README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) section lists the other closed vendors' clauses.
 
-So the rule is hard, not a warning (invariant 1): the teacher must be in the registry with `distill_ok=True`, and an override needs a reviewed code change. The cost is real: traffic that runs on closed models today cannot become training data. It has to go through an open teacher first.
+So the rule is hard, not a warning: the teacher must be in the registry with `distill_ok=True`, and an override needs a reviewed code change. The cost is real: traffic that runs on closed models today cannot become training data. It has to go through an open teacher first.
 
 ### The teacher Ratchet uses: Nemotron 3 Ultra under OpenMDW-1.1
 
@@ -128,6 +172,12 @@ The student is <Who as="student" />: `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` plu
 
 ### What you own
 
+<div class="rt-callout rt-callout--owned">
+
+**You own this.** The LoRA adapter and its signed bill of materials are yours; the Nano base keeps the NVIDIA Nemotron Open Model License.
+
+</div>
+
 - **The LoRA adapter** Night School trains: the files in `adapters/student-vN/` in your bucket.
 - **Its signed training lineage**: the bill of materials, signed with your Ed25519 key (`RATCHET_BOM_SIGNING_KEY`), which commits to the exact training and golden sets, every teacher and license, and the evaluation.
 
@@ -158,23 +208,34 @@ Labels a person wrote (a correction sent with `POST /v1/ratchet/feedback`, or a 
 
 The [text-to-SQL adapter](/guides/text-to-sql/) is the clearest case of the chain, because every link is a file you can read.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  BASE["Base model<br/>Nemotron 3 Nano 4B<br/>NVIDIA Nemotron Open Model License"] --> AD["LoRA adapter"]
-  TEA["Teacher<br/>Nemotron 3 Ultra on Token Factory<br/>OpenMDW-1.1"] --> LAB["Labels: SQL the teacher wrote<br/>and that was run and kept"]
+flowchart TB
+  TEA["Teacher: Nemotron 3 Ultra<br/>on Token Factory<br/>OpenMDW-1.1"] --> LAB["Labels: SQL the teacher<br/>wrote that ran and was kept"]
+  NONE["Closed-model<br/>outputs"] -.->|"none used"| LAB
+  BASE["Base: Nemotron 3 Nano 4B<br/>NVIDIA Nemotron<br/>Open Model License"] --> AD["LoRA adapter"]
   LAB --> AD
-  NONE["Closed-model outputs"] -.->|"none used"| LAB
+  LAB --> MAN[("teacher_manifest.json:<br/>teacher, license, data hashes")]
   AD --> CARD["Model card and NOTICE.md<br/>name both licenses"]
-  LAB --> MAN["teacher_manifest.json<br/>records the teacher, its license and the data hashes"]
+  class TEA teacher
+  class NONE danger
+  class AD student
+  class MAN store
 ```
 
+<figcaption>
+
 **Reading this diagram.** Two licenses meet in the adapter. The base model's license comes with the weights it sits on, so a copy of it ships with the adapter. The teacher's license covers the labels, and its terms place no restrictions on using the outputs. The dotted line is the rule that matters: no output from a closed model is in the data, so there is no closed-model clause to breach. The manifest and the model card are where a reader can check each claim.
+
+</figcaption>
+</figure>
 
 The adapter was trained on a free Colab T4, not on Nebius GPUs. Only the teacher ran on Nebius Token Factory, so the Token Factory terms question below applies to the labels, not to the training.
 
 ### The open question: Token Factory's terms
 
-Token Factory's Terms of Service §5(f) is about using the service to "Develop a product or service that competes with the Service" (as quoted in the [threat model](/reference/threat-model/), T7). That wording is broad. The project asked Nebius support about it in writing on **Oct 19, 2026**; as of Oct 21, 2026 there is no final answer, so treat the question as **open**. Ratchet runs on Nebius end to end (the teacher on Token Factory, the student on Nebius AI Cloud), which is how it is positioned, but that is not a legal answer. Not legal advice.
+Token Factory's Terms of Service §5(f) is about using the service to "Develop a product or service that competes with the Service" (as quoted in the [threat model](/reference/threat-model/), T7). That wording is broad. The project asked Nebius support about it in writing on **Oct 19, 2026**; as of Oct 21, 2026 there is no final answer, so treat the question as **open**. Ratchet is built to run on Nebius end to end (the teacher on Token Factory, the student on Nebius AI Cloud, where it has not run yet), which is how it is positioned, but that is not a legal answer. Not legal advice.
 
 ## For engineers
 

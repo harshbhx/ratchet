@@ -5,6 +5,11 @@ description: Who Ratchet is for, what it saves, how it could earn money, why now
 
 import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import Compare from '../../../components/Compare.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
 
 <Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Its savings are shown in simulation today, not on live traffic.</Summary>
 
@@ -20,23 +25,41 @@ Teams with steady, repetitive LLM traffic on tasks a small model can learn: supp
 
 ## The value
 
+<Compare before="Renting a frontier model for every call" after="With Ratchet">
+  <div slot="before">Every narrow, repeated request is a paid call at frontier prices, the bill grows with traffic, and closed vendors forbid training a cheaper model on their answers.</div>
+  <div slot="after">A small open model you own takes over the work it is sure about, learns only from teachers whose license allows it, and ships each new version only if it passes a gate.</div>
+</Compare>
+
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  T["Steady, narrow LLM traffic"] --> R["Ratchet"]
-  R --> V1["Lower bill as the student takes over"]
-  R --> V2["A model you own: adapter plus signed lineage"]
-  R --> V3["License-clean: closed teachers refused"]
-  R --> V4["Safe releases: gate, canary, rollback"]
-  V1 --> M["Measured per request, by token and by GPU-hours"]
-  classDef core fill:#1e3a8a,stroke:#3b82f6,color:#fff
-  classDef out fill:#14532d,stroke:#22c55e,color:#fff
-  class R core
-  class V1,V2,V3,V4,M out
+flowchart TB
+  T(["Steady, narrow<br/>LLM traffic"]) ==> R["Ratchet"]
+  R --> V1["Lower bill<br/>as the student<br/>takes over"]
+  R --> V2["A model you own:<br/>adapter and<br/>signed lineage"]
+  R --> V3["License-clean:<br/>closed teachers<br/>refused"]
+  R --> V4["Safe releases:<br/>gate, canary,<br/>rollback"]
+  V1 --> M[("Measured per request,<br/>by token and GPU-hours")]
+  class V2 student
+  class V4 gate
+  class M store
 ```
+
+<figcaption>
 
 **Reading this diagram.** One input, steady narrow traffic, produces four separate benefits, and the first is measured rather than assumed. Each request records what it cost and what the teacher alone would have cost, in two views: per token and by the GPU-hours actually paid. The other three benefits are about risk: who owns the model, whether its training data was allowed, and whether a bad version can reach everyone.
 
-- **Cost falls as the student takes over.** In the reference simulation (mock models, ticket triage), the all-teacher cost was about $1.09 per 1,000 requests and Ratchet's steady-state cost about $0.15 to $0.16, a saving of 85 to 87% (**simulation**, unverified list prices). Real savings depend on the traffic mix and on GPU utilization.
+</figcaption>
+</figure>
+
+- **Cost falls as the student takes over.** Real savings depend on the traffic mix and on GPU utilization. The reference simulation (mock models, 2,000 support tickets a day, seed 7) shows the shape: once the student serves, and outside the days after a simulated product launch, its cost is about $0.15 to $0.16 per 1,000 requests, a saving of 85 to 87%.
+
+<StatRow cols={3} label="The reference simulation's cost on day 10">
+  <Stat value="$1.093" label="per 1,000 requests, all Ultra" tone="sim" note="What the teacher alone would have cost." />
+  <Stat value="$0.147" label="per 1,000 requests, Ratchet" tone="sim" note="Day 10, with the student serving." />
+  <Stat value="87%" label="saved on day 10" tone="sim" note="At unverified list prices." />
+</StatRow>
+
 - **You own the result.** A LoRA adapter on an open base model, plus a signed bill of materials listing the teacher and license of every training example.
 - **Releases are gated.** A new student must beat the current one on held-out data, then pass shadow and canary stages. See [The release gate](/guides/release-gate/).
 
@@ -57,27 +80,34 @@ The plan is an open-source core (Apache-2.0: gateway, ledger, Night School, rele
 | Fine-tuning and distillation services | Train a model when you start a job | Run by themselves every night, or record each example's teacher license | Retrains nightly and signs the lineage into the adapter |
 | Reference blueprints and tutorials | Show the pattern and its parts | Run unattended; promotion is left to a person | Gates, canaries and rolls back automatically |
 
+<figure class="rt-diagram">
+
 ```mermaid
 flowchart TB
   subgraph Prior["Existing categories"]
-    A["Routing and gateways"]
-    B["Distillation services"]
-    C["Blueprints and papers"]
+    A["Routing and<br/>gateways"]
+    B["Distillation<br/>services"]
+    C["Blueprints<br/>and papers"]
   end
-  A --> X["One loop that runs by itself"]
+  A --> X{{"One loop that runs by itself"}}
   B --> X
   C --> X
-  X --> O["Per-request escalation, nightly retrain, gated release, signed license lineage"]
-  classDef new fill:#1e3a8a,stroke:#3b82f6,color:#fff
-  class X,O new
+  X --> O["Per-request escalation,<br/>nightly retraining,<br/>gated release,<br/>signed license lineage"]
+  class X gate
+  class O ok
 ```
 
-**Reading this diagram.** Each category on top is real and useful, and Ratchet uses their ideas. The claim is only about the combination: routing, retraining and release safety joined in one loop, with each example's teacher license recorded. Sources for the prior art are listed in [What is Ratchet](/guides/what-is-ratchet/).
+<figcaption>
+
+**Reading this diagram.** Each category on top is real and useful, and Ratchet uses their ideas. The claim is only about the combination: routing, retraining and release safety joined in one loop, with each example's teacher license recorded. The README's [prior art section](https://github.com/harshbhx/ratchet#prior-art-and-what-is-new) names the work it builds on.
+
+</figcaption>
+</figure>
 
 ## Honest limits
 
 <Aside type="caution" title="As of Oct 22, 2026">
-- **Not proven on live traffic.** The teacher calls are real on Nebius Token Factory, but the student endpoint has not been served on a Nebius GPU. Savings figures come from mock models and are labelled simulation. A text-to-SQL adapter trained on a free Colab T4 is the first real training result ([Results](/guides/results/)).
+- **Not proven on live traffic.** Real teacher calls on Nebius Token Factory built the text-to-SQL data (Oct 22, 2026), but the gateway's live mode is unverified until the day-1 checks pass, and the student endpoint has not been served on a Nebius GPU. Savings figures come from mock models and are labelled simulation. A text-to-SQL adapter trained on a free Colab T4 is the first real training result ([Results](/guides/results/)).
 - **Early stage.** There is no customer and no revenue.
 - **Savings depend on the traffic mix.** Per-token savings against the cheapest tiers of closed models are small. The large savings come from moving traffic off top-tier models, and only for tasks a small model can learn.
 - **A Token Factory terms question is open.** A question about its Terms of Service §5(f) was sent to Nebius support on Oct 19, 2026. This is not legal advice.
@@ -85,8 +115,11 @@ flowchart TB
 
 ## Related
 
-- [What is Ratchet](/guides/what-is-ratchet/)
-- [Why it matters](/guides/why-it-matters/)
-- [Cost and savings](/guides/cost-and-savings/)
-- [Licenses](/guides/licenses/)
-- [For judges](/guides/for-judges/)
+<PathGrid cols={2} label="Related pages">
+  <PathCard title="Why it matters" href="/guides/why-it-matters/" icon="scale" tone="neutral" description="The value in depth, by audience." />
+  <PathCard title="Cost and savings" href="/guides/cost-and-savings/" icon="coin" tone="neutral" description="Per token and by GPU-hours paid, with the break-even." />
+  <PathCard title="Licenses" href="/guides/licenses/" icon="key" description="Why only open teachers, and what you own." />
+  <PathCard title="For judges" href="/guides/for-judges/" icon="start" tone="neutral" description="A ten-minute tour of the demo and the evidence." />
+</PathGrid>
+
+Also: [What is Ratchet](/guides/what-is-ratchet/).

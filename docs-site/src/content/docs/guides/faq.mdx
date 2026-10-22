@@ -31,18 +31,29 @@ The whole loop in four steps; [the big picture](/guides/big-picture/) has every 
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
 flowchart LR
-  app["Your app"] --> gw["Gateway"]
-  gw -->|"confident"| st["Student"]
-  gw -->|"unsure"| te["Teacher"]
+  gw(["Gateway"]) ==> st["Student"]
+  st -->|"unsure"| te["Teacher"]
   te --> led[("Ledger")]
   led --> ns["Night School"]
-  ns -->|"gated release"| st
+  ns -.-> st
+  class st student
+  class te teacher
+  class led store
 ```
 
-<Aside type="caution" title="Status as of Oct 21, 2026">
-Ratchet has not run on Nebius yet. The loop is complete and tested in simulation with mock models; live mode, the student endpoint, the training job and the demo VM kit are written and tested offline, not against a real account. Every number on this site is either simulation or an estimate, and says which.
+<figcaption>
+
+**Reading this diagram.** Every request reaches the gateway, which asks the student first; a confident student answers at once. Unsure requests go to the teacher, whose answers are stored in the ledger. Each night Night School trains a new student from them, and the dotted line is the gated release that may replace the current one.
+
+</figcaption>
+</figure>
+
+<Aside type="caution" title="Status as of Oct 22, 2026">
+Nothing has run on Nebius GPUs yet. Teacher calls to Nemotron 3 Ultra on Token Factory are real (they built the text-to-SQL data on Oct 22, 2026), and the text-to-SQL adapter was trained on a free Colab T4. The full loop is complete and tested in simulation with mock models; live mode, the student endpoint, the training job and the demo VM kit are written and tested offline, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. Every number on this site is simulation, an estimate, or read from the text-to-SQL results file, and says which.
 </Aside>
 
 ## For everyone
@@ -75,7 +86,7 @@ Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
 ### Does it work on real traffic yet?
 
-Not yet. As of Oct 21, 2026 nothing has run against a real Nebius account, so there are no live numbers: live figures read `[LIVE NUMBER]` placeholders, and they will be filled only from a published live-run results file. Everything shown so far is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
+Not yet. As of Oct 22, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and no student has run on a Nebius GPU, so there are no live numbers. Live figures will come only from a published live-run results file. The one measured result is the text-to-SQL adapter's exam, on [Results](/guides/results/); everything else is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
 
 ### What does it cost?
 
@@ -83,14 +94,14 @@ All of these are estimates or simulation, with their sources:
 
 - **The public demo VM**: about $72.50 for Oct 29 to Dec 15, 2026 (`cpu-e2`, prices as of Oct 20, 2026).
 - **The teacher**: Ultra at $1 per million input tokens and $3 per million output tokens (list price, Oct 2026, unverified until the day-1 checks pass), roughly $1.30 per 1,000 teacher calls.
-- **The GPU endpoint**: about $32 to $37 for every full day it runs (an L40S at about $1.35 an hour on Nebius's pricing page, read Oct 22, 2026, or $1.55 in the repo docs, unverified).
+- **The GPU endpoint**: about $32 for every full day it runs (an L40S at $1.35 a GPU-hour on [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate).
 - **In simulation** (mock models, seed 7, the reference run in `docs/TESTING.md`), day 10 cost $0.147 per 1,000 ticket requests against $1.093 if Ultra had answered all of them.
 
 [Cost and savings](/guides/cost-and-savings/), [Host it on Nebius](/guides/host-on-nebius/)
 
 ### When does self-hosting lose money?
 
-When too few requests reach the student. A GPU endpoint bills every hour it runs, whether requests arrive or not. Break-even is the GPU price per hour divided by the teacher spend each student answer avoids: with unverified list prices (about $1.55 an hour, about $0.001 avoided per ticket-triage answer in simulation), that is about 1,500 student answers an hour, roughly 36,000 a day. At the demo's 1,500 requests a day, a 24/7 endpoint loses money, and Ratchet's own cost report says so and recommends the hosted fallback or scaling the endpoint to zero. [Cost and savings](/guides/cost-and-savings/)
+When too few requests reach the student. A GPU endpoint bills every hour it runs, whether requests arrive or not. Break-even is the GPU price per hour divided by the teacher spend each student answer avoids: with estimated prices ($1.35 a GPU-hour for an L40S, about $0.001 avoided per ticket-triage answer in simulation), that is about 1,350 student answers an hour, roughly 32,000 a day. At the demo's 1,500 requests a day, a 24/7 endpoint loses money, and Ratchet's own cost report says so and recommends the hosted fallback or scaling the endpoint to zero. [Cost and savings](/guides/cost-and-savings/)
 
 ### What happens when the GPU endpoint is off?
 
@@ -104,15 +115,15 @@ A cascade router saves money on each call but learns nothing: every call stays r
 
 ### What should I look at first?
 
-The story page at `/`, then `/scout` (ask an example question and watch each call get answered by the student or the teacher), then `/dashboard`. The demo address is `[DEMO URL]` (a placeholder: not known yet). [For judges](/guides/for-judges/)
+The story page at https://ratchet.dualmindlab.tech, then `/scout` (ask an example question and watch each call get answered by the student or the teacher), then `/dashboard`. [For judges](/guides/for-judges/)
 
 ### Is the demo live or simulated?
 
-Mock mode is simulation, and the pages label it so. The hosted demo is meant to run in live mode, because mock mode never calls Token Factory. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Mock mode is simulation, and the pages label it so. The hosted demo is meant to run in live mode, calling the real teacher on Token Factory, and live mode stays unverified until the day-1 checks pass. It has no GPU: student calls go to the hosted, untuned Nano 30B <Who as="fallback" />, and every answer carries that badge. The story page's replay and savings figures are simulation. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 
-None are live yet. Simulation numbers come from mock models and say "simulation" with their source; costs from the docs say "estimate" with their date. Live numbers will come only from a published, non-smoke live-run results file (`evidence/live/results.json`), which does not exist yet. [Evidence](/guides/evidence/)
+Only the text-to-SQL adapter's results, read from its own results file on [Results](/guides/results/). None of the loop's numbers are live yet. Simulation numbers come from mock models and say "simulation" with their source; costs from the docs say "estimate" with their date. Live numbers will come only from a published, non-smoke live-run results file (`evidence/live/results.json`), which does not exist yet. [Evidence](/guides/evidence/)
 
 ### Which NVIDIA models and Nebius services does it use?
 
@@ -135,7 +146,7 @@ In live mode, every teacher call goes to Token Factory: cold starts, escalations
 
 ### Can I check the claims myself?
 
-Yes, offline. `make test` runs the test suite with no network; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
+Yes, offline. `make test` runs the 1,900 tests with no network and no GPU; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
 
 ### Why does a Scout run say "search unavailable"?
 
@@ -143,7 +154,7 @@ The day's public share of Tavily credits ran out, or a search failed. The run st
 
 ### Is anything held back for judges?
 
-Yes, on the server side. `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's Scout runs, spend and Tavily credits back from the public; the code is shared with evaluators directly, never published, and opens a session through `POST /scout/judge` and a signed cookie. A field on the Scout page to type the code in is planned, not on this branch yet. [Scout](/guides/scout/)
+Yes, on the server side. `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's Scout runs, spend and Tavily credits back from the public; the code is shared with evaluators directly, never published, and opens a session through `POST /scout/judge` and a signed cookie. A field on the Scout page to type the code in is planned. [Scout](/guides/scout/)
 
 ## For engineers
 
@@ -243,7 +254,7 @@ No. Below break-even, the hosted fallback on Token Factory is cheaper: you pay p
 
 ### Is it ready for production?
 
-Not yet, and it says so. It has not run on Nebius; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
+Not yet, and it says so. No student has run on a Nebius GPU and live mode is unverified until the day-1 checks pass; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
 
 ### Where does my data go?
 
