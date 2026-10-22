@@ -1,0 +1,86 @@
+# Ratchet demo on a SHARED VM: the same image as deploy/vm, boxed in so the other services on the machine are not affected.
+#   cd deploy/shared-vm && cp .env.example .env && docker compose up -d --build
+#   with a public HTTPS address through a Cloudflare Tunnel:   docker compose --profile tunnel up -d --build
+#
+# What is different from deploy/vm/docker-compose.yml:
+#   - no Caddy, and nothing listens on a public port (80 and 443 stay free for the other services);
+#   - hard limits: at most 1.75 GiB of RAM in total by default (the demo 1.5 GiB, the tunnel 256 MiB), well under a 3 GiB budget
+#     that you can raise through MEM_GATEWAY; no swap; at most 1.75 vCPU in total; a cap on processes; no extra privileges;
+#   - if the host runs short of memory, the kernel stops these containers first (oom_score_adj);
+#   - its own network and volumes, named so they cannot collide with another project.
+# Mock mode only. It needs no keys, so there is nothing secret on this box. Live mode stays in deploy/vm.
+# Whether this fits next to your other services under real load is unverified: watch `docker stats` the first day.
+
+name: ratchet-shared
+
+x-gateway: &gateway
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  image: ratchet-gateway:shared
+  restart: unless-stopped
+  stop_grace_period: 20s
+  networks: [ratchet-net]
+  memswap_limit: ${MEM_GATEWAY:-1536m}  # same as mem_limit: no swap
+  pids_limit: 200
+  oom_score_adj: 500                 # first to be stopped when the host runs out of memory
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # The demo: the story page, Scout, the dashboard and the simulation controls, in mock mode with an in-memory ledger.
+  ratchet-demo:
+    <<: *gateway
+    command: [uvicorn, ratchet.gateway:app, --host, 0.0.0.0, --port, "8000", --workers, "1", --proxy-headers, --forwarded-allow-ips, "*"]
+    environment:
+      RATCHET_MODE: mock
+      RATCHET_MOCK_WARMUP_DAYS: "4"
+      RATCHET_DEMO_RPM: "30"
+      RATCHET_DEMO_MAX_DAYS: "30"
+      RATCHET_DEMO_MAX_REQUESTS: "200000"
+      RATCHET_DEMO_IDLE_RESET_S: "7200"
+      RATCHET_IP_RPM: "60"
+      RATCHET_MAX_INFLIGHT: "8"
+      RATCHET_STATS_TTL_S: "2"
+    ports:
+      - "127.0.0.1:${DEMO_PORT:-18000}:8000"   # this machine only: reach it from a tunnel or a reverse proxy you control
+    cpus: "1.5"
+    mem_limit: ${MEM_GATEWAY:-1536m}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s   # the mock warm-up runs four simulated days before the app answers
+
+  # Optional public HTTPS address without opening any port: a Cloudflare Tunnel whose route points at http://ratchet-demo:8000
+  # (create the tunnel in the Cloudflare dashboard and put its token in .env as TUNNEL_TOKEN; never commit .env).
+  tunnel:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:latest   # pin a version once you have one that works
+    command: [tunnel, --no-autoupdate, run]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in deploy/shared-vm/.env}
+    networks: [ratchet-net]
+    depends_on:
+      ratchet-demo:
+        condition: service_healthy
+    restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 100
+    oom_score_adj: 500
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  ratchet-net:
+    name: ratchet-shared-net
