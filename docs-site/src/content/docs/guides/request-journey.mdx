@@ -7,7 +7,6 @@ import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components'
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import RequestJourney from '../../../components/diagrams/RequestJourney.astro';
 
 <Summary>A request enters at `POST /v1/chat/completions`, passes the gateway's admission checks, goes through `Ratchet.handle` (the student first, the teacher when the student is unsure), is logged as one ledger row with a route that says why it was served that way, and comes back as a normal OpenAI response with a `ratchet` block.</Summary>
 
@@ -27,38 +26,97 @@ If the apprentice's stove breaks, the head chef simply cooks. If the head chef c
 
 ## How it really works
 
-<RequestJourney />
+### Every decision on the way
+
+<figure class="rt-diagram">
+
+```mermaid
+flowchart TB
+  adm{{"Admission checks pass?"}}
+  adm -->|no| refused["Refused: 4xx or 503<br/>no model call, no request row"]
+  adm -->|yes| only{{"Teacher-only request?<br/>pinned, tools, ineligible"}}
+  only -->|no| ver{{"A version that serves<br/>this task?"}}
+  ver -->|yes| up{{"Student call works?"}}
+  up -->|yes| conf{{"Confident enough<br/>to serve?"}}
+  conf -->|yes| serve["Student serves<br/>route student"]
+  serve --> audit{{"Audit drawn?<br/>RATCHET_AUDIT_RATE"}}
+  ver -->|"no: cold_start,<br/>student_disabled, task_disabled"| teach
+  up -->|"no: student_breaker,<br/>student_error"| teach
+  conf -->|"no: confidence,<br/>n_choices, rule:i"| teach["Teacher answers<br/>the escalation"]
+  audit -->|"yes: the teacher checks it<br/>at temperature 0"| store
+  teach --> store{{"Storable? no opt-out,<br/>complete and valid"}}
+  store -->|yes| ex[("Training example<br/>redacted, licensed")]
+  only -->|"yes: the teacher<br/>answers alone"| log
+  audit -->|no| log
+  store -->|no| log
+  ex --> log(["Log one row, tick the gate,<br/>send the response"])
+
+  class adm,only,ver,up,conf,audit,store gate
+  class refused danger
+  class serve student
+  class teach teacher
+  class ex store
+  class log ok
+```
+
+<figcaption>
+
+**Reading this diagram.** Each hexagon is one check, in the order the code runs it. A refusal at admission costs nothing and calls no model. Teacher-only requests (a pinned task, a tool request, a request the student must not see) skip the student entirely and are not stored. Otherwise the student gets its chance, and each "no" on the way down sends the request to the teacher with a route that names the reason, the labels on the arrows. A confident student serves, and one random draw decides whether the teacher also checks that answer. Both teacher paths meet at the same storage check before anything becomes training data. Every path but a refusal ends in one ledger row; a teacher failure when its answer is needed ends in an error instead ([When something fails](#when-something-fails)).
+
+<ul class="rt-key">
+  <li class="gate">A check</li>
+  <li class="student">The student serves</li>
+  <li class="teacher">The teacher answers</li>
+  <li class="store">Kept as data</li>
+  <li class="danger">Refused</li>
+</ul>
+
+</figcaption>
+</figure>
+
+### An escalation, and an audit after the response
+
+<figure class="rt-diagram">
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant G as Gateway
-    participant S as Student endpoint
-    participant T as Teacher
-    participant L as Ledger
-    C->>G: POST /v1/chat/completions
-    G->>G: admission checks
-    G->>G: pick a version, canary or live
-    G->>S: 3 samples, temperature 0.7, logprobs
-    S-->>G: samples
-    G->>G: confidence against the threshold
-    alt confident
-        G->>G: serve the student's answer
-        opt audit drawn
-            G->>T: the same request, temperature 0
-            T-->>G: teacher answer
-            G->>L: store example if valid
-        end
-    else unsure, or the student failed
-        G->>T: escalate
-        T-->>G: teacher answer
-        G->>L: store example if valid
+  autonumber
+  participant Client
+  participant Gateway
+  participant Student as Student<br/>vLLM
+  participant Teacher as Teacher<br/>Ultra
+  participant Ledger
+  Client->>Gateway: chat request
+  Note over Gateway: admission, pick a version
+  Gateway->>Student: 3 samples
+  Student-->>Gateway: samples
+  Note over Gateway: confidence vs threshold
+  alt unsure: escalate
+    Gateway->>Teacher: same request
+    Teacher-->>Gateway: answer
+    Gateway->>Ledger: example, if valid
+    Gateway->>Ledger: row, route confidence
+    Gateway-->>Client: teacher's answer
+  else confident, audit drawn
+    Gateway->>Ledger: row, audit pending
+    Gateway-->>Client: student's answer
+    rect rgba(42, 120, 214, 0.08)
+      Note over Gateway,Ledger: after the response, on a sidecar worker
+      Gateway->>Teacher: same request, temperature 0
+      Teacher-->>Gateway: answer
+      Gateway->>Ledger: verdict, example, finish the row
     end
-    G->>L: log one request row
-    G-->>C: chat.completion with the ratchet block
+  end
 ```
 
-In live mode the audit (and a shadow's work) runs after the response instead, on a small worker pool; the draw is still made on the request path. See [Escalation and audits](/guides/escalation-and-audits/).
+<figcaption>
+
+**Reading this diagram.** Steps 1 to 3 are the same for both outcomes: one call to the student endpoint returns 3 samples at temperature 0.7 with token logprobs, and the gateway scores them. In the upper branch the student is unsure, so the teacher answers (4, 5), its answer is stored if it is complete and valid (6), the row is logged with route `confidence` (7) and the client gets the teacher's answer (8). In the lower branch the student is confident and the audit draw comes up. In live mode the row is logged with the audit pending (9) and the client gets the student's answer at once (10). The shaded part runs afterwards on a sidecar worker: the teacher answers the same request at temperature 0, and the verdict, the stored example and the costs finish the row (11 to 13). In mock mode, and for Scout and the simulator, the same audit runs before the response.
+
+</figcaption>
+</figure>
+
+A shadow's work runs after the response in live mode too. The audit draw itself is always made on the request path, so the same draws happen whether the audit runs before or after the response. See [Escalation and audits](/guides/escalation-and-audits/).
 
 ### Before the cascade: admission
 
@@ -89,7 +147,7 @@ After admission the rest runs in a worker thread, so the ledger's lock never blo
 
 1. **Read the switches and settle the request's terms.** The operator's runtime switches and task pins are read once (`Ledger.flags`). A `response_format` is bound to the task as a contract. The client's generation parameters are split by role (`GenPolicy`): what the student may receive, what the serving teacher may receive, and the audit's fixed parameters. Whether the request's teacher answers may be stored is settled now (`store_opt_out`: zero retention, a no-store task, the key's `store=0`, `store: false`, or a no-train end user).
 
-2. **Teacher-only paths.** Some requests never reach the student. An unregistered task under `RATCHET_UNKNOWN_TASKS=teacher` (route `unknown_task`), a pinned task (route `pinned`), a tool request, meaning tools offered or tool calls in the messages (route `tools`), and a request with a content part only the teacher reads (route `multimodal`, decided by the gateway) all go to `_teacher_only`: the teacher answers, the request is logged, and nothing is stored as training data (invariant 10). No student, audit or shadow call.
+2. **Teacher-only paths.** Some requests never reach the student. An unregistered task under `RATCHET_UNKNOWN_TASKS=teacher` (route `unknown_task`), a pinned task (route `pinned`), and a tool request, meaning tools offered or tool calls in the messages (route `tools`), all go to `_teacher_only`: the teacher answers, the request is logged, and nothing is stored as training data (invariant 10). A request the student must not see takes the same kind of path through `_ineligible` (route `ineligible:<reason>`): a content part only the teacher reads (`content_type`), or more input than the task's `student_max_input_tokens` (`input_tokens`); only an over-length request on a task with `store_ineligible` may be stored. No student, audit or shadow call on any of these.
 
 3. **Pick a version** (`_pick_version`). If an operator turned the student off, none (route `student_disabled`). If a version is in canary, it is picked with probability `traffic_pct / 100` (10% or 50%); otherwise the live version. With neither (cold start) the teacher answers (route `cold_start`), and its answer is stored as usual.
 
@@ -99,7 +157,7 @@ After admission the rest runs in a worker thread, so the ledger's lock never blo
 
 6. **Score confidence** (`confidence.score`) on the first 3 samples, exactly as at calibration. A sample that is empty, cut off, unparseable or invalid under the task's spec gets no vote. Agreement is counted on the task's fields (for `ticket-triage`: `category` and `priority`). Confidence is `0.4 × p + 0.6 × agreement`, where `p` is the best agreeing sample's mean token probability; without logprobs it is agreement alone. See [Confidence](/guides/confidence/).
 
-7. **Compare with the threshold** (`Ratchet.threshold`). Each version carries its own threshold per task, calibrated on half of its golden set. The hosted fallback model gets `RATCHET_CONFIDENCE_THRESHOLD` (0.80); a task whose spec changed since the version was scored gets 1.01, which nothing reaches. The student serves when at least one sample is valid, confidence is at or above the threshold, and, for `n` choices, at least `n` samples agree (route `student`). A confident student without `n` agreeing samples escalates (route `n_choices`); an unsure one escalates (route `confidence`).
+7. **Compare with the threshold** (`Ratchet.threshold`). Each version carries its own threshold per task, calibrated on half of its golden set. The hosted fallback model gets `RATCHET_CONFIDENCE_THRESHOLD` (0.80); a task whose spec changed since the version was scored gets 1.01, which nothing reaches. The student serves when at least one sample is valid, confidence is at or above the threshold, and, for `n` choices, at least `n` samples agree (route `student`). A confident student without `n` agreeing samples escalates (route `n_choices`); an unsure one escalates (route `confidence`). A task's `escalate_when` rules can still send a confident answer to the teacher (route `rule:<i>`, for the rule that held).
 
 8. **Maybe audit.** When the student serves, one random draw decides an audit: probability `RATCHET_AUDIT_RATE` (0.05; at least 0.10 in mock mode), or `RATCHET_CANARY_AUDIT_RATE` for a canary when set, or an operator's runtime rate. If drawn, the teacher answers the same request at temperature 0 and its answer is compared with the student's. The student's answer is served either way.
 
@@ -134,7 +192,9 @@ Every row gets a `route` (`router.ROUTES`). `/ratchet/stats` counts them per tas
 | `pinned` | teacher | The task is pinned by its spec or by an operator | Never |
 | `unknown_task` | teacher | Unregistered task under `RATCHET_UNKNOWN_TASKS=teacher` | Never |
 | `tools` | teacher | A tool request; the teacher answers with the tools | Never |
-| `multimodal` | teacher | A content part only the teacher reads (`RATCHET_TEACHER_MODALITIES`) | Never |
+| `rule:<i>` | teacher | Rule `i` of the task's `escalate_when` held for the confident student's answer | Yes, if valid |
+| `ineligible:<reason>` | teacher | The student must not see the request: a content part only the teacher reads (`content_type`, `RATCHET_TEACHER_MODALITIES`) or too much input (`input_tokens`) | Only an over-length request on a task with `store_ineligible` |
+| `multimodal` | teacher | Set by a caller of `Ratchet.teacher_only` for a part only the teacher reads; the chat route uses `ineligible:content_type` | Never |
 
 "If valid" also means no storage opt-out applies. Rows written before v0.5 have no route and are counted as `unrecorded`.
 
@@ -197,14 +257,28 @@ Only a teacher call whose answer is needed can fail a request (invariant 7). Eve
 
 **The student fails: the teacher answers.** A student call on the request path waits 15 s to answer and 2 s to connect (`RATCHET_STUDENT_TIMEOUT_S`, `RATCHET_STUDENT_CONNECT_TIMEOUT_S`) and is never retried: the teacher is its retry. After 5 endpoint failures in a row (timeouts, connection errors, 5xx, 408, 429) the student's circuit breaker opens and requests go straight to the teacher without waiting:
 
+<figure class="rt-diagram">
+
 ```mermaid
 stateDiagram-v2
-    [*] --> closed
-    closed --> open: 5 failures in a row
-    open --> half_open: after 30 s, one probe
-    half_open --> closed: the probe succeeds
-    half_open --> open: the probe fails, the wait doubles up to 300 s
+  direction LR
+  [*] --> closed
+  closed --> open: 5 failures in a row
+  open --> half_open: after 30 s, one probe
+  half_open --> closed: the probe succeeds
+  half_open --> open: the probe fails,<br/>the wait doubles up to 300 s
+
+  class closed ok
+  class open danger
+  class half_open pending
 ```
+
+<figcaption>
+
+**Reading this diagram.** While the breaker is `closed`, every request tries the student. Five endpoint failures in a row (timeouts, connection errors, 5xx, 408, 429) open it, and requests go straight to the teacher with route `student_breaker`, without waiting for a timeout. After the wait exactly one request probes the endpoint (`half_open`): success closes the breaker and resets the wait to 30 s, failure opens it again for twice as long, up to 300 s. Each move writes a `circuit` event.
+
+</figcaption>
+</figure>
 
 A shadow has its own breaker, so a bad staging adapter cannot open the one live traffic depends on. When vLLM forgets an adapter after a restart, its 404 queues a reload from `RATCHET_ADAPTER_ROOT` (at most once a minute per adapter).
 
