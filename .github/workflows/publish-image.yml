@@ -1,0 +1,49 @@
+# Builds the gateway image and publishes it to the GitHub Container Registry, so a VM only has to `docker compose pull`.
+#   image: ghcr.io/harshbhx/ratchet-gateway:shared   (and :<commit sha>)
+# Uses only GitHub's built-in token: no secrets to add. The first publish creates a PRIVATE package: make it public once under
+# the repo's Packages > ratchet-gateway > Package settings > Change visibility (a VM can also log in with a read:packages token).
+name: publish-image
+
+on:
+  push:
+    branches: [main, deploy/shared-vm]
+    paths:
+      - Dockerfile
+      - pyproject.toml
+      - ratchet/**
+      - sim/**
+      - .github/workflows/publish-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/harshbhx/ratchet-gateway
+    steps:
+      - uses: actions/checkout@v7
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build
+        run: >
+          docker build
+          --label org.opencontainers.image.source=https://github.com/harshbhx/ratchet
+          --label org.opencontainers.image.revision=${{ github.sha }}
+          -t "$IMAGE:shared" -t "$IMAGE:${{ github.sha }}" .
+      - name: Check that it starts and answers
+        run: |
+          docker run -d --name probe -p 8000:8000 "$IMAGE:shared"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/healthz; then break; fi
+            sleep 5
+          done
+          curl -fsS http://127.0.0.1:8000/healthz
+          docker rm -f probe
+      - name: Push
+        run: |
+          docker push "$IMAGE:shared"
+          docker push "$IMAGE:${{ github.sha }}"

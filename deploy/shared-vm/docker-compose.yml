@@ -1,6 +1,7 @@
 # Ratchet demo on a SHARED VM: the same image as deploy/vm, boxed in so the other services on the machine are not affected.
-#   cd deploy/shared-vm && cp .env.example .env && docker compose up -d --build
-#   with a public HTTPS address through a Cloudflare Tunnel:   docker compose --profile tunnel up -d --build
+#   cp .env.example .env && docker compose pull && docker compose up -d       (the VM needs only this file and .env)
+#   with a public HTTPS address through a Cloudflare Tunnel:   docker compose --profile tunnel up -d
+#   to build from source instead of pulling:                   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # What is different from deploy/vm/docker-compose.yml:
 #   - no Caddy, and nothing listens on a public port (80 and 443 stay free for the other services);
@@ -14,10 +15,8 @@
 name: ratchet-shared
 
 x-gateway: &gateway
-  build:
-    context: ../..
-    dockerfile: Dockerfile
-  image: ratchet-gateway:shared
+  image: ghcr.io/harshbhx/ratchet-gateway:${IMAGE_TAG:-shared}   # built by .github/workflows/publish-image.yml; the VM only pulls it
+  pull_policy: always
   restart: unless-stopped
   stop_grace_period: 20s
   networks: [ratchet-net]
