@@ -1,0 +1,350 @@
+---
+/**
+ * The text-to-SQL adapter's measured results. Reads src/data/sql-results.json at build time:
+ *   {"status": "pending"}                       -> a panel saying what will appear
+ *   a results.json from `measure_adapter.py report` (mode "sql") -> stat tiles and comparison bars
+ * A file with "sample": true gets a visible SAMPLE DATA banner. Pure CSS, no scripts, theme-aware.
+ */
+import data from '../data/sql-results.json';
+
+const d: any = data;
+
+const pctOf = (x: unknown): string => (typeof x === 'number' ? `${(x * 100).toFixed(1)}%` : 'n/a');
+const usd = (x: unknown): string => (typeof x === 'number' ? `$${x.toFixed(4)}` : 'n/a');
+const w = (x: unknown): string => (typeof x === 'number' ? `${Math.max(0, Math.min(1, x)) * 100}%` : '0%');
+const short = (s: unknown): string => (typeof s === 'string' && s ? s.slice(0, 12) : 'n/a');
+
+const isReal = !!d && d.status !== 'pending' && d.mode === 'sql' && !!d.adapter_agreement && !!d.base_model_agreement;
+const isSample = !!d && d.sample === true;
+
+const prettify = (key: string): string => {
+  const [kind, val] = key.split('=');
+  if (kind === 'difficulty') return `Difficulty: ${val}`;
+  if (kind === 'domain') return val === 'seen' ? 'Industry seen in training' : 'Industry never seen in training';
+  return key;
+};
+
+const comparisons: any[] = [];
+const tiles: any[] = [];
+let breakdown: any[] = [];
+if (isReal) {
+  comparisons.push({ label: 'All measured questions', base: d.base_model_agreement, adapter: d.adapter_agreement });
+  breakdown = Object.entries(d.breakdown_answering_every_row ?? {}).map(([k, g]: [string, any]) => ({
+    label: prettify(k),
+    base: g.base,
+    adapter: g.adapter,
+  }));
+  tiles.push(
+    { k: 'Exam size', v: String(d.rows?.total ?? 'n/a'), s: `${d.rows?.measured ?? 'n/a'} measured, ${d.rows?.calibration ?? 'n/a'} set the threshold` },
+    { k: 'Base model', v: pctOf(d.base_model_agreement.rate), s: `${d.base_model_agreement.agree} of ${d.base_model_agreement.n} match the teacher` },
+    { k: 'With adapter', v: pctOf(d.adapter_agreement.rate), s: `${d.adapter_agreement.agree} of ${d.adapter_agreement.n} match the teacher` },
+    {
+      k: 'Coverage',
+      v: pctOf(d.coverage?.rate),
+      s: d.coverage?.rate == null ? '' : `answers ${d.coverage.answered} of ${d.coverage.of}, the rest go to the teacher`,
+    },
+    {
+      k: 'Precision when it answers',
+      v: pctOf(d.precision_when_answered?.rate),
+      s: d.precision_when_answered?.rate == null ? 'no threshold reached the target' : `${d.precision_when_answered.agree} of ${d.precision_when_answered.n}`,
+    },
+    {
+      k: 'Estimated cost saved',
+      v: typeof d.cost_usd_on_measured_rows?.saved_pct === 'number' ? `${d.cost_usd_on_measured_rows.saved_pct}%` : 'n/a',
+      s: `${usd(d.cost_usd_on_measured_rows?.with_student)} against ${usd(d.cost_usd_on_measured_rows?.all_teacher)} (estimate)`,
+    },
+  );
+}
+const prov = d?.provenance ?? {};
+const prices = d?.cost_usd_on_measured_rows?.prices_per_million_tokens;
+---
+
+{
+  isReal ? (
+    <div class="sqlr">
+      {isSample && (
+        <p class="sqlr-sample" role="note">
+          <strong>SAMPLE DATA.</strong> These numbers are made up to test the layout. They are not a result.
+        </p>
+      )}
+
+      <div class="sqlr-tiles">
+        {tiles.map((t) => (
+          <div class="sqlr-tile">
+            <p class="sqlr-k">{t.k}</p>
+            <p class="sqlr-v">{t.v}</p>
+            <p class="sqlr-s">{t.s}</p>
+          </div>
+        ))}
+      </div>
+
+      <h3 class="sqlr-h">Matching the teacher on questions it has not seen</h3>
+      <p class="sqlr-note">
+        Each bar is the share of questions whose query returns the same rows as the teacher's. The thin line with end caps is the 95% range.
+        A wide range means a small sample.
+      </p>
+
+      {[...comparisons, ...breakdown].map((c) => (
+        <div class="sqlr-group">
+          <p class="sqlr-lab">
+            {c.label} <span class="sqlr-n">{c.adapter?.n} questions</span>
+          </p>
+          {[
+            { name: 'Base model', a: c.base, kind: 'base' },
+            { name: 'With adapter', a: c.adapter, kind: 'ad' },
+          ].map((b) => (
+            <div class="sqlr-row">
+              <span class="sqlr-name">{b.name}</span>
+              <div class="sqlr-track" role="img" aria-label={`${b.name}: ${pctOf(b.a?.rate)}, 95% range ${pctOf(b.a?.wilson95?.[0])} to ${pctOf(b.a?.wilson95?.[1])}`}>
+                <div class:list={['sqlr-fill', `sqlr-fill--${b.kind}`]} style={`width:${w(b.a?.rate)}`} />
+                <div class="sqlr-range" style={`left:${w(b.a?.wilson95?.[0])};width:calc(${w(b.a?.wilson95?.[1])} - ${w(b.a?.wilson95?.[0])})`} />
+              </div>
+              <span class="sqlr-val">
+                {pctOf(b.a?.rate)} <span class="sqlr-rng">({pctOf(b.a?.wilson95?.[0])} to {pctOf(b.a?.wilson95?.[1])})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      <h3 class="sqlr-h">If it only answers when confident</h3>
+      <p class="sqlr-note">
+        Threshold {String(d.confidence_threshold)} on the average token probability, set on the calibration half for a target precision of{' '}
+        {pctOf(d.target_precision)}, measured on the other half.
+        {d.confidence_threshold > 1 && ' No threshold reached the target, so at that target every question would go to the teacher.'}
+      </p>
+      {d.precision_when_answered?.rate != null && (
+        <div class="sqlr-group">
+          <div class="sqlr-row">
+            <span class="sqlr-name">Precision when it answers</span>
+            <div class="sqlr-track" role="img" aria-label={`Precision when it answers: ${pctOf(d.precision_when_answered.rate)}`}>
+              <div class="sqlr-fill sqlr-fill--ad" style={`width:${w(d.precision_when_answered.rate)}`} />
+              <div class="sqlr-range" style={`left:${w(d.precision_when_answered.wilson95?.[0])};width:calc(${w(d.precision_when_answered.wilson95?.[1])} - ${w(d.precision_when_answered.wilson95?.[0])})`} />
+            </div>
+            <span class="sqlr-val">
+              {pctOf(d.precision_when_answered.rate)}{' '}
+              <span class="sqlr-rng">({pctOf(d.precision_when_answered.wilson95?.[0])} to {pctOf(d.precision_when_answered.wilson95?.[1])})</span>
+            </span>
+          </div>
+          <div class="sqlr-row">
+            <span class="sqlr-name">Coverage</span>
+            <div class="sqlr-track" role="img" aria-label={`Coverage: ${pctOf(d.coverage?.rate)}`}>
+              <div class="sqlr-fill sqlr-fill--cov" style={`width:${w(d.coverage?.rate)}`} />
+            </div>
+            <span class="sqlr-val">{pctOf(d.coverage?.rate)}</span>
+          </div>
+        </div>
+      )}
+
+      <p class="sqlr-foot">
+        {d.label}
+        {prices && ` Prices per million tokens: teacher ${prices.teacher_in} in and ${prices.teacher_out} out, student ${prices.student} (USD, inputs, not measurements).`}
+      </p>
+      <dl class="sqlr-prov">
+        <dt>Raw answers SHA-256</dt>
+        <dd><code>{short(prov.raw_sha256)}</code></dd>
+        <dt>Exam SHA-256</dt>
+        <dd><code>{short(prov.golden_sha256)}</code></dd>
+        <dt>Exam databases SHA-256</dt>
+        <dd><code>{short(prov.dbs_sha256)}</code></dd>
+        <dt>Adapter SHA-256</dt>
+        <dd><code>{short(prov.adapter_sha256)}</code></dd>
+        <dt>Base model</dt>
+        <dd><code>{prov.base_model ?? 'n/a'}</code></dd>
+        <dt>Hardware</dt>
+        <dd>{prov.gpu ?? 'n/a'}</dd>
+      </dl>
+      <p class="sqlr-foot">
+        Check it yourself: <code>python measure_adapter.py verify --raw raw.jsonl --results results.json --golden golden.jsonl --dbs dbs.json</code>{' '}
+        recomputes every number above from the raw answers and fails if any differs. Only the first 12 characters of each SHA-256 are shown.
+      </p>
+    </div>
+  ) : (
+    <div class="sqlr sqlr-pending" role="status">
+      <p class="sqlr-pend-title">Results will appear here when the training run finishes</p>
+      <p class="sqlr-note">
+        Nothing on this page is a measured result yet. When the run is done, its <code>results.json</code> is copied into the site and this panel turns into the
+        numbers below. Nothing is typed by hand.
+      </p>
+      <ul class="sqlr-list">
+        <li>Exam size, and how many questions were measured</li>
+        <li>Base model and adapter: how often each matches the teacher, with a 95% range</li>
+        <li>The same split by difficulty and by industry seen or never seen in training</li>
+        <li>Coverage and precision when the adapter only answers if it is confident</li>
+        <li>Estimated cost against the teacher alone (an estimate: token counts are measured, prices are inputs)</li>
+        <li>SHA-256 prefixes of the files behind it, and the command that recomputes everything</li>
+      </ul>
+    </div>
+  )
+}
+
+<style>
+  .sqlr {
+    margin: 1.25rem 0 2rem;
+    padding: 1.1rem 1.25rem 1.25rem;
+    border: 1px solid var(--rt-line);
+    border-radius: 1rem;
+    background: var(--rt-surface);
+    color: var(--rt-ink-2);
+  }
+  .sqlr-pending {
+    border-style: dashed;
+    border-color: var(--rt-line-strong);
+    background: var(--rt-surface-2);
+  }
+  .sqlr-pend-title {
+    margin: 0 0 0.4rem;
+    color: var(--rt-ink);
+    font-weight: 650;
+    font-size: var(--sl-text-base);
+  }
+  .sqlr-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.2rem;
+  }
+  .sqlr-sample {
+    margin: 0 0 1rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--rt-warn);
+    border-radius: 0.6rem;
+    background: var(--rt-warn-soft);
+    color: var(--rt-ink);
+  }
+  .sqlr-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+  .sqlr-tile {
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--rt-line);
+    border-radius: 0.75rem;
+    background: var(--rt-surface-2);
+  }
+  .sqlr-tile p {
+    margin: 0;
+  }
+  .sqlr-k {
+    color: var(--rt-muted);
+    font-family: var(--__sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .sqlr-v {
+    margin-top: 0.15rem !important;
+    color: var(--rt-ink);
+    font-size: 1.7rem;
+    font-weight: 650;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .sqlr-s {
+    margin-top: 0.2rem !important;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--rt-muted);
+  }
+  .sqlr-h {
+    margin: 1.25rem 0 0.25rem;
+    color: var(--rt-ink);
+    font-size: 1.05rem;
+  }
+  .sqlr-note,
+  .sqlr-foot {
+    margin: 0.25rem 0 0.75rem;
+    font-size: 0.85rem;
+    color: var(--rt-muted);
+  }
+  .sqlr-group {
+    margin: 0.5rem 0 0.9rem;
+  }
+  .sqlr-lab {
+    margin: 0 0 0.25rem;
+    color: var(--rt-ink);
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .sqlr-n {
+    margin-left: 0.4rem;
+    color: var(--rt-muted);
+    font-weight: 400;
+    font-size: 0.8rem;
+  }
+  .sqlr-row {
+    display: grid;
+    grid-template-columns: 9rem minmax(0, 1fr) 12.5rem;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.2rem 0;
+    font-size: 0.82rem;
+  }
+  .sqlr-name {
+    color: var(--rt-ink-2);
+  }
+  .sqlr-val {
+    color: var(--rt-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .sqlr-rng {
+    color: var(--rt-muted);
+    font-size: 0.75rem;
+  }
+  .sqlr-track {
+    position: relative;
+    height: 0.9rem;
+    border-radius: 999px;
+    background: var(--rt-bg-sunken);
+    border: 1px solid var(--rt-line);
+    overflow: hidden;
+  }
+  .sqlr-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 999px;
+  }
+  .sqlr-fill--base {
+    background: var(--rt-muted);
+    opacity: 0.6;
+  }
+  .sqlr-fill--ad {
+    background: var(--rt-owned);
+  }
+  .sqlr-fill--cov {
+    background: var(--rt-good);
+  }
+  /* The 95% range: a thin line with caps, drawn over the bar. */
+  .sqlr-range {
+    position: absolute;
+    top: 50%;
+    height: 0.55rem;
+    transform: translateY(-50%);
+    border-left: 2px solid var(--rt-ink);
+    border-right: 2px solid var(--rt-ink);
+    box-sizing: border-box;
+    background: linear-gradient(var(--rt-ink), var(--rt-ink)) center / 100% 2px no-repeat;
+  }
+  .sqlr-prov {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.2rem 1rem;
+    margin: 0.5rem 0;
+    font-size: 0.8rem;
+  }
+  .sqlr-prov dt {
+    color: var(--rt-muted);
+  }
+  .sqlr-prov dd {
+    margin: 0;
+    color: var(--rt-ink);
+  }
+  @media (max-width: 40rem) {
+    .sqlr-row {
+      grid-template-columns: 1fr;
+      gap: 0.15rem;
+      margin: 0.45rem 0;
+    }
+  }
+</style>
