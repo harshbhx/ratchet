@@ -7,7 +7,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import NightlyLoop from '../../../components/diagrams/NightlyLoop.astro';
 
 <Summary>Night School is the nightly job that trains a fresh LoRA adapter from the base model on every teacher answer stored so far, grades it on a sealed golden set it never studied, and hands it to the release gate.</Summary>
 
@@ -26,6 +25,37 @@ Night school is skipped when there is nothing new to learn, when the new apprent
 ## How it really works
 
 One night is `run_night()` in [`ratchet/nightschool/orchestrate.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/nightschool/orchestrate.py). In live mode a cron job starts it with `python -m ratchet.live night`. Each check below can end the night early with a `skip` event in the release log.
+
+<figure class="rt-diagram">
+
+```mermaid
+flowchart TB
+  start(["02:30 · ratchet.live night"]) --> pre{{"Paused, storage off,<br/>or a release in flight?"}}
+  pre -->|yes| skip(["skip event<br/>nothing trained"])
+  pre -->|no| build["Build the dataset<br/>golden split by hash,<br/>seen 3+ times: train"]
+  build --> enough{{"50+ new training rows<br/>and golden rows?"}}
+  enough -->|no| skip
+  enough -->|yes| champ["Re-score the live version<br/>on tonight's golden set"]
+  champ --> train["Train a fresh LoRA<br/>from the base, every row"]
+  train --> evalx["Golden eval: even rows<br/>calibrate, odd rows grade"]
+  evalx --> admit{{"Sign the BOM,<br/>then gate.admit"}}
+  admit -->|"below the bar"| rej["rejected"]
+  admit -->|"live version exists"| sh["shadow"]
+  admit -->|"cold start"| can["canary 10%"]
+
+  class pre,enough,admit gate
+  class skip outline
+  class start,build,champ,evalx neutral
+  class train,sh,can student
+  class rej danger
+```
+
+<figcaption>
+
+**Reading this diagram.** Two checks can end the night before any GPU time: the first (training paused, storage turned off, or a version still in shadow or canary) and the data check (fewer than 50 new training rows, or no golden rows yet). The dataset step is where the golden split happens: a row's hash puts about 10% of examples in the sealed golden set, and the FREQUENT rule moves a request seen 3 or more times into training. The live version, the champion, is graded again on tonight's golden rows before the challenger trains, so both are compared on the same data. The new adapter is trained from the base model on every training row, calibrated on the even golden rows and graded on the odd ones it never saw. The release gate's `admit` decides what happens next. Not drawn: the retention purge right after the pause check, the Merkle commitment before training, and the paperwork a live night writes back to the bucket.
+
+</figcaption>
+</figure>
 
 <Steps>
 
@@ -59,35 +89,36 @@ One night is `run_night()` in [`ratchet/nightschool/orchestrate.py`](https://git
 
 </Steps>
 
-<NightlyLoop />
-
 ### One live night, step by step
+
+<figure class="rt-diagram">
 
 ```mermaid
 sequenceDiagram
-  participant Cron
-  participant Live as ratchet.live night
-  participant Ledger
-  participant Bucket as Object Storage bucket
-  participant Job as Serverless Job (L40S)
-  participant Endpoint as Student endpoint (vLLM)
-  participant Judge as Super (judge)
-  participant Gate as Release gate
-  Cron->>Live: start (02:30)
-  Live->>Ledger: paused? retention, storage, release in flight
-  Live->>Ledger: build train and golden rows
-  Live->>Endpoint: re-score the live version on the golden rows
-  Live->>Bucket: upload night/train.jsonl
-  Live->>Job: nebius ai job create
-  Job->>Bucket: read train.jsonl, write adapters/student-vN
-  Live->>Endpoint: POST /v1/load_lora_adapter
-  Live->>Endpoint: golden eval, 3 samples per row
-  Live->>Judge: score free-text rows
-  Live->>Ledger: candidate, eval, signed BOM
-  Live->>Gate: admit(vN)
-  Gate->>Ledger: rejected, shadow or canary 10%
-  Live->>Bucket: upload BOM and NOTICE.md
+  autonumber
+  participant Night as Gateway host<br/>live night
+  participant Job as Serverless<br/>Job, L40S
+  participant Bucket as Bucket<br/>at /data
+  participant Student as Student<br/>endpoint
+  participant Judge as Judge<br/>Super
+  Note right of Night: 02:30. Checks, then the<br/>train and golden rows
+  Night->>Student: re-score the live version
+  Night->>Bucket: night/train.jsonl
+  Night->>Job: nebius ai job create
+  Job->>Bucket: adapters/student-vN
+  Night->>Student: load_lora_adapter
+  Night->>Student: golden eval
+  Night->>Judge: free-text rows
+  Note right of Night: candidate, eval,<br/>signed BOM, gate.admit
+  Night->>Bucket: BOM and NOTICE.md
 ```
+
+<figcaption>
+
+**Reading this diagram.** Everything starts on the gateway host, where cron runs `python -m ratchet.live night` next to the ledger and the release gate. The live version is graded again first, on the student endpoint (1). Then the night uploads the training file to the bucket (2) and starts a Serverless Job (3), which reads it from `/data` and writes the new adapter's folder back (4); `deploy/train_job.sh` waits until the weights are there. The night tells vLLM to load the adapter at runtime (5), grades it with 3 samples per golden row (6) and has the judge score free-text rows (7). It records the candidate, its eval and its signed bill of materials in the ledger and calls the gate. Last, it writes the BOM and the signed `NOTICE.md` into the adapter's folder and syncs the bucket again (8).
+
+</figcaption>
+</figure>
 
 The live commands, file paths and polling are on [Training on your data](/guides/training-on-your-data/).
 
@@ -179,6 +210,86 @@ Both implement the same two interfaces, `Trainer.train(rows, base_model, name)` 
 | Bad deploys | `corrupt_on_deploy` breaks a version on purpose for the rollback demo | Real |
 
 Simulation numbers come from the mock fleet. In the README's reference run (simulation, mock models, seed 7, 2,000 tickets a day) the first student is live on day 3, and a deliberately corrupted v3 is rolled back automatically on day 4.
+
+### After admit: the release states
+
+Night School ends at `gate.admit`. From there the [release gate](/guides/release-gate/) moves the version on its own, one tick at a time:
+
+<figure class="rt-diagram">
+
+```mermaid
+stateDiagram-v2
+  state "canary 10%" as c10
+  state "canary 50%" as c50
+  [*] --> candidate: a night trains
+  candidate --> rejected: golden gate fails
+  candidate --> shadow: passes, a live version exists
+  candidate --> c10: passes, cold start
+  shadow --> rejected: fails after 100 would-serve answers
+  shadow --> c10: passes after 100 would-serve answers
+  c10 --> c50: 20 audits, precision ≥ 0.92
+  c50 --> live: 20 audits, precision ≥ 0.92
+  c10 --> rolled_back: upper bound below 0.92
+  c50 --> rolled_back: upper bound below 0.92
+  live --> retired: a canary is promoted
+
+  class candidate neutral
+  class shadow, c10, c50 student
+  class live ok
+  class rejected, rolled_back danger
+  class retired outline
+```
+
+<figcaption>
+
+**Reading this diagram.** A candidate is graded on the golden set first: it needs precision of at least 0.95, coverage of at least 0.25 and no regression against the live version's re-score. With a live version it then runs in shadow, answering every request silently, until it has 100 answers it would have served. A canary serves 10%, then 50% of requests; each stage needs 20 audits (15 in mock mode) with audited precision of at least 0.92, and the 50% stage then becomes live while the old live version is retired. A canary whose Wilson upper bound falls below 0.92 is rolled back, and traffic returns to the live version, or to the teacher on a cold start. Not drawn: a shadow or canary is also retired when a newer candidate is admitted (rare, because no night trains during a release), and the opt-in anytime-valid rule (`RATCHET_SEQUENTIAL=1`) decides the canary with an e-value instead. The release gate guide has every rule.
+
+<ul class="rt-key">
+  <li class="student">Your adapter on trial</li>
+  <li class="ok">Serving everyone</li>
+  <li class="danger">Stopped</li>
+  <li class="outline">Replaced</li>
+</ul>
+
+</figcaption>
+</figure>
+
+### A bad deploy, rolled back (simulation)
+
+The reference run breaks v3 on purpose (`--bad-deploy-version 3`): the mock fleet corrupts it only on the production endpoint, so it looks healthy in shadow and fails once it serves real traffic. Simulation, mock models, seed 7:
+
+<figure class="rt-diagram">
+
+```mermaid
+flowchart TB
+  subgraph d3["Day 3 · night"]
+    t3["v3 trained<br/>passes the golden gate"]
+  end
+  subgraph d4["Day 4"]
+    sh["Shadow, on staging<br/>v3 looks healthy"]
+    c10["Canary 10%, on production<br/>v3 deployed corrupted"]
+    bad{{"Audits disagree<br/>upper bound below 0.92"}}
+    rb["Rolled back at 10%<br/>v1 takes all traffic again"]
+  end
+  subgraph n4["Day 4 · night"]
+    t4["v4 trained, into shadow"]
+  end
+  live(["Day 6 · v4 live"])
+  t3 --> sh --> c10 --> bad --> rb --> t4 --> live
+
+  class t3,t4 neutral
+  class sh,c10 student
+  class bad gate
+  class rb danger
+  class live ok
+```
+
+<figcaption>
+
+**Reading this diagram.** Read down, one band per day of the run. v3 passed every check that does not need live traffic: the golden gate on day 3, then the shadow comparison on day 4. The canary is where its answers met real requests and real audits. While v3 served 1 request in 10, v1 stayed live for the rest; when the audits showed v3's precision could not reach the 0.92 floor, the gate rolled it back the same day, and v3 never reached 100% of traffic. The loop went on: v4 was trained that night and went live on day 6.
+
+</figcaption>
+</figure>
 
 <Aside type="caution" title="Not run on Nebius yet">
 As of Oct 21, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter on a real Nebius account. The checks to run first are in DAY1.md.
