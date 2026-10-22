@@ -132,8 +132,8 @@ Keep the blank lines around the block and inside `<figcaption>`, or MDX reads th
 
 ### Rules of thumb
 
-- Fit the column: about 720 px of diagram, at the natural text size. Wider diagrams scroll sideways; a phone always
-  scrolls, which is fine.
+- Fit the column: at most about 730 px of diagram (the card leaves 734 px in the 48rem column), at the natural text size.
+  Wider diagrams scroll sideways. A phone always scrolls, which is fine: a figure tells phone readers to scroll sideways.
 - About 12 nodes at most. Split a bigger idea into two diagrams, or move detail into the caption.
 - Short labels: two lines of three or four words. Put names in quotes (`A["..."]`), and never use parentheses, `<` or
   `>` in an unquoted label. `<br/>` breaks a line.

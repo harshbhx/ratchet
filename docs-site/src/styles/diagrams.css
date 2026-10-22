@@ -18,7 +18,8 @@ pre.mermaid {
   justify-content: safe center !important;
   align-items: flex-start !important;
   margin: 1.75rem 0 !important;
-  padding: 1.5rem 1.25rem !important;
+  /* 1rem at the sides leaves about 734 px of diagram in the 48rem column. */
+  padding: 1.5rem 1rem !important;
   border: 1px solid var(--rt-line) !important;
   border-radius: 1rem !important;
   color: var(--rt-ink);
@@ -164,7 +165,19 @@ pre.mermaid > div[style*='color: red'] {
   border-color: var(--rt-muted);
 }
 
+/* On a phone most diagrams are wider than the screen: say so once, at the top of the figure. */
+.sl-markdown-content figure.rt-diagram::before {
+  content: 'Scroll sideways to see the whole diagram';
+  display: none;
+  padding: 0.6rem 0.9rem 0;
+  color: var(--rt-muted);
+  font-size: var(--sl-text-xs);
+}
+
 @media (max-width: 40rem) {
+  .sl-markdown-content figure.rt-diagram::before {
+    display: block;
+  }
   .sl-markdown-content pre.mermaid,
   pre.mermaid {
     padding: 1rem 0.75rem !important;

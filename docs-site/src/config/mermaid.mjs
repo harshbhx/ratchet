@@ -258,12 +258,15 @@ export const mermaidConfig = {
     padding: 11,
     nodeSpacing: 28,
     rankSpacing: 44,
-    diagramPadding: 10,
+    diagramPadding: 6,
     wrappingWidth: 220,
   },
   // Message, note and actor text take the top-level fontFamily and fontSize (Mermaid copies them over these).
   sequence: {
     useMaxWidth: false,
+    // Mermaid's default 50 px on each side would push a five-participant diagram past the column.
+    diagramMarginX: 8,
+    diagramMarginY: 8,
     mirrorActors: false,
     showSequenceNumbers: false,
     width: 104,
