@@ -8,6 +8,7 @@ import lucode from 'lucode-starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightOpenAPI, { createOpenAPISidebarGroup } from 'starlight-openapi';
 import { REPO_URL, SITE_DIR, SITE_URL } from './scripts/doc-map.mjs';
+import { mermaidConfig } from './src/config/mermaid.mjs';
 
 const DOCS = join(SITE_DIR, 'src', 'content', 'docs');
 
@@ -24,17 +25,11 @@ export default defineConfig({
   trailingSlash: 'always',
   integrations: [
     // Before Starlight, so ```mermaid blocks become diagrams instead of code.
+    // autoTheme off: the base theme stays, and src/config/mermaid.mjs colours diagrams with the site's CSS variables.
     mermaid({
-      autoTheme: true,
+      autoTheme: false,
       enableLog: false,
-      mermaidConfig: {
-        fontFamily: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
-        // Natural size, scrolling sideways when wider than the column, instead of shrinking the text.
-        flowchart: { curve: 'basis', htmlLabels: true, padding: 12, useMaxWidth: false },
-        sequence: { mirrorActors: false, showSequenceNumbers: false, useMaxWidth: false },
-        state: { useMaxWidth: false },
-        er: { useMaxWidth: false },
-      },
+      mermaidConfig,
     }),
     starlight({
       title: 'Ratchet docs',
