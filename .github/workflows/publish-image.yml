@@ -1,7 +1,9 @@
-# Builds the gateway image and publishes it to the GitHub Container Registry, so a VM only has to `docker compose pull`.
+# Builds the gateway image for amd64 and arm64 and publishes one multi-arch image to the GitHub Container Registry,
+# so a VM of either kind only has to `docker compose pull`.
 #   image: ghcr.io/harshbhx/ratchet-gateway:shared   (and :<commit sha>)
-# Uses only GitHub's built-in token: no secrets to add. The first publish creates a PRIVATE package: make it public once under
-# the repo's Packages > ratchet-gateway > Package settings > Change visibility (a VM can also log in with a read:packages token).
+# Each architecture is built natively (an arm64 runner for arm64, no emulation) with plain docker commands and GitHub's
+# built-in token: no third-party actions, no secrets to add. The first publish creates a PRIVATE package: make it public once
+# under the repo's Packages > ratchet-gateway > Package settings > Change visibility.
 name: publish-image
 
 on:
@@ -19,11 +21,19 @@ permissions:
   contents: read
   packages: write
 
+env:
+  IMAGE: ghcr.io/harshbhx/ratchet-gateway
+
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    env:
-      IMAGE: ghcr.io/harshbhx/ratchet-gateway
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
       - name: Log in to ghcr.io
@@ -33,10 +43,10 @@ jobs:
           docker build
           --label org.opencontainers.image.source=https://github.com/harshbhx/ratchet
           --label org.opencontainers.image.revision=${{ github.sha }}
-          -t "$IMAGE:shared" -t "$IMAGE:${{ github.sha }}" .
+          -t "$IMAGE:${{ github.sha }}-${{ matrix.arch }}" .
       - name: Check that it starts and answers
         run: |
-          docker run -d --name probe -p 8000:8000 "$IMAGE:shared"
+          docker run -d --name probe -p 8000:8000 "$IMAGE:${{ github.sha }}-${{ matrix.arch }}"
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8000/healthz; then break; fi
             sleep 5
@@ -44,6 +54,18 @@ jobs:
           curl -fsS http://127.0.0.1:8000/healthz
           docker rm -f probe
       - name: Push
+        run: docker push "$IMAGE:${{ github.sha }}-${{ matrix.arch }}"
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Publish the multi-arch tags
         run: |
-          docker push "$IMAGE:shared"
-          docker push "$IMAGE:${{ github.sha }}"
+          for tag in shared "${{ github.sha }}"; do
+            docker buildx imagetools create -t "$IMAGE:$tag" "$IMAGE:${{ github.sha }}-amd64" "$IMAGE:${{ github.sha }}-arm64"
+          done
+      - name: Show what was published
+        run: docker buildx imagetools inspect "$IMAGE:shared"

@@ -9,6 +9,7 @@
 #     that you can raise through MEM_GATEWAY; no swap; at most 1.75 vCPU in total; a cap on processes; no extra privileges;
 #   - if the host runs short of memory, the kernel stops these containers first (oom_score_adj);
 #   - its own network and volumes, named so they cannot collide with another project.
+# The image is multi-arch (amd64 and arm64), so the same file runs on either kind of VM.
 # Mock mode only. It needs no keys, so there is nothing secret on this box. Live mode stays in deploy/vm.
 # Whether this fits next to your other services under real load is unverified: watch `docker stats` the first day.
 
@@ -65,7 +66,7 @@ services:
     image: cloudflare/cloudflared:latest   # pin a version once you have one that works
     command: [tunnel, --no-autoupdate, run]
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in deploy/shared-vm/.env}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}   # empty is fine for the demo alone; the tunnel container refuses to start without it
     networks: [ratchet-net]
     depends_on:
       ratchet-demo:
