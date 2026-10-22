@@ -68,6 +68,7 @@ export const EVENT_ICON: Record<string, LucideIcon> = {
   endpoint: Server,
   fault: Bug,
   warmup: Timer,
+  demo_reset: RotateCw,
 };
 
 /** A breaker state's icon: it always comes with a word (`BREAKER_WORD` in resilience-model.ts). */

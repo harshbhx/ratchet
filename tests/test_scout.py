@@ -1015,6 +1015,7 @@ def test_scout_status_only_adds_keys(gw, monkeypatch, tmp_path):
         "tavily": bool,
     }  # docs/SCOUT.md's list before v0.5
     new = {"public_runs_left_today", "public_budget_left_usd", "judge_runs_today", "persistent", "judge", "search"}
+    new |= {"live_check"}  # the demo watchdog's flag (FR-11.33)
     new |= {"fallback_student", "student_serving"}  # which model answers student calls (FR-7.40, lane W)
     mock = TestClient(gw.app).get("/scout/status").json()
     _live_gateway(gw, monkeypatch, _live_scout_settings(tmp_path, tavily_monthly_credits=1000), TavilyStub(), FakeClock(DEC1))
@@ -1066,3 +1067,176 @@ def test_scout_cli_labels_search_unavailable(gw, monkeypatch, capsys):
     out, err = capsys.readouterr()
     assert "-> search unavailable (ConnectError)" in out
     assert "warning: search unavailable (ConnectError); answered without web sources" in err
+
+
+# ---------------------------------------------------------------- recorded runs (FR-10.40, ADR 0140)
+
+
+def _mock_gw(gw_env, **env):
+    gw = gw_env(**env)
+    gw.rt.settings.mock_pace = 0
+    return gw
+
+
+def _rec(**over):
+    from ratchet.scout import record as sr
+
+    ev = [
+        {"type": "start", "run_id": "a1", "question": "Q", "mode": "live", "t_ms": 0},
+        {"type": "done", "answer": "A", "citations": [], "totals": {"llm_calls": 1}, "t_ms": 1500},
+    ]
+    return {
+        "schema": sr.SCHEMA,
+        "recorded_at": "2026-10-21T10:00:00Z",
+        "host": "demo.example",
+        "mode": "live",
+        "question": "Q",
+        "duration_ms": 1500,
+        "events": ev,
+        "totals": {"llm_calls": 1},
+        **over,
+    }
+
+
+@pytest.mark.req("FR-10.40")
+def test_record_scout_run_against_mock_gateway(gw_env, tmp_path):
+    from ratchet.scout import record as sr
+
+    gw = _mock_gw(gw_env)
+    ticks = iter(range(0, 10_000))
+    rec = sr.record(
+        "http://testserver/v1", EXAMPLE_QUESTIONS[0], client=TestClient(gw.app), allow_mock=True, clock=lambda: next(ticks) / 100
+    )
+    evs = rec["events"]
+    assert evs[0]["type"] == "start" and evs[-1]["type"] == "done"
+    ts = [e["t_ms"] for e in evs]
+    assert ts[0] == 0 and ts == sorted(ts) and ts[-1] > 0 and rec["duration_ms"] == ts[-1]
+    assert rec["totals"] == evs[-1]["totals"] and rec["mode"] == "mock" and rec["schema"] == sr.SCHEMA
+    assert rec["host"] == "testserver" and rec["question"] == EXAMPLE_QUESTIONS[0]
+    path = sr.write(rec, tmp_path)
+    assert sr.ID_RE.fullmatch(path.stem) and json.loads(path.read_text())["events"] == evs
+
+
+@pytest.mark.req("FR-10.40")
+def test_record_refuses_incomplete_and_mock(gw_env, tmp_path, capsys):
+    from ratchet.scout.__main__ import main
+
+    gw = _mock_gw(gw_env)
+    c = TestClient(gw.app)
+    out = tmp_path / "out"
+    # mock mode without --allow-mock
+    assert main(["record", EXAMPLE_QUESTIONS[0], "--base-url", "http://testserver", "--out", str(out)], client=c) == 1
+    assert "mock" in capsys.readouterr().err and not out.exists()
+    # an error event: a question the mock gateway refuses
+    assert main(["record", "not an example", "--base-url", "http://testserver", "--out", str(out), "--allow-mock"], client=c) == 1
+    assert "error" in capsys.readouterr().err and not out.exists()
+
+    # a stream that ends without done
+    def handler(request):
+        body = 'data: {"type": "start", "mode": "live", "question": "Q", "run_id": "x"}\n\n'
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    short = httpx.Client(transport=httpx.MockTransport(handler))
+    assert main(["record", "Q", "--base-url", "http://h", "--out", str(out)], client=short) == 1
+    assert "without a done" in capsys.readouterr().err and not out.exists()
+    # and the good case writes a file and exits 0
+    assert (
+        main(["record", EXAMPLE_QUESTIONS[0], "--base-url", "http://testserver", "--out", str(out), "--allow-mock"], client=c)
+        == 0
+    )
+    assert len(list(out.glob("*.json"))) == 1
+
+
+@pytest.mark.req("FR-10.40", "NFR-71", "INV-13")
+def test_recording_never_holds_secrets(gw_env, tmp_path):
+    from ratchet.scout import record as sr
+
+    gw = _mock_gw(
+        gw_env,
+        RATCHET_SCOUT_JUDGE_CODE=JUDGE_CODE,
+        RATCHET_SCOUT_JUDGE_RUNS_PER_DAY="2",
+        RATCHET_API_KEYS="ops:sk-secret-key-0123456789",
+    )
+    c = TestClient(gw.app, headers={"Authorization": "Bearer sk-secret-key-0123456789"})
+    rec = sr.record("http://testserver", EXAMPLE_QUESTIONS[0], client=c, judge_code=JUDGE_CODE, allow_mock=True)
+    text = sr.write(rec, tmp_path).read_text()
+    assert (
+        JUDGE_CODE not in text
+        and "sk-secret-key-0123456789" not in text
+        and "ratchet_judge" not in text
+        and "authorization" not in text.lower()
+    )
+    with pytest.raises(sr.RecordError) as e:
+        sr.record("http://testserver", EXAMPLE_QUESTIONS[0], client=TestClient(gw.app), judge_code="x" * 20, allow_mock=True)
+    assert "x" * 20 not in str(e.value)
+
+
+@pytest.mark.req("FR-10.40", "NFR-71")
+def test_recorded_endpoints(gw_env, tmp_path):
+    from ratchet.scout import record as sr
+
+    off = _mock_gw(gw_env)
+    assert TestClient(off.app).get("/scout/recorded").json() == {"recordings": []}
+    assert TestClient(off.app).get("/scout/recorded/20261021T100000Z-q").status_code == 404
+
+    d = tmp_path / "rec"
+    d.mkdir()
+    (d / "20261021T100000Z-q.json").write_text(json.dumps(_rec()))
+    (d / "20261022T100000Z-newer.json").write_text(
+        json.dumps(_rec(question="Newer", recorded_at="2026-10-22T10:00:00Z", mode="mock"))
+    )
+    (d / "20261023T100000Z-wrong-schema.json").write_text(json.dumps(_rec(schema="other/v1")))
+    (d / "20261024T100000Z-bad.json").write_text("{not json")
+    big = _rec()
+    big["events"][0]["pad"] = "x" * (sr.MAX_BYTES + 10)
+    (d / "20261025T100000Z-big.json").write_text(json.dumps(big))
+    (tmp_path / "20261021T100000Z-outside.json").write_text(json.dumps(_rec()))
+    (d / "notes.json").write_text(json.dumps(_rec()))
+
+    gw = _mock_gw(gw_env, RATCHET_SCOUT_RECORDINGS_DIR=str(d))
+    c = TestClient(gw.app)
+    rows = c.get("/scout/recorded").json()["recordings"]
+    assert [r["id"] for r in rows] == ["20261022T100000Z-newer", "20261021T100000Z-q"]
+    assert set(rows[0]) == {"id", "recorded_at", "question", "duration_ms", "mode", "totals"} and rows[0]["mode"] == "mock"
+    one = c.get("/scout/recorded/20261021T100000Z-q")
+    assert one.status_code == 200 and one.json()["events"][-1]["type"] == "done" and one.json()["id"] == "20261021T100000Z-q"
+    for bad in (
+        "20261023T100000Z-wrong-schema",
+        "20261024T100000Z-bad",
+        "20261025T100000Z-big",
+        "notes",
+        "..%2F20261021T100000Z-outside",
+        "%2e%2e/20261021T100000Z-outside",
+        "20261021T100000Z-" + "a" * 41,
+        "20261021T100000Z-Q",
+        "20261021T100000Z-missing",
+    ):
+        assert c.get(f"/scout/recorded/{bad}").status_code == 404, bad
+    # a new file appears without a restart
+    (d / "20261026T100000Z-fresh.json").write_text(json.dumps(_rec(question="Fresh")))
+    assert c.get("/scout/recorded").json()["recordings"][0]["id"] == "20261026T100000Z-fresh"
+    # at most 20 are listed
+    for i in range(25):
+        (d / f"202611{i + 1:02d}T100000Z-n{i}.json").write_text(json.dumps(_rec()))
+    assert len(c.get("/scout/recorded").json()["recordings"]) == 20
+
+
+@pytest.mark.req("FR-10.40", "NFR-71")
+def test_recorded_endpoints_spend_nothing(gw_env, tmp_path):
+    d = tmp_path / "rec"
+    d.mkdir()
+    (d / "20261021T100000Z-q.json").write_text(json.dumps(_rec()))
+    gw = _mock_gw(gw_env, RATCHET_SCOUT_RECORDINGS_DIR=str(d))
+    c = TestClient(gw.app)
+
+    def state():
+        db = gw.rt.ledger.db
+        n = lambda t: db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: E731
+        return n("requests"), n("events"), n("spend"), gw.rt.guard.status()
+
+    before = state()
+    for _ in range(3):
+        assert c.get("/scout/recorded").status_code == 200
+        assert c.get("/scout/recorded/20261021T100000Z-q").status_code == 200
+        assert c.get("/scout/recorded/20261021T100000Z-nope").status_code == 404
+    assert state() == before

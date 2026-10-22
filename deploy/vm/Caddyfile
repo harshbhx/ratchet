@@ -3,6 +3,8 @@
 #   RATCHET_DOMAIN       e.g. ratchet.dualmindlab.tech, or 203.0.113.7.sslip.io
 #   RATCHET_API_GUARD    open (default) | guarded
 #   RATCHET_ADMIN_TOKEN  required when guarded; send it as the X-Ratchet-Admin-Token header
+#   RATCHET_SIM          on (default) | off: serve the simulation gateway (ratchet-sim) at RATCHET_SIM_DOMAIN
+#   RATCHET_SIM_DOMAIN   default sim.<RATCHET_DOMAIN>; must differ from RATCHET_DOMAIN
 #
 # Check after editing:  docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
 # Reload without downtime: docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
@@ -76,3 +78,48 @@
 		}
 	}
 }
+
+# The simulation host (RATCHET_SIM=on): the mock gateway. No guard here: its demo controls are meant to be clicked, and the
+# app refuses them anyway in live mode (INV-8). The edge token is stripped all the same. The live site above keeps its guard.
+(sim-on) {
+	{$RATCHET_SIM_DOMAIN} {
+		header {
+			Strict-Transport-Security "max-age=31536000"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+			-Server
+		}
+
+		@stream path /scout/stream /scout/stream/*
+		handle @stream {
+			reverse_proxy ratchet-sim:8000 {
+				flush_interval -1
+				header_up -X-Ratchet-Admin-Token
+			}
+		}
+
+		handle {
+			encode zstd gzip
+			reverse_proxy ratchet-sim:8000 {
+				flush_interval -1
+				header_up -X-Ratchet-Admin-Token
+			}
+		}
+
+		log {
+			output stdout
+			format filter {
+				request>headers>X-Ratchet-Admin-Token delete
+				wrap console
+			}
+		}
+	}
+}
+
+# RATCHET_SIM=off: no simulation host.
+(sim-off) {
+}
+
+import sim-{$RATCHET_SIM}

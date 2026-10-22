@@ -6,7 +6,7 @@ Ready to paste. Fill each `[LIVE NUMBER]` from `evidence/live/results.json` usin
 - **Track:** Best Apps and Agents ("Useful applications and agents powered by Nemotron models through Token Factory").
 - **Also eligible for:** Best Use of Tavily (Scout's searcher uses the Tavily Search API). It needs a working runtime call to Tavily, so only live mode counts.
 - **Judging:** a pass/fail Stage One check against the submission requirements, then four equally weighted criteria: Technological Implementation, Design, Potential Impact, Quality of the Idea. Judging runs Dec 1–15, 2026.
-- **Demo URL:** [DEMO URL], hosted on a Nebius VM (see [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Pages: `/` landing, `/scout` Scout demo, `/dashboard` dashboard.
+- **Demo URLs:** [DEMO URL] (live: Token Factory and Tavily; the URL for Stage One) and [SIM URL] (simulation, mock models: run days, break a deploy, watch the rollback), both hosted on one Nebius VM (see [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Pages on each: `/` landing, `/scout` Scout demo, `/dashboard` dashboard.
 
 ### Prizes and field (as reported, Oct 2026)
 
@@ -129,7 +129,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 1781 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 1900 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 92% of them by day 8 and that day cost 81% less than all-Ultra (62% over all 8 days, including the cold start), with per-task calibration on (the default), which holds each of the two tasks to its own threshold; with one pooled threshold (`RATCHET_PER_TASK_CALIBRATION=0`, v0.4) 96%, 85% and 63%.
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -209,5 +209,5 @@ python, fastapi, httpx, sqlite, vllm, trl, peft, nvidia-nemotron, nemotron-3-ult
 - [ ] Feedback section filled in (above)
 - [ ] "Significant updates" note not needed: project created during the submission period (Oct 2026)
 - [ ] City selection: only if a Builders & Brews event was attended
-- [ ] All `[LIVE NUMBER]` placeholders and `[DEMO URL]` replaced
+- [ ] All `[LIVE NUMBER]` placeholders, `[DEMO URL]` and `[SIM URL]` replaced; both hosts load logged out, and the live strip shows a Token Factory call
 - [ ] Re-read the Official Rules once more before submitting

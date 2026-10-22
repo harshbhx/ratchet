@@ -5042,6 +5042,72 @@
         ]
       }
     },
+    "/scout/recorded": {
+      "get": {
+        "summary": "Scout Recorded",
+        "description": "Recorded live runs, newest first (FR-10.40): read-only, no model call, no guard budget, no ledger row.",
+        "operationId": "scout_recorded_scout_recorded_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Recorded Scout Recorded Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
+    "/scout/recorded/{rid}": {
+      "get": {
+        "summary": "Scout Recorded One",
+        "operationId": "scout_recorded_one_scout_recorded__rid__get",
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Scout Recorded One Scout Recorded  Rid  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Scout"
+        ]
+      }
+    },
     "/scout/status": {
       "get": {
         "summary": "Scout Status",

@@ -12,7 +12,7 @@ All settings come from environment variables. Defaults live in `ratchet/config.p
 | `NEBIUS_API_KEY` | empty | Token Factory API key (sent as `Authorization: Bearer …`) |
 | `RATCHET_TEACHER_MODEL` | `nvidia/Nemotron-3-Ultra-550b-a55b` | Teacher model. Must be in the license registry and distillable, or startup fails with `LicenseError` |
 | `RATCHET_JUDGE_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | Judge for free-text golden evaluation (`LiveEvaluator`): the answers the student would serve on free-text tasks' held-out golden rows, read by `RATCHET_MIN_JUDGE_PASS` ([free-text tasks](#free-text-tasks)) |
-| `RATCHET_FALLBACK_STUDENT` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Hosted, untuned model used for student calls when `RATCHET_STUDENT_BASE` is empty. Reported as `fallback_student` in `/ratchet/stats` and `/scout/status`; the pages label a student answer with this `model` "Nano 30B · hosted", never as our adapter (FR-7.40) |
+| `RATCHET_FALLBACK_STUDENT` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Hosted, untuned model used for student calls when `RATCHET_STUDENT_BASE` is empty and a trained version exists (on a fresh deployment the teacher answers). It answers under `RATCHET_CONFIDENCE_THRESHOLD`, and its answers count toward no version's release: a canary or shadow holds while it serves ([ADR 0073](adr/0073-fallback-attribution.md)). Reported as `fallback_student` in `/ratchet/stats` and `/scout/status`; the pages label a student answer with this `model` "Nano 30B · hosted", never as our adapter (FR-7.40) |
 | `RATCHET_STUDENT_BASE` | empty | Base URL of your vLLM endpoint, e.g. `https://<endpoint>/v1` |
 | `RATCHET_STUDENT_KEY` | empty | Token for the student endpoint |
 | `RATCHET_STUDENT_BASE_MODEL` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model that adapters are trained on (also used by the deploy scripts) |
@@ -68,10 +68,24 @@ Read in `ratchet/config.py` (`Settings.gen_policy()`); used by `ratchet/router.p
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_TEACHER_PARAMS` | empty (every standard field) | Request fields the teacher gets when its answer is served (escalation, cold start, pinned, teacher-only), comma-separated, in any case: `max_tokens` (also for `max_completion_tokens`), `temperature`, `top_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `response_format`, `tools`, `tool_choice`, `parallel_tool_calls`, `logprobs`, `top_logprobs`, `reasoning_effort`. Empty means the default: every standard field. `tools`, `tool_choice` and `parallel_tool_calls` are in it since v0.5 (FR-1.41): only a tool request has them, the teacher answers it alone and its tool calls come back to the client ([API.md](API.md#tools-and-function-calling)); leave them out (name the other fields) and the teacher answers tool requests in prose, still teacher-only and never stored. `logprobs` and `top_logprobs` reach the teacher only when a client sends them, and its token logprobs come back in the response (v0.5, FR-1.14); leave them out if the teacher refuses `logprobs` (`scripts/day1_check.py` reports whether it returns them), and teacher-served choices then carry `logprobs.content: null`. `none` forwards nothing; `all` stands for the whole list, and `all,top_k` adds a vendor field the client sends (otherwise unknown fields are never forwarded). Startup stops on `model`, `messages`, `n`, `stream`, `stream_options`, `user`, `safety_identifier`, `store`, `metadata`, `service_tier`, `functions` or `function_call`, on a name that is not an identifier, and on a near miss of a standard field (`max_token`, `stops`), which is a typo; any other name is taken as a vendor field. Audits and arbitrations take the same fields, minus `top_p`, `seed`, the penalties, `logit_bias` and logprobs, at temperature 0. A served answer written under a client's `logit_bias`, a non-zero penalty, a temperature above 1 or a vendor field is not stored |
-| `RATCHET_STUDENT_PARAMS` | empty (`max_tokens,stop,seed,response_format,top_logprobs`) | Request fields the student gets, same syntax. Its `n` (`RATCHET_SAMPLES`), temperature (0.7) and logprobs are fixed by the cascade whatever this says, so its confidence stays calibrated. Remove `logit_bias` when clients send OpenAI token ids, which mean other tokens to Nemotron. A request with tools never reaches the student (the teacher answers it alone, FR-1.41), so `tools` and `tool_choice` here only matter for a golden row stored with them; add them only when the student's vLLM runs with `--enable-auto-tool-choice` and a `--tool-call-parser` (`deploy/student_endpoint.sh` does not), since without them vLLM answers 400. A golden row the student refuses this way scores as not served in the nightly eval |
+| `RATCHET_STUDENT_PARAMS` | empty (`max_tokens,stop,seed,response_format,top_logprobs`) | Request fields the student gets, same syntax. Its `n` (`RATCHET_SAMPLES`), temperature (0.7) and logprobs are fixed by the cascade whatever this says, so its confidence stays calibrated. `logit_bias` is not in the default on purpose: a client's bias would steer the student's answer while the audit runs without it, and OpenAI token ids mean other tokens to Nemotron; name it here to forward it. A request with tools never reaches the student (the teacher answers it alone, FR-1.41), so `tools` and `tool_choice` here only matter for a golden row stored with them; add them only when the student's vLLM runs with `--enable-auto-tool-choice` and a `--tool-call-parser` (`deploy/student_endpoint.sh` does not), since without them vLLM answers 400. A golden row the student refuses this way scores as not served in the nightly eval |
 | `RATCHET_TEACHER_MAX_TOKENS` | `8192` | Most output tokens per teacher call (reasoning included, as Token Factory counts them). A client's larger `max_tokens` is capped to this; with none, this is sent. `0` = no cap |
 | `RATCHET_STUDENT_MAX_TOKENS` | `1024` | Most output tokens per student sample, the same way. `0` = no cap |
 | `RATCHET_TEACHER_REASONING_HEADROOM` | `0` | Tokens added to a client's `max_tokens` for the teacher (still at most `RATCHET_TEACHER_MAX_TOKENS`), for reasoning it writes before the answer: without it a reasoning teacher can spend a tight limit on its reasoning and be cut off. When the teacher gets more than the client asked for, a visible answer longer than the client's `max_tokens` (about 4 characters a token) is returned with `finish_reason: "length"` and not stored. Set it near `RATCHET_TEACHER_REASONING_TOKENS` for a reasoning teacher whose clients send small limits |
+
+## Reasoning (Nemotron thinking)
+
+Read in `ratchet/config.py` (`Settings.reasoning_policy()`, [ADR 0130](adr/0130-reasoning-by-role.md)); sent as the chat template's `chat_template_kwargs`. A bad value stops the gateway, the simulator and `python -m ratchet.live` at startup. `default` sends nothing.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_STUDENT_REASONING` | `off` | The trained student on the vLLM endpoint (production, canary, shadow, both golden evals): `off` sends `{"enable_thinking": false}`, `default` nothing. `on` and `medium` stop startup: the student is trained with thinking off |
+| `RATCHET_FALLBACK_STUDENT_REASONING` | `off` | The hosted untuned student (`RATCHET_FALLBACK_STUDENT`) used while `RATCHET_STUDENT_BASE` is empty: `off`, `on` or `default`. Set `default` if Token Factory refuses the field (the student then fails fast and requests escalate, route `student_error`) |
+| `RATCHET_TEACHER_REASONING` | `default` | The teacher whose answer is served (escalation, cold start, pinned, teacher-only) and the fallback teacher: `default`, `off`, `on` or `medium` (Ultra's `{"enable_thinking": true, "medium_effort": true}`). Keep `default` until day 1 shows Token Factory accepts the field. With `off`, `RATCHET_TEACHER_REASONING_HEADROOM` is not needed |
+| `RATCHET_CHECK_REASONING` | empty (follows `RATCHET_TEACHER_REASONING`) | Audits and arbitrations, same values |
+| `RATCHET_TEACHER_REASONING_FIELD` | `chat_template_kwargs` | Where Token Factory-bound calls (teacher, fallback teacher, hosted fallback student) carry the kwargs: top level, or `extra_body` (nested as `extra_body.chat_template_kwargs`). **Unverified until day 1** ([DAY1.md](DAY1.md)). The vLLM endpoint always gets the top-level field |
+
+A client's `chat_template_kwargs` and `extra_body` are accepted and ignored, and `RATCHET_TEACHER_PARAMS` and `RATCHET_STUDENT_PARAMS` refuse them. The kwargs are never stored or hashed.
 
 ## Upstream timeouts and retries
 
@@ -161,6 +175,7 @@ Read in `ratchet/config.py`; used by `ratchet/gateway.py` and `ratchet/scout/gua
 | `RATCHET_SCOUT_RUNS_PER_HOUR` | `6` | Runs per client IP per rolling hour. Mock mode allows 10 × this value |
 | `RATCHET_SCOUT_MAX_RUNS_PER_DAY` | `30` | Live mode: most runs per UTC day, for all clients together. Caps Tavily credits (about 3 searches per run, so 90 credits a day). Mock mode has no cap |
 | `RATCHET_SCOUT_MAX_RESULTS` | `4` | Tavily results per query. With 3 queries, at most 12 results are triaged |
+| `RATCHET_SCOUT_RECORDINGS_DIR` | empty | A folder of recorded Scout runs (`python -m ratchet.scout record`) that `GET /scout/recorded` lists and serves, read-only, so a judge can watch a real run when live runs are refused or failing (FR-10.40, [ADR 0140](adr/0140-recorded-scout-run.md)). Empty turns it off. Files are read at request time; a file over 2 MB or with another schema is ignored. The VM's compose file mounts `evidence/scout` there |
 | `RATCHET_TRUST_PROXY` | `0` | `1`: take the client IP for the per-IP limit from the first `X-Forwarded-For` entry. Only set it when a proxy you control overwrites that header; otherwise clients can fake their IP. Not needed on the demo VM, where uvicorn runs with `--proxy-headers` |
 
 The budget counts the `cost_usd` of every Scout step, including audits and shadow calls. It does not cover `/v1/chat/completions`. In live mode the daily counters are kept in the ledger (`scout_run` rows in `spend`, `usd` 0) and restored at startup, so a restart or `update.sh` does not reset them ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)). They reset at 00:00 UTC. The per-IP windows stay in memory and reset on restart, so no IP is stored. On the first restart after upgrading, runs from earlier that day have no rows and are not counted, once.
@@ -195,6 +210,21 @@ Read in `ratchet/config.py`. Ignored in live mode.
 | `RATCHET_MOCK_ENDPOINT_HOURS` | `24` | Hours a day the simulated student endpoint runs, 0 to 24: each simulated day (the demo, the warm-up, `python -m sim.simulate`) records one endpoint interval of this length from the start of the day, on the synthetic clock, for the cost report ([Cost accounting](#cost-accounting)). `0` = no endpoint (as with the hosted fallback). Anything outside 0 to 24 stops startup. Simulation assumption, not a measurement |
 | `RATCHET_MOCK_TEACHER_REASONING_MEAN` | unset | The mock teacher's mean billed reasoning tokens. Unset, it bills exactly `RATCHET_TEACHER_REASONING_TOKENS` (300), the formula's assumption, so every number is as before. Set (more than 0, at most 100,000; anything else stops the gateway and `python -m ratchet.live` at startup, in live mode too, where nothing reads it), each request bills round(mean × exp(0.3 z − 0.045)) reasoning tokens, z a standard normal drawn from the request's text (the same request always costs the same), so the savings receipts have a gap between the formula and the bills to measure: with `420`, `ticket-triage`'s calibrated ratio is about 1.3 to 1.4 (simulation; [Savings receipts](#savings-receipts)). The simulator takes `--teacher-reasoning-mean` instead |
 
+## Demo hosting: the simulation host (FR-11.30)
+
+The demo VM can run a second gateway in mock mode beside the live one ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md), [ADR 0133](adr/0133-live-and-simulation-hosts.md)). Read in `ratchet/config.py`; a bad value stops startup, naming the variable. The four `RATCHET_DEMO_*` settings act in mock mode only and only when set (a warning in live mode); the compose file sets them on `ratchet-sim`.
+
+| Variable | Default | Mode | Meaning |
+|---|---|---|---|
+| `RATCHET_LIVE_URL` | empty | both | The live gateway's public URL, for the header switch (`/ratchet/stats` `links.live`). Empty, or `https://` with a host, at most 300 characters, no user info, no whitespace |
+| `RATCHET_SIM_URL` | empty | both | The simulation's public URL (`links.sim`). Same rule. On the VM the compose file derives it from `RATCHET_SIM_DOMAIN` unless `.env` sets it (empty: no link) |
+| `RATCHET_DEMO_RPM` | `0` (off) | mock | Demo actions (non-GET calls to `/ratchet/demo/*`) a minute per client IP, 0 to 600. Over it: 429 with `Retry-After`. The burst is `rpm // 6`, at least 1 |
+| `RATCHET_DEMO_MAX_DAYS` | `0` (off) | mock | Reset the shared simulation before the day after this many simulated days. 0, or above `RATCHET_MOCK_WARMUP_DAYS`, at most 3650. Enforced when a visitor clicks `POST /ratchet/demo/day` (`auto_reset: "max_days"`) |
+| `RATCHET_DEMO_MAX_REQUESTS` | `0` (off) | mock | Reset past this many ledger requests, 0, or above warm-up days x `RATCHET_MOCK_WARMUP_REQUESTS`, at most 10,000,000. Checked on a click and by a background pass every minute |
+| `RATCHET_DEMO_IDLE_RESET_S` | `0` (off) | mock | Reset after this many seconds with no demo action and no request while the state differs from the last reset. 0 or 300 to 604,800 |
+
+The warm-up rules exist so a cap can never reset the simulation right after its own warm-up. An automatic reset runs the warm-up again, writes a `demo_reset` event into the new ledger and clears everything visitors added.
+
 ## Demo VM: Caddy (`deploy/vm/`)
 
 Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)), from `deploy/vm/.env`. The gateway does not read them.
@@ -204,6 +234,9 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 | `RATCHET_DOMAIN` | required | Site name Caddy serves and gets a certificate for, e.g. `ratchet.dualmindlab.tech` or `<public-ip>.sslip.io`. First boot fills in the sslip.io name if it is still the placeholder |
 | `RATCHET_API_GUARD` | `open` | `open`: every path is public. `guarded`: `/v1/*`, `/openai/*`, `/ratchet/demo/*` and `/ratchet/admin/*` return 403 unless the request has a matching `X-Ratchet-Admin-Token` header (the admin API also needs an admin key, `RATCHET_ADMIN_KEYS`, in live mode). Pages, `/scout*`, `/ratchet/stats` and `/ratchet/bom` stay public at the edge; whether the gateway serves the dashboard API without a key is `RATCHET_PUBLIC_DASHBOARD`. In mock mode, `guarded` also disables the dashboard's demo buttons. In live mode without `RATCHET_API_KEYS`, the gateway starts only with `RATCHET_ALLOW_UNAUTHENTICATED=1` |
 | `RATCHET_ADMIN_TOKEN` | empty | Token for `guarded`. Hex, at least 32 characters (`openssl rand -hex 32`). Shorter or empty blocks the guarded paths for everyone. Caddy strips the header before it reaches the gateway |
+| `RATCHET_SIM` | `on` | `on`: Caddy serves the `ratchet-sim` container at `RATCHET_SIM_DOMAIN`. `off`: no simulation host (the container still runs, unreachable); then also set an empty `RATCHET_SIM_URL=` so the live pages link nothing. `update.sh` refuses anything else |
+| `RATCHET_SIM_DOMAIN` | `sim.<RATCHET_DOMAIN>` | The simulation host's name. It needs DNS: `sim.<ip>.sslip.io` resolves by itself; with your own domain add an A record (or a wildcard) first. Must differ from `RATCHET_DOMAIN` (`update.sh` refuses it before it builds anything) |
+| `RATCHET_SIM_BOM_SIGNING_KEY` | empty | Optional key that signs the simulation's BOMs, handed to `ratchet-sim` as its `RATCHET_BOM_SIGNING_KEY`. Never the same as the live `RATCHET_BOM_SIGNING_KEY` (`update.sh` refuses it): a simulated BOM must not verify against the live public key |
 
 `deploy/vm/create_vm.sh` and `deploy/vm/backup.sh` have their own settings, listed at the top of each script and in [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md). Like the variables above they are in `config.DEPLOY_ENV`, so the gateway's startup check does not call them unknown:
 
@@ -217,6 +250,34 @@ Read only by Docker Compose and Caddy on the demo VM ([DEPLOY_NEBIUS_VM.md](DEPL
 | `RATCHET_REPO_URL` | `https://github.com/harshbhx/ratchet.git` | What the VM clones into `/opt/ratchet` |
 | `RATCHET_BACKUP_DIR` | `/var/backups/ratchet` | `backup.sh`: the host folder for ledger backups |
 | `RATCHET_BACKUP_KEEP` | `14` | `backup.sh`: local copies to keep |
+| `RATCHET_BACKUP_TAG` | empty | `backup.sh`: 1 to 32 letters, digits or `-`, added to the file name (`ratchet-<stamp>-<tag>.db.gz`); `update.sh` sets `pre-update`. Anything else exits 1 |
+
+## Demo watchdog (`ratchet/watch.py`)
+
+Read on the VM host by `python3 -m ratchet.watch` (standard library only), from `deploy/vm/.env` with the process environment winning, and by the gateway's `python -m ratchet.config check`, which refuses a bad value before `update.sh` replaces the container ([ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md), [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#watchdog)). A bad value names its variable and never echoes a secret. Variables marked secret are never printed, logged or sent.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATCHET_WATCH` | `on` | `on` or `off`. `off`: every command but `status` prints one line and exits 0 |
+| `RATCHET_WATCH_CLIENT` | `watchdog` | The `RATCHET_API_KEYS` name the probe uses; the host takes that name's key from `RATCHET_API_KEYS` itself. The pinned task's `clients` list in `deploy/vm/config/tasks.json` must name it |
+| `RATCHET_WATCH_FAILURES` | `3` | Failed liveness checks, or failed ledger checks, in a row before a restart (2 to 20, one check every 2 minutes) |
+| `RATCHET_WATCH_RESTART_COOLDOWN_S` | `600` | Seconds after a restart before another (120 to 86,400) |
+| `RATCHET_WATCH_MAX_RESTARTS_PER_HOUR` | `2` | Restarts in a rolling hour; past it one alert and no restart (1 to 10) |
+| `RATCHET_WATCH_START_GRACE_S` | `240` | No check counts while the container started less than this ago (0 to 3,600) |
+| `RATCHET_WATCH_PROBE_TIMEOUT_S` | `200` | The probe's HTTP timeout, above the gateway's own teacher deadline (180 s) so its retries finish first (10 to 900) |
+| `RATCHET_WATCH_REALERT_S` | `21600` | While a check keeps failing, repeat its alert this often (600 to 604,800) |
+| `RATCHET_WATCH_CONNECT` | `public` | `public`: the probe resolves `RATCHET_DOMAIN` as anyone would. `local`: it connects to `127.0.0.1:443` with the domain as SNI and `Host` (certificates still checked), for a VM that cannot reach its own public IP. Whether Nebius VMs can (hairpin NAT) is unverified |
+| `RATCHET_WATCH_HEARTBEAT_URL` | empty | Secret. An `https://` URL the probe GETs after a healthy probe that follows a healthy tick (healthchecks.io or any dead-man's switch: it alerts when the VM, cron or the watchdog is dead, which nothing on the VM can report) |
+| `RATCHET_WATCH_STATE_DIR` | `/var/lib/ratchet` | State files and locks (`watch-tick.json`, `watch-probe.json`, `watch.paused`, `update.lock`), mode 0600 |
+| `RATCHET_WATCH_FLAG_MAX_AGE_S` | `10800` | Gateway: a banner flag older than this reads `stale` and shows nothing (600 to 604,800) |
+| `RATCHET_ALERT_WEBHOOK_URL` | empty | Secret. `https://` only. Alerts are POSTed here as JSON with a `text` field (Slack's incoming-webhook shape; whether Slack ignores the other keys, and Discord's `/slack` suffix, are unverified: `python3 -m ratchet.watch test-alert` is the check). Empty: alerts go to `/var/log/ratchet/watch.log` only |
+| `RATCHET_ALERT_WEBHOOK_SECRET` | empty | Secret. When set, each alert carries `X-Ratchet-Signature: sha256=<hex HMAC-SHA256 of the body>` |
+| `RATCHET_ALERT_KINDS` | `alert,rollback,train_failed,circuit,budget,admin,task_disabled,probe,watchdog_restart` | Kinds to send; an unknown kind is an error naming it. The watchdog sends only `probe` and `watchdog_restart` |
+| `RATCHET_INSTANCE_NAME` | the host name | `gateway` in the alert body |
+| `RATCHET_WATCH_KEY` | empty | Secret. `scripts/demo_check.py --chat` only: the `watchdog` key for its one live completion (from the environment, never a flag) |
+| `RATCHET_DEMO_CHECK_KEY` | empty | Secret. `scripts/demo_check.py` only: the key for its free `GET /v1/models` check (the judge key's), unless `--key-env` names another variable |
+
+The probe also reads `RATCHET_MODE`, `RATCHET_DOMAIN`, `RATCHET_API_GUARD`, `RATCHET_ADMIN_TOKEN`, `RATCHET_API_KEYS` and `RATCHET_TEACHER_FALLBACK_MODEL` from the same file.
 
 ## Live Night School (`ratchet/live.py`)
 

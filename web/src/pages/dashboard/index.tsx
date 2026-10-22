@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
+import { lastCall, lastCallLine, sharedNotice } from "@/lib/surface-model";
 import { hostedServing, servingLine } from "@/lib/who-model";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
@@ -104,6 +105,34 @@ function Skeleton() {
   );
 }
 
+/** What a click's `auto_reset` says: the shared simulation started over before the day ran. */
+function resetSentence(reason: string, stats: Stats | null | undefined): string {
+  const d = stats?.demo;
+  const after = reason === "max_days" && d?.max_days ? `after ${d.max_days} simulated days` : reason === "max_requests" && d?.max_requests ? `after ${fmtInt(d.max_requests)} requests` : "";
+  return `The shared simulation reset${after ? ` ${after}` : ""} and ran its warm-up again.`;
+}
+
+/** The last real Token Factory and Tavily calls, content-free (FR-11.31); live mode only. */
+function LastCalls({ stats }: { stats: Stats }) {
+  const tf = lastCall(stats.upstream, "token_factory");
+  const tavily = lastCall(stats.upstream, "tavily");
+  const name = stats.upstream?.token_factory ? "Token Factory" : "Model";
+  return (
+    <>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+        <dt>Last {name} call</dt>
+        <dd className="min-w-0 text-ink-2 [overflow-wrap:anywhere]">{tf ? lastCallLine(tf) : "none since start"}</dd>
+      </div>
+      {tavily && (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+          <dt>Last Tavily call</dt>
+          <dd className="min-w-0 text-ink-2 [overflow-wrap:anywhere]">{lastCallLine(tavily)}</dd>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ColdStart({ mock, onRun, busy }: { mock: boolean; onRun: () => void; busy: boolean }) {
   return (
     <div className="relative overflow-hidden rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
@@ -191,6 +220,9 @@ function Header({
                 <dd className="min-w-0 truncate font-mono text-[12px] text-ink-2">{stats.student_base}</dd>
               </div>
             )}
+            {!mock && stats.upstream?.recording && (
+              <LastCalls stats={stats} />
+            )}
             <div className="flex items-center gap-1.5">
               <dt>Day</dt>
               <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
@@ -260,15 +292,17 @@ export default function DashboardPage() {
     setBusy("day");
     try {
       const r = await api.demoDay(workload, DAY_REQUESTS);
+      if (r.auto_reset) setFresh(new Set());
       const after = await refresh();
       const added = markFresh(before, after);
       const notable = added.filter((e) => NOTABLE.has(e.kind) && e.kind !== "trained");
       const bad = added.some((e) => e.kind === "rollback" || e.kind === "alert" || e.kind === "student_error" || e.kind === "circuit");
       const wl = WORKLOADS.find((w) => w.id === r.workload)?.label ?? r.workload;
       say({
-        tone: bad ? "warn" : r.night.admitted || added.some((e) => e.kind === "live") ? "good" : "info",
+        tone: r.auto_reset ? "info" : bad ? "warn" : r.night.admitted || added.some((e) => e.kind === "live") ? "good" : "info",
         title: (
           <>
+            {r.auto_reset && <>{resetSentence(r.auto_reset, after ?? stats)} </>}
             Day {r.day} done: {fmtInt(DAY_REQUESTS)} requests ({wl}). {nightSentence(r.night, after)}
           </>
         ),
@@ -376,6 +410,10 @@ export default function DashboardPage() {
                     <RefreshCw className={cn(refreshing && "animate-spin")} aria-hidden /> Retry
                   </Button>
                 </div>
+              )}
+
+              {mock && sharedNotice(stats.demo) && (
+                <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[13px] text-ink-2">{sharedNotice(stats.demo)}</p>
               )}
 
               {mock && (

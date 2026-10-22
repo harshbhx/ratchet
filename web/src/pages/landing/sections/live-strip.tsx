@@ -1,10 +1,16 @@
 import { Link } from "react-router";
-import { ArrowRight, FlaskConical, Radio } from "lucide-react";
+import { ArrowRight, ArrowUpRight, FlaskConical, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Container } from "@/components/ui/section";
 import type { Stats } from "@/lib/api";
 import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
+import { fmtAge, lastCall, lastCallLine } from "@/lib/surface-model";
 import { studentShareCopy } from "@/lib/who-model";
+
+/** "No Token Factory call since the gateway started 12 min ago". */
+function noCall(what: string, since: number | null | undefined): string {
+  return since ? `No ${what} call since the gateway started ${fmtAge(Date.now() / 1000 - since)}` : `No ${what} call yet`;
+}
 
 /** The gateway's real numbers right now. Hidden when the API is unreachable (static preview). */
 export function LiveStrip({ stats }: { stats: Stats | null }) {
@@ -16,6 +22,12 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const mock = stats.mode === "mock";
   // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
   const share = studentShareCopy(stats.student_serving);
+
+  // The last real upstream calls (live mode only; the simulation records none), content-free (FR-11.31).
+  const tf = !mock && stats.upstream?.recording ? lastCall(stats.upstream, "token_factory") : null;
+  const tavily = !mock && stats.upstream?.recording ? lastCall(stats.upstream, "tavily") : null;
+  const since = stats.upstream?.since;
+  const other = mock ? stats.links?.live : stats.links?.sim;
 
   const items = [
     {
@@ -59,9 +71,16 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
                 </Badge>
               )}
             </div>
-            <Link to="/dashboard" className="inline-flex items-center gap-1 text-[13px] font-medium text-ink-2 transition-colors hover:text-ink">
-              Open the dashboard <ArrowRight className="size-3.5" />
-            </Link>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <Link to="/dashboard" className="inline-flex items-center gap-1 text-[13px] font-medium text-ink-2 transition-colors hover:text-ink">
+                Open the dashboard <ArrowRight className="size-3.5" />
+              </Link>
+              {other && (
+                <a href={other} className="inline-flex items-center gap-1 text-[13px] font-medium text-ink-2 transition-colors hover:text-ink">
+                  {mock ? "Open the live gateway" : "Open the simulation"} <ArrowUpRight className="size-3.5" aria-hidden />
+                </a>
+              )}
+            </div>
           </div>
           <dl className="grid grid-cols-2 lg:grid-cols-4">
             {items.map((it, i) => (
@@ -80,6 +99,18 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
               </div>
             ))}
           </dl>
+          {!mock && stats.upstream?.recording && (
+            <dl className="grid gap-x-6 gap-y-1 border-t border-line px-4 py-3 text-[12.5px] text-muted sm:grid-cols-2 sm:px-5">
+              <div className="min-w-0 [overflow-wrap:anywhere]">
+                <dt className="inline">Last {stats.upstream.token_factory ? "Token Factory" : "model"} call: </dt>
+                <dd className="inline text-ink-2">{tf ? lastCallLine(tf) : noCall(stats.upstream.token_factory ? "Token Factory" : "model", since)}</dd>
+              </div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
+                <dt className="inline">Last Tavily call: </dt>
+                <dd className="inline text-ink-2">{tavily ? lastCallLine(tavily) : noCall("Tavily", since)}</dd>
+              </div>
+            </dl>
+          )}
         </div>
       </Container>
     </section>

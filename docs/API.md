@@ -87,6 +87,8 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/demo/teacher-drift` | mock only | [mock](#access-levels) | Make the mock teacher change labels at random, to show the teacher watch |
 | POST | `/ratchet/demo/reset` | mock only | [mock](#access-levels) | Start over |
 | GET | `/scout/examples` | both | [public](#access-levels) | Example questions and whether free text is allowed |
+| GET | `/scout/recorded` | both | [public](#access-levels) | Recorded live Scout runs, newest first (FR-10.40) |
+| GET | `/scout/recorded/{id}` | both | [public](#access-levels) | One recording, to play back at its real pace |
 | GET | `/scout/status` | both | [public](#access-levels) | Budget guard state, the judges' reserve, search and Tavily credits, and which model answers student calls (`fallback_student`, `student_serving`) |
 | POST | `/scout/judge` | both | [public](#access-levels) | Open a judge session: the access code in the body, a signed cookie back |
 | DELETE | `/scout/judge` | both | [public](#access-levels) | End a judge session (clears the cookie) |
@@ -296,6 +298,7 @@ Each model call gets the client's parameters as its role allows ([ADR 0017](adr/
 | an unknown field | Only when `RATCHET_TEACHER_PARAMS` names it | Only when `RATCHET_STUDENT_PARAMS` names it | As when serving |
 
 - The student's temperature and logprobs never change, and its confidence is always scored over `RATCHET_SAMPLES` samples: its threshold was calibrated that way. A request for more choices draws more samples, only to fill them ([Choices and logprobs](#choices-and-logprobs)). A sample cut off by its token limit gets no vote, so a tight `max_tokens` can send a request to the teacher.
+- Reasoning is the operator's, not the client's ([ADR 0130](adr/0130-reasoning-by-role.md)): a client's `chat_template_kwargs` and `extra_body` are accepted and ignored, and each role gets Nemotron's thinking switch from `RATCHET_*_REASONING` ([CONFIGURATION.md](CONFIGURATION.md#reasoning-nemotron-thinking)); the student's calls always carry `{"enable_thinking": false}` by default. `reasoning_effort` still reaches the teacher as the table says (whether Token Factory applies it is unverified).
 - `max_tokens` above a cap is capped, not refused.
 - When the reasoning headroom gives the teacher more than the client asked for, an answer whose visible part (reasoning removed) is longer than the client's `max_tokens` (about 4 characters a token) comes back whole with `finish_reason: "length"`, and is not stored.
 - `stop`, `response_format` (without its `x-ratchet` annotations), `tools` and `tool_choice` are stored with the example, redacted like the messages: the same messages under other conditions are another example (in the same golden or train split), and the nightly golden eval samples the student under them. Temperature, seed, penalties and `max_tokens` are not stored.
@@ -434,7 +437,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `ratchet` field | Meaning |
 |---|---|
 | `served_by` | `student` or `teacher` |
-| `student_version` | Version that answered; `null` when the teacher answered (including escalations) |
+| `student_version` | Version that answered; `null` when the teacher answered (including escalations), and when the hosted fallback student answered (no `RATCHET_STUDENT_BASE`): that answer is not any version's, and never counts toward a release ([ADR 0073](adr/0073-fallback-attribution.md)) |
 | `confidence` | Student confidence if a student was tried, else `null` |
 | `escalated` | `true` if the student was tried and was below its threshold |
 | `cost_usd` | Actual cost of this request, including audit, shadow and arbitration calls (a call that failed adds nothing). With `overhead_pending`, only what serving the answer cost ([Off-path checks](#off-path-checks)) |
@@ -460,9 +463,9 @@ A request that sent `metadata` gets it back as a top-level `metadata` field, as 
 
 With `RATCHET_SIDECAR_WORKERS` above 0 (live mode's default, 4), the response does not wait for the teacher's audit of a served student answer, for the shadow candidate's samples or for the teacher's arbitration: the gateway answers as soon as the served answer is ready, and a bounded queue runs them afterwards ([ADR 0072](adr/0072-off-path-audits-and-shadow.md)). The same requests are audited (the draw is made on the request path), the same calls are made in the same order, and the finished ledger row is the one an inline run writes. Such a response carries `"overhead_pending": true` in the `ratchet` block; then `cost_usd` and the cost split are what serving cost, `usage_breakdown.audit`, `.shadow` and `.arbitration` are `null`, and the request's ledger row (`GET /v1/ratchet/requests/{id}`) gets the rest when the checks end: `audited` is 1 with `audit_agree` null while the audit is pending, and `shadow_version` is set with `shadow_serve` null while the shadow is. The release gate counts neither until they end. When the queue is full (its places, or the 64 MiB of request text its jobs may hold), a drawn audit runs before the response instead (never dropped) and the response has no `overhead_pending`; a shadow that finds no place does not run for that request. Mock mode (0 workers by default) keeps every check before the response, as before.
 
-`model` is the model that produced the served answer: the adapter name (`student-vN`), the teacher model ID, or the fallback teacher's (`RATCHET_TEACHER_FALLBACK_MODEL`) when it answered for an unavailable teacher.
+`model` is the model that produced the served answer: the adapter name (`student-vN`), the hosted fallback student's configured id (`RATCHET_FALLBACK_STUDENT`) when it answered because no student endpoint is set, the teacher model ID, or the fallback teacher's (`RATCHET_TEACHER_FALLBACK_MODEL`) when it answered for an unavailable teacher.
 
-`system_fingerprint` names the configuration that produced the answer: `fp_` and the first 12 hex digits of SHA-256 over `student|<adapter>|<version id>|<training-set hash>|<threshold>` for a student answer, or `teacher|<RATCHET_TEACHER_MODEL>` for a teacher answer (`teacher|<RATCHET_TEACHER_FALLBACK_MODEL>` for the fallback teacher's). A degraded answer carries its version's student fingerprint. `<threshold>` is the one the answer was held to: since FR-14.1 each task of a version can have its own, so the fingerprint is the same for every answer of one version on one task, and changes when a promotion or a rollback puts another version in front (during a canary, both versions' fingerprints appear) or when that threshold changes. `service_tier` is always `default`. `choices[i].logprobs` is `null` unless the request sent `logprobs: true` ([Choices and logprobs](#choices-and-logprobs)), `message.refusal` is `null` and `message.annotations` is empty.
+`system_fingerprint` names the configuration that produced the answer: `fp_` and the first 12 hex digits of SHA-256 over `student|<adapter>|<version id>|<training-set hash>|<threshold>` for a student answer, or `teacher|<RATCHET_TEACHER_MODEL>` for a teacher answer (`teacher|<RATCHET_TEACHER_FALLBACK_MODEL>` for the fallback teacher's). The hosted fallback student's answer names no version: `student|<RATCHET_FALLBACK_STUDENT>|<threshold>`, the same whichever version the request was routed to. A degraded answer carries its version's student fingerprint (the fallback's, when the fallback wrote it). `<threshold>` is the one the answer was held to: since FR-14.1 each task of a version can have its own, so the fingerprint is the same for every answer of one version on one task, and changes when a promotion or a rollback puts another version in front (during a canary, both versions' fingerprints appear) or when that threshold changes. `service_tier` is always `default`. `choices[i].logprobs` is `null` unless the request sent `logprobs: true` ([Choices and logprobs](#choices-and-logprobs)), `message.refusal` is `null` and `message.annotations` is empty.
 
 `message.content` is the served answer after `tasks.clean_answer`: model reasoning is never returned (a `<think>…</think>` block, anything before a lone `</think>`, an unterminated `<think>` that opens what is left and what follows), and for a structured task such as `ticket-triage` a code fence around the whole JSON answer is removed, so the content is bare JSON. A structured answer that is one JSON object is returned whole, so a tag quoted in its strings stays; a `<think>` after answer text is content too. A free-text answer keeps its code blocks. With a `response_format` the content is the JSON the answer holds ([Structured outputs](#structured-outputs)). A teacher answer that was cut off by its token limit is still returned (and is not stored as training data), with `finish_reason: "length"`.
 
@@ -1043,7 +1046,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   "days": [
     {"day": 3, "requests": 1500, "student_share": 0.98, "escalation_rate": 0.02,
      "cost_per_1k": 0.16, "baseline_per_1k": 1.093, "savings_pct": 0.85,
-     "avg_latency_ms": 352.0, "audit_agreement": 1.0, "degraded": 0, "fallback_teacher": 0,
+     "avg_latency_ms": 352.0, "audit_agreement": 1.0, "degraded": 0, "fallback_teacher": 0, "fallback_served": 0,
      "p50_student_ms": 0.41, "p95_ms": 0.93}
   ],
   "versions": [
@@ -1128,7 +1131,7 @@ feedback": {"verdicts": 40, "correct": 37, "incorrect": 3, "corrections_sent": 3
   | `certified` | The version's eval carries a certificate that certifies (`certificate.certified`), and our adapter serves. Always `false` for `hosted_fallback`: the certificate was computed for our adapter, never for the hosted model |
 
   While `kind` is `hosted_fallback`, the pages say "Nano 30B · hosted" for a student answer (with the threshold, and "not covered by the certificate"), stop saying "your model", and hide the live version's golden precision ([SCOUT.md](SCOUT.md#who-answered)).
-- `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `/v1/embeddings` calls (route `passthrough`) are left out of `days`, `totals` and `clients`, and counted in `tasks` (the `embeddings` row) and in `cost`. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the simulated model latency.
+- `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `/v1/embeddings` calls (route `passthrough`) are left out of `days`, `totals` and `clients`, and counted in `tasks` (the `embeddings` row) and in `cost`. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `fallback_served` counts that day's student-served requests whose answer another model than their version's adapter wrote: the hosted fallback student, without `RATCHET_STUDENT_BASE` (v0.5, FR-12.32). They are in `student_share` and `audit_agreement`, but count toward no version's release (days whose rows retention folded report 0). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the simulated model latency.
 - `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher". `routes` counts the task's requests by how they were served (the ledger's `requests.route`), most frequent first, and adds up to `requests`:
 
   | Route | Served by | Why |
@@ -1190,6 +1193,7 @@ feedback": {"verdicts": 40, "correct": 37, "incorrect": 3, "corrections_sent": 3
 - `controls` (v0.5): the operator's runtime switches ([Admin](#admin)): whether the student is turned off (`student_disabled`), releases are frozen (`releases_frozen`) and training is paused (`training_paused`), the runtime audit rate (`audit_rate`, `null` while `RATCHET_AUDIT_RATE` applies) and the tasks pinned to the teacher at runtime (`pinned_tasks`, sorted; such a task also shows `pinned: true` under `tasks`).
 - `drift` (v0.5): the [drift monitor](#get-ratchetdrift)'s summary: whether it is on (`RATCHET_DRIFT_ALARM` above 0), its threshold, the chance that any stream it holds ever alarms on unchanged traffic (`family_bound`, K / threshold), how many streams alarmed (`alarms`) and how many it holds (`streams`, a count; the list is in `GET /ratchet/drift`). Off: `enabled` false, `threshold` and `family_bound` `null`, both counts 0.
 - `teacher_watch` (v0.5): the [teacher watch](#teacher-watch)'s summary: whether it acts (`RATCHET_TEACHER_WATCH`), the check epoch, whether Night School is frozen, the epoch's checks and disagreements, the teacher's self-agreement and the agreement ceiling (`null` without checks), the freeze rule's e-value and the contested labels. The same keys as `GET /ratchet/teacher`, without the per-source and per-task rows.
+- `reasoning`: Nemotron's thinking mode by role (`student`, `fallback_student`, `serve`, `check`: `default`, `off`, `on` or `medium`) and the body `field` Token Factory-bound calls use ([Reasoning](CONFIGURATION.md#reasoning-nemotron-thinking), FR-1.90).
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
 - `kpis`: the [success metrics](#get-ratchetkpisdaysn) over the last `RATCHET_KPI_WINDOW_DAYS` days with traffic, exactly as `GET /ratchet/kpis` returns them.
 
@@ -1206,7 +1210,7 @@ What the ledger knows about one request, by the id the gateway gave it ([Request
 {
   "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
   "request": {"id": 1204, "ts": 1792400000.1, "day": 9, "task": "ticket-triage", "served_by": "teacher",
-              "student_version": 5, "confidence": 0.41, "escalated": 1, "audited": 0, "route": "confidence",
+              "student_version": 5, "student_model": "student-v5", "shadow_model": null, "confidence": 0.41, "escalated": 1, "audited": 0, "route": "confidence",
               "latency_ms": 2711.0, "wall_ms": 2713.2, "cost_usd": 0.00133, "baseline_cost_usd": 0.00131,
               "client": "acme", "client_request_id": "order-77-retry-1", "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
               "...": "every other column of the requests table"},
@@ -1215,6 +1219,8 @@ What the ledger knows about one request, by the id the gateway gave it ([Request
                 "status": 504, "latency_ms": 15002.4, "cost_usd": 0.0}]
 }
 ```
+
+`student_version` is the version the request was routed to; `student_model` is the model its student samples came from (the version's adapter, or the hosted fallback student's id without `RATCHET_STUDENT_BASE`; `null` when no sample came back and in rows logged before v0.5), and `shadow_model` the model behind the shadow verdict (set with `shadow_version`). Only rows whose model is the version's adapter, or `null`, count toward that version's release ([ADR 0073](adr/0073-fallback-attribution.md)).
 
 `request` is `null` for a request that failed before the cascade logged it (a teacher error after the student's samples, a quota 429, an unhandled error); then its `failures` row says where it failed, what it spent (`cost_usd`) and the status (`status`: the status of the stage that failed; for an upstream stage the upstream's, such as 504 for a timeout or 503 for an open breaker). `failures` also lists the optional calls that failed around an answered request: a student call the teacher covered, a failed audit, shadow sample or arbitration. `error` is the exception's class, status and code (`UpstreamError 502 upstream_unreachable`, `APIError 429 daily_quota_exceeded`), never a message. A failed request's rows are written before its response starts, so a lookup made as soon as the error arrives finds them; under a flood the gateway keeps at most 120 of its own rows a minute per stage (a row that carries spent money is always kept), so the id of a refusal past that is a 404. A request that is not found, and an id that is not one of the two forms, is a 404.
 
@@ -2071,6 +2077,18 @@ The mock demo is shared by every visitor, so the controls protect themselves:
 
 The dashboard shows these messages under its buttons.
 
+### `/ratchet/stats`: `links`, `demo` and `upstream` (FR-11.30, FR-11.31)
+
+Three additive blocks, content-free, under `/ratchet/stats`'s access and scrubbing rules (a scrubbed anonymous copy passes them through unchanged). `tests/fixtures/stats_keys.json` lists them.
+
+| Block | Fields |
+|---|---|
+| `links` | `live`, `sim`: `RATCHET_LIVE_URL` and `RATCHET_SIM_URL` as set, else `null`. The header switch reads them |
+| `demo` | `surface` (`simulation` in mock mode, else `live`), `controls` and `shared` (true in mock mode), `max_days`, `max_requests`, `idle_reset_s`, `actions_per_minute` (`null` when off), `auto_resets` (since the process started), `last_reset_at` (epoch seconds or `null`) |
+| `upstream` | `recording` (true in live mode), `since` (epoch seconds the record started, `null` in mock mode), `token_factory` (whether `RATCHET_TEACHER_BASE` is Token Factory's host, which decides if a page may say "Live on Nebius Token Factory"), `calls`: the newest call per role called since start, in the order teacher, fallback_teacher, student, tavily |
+
+A `calls` item: `role`, `host` (`token_factory`, `student_endpoint`, `tavily` or `other`), `requested_model`, `model` (the response's `model`, kept only when it looks like a model id, else `null`; Token Factory echoing the id is unverified), `ok`, `status` (the upstream's HTTP status, `null` without one), `error` (the exception's class name), `reason` (`timeout`, `unreachable`, `bad_response`, `http` or `other`), `latency_ms`, `at` (epoch seconds), `age_s` and `last_ok_age_s` (seconds since the last success of that role, `null` if none). It **never contains** prompt or answer text, URLs, keys, headers, error messages or the upstream's own error code. Breaker refusals, adapter loads, Night School's judge and other processes (the live-run harness) are not recorded. The hosted Nano is the `student` role on `token_factory` with the fallback model's id as `requested_model`; our adapter is the `student` role on `student_endpoint`.
+
 ### POST `/ratchet/demo/day?requests=1500&workload=tickets`
 
 Advances `Ledger.day` by one and sends `requests` simulated requests through the cascade, calling `gate.tick()` every `requests/10`. Then it runs one night (`run_night`). `requests` is clamped to 100–5000.
@@ -2083,12 +2101,14 @@ Advances `Ledger.day` by one and sends `requests` simulated requests through the
 With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. With any other workload it trains on every stored task. Each workload has its own seeded stream, so the streams do not affect each other. The dashboard's **Traffic** selector sets `workload` (default there: `mixed`). Until tool calls pass through the gateway, the default allowlists forward `tools` to neither model, so the `tools` workload is answered, stored and learned as free text. The numbers are simulation output from mock models, and the response says so (`simulation: true`).
 
 ```json
-{"day": 4, "workload": "tickets", "simulation": true,
+{"day": 4, "workload": "tickets", "simulation": true, "auto_reset": null,
  "night": {"trained": false, "version": null, "admitted": false,
            "reason": "release in flight", "eval": null}}
 ```
 
 `night.reason` is one of `admitted`, `rejected`, `release in flight`, `not enough new data`, `no golden set`.
+
+`auto_reset` is `null`, or `"max_days"` or `"max_requests"` when the shared simulation reached `RATCHET_DEMO_MAX_DAYS` or `RATCHET_DEMO_MAX_REQUESTS`: it started over (a fresh ledger, the warm-up again, one `demo_reset` event) before this day ran, so `day` is then the first day after the warm-up. On a gateway with `RATCHET_DEMO_RPM` set, every non-GET `/ratchet/demo/*` call takes a token from the caller's IP bucket, and an empty bucket answers **429** `the shared simulation takes N actions a minute per visitor; try again in S s` with `Retry-After`. Live mode answers 403 before any of this.
 
 ### POST `/ratchet/demo/break-next`
 
@@ -2169,6 +2189,19 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 
 `examples` is `ratchet.scout.prompts.EXAMPLE_QUESTIONS` (8 questions). `free_text` is `true` only in live mode.
 
+### GET `/scout/recorded`
+
+```json
+{"recordings": [{"id": "20261021T100500Z-what-is-lora-fine-tuning", "recorded_at": "2026-10-21T10:05:00Z",
+                 "question": "What is LoRA fine-tuning?", "duration_ms": 41800, "mode": "live", "totals": {"llm_calls": 14, "...": "..."}}]}
+```
+
+Up to 20 recordings from `RATCHET_SCOUT_RECORDINGS_DIR`, newest first; `{"recordings": []}` when the setting is empty or the folder is. Public, read-only: no model call, no guard budget, no ledger row ([ADR 0140](adr/0140-recorded-scout-run.md)).
+
+### GET `/scout/recorded/{id}`
+
+One recording: `{"id", "schema": "ratchet.scout-recording/v1", "recorded_at", "host", "mode": "live"|"mock", "question", "duration_ms", "events": [...], "totals"}`. Each event is the SSE event of [SCOUT.md](SCOUT.md#event-objects-sse-data-payloads-in-order) plus `t_ms`, its offset in milliseconds from the first. 404 when the id does not match `^[0-9]{8}T[0-9]{6}Z-[a-z0-9-]{1,40}$`, the file is missing, over 2 MB, not JSON or another schema.
+
 ### GET `/scout/status`
 
 ```json
@@ -2195,6 +2228,7 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 | `tavily` | `true` when live search (Tavily) is configured |
 | `fallback_student` | v0.5: the hosted fallback's model id, as in `/ratchet/stats`. A `step` whose `served_by` is `student` and whose `model` is this id came from the untuned hosted Nano, not our adapter |
 | `student_serving` | v0.5: the same object as in [`/ratchet/stats`](#get-ratchetstats), so the Scout page labels each call without a stats call |
+| `live_check` | The demo watchdog's flag (FR-11.33, [ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)): `{"state", "since", "checked", "search"}`. `state` is `failing` only after the watchdog's hourly probe, through the public URL, got a teacher-side or gateway-side failure within `RATCHET_WATCH_FLAG_MAX_AGE_S`; `ok`; `stale` (the watchdog stopped); `unknown` (no row yet); `off` (mock mode). Never an error code or text, so a keyword monitor can match `"state":"failing"` and a page can show a banner |
 | `public_runs_left_today` | Runs the public can still start today: the run cap minus the judges' reserve, minus public runs and judge runs past the reserve; `null` without a cap (mock mode) |
 | `public_budget_left_usd` | The same for spend; `null` without a budget. A public run can be refused a little earlier, while a judge budget is reserved: the largest finished run today is kept as a margin |
 | `judge_runs_today` | Judge runs admitted today |

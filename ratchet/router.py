@@ -17,7 +17,7 @@ from typing import Any, NamedTuple, NoReturn
 
 import httpx
 
-from . import calibration, licenses, metrics, obs, schema_tasks, tasks, taskspec
+from . import calibration, licenses, metrics, obs, reasoning, schema_tasks, tasks, taskspec
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .drift import boosted_rate
@@ -538,8 +538,9 @@ class OffPath:
     many choices the client got, the student answer an audit judges, the reference the request already has (the
     escalation's teacher answer, or the answer of an audit that ran on the request path because the queue was full),
     the baseline the row was logged with, the student version whose answer is audited (None: no audit), the shadow
-    candidate (None: no shadow) and whether a teacher call of the request already failed (an inline audit's), which
-    stops the arbitration as it would on the request path."""
+    candidate (None: no shadow), whether a teacher call of the request already failed (an inline audit's), which
+    stops the arbitration as it would on the request path, and the shadow's student as the request resolved it
+    (`Ratchet._shadow_student`, ADR 0073)."""
 
     row: int
     task: tasks.Task
@@ -556,6 +557,7 @@ class OffPath:
     audit_version: int | None
     shadow: Version | None
     teacher_failed: bool = False
+    shadow_target: tuple[Provider, str] | None = None
 
     @property
     def tag(self) -> tuple[int | None, int | None]:
@@ -635,6 +637,9 @@ class Ratchet:
         # What each role sends of a client's parameters (ADR 0017); a bad RATCHET_*_PARAMS or cap stops startup here.
         self.gen = settings.gen_policy()
         self._plain = self.gen.plan(None)  # the plan of a request without parameters (Scout, the simulator)
+        self._reasoning = settings.reasoning_policy()
+        # The hosted fallback student has its own mode (ADR 0130); an adapter keeps GenPolicy.student's.
+        self.fallback_student_kwargs = reasoning.template_kwargs(self._reasoning.fallback_student)
         self.clock = clock
         self.timer = timer
         self.on_adapter_missing = on_adapter_missing
@@ -684,6 +689,9 @@ class Ratchet:
         # Called with (client, US dollars) when an off-path audit or shadow spends after its request answered (ADR 0072),
         # so the gateway's spend meter (ADR 0063) counts what the response's `cost_usd` could not include yet.
         self.on_offpath_spend: Callable[[str | None, float], object] | None = None
+        # Answers and shadow runs another model than the version's adapter would have written (ADR 0073), by (role,
+        # version); throttles their `unattributed` events. `days[].fallback_served` in /ratchet/stats has the answers.
+        self._unattributed_counts: Counter[tuple[str, int]] = Counter()
 
     def _teacher_breaker(self, name: str, provider: Provider) -> Breaker:
         """A teacher's breaker ('teacher' or 'fallback_teacher') with RATCHET_TEACHER_BREAKER_*, listed in health()."""
@@ -1437,6 +1445,7 @@ class Ratchet:
         reference: Completion | None,
         teacher_failed: bool,
         deadline_s: float | None = None,
+        target: tuple[Provider, str] | None = None,
     ) -> ShadowOutcome:
         """The shadow candidate runs the same cascade silently, on the request path or off it (ADR 0072). It records
         whether the candidate would have served, and if so whether it agrees with the best reference the request has:
@@ -1446,11 +1455,12 @@ class Ratchet:
         the same outage. Neither the samples nor the arbitration can fail the request (INV-15): a failed sample leaves
         no shadow record (`_NO_SHADOW`); a failed arbitration, or a reference the teacher cut off or got wrong (INV-16),
         leaves `shadow_agree` None, which the release gate counts as a disagreement (`Ledger.shadow_quality`).
-        `deadline_s` bounds the arbitration, retries included."""
+        `deadline_s` bounds the arbitration, retries included. `target` is the shadow's student as `_shadow_student`
+        resolved it for this request (None: resolved here)."""
         try:
             # The task's own sample count, as the live student's (FR-2.55).
             n = task.sample_count(self.s.samples)
-            s_samples, c, s_model = self._sample(shadow, messages, role="shadow", gen=plan.student, n=n)
+            s_samples, c, s_model = self._sample(shadow, messages, role="shadow", gen=plan.student, n=n, target=target)
         except CircuitOpen as e:  # the shadow's breaker is open: no shadow record, nothing counted again
             self._record_failure("shadow", e, task, client, meta, t0, call="sampling")
             return _NO_SHADOW
@@ -1485,6 +1495,49 @@ class Ratchet:
             ref_text = reference.text if reference is not None else served.text
             agree = int(task.agree(s_sc.answer.text, ref_text))
         return ShadowOutcome(s_samples, c, arbitration, arbitration_cost, stored, shadow.id, serve, agree, rejected)
+
+    def _own(self, version: Version, model: str) -> bool:
+        """Whether an answer `model` wrote is `version`'s (ADR 0073): only its own adapter's. The hosted fallback student
+        (RATCHET_FALLBACK_STUDENT, which answers for every version when RATCHET_STUDENT_BASE is empty) is another model,
+        so its answers say nothing about the version: they are served, but not attributed to it (`ratchet.student_version`
+        null) and never counted toward its release statistics (`Ledger.OWN_STUDENT`, `OWN_SHADOW`)."""
+        return model == version.adapter_uri
+
+    def _unattributed(self, role: str, version: Version, model: str) -> None:
+        """Count an answer another model than `version`'s adapter served for it (`role` student) or a shadow run that did
+        not happen for that reason (`role` shadow), and write an `unattributed` event on the 1st, 10th, 100th and 1000th
+        time per role and version, so an operator sees why its release does not move. The detail names the model (the
+        configuration, never request text)."""
+        with self._errors_lock:
+            self._unattributed_counts[(role, version.id)] += 1
+            n = self._unattributed_counts[(role, version.id)]
+        if n not in EVENT_ON_FAILURE:
+            return
+        who = f"the hosted fallback student {model}" if model == self.s.fallback_student_model else model
+        if role == "shadow":
+            detail = f"v{version.id} shadow: not run, it resolves to {who}, not its adapter; the shadow waits"
+        else:
+            detail = f"v{version.id} ({version.state}): answered by {who}, not its adapter; not counted toward its release"
+        self.ledger.event("unattributed", detail)
+
+    def _shadow_student(
+        self, shadow: Version, task: tasks.Task, client: str | None, meta: RequestMeta | None, t0: float
+    ) -> tuple[Provider, str] | None:
+        """The shadow candidate's student (provider, model), resolved once per request before a sidecar place is taken
+        for it; None when the shadow does not run for this request. That is when the resolver names another model than
+        the candidate's adapter (the hosted fallback student, ADR 0073): its samples would say nothing about the
+        candidate, and the teacher would arbitrate between the fallback and itself. Or when the resolver raises: a
+        failed shadow sample, counted and recorded as `_shadow` does (INV-15), never the request's failure."""
+        try:
+            target = self.resolve_student(shadow)
+        except Exception as e:  # optional call: count it, never fail the request
+            self._count_failure("shadow_errors", "shadow_error", f"v{shadow.id} sampling: {describe_failure(e)}")
+            self._record_failure("shadow", e, task, client, meta, t0, call="sampling")
+            return None
+        if not self._own(shadow, target[1]):
+            self._unattributed("shadow", shadow, target[1])
+            return None
+        return target
 
     def _offpath(self, meta: RequestMeta | None) -> bool:
         """Whether this request's audit and shadow may run after it returns (ADR 0072): only for a request the gateway
@@ -1558,8 +1611,11 @@ class Ratchet:
                 reference,
                 teacher_failed,
                 ARBITRATION_DEADLINE_S,
+                target=op.shadow_target,
             )
-            cols.update(shadow_version=shadow.version, shadow_serve=shadow.serve, shadow_agree=shadow.agree)
+            # The model behind the verdict, cleared with the verdict when the samples failed (as an inline run logs it).
+            s_model = op.shadow_target[1] if shadow.version is not None and op.shadow_target is not None else None
+            cols.update(shadow_version=shadow.version, shadow_serve=shadow.serve, shadow_agree=shadow.agree, shadow_model=s_model)
             if shadow.samples is not None:
                 cost.append(shadow.sample_cost)
                 student_cost.append(shadow.sample_cost)
@@ -1716,6 +1772,10 @@ class Ratchet:
         compare."""
         return calibration.spec_changed(version.eval, _task(task))
 
+    def reasoning_snapshot(self) -> dict[str, str]:
+        """The thinking mode of each role and the body field, for /ratchet/stats."""
+        return self._reasoning.snapshot()
+
     def _sample(
         self,
         version: Version,
@@ -1723,14 +1783,18 @@ class Ratchet:
         role: str = "student",
         gen: GenParams | None = None,
         n: int | None = None,
+        target: tuple[Provider, str] | None = None,
     ) -> tuple[list[Completion], float, str]:
         """The student's samples under `gen` (the plan's `student` parameters), `n` of them (`Settings.samples` when
         None; `handle` and the shadow pass the task's own count, and more only to fill a client's n choices), through the
         `role` breaker of its endpoint (`role`, student or shadow, also names the call in the metrics and the log). Raises
         `CircuitOpen` without calling when that breaker is open, and `AdapterMissing` when vLLM answers 404 naming the
         version's adapter (an endpoint restart forgets runtime-loaded adapters; that 404 is the endpoint answering, so it
-        does not count against it)."""
-        provider, model = self.resolve_student(version)
+        does not count against it). `target` is the (provider, model) the resolver already named for `version` (the
+        shadow's, `_shadow_student`); None resolves it here."""
+        provider, model = self.resolve_student(version) if target is None else target
+        if model == self.s.fallback_student_model:
+            gen = replace(self._plain.student if gen is None else gen, template_kwargs=self.fallback_student_kwargs)
         breaker = self._breaker(role, provider)
         if not breaker.allow():
             metrics.UPSTREAM.inc(role, "circuit_open")
@@ -2243,7 +2307,13 @@ class Ratchet:
         `Settings.audit_rate`.
 
         `requests.wall_ms` is the time from here to the ledger write on `self.timer`, every model call included;
-        `latency_ms` stays the providers' own time, so `wall_ms - latency_ms` is Ratchet's overhead (ADR 0060)."""
+        `latency_ms` stays the providers' own time, so `wall_ms - latency_ms` is Ratchet's overhead (ADR 0060).
+
+        An answer is a version's only when its own adapter wrote it (`_own`, ADR 0073). The hosted fallback student
+        (no RATCHET_STUDENT_BASE) answers for every version: such an answer is served and audited as drawn, but the
+        result names no version (`version` None, `model` the fallback's configured id, a fingerprint without a version),
+        the row records the model (`requests.student_model`), so the release gate never counts it, and a shadow that
+        resolves to the fallback does not run."""
         t0 = self.timer()
         flags = self.ledger.flags()  # the operator's switches and task pins, one snapshot for the request (ADR 0064)
         task = self.resolve(task, params)
@@ -2308,6 +2378,10 @@ class Ratchet:
         repaired: list[Completion] = []  # teacher answers a repair left unused (FR-1.40), paid for and in the breakdown
         served_first: Completion | None = None  # the served teacher call's first answer, after a repair (`_asked`)
         audit_first: Completion | None = None  # the same for the audit
+        # The model the student's samples came from (`requests.student_model`), and whether it is the version's own
+        # adapter: another model's answer (the hosted fallback student) is served but never the version's (ADR 0073).
+        student_model: str | None = None
+        own = True
 
         sc = None
         # The samples one confidence score of this task rests on: its policy's, else RATCHET_SAMPLES (FR-2.55), as the
@@ -2331,6 +2405,7 @@ class Ratchet:
                 self._record_failure("student", e, task, client, meta, t0)
                 escalated, route = True, "student_error"
             else:
+                student_model, own = model_used, self._own(version, model_used)
                 latency += max(s.latency_ms for s in samples)
                 cost += c
                 student_cost += c
@@ -2351,7 +2426,7 @@ class Ratchet:
                 escalated, route = True, f"{RULE_ROUTE}{rule}"
             elif confident and picked is not None:
                 served, served_by, route, served_choices = sc.answer, "student", "student", picked
-                fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
+                fp = self._student_fingerprint(version, model_used, threshold)
                 # The task's own audit rate (`policy.audit_rate`, FR-2.50) or RATCHET_AUDIT_RATE; audit focusing (ADR
                 # 0025): a canary may be audited at its own rate; an operator's runtime rate (`audit_rate`, ADR 0064)
                 # replaces them all. Still one draw per served answer, drawn also under student_only, which skips the
@@ -2405,7 +2480,7 @@ class Ratchet:
                 served, served_by, route, degraded = sc.answer, "student", "degraded", TEACHER_UNAVAILABLE
                 served_choices = picked
                 threshold = self.threshold(version, model_used, task)
-                fp = fingerprint("student", model_used, version.id, version.dataset_hash, threshold)
+                fp = self._student_fingerprint(version, model_used, threshold)
                 self._count_failure("degraded_answers", "degraded", f"{task.name}: {describe_failure(e)}")
                 self._record_failure("teacher", e, task, client, meta, t0)
             else:
@@ -2455,23 +2530,36 @@ class Ratchet:
             # Shadow (`_shadow`): the candidate runs the same cascade silently, compared with the teacher's answer when
             # this request has one (the escalation's, or a counted audit's), else with the served answer. A request a
             # stand-in answered (degraded, or the fallback teacher) runs no shadow: its only reference would not be the
-            # primary teacher's (ADR 0019). Off the request path it rides with the request's audit, or takes a place of its
-            # own; with no place left it does not run for this request (counted per version), and nothing else changes.
+            # primary teacher's (ADR 0019). Nor does one whose student resolves to another model than the candidate's adapter
+            # (the hosted fallback student, ADR 0073: `_shadow_student`). Off the request path it rides with the
+            # request's audit, or takes a place of its own; with no place left it does not run for this request (counted
+            # per version), and nothing else changes.
             # The student turned off (ADR 0064) stops the shadow's samples too: the switch stops every student call.
             stopped = student_only or flags.student_disabled
             shadow = None if route in STAND_IN_ROUTES or stopped else self.ledger.by_state("shadow")
             shadow_vid = shadow_serve = shadow_agree = None
+            shadow_target: tuple[Provider, str] | None = None
+            shadow_model: str | None = None  # the model behind the shadow's verdict (`requests.shadow_model`)
+            if shadow is not None:
+                shadow_target = self._shadow_student(shadow, task, client, meta, t0)
+                if shadow_target is None:
+                    shadow = None
             if shadow is not None and offpath:
+                assert shadow_target is not None
                 if slot is None:
                     slot = self.sidecar.reserve(size=job_bytes(messages))
                     if slot is None:
                         self._sidecar_full("shadow", shadow.id)
                 if slot is not None:
                     pending_shadow, shadow_vid = shadow, shadow.id  # shadow_serve NULL: pending (`_finish_offpath`)
+                    shadow_model = shadow_target[1]
                 shadow = None
             if shadow is not None:
+                assert shadow_target is not None
                 reference = teacher_c if served_by == "teacher" or audited else None
-                so = self._shadow(task, messages, plan, meta, client, t0, shadow, served, reference, teacher_failed)
+                so = self._shadow(
+                    task, messages, plan, meta, client, t0, shadow, served, reference, teacher_failed, target=shadow_target
+                )
                 if so.samples is not None:
                     s_samples, arbitration_c = so.samples, so.arbitration
                     cost += so.sample_cost
@@ -2485,6 +2573,7 @@ class Ratchet:
                         if so.rejected is not None:
                             repaired.append(so.rejected)
                     shadow_vid, shadow_serve, shadow_agree = so.version, so.serve, so.agree
+                    shadow_model = shadow_target[1]
 
             # Settled at the start, or by a store check that found an opt-out made while the request ran
             # (`_store_example`).
@@ -2523,6 +2612,8 @@ class Ratchet:
                 client_request_id=meta.client_request_id,
                 retry_count=meta.retry_count,
                 uses_tools=0,  # a tool request never reaches the cascade (FR-1.41)
+                student_model=student_model,
+                shadow_model=shadow_model,
             )
         except BaseException:
             if slot is not None:
@@ -2545,23 +2636,29 @@ class Ratchet:
                 pending_audit,
                 pending_shadow,
                 teacher_failed,
+                shadow_target if pending_shadow is not None else None,
             )
             if not slot.submit(functools.partial(self._finish_offpath, op), op.tag):
                 self._finish_offpath(op)  # the sidecar stopped meanwhile: the request still runs its own checks
+        if served_by == "student" and not own:  # served, but not the version's answer (ADR 0073)
+            assert version is not None and student_model is not None
+            self._unattributed("student", version, student_model)
         # An off-path audit's baseline is counted when its job prices it (`_finish_offpath`).
         counted_baseline = 0.0 if pending_audit is not None else baseline
         self._count_request(task, served_by, route, wall_ms, cost, counted_baseline, client, escalated, meta)
         choices = _choices(task, served_choices, params)
+        # Another model's answer (the hosted fallback student) names that model, as configured, and no version (ADR 0073).
+        attributed = served_by == "student" and own
         return Result(
             text=choices[0].text,
             served_by=served_by,
-            version=version.id if (version and served_by == "student") else None,
+            version=version.id if (version and attributed) else None,
             confidence=confidence,
             escalated=escalated,
             cost_usd=cost,
             baseline_usd=baseline,
             latency_ms=latency,
-            model=served.model,
+            model=student_model if served_by == "student" and not own and student_model else served.model,
             route=route,
             finish_reason=choices[0].finish_reason,
             **_usage(messages, _asked(served_choices, served_first), choices),
@@ -2580,6 +2677,14 @@ class Ratchet:
             task=task.name,
             schema_valid=_schema_valid(task, choices),
         )
+
+    def _student_fingerprint(self, version: Version, model: str, threshold: float) -> str:
+        """A student answer's `system_fingerprint`: its adapter, version, training-set hash and threshold. Another
+        model's answer (the hosted fallback student, ADR 0073) gets that model and its threshold only: no version wrote
+        it, so it stays the same whichever version the request was routed to."""
+        if self._own(version, model):
+            return fingerprint("student", model, version.id, version.dataset_hash, threshold)
+        return fingerprint("student", model, threshold)
 
     def _may_degrade(
         self, sc: Scored | None, params: GenParams | None, e: BaseException, picked: list[Completion] | None = None

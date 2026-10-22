@@ -33,6 +33,7 @@ It exists to show Ratchet on real agent traffic: the case NVIDIA Research estima
 | GET | `/scout/examples` | `{"mode": "mock"\|"live", "examples": [str, ...], "free_text": bool}`. `free_text` is false in mock mode |
 | GET | `/scout/stream?q=<question>` | Server-Sent Events, one JSON object per `data:` line (below) |
 | POST | `/scout/run` | Body `{"question": str}`. Returns `{"events": [ ...same objects... ]}` once the run finishes |
+| GET | `/scout/recorded`, `/scout/recorded/{id}` | Recorded live runs (below): the list, and one with each event's `t_ms` |
 | GET | `/scout/status` | `{"mode", "budget_usd", "spent_today_usd", "runs_today", "runs_per_hour_per_ip", "max_runs_per_day", "tavily": bool, "fallback_student", "student_serving"}`. `budget_usd` and `max_runs_per_day` are `null` in mock mode; `fallback_student` and `student_serving` (v0.5) say which model answers student calls ([Who answered](#who-answered)). Since v0.5 also `public_runs_left_today`, `public_budget_left_usd`, `judge_runs_today`, `persistent`, `judge` and `search` (below) |
 | POST | `/scout/judge` | Body `{"code": str}`: opens a judge session (a signed `ratchet_judge` cookie). 400, 401, 404 (judge access off), 429 (10 attempts per IP per hour) |
 | DELETE | `/scout/judge` | Ends a judge session: clears the cookie |
@@ -161,6 +162,16 @@ Mock-mode demo settings:
 - Result URLs use `example.org`, so nothing pretends to be a real page.
 - `ResearchStream` produces triage and read requests for the simulator and `POST /ratchet/demo/day?workload=research|mixed`. Users phrase each question 4 ways. Questions 7 and 8 (self-consistency, model collapse) appear only from the drift day, as 20% of traffic.
 - The simulator and the agents build messages with the same functions in `ratchet/scout/prompts.py`, so the mock teacher and students can look up each request by its exact user text.
+
+## Recorded runs
+
+When the budget guard refuses a run (INV-11) or a live call fails, a judge can still watch a real run: one the operator recorded on the live demo, played back at its real pace and labelled "Recorded live run" with its date (a mock-mode recording is "Recorded simulation"). Playback makes no model or search call, takes no budget and cannot be used up ([ADR 0140](adr/0140-recorded-scout-run.md)).
+
+```bash
+python -m ratchet.scout record "What is LoRA fine-tuning?" --base-url https://demo.example [--judge-code C] [--out evidence/scout] [--allow-mock]
+```
+
+It reads `GET /scout/stream` and writes `<out>/<UTC time>-<slug>.json` (schema `ratchet.scout-recording/v1`: question, host name, mode, events with `t_ms`, totals). It exits 1 and writes nothing when the run errors, does not finish, or the gateway is in mock mode and `--allow-mock` is not given. The judge code (or `$RATCHET_SCOUT_JUDGE_CODE`) is used for one `POST /scout/judge` and never written. The gateway serves the folder named by `RATCHET_SCOUT_RECORDINGS_DIR` through `GET /scout/recorded`; it never writes a recording, so no visitor's question is stored. Record one run after each deploy and commit it.
 
 ## Command line
 

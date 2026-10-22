@@ -13,6 +13,8 @@
 #   RATCHET_BACKUP_KEEP   local copies to keep (default 14)
 #   RATCHET_BUCKET_S3     s3://bucket/prefix: also upload there with the aws CLI
 #   RATCHET_S3_ENDPOINT   Object Storage S3 endpoint (copy it from the console; verify on day 1)
+#   RATCHET_BACKUP_TAG    letters, digits and "-" (up to 32): ratchet-<stamp>-<tag>.db.gz (update.sh uses "pre-update")
+# The last line printed is backup_file=<path>, which update.sh reads (restore with deploy/vm/restore.sh).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,6 +26,11 @@ OUT_DIR="${RATCHET_BACKUP_DIR:-/var/backups/ratchet}"
 KEEP="${RATCHET_BACKUP_KEEP:-14}"
 BUCKET="${RATCHET_BUCKET_S3:-$(env_get RATCHET_BUCKET_S3)}"
 S3_ENDPOINT="${RATCHET_S3_ENDPOINT:-$(env_get RATCHET_S3_ENDPOINT)}"
+TAG="${RATCHET_BACKUP_TAG:-}"
+if [[ -n "$TAG" && ! "$TAG" =~ ^[A-Za-z0-9-]{1,32}$ ]]; then
+  echo "RATCHET_BACKUP_TAG must be 1 to 32 letters, digits or -" >&2
+  exit 1
+fi
 
 if [[ "${MODE:-mock}" == "mock" ]]; then
   echo "$(date -u +%FT%TZ) mock mode: ledger is in memory, nothing to back up"
@@ -34,7 +41,7 @@ cd "$HERE"
 [[ -n "$(docker compose ps -q ratchet)" ]] || { echo "ratchet container is not running" >&2; exit 1; }
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-name="ratchet-${stamp}.db"
+name="ratchet-${stamp}${TAG:+-$TAG}.db"
 tmp_in_container="/data/.backup-${stamp}.db"
 mkdir -p "$OUT_DIR"
 
@@ -70,3 +77,4 @@ if [[ -n "$BUCKET" ]]; then
   aws s3 cp "${OUT_DIR}/${name}.gz" "${BUCKET%/}/backups/${name}.gz" ${S3_ENDPOINT:+--endpoint-url "$S3_ENDPOINT"}
   echo "$(date -u +%FT%TZ) uploaded to ${BUCKET%/}/backups/${name}.gz"
 fi
+echo "backup_file=${OUT_DIR}/${name}.gz"
