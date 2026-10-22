@@ -23,7 +23,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +81,8 @@ def tag_for(path: str) -> str:
 
 
 def version() -> str:
+    import tomllib  # Python 3.11+; ruff targets 3.10, where it would sort as third party  # noqa: PLC0415
+
     with open(REPO / "pyproject.toml", "rb") as f:
         return tomllib.load(f)["project"]["version"]
 
@@ -96,10 +97,31 @@ def import_gateway() -> Any:
     return gateway
 
 
+def _stable(node: Any) -> None:
+    """Drop what newer FastAPI and pydantic versions add to the schema without changing its meaning.
+
+    `additionalProperties: true` is JSON Schema's default for an object, and ValidationError's optional `input` and
+    `ctx` are newer additions. Without this, `--check` fails on any machine whose versions differ from the ones the
+    committed file was written with.
+    """
+    if isinstance(node, dict):
+        if node.get("additionalProperties") is True:
+            del node["additionalProperties"]
+        if node.get("title") == "ValidationError" and isinstance(node.get("properties"), dict):
+            node["properties"].pop("input", None)
+            node["properties"].pop("ctx", None)
+        for value in node.values():
+            _stable(value)
+    elif isinstance(node, list):
+        for value in node:
+            _stable(value)
+
+
 def export_openapi(gateway: Any) -> tuple[dict[str, Any], list[dict[str, str]]]:
     app = gateway.app
     schema = app.openapi()
     schema = json.loads(json.dumps(schema))  # a copy, so the app's cached schema stays as it was
+    _stable(schema)
     schema["info"] = {
         "title": "Ratchet gateway",
         "version": version(),
@@ -158,46 +180,143 @@ def export_env() -> dict[str, Any]:
 
 # The command line tools, with a "when to use it" line each. The help text comes from running the tool.
 CLIS: list[dict[str, Any]] = [
-    {"id": "live", "cmd": "python -m ratchet.live", "doc": "ratchet/live.py", "subs": [],
-     "when": "Live mode on Nebius: run Night School (night), advance the release gate (tick), reload adapters after an endpoint restart (reload), seal savings receipts (seal), apply retention now (purge) or export an adapter with its licenses (export)."},
-    {"id": "live-export", "cmd": "python -m ratchet.live export", "parser": "ratchet.live:export_parser",
-     "when": "Hand an adapter to someone else with its bill of materials and NOTICE.md."},
-    {"id": "live-purge", "cmd": "python -m ratchet.live purge", "parser": "ratchet.live:purge_parser",
-     "when": "Apply the retention windows now instead of waiting for the gateway's hourly run."},
-    {"id": "config", "cmd": "python -m ratchet.config", "module": "ratchet.config",
-     "when": "Check the environment before you start or update a gateway: exit 2 means the gateway would not start."},
-    {"id": "scout", "cmd": "python -m ratchet.scout", "module": "ratchet.scout",
-     "when": "Run Scout from a terminal against any gateway, as an outside client would."},
-    {"id": "cost", "cmd": "python -m ratchet.cost", "module": "ratchet.cost",
-     "when": "Print the cost report (savings per token and by GPU-hours paid) and record when the student endpoint was up."},
-    {"id": "bom", "cmd": "python -m ratchet.bom", "module": "ratchet.bom",
-     "when": "Make a signing key, and verify an adapter's signed bill of materials and its NOTICE.md offline."},
-    {"id": "stats", "cmd": "python -m ratchet.stats", "module": "ratchet.stats",
-     "when": "Plan how many golden rows a certificate needs, compute exact bounds, and recheck every number in a signed BOM."},
-    {"id": "proof", "cmd": "python -m ratchet.proof", "module": "ratchet.proof",
-     "when": "Check offline that a request was, or was not, in an adapter's training set, and that no golden row was trained on."},
-    {"id": "receipt", "cmd": "python -m ratchet.receipt", "module": "ratchet.receipt",
-     "when": "Verify a savings receipt, its chain and an inclusion proof offline, or seal a day from a ledger file."},
-    {"id": "replay", "cmd": "python -m ratchet.replay", "module": "ratchet.replay",
-     "when": "Ask what past traffic would have cost and served at another threshold or audit rate, from a ledger file."},
-    {"id": "admin", "cmd": "python -m ratchet.admin", "module": "ratchet.admin",
-     "when": "Operator actions from a shell, with an audit trail: erase an end user's data or export the ledger's tables."},
-    {"id": "importer", "cmd": "python -m ratchet.importer", "module": "ratchet.importer",
-     "when": "Import labelled examples (human labels or an allowed teacher's answers) from a JSONL file."},
-    {"id": "liverun", "cmd": "python -m ratchet.liverun", "module": "ratchet.liverun",
-     "when": "Measure a live run: rounds of synthetic traffic with Night School between them and a control arm sent straight to the teacher."},
-    {"id": "train", "cmd": "python -m ratchet.nightschool.train", "module": "ratchet.nightschool.train",
-     "when": "Inside the training job's container only: fine-tune a LoRA adapter on train.jsonl. Night School starts it for you."},
-    {"id": "simulate", "cmd": "python -m sim.simulate", "module": "sim.simulate",
-     "when": "Run the whole loop offline with mock models (simulation): days of traffic, nights of training, releases and rollbacks."},
-    {"id": "day1", "cmd": "python scripts/day1_check.py", "doc": "scripts/day1_check.py",
-     "when": "Before live mode: check the model IDs, logprobs and JSON mode on Token Factory with a real key (costs a few cents)."},
-    {"id": "reqtrace", "cmd": "python scripts/reqtrace.py", "script": "scripts/reqtrace.py",
-     "when": "Regenerate or check the requirements traceability matrix (docs/REQUIREMENTS.md); make lint runs the check."},
-    {"id": "reference-check", "cmd": "python scripts/reference_check.py", "script": "scripts/reference_check.py",
-     "when": "Check (or rewrite) the pinned reference runs that hold the simulation's behaviour still."},
-    {"id": "regen-sim", "cmd": "python scripts/regen_sim_reference.py", "script": "scripts/regen_sim_reference.py",
-     "when": "Regenerate (or check) the seed-7 reference simulation fixture the web app's numbers are pinned to."},
+    {
+        "id": "live",
+        "cmd": "python -m ratchet.live",
+        "doc": "ratchet/live.py",
+        "subs": [],
+        "when": (
+            "Live mode on Nebius: run Night School (night), advance the release gate (tick), "
+            "reload adapters after an endpoint restart (reload), seal savings receipts (seal), "
+            "apply retention now (purge) or export an adapter with its licenses (export)."
+        ),
+    },
+    {
+        "id": "live-export",
+        "cmd": "python -m ratchet.live export",
+        "parser": "ratchet.live:export_parser",
+        "when": "Hand an adapter to someone else with its bill of materials and NOTICE.md.",
+    },
+    {
+        "id": "live-purge",
+        "cmd": "python -m ratchet.live purge",
+        "parser": "ratchet.live:purge_parser",
+        "when": "Apply the retention windows now instead of waiting for the gateway's hourly run.",
+    },
+    {
+        "id": "config",
+        "cmd": "python -m ratchet.config",
+        "module": "ratchet.config",
+        "when": "Check the environment before you start or update a gateway: exit 2 means the gateway would not start.",
+    },
+    {
+        "id": "scout",
+        "cmd": "python -m ratchet.scout",
+        "module": "ratchet.scout",
+        "when": "Run Scout from a terminal against any gateway, as an outside client would.",
+    },
+    {
+        "id": "cost",
+        "cmd": "python -m ratchet.cost",
+        "module": "ratchet.cost",
+        "when": "Print the cost report (savings per token and by GPU-hours paid) and record when the student endpoint was up.",
+    },
+    {
+        "id": "bom",
+        "cmd": "python -m ratchet.bom",
+        "module": "ratchet.bom",
+        "when": "Make a signing key, and verify an adapter's signed bill of materials and its NOTICE.md offline.",
+    },
+    {
+        "id": "stats",
+        "cmd": "python -m ratchet.stats",
+        "module": "ratchet.stats",
+        "when": "Plan how many golden rows a certificate needs, compute exact bounds, and recheck every number in a signed BOM.",
+    },
+    {
+        "id": "proof",
+        "cmd": "python -m ratchet.proof",
+        "module": "ratchet.proof",
+        "when": (
+            "Check offline that a request was, or was not, in an adapter's training set, and that no golden row was trained on."
+        ),
+    },
+    {
+        "id": "receipt",
+        "cmd": "python -m ratchet.receipt",
+        "module": "ratchet.receipt",
+        "when": "Verify a savings receipt, its chain and an inclusion proof offline, or seal a day from a ledger file.",
+    },
+    {
+        "id": "replay",
+        "cmd": "python -m ratchet.replay",
+        "module": "ratchet.replay",
+        "when": "Ask what past traffic would have cost and served at another threshold or audit rate, from a ledger file.",
+    },
+    {
+        "id": "admin",
+        "cmd": "python -m ratchet.admin",
+        "module": "ratchet.admin",
+        "when": "Operator actions from a shell, with an audit trail: erase an end user's data or export the ledger's tables.",
+    },
+    {
+        "id": "importer",
+        "cmd": "python -m ratchet.importer",
+        "module": "ratchet.importer",
+        "when": "Import labelled examples (human labels or an allowed teacher's answers) from a JSONL file.",
+    },
+    {
+        "id": "liverun",
+        "cmd": "python -m ratchet.liverun",
+        "module": "ratchet.liverun",
+        "when": (
+            "Measure a live run: rounds of synthetic traffic with Night School between them "
+            "and a control arm sent straight to the teacher."
+        ),
+    },
+    {
+        "id": "train",
+        "cmd": "python -m ratchet.nightschool.train",
+        "module": "ratchet.nightschool.train",
+        "when": (
+            "Inside the training job's container only: fine-tune a LoRA adapter on train.jsonl. Night School starts it for you."
+        ),
+    },
+    {
+        "id": "simulate",
+        "cmd": "python -m sim.simulate",
+        "module": "sim.simulate",
+        "when": (
+            "Run the whole loop offline with mock models (simulation): "
+            "days of traffic, nights of training, releases and rollbacks."
+        ),
+    },
+    {
+        "id": "day1",
+        "cmd": "python scripts/day1_check.py",
+        "doc": "scripts/day1_check.py",
+        "when": (
+            "Before live mode: check the model IDs, logprobs and JSON mode on Token Factory with a real key (costs a few cents)."
+        ),
+    },
+    {
+        "id": "reqtrace",
+        "cmd": "python scripts/reqtrace.py",
+        "script": "scripts/reqtrace.py",
+        "when": ("Regenerate or check the requirements traceability matrix (docs/REQUIREMENTS.md); make lint runs the check."),
+    },
+    {
+        "id": "reference-check",
+        "cmd": "python scripts/reference_check.py",
+        "script": "scripts/reference_check.py",
+        "when": "Check (or rewrite) the pinned reference runs that hold the simulation's behaviour still.",
+    },
+    {
+        "id": "regen-sim",
+        "cmd": "python scripts/regen_sim_reference.py",
+        "script": "scripts/regen_sim_reference.py",
+        "when": "Regenerate (or check) the seed-7 reference simulation fixture the web app's numbers are pinned to.",
+    },
 ]
 
 # Subcommands as argparse prints them in the usage line: `{report,endpoint,close} ...` (choices of an option have no `...`).
@@ -208,8 +327,9 @@ def run_help(args: list[str], cwd: str) -> tuple[int, str]:
     env = {**os.environ, "RATCHET_MODE": "mock", "COLUMNS": "100", "PYTHONPATH": str(REPO), "PYTHONIOENCODING": "utf-8"}
     for name in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "RATCHET_DB"):
         env.pop(name, None)
-    p = subprocess.run([sys.executable, *args, "--help"], cwd=cwd, env=env, capture_output=True, text=True,
-                       encoding="utf-8", timeout=120)
+    p = subprocess.run(
+        [sys.executable, *args, "--help"], cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", timeout=120
+    )
     return p.returncode, (p.stdout or p.stderr).replace("\r\n", "\n").rstrip()
 
 
