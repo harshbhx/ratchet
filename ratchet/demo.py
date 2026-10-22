@@ -77,7 +77,9 @@ class DemoJanitor:
     """Resets the shared simulation when it is due: past `max_requests`, or idle for `idle_reset_s` while dirty. One per
     gateway process, so it survives `Runtime.reset()`. `reset(reason)` is the gateway's callback and says whether it ran
     (False when a demo action holds the lock); `counts()` is the ledger's request total. `thread_factory` lets a test see
-    the start without a thread."""
+    the start without a thread. `stop()` ends its thread for good (the app's shutdown): its callbacks read the gateway
+    module's globals, so a thread that outlived the module's state it was built for (a test that reloads the module)
+    would reset whichever gateway is current."""
 
     def __init__(
         self,
@@ -96,6 +98,7 @@ class DemoJanitor:
         self.thread_factory = thread_factory
         self._lock = threading.Lock()
         self._started = False
+        self._stopping = threading.Event()
         self._touched = clock()
         self._seen_requests = 0  # the request count at the last activity (or reset)
         self._clean_requests = 0  # the request count right after the last reset
@@ -145,7 +148,8 @@ class DemoJanitor:
         return None
 
     def ensure_started(self) -> None:
-        """Start the daemon thread once, when a time or request cap is set. Never at import, in live mode or by default."""
+        """Start the daemon thread once, when a time or request cap is set. Never at import, in live mode or by default,
+        and never again after `stop()`."""
         if self._started or not self.policy.background:
             return
         with self._lock:
@@ -155,14 +159,20 @@ class DemoJanitor:
         every = min(60.0, max(10.0, self.policy.idle_reset_s / 4)) if self.policy.idle_reset_s else 60.0
 
         def loop() -> None:
-            while True:
-                time.sleep(every)
+            while not self._stopping.wait(every):  # a stop wakes it at once
                 try:
                     self.check()
                 except Exception as e:  # the janitor must never die
                     _log.warning("demo janitor pass failed: %s", type(e).__name__)
 
         self.thread_factory(target=loop, name="demo-janitor", daemon=True).start()
+
+    def stop(self) -> None:
+        """End the thread, if one runs, and never start another: no pass runs after this returns (one already past its
+        wake-up finishes). Safe to call twice and without a thread."""
+        self._stopping.set()
+        with self._lock:
+            self._started = True
 
     def snapshot(self) -> dict[str, float | int | None]:
         return {"auto_resets": self.auto_resets, "last_reset_at": self.last_reset_at}

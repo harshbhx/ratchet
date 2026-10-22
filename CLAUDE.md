@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]"
-make test           # pytest -q (1894 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (1900 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -187,6 +187,7 @@ Always run `make lint test reference` before committing.
 - Behaviour change: update the PRD row and mark the proving test with `@pytest.mark.req("FR-a.b")`, then run `make trace`. A new requirement or invariant needs a `CODE` entry in `scripts/reqtrace.py`; ids never change (INV-n is the list number). Statuses follow the grammar in [PRD §6](docs/PRD.md#6-functional-requirements). `KNOWN_GAPS` only shrinks: remove an id when its test lands. See [docs/TESTING.md](docs/TESTING.md#traceability).
 - Simulation numbers are **mock**. Label them as simulation anywhere they appear (README, docs, video).
 - Database changes: add the column to `SCHEMA` **and** to `MIGRATIONS` in `ledger.py`; an index goes in `INDEXES`. The evidence features' columns and tables are already there (ADR 0024).
+- The ledger's writer connection (`Ledger.db`) is touched only under `Ledger.locked()`, and a `@_reads` method reads only through `self._rdb`: the connection has a Python callback on it that SQLite runs holding its mutex and without the GIL, so an unsynchronised use from another thread (the sidecar writes from its own) freezes the whole process ([ADR 0072](docs/adr/0072-off-path-audits-and-shadow.md)). A test that reads `led.db` after a live request reads under `ledger.locked()` or drains the sidecar first; `tests/conftest.py` fails it otherwise. A thread a test starts (the demo janitor) is ended before the test returns.
 - A setting or `ReleasePolicy` field reserved for a feature not built yet (`config.RESERVED_SETTINGS`, `release.RESERVED_POLICY`) stops startup at any value but its default; the item that builds the feature removes its entries and adds its own checks.
 - New env var: read it in `config.py` (or `ReleasePolicy.from_env`), list it in `config.KNOWN_ENV` (a deploy script's variable in `config.DEPLOY_ENV`; else the startup check calls it unknown and `reqtrace --check` fails) and document it in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). A rule a setting must follow goes in `Settings.validate` (or `ReleasePolicy.validate` for one across policy fields), so the startup check and `python -m ratchet.config check` list it with the rest.
 - New endpoint: document it in [docs/API.md](docs/API.md), with its access level in the Access column, and give it a level in `ratchet/access.py` (`test_every_route_has_an_access_level` fails until both agree; an unclassified route is private in live mode).

@@ -114,7 +114,10 @@ def _unreadable(messages: Any, model: str) -> str:
 
 
 def _last_request(led: Ledger) -> dict[str, Any]:
-    return dict(led.db.execute("SELECT * FROM requests ORDER BY id DESC LIMIT 1").fetchone())
+    # Under the ledger's lock: a live gateway's sidecar writes through the same connection, and an unsynchronised read
+    # against it can deadlock (ADR 0072; `LedgerGuard` in tests/conftest.py). A test that needs the row final drains first.
+    with led.locked():
+        return dict(led.db.execute("SELECT * FROM requests ORDER BY id DESC LIMIT 1").fetchone())
 
 
 def _events(led: Ledger) -> list[tuple[str, str]]:

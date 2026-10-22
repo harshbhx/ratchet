@@ -8,12 +8,17 @@ seconds."""
 
 from __future__ import annotations
 
+import ast
 import json
+import os
 import random
 import sqlite3
 import statistics
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,6 +26,7 @@ from fakes import OPEN_TEACHER, FakeClock, FakeOpenAIServer, RecordingProvider, 
 from fastapi.testclient import TestClient
 
 from ratchet import config
+from ratchet import ledger as ledger_module
 from ratchet.config import Settings
 from ratchet.ledger import AUDIT_TALLY_SQL, ROUTED_SQL, ROUTED_STATES, SHADOW_QUALITY_SQL, SYNC_MODES, Ledger
 from ratchet.providers import OpenAICompatProvider
@@ -387,6 +393,94 @@ def test_stats_reads_skip_the_writer_lock(tmp_path):
         writer.join()
     assert out["totals"]["requests"] == 1 and out["days"][0]["p95_ms"] == 120.0 and len(out["events"]) == 1
     led.close()
+
+
+@pytest.mark.req("FR-12.8", "FR-12.31")
+def test_reader_methods_use_only_the_reader_connection():
+    """A `_reads` method runs under the reader's lock, never the writer's (it must not wait for a write), so it must read
+    through `self._rdb`. Touching `self.db` would use the writer's connection with no lock held: a thread inside one of
+    that connection's trigger callbacks (the sidecar's `update_request`, ADR 0072) then deadlocks against it, with the
+    GIL and the connection's mutex each held by the other. `last_ids` did exactly that."""
+    tree = ast.parse(Path(ledger_module.__file__).read_text(encoding="utf-8"))
+    ledger_class = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Ledger")
+    readers = [
+        f
+        for f in ledger_class.body
+        if isinstance(f, ast.FunctionDef) and any(ast.unparse(d) == "_reads" for d in f.decorator_list)
+    ]
+    assert len(readers) >= 15  # the decorator was found: this is not a vacuous pass
+    uses_writer = [
+        f.name
+        for f in readers
+        if any(isinstance(n, ast.Attribute) and n.attr == "db" and ast.unparse(n.value) == "self" for n in ast.walk(f))
+    ]
+    assert uses_writer == []
+
+
+# Every `_reads` method callable without arguments, in one thread, against a thread that finishes pending audits through
+# `update_request` and logs requests, on a WAL file ledger. Run in a child process because this deadlock freezes the whole
+# interpreter (the thread waiting for the connection's mutex holds the GIL), so only another process can time it out.
+READS_AGAINST_AN_OFFPATH_WRITER = """
+import ast, faulthandler, inspect, sys, threading, time
+faulthandler.dump_traceback_later(30, exit=True)  # a deadlock: dump every thread's stack and exit
+import ratchet.ledger as ledger_module
+from ratchet.ledger import Ledger
+
+path, seconds = sys.argv[1], float(sys.argv[2])
+led = Ledger(path)
+assert led._ro is not None, "a file ledger in WAL mode has the read-only reader"
+tree = ast.parse(open(ledger_module.__file__, encoding="utf-8").read())
+cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Ledger")
+names = [f.name for f in cls.body if isinstance(f, ast.FunctionDef) and any(ast.unparse(d) == "_reads" for d in f.decorator_list)]
+
+
+def needs_no_arguments(method):
+    params = inspect.signature(method).parameters.values()
+    return all(p.default is not p.empty or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in params)
+
+
+readers = [n for n in names if needs_no_arguments(getattr(led, n))]
+assert len(readers) >= 8 and "last_ids" in readers, readers
+rid = led.log_request(task="t", route="student", served_by="student", audited=1, cost_usd=0.0)
+stop, done = threading.Event(), {"writes": 0, "reads": 0}
+
+def write():
+    while not stop.is_set():
+        led.update_request(rid, add_cost_usd=0.000001)
+        led.log_request(task="t", route="student", served_by="student", cost_usd=0.0)
+        done["writes"] += 1
+
+def read():
+    while not stop.is_set():
+        for name in readers:
+            getattr(led, name)()
+        done["reads"] += 1
+
+threads = [threading.Thread(target=write, daemon=True), threading.Thread(target=read, daemon=True)]
+for t in threads:
+    t.start()
+time.sleep(seconds)
+stop.set()
+for t in threads:
+    t.join(20)
+assert not any(t.is_alive() for t in threads) and done["writes"] > 0 and done["reads"] > 0, done
+print("ok", len(readers))
+"""
+
+
+@pytest.mark.req("FR-12.8", "FR-12.31")
+def test_reads_and_an_offpath_writer_never_deadlock(tmp_path):
+    """The reader methods and the sidecar's `update_request` meet on a WAL file ledger for a second without a deadlock.
+    Before `last_ids` read through the reader connection this froze the child in under a second, every time."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("COV_CORE", "PYTEST_ADDOPTS"))}
+    proc = subprocess.run(
+        [sys.executable, "-c", READS_AGAINST_AN_OFFPATH_WRITER, str(tmp_path / "meet.db"), "1.0"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    assert proc.returncode == 0 and proc.stdout.startswith("ok"), proc.stdout[-500:] + proc.stderr[-3000:]
 
 
 # ---------- the throttled tick ----------

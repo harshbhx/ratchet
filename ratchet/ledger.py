@@ -1337,7 +1337,7 @@ class Ledger:
         """The highest `requests.id` and `events.id`, 0 for an empty table. The live-run harness keys its rounds by
         request-id ranges and reads a night's outcome from the events after it (FR-8.20): a live ledger's day is wall
         time since the first request, not a round."""
-        r = self.db.execute(
+        r = self._rdb.execute(
             "SELECT (SELECT COALESCE(MAX(id), 0) FROM requests) req, (SELECT COALESCE(MAX(id), 0) FROM events) ev"
         ).fetchone()
         return {"requests": int(r["req"]), "events": int(r["ev"])}

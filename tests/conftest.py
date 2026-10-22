@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -54,6 +55,127 @@ def builtin_tasks():
     tasks.reset_builtin()
 
 
+class LedgerGuard:
+    """Refuses a test's unsynchronised use of a ledger's writer connection while a sidecar may be writing through it.
+
+    Why: the writer connection has a Python function registered on it (`ratchet_written`, which the TEMP triggers that
+    keep the hot-path caches fresh call). SQLite runs that function with the connection's mutex held and the GIL released,
+    so it waits for the GIL; a second thread that holds the GIL and touches the same connection (`execute(...).fetchone()`
+    reads columns through the C API, which takes the mutex) waits for the mutex. Neither gives way: a deadlock at 0% CPU.
+    It is why every `Ledger` method runs under `Ledger.locked()`. The sidecar (ADR 0072) writes from its worker threads in
+    live mode, so a test that read `rt.ledger.db` straight after a live request, with a shadow or an audit queued, hung
+    the suite about once in eighty runs under load (`test_serve_student_mode_answers_degraded_with_a_flag_and_a_header`).
+
+    The rule it enforces, deterministically (not only on the unlucky interleaving): once a sidecar took a job, a ledger's
+    connection may be used only while holding `ledger.locked()`, or after `sidecar.drain(...)` returned True (or `close`)."""
+
+    def __init__(self) -> None:
+        self.undrained: set[Any] = set()  # sidecars that took a job and have not been drained or closed since
+        self.violations: list[str] = []
+
+    def check(self, what: str, lock: Any) -> None:
+        if not self.undrained or lock is None or lock._is_owned():
+            return
+        import traceback
+
+        message = (
+            f"unsynchronised use of a ledger's connection ({what}) while a sidecar job may still be writing through it: "
+            "this deadlocks now and then (a Python callback inside SQLite against the GIL; see tests/conftest.py "
+            "`LedgerGuard`). Read inside `with ledger.locked():`, or wait first with `assert rt.ratchet.sidecar.drain(10)`, "
+            "or run the request with `RequestMeta(offpath=False)`, or give the Ratchet `SideCar(0)`."
+        )
+        self.violations.append(message + "\n" + "".join(traceback.format_stack(limit=8)))
+        raise AssertionError(message)
+
+
+@pytest.fixture(autouse=True)
+def ledger_lock_guard():
+    """Installs `LedgerGuard` on every ledger a test builds, and fails the test at its end if the guard fired in a thread
+    that swallowed the error (a sidecar job's failure is logged, never raised). Its own `MonkeyPatch`, so `gw_env`'s
+    `undo()` does not take it off mid-test."""
+    import sqlite3
+
+    from ratchet import ledger as ledger_module
+    from ratchet.sidecar import SideCar
+
+    guard = LedgerGuard()
+
+    class GuardedConnection(sqlite3.Connection):
+        """The writer connection of a `Ledger`, which tells the guard when it is used (`execute`, `executemany`,
+        `executescript`, `commit`, `rollback`: the calls a reader or writer starts with)."""
+
+        owner_lock: Any = None  # the ledger's lock, set once its constructor has finished
+
+        def execute(self, *args: Any, **kwargs: Any):
+            guard.check("execute", self.owner_lock)
+            return super().execute(*args, **kwargs)
+
+        def executemany(self, *args: Any, **kwargs: Any):
+            guard.check("executemany", self.owner_lock)
+            return super().executemany(*args, **kwargs)
+
+        def executescript(self, *args: Any, **kwargs: Any):
+            guard.check("executescript", self.owner_lock)
+            return super().executescript(*args, **kwargs)
+
+        def commit(self):
+            guard.check("commit", self.owner_lock)
+            return super().commit()
+
+        def rollback(self):
+            guard.check("rollback", self.owner_lock)
+            return super().rollback()
+
+    class SqliteWithGuardedWriter:
+        """`ratchet.ledger.sqlite3`: the module, except that the writer connection is a GuardedConnection (the read-only
+        reader, opened by URI, is a plain one: it has no Python function on it and never shares the writer's mutex)."""
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(sqlite3, name)
+
+        def connect(self, database: Any, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+            if not kwargs.get("uri"):
+                kwargs.setdefault("factory", GuardedConnection)
+            return sqlite3.connect(database, *args, **kwargs)
+
+    real_init = ledger_module.Ledger.__init__
+
+    def init(self: Any, *args: Any, **kwargs: Any) -> None:
+        real_init(self, *args, **kwargs)
+        if isinstance(self.db, GuardedConnection):
+            self.db.owner_lock = self._lock
+
+    real_submit, real_drain, real_close = SideCar._submit, SideCar.drain, SideCar.close
+
+    def submit(self: SideCar, slot: Any, fn: Any, tag: Any) -> bool:
+        queued = real_submit(self, slot, fn, tag)
+        if queued:
+            guard.undrained.add(self)
+        return queued
+
+    def drain(self: SideCar, timeout_s: float) -> bool:
+        idle = real_drain(self, timeout_s)
+        if idle:
+            guard.undrained.discard(self)
+        return idle
+
+    def close(self: SideCar, timeout_s: float):
+        left = real_close(self, timeout_s)
+        if real_drain(self, 0.0):  # a job that outlived the drain keeps running in its thread: still undrained
+            guard.undrained.discard(self)
+        return left
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ledger_module, "sqlite3", SqliteWithGuardedWriter())
+        mp.setattr(ledger_module.Ledger, "__init__", init)
+        mp.setattr(SideCar, "_submit", submit)
+        mp.setattr(SideCar, "drain", drain)
+        mp.setattr(SideCar, "close", close)
+        yield guard
+    guard.undrained.clear()
+    assert not guard.violations, "\n\n".join(guard.violations)
+
+
 @pytest.fixture(autouse=True)
 def builtin_licenses():
     """The license registry is module state (`licenses.REGISTRY`, published by `licenses.install` at startup): a test
@@ -62,6 +184,25 @@ def builtin_licenses():
     from ratchet import licenses
 
     licenses.reset_builtin()
+
+
+@pytest.fixture(autouse=True)
+def no_demo_janitor_outlives_its_test():
+    """A test that starts the demo janitor's real thread (a demo action on a gateway with RATCHET_DEMO_MAX_REQUESTS or
+    RATCHET_DEMO_IDLE_RESET_S) must not leave it running: `gw` and `gw_env` end it, and anything else that starts one ends
+    it itself. Autouse, so torn down after `gw` and `gw_env` have ended theirs: a leak fails the test that caused it
+    instead of resetting a later test's gateway (see `stop_demo_janitor`)."""
+    yield
+    leaked = [t for t in threading.enumerate() if t.name == "demo-janitor" and t.is_alive()]
+    if not leaked:
+        return
+    stop_demo_janitor(sys.modules.get("ratchet.gateway"))  # so the next test is not hit as well
+    for t in leaked:
+        t.join(5)
+    pytest.fail(
+        f"{len(leaked)} demo-janitor thread(s) outlived the test: end the janitor (`DemoJanitor.stop()`) before the test "
+        "returns, or build the gateway with the `gw`/`gw_env` fixtures, which do"
+    )
 
 
 # Who may read what (ADR 0061), the logs and the metrics token (ADR 0062), and the spend and rate limits (ADR 0063):
@@ -94,6 +235,17 @@ ACCESS_ENV = (
 )
 
 
+def stop_demo_janitor(gateway: Any) -> None:
+    """Ends the demo janitor's thread of the gateway module as it stands (`DemoJanitor.stop`). The thread calls back into
+    the module's globals (`rt`, `_auto_reset`), which `importlib.reload` rebinds to the next test's gateway, so one left
+    running after its test would, a minute later and every minute after, reset whichever gateway is current: the scout
+    simulation lost its live version this way on a slow runner, `test_demo_caps_reset_on_click`'s thread being the one
+    (RATCHET_DEMO_MAX_REQUESTS=250 against a ledger that had passed 250 requests)."""
+    janitor = getattr(gateway, "_janitor", None)
+    if janitor is not None:
+        janitor.stop()
+
+
 @pytest.fixture()
 def gw(monkeypatch):
     """The gateway reloaded in mock mode with no warm-up (Scout and page tests)."""
@@ -103,8 +255,10 @@ def gw(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     import ratchet.gateway as gw
 
+    stop_demo_janitor(gw)
     importlib.reload(gw)
-    return gw
+    yield gw
+    stop_demo_janitor(gw)
 
 
 @pytest.fixture()
@@ -120,11 +274,13 @@ def gw_env(monkeypatch):
             monkeypatch.delenv(name, raising=False)
         for k, v in env.items():
             monkeypatch.setenv(k, v)
+        stop_demo_janitor(gw)  # the gateway this load replaces
         importlib.reload(gw)
         return gw
 
     yield load
     monkeypatch.undo()
+    stop_demo_janitor(gw)
     importlib.reload(gw)
 
 
