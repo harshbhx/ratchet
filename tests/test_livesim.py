@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -441,6 +442,43 @@ def test_janitor_thread_starts_once_and_only_when_asked():
     on.ensure_started()
     on.ensure_started()
     assert [m.get("name") for m in made if "name" in m] == ["demo-janitor"] and {"started": True} in made
+
+
+@pytest.mark.req("FR-11.30")
+def test_janitor_stop_ends_its_thread_and_it_is_never_started_again():
+    """The thread wakes at once on `stop()` (it waits on an event, it does not sleep) and a stopped janitor stays stopped,
+    so the app's shutdown leaves no thread that could still reset the shared simulation."""
+    janitor = DemoJanitor(DemoPolicy(idle_reset_s=300.0), lambda reason: True, lambda: 0)  # the real thread factory
+    janitor.ensure_started()
+    (thread,) = [t for t in threading.enumerate() if t.name == "demo-janitor" and t.is_alive()]
+    janitor.stop()
+    thread.join(5)
+    assert not thread.is_alive()
+    janitor.stop()  # twice is fine
+    janitor.ensure_started()
+    assert not [t for t in threading.enumerate() if t.name == "demo-janitor" and t.is_alive()]
+    DemoJanitor(DemoPolicy(idle_reset_s=300.0), lambda reason: True, lambda: 0).stop()  # without a thread is fine too
+
+
+@pytest.mark.req("FR-11.30")
+def test_reloading_the_gateway_ends_the_janitor_it_replaces(gw_env):
+    """The janitor's callbacks read the gateway module's globals, which a reload rebinds. A thread that survived it
+    (`test_demo_caps_reset_on_click` starts one with RATCHET_DEMO_MAX_REQUESTS=250) reset the next test's gateway a minute
+    later, wherever the suite had got: the scout simulation ended without a live version on a slow runner. `gw_env` ends
+    the janitor of the module it reloads, and the lifespan ends the running app's."""
+    gw = gw_env(RATCHET_DEMO_MAX_REQUESTS="250")
+    c = TestClient(gw.app)
+    assert c.post("/ratchet/demo/break-next").status_code == 200  # a demo action starts the real thread
+    (thread,) = [t for t in threading.enumerate() if t.name == "demo-janitor" and t.is_alive()]
+    gw_env()  # the next test's gateway
+    thread.join(5)
+    assert not thread.is_alive()
+    gw = gw_env(RATCHET_DEMO_MAX_REQUESTS="250")
+    with TestClient(gw.app) as c:  # the lifespan
+        assert c.post("/ratchet/demo/break-next").status_code == 200
+        (thread,) = [t for t in threading.enumerate() if t.name == "demo-janitor" and t.is_alive()]
+    thread.join(5)
+    assert not thread.is_alive()
 
 
 @pytest.mark.req("FR-11.30")

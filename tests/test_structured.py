@@ -9,6 +9,7 @@ API.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from typing import Any, Literal
@@ -228,13 +229,24 @@ def test_validator_never_raises_and_is_bounded():
     assert jsonschema_lite.validate(deep, {"items": {"items": {}}}) == []  # items only two levels deep
     nest = {"type": "array", "items": {"$ref": "#"}}
     assert jsonschema_lite.validate(deep, nest)[0].endswith(f"nested more than {jsonschema_lite.MAX_DEPTH} levels deep")
-    # anyOf of anyOfs over a long array multiplies the work: the step budget ends it quickly, as invalid.
+    # anyOf of anyOfs over a long array multiplies the work: the step budget ends it quickly, as invalid. "Quickly" is
+    # measured against an ordinary check, in the same rounds, not against a wall clock: coverage's tracer and a shared CI
+    # runner made this case take 2.3 s twice (the old bound was 2.0 s) where it takes 0.2 s bare, and they slow the ordinary
+    # check by the same factor. The ordinary check is 20,000 integers against {"type": "integer"}, a fifth of the budget's
+    # 100,000 steps. The exploding case takes about 3 times as long (bare or traced; up to 6 with every core busy) and is
+    # allowed 20. Without the budget it would take exponentially longer; a budget 15 times larger fails.
     explode: Any = {"type": "integer"}
     for _ in range(12):
         explode = {"anyOf": [{"type": "string"}, explode, explode]}
-    t0 = time.perf_counter()
-    errors = jsonschema_lite.validate([True] * 200, {"type": "array", "items": explode})  # every branch fails
-    assert time.perf_counter() - t0 < 2.0
+    exploded = ordinary = math.inf
+    for _ in range(3):
+        t0 = time.perf_counter()
+        errors = jsonschema_lite.validate([True] * 200, {"type": "array", "items": explode})  # every branch fails
+        exploded = min(exploded, time.perf_counter() - t0)
+        t0 = time.perf_counter()
+        fine = jsonschema_lite.validate([1] * 20_000, {"type": "array", "items": {"type": "integer"}})
+        ordinary = min(ordinary, time.perf_counter() - t0)
+    assert fine == [] and exploded < 20 * ordinary, f"{exploded:.2f} s against {ordinary:.2f} s for a fifth of the step budget"
     assert errors == [f"$: the schema is too large to check (more than {jsonschema_lite.MAX_STEPS} steps)"]
     for junk in ([1, 2], "x", 3, {"type": 7, "required": "x", "properties": [1], "items": 3, "enum": {}}):
         jsonschema_lite.validate({"a": [1, {"b": None}]}, junk)  # never raises

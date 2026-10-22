@@ -647,7 +647,8 @@ def test_put_audit_rate_changes_behaviour_without_a_restart(gw_env, tmp_path, mo
 
     def audited(tag: object) -> int:
         assert _chat(c, tag)["served_by"] == "student"
-        return int(rt.ledger.db.execute("SELECT audited FROM requests ORDER BY id DESC").fetchone()[0])
+        with rt.ledger.locked():  # the request's audit may be running in the sidecar, through the same connection
+            return int(rt.ledger.db.execute("SELECT audited FROM requests ORDER BY id DESC").fetchone()[0])
 
     assert [audited(i) for i in range(3)] == [0, 0, 0]
     r = c.put("/ratchet/admin/settings", json={"audit_rate": 1, **REASON}, headers=ADMIN)

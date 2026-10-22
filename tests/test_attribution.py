@@ -71,7 +71,8 @@ def _hosted(provider: RecordingProvider):
 
 
 def _rows(led: Ledger, where: str = "1", args: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-    return [dict(r) for r in led.db.execute(f"SELECT * FROM requests WHERE {where} ORDER BY id", args)]
+    with led.locked():  # a sidecar job may be writing through the same connection (tests/conftest.py `LedgerGuard`)
+        return [dict(r) for r in led.db.execute(f"SELECT * FROM requests WHERE {where} ORDER BY id", args)]
 
 
 def _events(led: Ledger, kind: str) -> list[str]:

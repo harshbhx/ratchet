@@ -53,7 +53,8 @@ def _ask(tag: object) -> list[dict[str, Any]]:
 
 
 def _row(led: Ledger, rid: int) -> dict[str, Any]:
-    return dict(led.db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone())
+    with led.locked():  # also while a job is queued or running: it writes through the same connection (`LedgerGuard`)
+        return dict(led.db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone())
 
 
 def _events(led: Ledger, kind: str) -> list[str]:
@@ -241,6 +242,28 @@ def test_sidecar_close_drains_then_gives_up_and_refuses_late_jobs():
     snap = car.snapshot()
     assert (snap["done"], snap["abandoned"], snap["refused"], snap["closed"]) == (1, 1, 1, True)
     assert car.close(0) == {}  # again: nothing more to give up
+
+
+@pytest.mark.req("FR-12.31")
+def test_the_ledger_connection_is_used_only_under_its_lock_once_a_sidecar_took_a_job(ledger_lock_guard):
+    """The writer connection has a Python callback on it (the cache triggers), which SQLite runs with the connection's
+    mutex held and the GIL released; a thread that holds the GIL and reads the same connection waits for that mutex, and
+    both wait forever. A test that read `rt.ledger.db` unsynchronised after a live request hung the suite this way.
+    tests/conftest.py's `LedgerGuard` makes it a failure at the first unsynchronised use, not an unlucky interleaving."""
+    led = Ledger(":memory:")
+    assert led.db.execute("SELECT 1").fetchone()[0] == 1  # no job yet: nothing can be writing
+    car, gate = SideCar(1, 4), threading.Event()
+    slot = car.reserve()
+    assert slot is not None and slot.submit(lambda: gate.wait(WAIT_S))
+    with pytest.raises(AssertionError, match="unsynchronised use of a ledger's connection"):
+        led.db.execute("SELECT 1")
+    ledger_lock_guard.violations.clear()  # this one was expected: the fixture fails a test that leaves any
+    with led.locked():
+        assert led.db.execute("SELECT 1").fetchone()[0] == 1  # under the lock it is safe
+    assert led.totals()["requests"] == 0  # and the ledger's own methods take it themselves
+    gate.set()
+    assert car.drain(WAIT_S)
+    assert led.db.execute("SELECT 1").fetchone()[0] == 1  # drained: nothing is writing any more
 
 
 # ---------- the ledger ----------

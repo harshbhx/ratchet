@@ -816,9 +816,6 @@ class Runtime:
                 self.ledger.event("purge_failed", f"retention: {describe_failure(e)}")
             except Exception:  # noqa: BLE001 - the ledger may be what failed
                 pass
-            return True
-        finally:
-            self.gate_lock.release()
 
     def _recent(self, now: float) -> bool:
         last = self._last_tick
@@ -1283,9 +1280,10 @@ def _pseudonyms(*names: Iterable[str | None]) -> dict[str, str]:
 
 @contextlib.asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """At shutdown, after the server stopped taking requests, the off-path queue drains for up to
-    RATCHET_SIDECAR_DRAIN_S on a worker thread (`Runtime.shutdown`, ADR 0072)."""
+    """At shutdown, after the server stopped taking requests, the demo janitor's thread ends and the off-path queue drains
+    for up to RATCHET_SIDECAR_DRAIN_S on a worker thread (`Runtime.shutdown`, ADR 0072)."""
     yield
+    _janitor.stop()
     await anyio.to_thread.run_sync(rt.shutdown)
 
 
