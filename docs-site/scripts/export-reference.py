@@ -11,6 +11,9 @@ Writes (all committed, so building the site needs no Python):
 
 Run it from anywhere after changing a route, a setting or a CLI; the docs build then renders the new data. It imports
 the gateway in mock mode (no keys, no network) and runs each CLI's --help in a temporary folder.
+
+The --help text is argparse's, and argparse wraps usage lines differently from one Python version to the next, so the
+committed files are written with the Python the `docs` CI job uses (3.12). Export with that version or --check fails.
 """
 
 from __future__ import annotations
@@ -350,7 +353,8 @@ CLIS: list[dict[str, Any]] = [
 ]
 
 # Subcommands as argparse prints them in the usage line: `{report,endpoint,close} ...` (choices of an option have no `...`).
-SUB_RE = re.compile(r"\{([a-z0-9_,-]+)\} \.\.\.")
+# A long usage line wraps before the `...` on some Python versions, so any whitespace may sit between the two.
+SUB_RE = re.compile(r"\{([a-z0-9_,-]+)\}\s+\.\.\.")
 
 
 def run_help(args: list[str], cwd: str) -> tuple[int, str]:
