@@ -1,4 +1,4 @@
-// The Ratchet demo as a Cloudflare Container: the same mock-mode image as deploy/shared-vm, no keys, no secrets.
+// The Ratchet demo as a Cloudflare Container: the repo's mock-mode image, no keys, no secrets.
 // A cron trigger pings it every 5 minutes, so it stays awake and a visitor never waits for the mock warm-up.
 import { Container, getContainer } from "@cloudflare/containers";
 
