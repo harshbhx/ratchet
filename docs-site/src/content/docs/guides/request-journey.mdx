@@ -3,10 +3,16 @@ title: One request's journey
 description: What happens to a single chat request, from the gateway's admission checks through the student, the teacher and the ledger, to the response.
 ---
 
-import { Steps, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
+import Stepper from '../../../components/ui/Stepper.astro';
 
 <Summary>A request enters at `POST /v1/chat/completions`, passes the gateway's admission checks, goes through `Ratchet.handle` (the student first, the teacher when the student is unsure), is logged as one ledger row with a route that says why it was served that way, and comes back as a normal OpenAI response with a `ratchet` block.</Summary>
 
@@ -23,6 +29,12 @@ Every order gets one line in the book: who served it, why, and what it cost. The
 If the apprentice's stove breaks, the head chef simply cooks. If the head chef cannot come, the guest gets an apology (an error), unless you arranged a stand-in in advance.
 
 </Eli10>
+
+<StatRow cols={3} label="One request in numbers">
+  <Stat value={10} count={false} label="admission checks" note="All run before any model call. A refused request costs nothing." />
+  <Stat value={3} count={false} label="student samples" note="One call to the endpoint, at temperature 0.7 with token logprobs." tone="owned" />
+  <Stat value={1} count={false} label="ledger row per request" note="Metadata only: who served it, the route, confidence and cost. Never the prompt." />
+</StatRow>
 
 ## How it really works
 
@@ -143,11 +155,31 @@ After admission the rest runs in a worker thread, so the ledger's lock never blo
 
 ### Inside the cascade: `Ratchet.handle`
 
+Step through it one decision at a time, or read every rule in the numbered list under it.
+
+<Stepper
+  label="One request through the cascade"
+  steps={[
+    { title: "Settle the request's terms", body: "The operator's runtime switches and task pins are read once (`Ledger.flags`), the client's parameters are split by role, and whether this request's teacher answers may be stored is decided now." },
+    { title: 'Teacher-only paths', body: 'A pinned task, a tool request or a request the student must not see goes to the teacher alone. Nothing from it is stored as training data.', tone: 'rented' },
+    { title: 'Pick a version', body: 'A canary is picked with probability `traffic_pct / 100` (10% or 50%), otherwise the live version. With neither, the teacher answers (route `cold_start`).' },
+    { title: 'Skip a task the version cannot serve', body: 'If the version holds the task back, the student is not called at all, and the teacher answers (route `task_disabled`).' },
+    { title: 'Sample the student', body: 'One call to the endpoint for **3** samples at temperature 0.7 with token logprobs. If the call fails or the breaker is open, the teacher answers.', tone: 'owned' },
+    { title: 'Score confidence', body: 'Confidence is `0.4 × p + 0.6 × agreement` over the 3 samples. A sample that is empty, cut off or invalid under the task gets no vote.', tone: 'owned' },
+    { title: 'Compare with the threshold', body: "At or above the version's threshold for the task, the student serves (route `student`). Below it, the request escalates (route `confidence`).", tone: 'owned' },
+    { title: 'Maybe audit', body: "When the student serves, one random draw (**5%** by default) decides whether the teacher also answers, at temperature 0, to check it. The student's answer is served either way.", tone: 'rented' },
+    { title: 'Escalate otherwise', body: 'The teacher answers and its answer is served. It becomes a training example only when it is complete and valid, after PII redaction.', tone: 'rented' },
+    { title: 'Run the shadow', body: 'A version in shadow is sampled and scored silently. A disagreement with the live answer is settled by the teacher.' },
+    { title: 'Log one row', body: 'Task, who served, version, confidence, costs, route and ids go into the ledger: metadata only, never the prompt or the answer.' },
+    { title: 'Back in the gateway', body: "The spend meter adds the request's cost, the release gate ticks, and the response goes back with its `ratchet` block." },
+  ]}
+/>
+
 <Steps>
 
 1. **Read the switches and settle the request's terms.** The operator's runtime switches and task pins are read once (`Ledger.flags`). A `response_format` is bound to the task as a contract. The client's generation parameters are split by role (`GenPolicy`): what the student may receive, what the serving teacher may receive, and the audit's fixed parameters. Whether the request's teacher answers may be stored is settled now (`store_opt_out`: zero retention, a no-store task, the key's `store=0`, `store: false`, or a no-train end user).
 
-2. **Teacher-only paths.** Some requests never reach the student. An unregistered task under `RATCHET_UNKNOWN_TASKS=teacher` (route `unknown_task`), a pinned task (route `pinned`), and a tool request, meaning tools offered or tool calls in the messages (route `tools`), all go to `_teacher_only`: the teacher answers, the request is logged, and nothing is stored as training data (invariant 10). A request the student must not see takes the same kind of path through `_ineligible` (route `ineligible:<reason>`): a content part only the teacher reads (`content_type`), or more input than the task's `student_max_input_tokens` (`input_tokens`); only an over-length request on a task with `store_ineligible` may be stored. No student, audit or shadow call on any of these.
+2. **Teacher-only paths.** Some requests never reach the student. An unregistered task under `RATCHET_UNKNOWN_TASKS=teacher` (route `unknown_task`), a pinned task (route `pinned`), and a tool request, meaning tools offered or tool calls in the messages (route `tools`), all go to `_teacher_only`: the teacher answers, the request is logged, and nothing is stored as training data. A request the student must not see takes the same kind of path through `_ineligible` (route `ineligible:<reason>`): a content part only the teacher reads (`content_type`), or more input than the task's `student_max_input_tokens` (`input_tokens`); only an over-length request on a task with `store_ineligible` may be stored. No student, audit or shadow call on any of these.
 
 3. **Pick a version** (`_pick_version`). If an operator turned the student off, none (route `student_disabled`). If a version is in canary, it is picked with probability `traffic_pct / 100` (10% or 50%); otherwise the live version. With neither (cold start) the teacher answers (route `cold_start`), and its answer is stored as usual.
 
@@ -253,7 +285,7 @@ With `stream: true` the gateway sends OpenAI `chat.completion.chunk` events, a f
 
 ### When something fails
 
-Only a teacher call whose answer is needed can fail a request (invariant 7). Everything else fails open.
+Only a teacher call whose answer is needed can fail a request. Everything else fails open.
 
 **The student fails: the teacher answers.** A student call on the request path waits 15 s to answer and 2 s to connect (`RATCHET_STUDENT_TIMEOUT_S`, `RATCHET_STUDENT_CONNECT_TIMEOUT_S`) and is never retried: the teacher is its retry. After 5 endpoint failures in a row (timeouts, connection errors, 5xx, 408, 429) the student's circuit breaker opens and requests go straight to the teacher without waiting:
 
@@ -282,7 +314,7 @@ stateDiagram-v2
 
 A shadow has its own breaker, so a bad staging adapter cannot open the one live traffic depends on. When vLLM forgets an adapter after a restart, its 404 queues a reload from `RATCHET_ADAPTER_ROOT` (at most once a minute per adapter).
 
-**The teacher fails on an audit or a shadow arbitration: the student's answer is served anyway** (invariant 15). The failure is counted and the audit simply does not count.
+**The teacher fails on an audit or a shadow arbitration: the student's answer is served anyway**. The failure is counted and the audit simply does not count.
 
 **The teacher fails when its answer is needed** (an escalation, a cold start, a pinned or teacher-only request). The teacher gets up to 2 retries within 180 s (`RATCHET_TEACHER_RETRIES`, `RATCHET_TEACHER_DEADLINE_S`; a 120 s read timeout), on connection failures and 408, 409, 429 and 5xx. If it still fails, no request row is written; a `failures` row records what the student's samples spent, which also counts against the key's budget. The gateway maps the cause (`_map_upstream`):
 
@@ -363,13 +395,15 @@ It is served. A random audit may catch it, and audits drive the canary's rollbac
 
 ### Has this path run against real endpoints?
 
-Not yet. As of Oct 21, 2026, the live paths are tested offline with fake HTTP transports; nothing has run against Token Factory or a real vLLM endpoint.
+Partly. The teacher runs on Nebius Token Factory. The student side has not: as of Oct 22, 2026 no student has been served from a Nebius GPU endpoint, and the paths through vLLM are tested offline with fake HTTP transports. Model ids and prices stay unverified until `scripts/day1_check.py` passes with a real key.
 
 ## Related
 
-<CardGrid>
-  <LinkCard title="Confidence" href="/guides/confidence/" description="How the score and the threshold are computed." />
-  <LinkCard title="Escalation and audits" href="/guides/escalation-and-audits/" description="When the teacher steps in, and what audits measure." />
-  <LinkCard title="The ledger" href="/guides/ledger/" description="What the request row and the examples hold." />
-  <LinkCard title="API reference" href="/reference/api/" description="Every field, header and error." />
-</CardGrid>
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="Confidence" href="/guides/confidence/" icon="scale" eyebrow="Steps 6 and 7" description="How the score and the threshold are computed, and checked on held-out rows." />
+  <PathCard title="Escalation and audits" href="/guides/escalation-and-audits/" icon="check" eyebrow="Steps 8 and 9" tone="rented" description="When the teacher steps in, and what its random audits measure." />
+  <PathCard title="The ledger" href="/guides/ledger/" icon="database" eyebrow="Step 11" tone="neutral" description="What the request row and the stored examples hold, and what is never kept." />
+  <PathCard title="API reference" href="/reference/api/" icon="code" eyebrow="Reference" tone="neutral" description="Every field, header and error of the chat route." />
+</PathGrid>
+</FadeContent>

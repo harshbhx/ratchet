@@ -9,11 +9,17 @@ import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Flow from '../../../components/Flow.astro';
+import FlowStep from '../../../components/FlowStep.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
+import GradientText from '../../../components/ui/GradientText.astro';
 
-<Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains a new LoRA adapter from them, which the endpoint then loads from your bucket.</Summary>
+<Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, everything on this page is written and tested offline, but **none of it has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. There are no live results yet.
+<Aside type="caution" title="The GPU path has not run on Nebius yet">
+As of Oct 22, 2026, everything on this page is written and tested offline, but **none of the GPU path has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The teacher runs on Nebius Token Factory; the one adapter trained so far, for text-to-SQL, was trained on a free Colab T4. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
 </Aside>
 
 <Eli10>
@@ -31,6 +37,15 @@ When the station is **closed to save money**, a different, untrained cook from t
 ## How it really works
 
 ### The path from a request to a loaded adapter
+
+<Flow label="From a request to a loaded adapter">
+  <FlowStep title="A teacher answer is stored" tone="rented" meta="the ledger">Checked, redacted, with its teacher and license.</FlowStep>
+  <FlowStep title="The training file goes up" meta="RATCHET_SYNC_CMD">night/train.jsonl, uploaded to the bucket.</FlowStep>
+  <FlowStep title="A Serverless Job trains" meta="one L40S, at most 2 h">A fresh LoRA from the base, written back to the bucket.</FlowStep>
+  <FlowStep title="The adapter is loaded" tone="owned" meta="vLLM, no restart">Graded on the golden set, then handed to the gate.</FlowStep>
+</Flow>
+
+The thirteen steps in full:
 
 <Steps>
 
@@ -64,62 +79,80 @@ When the station is **closed to save money**, a different, untrained cook from t
 
 ### The Nebius pieces
 
+<figure class="rt-diagram">
+
 ```mermaid
 flowchart TB
-  subgraph Host["Your gateway host: VM or laptop"]
-    GW["Gateway: FastAPI"]
-    DB[("Ledger: SQLite")]
-    NS["Night School: python -m ratchet.live night"]
+  subgraph Host["Your gateway host"]
+    direction LR
+    GW["Gateway"] --> DB[("SQLite<br/>ledger")]
+    NS["Night School<br/>ratchet.live night"] --> DB
   end
-  subgraph Nebius["Nebius AI Cloud"]
-    BK[("Object Storage bucket, mounted at /data")]
-    JOB["Serverless Job: LoRA training on one L40S"]
-    EP["Serverless Endpoint: vLLM, base model and adapters"]
+  subgraph TF["Token Factory, per token"]
+    TEA["Teacher: Ultra<br/>Judge: Super"]
   end
-  subgraph TF["Token Factory"]
-    TEA["Teacher: Nemotron 3 Ultra"]
-    JDG["Judge: Nemotron 3 Super"]
+  subgraph Neb["Nebius AI Cloud, not run yet"]
+    direction TB
+    JOB["Serverless Job<br/>LoRA on one L40S"] -->|"adapter"| BK[("Bucket<br/>at /data")]
+    BK -->|"loads"| EP["Serverless Endpoint<br/>vLLM"]
   end
-  GW --> DB
-  GW -->|"student calls"| EP
-  GW -->|"escalations and audits"| TEA
-  NS --> DB
-  NS -->|"upload night/train.jsonl"| BK
-  NS -->|"submit job"| JOB
-  BK --> JOB
-  JOB -->|"adapters/student-vN"| BK
-  BK --> EP
-  NS -->|"load_lora_adapter, golden eval"| EP
-  NS -->|"free-text grading"| JDG
+  Host ==>|"escalations, audits,<br/>judge"| TF
+  Host ==>|"rows, job, student calls"| Neb
+
+  class DB,BK store
+  class TEA teacher
+  class JOB,EP pending
+  class TF teacherZone
+  class Neb pendingZone
 ```
 
-**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. Nothing on Nebius ever writes to the ledger; only the host does.
+<figcaption>
+
+**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. From the host, the night uploads the rows to the bucket, submits the job and tells the endpoint to load the adapter, and the gateway sends student calls to the endpoint. Nothing on Nebius ever writes to the ledger; only the host does. The Nebius GPU parts are drawn amber and dashed because they have not run yet.
+
+<ul class="rt-key">
+  <li class="teacher">Rented per token</li>
+  <li class="store">Keeps data</li>
+  <li class="pending">Written, not run on Nebius yet</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### How one training example is made
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  R["Request"] --> T["Teacher answers"]
-  T --> Q{"Complete, valid, no opt-out, task not pinned?"}
-  Q -->|no| X["Served, not stored"]
-  Q -->|yes| RED["Redact prompt, answer and conditions"]
-  RED --> V{"Still valid after redaction?"}
-  V -->|no| X
-  V -->|yes| H["Hash task and redacted messages"]
-  H --> D{"Known hash?"}
-  D -->|"tombstoned"| X
-  D -->|"yes, seen again"| B["seen plus 1, unless a retry"]
-  D -->|new| SP{"Hash bucket"}
-  SP -->|"about 90 percent"| TR["Training split"]
-  SP -->|"about 10 percent"| GO["Golden split"]
-  B --> F{"seen 3 or more?"}
+flowchart TB
+  T(["A teacher answer"]) --> Q{{"Complete, valid,<br/>no opt-out, not pinned?"}}
+  Q -->|yes| RED["Redact the prompt,<br/>answer and conditions"]
+  RED --> V{{"Still valid?"}}
+  V -->|yes| D{{"Hash of task and<br/>redacted messages known?"}}
+  D -->|new| SP{{"Hash bucket"}}
+  D -->|"seen again"| B["seen + 1,<br/>unless a retry"]
+  B --> F{{"Seen 3 or more?"}}
+  SP -->|"about 90%"| TR[("Training split")]
+  SP -->|"about 10%"| GO[("Golden split")]
   F -->|yes| TR
-  F -->|no| KEEP["Stays where it is"]
-  TR --> J["night/train.jsonl, teacher answer as target"]
-  GO --> E["Golden eval only: calibration and held-out halves"]
+  TR --> J["night/train.jsonl<br/>teacher answer as target"]
+  GO --> E["Golden eval only"]
+  Q -->|no| X["Served, not stored"]
+  V -->|no| X
+  D -->|tombstoned| X
+
+  class T teacher
+  class Q,V,D,SP,F gate
+  class TR,GO store
+  class X outline
 ```
 
-**Reading this diagram.** A request can fall out of the path at four places, always on the safe side: the answer is still served, only storage is skipped. After redaction the example gets a hash, and the hash does three jobs: it merges repeats, it blocks erased examples for good, and it fixes the split without anyone choosing it. The golden split is never trained on, with one exception: a prompt seen three or more times moves to training, so a question people ask all the time does not stay hidden forever.
+<figcaption>
+
+**Reading this diagram.** A teacher answer can fall out of the path at three places, always on the safe side: the answer is still served, only storage is skipped. After redaction the example gets a hash, and the hash does three jobs: it merges repeats, it blocks erased examples for good, and it fixes the split without anyone choosing it. The golden split is never trained on, with one exception: a prompt seen three or more times moves to training, so a question people ask all the time does not stay hidden forever.
+
+</figcaption>
+</figure>
 
 ### What each part of an example is used for
 
@@ -133,52 +166,62 @@ flowchart TD
 
 ### Where your data goes
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  APP["Your app"] -->|"chat request"| GW["Gateway"]
-  GW -->|"teacher answers, redacted"| LED["Ledger: examples"]
-  LED -->|"nightly rows"| TJ["night/train.jsonl"]
-  TJ -->|"RATCHET_SYNC_CMD"| BK["Object Storage bucket"]
-  BK -->|"mounted at /data"| JOB["Serverless Job: train.py"]
-  JOB -->|"writes"| AD["adapters/student-vN in the bucket"]
-  AD -->|"load_lora_adapter"| EP["Student endpoint: vLLM"]
+flowchart TB
+  APP(["Your app"]) -->|"chat request"| GW["Gateway"]
+  GW -->|"teacher answers, redacted"| LED[("Ledger: examples")]
+  LED -->|"night/train.jsonl,<br/>RATCHET_SYNC_CMD"| BK[("Object Storage bucket")]
+  BK -->|"mounted at /data"| JOB["Serverless Job<br/>train.py"]
+  JOB -->|"adapters/student-vN"| BK
+  BK -->|"load_lora_adapter"| EP["Student endpoint<br/>vLLM"]
   EP -->|"answers as student-vN"| GW
+
+  class LED,BK store
+  class EP student
 ```
 
-**Reading this diagram.** The loop is closed: answers go out left to right, and the adapter comes back along the bottom. The only arrow that carries your text is the one from the ledger to the training file, and by then it is redacted.
+<figcaption>
+
+**Reading this diagram.** The loop is closed: requests and teacher answers go down the middle, and the adapter comes back up to the gateway through the endpoint on the right. The only arrow that carries your text out of the gateway is the one from the ledger to the training file, and by then it is redacted. The job and the bucket meet twice: it reads the rows from `/data` and writes the adapter back to the same place.
+
+</figcaption>
+</figure>
 
 ### One live night, with the real commands
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-  participant Cron as cron
-  participant Live as ratchet.live night
-  participant Data as RATCHET_DATA_DIR
-  participant Bucket as Bucket at /data
-  participant Script as train_job.sh
-  participant Job as Serverless Job (L40S)
-  participant VLLM as Student endpoint (vLLM)
-  participant TF as Token Factory (judge)
-  Cron->>Live: run at 02:30
-  Live->>VLLM: re-score the live adapter on golden rows
-  Live->>Data: write night/train.jsonl
-  Live->>Bucket: RATCHET_SYNC_CMD (upload)
-  Live->>Script: RATCHET_TRAIN_CMD student-vN
-  Script->>Job: nebius ai job create
-  Job->>Bucket: read night/train.jsonl
-  Job->>Bucket: write adapters/student-vN
-  Script->>Bucket: poll for adapter_model.safetensors
-  Script-->>Live: exit 0 once it exists
-  Live->>VLLM: POST /v1/load_lora_adapter
-  VLLM->>Bucket: read adapters/student-vN
-  Live->>VLLM: golden eval, 3 samples per row
-  Live->>TF: judge free-text rows
-  Live->>Live: signed BOM, then gate.admit
-  Live->>Data: ratchet_bom.json and NOTICE.md into the adapter folder
-  Live->>Bucket: RATCHET_SYNC_CMD again (upload only)
+  autonumber
+  participant Live as ratchet.live<br/>night
+  participant Bucket as Bucket<br/>at /data
+  participant Job as Serverless<br/>Job, L40S
+  participant Student as Student<br/>vLLM
+  participant J as Judge<br/>Super
+  Note over Live: cron, 02:30
+  Live->>Student: re-score live<br/>on golden rows
+  Note over Live: write night/<br/>train.jsonl
+  Live->>Bucket: upload the rows
+  Live->>Job: train_job.sh:<br/>job create
+  Job->>Bucket: read the rows,<br/>write student-vN
+  Live->>Bucket: poll for<br/>the weights
+  Live->>Student: load_lora_adapter
+  Student->>Bucket: read student-vN
+  Live->>Student: golden eval,<br/>3 samples a row
+  Live->>J: free-text rows
+  Note over Live: signed BOM,<br/>gate.admit
+  Live->>Bucket: BOM, NOTICE.md,<br/>sync again
 ```
 
-**Reading this diagram.** Read it as a checklist in time order. Night School re-scores the old adapter before it trains, so the champion and the challenger sit the same exam. The script, not the job, is what `ratchet.live` waits on: it polls for the weights file. The last two lines matter for licensing: the weights are in the bucket from the job, and the BOM and NOTICE.md are added after the gate has decided, so the folder holds the adapter and its licenses together.
+<figcaption>
+
+**Reading this diagram.** Read it as a checklist in time order. Night School re-scores the old adapter before it trains (1), so the champion and the challenger sit the same exam, then uploads the rows with `RATCHET_SYNC_CMD` (2). `RATCHET_TRAIN_CMD` runs `deploy/train_job.sh`, which submits the job (3) and then polls the bucket for the weights file (5): the script, not the job, is what `ratchet.live` waits on. The last line matters for licensing: the weights are in the bucket from the job, and the BOM and `NOTICE.md` are added after the gate has decided (10), so the folder holds the adapter and its licenses together. Every arrow here is written and tested offline; none has run on Nebius yet.
+
+</figcaption>
+</figure>
 
 ### The student endpoint only answers
 
@@ -321,7 +364,7 @@ bash deploy/student_endpoint.sh status   # prints "<id> <state>"
 
 Night School needs the endpoint **running** while it re-scores the live adapter, loads the new one and grades it. With the endpoint stopped most of the time, start it before the night run (with `RATCHET_STUDENT_BASE` set in the night job's environment) and stop it after. Each start and stop is recorded, and answers in hours without uptime count as the hosted fallback's in the cost report.
 
-Whether running the endpoint pays at all depends on volume. With unverified list prices (an L40S at about $1.55 an hour, about $0.001 of teacher spend avoided per ticket-triage answer in the simulation), break-even is about 1,500 student answers an hour; at the demo's volume a 24/7 endpoint loses money, and `python -m ratchet.cost report` says so ([cost and savings](/guides/cost-and-savings/)). Estimates from the repo's [deployment guide](/reference/deployment/#4-cost-estimates), same unverified prices: about $0.80 to $1.60 per training night, about $37 per full day if the endpoint is left on.
+Whether running the endpoint pays at all depends on volume. With estimated prices (an L40S at about $1.35 per GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and about $0.001 of teacher spend avoided per ticket-triage answer in the simulation), break-even is about 1,350 student answers an hour; at the demo's volume a 24/7 endpoint loses money, and `python -m ratchet.cost report` says so ([cost and savings](/guides/cost-and-savings/)). At the same price, estimates from the repo's [deployment guide](/reference/deployment/#4-cost-estimates): about $0.70 to $1.35 per training night, about $32 per full day if the endpoint is left on.
 
 ### Exporting the adapter you own
 
@@ -349,16 +392,25 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 ### What is verified and what is not
 
-| Part | Status (Oct 21, 2026) |
+<div class="rt-callout rt-callout--live">
+
+**Checked, as of Oct 21, 2026, offline only.** These parts run in the test suite, against fakes, not on a Nebius account:
+
+- `ratchet.live` commands, `NebiusTrainer`, `LiveEvaluator`, the reloader and the export: tested in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints.
+- `train_job.sh` and `student_endpoint.sh`: run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read, not a real account.
+- `train.py`'s arguments, row checks, loss setting and chat-template prefix check: tested with the vendored Nano 4B chat template. Its `main` needs a GPU and is not run in tests.
+
+</div>
+
+Not run or not checked yet:
+
+| Part | Status (Oct 22, 2026) |
 |---|---|
-| `ratchet.live` commands, `NebiusTrainer`, `LiveEvaluator`, the reloader, the export | Tested offline in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints |
-| `train_job.sh`, `student_endpoint.sh` | Run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read, not a real account |
-| `train.py`'s arguments, row checks, loss setting and chat-template prefix check | Tested offline with the vendored Nano 4B chat template; `main` needs a GPU and is not run in tests |
-| The training image | Not built yet; pins are candidates  |
-| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run yet  |
-| The endpoint's arguments as the container splits them, thinking off | Not checked yet  |
+| The training image | Not built yet; pins are candidates |
+| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run on Nebius yet. The text-to-SQL adapter was trained on a free Colab T4, outside this path |
+| The endpoint's arguments as the container splits them, thinking off | Not checked yet |
 | Serverless pricing, the S3 endpoint URL | Unverified (the S3 URL format in the docs is an assumption) |
-| Live numbers | None yet; `[LIVE NUMBER]` placeholders stay empty until a real run |
+| Live numbers from this path | None yet; `[LIVE NUMBER]` placeholders stay empty until a real run |
 
 ## For engineers
 
@@ -387,7 +439,7 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 | `RATCHET_SYNC_CMD` | empty | Uploads `RATCHET_DATA_DIR` to the bucket, before the job and after a night that trained. Upload only: a `--delete` would remove the weights the job wrote |
 | `RATCHET_TRAIN_CMD` | `bash deploy/train_job.sh {version}` | Runs training and **waits** for it; `{version}` and `{data}` are substituted |
 | `RATCHET_ADAPTER_ROOT` | `/data/adapters` | Where the endpoint sees adapters (`lora_path` = root + `/` + name); also used by the gateway's reloader |
-| `RATCHET_TRAIN_GPU_USD_PER_HOUR`, `RATCHET_STUDENT_GPU_USD_PER_HOUR` | `1.55` | Prices for the cost report (unverified list prices) |
+| `RATCHET_TRAIN_GPU_USD_PER_HOUR`, `RATCHET_STUDENT_GPU_USD_PER_HOUR` | `1.55` | Prices for the cost report. The code's default; these docs use 1.35 USD per GPU-hour, Nebius's list price for an L40S. Set the rate on your bill |
 
 `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` are split with `shlex.split` and run without a shell, so pipes and `&&` do not work; wrap them in a script.
 
@@ -456,7 +508,7 @@ Yes, as attested human labels or as an open teacher's outputs: `python -m ratche
 
 ### What does it cost?
 
-Estimates only, from the repo's deployment guide with unverified list prices: about $0.80 to $1.60 per night that trains (an L40S for 30 to 60 minutes), about $37 per full day for an endpoint left on, plus the bucket. Nights that skip cost nothing. Below about 1,500 student answers an hour, a 24/7 endpoint costs more than it saves; use the hosted fallback or stop the endpoint between uses.
+Estimates only, at about $1.35 per L40S GPU-hour (Nebius's list price, read Oct 22, 2026): about $0.70 to $1.35 per night that trains (30 to 60 minutes), about $32 per full day for an endpoint left on, plus the bucket. Nights that skip cost nothing. Below about 1,350 student answers an hour, a 24/7 endpoint costs more than it saves; use the hosted fallback or stop the endpoint between uses.
 
 ### What if the endpoint restarts?
 
@@ -476,13 +528,17 @@ That is what the day-1 checks are for. The script dry runs, the image's build-ti
 
 ### Has this run on Nebius?
 
-No, not as of Oct 21, 2026. It is written and tested offline only. Treat every command here as a plan until the day-1 checks pass.
+The teacher does: it runs on Nebius Token Factory. The training job and the endpoint do not, as of Oct 22, 2026: they are written and tested offline only, and the one adapter trained so far ran on a free Colab T4. Treat every GPU command here as a plan until the day-1 checks pass.
 
 ## Related
 
-- [Night School](/guides/night-school/): the nightly checks, the golden set and LoRA
-- [Host on Nebius](/guides/host-on-nebius/): the gateway VM and the rest of the stack
-- [The ledger](/guides/ledger/): what is stored, redaction and opt-outs
-- [Licenses](/guides/licenses/): what you own and what travels with the adapter
-- [Cost and savings](/guides/cost-and-savings/): when self-hosting pays
-- [Deployment](/reference/deployment/)
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="Night School" href="/guides/night-school/" icon="loop" eyebrow="The nightly rules" description="The checks, the golden set and LoRA, one night at a time." />
+  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="The rest of the stack" tone="neutral" description="The gateway VM, Token Factory and the GPU pieces, with costs." />
+  <PathCard title="The ledger" href="/guides/ledger/" icon="database" eyebrow="What is stored" tone="neutral" description="Redaction, opt-outs and what never becomes training data." />
+  <PathCard title="Licenses" href="/guides/licenses/" icon="scale" eyebrow="What you own" description="The adapter, its signed lineage and the licenses that travel with it." />
+  <PathCard title="Cost and savings" href="/guides/cost-and-savings/" icon="coin" eyebrow="When it pays" tone="neutral" description="Break-even, the cost report and when self-hosting does not pay." />
+  <PathCard title="Deployment reference" href="/reference/deployment/" icon="book" eyebrow="Reference" tone="neutral" description="Every deploy step in full, with the commands." />
+</PathGrid>
+</FadeContent>

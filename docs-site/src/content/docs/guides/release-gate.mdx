@@ -7,6 +7,12 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
+import Stepper from '../../../components/ui/Stepper.astro';
 
 <Summary>The release gate decides, from held-out golden rows and teacher audits, whether a newly trained adapter may take traffic, how much, and when to send it back, so a bad night never quietly replaces a good student.</Summary>
 
@@ -27,54 +33,82 @@ The apprentice who already serves every table is never sent back automatically. 
 
 ## How it really works
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-    participant N as Night School
-    participant G as Release gate
-    participant L as Ledger
-    participant R as Request path
-    participant T as Teacher
-    N->>L: write version, eval, signed BOM
-    N->>G: admit candidate
-    G->>G: golden gate against the re-scored live version
-    alt passes and a live version exists
-        G->>L: state shadow
-        loop each request
-            R->>G: shadow samples and scores, nothing served
-            G->>T: arbitrate a disagreement
-        end
-        G->>L: state canary 10 percent
-    else passes and none is live
-        G->>L: state canary 10 percent
+  participant N as Night School
+  participant G as Release gate
+  participant Ledger as Ledger
+  participant R as Request path
+  participant Teacher as Teacher
+  N->>Ledger: version, eval, BOM
+  N->>G: admit
+  Note over G: golden gate, against the<br/>re-scored live version
+  alt passes, a live version exists
+    G->>Ledger: state shadow
+    loop each request
+      R->>G: shadow verdict,<br/>nothing served
+      G->>Teacher: arbitrate a disagreement
     end
-    loop each request in the canary
-        R->>T: random audit of a served answer
-        T-->>G: agree or not
-    end
-    G->>L: 50 percent, then live 100 percent, or rolled_back
+    G->>Ledger: canary 10%
+  else passes, cold start
+    G->>Ledger: canary 10%
+  end
+  loop each request in the canary
+    R->>Teacher: audit<br/>an answer
+    Teacher-->>G: agree or not
+  end
+  G->>Ledger: 50%, then live,<br/>or rolled_back
 ```
 
-**Reading this diagram.** Night School hands over a trained candidate and the gate does the rest. The first judge is the golden exam, run the same night for the candidate and the current live version. Then real traffic does the judging: first silently in shadow, then in the canary where the teacher audits a random sample of what the canary served. Every state change is a write to the ledger, which is why the whole history can be replayed from the events table.
+<figcaption>
+
+**Reading this diagram.** Night School hands over a trained candidate and the gate does the rest. The first judge is the golden exam, run the same night for the candidate and the current live version. Then real traffic does the judging: first silently in shadow, then in the canary, where the teacher audits a random sample of what the canary served. Every state change is a write to the ledger, which is why the whole history can be replayed from the events table.
+
+</figcaption>
+</figure>
 
 A version moves through a small set of states, stored in the ledger's `versions` table. The golden gate, the shadow decision, the default canary rule and every admin action write their moves with a compare-and-set, so two processes deciding at once make each decision only once.
 
+<figure class="rt-diagram">
+
 ```mermaid
 stateDiagram-v2
-    [*] --> candidate: trained tonight
-    candidate --> rejected: fails the golden gate
-    candidate --> canary: passes, no live version yet
-    candidate --> shadow: passes, a live version exists
-    shadow --> rejected: fails on real traffic
-    shadow --> canary: holds up after 100 would-serve answers
-    canary --> canary: 10 to 50 after enough audits
-    canary --> live: 50 to 100 after enough audits
-    canary --> rolled_back: audits clearly below the floor
-    canary --> retired: replaced, or inconclusive
-    shadow --> retired: replaced or cancelled
-    live --> retired: a canary is promoted over it
+  state "canary 10%" as c10
+  state "canary 50%" as c50
+  [*] --> candidate: trained tonight
+  candidate --> rejected: fails the golden gate
+  candidate --> shadow: passes, live exists
+  candidate --> c10: passes, cold start
+  shadow --> rejected: fails on traffic
+  shadow --> c10: holds up
+  c10 --> c50: enough audits
+  c50 --> live: enough audits
+  c10 --> rolled_back: clearly below
+  c50 --> rolled_back: clearly below
+  live --> retired: replaced
+
+  class candidate neutral
+  class shadow, c10, c50 student
+  class live ok
+  class rejected, rolled_back danger
+  class retired outline
 ```
 
-**Reading this diagram.** Every version is born as a candidate and ends in one of three resting places: `rejected` (never served anyone), `rolled_back` (served some, then failed its audits) or `retired` (replaced). Only a canary can become live, and the only way out of live is to be replaced. There is no automatic arrow out of `live`, on purpose.
+<figcaption>
+
+**Reading this diagram.** Every version is born as a candidate and ends in one of three resting places: `rejected` (never served anyone), `rolled_back` (served some, then failed its audits) or `retired` (replaced). Only a canary can become live, and the only way out of live is to be replaced: there is no automatic arrow out of `live`, on purpose. "Enough audits" means at least 20 in the stage with audited precision at or above 0.92; "clearly below" means the Wilson upper bound is under 0.92. Not drawn: a shadow or canary is also `retired` when it is replaced or cancelled, or when the opt-in sequential rule finds a stage inconclusive.
+
+<ul class="rt-key">
+  <li class="student">Your adapter on trial</li>
+  <li class="ok">Serving everyone</li>
+  <li class="danger">Stopped</li>
+  <li class="outline">Replaced</li>
+</ul>
+
+</figcaption>
+</figure>
 
 | State | Traffic | Meaning |
 |---|---|---|
@@ -88,6 +122,19 @@ stateDiagram-v2
 
 `inconclusive` is an event, not a state: under the opt-in sequential rule, a canary stage that reaches `max_stage_audits` without a decision is `retired` with an `inconclusive` event.
 
+Step through the rollout one stage at a time; the numbered list under it keeps every rule.
+
+<Stepper
+  label="Rollout stages"
+  steps={[
+    { title: 'Golden gate', body: 'Held-out precision at least **95%** and coverage at least **25%**, and no regression of more than 2 points against the live version, graded on the same golden rows the same night.' },
+    { title: 'Shadow', body: 'The candidate answers silently next to the live version. After it would have served **100** answers: precision at least 95% and coverage within 2 points, or it is rejected.', tone: 'owned' },
+    { title: 'Canary 10%', body: 'One request in ten. With at least **20** audits in the stage, it advances, holds, or is rolled back when the 95% Wilson upper bound of audited precision is below **0.92**.', tone: 'owned' },
+    { title: 'Canary 50%', body: 'The same rule, with the audit count starting again.', tone: 'owned' },
+    { title: 'Live', body: 'One transaction makes the canary live at 100% and retires the old version. The live version is watched and alerts, but is never rolled back automatically.', tone: 'owned' },
+  ]}
+/>
+
 <Steps>
 
 1. **Golden gate** (`ReleaseGate.admit`, right after training). Read the candidate's held-out numbers from its eval, in this order:
@@ -97,7 +144,7 @@ stateDiagram-v2
    - if a version is live: no regression against it. By default, the candidate is rejected if its precision or coverage is more than `tolerance` (0.02) below the live version's. With the opt-in paired gate, a row-by-row test instead (below);
    - per task: a task that fails its own check is disabled on the candidate (or, with `RATCHET_TASK_MODE=reject`, rejects it).
 
-   The live version's numbers come from a re-score on the **same golden rows the same night** (champion against challenger, invariant 4), so both are graded on one exam.
+   The live version's numbers come from a re-score on the **same golden rows the same night** (champion against challenger), so both are graded on one exam.
 
 2. **First stage.** With no live version (cold start), the candidate goes straight to canary at 10%: there is nothing to shadow against, so the teacher's audits judge it. Otherwise it enters **shadow**. Any older shadow or canary still in flight is retired first (rare, because Night School does not train while a release is in flight).
 
@@ -119,40 +166,72 @@ stateDiagram-v2
 
 Ticks run from the request path at most every `RATCHET_TICK_INTERVAL_S` seconds (5 in live mode, every request in mock mode) and from cron (`python -m ratchet.live tick`).
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  N["Night School trains"] --> G{"Golden gate"}
+flowchart TB
+  N(["Night School trains"]) ==> G{{"Golden gate"}}
   G -->|fail| R["rejected"]
-  G -->|"pass, first version"| C10["canary at 10%"]
-  G -->|"pass, live exists"| S["shadow"]
-  S -->|"holds up"| C10
+  G ==>|"pass, live exists"| S["shadow"]
+  G -->|"pass, first version"| C10
   S -->|fail| R
-  C10 -->|"enough good audits"| C50["canary at 50%"]
-  C50 -->|"enough good audits"| L["live at 100%"]
-  C10 -->|"audits clearly bad"| RB["rolled_back"]
-  C50 -->|"audits clearly bad"| RB
+  S ==>|"holds up"| C10["canary at 10%"]
+  C10 ==>|"enough good audits"| C50["canary at 50%"]
+  C50 ==>|"enough good audits"| L(["live at 100%"])
+  C10 -->|"clearly bad"| RB["rolled_back"]
+  C50 -->|"clearly bad"| RB
+
+  class N neutral
+  class G gate
+  class S,C10,C50 student
+  class L ok
+  class R,RB danger
 ```
 
-**Reading this diagram.** The same story as the state diagram, as a pipeline from Night School on the left. The shadow stage is skipped only on a cold start, when there is no live student to compare with. Both canary stages can end in a rollback, but only the 50% stage can lead to live.
+<figcaption>
+
+**Reading this diagram.** The same story as the state diagram, as a pipeline from Night School at the top; the thick path is the way to live. The shadow stage is skipped only on a cold start, when there is no live student to compare with. Both canary stages can end in a rollback, but only the 50% stage can lead to live.
+
+</figcaption>
+</figure>
 
 One canary tick under the default rule:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  A["Audits in this stage"] --> N{"At least min_audits?"}
-  N -->|no| Hold1["Hold: keep auditing"]
-  N -->|yes| W{"Wilson upper bound below 0.92?"}
+flowchart TB
+  A(["Audits in this stage"]) --> N{{"At least min_audits?"}}
+  N -->|yes| W{{"Wilson upper bound<br/>below 0.92?"}}
   W -->|yes| Back["Roll back"]
-  W -->|no| P{"Point estimate below 0.92?"}
-  P -->|yes| Hold2["Hold: not enough evidence"]
-  P -->|no| F{"Releases frozen?"}
-  F -->|yes| Hold3["Hold"]
-  F -->|no| Up["Advance a stage, or promote"]
+  W -->|no| P{{"Point estimate<br/>below 0.92?"}}
+  P -->|no| F{{"Releases frozen?"}}
+  F -->|no| Up(["Advance a stage,<br/>or promote"])
+  N -->|no| Hold["Hold:<br/>keep auditing"]
+  P -->|"yes: not enough<br/>evidence"| Hold
+  F -->|yes| Hold
+
+  class A neutral
+  class N,W,P,F gate
+  class Back danger
+  class Up ok
+  class Hold neutral
 ```
 
-**Reading this diagram.** Three of the four exits are holds. The only way to move forward is to have enough audits, a point estimate at or above the floor and no operator freeze. A rollback needs the strongest evidence of all: not "the average looks bad" but "even the generous end of the interval is below the floor". Note that a freeze is checked last: a rollback is never blocked by it.
+<figcaption>
+
+**Reading this diagram.** Three of the exits lead to the same hold. The only way to move forward is to have enough audits, a point estimate at or above the floor and no operator freeze. A rollback needs the strongest evidence of all: not "the average looks bad" but "even the generous end of the interval is below the floor". A freeze is checked last, so it never blocks a rollback.
+
+</figcaption>
+</figure>
 
 ## The Wilson bound, precisely
+
+<StatRow cols={3} label="The canary's defaults">
+  <Stat value={20} count={false} label="audits per stage" note="min_audits: before a canary can advance, or be rolled back by the Wilson rule (15 in mock mode)." />
+  <Stat value={0.92} decimals={2} count={false} label="audited precision floor" note="live_floor: rolled back when even the Wilson upper bound is below it." />
+  <Stat value={100} count={false} label="would-serve shadow answers" note="min_shadow: before the shadow is judged against the live version." />
+</StatRow>
 
 The Wilson score interval for `s` agreeing audits out of `n`, with `z = 1.96`:
 
@@ -236,22 +315,38 @@ The gate's tick has two more steps that never promote or roll back a version. Th
 
 **The teacher watch** (`_tick_watchers`) asks whether the teacher itself is steady. The golden set and the audits both measure agreement with the teacher, so a teacher whose answers wander would make every number meaningless. Each stored label gets at most one re-test per check epoch (a repeated request that the teacher labels again, or one of the `RATCHET_TEACHER_PROBES` probes Night School sends each night, 20 by default). A disagreement puts the label in quarantine (`contested`): it is left out of both the training and the golden split until Night School adjudicates it, by asking the teacher twice more and keeping the strict majority of three. When the evidence that the teacher disagrees with itself more than `RATCHET_TEACHER_NOISE_MAX` (0.05) reaches 1/`RATCHET_ALPHA_TEACHER` (100), the gate writes a `teacher_drift` event and Night School stops training until an operator acknowledges it with `POST /ratchet/teacher/ack`. A new model id in the teacher's responses starts a new epoch. `GET /ratchet/teacher` shows the state, and `RATCHET_TEACHER_WATCH=0` turns the actions off while the free checks are still recorded.
 
+<figure class="rt-diagram">
+
 ```mermaid
 stateDiagram-v2
-    [*] --> Steady
-    Steady --> Steady: re-tests agree
-    Steady --> Quarantine: a re-test disagrees with a stored label
-    Quarantine --> Steady: adjudication, a majority of 3 settles the label
-    Steady --> Frozen: evidence reaches 1 over alpha
-    Frozen --> Steady: operator acknowledges
-    Steady --> Steady: new teacher model id starts a new epoch
+  direction LR
+  [*] --> Steady
+  Steady --> Quarantine: a re-test disagrees
+  Quarantine --> Steady: 2 of 3 settle it
+  Steady --> Frozen: evidence ≥ 1/alpha
+  Frozen --> Steady: an operator acks
+
+  class Steady ok
+  class Quarantine pending
+  class Frozen danger
 ```
 
-**Reading this diagram.** One disagreement is not an emergency: it only quarantines one label until two more teacher answers settle it. Training stops only when many disagreements add up to strong evidence, and it stays stopped until a person looks. The freeze affects training, not serving: the live student keeps answering.
+<figcaption>
+
+**Reading this diagram.** One disagreement is not an emergency: it only quarantines one label until two more teacher answers settle it by a majority of 3. Training stops only when many disagreements add up to strong evidence (1/`RATCHET_ALPHA_TEACHER`, 100 by default), and it stays stopped until a person acknowledges it. The freeze affects training, not serving: the live student keeps answering. Not drawn: re-tests that agree leave the watch steady, and a new teacher model id starts a new check epoch.
+
+<ul class="rt-key">
+  <li class="ok">Training as usual</li>
+  <li class="pending">One label held out</li>
+  <li class="danger">Training stopped</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ## No training while a release is in flight
 
-Night School skips the night while any version is in `shadow` or `canary` (invariant 5), with a `skip` event such as `v4 still in canary; no training tonight (saves GPU time)`. A new candidate would replace the one being judged and waste both the GPU time and the evidence gathered so far. An operator who wants tonight's training can retire the shadow first.
+Night School skips the night while any version is in `shadow` or `canary`, with a `skip` event such as `v4 still in canary; no training tonight (saves GPU time)`. A new candidate would replace the one being judged and waste both the GPU time and the evidence gathered so far. An operator who wants tonight's training can retire the shadow first.
 
 ## Operator holds and the admin API
 
@@ -269,7 +364,7 @@ Every manual change goes through `ratchet/admin.py`, shared by the HTTP admin AP
 A hold never blocks a rollback, a rejection or an alert. The admin's moves and the gate's (the golden gate, the shadow decision and the default canary rule) use the same compare-and-set (`Ledger.transition`, `Ledger.promote_live`): a move into shadow or canary is refused while another version is in flight, a decision made on a state someone else just changed is dropped, and a candidate an admin moved while it was being scored is left alone with a `conflict` event.
 
 <Aside type="note" title="The sequential rule's writes">
-In the code on this branch, the opt-in sequential canary rule (`_sequential_canary`) moves versions with `Ledger.set_version`, an unconditional update, rather than the compare-and-set writers, and its promotion writes no `live_retired` event. The "each decision is made once" guarantee therefore covers the default rule, not the sequential one, until that path uses `transition` and `promote_live` too.
+In the current code, the opt-in sequential canary rule (`_sequential_canary`) moves versions with `Ledger.set_version`, an unconditional update, rather than the compare-and-set writers, and its promotion writes no `live_retired` event. The "each decision is made once" guarantee therefore covers the default rule, not the sequential one, until that path uses `transition` and `promote_live` too.
 </Aside>
 
 ## The release log
@@ -294,8 +389,8 @@ Every decision writes an event (the `events` table, shown in the dashboard's rel
 | `conflict` | A candidate changed by another process while the gate decided |
 | `admin` | An operator's change, with the actor and the reason |
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, the release gate has decided only on mock models: every promotion and rollback quoted here is simulation. Live mode, the cron tick and the admin CLI are tested offline but have not run against a real Nebius account.
+<Aside type="caution" title="Only simulated releases so far">
+As of Oct 22, 2026, the release gate has decided only on mock models: every promotion and rollback quoted here is simulation. No trained student has been served from a Nebius GPU, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
 </Aside>
 
 ## For engineers
@@ -377,7 +472,7 @@ Not under the default rule. The gateway's tick, the cron tick and an admin can r
 
 ### Do customer complaints (feedback verdicts) roll a version back?
 
-No. Human verdicts are reported and can raise a `human_alert`, but the gate never reads them (invariant 26): clients report what they notice, so the sample is biased. Audited precision stays the release signal.
+No. Human verdicts are reported and can raise a `human_alert`, but the gate never reads them: clients report what they notice, so the sample is biased. Audited precision stays the release signal.
 
 ### What has not been run yet?
 
@@ -397,7 +492,11 @@ The whole gate, including the drift alarm and the teacher watch, has run only on
 
 ## Related
 
-- [Confidence](/guides/confidence/): where the threshold and the held-out numbers come from.
-- [Night School](/guides/night-school/): the nightly training that produces each candidate.
-- [Escalation and audits](/guides/escalation-and-audits/): how audits are drawn.
-- [Evidence you can check](/guides/evidence/): certificates and the paired comparison in the signed BOM.
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="Confidence" href="/guides/confidence/" icon="scale" eyebrow="The golden numbers" tone="neutral" description="Where the threshold and the held-out precision and coverage come from." />
+  <PathCard title="Night School" href="/guides/night-school/" icon="loop" eyebrow="Before admit" description="The nightly training that produces each candidate." />
+  <PathCard title="Escalation and audits" href="/guides/escalation-and-audits/" icon="check" eyebrow="The live signal" tone="rented" description="How the audits the canary is judged on are drawn." />
+  <PathCard title="Evidence you can check" href="/guides/evidence/" icon="file" eyebrow="Recompute it" tone="neutral" description="Certificates and the paired comparison in the signed BOM." />
+</PathGrid>
+</FadeContent>

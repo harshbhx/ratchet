@@ -3,10 +3,17 @@ title: Scout
 description: Five research agents whose calls all go through Ratchet, showing which calls the student takes over and which stay pinned to the teacher.
 ---
 
-import { Steps, Tabs, TabItem, Card, CardGrid, LinkCard, Aside, Badge, FileTree } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import Flow from '../../../components/Flow.astro';
+import FlowStep from '../../../components/FlowStep.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>Scout is a small multi-agent research demo built on Ratchet: five agents answer a question from the web, the many short triage and reading calls move to the student, and the open-ended planning and writing stay pinned to the teacher.</Summary>
 
@@ -44,91 +51,118 @@ The head chef's planning and plating notes are never copied into the recipe book
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
   participant B as Browser
-  participant G as Gateway
-  participant D as Budget guard
-  participant C as Cascade
-  participant U as Ultra teacher
-  participant N as Nano student
+  participant G as Gateway<br/>and cascade
+  participant Teacher as Ultra<br/>teacher
+  participant Student as Nano<br/>student
   participant S as Search
-  B->>G: GET /scout/stream with a question
-  G->>D: admit the run
-  D-->>G: admitted
-  G-->>B: start event
-  G->>C: planner call, research-plan
-  C->>U: pinned, always the teacher
-  U-->>C: three search queries
-  G-->>B: step event for the planner
-  G->>S: up to three searches
+  B->>G: GET /scout/stream
+  Note over G: Guard.admit
+  G-->>B: start
+  G->>Teacher: planner, pinned
+  Teacher-->>G: 3 queries
+  G->>S: up to 3 searches
   S-->>G: up to 12 results
-  G-->>B: step events for the searcher
-  loop each result, six at a time
-    G->>C: triage call, source-triage
-    C->>N: three student samples
+  loop each result, 6 at a time
+    G->>Student: triage, 3 samples
     opt not confident
-      C->>U: escalate
+      G->>Teacher: escalate
     end
   end
-  G-->>B: step events for triage
-  loop each relevant result, up to six
-    G->>C: reader call, page-read
+  loop each relevant result, up to 6
+    G->>Student: reader, 3 samples
   end
-  G-->>B: step events for the reader
-  G->>C: writer call, research-write
-  C->>U: pinned, always the teacher
-  G-->>B: writer step, then done
-  G->>D: add the run's spend
+  G->>Teacher: writer, pinned
+  G-->>B: step events,<br/>then done
+  Note over G: Guard.add_spend,<br/>also on failure
 ```
 
-**Reading this diagram.** The run is a pipeline with two fan-out stages. The guard is asked once at the start and told once at the end, and in between the gateway never calls a model without going through the cascade. Notice who answers: the planner and writer lines go straight to Ultra, while triage and reader lines try the student first. The page sees each step as soon as it finishes, which is why triage steps appear out of order.
+<figcaption>
+
+**Reading this diagram.** The run is a pipeline with two fan-out stages. The budget guard is asked once at the start and told once at the end, and in between the gateway never calls a model without going through the cascade. Notice who answers: the planner and writer calls go straight to Ultra, while triage and reader calls try the student first, and the reader escalates the same way triage does. The page gets a `step` event as soon as each call finishes, which is why triage steps appear out of order.
+
+<ul class="rt-key">
+  <li class="teacher">Ultra, the teacher</li>
+  <li class="student">Nano, the student</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### The agents and what they pass on
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  Q["Question"] --> PL
-  subgraph Pinned["Pinned to the teacher: never stored, never trained on"]
-    PL["Planner: research-plan"]
-    WR["Writer: research-write"]
-  end
-  subgraph Tool["A tool, not a model"]
-    SE["Searcher: Tavily or simulated"]
-  end
-  subgraph Dist["Distilled: student first, teacher when unsure"]
-    TR["Triage x up to 12: source-triage"]
-    RD["Reader x up to 6: page-read"]
-  end
-  PL -->|"3 queries"| SE
-  SE -->|"up to 12 results"| TR
-  TR -->|"relevant results"| RD
-  RD -->|"numbered facts"| WR
-  WR --> A["Answer with citations"]
+flowchart TB
+  Q(["A question"]) --> PL["Planner<br/>research-plan"]
+  PL -->|"3 queries"| SE["Searcher<br/>Tavily or simulated"]
+  SE -->|"up to 12 results"| TR["Triage, up to 12 calls<br/>source-triage"]
+  TR -->|"the relevant ones"| RD["Reader, up to 6 calls<br/>page-read"]
+  RD -->|"numbered facts"| WR["Writer<br/>research-write"]
+  WR --> A(["An answer with citations"])
+
+  class PL,WR teacher
+  class TR,RD student
+  class SE outline
 ```
 
-**Reading this diagram.** The three boxes are the three kinds of call. Only the bottom box is where Ratchet's student works, and it is where most calls are: up to 18 of up to 20 in a run. Each arrow is also a size: three queries become up to twelve results, then up to six facts, then one answer. Because the pinned box is the planner and writer only, the savings a run shows are honest about the part that cannot move.
+<figcaption>
+
+**Reading this diagram.** Orange calls are pinned to the teacher: never stored, never trained on. Blue calls are distilled: the student first, the teacher when it is unsure. The dashed box is a tool, not a model. Most calls are blue: up to 18 of up to 20 in a run. Each arrow is also a size: three queries become up to twelve results, then up to six facts, then one answer. Because only the planner and the writer are pinned, the savings a run shows are honest about the part that cannot move.
+
+<ul class="rt-key">
+  <li class="teacher">Pinned to the teacher</li>
+  <li class="student">Distilled to the student</li>
+  <li class="outline">A tool</li>
+</ul>
+
+</figcaption>
+</figure>
 
 In the gateway each agent call is `Ratchet.handle` in the same process. From outside, the [Scout CLI](#for-engineers) sends the same calls to `/v1/chat/completions` with an `X-Ratchet-Task` header, like any OpenAI client.
 
 ### Pinned and distilled calls, and why
 
+<Flow label="The five agents">
+  <FlowStep title="Planner" tone="rented" meta="research-plan">Writes 3 search queries. Pinned to the teacher.</FlowStep>
+  <FlowStep title="Searcher" meta="a tool">Tavily in live mode, simulated results in mock mode.</FlowStep>
+  <FlowStep title="Triage and reader" tone="owned" meta="source-triage, page-read">Up to 18 short labelling calls, distilled to the student.</FlowStep>
+  <FlowStep title="Writer" tone="rented" meta="research-write">2 to 4 sentences with citations. Pinned to the teacher.</FlowStep>
+</Flow>
+
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  A["Agent call with a task name"] --> P{"Pinned task?"}
-  P -->|"yes, planner and writer"| U["Ultra answers"]
-  U --> L["Logged with its cost, never stored"]
-  P -->|"no, triage and reader"| S["Student samples three times"]
-  S --> C{"Confident enough?"}
-  C -->|yes| SV["Student answer served"]
+flowchart TB
+  A(["An agent call<br/>with a task name"]) --> P{{"Pinned task?"}}
+  P -->|"yes: planner, writer"| U["Ultra answers"]
+  U --> L["Logged with its cost,<br/>never stored"]
+  P -->|"no: triage, reader"| S["The student samples<br/>three times"]
+  S --> C{{"Confident enough?"}}
+  C -->|yes| SV["The student's<br/>answer is served"]
   C -->|no| E["Ultra answers"]
-  E --> T["Stored as training data, with provenance"]
-  SV --> AU["A random few audited by Ultra"]
+  E --> T[("Stored as training data,<br/>with provenance")]
+  SV -.-> AU["A random few<br/>audited by Ultra"]
+
+  class P,C gate
+  class U,E,AU teacher
+  class S,SV student
+  class T store
 ```
 
-**Reading this diagram.** The first question decides everything: is the task pinned? A pinned call never touches the student and never reaches the training data. A distilled call is the normal cascade. Notice that both of the lower branches end with Ultra involved: either because the student was unsure, or because an audit checks it afterwards. That is how the student's quality stays measured.
+<figcaption>
 
-**Pinned** (`research-plan`, `research-write`): planning queries and writing an answer are open-ended. There are no label fields to compare, so the student and the teacher would almost never "agree", calibration would end up serving nothing, and every call would still pay for student samples. Training a 4B model on long free text would also dilute what it learns for the labelled tasks. So a pinned task goes straight to the teacher, with no student sample, audit or shadow. It is logged in the ledger like any other call, so the cost and the all-teacher baseline stay complete, but it is **never stored as a training example**. That is invariant 10. Only an operator's task spec can pin a task, never a request header.
+**Reading this diagram.** The first question decides everything: is the task pinned? A pinned call never touches the student and never reaches the training data. A distilled call is the normal cascade. Both lower branches end with Ultra involved: either because the student was unsure, or because an audit checks it afterwards (the dotted arrow). That is how the student's quality stays measured.
+
+</figcaption>
+</figure>
+
+**Pinned** (`research-plan`, `research-write`): planning queries and writing an answer are open-ended. There are no label fields to compare, so the student and the teacher would almost never "agree", calibration would end up serving nothing, and every call would still pay for student samples. Training a 4B model on long free text would also dilute what it learns for the labelled tasks. So a pinned task goes straight to the teacher, with no student sample, audit or shadow. It is logged in the ledger like any other call, so the cost and the all-teacher baseline stay complete, but it is **never stored as a training example**, a rule the code and its tests enforce. Only an operator's task spec can pin a task, never a request header.
 
 **Distilled** (`source-triage`, `page-read`): one short labelling call per search result and one per relevant page. Each run makes up to 18 of them, they repeat in shape from question to question, and their label fields can be compared exactly. That is where the student takes over. Before a trained student is live (the cold start), these calls go to the teacher too, and its answers become the training data.
 
@@ -164,7 +198,7 @@ The page puts a badge on every step. A student step from a Night School adapter 
 
 ### The budget guard
 
-Scout is the one public path on the demo that spends money, so live mode guards it. Invariant 11: every run, judge runs included, goes through `Guard.admit` before it starts and `Guard.add_spend` after it ends, also on failure. Live mode must never run without it.
+Scout is the one public path on the demo that spends money, so live mode guards it, and the code never lets it run without the guard: every run, judge runs included, goes through `Guard.admit` before it starts and `Guard.add_spend` after it ends, also on failure. Live mode must never run without it.
 
 - **A daily spend cap**: `RATCHET_SCOUT_DAILY_BUDGET_USD` (code default $3.00; the demo VM's `.env` sets $0.50, so the 48 days from Oct 29 to Dec 15 cost at most $24, plus runs in flight). Spend is the `cost_usd` of every step, audits and shadow calls included, so a run that fails halfway still counts what it spent.
 - **A daily run cap**: `RATCHET_SCOUT_MAX_RUNS_PER_DAY` (30), all visitors together. It also caps Tavily credits: about 3 searches a run.
@@ -174,25 +208,37 @@ Scout is the one public path on the demo that spends money, so live mode guards 
 - **An access code**: a judge sends `RATCHET_SCOUT_JUDGE_CODE` once, in the body of `POST /scout/judge`, never in a URL or header (access logs record both). The gateway keeps only its SHA-256 digest and a derived key, allows 10 attempts per IP per hour, and answers with a signed `ratchet_judge` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` in live mode, 7 days by default). Rotating the code ends every session. No refusal message hints that a code exists. The code goes in the submission's testing instructions only.
 - **Paced Tavily credits**: with `RATCHET_TAVILY_MONTHLY_CREDITS` set, every search reserves its credits first and settles them after the call. The public's allowance is spread evenly per UTC day until `RATCHET_TAVILY_PACE_UNTIL`, with a share held for judges. After Tavily answers 432 or 433 (plan or pay-as-you-go limit), searching pauses for an hour.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  A["Scout request in live mode"] --> J{"Valid judge cookie?"}
-  J -->|yes| JP{"P plus U below T?"}
-  J -->|no| PB{"P plus max 0, U minus J below T minus J?"}
-  JP -->|no| R1["Refused: day's budget used"]
-  PB -->|no| R2["Refused: public share used"]
-  JP -->|yes| H{"Under the IP hourly limit and run cap?"}
+flowchart TB
+  A(["A Scout request<br/>in live mode"]) --> J{{"Valid judge cookie?"}}
+  J -->|yes| JP{{"P + U below T?"}}
+  J -->|no| PB{{"P + max(0, U − J)<br/>below T − J?"}}
+  JP -->|yes| H{{"Under the IP limit<br/>and the run cap?"}}
   PB -->|yes| H
-  H -->|no| R3["Refused: 429"]
-  H -->|yes| CR{"Tavily credits available?"}
-  CR -->|no| NS["Run without search, labelled search unavailable"]
-  CR -->|yes| OK["Admit, write a scout_run row"]
+  H -->|yes| CR{{"Tavily credits left?"}}
+  CR -->|yes| OK["Admit, write a<br/>scout_run row"]
+  CR -->|no| NS["Run without search,<br/>labelled unavailable"]
   OK --> RUN["Run the agents"]
   NS --> RUN
-  RUN --> END["add_spend in a finally block, also on failure"]
+  RUN --> END(["add_spend in a finally<br/>block, also on failure"])
+  JP -->|no| R["Refused, nothing spent"]
+  PB -->|no| R
+  H -->|no| R
+
+  class J,JP,PB,H,CR gate
+  class R danger
+  class NS outline
+  class END ok
 ```
 
-**Reading this diagram.** T is the day's total, J the judges' reserve, P the public use so far and U the judge use so far. A visitor with the judge cookie is checked against the whole day, so the reserve is theirs. A public visitor is checked against what is left after the reserve, plus any reserve judges did not use. Credits are the last check, and failing it does not refuse the run: it only removes the search. Every admitted run ends in `add_spend`, even when it fails.
+<figcaption>
+
+**Reading this diagram.** T is the day's total, J the judges' reserve, P the public use so far and U the judge use so far. A visitor with the judge cookie is checked against the whole day, so the reserve is theirs. A public visitor is checked against what is left after the reserve, plus any reserve judges did not use. Credits are the last check, and failing it does not refuse the run: it only removes the search. A refusal starts nothing and spends nothing: it is an `error` event on the stream, or a 429 from `POST /scout/run`. Every admitted run ends in `add_spend`, even when it fails.
+
+</figcaption>
+</figure>
 
 A worked example (made-up round numbers, not a measurement): with a daily budget T of $0.50 and a reserve J of $0.10, the public can spend up to $0.40 before public runs are refused. If judges have used nothing, a judge can still start a run until the whole $0.50 is spent. If judges have used $0.15 (more than their reserve), the extra $0.05 counts against the public side, so public runs stop at $0.35.
 
@@ -224,6 +270,12 @@ A search that fails (any HTTP or transport error, such as a revoked key's 401 or
 
 These are **simulation** numbers (mock models), from the README and [TESTING.md](/reference/testing/#workloads-research-and-mixed). `python -m sim.simulate --workload research --days 8 --requests 1500` sends only Scout's triage and reader calls (the distilled ones), seed 7:
 
+<StatRow cols={3} label="The research simulation, seed 7">
+  <Stat value={92} suffix="%" count={false} label="student share on day 8" note="Simulation, mock models. Per-task calibration on, the default." tone="sim" />
+  <Stat value={81} suffix="%" count={false} label="saved on day 8" note="Simulation, mock models, against all-Ultra." tone="sim" />
+  <Stat value={62} suffix="%" count={false} label="saved over all 8 days" note="Simulation, mock models: $5.11 against $13.58 all-Ultra." tone="sim" />
+</StatRow>
+
 | Setting | Student share, day 8 | Saved on day 8 | Saved over all 8 days |
 |---|---|---|---|
 | Per-task calibration on (the default) | 92% | 81% | 62% ($5.11 vs $13.58 all-Ultra) |
@@ -231,8 +283,8 @@ These are **simulation** numbers (mock models), from the README and [TESTING.md]
 
 Across seeds 1, 2, 3, 7 and 11 with the default, the final student share ranged from 65% to 97% and the total savings from 19% to 65%, with the first version live between day 2 and day 6. Because these runs leave out the pinned calls, a full Scout run saves less than the triage-and-reader figure. With `RATCHET_MOCK_WARMUP_DAYS=4` the mock demo opens on a student that answers about 80 to 90% of a run's model calls: 14 to 18 of 17 to 20 calls per example question, 72 to 86% cheaper than all-Ultra (simulation, [SCOUT.md](/reference/scout/)).
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, live Scout (Tavily plus the real cascade on Token Factory) is written and tested offline but has not run against real accounts. The live Scout figures are still `[LIVE NUMBER]` placeholders.
+<Aside type="caution" title="No live Scout figures yet">
+Live Scout uses Tavily and the real cascade, with the teacher on Nebius Token Factory. No student runs on a Nebius GPU yet, so in live mode student calls go to the hosted, untuned Nano 30B and carry its badge. As of Oct 22, 2026 no measured live Scout figures are published: they stay `[LIVE NUMBER]` placeholders until a published run, and every number on this page is simulation.
 </Aside>
 
 ## For engineers
@@ -312,7 +364,11 @@ The ledger stores no question and no client IP for Scout runs: the spend rows ho
 
 ## Related
 
-- [For judges](/guides/for-judges/)
-- [The request journey](/guides/request-journey/)
-- [Security and safety](/guides/security/)
-- [Scout reference: agents, events and the guard](/reference/scout/)
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Ten minutes" tone="neutral" description="Where the demo is, what to try, and what is live and what is simulation." />
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="start" eyebrow="Each agent call" tone="neutral" description="What the cascade does with every triage, reader, planner and writer call." />
+  <PathCard title="Security and safety" href="/guides/security/" icon="shield" eyebrow="Who may call what" tone="neutral" description="Keys, spend limits and the rules the loop never breaks." />
+  <PathCard title="Scout reference" href="/reference/scout/" icon="search" eyebrow="Reference" tone="neutral" description="Agents, event objects and the budget guard in full." />
+</PathGrid>
+</FadeContent>

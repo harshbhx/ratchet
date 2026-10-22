@@ -3,10 +3,15 @@ title: Python API
 description: Embed Ratchet in a Python program without HTTP. Build the settings, ledger and providers, call Ratchet.handle, and tick the release gate yourself.
 ---
 
-import { Steps, Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>The Python API is the cascade the gateway runs, `Ratchet.handle`, called from your own Python code, so a batch job, a test or an agent in the same process can use the student and the teacher without an HTTP hop.</Summary>
 
@@ -32,7 +37,7 @@ The gateway in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/m
 
 3. **Make the providers.** The teacher is an `OpenAICompatProvider` on Token Factory with the teacher's timeouts and retries (`s.teacher_timeout()`, `s.teacher_retry()`). The student is an `OpenAICompatProvider` on your vLLM endpoint with the student's timeouts and **no retry**: on the request path the teacher is the student's retry.
 
-4. **Build `Ratchet` with a resolver for the student.** `Ratchet(s, ledger, teacher, resolver)`. The resolver is a function from a version (`ledger.Version`) to `(provider, model name)`. For vLLM with runtime LoRA the model name is the adapter's name, `v.adapter_uri`, so `lambda v: (student, v.adapter_uri)` is enough. The constructor installs the license registry, refuses a teacher that is not distillable (`licenses.require_distillable`, invariant 1), checks every setting it reads, and builds the off-path worker pool (`SideCar`) from `Settings.sidecar()`. A bad value raises here, before any request.
+4. **Build `Ratchet` with a resolver for the student.** `Ratchet(s, ledger, teacher, resolver)`. The resolver is a function from a version (`ledger.Version`) to `(provider, model name)`. For vLLM with runtime LoRA the model name is the adapter's name, `v.adapter_uri`, so `lambda v: (student, v.adapter_uri)` is enough. The constructor installs the license registry, refuses a teacher that is not distillable (`licenses.require_distillable`), checks every setting it reads, and builds the off-path worker pool (`SideCar`) from `Settings.sidecar()`. A bad value raises here, before any request.
 
 5. **Call `handle`.** `result = r.handle(messages, "ticket-triage")` runs the full cascade: task resolution, version pick (canary or live), three student samples, confidence against the threshold, escalation to the teacher, the random audit, the shadow, storage of valid teacher answers, and one ledger row. It returns a `Result`. On a teacher failure with nothing to stand in, it raises.
 
@@ -44,72 +49,100 @@ The gateway in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/m
 
 The objects and who owns what:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-    App["Your program"] --> R["Ratchet"]
-    App --> G["ReleaseGate"]
-    S["Settings"] --> R
-    R --> T["Teacher provider"]
-    R --> V["Student resolver"]
-    V --> St["Student provider"]
-    R --> SC["SideCar"]
-    R --> Reg["Task registry"]
-    R --> L["Ledger, SQLite"]
-    G --> L
-    N["Night School"] --> L
+flowchart TB
+  S["Settings"] --> R
+  App(["Your program"]) --> R["Ratchet"]
+  App --> G["ReleaseGate"]
+  R --> T["Teacher<br/>provider"]
+  R --> V["Student<br/>resolver"]
+  V --> St["Student<br/>provider"]
+  R --> SC["SideCar"]
+  R --> Reg["Task<br/>registry"]
+  R --> L[("Ledger<br/>SQLite")]
+  G --> L
+  L <--> N["Night School"]
+
+  class T teacher
+  class V,St student
+  class L store
 ```
 
-**Reading this diagram.** Your program owns two objects, `Ratchet` and `ReleaseGate`. `Ratchet` is built from the settings and holds the teacher, the student resolver, the off-path worker pool, the task registry and the ledger. The release gate and Night School never talk to `Ratchet` directly: they meet it in the ledger, which is why nothing breaks if the gate ticks in another process.
+<figcaption>
+
+**Reading this diagram.** Your program owns two objects, `Ratchet` and `ReleaseGate`. `Ratchet` is built from the settings and holds the teacher, the student resolver, the off-path worker pool (`SideCar`), the task registry and the ledger. The release gate and Night School never talk to `Ratchet` directly: they meet it in the ledger, which is why nothing breaks if the gate ticks in another process.
+
+</figcaption>
+</figure>
 
 One `handle` call, with the default inline checks (no `RequestMeta` passed):
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-    participant A as Your code
-    participant R as Ratchet
-    participant S as Student
-    participant T as Teacher
-    participant L as Ledger
-    A->>R: handle with messages and task
-    R->>L: read runtime flags
-    R->>R: resolve the task, pick a version
-    alt pinned, tool or unknown task
-        R->>T: teacher alone
-        T-->>R: answer, never stored
-    else no version yet
-        R->>T: cold start
-        T-->>R: answer
-        R->>L: store if valid
-    else a version serves
-        R->>S: 3 samples with logprobs
-        S-->>R: samples
-        R->>R: confidence against threshold
-        alt unsure or student failed
-            R->>T: escalate
-            T-->>R: answer
-            R->>L: store if valid
-        else confident
-            opt audit drawn
-                R->>T: same request, temperature 0
-                T-->>R: reference
-                R->>L: store if valid
-            end
-        end
+  participant A as Your code
+  participant R as Ratchet
+  participant Student as Student
+  participant Teacher as Teacher
+  participant Ledger as Ledger
+  A->>R: handle(messages,<br/>task)
+  R->>Ledger: read the flags
+  Note over R: resolve the task,<br/>pick a version
+  alt pinned, tool or unknown task
+    R->>Teacher: the teacher alone
+    Teacher-->>R: answer, never stored
+  else no version yet
+    R->>Teacher: cold start
+    Teacher-->>R: answer
+    R->>Ledger: store, if valid
+  else a version serves
+    R->>Student: 3 samples
+    Student-->>R: samples
+    Note over R: confidence<br/>vs threshold
+    alt unsure, or the student failed
+      R->>Teacher: escalate
+      Teacher-->>R: answer
+      R->>Ledger: store, if valid
+    else confident
+      opt audit drawn
+        R->>Teacher: temperature 0
+        Teacher-->>R: reference
+        R->>Ledger: store, if valid
+      end
     end
-    R->>L: log one request row
-    R-->>A: Result
-    A->>A: gate.tick
+  end
+  R->>Ledger: one request row
+  R-->>A: Result
+  Note over A: gate.tick()
 ```
+
+<figcaption>
 
 **Reading this diagram.** Time runs downward. Before the student is asked, the call decides who may answer: a pinned, tool or unknown task goes to the teacher alone and is never stored, and a task with no trained version yet is a cold start. When a version serves, the student samples three times and the confidence score decides: unsure answers escalate to the teacher, confident ones are served, and a random share of those are audited by the teacher. One row is logged either way, and your code ticks the gate afterwards.
 
+<ul class="rt-key">
+  <li class="student">The student</li>
+  <li class="teacher">The teacher</li>
+</ul>
+
+</figcaption>
+</figure>
+
 The [request journey](/guides/request-journey/) walks through the same cascade from the HTTP side, and [escalation and audits](/guides/escalation-and-audits/) covers what happens on each branch.
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, live mode (the Token Factory teacher, the vLLM student endpoint, the training job) is written and tested offline with fake HTTP transports, but it has not run against a real Nebius account. The live example below follows the gateway's own wiring; the mock example further down is the one verified to run.
+<Aside type="caution" title="Live mode is unverified">
+As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but the vLLM student endpoint and the training job have not run on a Nebius GPU, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
 </Aside>
 
 ## For engineers
+
+<StatRow cols={2} label="Embedded or over HTTP">
+  <Stat value="Embedded" label="your own trusted Python code" note="A batch job, a test, a notebook, a simulation or an agent in the same process. No HTTP hop, and the whole Result object." />
+  <Stat value="Over HTTP" label="other services, languages or people" note="API keys, quotas, streaming and any OpenAI SDK unchanged. Put the gateway in front of anything untrusted." />
+</StatRow>
 
 ### What to import
 
@@ -311,7 +344,7 @@ Storage rules apply to every caller whether or not you pass a `RequestMeta`: `RA
 | `spend.BudgetExceeded` | With `RequestMeta(student_only=True)`, a request that needs the teacher |
 | `ValueError`, `licenses.LicenseError` | From the constructor: a bad setting, or a teacher that is not distillable |
 
-A student failure never raises: it is counted, and the teacher answers instead (routes `student_error` or `student_breaker`, invariant 7). A failed audit, shadow sample or arbitration never fails the request either. The gateway maps `UpstreamError` to its HTTP error codes; see [errors](/reference/api/#errors) in the HTTP guide.
+A student failure never raises: it is counted, and the teacher answers instead (routes `student_error` or `student_breaker`). A failed audit, shadow sample or arbitration never fails the request either. The gateway maps `UpstreamError` to its HTTP error codes; see [errors](/reference/api/#errors) in the HTTP guide.
 
 ### Tasks
 
@@ -411,11 +444,11 @@ Yes. Scout's triage and reader agents call `Ratchet.handle` from a pool of 6 thr
 
 ### Can two processes share one ledger file?
 
-Run one serving process per ledger: one gateway, or one embedded program, never both on the same `RATCHET_DB`. The nightly job, the cron tick and the admin CLI may open the same file from other processes; the ledger's caches see their commits. A second serving process is not guarded against yet (the single-writer lease, NFR-60, is planned): it would double every in-memory limit, and each process would keep its own breakers. Inside a process that already runs the gateway, use its `Ratchet` as Scout does instead of opening a second `Ledger` on the file. See [two gateway processes on one ledger](/reference/runbook/#two-gateway-processes-on-one-ledger).
+Run one serving process per ledger: one gateway, or one embedded program, never both on the same `RATCHET_DB`. The nightly job, the cron tick and the admin CLI may open the same file from other processes; the ledger's caches see their commits. A second serving process is not guarded against yet (a single-writer lease is planned): it would double every in-memory limit, and each process would keep its own breakers. Inside a process that already runs the gateway, use its `Ratchet` as Scout does instead of opening a second `Ledger` on the file. See [two gateway processes on one ledger](/reference/runbook/#two-gateway-processes-on-one-ledger).
 
 ### What do I lose compared with the gateway?
 
-Everything that lives in the HTTP layer of `ratchet/gateway.py`: API keys and per-key task scopes, daily quotas and spend budgets, rate limits and in-flight caps, idempotency keys, streaming, body limits, OpenAI request validation and the error envelope, the `ratchet` response block and headers, end-user hashing from `user` and `safety_identifier`, the throttled gate tick, the adapter reloader, the hourly retention purge, `/ratchet/stats` and the dashboard, and Scout's budget guard. What stays is everything in the router: licenses (invariant 1), redaction before storage, storage opt-outs, pinned tasks, the unknown-task policy, breakers, the fallback teacher, parameter allowlists, structured outputs, cost accounting and the ledger row. The full HTTP surface is in the [HTTP API guide](/reference/api/) and the generated [OpenAPI reference](/api/http/).
+Everything that lives in the HTTP layer of `ratchet/gateway.py`: API keys and per-key task scopes, daily quotas and spend budgets, rate limits and in-flight caps, idempotency keys, streaming, body limits, OpenAI request validation and the error envelope, the `ratchet` response block and headers, end-user hashing from `user` and `safety_identifier`, the throttled gate tick, the adapter reloader, the hourly retention purge, `/ratchet/stats` and the dashboard, and Scout's budget guard. What stays is everything in the router: licenses, redaction before storage, storage opt-outs, pinned tasks, the unknown-task policy, breakers, the fallback teacher, parameter allowlists, structured outputs, cost accounting and the ledger row. The full HTTP surface is in the [HTTP API guide](/reference/api/) and the generated [OpenAPI reference](/api/http/).
 
 ### How do I run Night School from Python?
 
@@ -431,11 +464,13 @@ The same as over HTTP: the answer is served. A random audit (5% of student answe
 
 ## Related
 
-<CardGrid>
-  <LinkCard title="HTTP API guide" href="/reference/api/" description="Every endpoint, field, header and error of the gateway." />
-  <LinkCard title="OpenAPI reference" href="/api/http/" description="The generated reference for every HTTP route." />
-  <LinkCard title="Command line" href="/api/cli/" description="python -m ratchet.live night, tick, reload and the other tools." />
-  <LinkCard title="Environment variables" href="/api/environment/" description="Every setting Settings reads, with its default." />
-  <LinkCard title="One request's journey" href="/guides/request-journey/" description="The same cascade, seen from the HTTP side." />
-  <LinkCard title="Scout" href="/guides/scout/" description="The research agents that call handle in-process." />
-</CardGrid>
+<FadeContent distance={16}>
+<PathGrid cols={3} label="Related pages">
+  <PathCard title="HTTP API guide" href="/reference/api/" icon="book" eyebrow="Reference" tone="neutral" description="Every endpoint, field, header and error of the gateway." />
+  <PathCard title="OpenAPI reference" href="/api/http/" icon="code" eyebrow="Generated" tone="neutral" description="The generated reference for every HTTP route." />
+  <PathCard title="Command line" href="/api/cli/" icon="code" eyebrow="Generated" tone="neutral" description="python -m ratchet.live night, tick, reload and the other tools." />
+  <PathCard title="Environment variables" href="/api/environment/" icon="layers" eyebrow="Generated" tone="neutral" description="Every setting Settings reads, with its default." />
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="start" eyebrow="Over HTTP" tone="neutral" description="The same cascade, seen from the HTTP side." />
+  <PathCard title="Scout" href="/guides/scout/" icon="search" eyebrow="Embedded" description="The research agents that call handle in-process." />
+</PathGrid>
+</FadeContent>

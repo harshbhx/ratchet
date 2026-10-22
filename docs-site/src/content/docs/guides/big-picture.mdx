@@ -3,12 +3,20 @@ title: The big picture
 description: Every Ratchet component, where it runs, how the pieces connect, mock mode against live mode, and the three loops that run at different speeds.
 ---
 
-import { Steps, Aside, FileTree, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import Flow from '../../../components/Flow.astro';
+import FlowStep from '../../../components/FlowStep.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
+import GradientText from '../../../components/ui/GradientText.astro';
 
-<Summary>Ratchet is one small gateway process with one SQLite ledger, plus a few Nebius services it calls: Token Factory for the teacher, a GPU endpoint for the student, a nightly training job and a storage bucket that carries data and adapters between them.</Summary>
+<Summary>Ratchet is <GradientText text="one small gateway process with one SQLite ledger" tone="owned" />, plus a few Nebius services it calls: Token Factory for the teacher, a GPU endpoint for the student, a nightly training job and a storage bucket that carries data and adapters between them.</Summary>
 
 <Eli10>
 
@@ -26,6 +34,12 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 </Eli10>
 
+<StatRow cols={3} label="The big picture at a glance">
+  <Stat value="One process" label="the gateway, with no GPU" note="It routes, scores and logs. A 2 vCPU, 8 GB VM is enough, because it never runs a model." />
+  <Stat value="One file" label="the SQLite ledger" note="Request metadata, stored teacher answers with their licenses, versions and the release log." />
+  <Stat value="Three loops" label="at three speeds" note="One for every request, one every few seconds to minutes, and one once a night." />
+</StatRow>
+
 ## How it really works
 
 <figure class="rt-diagram">
@@ -39,17 +53,17 @@ flowchart TB
     router["Cascade<br/>Ratchet.handle"] --> ledger[("SQLite ledger")]
     ledger <--> gate{{"Release gate"}}
   end
-  subgraph tf["Token Factory · per token"]
+  subgraph tf["Token Factory, per token"]
     direction TB
     teacher["Nemotron 3 Ultra<br/>teacher"]
-    teacher ~~~ others["Super: judge<br/>Nano 30B: fallback"]
+    teacher ~~~ others["Judge: Super<br/>Fallback: Nano<br/>30B, untuned"]
   end
   subgraph ep["Serverless Endpoint"]
-    student["Nano 4B + LoRA<br/>adapter, on vLLM"]
+    student["Nano 4B + LoRA<br/>on vLLM"]
   end
   subgraph ns["Night School"]
     direction TB
-    night["ratchet.live night<br/>cron, gateway host"] --> job["Serverless Job<br/>LoRA training"]
+    night["ratchet.live night<br/>cron, on the host"] --> job["Serverless Job<br/>LoRA training"]
   end
   bucket[("Object Storage<br/>bucket at /data")]
   gw ==>|"escalate, audit"| tf
@@ -86,6 +100,13 @@ flowchart TB
 
 ### The components
 
+<Flow label="One request">
+  <FlowStep title="Your app" meta="any OpenAI SDK">Sends a chat request with a task name.</FlowStep>
+  <FlowStep title="Gateway and cascade" meta="one process">Admission checks, then the student first.</FlowStep>
+  <FlowStep title="Student" tone="owned" meta="Nano 4B + LoRA">Answers when it is confident.</FlowStep>
+  <FlowStep title="Teacher" tone="rented" meta="Ultra on Token Factory">Answers the rest.</FlowStep>
+</Flow>
+
 | Component | What it does | Where it runs | Code |
 |---|---|---|---|
 | Your app | Sends OpenAI-style chat requests, with a task name | Anywhere | Any OpenAI SDK |
@@ -121,8 +142,8 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 
 </Steps>
 
-<Aside type="caution" title="Written, not yet run on Nebius">
-As of Oct 21, 2026, steps 2, 3 and 6 to 8 have run only against mock models and fake HTTP transports in the tests. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+<Aside type="caution" title="The GPU steps have not run on Nebius yet">
+As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but steps 2 and 6 to 8 (the student endpoint and the training job) have run only against mock models and fake HTTP transports in the tests: no student has been served from a Nebius GPU and no adapter trained in a Nebius job. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
 ### What a request leaves behind
@@ -153,7 +174,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** The left branch always happens: one request row with the route, cost, confidence and ids, never the prompt or the answer. The API key appears in it by name only, and an end user only as a keyed hash. The chain on the right decides whether any text is kept. A teacher answer exists after an escalation, a cold start, an audit or a shadow arbitration; the student's own answers are never stored. Pinned tasks, tool requests and other teacher-only requests are never stored (the one exception is an over-length request on a task that sets `store_ineligible`). Any storage opt-out stops it next: `store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`, a key with `store=0`, a no-store task, a no-train end user or zero retention. Then the answer must be complete and valid under the task's spec. Only then are the messages, the stored conditions and the answer redacted and written as a training example with the teacher's model id and license, in the golden or the train split. An erased example's hash is refused from then on.
+**Reading this diagram.** The short branch to the cylinder always happens: one request row with the route, cost, confidence and ids, never the prompt or the answer. The API key appears in it by name only, and an end user only as a keyed hash. The chain of checks down the middle decides whether any text is kept; each dashed box is a way out with nothing stored. A teacher answer exists after an escalation, a cold start, an audit or a shadow arbitration; the student's own answers are never stored. Pinned tasks, tool requests and other teacher-only requests are never stored (the one exception is an over-length request on a task that sets `store_ineligible`). Any storage opt-out stops it next: `store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`, a key with `store=0`, a no-store task, a no-train end user or zero retention. Then the answer must be complete and valid under the task's spec. Only then are the messages, the stored conditions and the answer redacted and written as a training example with the teacher's model id and license, in the golden or the train split. An erased example's hash is refused from then on.
 
 </figcaption>
 </figure>
@@ -238,7 +259,7 @@ flowchart TB
 
 Two more jobs run on the side: `python -m ratchet.live seal` seals the savings receipts of each ledger day that ended (hourly), and `deploy/vm/backup.sh` backs up the ledger (daily at 03:10 UTC). On the demo VM only the backup is switched on by default; the night, tick and seal lines in `/etc/cron.d/ratchet` are commented out until live mode works by hand.
 
-The loops share only the ledger. The gate reads what requests wrote, and Night School does not train while a version is in shadow or canary (invariant 5), so a release finishes or fails before the next candidate is trained.
+The loops share only the ledger. The gate reads what requests wrote, and Night School does not train while a version is in shadow or canary, so a release finishes or fails before the next candidate is trained.
 
 ## For engineers
 
@@ -310,17 +331,19 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 
 ### What does running it cost?
 
-Estimates only, from the repo docs. The demo VM: about $72.50 for Oct 29 to Dec 15, 2026, before live usage (prices as of Oct 20, 2026, [demo VM guide](/reference/deploy-nebius-vm/)). The student endpoint: about $37 per full day if left on, and a training run about $0.80 to $1.60 a night, at an assumed $1.55 per L40S hour ([deployment guide](/reference/deployment/); unverified list prices). See [Cost and savings](/guides/cost-and-savings/).
+Estimates only. The demo VM: about $72.50 for Oct 29 to Dec 15, 2026, before live usage (prices as of Oct 20, 2026, [demo VM guide](/reference/deploy-nebius-vm/)). The student endpoint: about $32 per full day if left on, and a training run about $0.70 to $1.35 a night, at about $1.35 per L40S GPU-hour ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; [deployment guide](/reference/deployment/#4-cost-estimates)). See [Cost and savings](/guides/cost-and-savings/).
 
 ### Has any of this run on Nebius?
 
-Not yet, as of Oct 21, 2026. The live paths are covered by offline tests with fake transports; the first real run follows the day-1 checks.
+The teacher has: it runs on Nebius Token Factory. The GPU side has not, as of Oct 22, 2026: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the text-to-SQL adapter was trained on a free Colab T4). Those paths are covered by offline tests with fake transports, and the first real run follows the day-1 checks.
 
 ## Related
 
-<CardGrid>
-  <LinkCard title="One request's journey" href="/guides/request-journey/" description="The request loop, step by step." />
-  <LinkCard title="Night School" href="/guides/night-school/" description="The nightly loop." />
-  <LinkCard title="The release gate" href="/guides/release-gate/" description="The tick loop." />
-  <LinkCard title="Host on Nebius" href="/guides/host-on-nebius/" description="Putting the pieces on real infrastructure." />
-</CardGrid>
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="start" eyebrow="Every request" tone="neutral" description="The request loop, step by step, from admission to the ledger row." />
+  <PathCard title="Night School" href="/guides/night-school/" icon="loop" eyebrow="Every night" description="The nightly loop that trains a fresh adapter you own." />
+  <PathCard title="The release gate" href="/guides/release-gate/" icon="gate" eyebrow="Every few minutes" tone="neutral" description="The tick loop: shadow, canary 10%, 50%, live, and rollback." />
+  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="Deploy" tone="neutral" description="Putting the pieces on real infrastructure, with costs." />
+</PathGrid>
+</FadeContent>

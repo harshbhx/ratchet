@@ -5,76 +5,79 @@ description: Every route of the Ratchet gateway in one place, with who may call 
 
 import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
 
 <Summary>The gateway serves about 80 routes; this page groups them by purpose, says which key each one needs, and shows the three calls most people make first.</Summary>
 
 The full schema of every route is in the generated [HTTP API reference](/api/http/). The long prose guide, with every field and error, is the [HTTP API guide](/reference/api/). This page is the map between them.
 
+<PathGrid cols={2} label="Route groups">
+  <PathCard title="OpenAI-compatible" href="#openai-compatible" icon="code" eyebrow="API key" description="Chat, completions, responses, embeddings and models: what your app calls." />
+  <PathCard title="Stats, evidence and cost" href="#stats-and-provenance" icon="chart" eyebrow="Dashboard key" tone="neutral" description="Stats, bills of materials, certificates, cost, replay and receipts." />
+  <PathCard title="Admin and tasks" href="#admin" icon="key" eyebrow="Admin key" tone="neutral" description="Versions, switches, task pins, erasure and the task registry, with an audit trail." />
+  <PathCard title="Scout and pages" href="#scout" icon="search" eyebrow="Public" tone="neutral" description="The research demo behind its budget guard, and the web pages." />
+</PathGrid>
+
 ## The routes by purpose
+
+<figure class="rt-diagram">
 
 ```mermaid
 flowchart LR
-    app([Your app]) --> A
-    ops([Operator]) --> D
-    watch([Dashboard and monitors]) --> C
-    subgraph A[Serve]
-        A1["/v1/chat/completions<br/>/v1/completions<br/>/v1/responses<br/>/v1/embeddings<br/>/v1/models"]
-        A2["/v1/ratchet/feedback<br/>/v1/ratchet/no-train<br/>/v1/ratchet/examples"]
-    end
-    subgraph B[Prove]
-        B1["/ratchet/bom<br/>/ratchet/versions/id/bom<br/>/ratchet/versions/id/certificate<br/>/ratchet/versions/id/proof<br/>/ratchet/receipts"]
-    end
-    subgraph C[Observe]
-        C1["/ratchet/stats<br/>/ratchet/kpis<br/>/ratchet/cost<br/>/ratchet/drift<br/>/ratchet/teacher<br/>/ratchet/replay<br/>/metrics"]
-        C2["/healthz<br/>/livez<br/>/readyz"]
-    end
-    subgraph D[Operate]
-        D1["/ratchet/admin/*<br/>/ratchet/tasks<br/>/ratchet/cost/endpoint<br/>/ratchet/teacher/ack"]
-    end
-    subgraph E[Demo]
-        E1["pages: / /dashboard /scout<br/>/scout/*<br/>/ratchet/demo/* (mock only)"]
-    end
-    app --> B
-    watch --> B
-    classDef serve fill:#dbeafe,stroke:#2563eb,color:#111
-    classDef rest fill:#fef3c7,stroke:#d97706,color:#111
-    class A1,A2 serve
-    class B1,C1,C2,D1,E1 rest
+  app(["Your app"])
+  watch(["Dashboard,<br/>monitors, auditors"])
+  ops(["Operator"])
+  web(["Browsers"])
+  S["<b>Serve</b><br/>/v1/chat/completions<br/>/v1/completions, /v1/responses<br/>/v1/embeddings, /v1/models<br/>/v1/ratchet/feedback, no-train,<br/>examples"]
+  P["<b>Prove</b><br/>/ratchet/bom<br/>/ratchet/versions/id/bom,<br/>certificate, proof<br/>/ratchet/receipts"]
+  O["<b>Observe</b><br/>/ratchet/stats, kpis, cost<br/>/ratchet/drift, teacher, replay<br/>/metrics, /healthz, /readyz"]
+  D["<b>Operate</b><br/>/ratchet/admin/*<br/>/ratchet/tasks<br/>/ratchet/cost/endpoint<br/>/ratchet/teacher/ack"]
+  E["<b>Demo</b><br/>pages: / /dashboard /scout<br/>/scout/*<br/>/ratchet/demo/*, mock only"]
+  app --> S
+  app --> P
+  watch --> O
+  watch --> P
+  ops --> D
+  web --> E
+
+  class S student
+  class D gate
+  class E outline
 ```
 
-**Reading this diagram.** Read it from the left. Your application only needs the first group, Serve: the OpenAI-shaped routes and the three Ratchet routes for feedback, no-train registrations and erasing its own examples. Prove holds the signed evidence: bills of materials, certificates, proofs and savings receipts. Observe is what the dashboard and your monitors read. Operate is for the person running the gateway: versions, switches, task pins and the task registry. Demo is the pages and the mock-only buttons, which answer 404 in live mode.
+<figcaption>
+
+**Reading this diagram.** Read it from the left, from who calls to what they call. Your application only needs the first group, Serve: the OpenAI-shaped routes and the three Ratchet routes for feedback, no-train registrations and erasing its own examples. Prove holds the signed evidence: bills of materials, certificates, proofs and savings receipts. Observe is what the dashboard and your monitors read. Operate is for the person running the gateway: versions, switches, task pins and the task registry. Demo is the pages and the mock-only buttons, which answer 403 in live mode.
+
+</figcaption>
+</figure>
 
 ## Who may call a route
 
 Every route has one access level. A key goes in `Authorization: Bearer <key>` or in `X-API-Key: <key>`.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-    req[A request arrives] --> lvl{What is the route's level?}
-    lvl -->|public| ok1[Anyone may call it]
-    lvl -->|api| k1{API keys configured?}
-    k1 -->|no| ok2[Anyone may call it]
-    k1 -->|yes| k2{Valid API key?}
-    k2 -->|yes| ok3[Allowed]
-    k2 -->|no| e1[401 invalid_api_key]
-    lvl -->|dashboard, bom, metrics| d1{Public dashboard?}
-    d1 -->|yes, the mock default| ok4[Allowed, scrubbed for anonymous readers]
-    d1 -->|no, the live default| d2{Admin or dashboard key?}
-    d2 -->|yes| ok5[Allowed, full payload]
-    d2 -->|no| e2[401 or 403]
-    lvl -->|admin| a1{Admin key?}
-    a1 -->|yes| ok6[Allowed, with an audit trail]
-    a1 -->|no| e3[401 or 403]
-    lvl -->|mock| m1{Mock mode?}
-    m1 -->|yes| ok7[Allowed]
-    m1 -->|no| e4[403]
-    classDef good fill:#dcfce7,stroke:#16a34a,color:#111
-    classDef bad fill:#fee2e2,stroke:#dc2626,color:#111
-    class ok1,ok2,ok3,ok4,ok5,ok6,ok7 good
-    class e1,e2,e3,e4 bad
+flowchart LR
+  pub{{"public"}} --> r1(["Anyone"])
+  api{{"api"}} --> r2(["A valid API key, once<br/>RATCHET_API_KEYS is set"])
+  dash{{"dashboard, bom,<br/>metrics"}} --> r3(["Anyone on a public dashboard,<br/>else an admin or dashboard key"])
+  adm{{"admin"}} --> r4(["An admin key,<br/>with an audit trail"])
+  mock{{"mock"}} --> r5(["Mock mode only,<br/>403 in live mode"])
+
+  class pub,api,dash,adm,mock gate
+  class r1 ok
+  class r5 outline
 ```
 
-**Reading this diagram.** Start at the top and follow the route's level. Public routes never ask for a key. API routes ask for a key only when `RATCHET_API_KEYS` is set. The read-only management routes (dashboard, bill of materials, metrics) are open on a public dashboard, which is the default in mock mode; in live mode they need an admin or dashboard key, and a gateway with neither configured refuses them. Admin routes always need an admin key in live mode. A route nobody has classified counts as dashboard level, so a new route starts private. On a public dashboard, a reader without a key still gets an answer, with client names replaced by pseudonyms.
+<figcaption>
+
+**Reading this diagram.** Each row is one access level, on the left, and who may call a route at that level, on the right. Public routes never ask for a key. API routes ask for a key only when `RATCHET_API_KEYS` is set. The read-only management routes (dashboard, bill of materials, metrics) are open on a public dashboard, which is the default in mock mode; in live mode they need an admin or dashboard key, and a gateway with neither configured refuses them. Admin routes always need an admin key in live mode. A route nobody has classified counts as dashboard level, so a new route starts private. On a public dashboard, a reader without a key still gets an answer, with client names replaced by pseudonyms. A missing or wrong key is a 401 or 403; on `/v1/*` a missing API key is a 401 `invalid_api_key`.
+
+</figcaption>
+</figure>
 
 <Aside type="note">
 The bill of materials routes also open to anyone with `RATCHET_PUBLIC_BOM=1`, so auditors can read provenance from a private gateway. The metrics route also accepts `RATCHET_METRICS_TOKEN`, so a scraper needs no dashboard key. Savings receipts are API-level: a key reads its own, an admin key reads all.
@@ -327,59 +330,75 @@ The body of that response:
 
 `error` has OpenAI's four fields. `detail` repeats the message for older clients. Routes outside `/v1` answer `{"detail": ...}` and put the id in `x-request-id`.
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-    participant C as Your app
-    participant G as Gateway
-    participant S as Student
-    participant T as Teacher
-    participant L as Ledger
-    C->>G: POST /v1/chat/completions (X-Ratchet-Task)
-    alt the request breaks a rule
-        G-->>C: 400 error envelope, x-request-id
-    else the student is sure
-        G->>S: three samples
-        S-->>G: answers with confidence
-        G-->>C: 200, ratchet.request_id, served_by student
-    else the student is unsure
-        G->>T: escalate
-        T-->>G: answer
-        G->>L: store the answer if valid
-        G-->>C: 200, ratchet.request_id, served_by teacher
-    end
-    C->>G: POST /v1/ratchet/feedback (request_id, verdict)
-    G->>L: record the verdict
-    G-->>C: 200 ratchet.feedback
-    Note over G,L: a correction becomes a human-labelled example
+  participant C as Your app
+  participant G as Gateway
+  participant Student as Student
+  participant Teacher as Teacher
+  participant Ledger as Ledger
+  C->>G: POST /v1/chat/<br/>completions
+  alt the request breaks a rule
+    G-->>C: 400 envelope,<br/>x-request-id
+  else the student is sure
+    G->>Student: three samples
+    Student-->>G: answers
+    G-->>C: 200, request_id,<br/>served_by student
+  else the student is unsure
+    G->>Teacher: escalate
+    Teacher-->>G: answer
+    G->>Ledger: store it, if valid
+    G-->>C: 200, request_id,<br/>served_by teacher
+  end
+  C->>G: POST feedback:<br/>request_id, verdict
+  G->>Ledger: record the verdict
+  G-->>C: 200 ratchet.feedback
+  Note over G,Ledger: a correction becomes<br/>a human-labelled example
 ```
 
-**Reading this diagram.** A request is checked first, and a broken rule is a 400 in OpenAI's envelope before anything is spent. Otherwise the student answers when it is sure, and the teacher answers and has its answer stored when it is not. Either way the response names the request in `ratchet.request_id`. Feedback comes later, as a separate call that quotes that id. The verdict is recorded in the ledger. It never promotes or rolls back a version; it is reported as human precision.
+<figcaption>
+
+**Reading this diagram.** A request is checked first, and a broken rule is a 400 in OpenAI's envelope before anything is spent. Otherwise the student answers when it is sure, and the teacher answers and has its answer stored when it is not. Either way the response names the request in `ratchet.request_id`. Feedback comes later, as a separate call to `/v1/ratchet/feedback` that quotes that id. The verdict is recorded in the ledger. It never promotes or rolls back a version; it is reported as human precision.
+
+</figcaption>
+</figure>
 
 ## Where the reference pages come from
 
 The generated pages are not typed by hand, so they cannot drift from the code.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-    code["Gateway code<br/>ratchet/gateway.py"] -->|"app.openapi(), mock mode"| script["export-reference.py"]
-    cfg["ratchet/config.py<br/>KNOWN_ENV, DEPLOY_ENV"] --> script
-    cli["Each python -m tool<br/>run with --help"] --> script
-    mk["Makefile targets"] --> script
-    script --> o["openapi/ratchet.json"]
-    script --> e["generated/env.json"]
-    script --> c["generated/cli.json"]
-    o --> h["HTTP API (generated) pages"]
-    e --> ep["Environment variables page"]
-    c --> cp["Command line page"]
-    hand["Hand-written endpoint map<br/>and guides"] --> site(["Docs site"])
-    h --> site
-    ep --> site
-    cp --> site
-    classDef gen fill:#dbeafe,stroke:#2563eb,color:#111
-    class o,e,c,h,ep,cp gen
+flowchart TB
+  code["gateway.py<br/>app.openapi()"] --> script
+  cfg["config.py<br/>KNOWN_ENV"] --> script
+  cli["each tool's<br/>--help"] --> script
+  mk["Makefile<br/>targets"] --> script
+  script["export-reference.py"] --> o[("openapi/<br/>ratchet.json")]
+  script --> e[("generated/<br/>env.json")]
+  script --> c[("generated/<br/>cli.json")]
+  o --> h["HTTP API<br/>pages"]
+  e --> ep["Environment<br/>variables page"]
+  c --> cp["Command<br/>line page"]
+  h --> site(["Docs site"])
+  ep --> site
+  cp --> site
+  hand["Endpoint map<br/>and guides,<br/>by hand"] --> site
+
+  class script gate
+  class o,e,c store
+  class hand outline
 ```
 
-**Reading this diagram.** The script on the left imports the gateway in mock mode, reads the settings registry, runs every command line tool with `--help` and reads the Makefile. It writes three committed data files. The site turns those files into the HTTP reference, the environment variable page and the command line page. This page and the guides are written by hand and link to the generated pages. After you change a route, a setting or a command, run `python docs-site/scripts/export-reference.py` and commit the result.
+<figcaption>
+
+**Reading this diagram.** The script at the top imports the gateway in mock mode, reads the settings registry, runs every command line tool with `--help` and reads the Makefile. It writes three committed data files. The site turns those files into the HTTP reference, the environment variable page and the command line page. This page and the guides are written by hand and link to the generated pages. After you change a route, a setting or a command, run `python docs-site/scripts/export-reference.py` and commit the result.
+
+</figcaption>
+</figure>
 
 ## Next steps
 

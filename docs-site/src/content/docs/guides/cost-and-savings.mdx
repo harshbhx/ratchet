@@ -3,10 +3,15 @@ title: Cost and savings
 description: How Ratchet prices each request, counts the GPU-hours you actually pay for, and says plainly when self-hosting the student does not pay.
 ---
 
-import { Steps, Tabs, TabItem, Card, CardGrid, LinkCard, Aside, Badge, FileTree } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>Ratchet prices every request twice, per token and by the GPU-hours actually paid, works out the traffic at which a self-hosted student endpoint breaks even, and tells you when it does not.</Summary>
 
@@ -16,11 +21,16 @@ Every dish the head chef from the agency cooks shows up on the bill. When the ap
 
 But the apprentice needs a kitchen station, and the station is rented by the hour. You pay for it while it is open, whether orders come in or not.
 
-So the real question is not "is the apprentice cheaper per dish?" It is "does the apprentice cook enough dishes each hour to pay the station's rent?" Say the station costs $1.55 an hour and each dish the apprentice cooks saves about a tenth of a cent of head-chef fees. Then the apprentice has to cook about 1,500 dishes every hour just to break even.
+So the real question is not "is the apprentice cheaper per dish?" It is "does the apprentice cook enough dishes each hour to pay the station's rent?" Say the station costs $1.35 an hour and each dish the apprentice cooks saves about a tenth of a cent of head-chef fees. Then the apprentice has to cook about 1,350 dishes every hour just to break even.
 
 On a quiet day that never happens. Then it is cheaper to close the station and let the agency's cheaper, untrained cook take the easy orders, paid per dish. Ratchet writes this on the receipt in plain words, even when the answer is "you are losing money".
 
 </Eli10>
+
+<StatRow cols={2} label="Two ways to count the same traffic">
+  <Stat value="Per token" label="the default headline" note="The student priced like the hosted Nano: $0.06 in, $0.24 out per 1M tokens. Cheap per answer, but it ignores an idle GPU." />
+  <Stat value="By GPU-hours paid" label="what you would pay" note="Teacher spend plus every hour the endpoint and the training jobs ran, busy or idle. It can be negative." />
+</StatRow>
 
 ## How it really works
 
@@ -40,18 +50,30 @@ On a quiet day that never happens. Then it is cheaper to close the station and l
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  R["One request"] --> S["Student samples, live and shadow"]
-  R --> T["Teacher calls: escalation, audit, arbitration, pinned"]
+flowchart TB
+  R(["One request"]) --> S["Student samples<br/>live and shadow"]
+  R --> T["Teacher calls: escalation,<br/>audit, arbitration, pinned"]
+  R --> B["All-teacher baseline"]
   S --> SC["student_cost_usd"]
   T --> TC["teacher_cost_usd"]
   SC --> C["cost_usd"]
   TC --> C
-  R --> B["all-teacher baseline"]
-  B --> V["savings = baseline minus cost"]
+  B --> V(["savings =<br/>baseline − cost"])
   C --> V
+
+  class S,SC student
+  class T,TC teacher
 ```
+
+<figcaption>
+
+**Reading this diagram.** Every model call a request makes is priced and lands in one of two parts: the student's samples (for the live version and a shadow) or the teacher's calls. Their sum is the request's `cost_usd`. Next to it, the request records what the teacher alone would have cost, and the saving is the difference.
+
+</figcaption>
+</figure>
 
 The response's `usage` field is not this bill. It counts only the tokens of the answer the client received, as if that model had answered alone. `ratchet.cost_usd` prices every call Ratchet made, which `ratchet.usage_breakdown` lists.
 
@@ -64,22 +86,34 @@ The two views answer different questions.
 | Per token (`per_token`, the default headline) | Σ `cost_usd` | The student costs what the hosted Nano costs per token ($0.06 in, $0.24 out per 1M). Cheap per answer, but it ignores an idle GPU |
 | By GPU-hours (`gpu_hours`) | teacher spend + endpoint GPU cost + training GPU cost + student per-token spend in hours with no recorded uptime | You pay for every hour the endpoint and the training jobs ran, busy or idle |
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph PT["Per token view"]
-    P1["Each student answer priced<br/>at the hosted Nano token price"] --> P2["Sum of cost_usd"]
+    direction LR
+    P1["Each student answer<br/>at the hosted Nano's<br/>token price"] --> P2["Sum of<br/>cost_usd"]
+    P2 --> SAV1(["baseline − total"])
   end
   subgraph GH["GPU-hours view"]
+    direction LR
     G1["Teacher spend"] --> G5["Total paid"]
-    G2["Endpoint hours x GPU rate<br/>busy or idle"] --> G5
-    G3["Training hours x GPU rate"] --> G5
+    G2["Endpoint and training<br/>hours × rate, busy or idle"] --> G5
     G4["Student tokens in hours<br/>with no recorded uptime"] --> G5
+    G5 --> SAV2(["baseline − total<br/>can be negative"])
   end
-  P2 --> SAV1["Savings = all-teacher baseline minus total"]
-  G5 --> SAV2["Savings = all-teacher baseline minus total<br/>can be negative"]
+  PT ~~~ GH
+
+  class G2 student
+  class G1 teacher
 ```
 
+<figcaption>
+
 **Reading this diagram.** Both views start from the same baseline, what an all-teacher run would have cost, and subtract what you actually pay. They differ in what counts as paid. The per-token view charges only for tokens, so an idle GPU costs nothing in it. The GPU-hours view charges for every hour the endpoint and the training jobs ran, so at low traffic the same requests can show a saving in one view and a loss in the other. Neither is clamped to zero.
+
+</figcaption>
+</figure>
 
 `RATCHET_STUDENT_COST_MODEL` picks which one is the report's `headline`. It changes nothing else: both views are always in the report, and each request's `cost_usd` stays per token, so history never moves.
 
@@ -98,27 +132,44 @@ Nebius words the billing like this: a stopped endpoint is not billed for compute
 
 ### Break-even, first in one line
 
-Here is the kid version again, with the real numbers from the docs. The endpoint costs about $1.55 an hour (an unverified L40S list price). In the simulation, each ticket-triage answer the student serves avoids about $0.001 of Ultra spend. So:
+Here is the kid version again, with the numbers the docs use. The endpoint costs about $1.35 per GPU-hour (an L40S on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate until your bill confirms it). In the simulation, each ticket-triage answer the student serves avoids about $0.001 of Ultra spend. So:
 
 ```text
 break-even student answers per endpoint hour = GPU price per hour ÷ teacher spend avoided per student answer
-                                             ≈ $1.55 ÷ $0.001 ≈ 1,550
+                                             ≈ $1.35 ÷ $0.001 ≈ 1,350
 ```
 
-The README rounds that to **about 1,500 student answers an hour, roughly 36,000 a day**. The reference simulation's exact figure is 1,575. Below that line, a 24/7 endpoint costs more than the teacher spend it saves.
+<StatRow cols={3} label="Break-even, estimated">
+  <Stat value="$1.35" label="per GPU-hour" note="An L40S on demand, Nebius's pricing page, read Oct 22, 2026. An estimate until a bill confirms it." />
+  <Stat value="$0.001" label="avoided per student answer" note="Ultra spend a ticket-triage answer avoids, from the reference simulation." tone="sim" />
+  <Stat value="≈ 1,350" label="answers per endpoint hour" note="About 32,000 a day. Below that, a 24/7 endpoint costs more than it saves. An estimate." tone="sim" />
+</StatRow>
+
+That is **about 1,350 student answers an hour, roughly 32,000 a day** (estimate). Below that line, a 24/7 endpoint costs more than the teacher spend it saves. The reference simulation prices its endpoint at the code's default of 1.55 USD per GPU-hour and reports a break-even of 1,575; at $1.35 the same run's break-even is about 1,370 (estimate, from the formula below).
+
+<figure class="rt-diagram">
 
 ```mermaid
-flowchart TD
-  R["GPU price per hour<br/>$1.55 assumed, or $1.35 per the Nebius pricing page"] --> BE["Break-even answers per hour<br/>= price per hour / avoided teacher spend per answer"]
-  S["Teacher spend avoided per student answer<br/>about $0.001 in the simulation"] --> BE
-  BE --> CMP{"Student answers actually served<br/>per endpoint hour"}
-  CMP -->|"at or above break-even"| WIN["The endpoint pays for its hours"]
-  CMP -->|"below break-even"| LOSE["The endpoint costs more than it saves"]
-  LOSE --> OPT["Use the hosted fallback,<br/>or run the endpoint only while traffic arrives"]
-  WIN --> UP["Keep it, and scale to zero when idle"]
+flowchart TB
+  R["GPU price per hour<br/>about $1.35, estimate"] --> BE["Break-even answers per hour<br/>= price per hour ÷ avoided<br/>teacher spend per answer"]
+  S["Teacher spend avoided<br/>per student answer<br/>about $0.001, simulation"] --> BE
+  BE --> CMP{{"Student answers served<br/>per endpoint hour"}}
+  CMP -->|"at or above<br/>break-even"| WIN["The endpoint pays<br/>for its hours"]
+  CMP -->|"below<br/>break-even"| LOSE["The endpoint costs<br/>more than it saves"]
+  LOSE --> OPT["Hosted fallback, or run<br/>the endpoint only<br/>while traffic arrives"]
+  WIN --> UP["Keep it, and scale<br/>to zero when idle"]
+
+  class CMP gate
+  class WIN ok
+  class LOSE danger
 ```
 
-**Reading this diagram.** The top two boxes are the only inputs: what an hour of GPU costs and how much teacher money one student answer avoids. Dividing one by the other gives the number of answers an hour the student must serve before the endpoint is worth its rent. Everything after that is a comparison with the traffic you really have. Because the price sits on top of the division, a cheaper GPU lowers the bar in proportion: at $1.35 the same arithmetic gives about 1,350 answers an hour. Both prices are estimates until a bill confirms them.
+<figcaption>
+
+**Reading this diagram.** The top two boxes are the only inputs: what an hour of GPU costs and how much teacher money one student answer avoids. Dividing one by the other gives the number of answers an hour the student must serve before the endpoint is worth its rent. Everything after that is a comparison with the traffic you really have. Because the price sits on top of the division, a cheaper GPU lowers the bar in proportion. Both inputs are estimates until a bill confirms them.
+
+</figcaption>
+</figure>
 
 ### Break-even, precisely
 
@@ -139,19 +190,32 @@ A bucket is an hour on a live ledger and a whole day on the simulator's syntheti
 
 `ratchet/cost.py` has exactly four outcomes (`RECOMMENDATIONS`), decided in this order:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  A{"Endpoint uptime recorded?"} -->|no| I1["insufficient_data"]
-  A -->|yes| B{"Observed at or above break-even and the crossover?"}
-  B -->|yes| SH["self_host"]
-  B -->|no| C{"Idle more than half its hours?"}
-  C -->|yes| SZ["scale_to_zero"]
-  C -->|no| D{"Has the student served anything?"}
-  D -->|no| I2["insufficient_data"]
-  D -->|yes| E{"Observed below the hosted crossover?"}
-  E -->|yes| HF["hosted_fallback"]
-  E -->|no| SZ2["scale_to_zero: run fewer hours"]
+flowchart TB
+  A{{"Endpoint uptime recorded?"}} -->|yes| B{{"At or above break-even<br/>and the crossover?"}}
+  B -->|no| C{{"Idle more than<br/>half its hours?"}}
+  C -->|no| D{{"Has the student<br/>served anything?"}}
+  D -->|yes| E{{"Below the hosted<br/>crossover?"}}
+  B -->|yes| SH(["self_host"])
+  E -->|yes| HF(["hosted_fallback"])
+  C -->|yes| SZ(["scale_to_zero"])
+  E -->|"no: run fewer hours"| SZ
+  A -->|no| I(["insufficient_data"])
+  D -->|no| I
+
+  class A,B,C,D,E gate
+  class SH ok
+  class I outline
 ```
+
+<figcaption>
+
+**Reading this diagram.** The checks run top to bottom in this order, and the first that settles it wins. Four answers are possible, and two of them can be reached in two ways: `insufficient_data` when nothing is recorded or the student has served nothing, and `scale_to_zero` when the endpoint is mostly idle or when neither it nor the hosted fallback pays at this volume. The table below says what to do for each.
+
+</figcaption>
+</figure>
 
 | Recommendation | Means | What to do |
 |---|---|---|
@@ -164,9 +228,9 @@ The explanation says two things separately so the words never contradict the fig
 
 ### The hosted-fallback crossover, and its caveat
 
-The hosted fallback is Nemotron 3 Nano 30B on Token Factory, untuned, paid per token. Answers it gives carry the <Who as="fallback" /> badge. With list prices and the simulation's token counts it costs about $0.00003 per answer, so a $1.55-an-hour endpoint beats it per answer only above roughly **52,000 student answers an hour**.
+The hosted fallback is Nemotron 3 Nano 30B on Token Factory, untuned, paid per token. Answers it gives carry the <Who as="fallback" /> badge. With list prices and the simulation's token counts it costs about $0.00003 per answer, so a $1.35-an-hour endpoint beats it per answer only above roughly **45,000 student answers an hour** ($1.35 ÷ $0.00003, an estimate; the reference simulation reports 51,528 at the code's default 1.55).
 
-That gives a middle band. Take a customer sending 10M requests a month, about 14,000 an hour. That is far above break-even: a GPU running all month costs about $1,100 at $1.55 an hour, against about $9,300 of avoided Ultra spend (simulation-based estimate). The GPU-hour savings are positive. The report still says `hosted_fallback`, worded "Self-hosting beats the teacher, but the hosted fallback would cost less per answer".
+That gives a middle band. Take a customer sending 10M requests a month, about 14,000 an hour. That is far above break-even: a GPU running all month costs about $990 at $1.35 an hour (730 hours), against about $9,300 of avoided Ultra spend (simulation-based estimate). The GPU-hour savings are positive. The report still says `hosted_fallback`, worded "Self-hosting beats the teacher, but the hosted fallback would cost less per answer".
 
 The caveat is printed with every `hosted_fallback` explanation (`CROSSOVER_CAVEAT`): the crossover assumes the hosted fallback serves as many requests as the tuned student. It is untuned, so more of its requests may go to the teacher, and each of those costs about $0.001 of Ultra. Ratchet does not measure the hosted model's coverage, because the two are never served side by side. Before switching, run a day on each and compare the student's share of requests in `/ratchet/stats`.
 
@@ -174,8 +238,8 @@ The caveat is printed with every `hosted_fallback` explanation (`CROSSOVER_CAVEA
 
 Plainly: **at low volume, a self-hosted student endpoint loses money.**
 
-- At the demo's 1,500 requests a day, a 24/7 endpoint runs at a small fraction of break-even. In the reference simulation (2,000 requests a day) it served about 66 student answers per hour it ran, against a break-even of 1,575.
-- Per token the same traffic looks like a 69% saving. By GPU-hours it is a loss of hundreds of dollars over ten days. Both numbers are true; only the second is what you would pay.
+- At the demo's 1,500 requests a day, a 24/7 endpoint runs at a small fraction of break-even. In the reference simulation (2,000 requests a day) it served about 66 student answers per hour it ran, against a break-even of 1,575 at the code's default rate (simulation).
+- Per token the same traffic looks like a 69% saving. By GPU-hours it is a loss of hundreds of dollars over ten days (simulation). Both numbers are true; only the second is what you would pay.
 - Below break-even the honest options are the hosted fallback (pay per token, no GPU running) or an endpoint that runs only while traffic arrives.
 - Above break-even, the levers are more traffic per GPU (several tasks or customers as LoRA adapters on one vLLM endpoint) and fewer idle hours.
 
@@ -183,7 +247,7 @@ Ratchet never promises savings below break-even, and the cost report says so in 
 
 ### Prices used
 
-Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/config.py`, Oct 2026, **unverified** until `scripts/day1_check.py` passes with a real key (invariant 9). Every report says "unverified list prices" until an operator sets `RATCHET_PRICES_VERIFIED=1`.
+Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/config.py`, Oct 2026, **unverified** until `scripts/day1_check.py` passes with a real key. Every report says "unverified list prices" until an operator sets `RATCHET_PRICES_VERIFIED=1`.
 
 | Model (key in `DEFAULT_PRICES`) | Role | Input, USD per 1M tokens | Output, USD per 1M tokens |
 |---|---|---|---|
@@ -192,19 +256,25 @@ Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/con
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Hosted fallback student | 0.06 | 0.24 |
 | `student` | Per-token proxy for the self-hosted student | 0.06 | 0.24 |
 
-GPU rates come from `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR` (with `RATCHET_STUDENT_GPUS` and `RATCHET_TRAIN_GPUS`, 1 each). Both default to $1.55 per GPU-hour, the L40S on-demand list price the docs assume (unverified estimate, Oct 2026). Nebius's [Compute pricing page](https://docs.nebius.com/compute/resources/pricing) listed the L40S at about $1.35 per GPU-hour when read on Oct 22, 2026; that is also an estimate until it matches your bill. Break-even scales with the rate: at $1.35 the same arithmetic gives about 1,350 student answers an hour. Set the variables to what Nebius actually bills you.
+GPU rates come from `RATCHET_STUDENT_GPU_USD_PER_HOUR` and `RATCHET_TRAIN_GPU_USD_PER_HOUR` (with `RATCHET_STUDENT_GPUS` and `RATCHET_TRAIN_GPUS`, 1 each). Both default to 1.55 in the code. These docs use $1.35 per GPU-hour, the L40S on-demand price on Nebius's [Compute pricing page](https://docs.nebius.com/compute/resources/pricing) when read on Oct 22, 2026; that is an estimate until it matches your bill. Break-even scales with the rate. Set the variables to what Nebius actually bills you.
 
-Estimates for running it, from [DEPLOYMENT.md](/reference/deployment/) §4 (on-demand list prices assumed, Oct 2026):
+Estimates for running it, from the [deployment guide](/reference/deployment/#4-cost-estimates) (on-demand prices, read Oct 22, 2026):
 
 | Item | Assumption | Estimate |
 |---|---|---|
-| Training run | L40S at about $1.55/h, 30 to 60 min a night | about $0.80 to $1.60 a night |
-| Student endpoint | L40S at about $1.55/h | about $37 per full day if left on |
+| Training run | L40S at about $1.35 per GPU-hour, 30 to 60 min a night | about $0.70 to $1.35 a night |
+| Student endpoint | L40S at about $1.35 per GPU-hour | about $32 per full day if left on |
 | Teacher calls | Ultra $1 / $3 per 1M tokens, about 150 input and 380 output tokens per call | about $1.30 per 1,000 calls |
 
 ### What it looks like in the simulation
 
-These numbers come from **mock models**. They show how the loop and the report behave, not real model quality. The README's reference run: seed 7, 2,000 support tickets a day, a product launch on day 5, a corrupted deploy of v3 (`python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3`).
+<div class="rt-callout rt-callout--sim"><p><strong>Simulation.</strong> Every number in this section comes from mock models. It shows how the loop and the report behave, not real model quality. The reference run: seed 7, 2,000 support tickets a day, a product launch on day 5, a corrupted deploy of v3 (<code>python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3</code>).</p></div>
+
+<StatRow cols={3} label="The reference run in three numbers">
+  <Stat value={69} suffix="%" count={false} label="saved per token" note="Over ten days, against an all-Ultra baseline of $21.86." tone="sim" />
+  <Stat value="−$358.48" label="saved by GPU-hours paid" note="A loss: 240 endpoint hours cost far more than the teacher spend avoided." tone="sim" />
+  <Stat value={66} count={false} label="student answers per endpoint hour" note="Against a break-even of 1,575 at the code's default 1.55 USD per GPU-hour." tone="sim" />
+</StatRow>
 
 | Day | Student share | Escalated | Audit agreement | $ per 1k requests | All-Ultra $ per 1k | Saved per token | What happened |
 |---|---|---|---|---|---|---|---|
@@ -215,7 +285,7 @@ These numbers come from **mock models**. They show how the loop and the report b
 | 9 | 98% | 2% | 97% | 0.162 | 1.093 | 85% | Learned overnight |
 | 10 | 98% | 2% | 99% | 0.147 | 1.093 | 87% | |
 
-The same run's cost report (simulation, the endpoint up 24 hours a day, unverified list prices; pinned in `web/src/lib/sim.ts`):
+The same run's cost report (simulation, the endpoint up 24 hours a day, token list prices and the code's default GPU rate of 1.55 USD per GPU-hour; pinned in `web/src/lib/sim.ts`):
 
 | Figure | Value |
 |---|---|
@@ -228,6 +298,8 @@ The same run's cost report (simulation, the endpoint up 24 hours a day, unverifi
 | Observed | 66 student answers per endpoint hour |
 | Hosted crossover | 51,528 per hour |
 | Recommendation | `hosted_fallback` ("Self-hosting does not pay at this volume.") |
+
+Recomputed at the $1.35 per GPU-hour these docs use (estimates, from the formulas above): the 240 endpoint hours would cost $324.00 instead of $372.00, the break-even would be about 1,370 student answers per endpoint hour and the hosted crossover about 44,900. The recommendation would not change: 66 answers an hour is still far below break-even.
 
 <Aside type="caution" title="Not run on Nebius yet">
 As of Oct 22, 2026, no student endpoint has been run on Nebius. Every cost figure on this page is either a simulation output or an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
@@ -259,9 +331,9 @@ The dashboard's savings come from the token formula, which assumes 300 reasoning
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_STUDENT_COST_MODEL` | `per_token` | Headline view: `per_token` or `gpu_hours` |
-| `RATCHET_STUDENT_GPU_USD_PER_HOUR` | `1.55` | Student endpoint, USD per GPU-hour (0 to 1,000), unverified list price |
+| `RATCHET_STUDENT_GPU_USD_PER_HOUR` | `1.55` | Student endpoint, USD per GPU-hour (0 to 1,000). The code's default; these docs use 1.35, Nebius's on-demand price for an L40S. Set the rate on your bill |
 | `RATCHET_STUDENT_GPUS` | `1` | GPUs the endpoint runs on |
-| `RATCHET_TRAIN_GPU_USD_PER_HOUR` | `1.55` | Training job, USD per GPU-hour |
+| `RATCHET_TRAIN_GPU_USD_PER_HOUR` | `1.55` | Training job, USD per GPU-hour. The code's default; set 1.35 or the rate on your bill |
 | `RATCHET_TRAIN_GPUS` | `1` | GPUs a training job runs on |
 | `RATCHET_PRICES_VERIFIED` | `0` | `1` once the day-1 checks pass and the rates match your Nebius bill |
 | `RATCHET_TEACHER_REASONING_TOKENS` | `300` | Reasoning tokens the student-served baseline assumes |
@@ -296,15 +368,15 @@ The dashboard's figures are the per-token view: the student priced at the hosted
 
 ### What does it cost to run Ratchet?
 
-The gateway does no inference, so it runs on a small CPU VM (about $72 for Oct 29 to Dec 15, 2026, estimate, [demo VM guide](/reference/deploy-nebius-vm/)). On top of that: teacher calls per token, a training job per night (about $0.80 to $1.60, estimate), and the student endpoint while it runs (about $37 per full day, estimate). All of these are list-price estimates until a live run measures them.
+The gateway does no inference, so it runs on a small CPU VM (about $72 for Oct 29 to Dec 15, 2026, estimate, [demo VM guide](/reference/deploy-nebius-vm/)). On top of that: teacher calls per token, a training job per night (about $0.70 to $1.35, estimate), and the student endpoint while it runs (about $32 per full day, estimate), both at about $1.35 per GPU-hour. All of these are estimates until a live run measures them.
 
 ### At what traffic does self-hosting pay?
 
-About 1,500 student-served answers per endpoint hour at the docs' assumed $1.55 an hour, roughly 36,000 a day (unverified list prices, simulation token counts). Below that, use the hosted fallback or run the endpoint only while traffic arrives.
+About 1,350 student-served answers per endpoint hour at about $1.35 per GPU-hour, roughly 32,000 a day (an estimate from list prices and the simulation's token counts). Below that, use the hosted fallback or run the endpoint only while traffic arrives.
 
 ### Is the hosted fallback just cheaper, then?
 
-Per answer, often yes: below roughly 52,000 answers an hour it is. But it is untuned, so it may escalate more requests to Ultra, and those cost far more than the GPU-hours saved. The report always says the crossover assumes equal coverage. Compare a day on each before switching.
+Per answer, often yes: below roughly 45,000 answers an hour it is (estimate). But it is untuned, so it may escalate more requests to Ultra, and those cost far more than the GPU-hours saved. The report always says the crossover assumes equal coverage. Compare a day on each before switching.
 
 ### What if nobody records the endpoint's uptime?
 
@@ -312,7 +384,7 @@ Then the report does not know the GPU cost. Student answers in hours with no rec
 
 ### Are these real numbers?
 
-Not yet. The prices are unverified list prices and every figure on this page comes from the simulation or from estimates. Ratchet has not run on Nebius as of Oct 21, 2026; the live-run harness will publish measured numbers, including the Nebius bill.
+Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page comes from the simulation or from estimates. As of Oct 22, 2026 the teacher runs on Nebius Token Factory, but no student endpoint has run on a Nebius GPU; the live-run harness will publish measured numbers, including the Nebius bill.
 
 ### Does the baseline overstate savings?
 
@@ -320,8 +392,13 @@ It can. The student-served baseline assumes the teacher would have written 300 r
 
 ## Related
 
-- [Evidence: certificates, proofs and savings receipts](/guides/evidence/)
-- [Host it on Nebius](/guides/host-on-nebius/)
-- [The request journey](/guides/request-journey/)
-- [Runbook: cost and the self-host recommendation](/reference/runbook/#cost-and-the-self-host-recommendation)
-- [Architecture §7: cost accounting](/reference/architecture/#7-cost-accounting)
+<FadeContent distance={16}>
+<PathGrid cols={2} label="Related guides">
+  <PathCard title="Evidence you can check" href="/guides/evidence/" icon="coin" eyebrow="Savings receipts" tone="neutral" description="Certificates, proofs and the signed savings receipts the fee is based on." />
+  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="What it costs to run" tone="neutral" description="The VM, Token Factory and GPU windows, with estimates and dates." />
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="start" eyebrow="Where cost comes from" tone="neutral" description="Every model call a request makes, and the ratchet block that prices it." />
+  <PathCard title="Runbook: the self-host recommendation" href="/reference/runbook/#cost-and-the-self-host-recommendation" icon="book" eyebrow="Reference" tone="neutral" description="What to do with each of the cost report's four answers." />
+</PathGrid>
+</FadeContent>
+
+The cost model in full: [Architecture, cost accounting](/reference/architecture/#7-cost-accounting).
