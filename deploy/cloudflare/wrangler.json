@@ -15,5 +15,5 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RatchetDemo"] }],
   "triggers": { "crons": ["*/5 * * * *"] },
-  "routes": [{ "pattern": "demo-cf.ratchet.dualmindlab.tech", "custom_domain": true }]
+  "routes": [{ "pattern": "demo.ratchet.dualmindlab.tech", "custom_domain": true }]
 }

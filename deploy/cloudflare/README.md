@@ -1,7 +1,7 @@
 # Ratchet demo on Cloudflare Containers
 
-The same mock-mode demo as [`deploy/shared-vm`](../shared-vm), run as a Cloudflare Container behind a Worker at
-`demo-cf.ratchet.dualmindlab.tech`. No keys, nothing secret; every number it shows is simulation, labelled as such.
+The mock-mode demo (the repo's Dockerfile, no keys, nothing secret), run as a Cloudflare Container behind a Worker at
+`demo.ratchet.dualmindlab.tech`. No keys, nothing secret; every number it shows is simulation, labelled as such.
 
 - **Manual deploys only.** The workflow `.github/workflows/deploy-cloudflare-demo.yml` runs only from the Actions tab
   (Run workflow, type `deploy`). Pushes and merges never deploy it, and nothing rebuilds it on a schedule.
