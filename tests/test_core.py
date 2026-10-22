@@ -313,8 +313,10 @@ def test_audit_counts_and_served_counts():
     assert led.audit_counts(v, last - 1) == (1, 1) and led.audit_counts(v, last) == (0, 0) and led.audit_counts(w) == (0, 0)
     assert led.version_live_quality(v) == (11, 9 / 11) and led.version_live_quality(w) == (0, None)
     assert led.served_counts() == {v: 13}
-    led.log_request(served_by="student", audited=1, audit_agree=None, route="student", **row)  # never written by the router
-    assert led.audit_counts(v) == (12, 9)  # an audit without a verdict counts against the version
+    # An audited row without a verdict is an off-path audit still running (ADR 0072): it counts in neither number until
+    # its verdict is written.
+    led.log_request(served_by="student", audited=1, audit_agree=None, route="student", **row)
+    assert led.audit_counts(v) == (11, 9)
 
 
 # ---------- generation parameters (FR-1.13, ADR 0017) ----------
@@ -410,7 +412,20 @@ def test_param_allowlists_parse_and_refuse_what_ratchet_never_forwards():
     # does not ask sends none). The student is never sent tools.
     assert DEFAULT_TEACHER_PARAMS == frozenset(PARAM_FIELDS)
     assert {"logprobs", "top_logprobs", "tools", "tool_choice", "parallel_tool_calls"} <= DEFAULT_TEACHER_PARAMS
-    assert DEFAULT_STUDENT_PARAMS == {"max_tokens", "stop", "seed", "response_format", "logit_bias", "top_logprobs"}
+    assert DEFAULT_STUDENT_PARAMS == {"max_tokens", "stop", "seed", "response_format", "top_logprobs"}  # no logit_bias
+
+
+@pytest.mark.req("FR-1.13", "FR-6.3", "INV-2")
+def test_a_client_logit_bias_never_steers_the_student_it_would_be_audited_against():
+    """The audit's teacher runs at temperature 0 without `logit_bias` (CHECK_DROPS), so a bias sent to the student would
+    move the audited agreement the release gate and the dashboard read. The default student allowlist leaves it out; an
+    operator can still name it."""
+    biased = GenParams(max_tokens=50, logit_bias={"9": 100})
+    assert "logit_bias" not in DEFAULT_STUDENT_PARAMS
+    assert GenPolicy().student(biased).logit_bias is None and "logit_bias" not in GenPolicy().student(biased).to_body()
+    assert GenPolicy().teacher(biased, "serve").logit_bias == {"9": 100}  # the serving teacher still gets it (never stored)
+    opt_in = GenPolicy(student_allow=parse_param_allowlist("max_tokens,logit_bias", DEFAULT_STUDENT_PARAMS))
+    assert opt_in.student(biased).logit_bias == {"9": 100}
 
 
 @pytest.mark.req("FR-1.13", "NFR-3")
@@ -424,7 +439,6 @@ def test_gen_policy_gives_each_role_its_parameters_and_caps():
         "max_tokens": 50,
         "stop": ["\n\n"],
         "seed": 7,
-        "logit_bias": {"50256": -100},
         "response_format": {"type": "json_object"},
         "top_logprobs": 2,
     }

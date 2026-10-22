@@ -162,7 +162,7 @@ export function Scout() {
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <ButtonLink to="/scout" size="lg">
-                Run Scout <ArrowRight />
+                Try the Scout demo <ArrowRight />
               </ButtonLink>
             </div>
           </Reveal>

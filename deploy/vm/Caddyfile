@@ -14,7 +14,9 @@
 # "guarded": keep the paid API, the demo controls and the admin API (/ratchet/admin/*, which the
 # gateway also guards with RATCHET_ADMIN_KEYS) behind a shared token, with or without the
 # gateway's own keys (RATCHET_API_KEYS; without them a live gateway needs
-# RATCHET_ALLOW_UNAUTHENTICATED=1). The UI stays public here: /, /scout*, /dashboard,
+# RATCHET_ALLOW_UNAUTHENTICATED=1). The paid API is every OpenAI-compatible route: /v1/* and the Azure-style
+# /openai/deployments/<task>/chat/completions (gateway.API_PREFIXES; tests/test_live.py checks
+# that every such route is listed here). The UI stays public here: /, /scout*, /dashboard,
 # /ratchet/stats, /ratchet/bom; the gateway's RATCHET_PUBLIC_DASHBOARD decides whether the last
 # two need a key.
 # Note: the mock dashboard's "Run day", "Break next deploy" and "Reset" buttons call
@@ -25,7 +27,7 @@
 # Use a hex token (openssl rand -hex 32): quotes or backslashes would break the expression.
 (guarded) {
 	@protected {
-		path /v1/* /ratchet/demo/* /ratchet/admin/*
+		path /v1/* /openai/* /ratchet/demo/* /ratchet/admin/*
 		not expression `size("{$RATCHET_ADMIN_TOKEN}") >= 32 && {header.X-Ratchet-Admin-Token} == "{$RATCHET_ADMIN_TOKEN}"`
 	}
 	handle @protected {

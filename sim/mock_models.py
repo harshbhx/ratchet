@@ -19,6 +19,8 @@ instance of its `response_format` schema, or a tool call when it is sent `tools`
 request instead, as before the generic world (the gateway's 400 in mock mode); the trainer and the golden eval never do,
 since what they read was stored already.
 
+`MockEmbedder` plays the /v1/embeddings model: a deterministic unit vector per input (FR-1.51).
+
 This is a simulation for demos and tests. Real numbers come from live mode.
 """
 
@@ -28,6 +30,7 @@ import hashlib
 import json
 import math
 import random
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -40,7 +43,7 @@ from ratchet.calibration import MIN_TASK_GOLDEN
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.ledger import Version
 from ratchet.nightschool.evaluate import cascade_eval
-from ratchet.providers import Completion, GenParams, GenPolicy, approx_tokens
+from ratchet.providers import Completion, Embeddings, GenParams, GenPolicy, approx_tokens
 from ratchet.scout.prompts import PLAN_SYSTEM, WRITE_SYSTEM
 
 from . import research
@@ -132,7 +135,12 @@ class MockTeacher:
     right to the token. With `reasoning_mean` set it bills round(mean * exp(cv * z - cv^2 / 2)) instead, z a standard
     normal drawn from the request alone (`_rng('reasoning', ...)`, no shared random state), so the same request always
     costs the same and the mean is `reasoning_mean`: the gap between the formula and the bills that savings receipts
-    measure and correct (FR-15.5, simulation)."""
+    measure and correct (FR-15.5, simulation).
+
+    `noise` > 0 plays an unstable teacher (the teacher watch's fault injection, `POST /ratchet/demo/teacher-drift`): on
+    each call about a labelled item, with probability `noise`, its first label is another value of its label space. The
+    draw comes from `_rng('teacher-noise', item.text, calls)`, never a shared generator, so a seeded run stays
+    reproducible; with `noise` 0 nothing is drawn and `calls` does not move, so every simulation number is unchanged."""
 
     def __init__(
         self,
@@ -142,6 +150,7 @@ class MockTeacher:
         reasoning_mean: float | None = None,
         reasoning_cv: float = 0.0,
         strict: bool = False,
+        noise: float = 0.0,
     ):
         if reasoning_mean is not None and not (math.isfinite(reasoning_mean) and reasoning_mean > 0):
             raise ValueError(f"reasoning_mean must be a positive number of tokens, not {reasoning_mean!r}")
@@ -152,6 +161,9 @@ class MockTeacher:
         self.reasoning_mean = reasoning_mean
         self.reasoning_cv = reasoning_cv
         self.strict = strict
+        self.noise = noise
+        self.calls = 0  # noisy calls so far (the noise draw's counter)
+        self._lock = threading.Lock()
 
     def reasoning(self, messages: list[dict[str, Any]]) -> int:
         """The reasoning tokens billed for this request."""
@@ -161,12 +173,27 @@ class MockTeacher:
         z = _rng("reasoning", json.dumps(messages, sort_keys=True, ensure_ascii=False)).gauss(0.0, 1.0) if cv else 0.0
         return max(0, round(self.reasoning_mean * math.exp(cv * z - cv * cv / 2)))
 
+    def _labels(self, item: Item) -> dict[str, Any]:
+        """The item's labels, the first one changed with probability `noise`."""
+        labels = dict(item.labels)
+        if self.noise <= 0 or not labels:
+            return labels
+        with self._lock:
+            r = _rng("teacher-noise", item.text, self.calls)
+            self.calls += 1
+        if r.random() < self.noise:
+            key = next(iter(labels))
+            others = [v for v in item.label_space[key] if v != labels[key]]
+            if others:
+                labels[key] = r.choice(others)
+        return labels
+
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
         text = _pinned_answer(messages, self.strict)
         calls = None
         if text is None:
             item = lookup(messages, _effective(params, response_format), strict=self.strict)
-            text = item.answer(item.labels)
+            text = item.answer(self._labels(item))
             if isinstance(item, GenericItem):
                 calls = item.calls(item.labels, "teacher")
         if calls is not None:  # a tool call has no content; its arguments are its output
@@ -342,7 +369,16 @@ class MockFleet:
             cert_delta=self.cert_delta,
             min_task_n=self.min_task_n,
             per_task=self.per_task,
+            judge=self.judge,
         )
+
+    @staticmethod
+    def judge(prompt: list[dict[str, Any]], reference: str, candidate: str, params: dict[str, Any] | None = None) -> bool:
+        """The mock judge (FR-14.40): it knows the truth, which in the mock world is the stored reference (the mock teacher
+        is always right), so a candidate passes exactly when it is that answer. Free text close to it in wording but with
+        another closing sentence fails, as a real judge would fail an answer that says something else, so the judge gate
+        is testable offline."""
+        return candidate.strip() == reference.strip()
 
     # Resolver: shadow runs on staging; canary/live run on the production endpoint.
     def resolve(self, version: Version):
@@ -358,3 +394,38 @@ class MockFleet:
             strict=self.strict,
         )
         return student, version.adapter_uri
+
+
+MOCK_EMBEDDING_DIMS = 256  # the mock embeddings model's vector length when a request sets no `dimensions`
+
+
+class MockEmbedder:
+    """Plays the /v1/embeddings model (FR-1.51): a deterministic unit vector per input, seeded from SHA-256 of its text
+    (a token array: of its JSON), so the same input always gets the same vector and different inputs almost orthogonal
+    ones. `dimensions` keeps the first that many values of the full vector (at least 256 long) and scales them back to
+    length 1, as OpenAI's shortened embeddings do. Prompt tokens are counted at about 4 characters a token (a token
+    array: its length). No network, no failures, no state; the gateway refuses a request for more than `max_values`
+    floats, so the public demo stays responsive."""
+
+    base_url = "mock://embeddings"
+    default_dims = MOCK_EMBEDDING_DIMS
+    # Floats per request (inputs x dimensions): about 3 MB of JSON and under half a second, so one request cannot tie
+    # up the shared demo (2^20 took 1.5 s of CPU and returned 22 MB). 512 inputs at the default 256 dimensions.
+    max_values = 1 << 17
+
+    def __init__(self, latency_ms: float = 20.0) -> None:
+        self.latency_ms = latency_ms  # simulated
+
+    @staticmethod
+    def vector(item: str | list[int], dims: int = MOCK_EMBEDDING_DIMS) -> list[float]:
+        text = item if isinstance(item, str) else json.dumps(item)
+        rng = random.Random(hashlib.sha256(text.encode("utf-8", "surrogatepass")).digest())
+        full = [rng.gauss(0.0, 1.0) for _ in range(max(dims, MOCK_EMBEDDING_DIMS))]
+        values = full[:dims]
+        norm = math.sqrt(sum(v * v for v in values)) or 1.0
+        return [v / norm for v in values]
+
+    def embed(self, inputs: list[Any], model: str, dimensions: int | None = None) -> Embeddings:
+        dims = dimensions or MOCK_EMBEDDING_DIMS
+        tokens = sum(approx_tokens(i) if isinstance(i, str) else len(i) for i in inputs)
+        return Embeddings([self.vector(i, dims) for i in inputs], model, tokens, self.latency_ms)

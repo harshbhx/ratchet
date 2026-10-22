@@ -705,7 +705,8 @@ def test_bad_teacher_license_file_fails_at_startup(tmp_path, monkeypatch, gw):
         Ratchet(_settings(teacher_licenses_file=str(bad)), Ledger(":memory:"), RecordingProvider("hi"), lambda v: (None, ""))
     for mode in ("mock", "live"):
         settings = _settings(mode=mode, db_path=str(tmp_path / f"{mode}.db"), student_base="", teacher_licenses_file=str(bad))
-        with pytest.raises(licenses.LicenseConfigError, match="gpt-4o"):
+        # The startup check reports it with every other bad setting (a ConfigLicenseError, also a LicenseError; ADR 0070).
+        with pytest.raises(licenses.LicenseError, match="gpt-4o"):
             gw.Runtime(settings)
     db = tmp_path / "night.db"
     _clean_env(monkeypatch, RATCHET_DB=str(db), RATCHET_TEACHER_LICENSES=str(bad))

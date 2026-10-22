@@ -11,8 +11,8 @@ Sources of truth:
 - This file: CODE (where each requirement is implemented), EXEMPT (checked by hand or only live)
   and KNOWN_GAPS (done but untested when this check landed; it may only shrink).
 
-Standard library only. Parsing is AST and regex; only the CODE, route and env checks import the
-package. It is not called trace.py because that would shadow the standard library module.
+Standard library only. Parsing is AST and regex; only the CODE, route, env and metric-target checks import
+the package. It is not called trace.py because that would shadow the standard library module.
 """
 
 from __future__ import annotations
@@ -22,12 +22,14 @@ import ast
 import contextlib
 import dataclasses
 import importlib
+import math
 import os
 import re
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:  # `python scripts/reqtrace.py` puts scripts/, not the repo, on the path
@@ -486,8 +488,13 @@ class Exempt:
 CODE: dict[str, tuple[str, ...]] = {
     # 6.1 Gateway
     "FR-1.1": ("ratchet.gateway:chat",),
-    "FR-1.2": ("ratchet.gateway:models",),
-    "FR-1.3": ("ratchet.gateway:chat", "ratchet.tasks:get", "ratchet.router:Ratchet.task_for"),
+    "FR-1.2": ("ratchet.gateway:models", "ratchet.gateway:retrieve_model", "ratchet.gateway:_models"),
+    "FR-1.3": (
+        "ratchet.gateway:chat",
+        "ratchet.tasks:get",
+        "ratchet.router:Ratchet.task_for",
+        "ratchet.openai_compat:resolve_task",
+    ),
     "FR-1.5": ("ratchet.gateway:chat", "ratchet.openai_compat:validate_chat_request"),
     "FR-1.6": ("ratchet.gateway:chat", "ratchet.gateway:_chunks"),
     "FR-1.7": (
@@ -609,6 +616,39 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:_call_deltas",
         "ratchet.ledger:Ledger.stats_by_task",
     ),
+    "FR-1.50": (
+        "ratchet.openai_compat:resolve_task",
+        "ratchet.openai_compat:check_model",
+        "ratchet.openai_compat:match_task",
+        "ratchet.openai_compat:system_prompt_task",
+        "ratchet.openai_compat:ModelRouting",
+        "ratchet.config:Settings.model_routing",
+        "ratchet.auth:bearer",
+        "ratchet.ledger:Ledger.recent_tasks",
+        "ratchet.gateway:_complete",
+        "ratchet.gateway:azure_chat",
+        "ratchet.gateway:Runtime.keep_auto_task",
+        "ratchet.gateway:_models",
+    ),
+    "FR-1.51": (
+        "ratchet.openai_compat:validate_embeddings_request",
+        "ratchet.openai_compat:check_embeddings_model",
+        "ratchet.openai_compat:validate_completion_request",
+        "ratchet.openai_compat:legacy_logprobs",
+        "ratchet.openai_compat:validate_responses_request",
+        "ratchet.openai_compat:response_object",
+        "ratchet.openai_compat:unsupported_endpoint",
+        "ratchet.providers:OpenAICompatProvider.embed",
+        "ratchet.config:Settings.embeddings_endpoint",
+        "ratchet.gateway:_serve",
+        "ratchet.gateway:_embed",
+        "ratchet.gateway:_legacy_complete",
+        "ratchet.gateway:_respond",
+        "ratchet.gateway:moderations",
+        "ratchet.gateway:Runtime._embedder",
+        "ratchet.tasks:RESERVED_NAMES",
+        "sim.mock_models:MockEmbedder",
+    ),
     # 6.2 Cascade and confidence
     "FR-2.1": ("ratchet.router:Ratchet._sample", "ratchet.confidence:STUDENT_SAMPLING"),
     "FR-2.2": ("ratchet.confidence:score",),
@@ -665,6 +705,28 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.nightschool.evaluate:cascade_eval",
         "ratchet.nightschool.dataset:rows",
     ),
+    "FR-2.55": (
+        "ratchet/similarity.py",
+        "ratchet.compare:FieldSpec",
+        "ratchet.compare:SimilarityText",
+        "ratchet.tasks:samples_problem",
+        "ratchet.tasks:Task.sample_count",
+        "ratchet.taskspec:parse_spec",
+        "ratchet.confidence:score",
+        "ratchet.router:Ratchet.handle",
+    ),
+    "FR-2.56": (
+        "ratchet/sqlcheck.py",
+        "ratchet.sqlcheck:Sandbox",
+        "ratchet.sqlcheck:SqlSpec",
+        "ratchet.sqlcheck:_guarded",
+        "ratchet.sqlcheck:parse_query",
+        "ratchet.sqlcheck:read_fixture",
+        "ratchet.tasks:Task.key",
+        "ratchet.tasks:clean_answer",
+        "ratchet.tasks:sql_problem",
+        "ratchet.taskspec:parse_spec",
+    ),
     "FR-2.15": (
         "ratchet/taskspec.py",
         "ratchet.taskspec:parse_document",
@@ -676,6 +738,21 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.router:Ratchet.task_for",
         "ratchet.router:Ratchet.threshold",
         "ratchet.nightschool.orchestrate:run_night",
+    ),
+    "FR-2.50": (
+        "ratchet/routing.py",
+        "ratchet.routing:parse",
+        "ratchet.routing:Routing.ineligible",
+        "ratchet.routing:Routing.misses",
+        "ratchet.tasks:Task.routing_rules",
+        "ratchet.router:Ratchet._ineligible",
+        "ratchet.router:Ratchet._rule",
+        "ratchet.router:Ratchet.audit_rate",
+        "ratchet.calibration:critical_measured",
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.release:ReleaseGate.critical_failure",
+        "ratchet.release:ReleaseGate.critical_holds",
+        "ratchet.nightschool.orchestrate:rescore",
     ),
     # 6.3 Provenance and licensing
     "FR-3.1": ("ratchet.licenses:REGISTRY", "ratchet.licenses:require_distillable"),
@@ -735,7 +812,12 @@ CODE: dict[str, tuple[str, ...]] = {
         "deploy/Dockerfile.train",
     ),
     "FR-4.6": ("ratchet.live:NebiusTrainer", "deploy/train_job.sh"),
-    "FR-4.7": ("ratchet.redact:redact", "ratchet.redact:redact_messages", "ratchet.router:Ratchet._store_example"),
+    "FR-4.7": (
+        "ratchet.redact:redact",
+        "ratchet.redact:redact_messages",
+        "ratchet.redact:_pattern_spans",
+        "ratchet.router:Ratchet._store_example",
+    ),
     "FR-4.50": (
         "ratchet.nightschool.dataset:rows",
         "ratchet.nightschool.dataset:effective_split",
@@ -755,6 +837,23 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-5.3": ("ratchet.nightschool.evaluate:cascade_eval",),
     "FR-5.4": ("ratchet.nightschool.orchestrate:run_night",),
     "FR-5.5": ("ratchet.nightschool.evaluate:LiveEvaluator.judge_score",),
+    "FR-5.40": (
+        "ratchet.teacher_watch:night",
+        "ratchet.teacher_watch:_probe",
+        "ratchet.teacher_watch:usable_label",
+        "ratchet.teacher_watch:relabel_with",
+        "ratchet.ledger:Ledger.probe_candidates",
+        "ratchet.ledger:Ledger.record_teacher_check",
+        "ratchet.config:Settings.teacher_watch_limits",
+        "ratchet.nightschool.orchestrate:run_night",
+    ),
+    "FR-5.41": (
+        "ratchet.teacher_watch:_adjudicate",
+        "ratchet.teacher_watch:majority",
+        "ratchet.ledger:Ledger.contested_examples",
+        "ratchet.ledger:Ledger.resolve_contested",
+        "ratchet.ledger:Ledger.mark_unresolved",
+    ),
     # 6.6 Release gate
     "FR-6.1": ("ratchet.release:ReleaseGate.admit",),
     "FR-6.2": ("ratchet.release:ReleaseGate.admit",),
@@ -772,6 +871,27 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.stats:mcnemar_one_sided",
     ),
     "FR-6.31": ("ratchet.release:ReleaseGate.admit", "ratchet.release:_below_certified_floor"),
+    "FR-6.40": (
+        "ratchet.release:ReleaseGate._refresh_audit_boost",
+        "ratchet.drift:boosted_rate",
+        "ratchet.router:Ratchet.handle",
+    ),
+    "FR-6.41": (
+        "ratchet.nightschool.orchestrate:early_night",
+        "ratchet.nightschool.orchestrate:run_night",
+        "ratchet.release:ReleaseGate.drift_alarm_since",
+    ),
+    "FR-6.42": (
+        "ratchet.release:ReleaseGate._tick_watchers",
+        "ratchet.release:ReleaseGate.check_teacher",
+        "ratchet.teacher_watch:Watch.check",
+        "ratchet.teacher_watch:evidence",
+        "ratchet.ledger:Ledger.teacher_freeze",
+        "ratchet.ledger:Ledger.teacher_ack",
+        "ratchet.gateway:teacher_ack",
+        "ratchet.nightschool.orchestrate:run_night",
+    ),
+    "FR-6.43": ("ratchet.release:ReleaseGate.admit", "ratchet.teacher_watch:ceiling_warning", "ratchet.teacher_watch:ceiling"),
     # 6.7 Dashboard
     "FR-7.1": ("web/src/pages/dashboard/kpis.tsx", "ratchet.ledger:Ledger.totals"),
     "FR-7.2": ("web/src/pages/dashboard/charts.tsx", "ratchet.ledger:Ledger.stats_by_day"),
@@ -810,6 +930,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "web/src/lib/who-model.ts",
         "web/src/components/ui/who.tsx",
     ),
+    "FR-7.9": ("ratchet.kpis:report", "ratchet.gateway:kpi", "ratchet.gateway:stats", "ratchet.ledger:Ledger.kpi_days"),
     # 6.8 Live operations on Nebius
     "FR-8.1": ("ratchet.providers:OpenAICompatProvider", "ratchet.gateway:Runtime.reset", "ratchet.live:main"),
     "FR-8.2": ("ratchet.live:load_adapter", "deploy/student_endpoint.sh"),
@@ -1075,6 +1196,28 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.taskspec:install",
         "ratchet.ledger:Ledger.stats_by_task",
     ),
+    "FR-14.40": (
+        "ratchet.nightschool.evaluate:cascade_eval",
+        "ratchet.nightschool.evaluate:LiveEvaluator.evaluate",
+        "ratchet.tasks:Task.free_text",
+        "ratchet.tasks:Task.precision_kind",
+        "ratchet.release:ReleaseGate.judge_problem",
+        "ratchet.release:ReleaseGate.judge_failures",
+        "sim.mock_models:MockFleet.judge",
+        "ratchet.ledger:Ledger.stats_by_task",
+    ),
+    "FR-13.7": (
+        "ratchet.redact:Pseudonymizer",
+        "ratchet.redact:load_detector",
+        "ratchet.redact:spans",
+        "ratchet.router:Ratchet._store_example",
+        "ratchet.config:Settings.redaction_style",
+        "ratchet.tasks:Task",
+        "ratchet.taskspec:_build",
+        "ratchet.gateway:redact_preview",
+        "ratchet.gateway:stats",
+    ),
+    "FR-13.8": ("ratchet.redact:PATTERNS", "ratchet.compare:parse_number"),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",
@@ -1187,11 +1330,38 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:replay_frontier",
         "sim.simulate:main",
     ),
+    "FR-16.6": (
+        "ratchet.drift:Stream.observe",
+        "ratchet.drift:DriftMonitor.update",
+        "ratchet.drift:Fenwick",
+        "ratchet.release:ReleaseGate.check_drift",
+        "ratchet.ledger:Ledger.confidence_stream",
+        "ratchet.ledger:Ledger.event_keyed",
+        "ratchet.certificate:status",
+        "ratchet.gateway:drift",
+        "ratchet.gateway:version_certificate",
+        "sim.simulate:run",
+    ),
+    "FR-16.7": (
+        "ratchet.ledger:Ledger.add_example",
+        "ratchet.ledger:Ledger._check_label",
+        "ratchet.ledger:Ledger.teacher_model_seen",
+        "ratchet.router:Ratchet._watch_model",
+        "ratchet.router:comparable_label",
+        "ratchet.nightschool.dataset:rows",
+        "ratchet.teacher_watch:status",
+        "ratchet.teacher_watch:bom_section",
+        "ratchet.gateway:teacher",
+        "ratchet.gateway:demo_teacher_drift",
+        "sim.mock_models:MockTeacher",
+    ),
     # 7 Non-functional
     "NFR-1": (
         "ratchet.router:Ratchet._sample",
         "ratchet.router:Ratchet.handle",
         "ratchet.ledger:Ledger.latency_percentiles",
+        "ratchet.ledger:Ledger.latency_quantile",
+        "ratchet.kpis:student_latency",
         "ratchet.sidecar:SideCar",
     ),
     "NFR-2": (
@@ -1241,6 +1411,19 @@ CODE: dict[str, tuple[str, ...]] = {
     "NFR-11": ("ratchet.config:Settings.cost_policy", "ratchet.cost:cost_report", "ratchet.gateway:stats"),
     "NFR-70": ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "ratchet/web/landing.html"),
     "NFR-35": ("ratchet.config:check", "ratchet.gateway:Runtime._check_config", "ratchet.readiness:Readiness.report"),
+    # 8.1 Success metrics (ratchet/kpis.py; their targets are checked against the PRD by rule_metric_targets)
+    "SM-1": ("ratchet.kpis:cost_reduction", "ratchet.ledger:Ledger.failed_cost"),
+    "SM-2": ("ratchet.kpis:audited_precision", "ratchet.ledger:Ledger.audit_totals"),
+    "SM-3": ("ratchet.kpis:student_share",),
+    "SM-4": ("ratchet.kpis:bad_deploys", "ratchet.ledger:Ledger.events_of"),
+    "SM-5": ("ratchet.kpis:drift_recovery", "ratchet.kpis:drift_episodes", "ratchet.kpis:escalation_rates"),
+    "NFR-55": ("ratchet.release:ReleaseGate._tick_drift", "ratchet.drift:DriftMonitor._update", "ratchet.drift:Stream"),
+    "NFR-56": ("ratchet.drift:Ranks", "ratchet.drift:DriftMonitor._stream", "ratchet.drift:DriftMonitor.counts"),
+    "NFR-57": (
+        "ratchet.teacher_watch:Watch.refresh",
+        "ratchet.ledger:Ledger.teacher_check_days",
+        "ratchet.router:Ratchet._watch_model",
+    ),
     # Invariants (CLAUDE.md)
     "INV-1": (
         "ratchet.licenses:require_distillable",
@@ -1273,7 +1456,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "INV-6": ("ratchet.nightschool.evaluate:cascade_eval",),
     "INV-7": ("ratchet.router:Ratchet.handle", "ratchet.gateway:chat", "ratchet.gateway:_map_upstream"),
     "INV-8": ("ratchet.gateway:_mock_only",),
-    "INV-9": ("ratchet.config:DEFAULT_PRICES", "scripts/day1_check.py"),
+    "INV-9": ("ratchet.config:DEFAULT_PRICES", "ratchet.config:EMBEDDING_PRICES", "scripts/day1_check.py"),
     "INV-10": (
         "ratchet.router:Ratchet._teacher_only",
         "ratchet.tasks:Task",
@@ -1837,6 +2020,63 @@ def rule_test_counts(ctx: Context) -> list[str]:
     return errors
 
 
+# A Target cell of PRD §8.1: an optional comparison, a number, and an optional unit ("≥ 70%", "0", "≤ 3 nights").
+_TARGET = re.compile(r"(≥|≤|<|>|=)?\s*(\d+(?:\.\d+)?)\s*(%|\w+)?")
+_TARGET_OPS = {"≥": ">=", "≤": "<=", "<": "<", ">": ">", "=": "==", None: "=="}
+
+
+def parse_target(text: str) -> tuple[str, float, str] | None:
+    """(op, value, unit) of a PRD target cell, a percentage as a fraction ("≥ 70%" -> (">=", 0.7, "fraction")); None when
+    it does not read as one."""
+    m = _TARGET.fullmatch(text.strip())
+    if m is None:
+        return None
+    op, number, unit = m.groups()
+    value = float(number)
+    if unit == "%":
+        return _TARGET_OPS[op], value / 100, "fraction"
+    return _TARGET_OPS[op], value, unit or ""
+
+
+def metric_targets() -> Mapping[str, Any]:
+    """`ratchet.kpis.SM_TARGETS`: {SM id: target with `op`, `value` and `unit`}. A seam, so tests can swap the table."""
+    return _import("ratchet.kpis").SM_TARGETS
+
+
+def _same_unit(prd_unit: str, code_unit: str) -> bool:
+    """A PRD percentage is a code `fraction`; a bare PRD number ("0") takes any count unit; a named one must match."""
+    if (prd_unit == "fraction") != (code_unit == "fraction"):
+        return False
+    return prd_unit in ("", "fraction") or prd_unit == code_unit
+
+
+def rule_metric_targets(ctx: Context) -> list[str]:
+    """(j) Every SM row's Target matches `ratchet.kpis.SM_TARGETS` (comparison, number and unit), and each has an entry."""
+    try:
+        targets = metric_targets()
+    except Exception as e:  # noqa: BLE001 - a broken import is a finding, not a crash
+        return [f"cannot import ratchet.kpis: {type(e).__name__}: {e}"]
+    errors = []
+    metrics = [r for r in ctx.unique() if r.kind == "SM"]
+    for r in metrics:
+        cell = r.text.rsplit(": ", 1)[-1]
+        want, have = parse_target(cell), targets.get(r.id)
+        if have is None:
+            errors.append(f"{r.id}: no entry in ratchet.kpis.SM_TARGETS; add its target ({cell!r})")
+        elif want is None:
+            errors.append(f"{r.id}: the PRD target {cell!r} does not read as a comparison and a number")
+        else:
+            op, value, unit = want
+            same = op == have.op and math.isclose(value, have.value, abs_tol=1e-12) and _same_unit(unit, have.unit)
+            if not same:
+                errors.append(
+                    f"{r.id}: the PRD target {cell!r} differs from ratchet.kpis.SM_TARGETS ({have.op} {have.value:g} {have.unit})"
+                )
+    for rid in sorted(set(targets) - {r.id for r in metrics}):
+        errors.append(f"ratchet.kpis.SM_TARGETS lists {rid}, which is not a metric in {PRD}")
+    return errors
+
+
 CORE_RULES: tuple[Callable[[Context], list[str]], ...] = (
     rule_ids_and_statuses,
     rule_coverage,
@@ -1852,6 +2092,7 @@ DOC_RULES: tuple[Callable[[Context], list[str]], ...] = (
     rule_env_documented,
     rule_env_known,
     rule_test_counts,
+    rule_metric_targets,
 )
 RULES = CORE_RULES + (rule_generated,) + DOC_RULES
 

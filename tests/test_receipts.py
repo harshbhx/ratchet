@@ -656,6 +656,45 @@ def test_live_purge_seals_every_ended_day_before_it_folds(tmp_path, monkeypatch,
     assert not [e for e in after.events() if e["kind"] == "receipt_skipped"]
 
 
+@pytest.mark.req("FR-13.4", "FR-15.5", "INV-17")
+def test_the_gateways_purge_never_folds_a_day_that_has_not_been_sealed(monkeypatch):
+    """The hourly purge seals every day that has ended and then applies the request window. A day that ended inside the
+    sealing grace (SEAL_GRACE_S) is not sealed yet; folding its first rows would make its receipt impossible for good
+    (`receipt_skipped`). The purge caps the fold at the start of the first day that is not closed, and the next one
+    seals the day from all of its rows."""
+    import types
+    from unittest import mock
+
+    from ratchet import gateway as gw
+    from ratchet.config import Retention
+
+    day = ledger_module.DAY_SECONDS
+    t0 = 1_800_000_000.0
+    led = Ledger(":memory:", auto_day=True)
+
+    def req(ts: float) -> None:
+        led.log_request(ts=ts, task="t", served_by="teacher", route="confidence", cost_usd=0.001, baseline_cost_usd=0.001)
+
+    for ts in (t0, t0 + 50_000, t0 + day + 5, t0 + day + 60_000, t0 + 2 * day + 30):  # days 1, 1, 2, 2, 3
+        req(ts)
+    lock = threading.Lock()
+    lock.acquire()
+    runtime = types.SimpleNamespace(
+        ledger=led, receipt_config=receipts.SealConfig(), retention=Retention(request_days=1), gate_lock=lock
+    )
+    now = t0 + 2 * day + 100  # day 2 ended 100 s ago, inside the 300 s grace
+    with mock.patch("time.time", return_value=now):
+        assert receipts.closed_through(led) == 1 and receipts.fold_floor(led) == t0 + day
+        gw.Runtime._purge(runtime)  # type: ignore[arg-type]
+    assert set(led.receipt_periods()) == {(1, None)}  # day 1 sealed; day 2 is not closed yet
+    assert not led.period_folded(2) and led.period_folded(1)  # day 1 folded, day 2 untouched
+    lock.acquire()
+    with mock.patch("time.time", return_value=now + 3600):
+        gw.Runtime._purge(runtime)  # type: ignore[arg-type]
+    assert led.receipt(2) is not None and led.receipt(2)["manifest"]["n"] == 2  # from both of its rows
+    assert not [e for e in led.events() if e["kind"] == "receipt_skipped"]
+
+
 # ---------- settings and the mock teacher ----------
 @pytest.mark.parametrize(
     "env, value, says",
@@ -711,7 +750,9 @@ def _sim_args(*extra: str) -> Any:
 
 def _decisions(res: dict[str, Any]) -> tuple[Any, ...]:
     events = [(e["day"], e["kind"], e["detail"]) for e in res["events"]]
-    return res["days"], res["totals"], res["versions"], res["nights"], events, res["served"]
+    # The latency percentiles are wall-clock time of this machine (ADR 0060), not simulation numbers.
+    days = [{k: v for k, v in d.items() if k not in ("p50_student_ms", "p95_ms")} for d in res["days"]]
+    return days, res["totals"], res["versions"], res["nights"], events, res["served"]
 
 
 def test_sealing_moves_no_simulation_number(monkeypatch):

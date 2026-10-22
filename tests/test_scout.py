@@ -3,6 +3,7 @@ the judge access, persistent guard and Tavily credit meter of ADR 0120."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import random
@@ -334,8 +335,15 @@ class TavilyStub:
 
 
 def _live_gateway(gw, monkeypatch, settings: Settings, tavily: TavilyStub, clock: FakeClock):
-    """A live `Runtime` on fake Token Factory and Tavily transports, installed as the gateway's `rt`."""
+    """A live `Runtime` on fake Token Factory and Tavily transports, installed as the gateway's `rt`. Without API keys
+    it starts only with `allow_unauthenticated` (ADR 0061), which these tests set unless they say otherwise."""
     teacher = FakeOpenAIServer(SCOUT_JSON)
+    if settings.allow_unauthenticated is None:
+        settings = dataclasses.replace(
+            settings, allow_unauthenticated=True, api_guard="guarded", admin_token="0123456789abcdef0123456789abcdef"
+        )
+    if settings.public_dashboard is None:  # /ratchet/stats read without a key
+        settings = dataclasses.replace(settings, public_dashboard=True)
     rt = gw.Runtime(settings, transports={"teacher": teacher.transport, "tavily": tavily.transport}, wall_clock=clock)
     monkeypatch.setattr(gw, "rt", rt)
     return rt, teacher

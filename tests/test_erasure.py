@@ -874,6 +874,11 @@ def test_live_gateway_purges_hourly_off_the_request_path(gw_env, tmp_path, monke
         end_user_key=END_USER_KEY,
         example_retention_days=30,
         request_retention_days=60,
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",  # no API keys (ADR 0061)
+        public_dashboard=True,
+        ip_rpm=0,
     )
     rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("hi").transport}, clock=clock)
     led = rt.ledger
@@ -1282,3 +1287,83 @@ def test_a_ledger_from_before_retention_gains_its_columns_and_tables(tmp_path):
     assert led.bill_of_materials()["purged_examples"] == 0
     out = privacy.apply_retention(led, Retention(example_days=1), now=1700000000.0 + 2 * DAY_SECONDS)
     assert out["examples_purged"] == 1 and led.erasure_candidates(hashes=["h1"])[0]["purge_reason"] == "retention"
+
+
+# ---------- an erasure while a night runs (ADR 0081) ----------
+GOOD_EVAL = {"precision": 0.99, "coverage": 0.9, "threshold": 0.8, "golden_agreement": 0.9, "golden_n": 10}
+
+
+def _night_world():
+    led = Ledger(":memory:", golden_fraction=0.3)
+    exs = _examples(led, train=60, golden=10)
+    victim = next(e for e in exs if e.split == "train")
+    return led, victim
+
+
+@pytest.mark.req("FR-13.3", "INV-2", "INV-17")
+def test_an_erasure_during_the_champion_rescore_is_not_trained_on():
+    """The night reads its rows, re-scores the live version (minutes in live mode) and trains. An example erased in
+    between is dropped from the training set and from its commitment, and the version's example count and signed dataset
+    hash are those of the rows it is trained on."""
+    led, victim = _night_world()
+    live = _version(led, "live", {"precision": 0.9, "coverage": 0.5, "threshold": 0.8}, train_examples=0)
+    erased: list[dict[str, Any]] = []
+
+    def evaluate(adapter_uri: str, golden_rows: list[dict[str, Any]]) -> dict[str, Any]:
+        if adapter_uri == f"student-v{live}" and not erased:  # the champion's re-score: a client's erasure lands now
+            erased.append(privacy.erase(led, hashes=[victim.hash], actor="admin", reason="gdpr", dry_run=False))
+        return dict(GOOD_EVAL, golden_n=len(golden_rows))
+
+    trainer = RecordingTrainer()
+    rep = run_night(led, trainer, RecordingEvaluator(evaluate), ReleaseGate(led, ReleasePolicy()), BASE_MODEL, min_new_examples=1)
+    assert rep.trained and erased and erased[0]["purged"] == 1
+    rows = trainer.calls[0].rows
+    hashes = {r["provenance"]["hash"] for r in rows}
+    assert victim.hash not in hashes and len(rows) == 59
+    assert led.versions_containing(victim.hash) == []  # not in the new version's committed leaves
+    version = led.version(rep.version)
+    assert version.train_examples == 59 and len(led.version_leaves(rep.version, "train")) == 59
+    assert led.version_bom(rep.version)["manifest"]["training"]["dataset_sha256"] == dataset.dataset_hash(rows)
+    assert [e for e in led.events() if e["kind"] == "erasure_honoured"]
+    assert not [e for e in led.events() if e["kind"] == "erasure_tainted"]
+
+
+@pytest.mark.req("FR-13.3", "INV-14", "INV-17")
+def test_an_erasure_while_the_adapter_trains_taints_the_new_version():
+    """An erasure recorded while the trainer runs cannot take its example out of that run: the new version's leaves hold it,
+    so the erasure is pending with the version tainted (it was not, because the version had no leaves yet), and an event
+    says so."""
+    led, victim = _night_world()
+    erased: list[dict[str, Any]] = []
+
+    class ErasingTrainer(RecordingTrainer):
+        def train(self, train_rows: list[dict[str, Any]], base_model: str, name: str) -> str:
+            erased.append(privacy.erase(led, hashes=[victim.hash], actor="admin", reason="gdpr", dry_run=False))
+            return super().train(train_rows, base_model, name)
+
+    trainer = ErasingTrainer()
+    rep = run_night(
+        led, trainer, RecordingEvaluator(GOOD_EVAL), ReleaseGate(led, ReleasePolicy()), BASE_MODEL, min_new_examples=1
+    )
+    assert rep.trained and erased and erased[0]["affected_versions"] == []  # no version could be named yet
+    assert led.versions_containing(victim.hash) == [rep.version]  # the leaf stays (INV-17)
+    row = led.db.execute("SELECT id, status, tainted FROM erasures").fetchone()
+    assert (row["status"], json.loads(row["tainted"])) == ("pending", [rep.version])
+    events = [e for e in led.events() if e["kind"] == "erasure_tainted"]
+    assert len(events) == 1 and f"v{rep.version}" in events[0]["detail"] and f"#{row['id']}" in events[0]["detail"]
+    # An erasure from before the night's read is not tainted by it: its example was purged before the rows were read.
+    again = led.taint_late_erasures(rep.version, time.time() + 3600)
+    assert again == []
+
+
+@pytest.mark.req("FR-13.3")
+def test_an_erased_example_is_never_a_tombstone_hit_in_the_training_rows_of_a_quiet_night():
+    led, victim = _night_world()
+    privacy.erase(led, hashes=[victim.hash], actor="admin", reason="gdpr", dry_run=False)
+    trainer = RecordingTrainer()
+    rep = run_night(
+        led, trainer, RecordingEvaluator(GOOD_EVAL), ReleaseGate(led, ReleasePolicy()), BASE_MODEL, min_new_examples=1
+    )
+    assert rep.trained and len(trainer.calls[0].rows) == 59
+    assert not [e for e in led.events() if e["kind"] in ("erasure_honoured", "erasure_tainted")]
+    assert led.tombstoned([victim.hash, "0" * 64]) == {victim.hash}

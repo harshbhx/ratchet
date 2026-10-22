@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .. import bom, calibration, certificate, privacy, tasks
+from .. import bom, calibration, certificate, privacy, receipts, tasks, teacher_watch
+from ..confidence import SERVE_NOTHING
 from ..config import GpuRate, Retention
 from ..ledger import Ledger, Version
 from ..release import ReleaseGate
@@ -51,11 +53,23 @@ def stale_tasks(version: Version, hashes: dict[str, str]) -> list[str]:
     return sorted(t for t, h in hashes.items() if calibration.stale(version.eval, t, h))
 
 
-def rescore(ledger: Ledger, version: Version, recheck: dict[str, Any], hashes: dict[str, str]) -> None:
+def rescore(
+    ledger: Ledger, version: Version, recheck: dict[str, Any], hashes: dict[str, str], gate: ReleaseGate | None = None
+) -> None:
     """Store a re-score of `version` (the champion re-check, or a skip night's re-score after a spec change). The tasks
-    the release gate disabled on it stay disabled (`calibration.keep_disabled`): the re-score runs no gate."""
-    new = {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes}
-    ledger.update_eval(version.id, calibration.keep_disabled(version.eval, new))
+    the release gate disabled on it stay disabled (`calibration.keep_disabled`): the re-score runs no gate but one. With
+    `gate`, a task whose critical classes the re-score does not show safe (`ReleaseGate.critical_holds`, FR-2.50) is
+    disabled in the same write, with a `task_disabled` event, so the version never serves it on unchecked numbers."""
+    new = calibration.keep_disabled(version.eval, {**recheck, "rechecked_day": ledger.day, "spec_hashes": hashes})
+    held = gate.critical_holds(new) if gate is not None else []
+    if held:
+        records = calibration.entries(new)
+        for name, why in held:
+            records[name] = {**records[name], "threshold": SERVE_NOTHING, "disabled": why}
+        new = {**new, "tasks": records}
+    ledger.update_eval(version.id, new)
+    for name, why in held:
+        ledger.event("task_disabled", f"v{version.id} {name}: {why}; the teacher answers it (re-scored)")
 
 
 def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: int) -> dict[str, Any] | None:
@@ -73,11 +87,17 @@ def paired_evidence(recheck: dict[str, Any], result: dict[str, Any], live_id: in
 
 
 def _rescore_changed_specs(
-    ledger: Ledger, evaluator: Evaluator, live: Version | None, golden_rows: list[dict[str, Any]], hashes: dict[str, str]
+    ledger: Ledger,
+    evaluator: Evaluator,
+    live: Version | None,
+    golden_rows: list[dict[str, Any]],
+    hashes: dict[str, str],
+    gate: ReleaseGate | None = None,
 ) -> None:
     """A task whose spec changed is on the teacher until the live version is scored under the new spec; on a night that
-    does not train, score it now (the same re-score a training night starts with). It reads the stored golden rows and
-    writes only the version's eval, so it also runs under zero retention. A failure leaves the tasks on the teacher."""
+    does not train, score it now (the same re-score a training night starts with, `gate`'s critical check included). It
+    reads the stored golden rows and writes only the version's eval, so it also runs under zero retention. A failure
+    leaves the tasks on the teacher."""
     changed = stale_tasks(live, hashes) if live is not None and golden_rows else []
     if live is None or not changed:
         return
@@ -86,8 +106,33 @@ def _rescore_changed_specs(
     except Exception as e:  # noqa: BLE001 - a skip night stays a skip night; the tasks stay on the teacher
         ledger.event("rescore_failed", f"v{live.id}: {describe_failure(e)}; spec changed for {', '.join(changed)}")
     else:
-        rescore(ledger, live, recheck, hashes)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
+        rescore(ledger, live, recheck, hashes, gate)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
         ledger.event("rescored", f"v{live.id} re-scored on the golden set: spec changed for {', '.join(changed)}")
+
+
+def _without_erased(ledger: Ledger, train_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """`train_rows` without the examples an erasure tombstoned since they were read, and how many that was (FR-13.3)."""
+    gone = ledger.tombstoned(r["provenance"]["hash"] for r in train_rows)
+    if not gone:
+        return train_rows, 0
+    kept = [r for r in train_rows if r["provenance"]["hash"] not in gone]
+    return kept, len(train_rows) - len(kept)
+
+
+def early_night(ledger: Ledger, gate: ReleaseGate, min_new_examples: int) -> tuple[int, str]:
+    """The new examples tonight needs, and the note a skip event adds (FR-6.41, ADR 0032). With drift_early_night=1,
+    when a drift alarm came from a request logged after the last `trained` event, half of `min_new_examples` (at least
+    1): traffic changed, so a student trained on it is worth having sooner. The drift monitor is brought up to date
+    first, so a nightly job in its own process sees the alarms the gateway would; the alarm's request decides, not when
+    its event was written, so an old alarm that a replay finds late does not count. Otherwise `min_new_examples` and no
+    note. It runs after the in-flight check, so it never trains during a release (INV-5)."""
+    if not gate.policy.drift_early_night or gate.drift is None:
+        return min_new_examples, ""
+    gate.check_drift()
+    trained = ledger.last_event("trained")
+    if not gate.drift_alarm_since(trained["ts"] if trained is not None else None):
+        return min_new_examples, ""
+    return max(1, min_new_examples // 2), f" (halved from {min_new_examples} after a drift alarm)"
 
 
 def run_night(
@@ -104,6 +149,7 @@ def run_night(
     redact_pii: bool | None = None,
     store_examples: bool = True,
     retention: Retention | None = None,
+    relabel: teacher_watch.Relabel | None = None,
 ) -> NightReport:
     """One night. With `retention` (live mode: `Settings.retention()`), the retention windows are applied first
     (`privacy.apply_retention`, FR-13.4), so the night never trains on text that has expired; a failure there stops the
@@ -116,6 +162,16 @@ def run_night(
     closed whether training returns or raises. It includes the dataset upload and the adapter load around the GPU job,
     so it is an upper bound on the job's billed time. Simulations record their own intervals on a synthetic clock
     (`cost.record_simulated_day`) and pass none. `redact_pii` (`Settings.redact_pii`) goes into the BOM's `redactor`.
+
+    With `gate.policy.drift_early_night`, a drift alarm since the last training halves `min_new_examples`
+    (`early_night`).
+
+    The teacher watch (FR-16.7, ADR 0033) comes first: with `relabel` and no freeze on, the night's probes and
+    adjudications run (`teacher_watch.night`, FR-5.40, FR-5.41), also while a release is in flight (they are evidence,
+    not training), and the freeze rule is checked again. Then a freeze (`teacher_drift`, FR-6.42) skips the night,
+    before the in-flight check, because only an operator can lift it. Contested labels are left out of both sets, and
+    the BOM's `teacher` section records the epoch's self-agreement. With RATCHET_TEACHER_WATCH=0 none of this
+    happens.
 
     Each version commits to its training and golden rows (FR-16.4, ADR 0027): their leaves are written right after
     `create_version` (`Ledger.set_version_leaves`, append-only) and their roots signed in the BOM. Later features add
@@ -133,22 +189,33 @@ def run_night(
         ledger.event("skip", "training paused by an admin; no training tonight")
         return NightReport(False, None, False, "training paused")
     if retention is not None and retention.enabled:
-        privacy.apply_retention(ledger, retention)
+        privacy.apply_retention(ledger, retention, fold_before=receipts.fold_floor(ledger))
     if not store_examples:
         ledger.event("skip", "storage disabled (RATCHET_STORE_EXAMPLES=0): no new examples are stored; no training tonight")
         if not ledger.versions(["shadow", "canary"]):
             golden_rows = dataset.rows(ledger, "golden", task)
-            _rescore_changed_specs(ledger, evaluator, ledger.live(), golden_rows, spec_hashes(golden_rows))
+            _rescore_changed_specs(ledger, evaluator, ledger.live(), golden_rows, spec_hashes(golden_rows), gate)
         return NightReport(False, None, False, "storage disabled")
+    watching = bool(gate.policy.teacher_watch)
+    if watching and relabel is not None and not ledger.teacher_state().frozen:
+        # Evidence, not training: it runs during a release too, when audits lean on the teacher most.
+        teacher_watch.night(ledger, relabel)
+        gate.check_teacher()  # tonight's probes may be what tips the e-value
+    if watching and ledger.teacher_state().frozen:  # said before an in-flight release: this one needs an operator
+        ledger.event("skip", "teacher labels look unstable; no training tonight (POST /ratchet/teacher/ack resumes)")
+        return NightReport(False, None, False, "teacher unstable")
     in_flight = ledger.versions(["shadow", "canary"])
     if in_flight:
         v = in_flight[-1]
         ledger.event("skip", f"v{v.id} still in {v.state}; no training tonight (saves GPU time)")
         return NightReport(False, None, False, "release in flight")
+    # One read of the ledger: the manifest (the version's example count and signed dataset hash), the trainer's rows and the
+    # commitments all come from it, so an example stored while the files are written cannot be trained on unrecorded.
+    read_at = time.time()  # an erasure recorded from now on may postdate the rows read below (`Ledger.taint_late_erasures`)
+    snap = dataset.read_snapshot(ledger, task, exclude_contested=watching)
     with tempfile.TemporaryDirectory() as tmp:
-        manifest = dataset.build(ledger, tmp, task)
-    train_rows = dataset.rows(ledger, "train", task)
-    golden_rows = dataset.rows(ledger, "golden", task)
+        manifest = dataset.build(ledger, tmp, task, exclude_contested=watching, snapshot=snap)
+    train_rows, golden_rows = snap.train, snap.golden
 
     new = manifest["train_examples"] - ledger.train_rows_kept(task)
     hashes = spec_hashes(golden_rows)
@@ -160,10 +227,11 @@ def run_night(
     tagged = manifest.get("skipped_think_tag", 0)  # FR-8.42: the chat template would render these differently
     if tagged:
         left_out += f" ({tagged} answers with a literal think tag left out of training)"
-    if new < min_new_examples:
-        ledger.event("skip", f"only {new} new examples (< {min_new_examples}){left_out}; no training tonight")
+    need, early = early_night(ledger, gate, min_new_examples)
+    if new < need:
+        ledger.event("skip", f"only {new} new examples (< {need}){early}{left_out}; no training tonight")
         # Without new data a changed spec would wait for a training night: re-score the live version now.
-        _rescore_changed_specs(ledger, evaluator, live, golden_rows, hashes)
+        _rescore_changed_specs(ledger, evaluator, live, golden_rows, hashes, gate)
         return NightReport(False, None, False, "not enough new data")
     if not golden_rows:
         ledger.event("skip", "no golden examples yet; no training tonight")
@@ -172,8 +240,14 @@ def run_night(
     # Champion vs challenger on the SAME golden set (and the same specs): re-score the live version first.
     if live is not None:
         recheck = evaluator.evaluate(live.adapter_uri, golden_rows)
-        rescore(ledger, live, recheck, hashes)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
+        rescore(ledger, live, recheck, hashes, gate)  # keeps the tasks the gate disabled on it disabled (FR-14.1)
 
+    # An erasure that landed since the rows were read (the champion re-score takes minutes) is honoured now: its examples
+    # are dropped from the training set, and the version's count and dataset hash follow the rows it is trained on.
+    train_rows, dropped = _without_erased(ledger, train_rows)
+    if dropped:
+        manifest = {**manifest, "train_examples": len(train_rows), "dataset_sha256": dataset.dataset_hash(train_rows)}
+        ledger.event("erasure_honoured", f"{dropped} examples erased during the night were left out of training")
     # The set commitments of tonight's rows, built before the paid training job so nothing can fail after it.
     commitments = {"training": dataset.commitment(train_rows), "golden": dataset.commitment(golden_rows)}
     name = f"student-v{len(ledger.versions()) + 1}"
@@ -199,6 +273,16 @@ def run_night(
     # once, before the eval and the BOM, so every signed root has its leaves in the ledger.
     for section, (_, _, leaves) in commitments.items():
         ledger.set_version_leaves(vid, bom.COMMITMENT_SPLITS[section], leaves)
+    # An erasure recorded while the adapter trained could not drop its rows, and its own list of affected versions could not
+    # name this one (no committed leaves yet): it is pending again, with this version tainted, until a version without the
+    # data replaces it.
+    late = ledger.taint_late_erasures(vid, read_at)
+    if late:
+        ledger.event(
+            "erasure_tainted",
+            f"v{vid} was trained while erasure {', '.join(f'#{i}' for i in late)} ran and holds erased examples: "
+            "the erasure is pending until a version trained without them replaces it",
+        )
     result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
     if live is not None:  # paired evidence, before the eval is stored and the BOM signed, so the BOM carries it
         pair = paired_evidence(recheck, result, live.id)
@@ -208,6 +292,8 @@ def run_night(
     # The adapter's own bill of materials, written now, while we know exactly what it was trained on. Features add their
     # sections (bom.EXTRA_KEYS) to `bom_extra` above this line.
     bom_extra: dict[str, Any] = {}
+    if watching:  # the teacher's self-agreement in this epoch and the contested labels left out (FR-16.7)
+        bom_extra["teacher"] = teacher_watch.bom_section(ledger, manifest.get("excluded_contested", 0))
     version = ledger.version(vid)
     assert version is not None
     m = bom.manifest(
@@ -219,11 +305,15 @@ def run_night(
         redact_pii=redact_pii,
     )
     ledger.set_bom(vid, bom.document(m, signer))
+    # Only an early night trains on fewer than min_new_examples new examples (FR-6.41); say so after the usual text.
+    sooner = ""
+    if new < min_new_examples:
+        sooner = f"; early night after a drift alarm ({new} new examples, normally {min_new_examples})"
     ledger.event(
         "trained",
         f"v{vid} on {manifest['train_examples']} examples{left_out}; "
         f"golden agreement {result.get('golden_agreement', 0):.1%} "
-        f"(n={result.get('golden_n', 0)})",
+        f"(n={result.get('golden_n', 0)}){sooner}",
     )
     admitted = gate.admit(vid)
     return NightReport(True, vid, admitted, "admitted" if admitted else "rejected", result)

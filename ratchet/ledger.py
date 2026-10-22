@@ -16,7 +16,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from . import calibration, licenses, metrics, tasks
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR
@@ -27,7 +27,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL, day INTEGER, task TEXT,
-    served_by TEXT,            -- 'student' | 'teacher'
+    served_by TEXT,            -- 'student' | 'teacher' | 'upstream' (an embeddings pass-through, route 'passthrough')
     student_version INTEGER,   -- version id that answered or tried first (NULL on cold start)
     confidence REAL,
     escalated INTEGER,
@@ -92,7 +92,14 @@ CREATE TABLE IF NOT EXISTS examples (
     prompt_hash TEXT,          -- a purged row's prompt key (ledger.prompt_key), so its `seen` still counts (INV-3)
     -- Human labels (FR-3.54, FR-4.50, ADR 0091):
     verified INTEGER DEFAULT 0,       -- 1: a person wrote the label (teacher_model 'human': a correction or an import)
-    golden_only INTEGER DEFAULT 0     -- 1: held out for good, even past FREQUENT, with every variant of its prompt
+    golden_only INTEGER DEFAULT 0,    -- 1: held out for good, even past FREQUENT, with every variant of its prompt
+    -- The example's key under the default redaction (`label` style, no detector plugin; ADR 0082) when it was stored
+    -- otherwise and the key differs; NULL when it is `hash`. An erasure tombstones both, so a style or plugin change
+    -- never lets an erased example be stored again.
+    canon_hash TEXT,
+    -- SHA-256 of the stored messages (`content_hash`), the same whatever the task or conditions: what groups one prompt across
+    -- tasks for the golden split and the frequent rule (ADR 0131). Kept when a purge removes the text.
+    content_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,7 +198,7 @@ CREATE TABLE IF NOT EXISTS backfill_jobs (   -- historical prompts relabelled by
     source_models TEXT,        -- JSON: {model: outputs discarded}
     status TEXT, usd REAL, realtime_usd REAL
 );
-CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys, never stored again (FR-16.9)
+CREATE TABLE IF NOT EXISTS tombstones (      -- erased example keys (hash and canon_hash), never stored again (FR-16.9)
     key TEXT PRIMARY KEY, erasure_id INTEGER, ts REAL,
     suppressed INTEGER DEFAULT 0  -- how often a tombstoned example was offered again and refused
 );
@@ -246,7 +253,8 @@ CREATE TABLE IF NOT EXISTS daily_rollup (     -- request rows folded by retentio
     sampled INTEGER, avoided REAL, student_in_tokens INTEGER, student_out_tokens INTEGER, served_with_tokens INTEGER,
     audited INTEGER, audit_agree_sum INTEGER, audit_n INTEGER,  -- audit_n: audited rows that recorded agreement
     wall_ms_sum REAL, latency_n INTEGER, stored_sum INTEGER, stored_n INTEGER,
-    folded_ts REAL             -- when these rows were folded; one fold may leave several rows per key, readers sum them
+    folded_ts REAL,            -- when these rows were folded; one fold may leave several rows per key, readers sum them
+    answered INTEGER, answered_escalated INTEGER  -- rows the student answered, and of those escalated (FR-7.9, SM-5)
 );
 -- INV-17: committed leaves and sealed receipts are append-only. A changed or deleted row would silently break the
 -- signed roots and chains built from them, so the database refuses UPDATE and DELETE, and an INSERT that would replace
@@ -311,6 +319,24 @@ def prompt_key(r: Mapping[str, Any]) -> str:
     if r["params"] and r["messages"]:
         return example_hash(r["task"], json.loads(r["messages"]))
     return str(r["hash"])
+
+
+def content_hash(messages_text: str) -> str:
+    """SHA-256 of an example's stored `messages` text (the JSON `add_example` writes): the same for the same prompt under
+    any task or conditions. It groups one prompt across tasks (`content_key`)."""
+    return hashlib.sha256(messages_text.encode()).hexdigest()
+
+
+def content_key(r: Mapping[str, Any]) -> str | None:
+    """The group of an example's prompt across tasks (ADR 0131): its `content_hash`, else computed from its messages for a
+    row stored before the column existed, else None (a legacy row whose text a purge removed: it has no group beyond
+    its own task's `prompt_key`)."""
+    keys = r.keys() if hasattr(r, "keys") else ()
+    if "content_hash" in keys and r["content_hash"]:
+        return str(r["content_hash"])
+    if "messages" in keys and r["messages"]:
+        return content_hash(str(r["messages"]))
+    return None
 
 
 def seen_count(r: Mapping[str, Any]) -> int:
@@ -431,9 +457,12 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "prompt_hash": "TEXT",
         "verified": "INTEGER DEFAULT 0",
         "golden_only": "INTEGER DEFAULT 0",
+        "canon_hash": "TEXT",
+        "content_hash": "TEXT",
     },
     "versions": {"stage_since": "INTEGER DEFAULT 0", "bom": "TEXT"},
     "erasures": {"actor": "TEXT", "reason": "TEXT", "scope": "TEXT", "purged": "INTEGER", "kept": "INTEGER"},
+    "daily_rollup": {"answered": "INTEGER", "answered_escalated": "INTEGER"},
 }
 # Data a new column needs in rows written before it existed: (the columns it reads, the UPDATE), run once, right after
 # `_migrate` adds the column, when the table has the columns it reads (a hand-made partial file may not).
@@ -454,8 +483,14 @@ INDEXES = [
     # The routing snapshot's rebuild reads only the live, canary and shadow rows (ADR 0060). SQLite ends every index with
     # the rowid, so requests_shadow_version already serves `shadow_version=? AND id>?` ranges.
     "CREATE INDEX IF NOT EXISTS versions_state ON versions (state)",
+    # The tasks requests named and when, of every client and of one (recent_tasks and task_seen, for GET /v1/models;
+    # FR-1.50): a few index probes per distinct task name instead of a scan of every request.
+    "CREATE INDEX IF NOT EXISTS requests_task_ts ON requests (task, ts)",
+    "CREATE INDEX IF NOT EXISTS requests_client_task_ts ON requests (client, task, ts)",
     "CREATE INDEX IF NOT EXISTS version_leaves_key ON version_leaves (key)",
     "CREATE INDEX IF NOT EXISTS teacher_checks_epoch ON teacher_checks (epoch)",
+    # The teacher watch's quarantine (FR-16.7): the contested rows by task without a scan of every example.
+    "CREATE INDEX IF NOT EXISTS examples_contested ON examples (contested, task)",
     "CREATE INDEX IF NOT EXISTS erasures_status ON erasures (status)",
     # One end user's requests over time (FR-13.2): what erasure, export and per-user limits look up.
     "CREATE INDEX IF NOT EXISTS requests_end_user_ts ON requests (end_user, ts)",
@@ -506,6 +541,26 @@ FEEDBACK_TABLES = ("feedback",)
 # examples.origin of a human or imported label (ADR 0091); live teacher answers leave it NULL ('live').
 LABEL_ORIGINS = ("feedback", "import")
 
+# The teacher watch (FR-16.7, ADR 0033). Its ledger-wide state is in `meta` under these keys: the check epoch (1 until the
+# first ack or model change), the ledger day it started (unset for epoch 1, which starts on day 1), whether Night School
+# is frozen ('1'), the model id the teacher's responses last reported, and the ids reported since the epoch started (a
+# JSON list, at most MAX_EPOCH_MODEL_IDS), so a teacher that alternates between two ids starts one epoch, not one per
+# response.
+TEACHER_EPOCH, TEACHER_EPOCH_DAY = "teacher_epoch", "teacher_epoch_day"
+TEACHER_FROZEN, TEACHER_MODEL = "teacher_frozen", "teacher_model"
+TEACHER_MODEL_IDS = "teacher_model_ids"
+MAX_EPOCH_MODEL_IDS = 8
+# `examples.checked_epoch` of a label that is not one independent greedy teacher answer: sampled above temperature 0 (or
+# under a client's reasoning effort), where two labels of one request may differ by design, or chosen by an adjudication
+# (a majority picked after a disagreement). It is never compared with another label again, nor probed.
+UNCHECKABLE = -1
+# `examples.contested`: 0 clean; CONTESTED when a re-test disagreed (quarantined until adjudicated); UNRESOLVED when an
+# adjudication found no strict majority (still quarantined, adjudicated again after the CONTESTED rows).
+CONTESTED, UNRESOLVED = 1, 2
+CHECK_SOURCES = ("duplicate", "probe")  # teacher_checks.source: a stored request's first re-test, or a Night School probe
+MAX_MODEL_ID = 200  # characters of a response's model id kept in `meta` and events (the upstream chooses the string)
+_META_UPSERT = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+
 DAY_SECONDS = 86400
 DAY_ORIGIN_META = "day_origin"  # meta row: when day 1 started on a live ledger, kept once request retention deletes rows
 PURGE_REASONS = ("retention", "erasure")  # examples.purge_reason
@@ -518,11 +573,12 @@ ROLLUP_SUMS = (
     "requests", "student_served", "teacher_served", "escalated", "cost", "baseline", "teacher_cost", "student_cost",
     "split_unknown", "split_unknown_cost", "sampled", "avoided", "student_in_tokens", "student_out_tokens",
     "served_with_tokens", "audited", "audit_agree_sum", "audit_n", "wall_ms_sum", "latency_n", "stored_sum", "stored_n",
+    "answered", "answered_escalated",
 )  # fmt: skip
 ROLLUP_INSERT = """INSERT INTO daily_rollup (folded_ts, day, task, client, route, store_opt_out, requests, student_served,
     teacher_served, escalated, cost, baseline, teacher_cost, student_cost, split_unknown, split_unknown_cost, sampled,
     avoided, student_in_tokens, student_out_tokens, served_with_tokens, audited, audit_agree_sum, audit_n, wall_ms_sum,
-    latency_n, stored_sum, stored_n)
+    latency_n, stored_sum, stored_n, answered, answered_escalated)
     SELECT ?, day, task, client, route, store_opt_out, COUNT(*),
            COALESCE(SUM(served_by='student'), 0), COALESCE(SUM(served_by='teacher'), 0), COALESCE(SUM(escalated), 0),
            SUM(cost_usd), SUM(baseline_cost_usd),
@@ -535,7 +591,8 @@ ROLLUP_INSERT = """INSERT INTO daily_rollup (folded_ts, day, task, client, route
            COALESCE(SUM(served_by='student' AND student_in_tokens IS NOT NULL), 0),
            COALESCE(SUM(audited=1), 0), SUM(CASE WHEN audited=1 THEN audit_agree END),
            COUNT(CASE WHEN audited=1 THEN audit_agree END),
-           SUM(latency_ms), COUNT(latency_ms), SUM(stored), COUNT(stored)
+           SUM(latency_ms), COUNT(latency_ms), SUM(stored), COUNT(stored),
+           COUNT(confidence), COALESCE(SUM(escalated=1 AND confidence IS NOT NULL), 0)
     FROM requests WHERE {where} GROUP BY day, task, client, route, store_opt_out"""
 # `Ledger.cost_by_day`'s columns and the daily_rollup sum each one adds (with its zero), for days with folded rows.
 COST_COLUMNS: dict[str, tuple[str, float]] = {
@@ -579,8 +636,14 @@ FAILURE_COLUMNS = frozenset({"ts", "day", "request_id", "client", "task", "stage
 # `stats_by_task`'s `compare_source` by a task's source: where its compared fields come from (FR-14.2). An unregistered
 # name (`adhoc`) compares whole answers: None.
 COMPARE_SOURCES = {"builtin": "registry", "file": "registry", "api": "registry", "auto": "schema"}
+# Distinct task names `recent_tasks` finds one index probe at a time; past this, one aggregate over the index is cheaper.
+RECENT_TASK_PROBES = 2000
 # The route reported for rows written before requests had a route column (v0.4 and earlier files).
 UNRECORDED_ROUTE = "unrecorded"
+# Rows other than the /v1/embeddings pass-through's (route `router.PASSTHROUGH_ROUTE`, FR-1.51): the headline ratios
+# (student share, escalation rate, cost per 1k, latency, savings) describe the distillation, which embeddings are not
+# part of. A row without a route (older than the column) is never a pass-through.
+NOT_PASSTHROUGH = "route IS NOT 'passthrough'"
 # What GPUs ran (ADR 0023): the self-hosted student endpoint, a Night School training job, and a separate evaluation job
 # (none records one yet: the live golden eval runs on the student endpoint, whose uptime is counted).
 COMPUTE_KINDS = ("student_endpoint", "training_job", "eval_job")
@@ -684,6 +747,23 @@ def _chunks(values: list[Any], size: int = SQL_CHUNK) -> Iterator[list[Any]]:
         yield values[i : i + size]
 
 
+class TeacherState(NamedTuple):
+    """The teacher watch's ledger-wide state (`Ledger.teacher_state`)."""
+
+    epoch: int  # the check epoch, 1 or more
+    frozen: bool  # Night School stops training until an operator acknowledges
+    since_day: int  # the ledger day the epoch started
+
+
+def _epoch(value: object) -> int:
+    """A check epoch read from `meta`: a whole number of at least 1; 1 when it is unset or unreadable."""
+    try:
+        epoch = int(str(value))
+    except ValueError:
+        return 1
+    return max(1, epoch)
+
+
 def _like(text: str) -> str:
     """A LIKE pattern that matches `text` anywhere, with `%`, `_` and the escape character taken literally."""
     return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -696,6 +776,24 @@ def _add(a: Any, b: Any) -> Any:
     if b is None:
         return a
     return a + b
+
+
+# `Ledger.kpi_days`'s sums and their zeros, for a day that only folded request rows have (FR-7.9, FR-13.4).
+KPI_ZERO: dict[str, Any] = {
+    "requests": 0, "student_served": 0, "escalated": 0, "answered": 0, "answered_escalated": 0, "cost": 0.0, "baseline": 0.0,
+}  # fmt: skip
+
+
+def _day_range(day_from: int | None, day_to: int | None) -> tuple[str, list[Any]]:
+    """A WHERE clause (and its arguments) for ledger days `day_from` to `day_to`, inclusive; None leaves a side open."""
+    where, args = "1=1", []
+    for op, day in ((">=", day_from), ("<=", day_to)):
+        if day is not None:
+            if isinstance(day, bool) or not isinstance(day, int):
+                raise ValueError(f"a ledger day must be a whole number, not {day!r}")
+            where += f" AND day {op} ?"
+            args.append(day)
+    return where, args
 
 
 # A stats row for a key that only folded request rows have (FR-13.4): every column a reader may read, empty.
@@ -741,19 +839,32 @@ class NoTrainFull(Exception):
 
 def _live_calibration(live: Version | None, task: tasks.Task) -> dict[str, Any]:
     """`stats_by_task`'s view of how the live version holds the student to `task` (FR-14.1)."""
-    out: dict[str, Any] = {"threshold": None, "precision": None, "coverage": None, "calibrated": None, "disabled": None}
+    out: dict[str, Any] = {
+        "threshold": None,
+        "precision": None,
+        "coverage": None,
+        "calibrated": None,
+        "disabled": None,
+        "precision_kind": None,
+        "judge_pass_rate": None,
+    }
     if live is None or task.pinned:
         return out
     rec = calibration.entry(live.eval, task.name)
     default = calibration.number(live.eval.get("threshold"))
-    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know.
-    if rec is not None or default is not None or calibration.spec_changed(live.eval, task):
+    # Without a record or a global threshold the router uses RATCHET_CONFIDENCE_THRESHOLD, which the ledger does not know;
+    # a task with critical classes and no measured record serves nothing whatever the global threshold (FR-2.50).
+    if rec is not None or default is not None or calibration.spec_changed(live.eval, task) or task.routing_rules.critical:
         out["threshold"] = calibration.threshold(live.eval, task, calibration.SERVE_NOTHING if default is None else default)
     if rec is not None:
         out["precision"] = calibration.number(rec.get("precision"))
         out["coverage"] = calibration.number(rec.get("coverage"))
         out["calibrated"] = rec.get("calibrated") if isinstance(rec.get("calibrated"), bool) else None
         out["disabled"] = rec.get("disabled") if isinstance(rec.get("disabled"), str) else None
+        # FR-14.40: what the precision means (a similarity task's is a proxy) and the judge's verdict on its served answers.
+        kind = rec.get("precision_kind")
+        out["precision_kind"] = kind if kind in tasks.PRECISION_KINDS else None
+        out["judge_pass_rate"] = calibration.number(rec.get("judge_pass_rate"))
     return out
 
 
@@ -1235,7 +1346,7 @@ class Ledger:
         ).fetchone()
         return {"rows": [dict(r) for r in rows], "other_clients": int(other["other"]), "no_client": int(other["none"])}
 
-    @_locked
+    @_reads
     def cost_by_day(self, since: int | None = None, until: int | None = None) -> list[dict[str, Any]]:
         """Per ledger day from `since` to `until` (inclusive; None = unbounded), the sums the cost report needs, in one
         aggregate query (ratchet/cost.py). Rows from before v0.5 have no split (`split_unknown`): their whole `cost_usd`
@@ -1269,11 +1380,11 @@ class Ledger:
             q += " AND day <= ?"
             args.append(until)
         rows = [dict(r) for r in self._rdb.execute(q + " GROUP BY day ORDER BY day", args)]
-        if not self._has_rollup():
+        if not self._has_rollup(self._rdb):
             return rows
         where = " AND ".join(["1=1"] + (["day >= ?"] if since is not None else []) + (["day <= ?"] if until is not None else []))
         by_day = {r["day"]: r for r in rows}
-        for day, f in self._rollup_by("day", f"WHERE {where}", args).items():  # folded request rows (FR-13.4)
+        for day, f in self._rollup_by("day", f"WHERE {where}", args, con=self._rdb).items():  # folded rows (FR-13.4)
             r = by_day.setdefault(day, {"day": day, **{col: zero for col, (_, zero) in COST_COLUMNS.items()}})
             for col, (rolled, zero) in COST_COLUMNS.items():
                 r[col] = _add(r[col], f[rolled]) or zero
@@ -1310,6 +1421,53 @@ class Ledger:
             }
             for r in rows
         ]
+
+    @_locked
+    def recent_tasks(self, days: float, client: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        """The tasks requests named in the last `days` days of wall-clock time, most recently used first, at most `limit`:
+        each as {task, first_ts, last_ts}, `first_ts` being its first request ever. With `client` (an API key name) only
+        that key's requests count, so one client's ad hoc task names are never listed to another. For GET /v1/models
+        (FR-1.50), which holds the ledger's lock meanwhile: so the cost is three index probes per distinct task name
+        (`_task_spans`), not a pass over every request, up to RECENT_TASK_PROBES names; past them, one aggregate over the
+        covering index."""
+        if isinstance(days, bool) or not isinstance(days, (int, float)) or not 0 < days < math.inf:
+            raise ValueError(f"days must be a positive number, not {days!r}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError(f"limit must be a whole number, 1 or more, not {limit!r}")
+        cutoff = time.time() - days * DAY_SECONDS
+        spans = self._task_spans(client, RECENT_TASK_PROBES)
+        if spans is None:
+            where, args = ("task IS NOT NULL", []) if client is None else ("client = ? AND task IS NOT NULL", [client])
+            spans = self.db.execute(f"SELECT task, MIN(ts), MAX(ts) FROM requests WHERE {where} GROUP BY task", args).fetchall()
+        recent = sorted((r for r in spans if r[2] is not None and r[2] >= cutoff), key=lambda r: (-r[2], r[0]))
+        return [{"task": t, "first_ts": float(first), "last_ts": float(last)} for t, first, last in recent[:limit]]
+
+    def _task_spans(self, client: str | None, most: int) -> list[sqlite3.Row] | None:
+        """(task, first ts, last ts) for every distinct task name requests (of `client`, when given) named, found by
+        walking the (task, ts) or (client, task, ts) index one name at a time; None when there are more than `most`."""
+        who = "" if client is None else "client = :client AND "
+        rows = self.db.execute(
+            f"""WITH RECURSIVE names(task) AS (
+                    SELECT (SELECT MIN(task) FROM requests WHERE {who}task IS NOT NULL)
+                    UNION ALL
+                    SELECT (SELECT MIN(task) FROM requests WHERE {who}task > names.task) FROM names
+                    WHERE names.task IS NOT NULL LIMIT :cap)
+                SELECT task, (SELECT MIN(ts) FROM requests WHERE {who}task = names.task),
+                       (SELECT MAX(ts) FROM requests WHERE {who}task = names.task)
+                FROM names WHERE task IS NOT NULL""",
+            {"client": client, "cap": most + 2},
+        ).fetchall()
+        return rows if len(rows) <= most else None
+
+    @_locked
+    def task_seen(self, task: str, client: str | None = None) -> dict[str, float] | None:
+        """When requests (with `client`, that key's) first and last named `task`, as {first_ts, last_ts}; None when none
+        did. Two index probes, for GET /v1/models/{id}."""
+        who = "" if client is None else "client = :client AND "
+        probe = f"FROM requests WHERE {who}task = :task"
+        q = f"SELECT (SELECT MIN(ts) {probe}), (SELECT MAX(ts) {probe})"
+        first, last = self.db.execute(q, {"client": client, "task": task}).fetchone()
+        return None if last is None else {"first_ts": float(first), "last_ts": float(last)}
 
     # ---------- compute time (ADR 0023) ----------
     def now(self) -> float:
@@ -1532,10 +1690,15 @@ class Ledger:
         bump: bool = True,
         count_seen: bool = True,
         sender: str | None = None,
+        canon_hash: str | None = None,
+        comparable: bool = True,
     ) -> bool | None:
         """Store a teacher-labelled example. Returns True when it was inserted, False when it was a duplicate, and None
-        when it was refused because an erasure tombstoned its hash (FR-13.3): nothing is stored or bumped, and only the
-        tombstone's `suppressed` count grows.
+        when it was refused because an erasure tombstoned its hash or its `canon_hash` (FR-13.3): nothing is stored or
+        bumped, and only the tombstone's `suppressed` count grows. `canon_hash` is the example's key under the default
+        redaction (`label` style, no detector plugin; ADR 0082) when it was redacted otherwise; it is stored with the
+        row, so an erasure tombstones it too, and an example erased under one style or plugin setting is refused under
+        any other.
         Human and imported labels (ADR 0091, `feedback.store_label`, the only caller that passes these) set `verified`
         (a person wrote the label), `golden_only` (the row goes to the golden split whatever its hash says, and stays
         held out even past FREQUENT; sticky on a duplicate) and `origin` (`LABEL_ORIGINS`). With `replace`, a duplicate's
@@ -1557,7 +1720,12 @@ class Ledger:
         (`seen_window`, RATCHET_SEEN_DEDUP_S) a repeat from the same `sender` counts at most once per window. `sender`
         is who sent the request (the API key's name, '' without one), or None for internal traffic (Scout, the
         simulator, the mock warm-up), whose repeats are traffic by construction and always count. The window is
-        checked and the row written under the ledger's lock, so two concurrent retries cannot both count."""
+        checked and the row written under the ledger's lock, so two concurrent retries cannot both count.
+
+        The teacher watch (FR-16.7, ADR 0033): a duplicate whose label and stored label both need no redaction and come
+        from the same teacher is the stored request's re-test, and its first one in the current check epoch is compared
+        with the stored label (`_check_label`). `comparable` is False for a label the teacher sampled above temperature 0
+        or under a client's reasoning effort: such a label is stored as UNCHECKABLE, and as a re-test it is not compared."""
         target = target_params(params)
         h = example_hash(task, messages, target)
         # Without conditions, h is the split key. A golden-only label is golden whatever its hash says (ADR 0091).
@@ -1565,15 +1733,19 @@ class Ledger:
         text = json.dumps(messages, ensure_ascii=False)
         stored_params = json.dumps(target, ensure_ascii=False) if target else None
         now = time.time()
-        if self.db.execute("SELECT 1 FROM tombstones WHERE key=?", (h,)).fetchone() is not None:
-            return self._refuse_erased(h, now)
+        canon = canon_hash if canon_hash and canon_hash != h else None
+        keys = (h,) if canon is None else (h, canon)
+        hit = self.db.execute(f"SELECT key FROM tombstones WHERE key IN ({','.join('?' * len(keys))})", keys).fetchone()
+        if hit is not None:
+            return self._refuse_erased(hit["key"], now)
         label = (completion, teacher_model, license_name, license_url, redactions, int(verified), origin)
         window = self.seen_window if sender is not None else None
         try:
             self.db.execute(
                 "INSERT INTO examples (ts, day, task, hash, messages, completion, teacher_model, license, license_url,"
-                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " split, redactions, params, client, end_user, last_seen_ts, verified, golden_only, origin, seen, canon_hash,"
+                " content_hash)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     now,
                     self.day,
@@ -1594,8 +1766,12 @@ class Ledger:
                     int(golden_only),
                     origin,
                     int(bump),  # 1 as the column's default for every router write; 0 for a label that is no occurrence
+                    canon,
+                    content_hash(text),
                 ),
             )
+            if not comparable:  # a sampled label is no reference for a later one (the teacher watch)
+                self.db.execute("UPDATE examples SET checked_epoch=? WHERE hash=?", (UNCHECKABLE, h))
             self.db.commit()
             if window is not None:
                 window.note(h, sender or "")
@@ -1615,6 +1791,8 @@ class Ledger:
         elif more and window is not None and not window.count(h, sender or ""):
             metrics.SEEN_SKIPPED.inc("window")
             more = 0
+        if comparable and not redactions and reason is None:  # the stored request's re-test (FR-16.7), before a label replaces it
+            self._check_label(h, completion, teacher_model, "duplicate")
         if reason == "retention":
             self.db.execute(
                 "UPDATE examples SET messages=?, completion=?, params=?, teacher_model=?, license=?, license_url=?,"
@@ -1848,7 +2026,7 @@ class Ledger:
         final = reason == "erasure"
         for part in _chunks(sorted(rows)):
             found = self.db.execute(
-                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason FROM examples"
+                "SELECT hash, task, split, messages, params, prompt_hash, purge_reason, canon_hash, content_hash FROM examples"
                 f" WHERE hash IN ({','.join('?' * len(part))})",
                 part,
             ).fetchall()
@@ -1859,9 +2037,9 @@ class Ledger:
                     key = prompt_key(r) if r["params"] else None  # without conditions the key is the hash itself
                     self.db.execute(
                         "UPDATE examples SET messages=NULL, completion=NULL, params=NULL, purged_ts=?, purge_reason=?,"
-                        " purged_train=?, prompt_hash=COALESCE(prompt_hash, ?),"
+                        " purged_train=?, prompt_hash=COALESCE(prompt_hash, ?), content_hash=COALESCE(content_hash, ?),"
                         " end_user=CASE WHEN ? THEN NULL ELSE end_user END WHERE hash=?",
-                        (now, reason, int(bool(rows[r["hash"]])), key, int(final), r["hash"]),
+                        (now, reason, int(bool(rows[r["hash"]])), key, content_key(r), int(final), r["hash"]),
                     )
                 else:  # an erasure of a row retention purged: its text is gone already; it now stays gone
                     self.db.execute("UPDATE examples SET purge_reason='erasure', end_user=NULL WHERE hash=?", (r["hash"],))
@@ -1913,12 +2091,13 @@ class Ledger:
         now: float | None = None,
     ) -> dict[str, int]:
         """Carry out an erasure in one transaction (FR-13.3): purge `purge` ({hash: counted as a training row}) for good,
-        tombstone each hash (`add_example` refuses it from now on), list the purged rows in `erasure_items` (hashes, task
-        and split, never text), unlink the erased party from the shared examples kept (`unlink`: (hash, 'client' or
-        'end_user', the client's name)), clear the erased end users' hashes from their request rows
-        (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data (`tainted`;
-        `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive checked and free
-        of request text. Returns the erasure's id and the counts. Signed BOMs are never touched (INV-14)."""
+        tombstone each hash and canonical key (`canon_hash`; `add_example` refuses both from now on), list the purged
+        rows in `erasure_items` (hashes, task and split, never text), unlink the erased party from the shared examples
+        kept (`unlink`: (hash, 'client' or 'end_user', the client's name)), clear the erased end users' hashes from their
+        request rows (`unlink_end_users`), and write the `erasures` row with the versions that may hold the data
+        (`tainted`; `status` 'pending' when there are some, else 'complete'). `actor`, `reason` and `scope` arrive
+        checked and free of request text. Returns the erasure's id and the counts. Signed BOMs are never touched
+        (INV-14)."""
         now = time.time() if now is None else _check_ts(now, "now")
         tainted = sorted({int(v) for v in affected})
         self._begin()
@@ -1942,8 +2121,9 @@ class Ledger:
                 "INSERT OR IGNORE INTO erasure_items (erasure_id, hash, task, split) VALUES (?,?,?,?)",
                 [(eid, r["hash"], r["task"], r["split"]) for r in done],
             )
+            keys = [r["hash"] for r in done] + [r["canon_hash"] for r in done if r["canon_hash"]]
             self.db.executemany(
-                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(r["hash"], eid, now) for r in done]
+                "INSERT OR IGNORE INTO tombstones (key, erasure_id, ts) VALUES (?,?,?)", [(k, eid, now) for k in keys]
             )
             kept = self._unlink(unlink)
             unlinked = 0
@@ -2115,7 +2295,7 @@ class Ledger:
         for r in (con or self.db).execute(f"SELECT {key} k, {sums} FROM daily_rollup {where} GROUP BY {key}", list(args)):
             out[r["k"]] = {c: r[c] for c in ROLLUP_SUMS}
         per_route = f"SELECT {key} k, route, store_opt_out, SUM(requests) n FROM daily_rollup {where}"
-        for r in self.db.execute(per_route + f" GROUP BY {key}, route, store_opt_out", list(args)):
+        for r in (con or self.db).execute(per_route + f" GROUP BY {key}, route, store_opt_out", list(args)):
             entry = out[r["k"]]
             route = f"route:{r['route'] or UNRECORDED_ROUTE}"
             entry[route] = entry.get(route, 0) + int(r["n"] or 0)
@@ -2383,11 +2563,6 @@ class Ledger:
         return None if row is None else str(row["value"])
 
     @_locked
-    def meta_set(self, key: str, value: str) -> None:
-        self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
-        self.db.commit()
-
-    @_locked
     def meta_setdefault(self, key: str, value: str) -> str:
         """The stored value of `key`, storing `value` first when there is none. Atomic across processes sharing the
         file: the first writer wins and everyone reads its value."""
@@ -2497,6 +2672,286 @@ class Ledger:
             "golden_only_examples": int(e["golden_only"]),
             "by_version": by_version,
         }
+
+    # ---------- the teacher watch (FR-16.7, ADR 0033) ----------
+    def _teacher_epoch(self) -> int:
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_EPOCH,)).fetchone()
+        return _epoch(r["value"] if r is not None else None)
+
+    def _check_label(self, h: str, completion: str, teacher_model: str, source: str) -> bool | None:
+        """Compare a new label of stored example `h` with its stored label, if this is the example's first re-test in the
+        current check epoch, and record the outcome: a `teacher_checks` row, `checked_epoch` set to the epoch, and
+        `contested` set when they disagree. Returns whether they agree, or None when no check ran.
+
+        A check runs only when both labels can be compared: the stored one needs no redaction (a placeholder could make
+        two different raw requests share one redacted text), it was written by the same configured teacher, it is not
+        UNCHECKABLE or contested (a label a re-test already disagreed with was selected by that disagreement, so it is no
+        independent draw any more), and its task is registered, names fields (`Task.verifiable`), is not pinned, and
+        finds both labels valid under its current spec (a stored label the spec refuses now says nothing about the
+        teacher). The caller checks the new label's redactions. At most one check per example per epoch keeps the checks
+        of an epoch valid as an e-process: every check compares two independent draws, never a re-used stored label with
+        a second re-test. Runs inside the caller's transaction."""
+        row = self.db.execute(
+            "SELECT task, completion, teacher_model, redactions, checked_epoch, contested FROM examples WHERE hash=?", (h,)
+        ).fetchone()
+        if row is None or row["redactions"] or row["contested"] or row["teacher_model"] != teacher_model:
+            return None
+        epoch = self._teacher_epoch()
+        done = int(row["checked_epoch"] or 0)
+        if done < 0 or done >= epoch:  # UNCHECKABLE, or already re-tested in this epoch
+            return None
+        task = tasks.lookup(row["task"])
+        if task is None or task.pinned or not task.verifiable:
+            return None
+        try:
+            stored, new = task.key(row["completion"]), task.key(completion)
+            if stored is tasks.NO_KEY or new is tasks.NO_KEY:
+                return None
+            agree = bool(task.match(stored, new))
+        except Exception:  # noqa: BLE001 - a comparison that fails is no check; never fail the write it rides on
+            return None
+        self.db.execute(
+            "INSERT INTO teacher_checks (ts, day, epoch, task, source, agree, model) VALUES (?,?,?,?,?,?,?)",
+            (time.time(), self.day, epoch, row["task"], source, int(agree), teacher_model),
+        )
+        self.db.execute("UPDATE examples SET checked_epoch=?, contested=? WHERE hash=?", (epoch, 0 if agree else CONTESTED, h))
+        return agree
+
+    @_locked
+    def record_teacher_check(self, h: str, completion: str, teacher_model: str, source: str = "probe") -> bool | None:
+        """`_check_label` in its own transaction, for a label that is not stored (a Night School probe): whether it agrees
+        with stored example `h`'s label, or None when no check ran (already re-tested this epoch, not comparable). The
+        check and its writes are one transaction, so the gateway storing a duplicate at the same time cannot add a second
+        check of the same example to the epoch."""
+        if source not in CHECK_SOURCES:
+            raise ValueError(f"source must be one of {', '.join(CHECK_SOURCES)}, not {source!r}")
+        self._begin()
+        try:
+            agree = self._check_label(h, completion, teacher_model, source)
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return agree
+
+    @_locked
+    def meta_set(self, key: str, value: str) -> None:
+        """Set the `meta` table's `key` to `value` (`meta_value` reads it)."""
+        self.db.execute(_META_UPSERT, (key, value))
+        self.db.commit()
+
+    @_locked
+    def teacher_state(self) -> TeacherState:
+        """The teacher watch's check epoch, whether Night School is frozen, and the day the epoch started, in one query
+        of `meta`."""
+        keys = (TEACHER_EPOCH, TEACHER_FROZEN, TEACHER_EPOCH_DAY)
+        got = {r["key"]: r["value"] for r in self.db.execute("SELECT key, value FROM meta WHERE key IN (?, ?, ?)", keys)}
+        try:
+            since = int(str(got.get(TEACHER_EPOCH_DAY, 1)))
+        except ValueError:
+            since = 1
+        return TeacherState(_epoch(got.get(TEACHER_EPOCH)), got.get(TEACHER_FROZEN) == "1", since)
+
+    def _new_epoch(self, kind: str, detail: str, unfreeze: bool, model_ids: list[str]) -> int:
+        """Start the next check epoch, today, with `model_ids` as the ids reported in it so far, and write event `kind`
+        (its `detail` may use `{epoch}`), inside the caller's transaction. Returns the new epoch."""
+        epoch = self._teacher_epoch() + 1
+        self.db.execute(_META_UPSERT, (TEACHER_EPOCH, str(epoch)))
+        self.db.execute(_META_UPSERT, (TEACHER_EPOCH_DAY, str(self.day)))
+        self.db.execute(_META_UPSERT, (TEACHER_MODEL_IDS, json.dumps(model_ids[-MAX_EPOCH_MODEL_IDS:])))
+        if unfreeze:
+            self.db.execute(_META_UPSERT, (TEACHER_FROZEN, "0"))
+        self.db.execute(
+            "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)",
+            (time.time(), self.day, kind, detail.format(epoch=epoch)),
+        )
+        return epoch
+
+    def _epoch_model_ids(self) -> list[str]:
+        """The model ids reported since the current epoch started (`TEACHER_MODEL_IDS`); [] when unset or unreadable."""
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL_IDS,)).fetchone()
+        try:
+            ids = json.loads(r["value"]) if r is not None and r["value"] else []
+        except ValueError:
+            return []
+        return [str(i) for i in ids] if isinstance(ids, list) else []
+
+    @_locked
+    def teacher_model_seen(self, model: str) -> str | None:
+        """Record the model id a primary-teacher response reported. When it is an id not yet reported in the current
+        epoch and differs from the last one recorded, start a new check epoch with a `teacher_model_changed` event and
+        return the previous id; the first id ever seen is only recorded. An id already reported in this epoch (a teacher
+        alternating between two backends) only becomes the last one: one epoch and one event per new id, not one per
+        response. None otherwise (and for an empty id). One transaction, so two processes that see the change write one
+        event and one new epoch."""
+        model = model[:MAX_MODEL_ID] if isinstance(model, str) else ""
+        if not model:
+            return None
+        self._begin()
+        try:
+            r = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL,)).fetchone()
+            before = str(r["value"]) if r is not None and r["value"] else None
+            if before == model:
+                self.db.commit()
+                return None
+            self.db.execute(_META_UPSERT, (TEACHER_MODEL, model))
+            ids = self._epoch_model_ids() or ([before] if before is not None else [])
+            if before is None or model in ids:
+                if model not in ids:
+                    ids.append(model)
+                self.db.execute(_META_UPSERT, (TEACHER_MODEL_IDS, json.dumps(ids[-MAX_EPOCH_MODEL_IDS:])))
+                self.db.commit()
+                return None
+            self._new_epoch(
+                "teacher_model_changed",
+                f"teacher responses now report model {model} (was {before}); check epoch {{epoch}} starts",
+                unfreeze=False,
+                model_ids=[before, model],
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return before
+
+    @_locked
+    def teacher_freeze(self, epoch: int, detail: str) -> bool:
+        """Freeze Night School and write the `teacher_drift` event, unless the epoch moved on since the caller counted
+        (an ack or a model change) or it is frozen already. One transaction, so the gateway and a nightly job that both
+        find the alarm write one event. Returns whether it froze."""
+        self._begin()
+        try:
+            frozen = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_FROZEN,)).fetchone()
+            if self._teacher_epoch() != epoch or (frozen is not None and frozen["value"] == "1"):
+                self.db.commit()
+                return False
+            self.db.execute(_META_UPSERT, (TEACHER_FROZEN, "1"))
+            self.db.execute(
+                "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, "teacher_drift", detail)
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return True
+
+    @_locked
+    def teacher_ack(self, by: str) -> int:
+        """An operator's acknowledgement (`POST /ratchet/teacher/ack`): a new check epoch, Night School unfrozen, and a
+        `teacher_ack` event naming who (an admin key's name, never the key). Returns the new epoch."""
+        self._begin()
+        try:
+            frozen = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_FROZEN,)).fetchone()
+            was = "Night School resumes" if frozen is not None and frozen["value"] == "1" else "Night School was not frozen"
+            last = self.db.execute("SELECT value FROM meta WHERE key=?", (TEACHER_MODEL,)).fetchone()
+            ids = [str(last["value"])] if last is not None and last["value"] else []
+            epoch = self._new_epoch(
+                "teacher_ack", f"acknowledged by {by}: check epoch {{epoch}} starts; {was}", unfreeze=True, model_ids=ids
+            )
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return epoch
+
+    @_locked
+    def teacher_check_counts(self, epoch: int, by: str = "task") -> dict[str, tuple[int, int]]:
+        """{task (or source, with `by='source'`): (checks, disagreements)} of check epoch `epoch`. One aggregate query."""
+        if by not in ("task", "source"):
+            raise ValueError(f"by must be 'task' or 'source', not {by!r}")
+        rows = self.db.execute(
+            f"SELECT {by} k, COUNT(*) n, COALESCE(SUM(agree = 0), 0) d FROM teacher_checks WHERE epoch=? GROUP BY {by}",
+            (epoch,),
+        )
+        return {str(r["k"]): (int(r["n"]), int(r["d"])) for r in rows}
+
+    @_locked
+    def teacher_check_days(
+        self, epoch: int, after_id: int = 0, *, by_task: bool = False
+    ) -> tuple[int, list[tuple[str, int, int, int]]]:
+        """(the last check id read, [(task, day, checks, disagreements)]) of epoch `epoch`'s checks after id `after_id`,
+        by ledger day (and by task with `by_task`; task '' otherwise), days in order. The release gate keeps the epoch's
+        counts up to date by reading only the new rows: a primary-key range (`+epoch` keeps the planner off the epoch
+        index, which would scan the whole epoch). From the start (`after_id` 0) the epoch index is the short way."""
+        cols, group = ("task, day", "task, day") if by_task else ("'' AS task, day", "day")
+        where = "id > ? AND +epoch = ?" if after_id else "id > ? AND epoch = ?"
+        rows = self.db.execute(
+            f"SELECT {cols}, MAX(id) last, COUNT(*) n, COALESCE(SUM(agree = 0), 0) d FROM teacher_checks"
+            f" WHERE {where} GROUP BY {group} ORDER BY day, task",
+            (after_id, epoch),
+        ).fetchall()
+        last = max((int(r["last"]) for r in rows), default=after_id)
+        return last, [(str(r["task"]), int(r["day"] or 0), int(r["n"]), int(r["d"])) for r in rows]
+
+    @_locked
+    def contested_counts(self) -> dict[str, int]:
+        """{task: stored examples quarantined because a re-test disagreed (`contested`), adjudicated or not}. On the
+        `examples_contested` index."""
+        rows = self.db.execute("SELECT task, COUNT(*) n FROM examples WHERE contested > 0 GROUP BY task")
+        return {str(r["task"]): int(r["n"]) for r in rows}
+
+    @_locked
+    def probe_candidates(self, epoch: int, teacher_model: str, task_names: Iterable[str], limit: int) -> list[sqlite3.Row]:
+        """Up to `limit` stored examples a Night School probe may re-ask (FR-5.40): of the tasks `task_names`, written by
+        `teacher_model`, needing no redaction, not contested and not yet re-tested in epoch `epoch` (UNCHECKABLE rows
+        never), in hash order, so each night takes the next ones and no row is favoured by its content."""
+        names = sorted(set(task_names))
+        if limit <= 0 or not names:
+            return []
+        marks = ",".join("?" * len(names))
+        return list(
+            self.db.execute(
+                "SELECT * FROM examples WHERE redactions = 0 AND COALESCE(contested, 0) = 0 AND checked_epoch >= 0"
+                f" AND checked_epoch < ? AND teacher_model = ? AND task IN ({marks}) ORDER BY hash LIMIT ?",
+                (epoch, teacher_model, *names, limit),
+            )
+        )
+
+    @_locked
+    def contested_examples(self, teacher_model: str, task_names: Iterable[str], limit: int) -> list[sqlite3.Row]:
+        """Up to `limit` contested examples of the tasks `task_names` written by `teacher_model`: what one night
+        adjudicates (FR-5.41). Those never adjudicated come first, oldest first, then the UNRESOLVED ones (no strict
+        majority before), so requests the teacher is split on cannot take every night's adjudications."""
+        names = sorted(set(task_names))
+        if limit <= 0 or not names:
+            return []
+        marks = ",".join("?" * len(names))
+        return list(
+            self.db.execute(
+                f"SELECT * FROM examples WHERE contested > 0 AND teacher_model = ? AND task IN ({marks})"
+                " ORDER BY contested, id LIMIT ?",
+                (teacher_model, *names, limit),
+            )
+        )
+
+    @_locked
+    def resolve_contested(self, h: str, completion: str | None = None) -> bool:
+        """End example `h`'s quarantine after an adjudication: `completion` (the majority teacher answer, already cleaned
+        and needing no redaction) replaces its label when given; its teacher, license and redaction count stay, because
+        the same teacher wrote the majority. The label is UNCHECKABLE from now on: a majority picked after a disagreement
+        is no independent teacher draw, so a later re-test is not compared with it. Only a row that is still contested
+        changes. Returns whether one did."""
+        if completion is None:
+            cur = self.db.execute(
+                "UPDATE examples SET contested = 0, checked_epoch = ? WHERE hash=? AND contested > 0", (UNCHECKABLE, h)
+            )
+        else:
+            cur = self.db.execute(
+                "UPDATE examples SET contested = 0, checked_epoch = ?, completion = ?"
+                " WHERE hash=? AND contested > 0 AND redactions = 0",
+                (UNCHECKABLE, completion, h),
+            )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    @_locked
+    def mark_unresolved(self, h: str) -> bool:
+        """Record that an adjudication of contested example `h` found no strict majority: it stays quarantined, as
+        UNRESOLVED, and later nights adjudicate it after the labels never adjudicated (`contested_examples`). Returns
+        whether a row changed."""
+        cur = self.db.execute("UPDATE examples SET contested = ? WHERE hash=? AND contested > 0", (UNRESOLVED, h))
+        self.db.commit()
+        return cur.rowcount > 0
 
     # ---------- versions ----------
     @_locked
@@ -2681,6 +3136,38 @@ class Ledger:
         empty split, or a version trained before v0.5: its BOM says which)."""
         q = "SELECT key, value FROM version_leaves WHERE version_id=? AND split=? ORDER BY key"
         return [(r["key"], r["value"]) for r in self.db.execute(q, (vid, split))]
+
+    @_locked
+    def tombstoned(self, keys: Iterable[str]) -> set[str]:
+        """The keys among `keys` that an erasure tombstoned (FR-13.3): the examples that may no longer be trained on."""
+        wanted = sorted(set(keys))
+        out: set[str] = set()
+        for part in _chunks(wanted):
+            marks = ",".join("?" * len(part))
+            out.update(r["key"] for r in self.db.execute(f"SELECT key FROM tombstones WHERE key IN ({marks})", part))
+        return out
+
+    @_locked
+    def taint_late_erasures(self, vid: int, since: float) -> list[int]:
+        """Version `vid` was trained on rows read at `since` (a wall-clock time) or later; an erasure recorded since then
+        may have purged some of them after the read, and the erasure's own list of affected versions could not name `vid`,
+        which had no committed leaves yet. Every erasure with `ts >= since` that purged an example in `vid`'s committed
+        train leaves gains `vid` in `tainted` and is `pending` again (its replacement, if any, is no longer the answer:
+        a version still holds the data). Returns those erasure ids, oldest first. Call once the leaves are written."""
+        rows = self.db.execute(
+            "SELECT DISTINCT e.id, e.tainted FROM erasures e JOIN erasure_items i ON i.erasure_id = e.id"
+            " JOIN version_leaves l ON l.key = i.hash AND l.split = 'train' AND l.version_id = ?"
+            " WHERE e.ts >= ? ORDER BY e.id",
+            (vid, since),
+        ).fetchall()
+        done = []
+        for r in rows:
+            tainted = sorted({*(json.loads(r["tainted"]) if r["tainted"] else []), int(vid)})
+            self.db.execute("UPDATE erasures SET tainted=?, status='pending' WHERE id=?", (json.dumps(tainted), r["id"]))
+            done.append(int(r["id"]))
+        if done:
+            self.db.commit()
+        return done
 
     @_locked
     def versions_containing(self, key: str, split: str = "train") -> list[int]:
@@ -3192,6 +3679,92 @@ class Ledger:
         ]
 
     @_locked
+    def last_event(self, kind: str) -> dict[str, Any] | None:
+        """The latest event of `kind` (id, ts, day, kind, detail), or None. Night School reads the last 'trained' one to
+        tell a drift alarm that came after it from one found late."""
+        r = self.db.execute("SELECT id, ts, day, kind, detail FROM events WHERE kind=? ORDER BY id DESC LIMIT 1", (kind,))
+        row = r.fetchone()
+        return dict(row) if row is not None else None
+
+    @_locked
+    def request_ts(self, rid: int) -> float | None:
+        """When request `rid` was logged (its `ts`), or None for an id the ledger does not hold (or a row without one)."""
+        r = self.db.execute("SELECT ts FROM requests WHERE id=?", (rid,)).fetchone()
+        return None if r is None or r["ts"] is None else float(r["ts"])
+
+    @_locked
+    def event_keyed(
+        self, key: str, kind: str, detail: str, *, day: int | None = None, meta: dict[str, Any] | None = None
+    ) -> bool:
+        """Write event `kind` unless one was already written under `key`, and record it in `meta` (key -> the event's
+        id, with `meta`'s entries). The check and both writes are one transaction, so two processes watching the same
+        ledger (the gateway and `python -m ratchet.live tick`) or a restart that replays it write the event once. `day`
+        dates the event when it happened on another day than today (a drift alarm found by replaying old rows). Returns
+        whether it wrote."""
+        self._begin()
+        try:
+            if self.db.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None:
+                self.db.commit()
+                return False
+            cur = self.db.execute(
+                "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)",
+                (time.time(), self.day if day is None else day, kind, detail),
+            )
+            value = json.dumps({"event": cur.lastrowid, **(meta or {})})
+            self.db.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, value))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        return True
+
+    @_locked
+    def meta_value(self, key: str) -> str | None:
+        """The `meta` table's value for `key`, or None."""
+        r = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return None if r is None else str(r["value"])
+
+    @_locked
+    def confidence_stream(
+        self,
+        after_id: int = 0,
+        limit: int = 200_000,
+        *,
+        version: int | None = None,
+        task: str | None = None,
+        before_id: int | None = None,
+    ) -> list[tuple[int, int, str, float, int]]:
+        """(id, student_version, task, confidence, day) of requests after id `after_id` that logged a student confidence,
+        oldest first, at most `limit` (the drift monitor's input, FR-16.6). A primary-key range scan, so a monitor that
+        is up to date reads only the new rows. `version`, `task` and `before_id` (exclusive) narrow it to one stream's
+        rows, to replay a stream whose counts were dropped."""
+        q = (
+            "SELECT id, student_version, task, confidence, day FROM requests"
+            " WHERE id > ? AND confidence IS NOT NULL AND student_version IS NOT NULL"
+        )
+        args: list[Any] = [after_id]
+        if version is not None:
+            q += " AND student_version = ?"
+            args.append(version)
+        if task is not None:
+            q += " AND task = ?"
+            args.append(task)
+        if before_id is not None:
+            q += " AND id < ?"
+            args.append(before_id)
+        args.append(limit)
+        rows = self.db.execute(q + " ORDER BY id LIMIT ?", args)
+        return [(int(r[0]), int(r[1]), str(r[2]), r[3], r[4]) for r in rows]
+
+    @_locked
+    def version_states(self) -> dict[int, str]:
+        """{version id: state} of every version, without parsing evals (cheap enough to read on every gate tick), in the
+        order the versions entered their current state (`stage_since`, then id): the last retired one is the most
+        recently retired."""
+        rows = self.db.execute("SELECT id, state FROM versions ORDER BY stage_since, id")
+        return {int(r["id"]): r["state"] for r in rows}
+
+    @_locked
     def audit_counts(self, vid: int, since_id: int = 0) -> tuple[int, int]:
         """(audits, agreements): teacher audits of answers version `vid` served, in requests after id `since_id` (0: its
         whole life; a version's `stage_since`: its current stage). Every release decision is computed from these two
@@ -3427,7 +4000,9 @@ class Ledger:
         """Per day: requests, shares, cost, savings, latency, audited agreement, and how many requests a stand-in
         answered because the teacher was unavailable (`degraded`: the student's below-threshold answer;
         `fallback_teacher`: the fallback teacher; ADR 0019). Days whose request rows retention folded (FR-13.4) add
-        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before.
+        their `daily_rollup` sums to the rows left; without folded rows every number is computed as before. Embeddings
+        pass-through rows (`NOT_PASSTHROUGH`) are left out: they are not part of the distillation these figures
+        describe; their spend is in `stats_by_task` and the cost report (`cost_by_day`).
         `p50_student_ms` and `p95_ms` are nearest-rank percentiles of `wall_ms` (the whole cascade on the gateway's clock)
         over the day's student-served and all requests that recorded it and are still kept (None without any). A day's
         percentiles are computed again only when its count or highest id moved (ids are never reused) or a request was
@@ -3436,7 +4011,7 @@ class Ledger:
         rows = [
             dict(r)
             for r in self._rdb.execute(
-                """SELECT day, COUNT(*) requests,
+                f"""SELECT day, COUNT(*) requests,
                       SUM(served_by='student') student_served,
                       SUM(escalated) escalated,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
@@ -3449,11 +4024,12 @@ class Ledger:
                       COUNT(CASE WHEN audited=1 THEN audit_agree END) audit_n,
                       MAX(id) top, COUNT(wall_ms) timed,
                       COALESCE(SUM(served_by='student' AND wall_ms IS NOT NULL), 0) timed_student
-               FROM requests GROUP BY day ORDER BY day"""
+               FROM requests WHERE {NOT_PASSTHROUGH} GROUP BY day ORDER BY day"""
             )
         ]
         if self._has_rollup(self._rdb):
-            rows = sorted(_merge(rows, "day", self._rollup_by("day", con=self._rdb)).values(), key=lambda r: r["day"])
+            folded = self._rollup_by("day", f"WHERE {NOT_PASSTHROUGH}", con=self._rdb)
+            rows = sorted(_merge(rows, "day", folded).values(), key=lambda r: r["day"])
         out = []
         for r in rows:
             n = r["requests"] or 1
@@ -3537,7 +4113,9 @@ class Ledger:
         teacher's audits of the task's student answers (`audits`, `audit_agreement`, over every version) and, from the
         live version's eval, how the student is held to it: `threshold` as the router applies it
         (`calibration.threshold`: 1.01 when disabled or when its spec changed since), its held-out `precision` and
-        `coverage`, whether its threshold is its own (`calibrated`) and why the release gate disabled it (`disabled`).
+        `coverage`, whether its threshold is its own (`calibrated`) and why the release gate disabled it (`disabled`);
+        since FR-14.40 also what that precision means (`precision_kind`: `exact`, or `proxy` for a similarity task) and
+        the judge's pass rate on the answers it would serve (`judge_pass_rate`, free-text tasks with a judge only).
         They are None without a live version, for a pinned task, and (all but `threshold`) when the live version has no
         record for the task. `compare_keys` are the paths of the fields its answers are compared on, and
         `compare_source` where they come from: `schema` for an auto task (derived from a response_format schema,
@@ -3621,19 +4199,21 @@ class Ledger:
         """Per API key: requests, cost and savings (the basis for per-client receipts); `end_users`, the distinct end
         users its requests named (FR-13.2); and `stored_share`, the share of its requests that stored or bumped a
         training example (None when no request recorded it, as before v0.5). Folded request rows (FR-13.4) count in
-        every figure but `end_users`: a fold keeps no end user, so that counts the rows still kept."""
+        every figure but `end_users`: a fold keeps no end user, so that counts the rows still kept. Embeddings
+        pass-through rows are left out, as in `stats_by_day`."""
         rows = [
             dict(r)
             for r in self._rdb.execute(
-                """SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
+                f"""SELECT client, COUNT(*) requests, SUM(served_by='student') student_served,
                       SUM(cost_usd) cost, SUM(baseline_cost_usd) baseline,
                       COUNT(DISTINCT end_user) end_users, AVG(stored) stored_share,
                       SUM(stored) stored_sum, COUNT(stored) stored_n
-               FROM requests WHERE client IS NOT NULL GROUP BY client ORDER BY COUNT(*) DESC"""
+               FROM requests WHERE client IS NOT NULL AND {NOT_PASSTHROUGH}
+               GROUP BY client ORDER BY COUNT(*) DESC"""
             )
         ]
         if self._has_rollup(self._rdb):
-            folded = self._rollup_by("client", "WHERE client IS NOT NULL", con=self._rdb)
+            folded = self._rollup_by("client", f"WHERE client IS NOT NULL AND {NOT_PASSTHROUGH}", con=self._rdb)
             rows = sorted(_merge(rows, "client", folded).values(), key=lambda r: -r["requests"])
         out = []
         for r in rows:
@@ -3654,13 +4234,16 @@ class Ledger:
 
     @_reads
     def totals(self) -> dict[str, float]:
-        """Requests, cost and baseline over the whole ledger, folded request rows included (FR-13.4). `failed_cost_usd` is
-        what failed requests spent without leaving a `requests` row (the student's samples before a teacher failure,
-        NFR-3); it counts against the savings: `saved_usd` = baseline - cost - failed cost, `savings_pct` = 1 - (cost +
-        failed cost) / baseline. A ledger without failures or folded rows gives exactly v0.4's numbers."""
-        r = dict(self._rdb.execute("SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests").fetchone())
+        """Requests, cost and baseline over the whole ledger, folded request rows included (FR-13.4) and embeddings
+        pass-through rows left out, as in `stats_by_day`. `failed_cost_usd` is what failed requests spent without leaving
+        a `requests` row (the student's samples before a teacher failure, NFR-3); it counts against the savings:
+        `saved_usd` = baseline - cost - failed cost, `savings_pct` = 1 - (cost + failed cost) / baseline. A ledger without
+        failures, folded rows or embeddings gives exactly v0.4's numbers."""
+        q = f"SELECT COUNT(*) n, SUM(cost_usd) c, SUM(baseline_cost_usd) b FROM requests WHERE {NOT_PASSTHROUGH}"
+        r = dict(self._rdb.execute(q).fetchone())
         if self._has_rollup(self._rdb):
-            f = self._rdb.execute("SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup").fetchone()
+            q = f"SELECT SUM(requests) n, SUM(cost) c, SUM(baseline) b FROM daily_rollup WHERE {NOT_PASSTHROUGH}"
+            f = self._rdb.execute(q).fetchone()
             r = {"n": r["n"] + int(f["n"] or 0), "c": _add(r["c"], f["c"]), "b": _add(r["b"], f["b"])}
         c, b = r["c"] or 0.0, r["b"] or 0.0
         failed = float(self._rdb.execute("SELECT COALESCE(SUM(cost_usd), 0.0) FROM failures").fetchone()[0])
@@ -3673,3 +4256,105 @@ class Ledger:
             "savings_pct": 0.0 if b == 0 else 1 - spent / b,
             "failed_cost_usd": failed,
         }
+
+    # ---------- success metrics (FR-7.9, ratchet/kpis.py) ----------
+    @_locked
+    def kpi_days(self) -> list[dict[str, Any]]:
+        """Per ledger day, oldest first, the sums the success metrics read (ratchet/kpis.py), folded request rows
+        (FR-13.4) included: requests, student-served and escalated requests, cost and baseline, `answered` (requests whose
+        student samples came back, so the student judged them: not a cold start, a pinned or teacher-only task, or a
+        student that was down) and `answered_escalated` (of those, the ones it was unsure of). Rows folded before the
+        `answered` columns existed count as not answered. Rows without a day are left out: they have no place in time."""
+        rows = self.db.execute(
+            """SELECT day, COUNT(*) requests,
+                      COALESCE(SUM(served_by='student'), 0) student_served,
+                      COALESCE(SUM(escalated), 0) escalated,
+                      COUNT(confidence) answered,
+                      COALESCE(SUM(escalated=1 AND confidence IS NOT NULL), 0) answered_escalated,
+                      COALESCE(SUM(cost_usd), 0.0) cost,
+                      COALESCE(SUM(baseline_cost_usd), 0.0) baseline
+               FROM requests WHERE day IS NOT NULL GROUP BY day"""
+        )
+        by_day = {r["day"]: dict(r) for r in rows}
+        if self._has_rollup():
+            folded = self.db.execute(
+                """SELECT day, SUM(requests) requests, SUM(student_served) student_served, SUM(escalated) escalated,
+                          SUM(answered) answered, SUM(answered_escalated) answered_escalated,
+                          SUM(cost) cost, SUM(baseline) baseline
+                   FROM daily_rollup WHERE day IS NOT NULL GROUP BY day"""
+            )
+            for f in folded:
+                r = by_day.setdefault(f["day"], {"day": f["day"], **KPI_ZERO})
+                for col, zero in KPI_ZERO.items():
+                    r[col] = _add(r[col], f[col]) or zero
+        return [by_day[d] for d in sorted(by_day)]
+
+    @_locked
+    def audit_totals(self, day_from: int | None = None, day_to: int | None = None) -> tuple[int, int]:
+        """(audits, agreements) pooled over ledger days `day_from` to `day_to` (inclusive; None = unbounded), every version
+        together, folded request rows included: each audited request that recorded the teacher's verdict, the rows
+        `stats_by_day` averages per day. SM-2 reads it; the release gate counts per version and per stage instead."""
+        where, args = _day_range(day_from, day_to)
+        r = self.db.execute(
+            f"SELECT COUNT(*) n, COALESCE(SUM(audit_agree), 0) agree FROM requests "
+            f"WHERE audited=1 AND audit_agree IS NOT NULL AND {where}",
+            args,
+        ).fetchone()
+        n, agree = int(r["n"]), int(r["agree"])
+        if self._has_rollup():
+            f = self.db.execute(
+                f"SELECT COALESCE(SUM(audit_n), 0) n, COALESCE(SUM(audit_agree_sum), 0) agree FROM daily_rollup WHERE {where}",
+                args,
+            ).fetchone()
+            n, agree = n + int(f["n"]), agree + int(f["agree"])
+        return n, agree
+
+    @_locked
+    def failed_cost(self, day_from: int | None = None, day_to: int | None = None) -> float:
+        """What failed requests spent over ledger days `day_from` to `day_to` (inclusive; None = unbounded) without leaving
+        a request row, from the `failures` table when the ledger has one (ADR 0062); 0.0 otherwise. It counts against the
+        savings (SM-1)."""
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='failures'").fetchone() is None:
+            return 0.0
+        where, args = _day_range(day_from, day_to)
+        return float(self.db.execute(f"SELECT COALESCE(SUM(cost_usd), 0.0) FROM failures WHERE {where}", args).fetchone()[0])
+
+    @_locked
+    def latency_quantile(
+        self, q: float, day_from: int | None = None, day_to: int | None = None, served_by: str | None = None
+    ) -> tuple[float | None, int, str]:
+        """(the q-quantile, rows, column) of request latency over ledger days `day_from` to `day_to` (inclusive; None =
+        unbounded), of one `served_by` when given, by the nearest-rank rule: the smallest observed value with a share q of
+        the values at or below it, never an interpolation (an ORDER BY with an OFFSET, no SQLite extension). The column is
+        `wall_ms` (the whole cascade on the gateway's clock) when the ledger has it and a row in the range recorded it,
+        else `latency_ms` (the providers' part). Folded rows keep no latencies, so they do not count. (None, 0, column)
+        when no row matches."""
+        if isinstance(q, bool) or not isinstance(q, (int, float)) or not 0 <= q <= 1:
+            raise ValueError(f"q must be a number from 0 to 1, not {q!r}")
+        if served_by is not None and not isinstance(served_by, str):
+            raise ValueError(f"served_by must be a string, not {served_by!r}")
+        base, args = _day_range(day_from, day_to)
+        if served_by is not None:
+            base += " AND served_by = ?"
+            args.append(served_by)
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(requests)")}
+        n, col = 0, "latency_ms"
+        for col in ("wall_ms", "latency_ms") if "wall_ms" in have else ("latency_ms",):
+            n = int(self.db.execute(f"SELECT COUNT(*) FROM requests WHERE {base} AND {col} IS NOT NULL", args).fetchone()[0])
+            if n:
+                break
+        if n == 0:
+            return None, 0, col
+        offset = min(n, max(1, math.ceil(round(q * n, 9)))) - 1
+        q_sql = f"SELECT {col} FROM requests WHERE {base} AND {col} IS NOT NULL ORDER BY {col} LIMIT 1 OFFSET ?"
+        return float(self.db.execute(q_sql, [*args, offset]).fetchone()[0]), n, col
+
+    @_locked
+    def events_of(self, kinds: Iterable[str]) -> list[dict[str, Any]]:
+        """The events of the given kinds, oldest first (SM-4 reads the release log without the rest)."""
+        wanted = sorted(set(kinds))
+        if not wanted:
+            return []
+        qs = ",".join("?" for _ in wanted)
+        q = f"SELECT id, ts, day, kind, detail FROM events WHERE kind IN ({qs}) ORDER BY id"
+        return [dict(r) for r in self.db.execute(q, wanted)]

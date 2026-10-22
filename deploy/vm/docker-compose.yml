@@ -66,7 +66,7 @@ services:
       - "443:443/udp"  # HTTP/3
     environment:
       RATCHET_DOMAIN: ${RATCHET_DOMAIN:?set RATCHET_DOMAIN in deploy/vm/.env}
-      # "open" (default) or "guarded": guarded blocks /v1/* and /ratchet/demo/* unless the
+      # "open" (default) or "guarded": guarded blocks /v1/*, /openai/* and /ratchet/demo/* unless the
       # X-Ratchet-Admin-Token header matches RATCHET_ADMIN_TOKEN. See the Caddyfile.
       RATCHET_API_GUARD: ${RATCHET_API_GUARD:-open}
       RATCHET_ADMIN_TOKEN: ${RATCHET_ADMIN_TOKEN:-}

@@ -55,7 +55,7 @@
       "avg_latency_ms": "number",
       "routes": "object",
       "human_feedback": "number",
-      "human_agreement": "number|null"
+      "human_agreement": "number|null",
       "audits": "number",
       "audit_agreement": "number|null",
       "threshold": "number|null",
@@ -65,7 +65,9 @@
       "disabled": "string|null",
       "compare_keys": "list",
       "compare_source": "string|null",
-      "tool_requests": "number"
+      "tool_requests": "number",
+      "precision_kind": "string|null",
+      "judge_pass_rate": "number|null"
     },
     "versions[]": {
       "id": "number",
@@ -139,7 +141,10 @@
       "purged_by_reason": "object",
       "erasures": "number",
       "erasure_refusals": "number",
-      "rolled_up_requests": "number"
+      "rolled_up_requests": "number",
+      "redaction_style": "string",
+      "redaction_task_styles": "object",
+      "redaction_plugin": "bool"
     },
     "security": {
       "api_keys": "bool",
@@ -219,6 +224,96 @@
       "training_paused": "bool",
       "audit_rate": "number|null",
       "pinned_tasks": "list"
+    },
+    "kpis": {
+      "mode": "string",
+      "simulated": "bool",
+      "window_days": "number",
+      "window": {
+        "from": "number|null",
+        "to": "number|null",
+        "days": "number",
+        "complete": "bool"
+      },
+      "metrics": {
+        "SM-1": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-2": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-3": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-4": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "SM-5": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        },
+        "NFR-1": {
+          "name": "string",
+          "value": "number|null",
+          "target": "number",
+          "op": "string",
+          "unit": "string",
+          "met": "bool|null",
+          "detail": "object"
+        }
+      },
+      "summary": {
+        "met": "number",
+        "not_met": "number",
+        "unknown": "number"
+      }
+    },
+    "drift": {
+      "enabled": "bool",
+      "threshold": "number|null",
+      "family_bound": "number|null",
+      "alarms": "number",
+      "streams": "number"
+    },
+    "teacher_watch": {
+      "enabled": "bool",
+      "epoch": "number",
+      "frozen": "bool",
+      "checks": "number",
+      "disagreements": "number",
+      "self_agreement": "number|null",
+      "ceiling": "number|null",
+      "e_value": "number",
+      "contested": "number"
     }
   }
 }

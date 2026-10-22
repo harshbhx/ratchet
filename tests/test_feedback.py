@@ -475,6 +475,38 @@ def test_correction_storage_rules_still_apply(gw_env):
     assert gw.rt.ledger.db.execute("SELECT COUNT(*) FROM feedback WHERE corrected_present=1 AND stored=0").fetchone()[0] == 6
 
 
+@pytest.mark.req("FR-13.30", "NFR-5")
+def test_a_correction_a_policy_keeps_out_is_never_redacted(gw_env, monkeypatch):
+    """Redaction is the expensive string work: a correction that is not kept (the request's own opt-out, a key's `store=0`)
+    gets its verdict recorded without `prepare` ever running, a stored one prepares once, and a correction that is not a
+    valid answer is still a 400 whatever the policy says."""
+    gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{ACME_KEY},globex:{GLOBEX_KEY}", RATCHET_KEY_LIMITS="globex:store=0")
+    c = TestClient(gw.app)
+    _cascade(gw)
+    prepared: list[str] = []
+    real = feedback.prepare
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        prepared.append(args[2])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(feedback, "prepare", spy)
+
+    def send(text: str, key: str, corrected: str, **request: Any) -> Any:
+        rid = _chat(c, text, key, **request)["ratchet"]["request_id"]
+        return _feedback(c, {"request_id": rid, "verdict": "incorrect", "corrected": corrected, "messages": _msgs(text)}, key)
+
+    r = send("opted out", ACME_KEY, A, store=False)
+    assert r.status_code == 200 and r.json()["correction"]["not_stored"] == "request"
+    r = send("key opted out", GLOBEX_KEY, A)
+    assert r.status_code == 200 and r.json()["correction"]["not_stored"] == "key"
+    assert prepared == []  # neither was redacted
+    r = send("kept", ACME_KEY, A)
+    assert r.status_code == 200 and r.json()["correction"]["stored"] is True and prepared == [A]
+    bad = send("opted out again", ACME_KEY, "not a ticket answer", store=False)
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid_correction" and prepared == [A]
+
+
 @pytest.mark.req("FR-13.30", "FR-13.2")
 def test_correction_needs_every_end_user_identifier(gw_env):
     """A request that sent both `user` and `safety_identifier` logs the second identifier's keyed hash too
@@ -747,6 +779,9 @@ def test_old_ledger_file_gains_feedback_schema(tmp_path):
 
 
 # ---------- import ----------
+LOOKUP_TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+
+
 @pytest.mark.req("FR-13.31", "FR-3.54", "INV-12", "INV-16")
 def test_import_openai_finetune_jsonl():
     led = Ledger(":memory:")
@@ -779,7 +814,7 @@ def test_import_openai_finetune_jsonl():
         {"messages": [*_msgs("weightless"), {"role": "assistant", "content": A, "weight": 0}]},
         {"messages": [{"role": "user", "content": "no answer"}]},
         b"{not json",
-        _ft("Locked out", C, tools=[{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]),
+        _ft("Locked out", C, tools=LOOKUP_TOOLS),
     ]
     rep = _import(led, *rows)
     assert (rep.rows, rep.inserted, rep.in_file_duplicates, rep.in_file_conflicts) == (11, 3, 1, 1)
@@ -802,10 +837,11 @@ def test_import_openai_finetune_jsonl():
     assert mt["completion"] == A and "jane.roe@example.com" not in mt["messages"] and mt["redactions"] == 1
     assert [m["role"] for m in json.loads(mt["messages"])] == ["system", "user", "assistant", "user"]
     assert "weight" not in mt["messages"]
-    # The default teacher allowlist forwards no tools, so a live request's teacher answer would have no tools condition:
-    # the imported row hashes like it, and dedupes against it.
+    # The default teacher allowlist forwards tools (FR-1.41), so the imported row keeps its tools as a stored condition,
+    # as the serving teacher's parameters would (`feedback.conditions`), and hashes with them.
     locked = next(r for r in stored if "Locked out" in r["messages"])
-    assert locked["params"] is None and locked["hash"] == example_hash(TRIAGE, _msgs("Locked out"))
+    assert json.loads(locked["params"]) == {"tools": LOOKUP_TOOLS}
+    assert locked["hash"] == example_hash(TRIAGE, _msgs("Locked out"), {"tools": LOOKUP_TOOLS})
     (event,) = [e for e in led.events() if e["kind"] == "import"]
     assert event["detail"].startswith("3 of 11 rows imported into ticket-triage as human labels: 3 new")
     assert "attested: 'written by our support leads'" in event["detail"] and f"sha256 {rep.sha256[:16]}" in event["detail"]
@@ -889,6 +925,23 @@ def test_import_refuses_pinned_task():
     tasks.register(Task("default", pinned=True), "file")
     assert dataset.rows(led, "train") == dataset.rows(led, "golden") == []
     assert feedback.store_human_example(led, tasks.get("default"), _msgs("y"), "z", None, _settings()).reason == "pinned"
+
+
+@pytest.mark.req("FR-13.31", "FR-13.1")
+def test_import_refuses_a_client_whose_key_stores_nothing():
+    """`--client` attributes the rows to an API key (erasure and export list them under it). A key with `store=0` in
+    RATCHET_KEY_LIMITS stores nothing it sends, so the import refuses it before reading a row; another key, a name that is
+    no key, and a bad limits spec (the gateway's own message) are told apart."""
+    led = Ledger(":memory:")
+    keys = f"acme:{ACME_KEY},globex:{GLOBEX_KEY}"
+    s = _settings(api_keys=keys, key_limits="globex:store=0")
+    with pytest.raises(importer.ImportRefused, match="'globex' is an API key with store=0 in RATCHET_KEY_LIMITS"):
+        _import(led, _ft("x", A), settings=s, client="globex")
+    assert _examples(led) == [] and led.events() == []
+    assert _import(led, _ft("x", A), settings=s, client="acme").inserted == 1
+    assert _import(led, _ft("y", A), settings=s, client="not-a-key").inserted == 1  # only a label, as before
+    with pytest.raises(importer.ImportRefused, match="cannot read the key limits"):
+        _import(led, _ft("z", A), settings=_settings(api_keys=keys, key_limits="nobody:store=0"), client="acme")
 
 
 @pytest.mark.req("FR-4.50", "FR-13.31", "INV-3", "INV-6")

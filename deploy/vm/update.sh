@@ -20,6 +20,13 @@ env_get() { grep -E "^$1=" "$HERE/.env" 2>/dev/null | tail -n1 | cut -d= -f2- ||
 echo "== git pull"
 git -C "$REPO" pull --ff-only
 
+# Settings the example lists and .env does not set (names only): the gateway's own default applies to each, which may not be
+# the example's. Not an error: copy the ones you want from .env.vm.example.
+missing="$(bash "$HERE/env_missing.sh" "$HERE/.env.vm.example" "$HERE/.env" | paste -sd ' ' -)"
+if [[ -n "${missing// /}" ]]; then
+  echo "note: .env does not set these settings from .env.vm.example (the defaults apply): ${missing% }" >&2
+fi
+
 echo "== docker compose build"
 cd "$HERE"
 docker compose pull caddy
@@ -73,7 +80,7 @@ echo "readiness: $([[ "$ready" == "1" ]] && echo ready || echo 'not ready (see t
 domain="$(env_get RATCHET_DOMAIN)"
 fail=0
 if [[ -n "$domain" ]]; then
-  # Public routes only: /v1/* may be blocked at the edge when RATCHET_API_GUARD=guarded, and the dashboard API needs a
+  # Public routes only: /v1/* and /openai/* may be blocked at the edge when RATCHET_API_GUARD=guarded, and the dashboard API needs a
   # key when it is private (RATCHET_PUBLIC_DASHBOARD=0, the gateway's default in live mode; ADR 0061).
   paths=(/ /healthz /readyz /dashboard /scout)
   public="$(env_get RATCHET_PUBLIC_DASHBOARD)"

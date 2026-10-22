@@ -19,7 +19,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
     ssh_authorized_keys:
-      - __SSH_PUBLIC_KEY__
+      - '__SSH_PUBLIC_KEY__'
   # Owns /opt/ratchet and runs Docker Compose and cron jobs. No password, no SSH login.
   - name: ratchet
     system: true
@@ -116,8 +116,9 @@ write_files:
           "Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}" \
           "Components: stable" \
           "Signed-By: /etc/apt/keyrings/docker.asc" > /etc/apt/sources.list.d/docker.sources
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        # The first boot's unattended upgrades and cloud-init's own apt hold the dpkg lock: wait for it (up to 10 minutes).
+        apt-get -o DPkg::Lock::Timeout=600 update
+        DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y \
           docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       fi
       systemctl enable --now docker

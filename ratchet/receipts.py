@@ -435,6 +435,14 @@ def closed_through(ledger: Ledger) -> int:
     return ledger.day_of(now - SEAL_GRACE_S, now) - 1
 
 
+def fold_floor(ledger: Ledger) -> float:
+    """The moment from which request rows may not be folded by retention: the start of the first day that has not ended
+    for sealing (`closed_through`), so the days before it are sealed (or sealable: the runners seal before they fold)
+    and the day that just ended, still inside SEAL_GRACE_S, keeps every row until its receipt is sealed. Folding it
+    first would leave `receipts._seal_period` to skip it for good (`receipt_skipped`, no receipt)."""
+    return ledger.day_start(closed_through(ledger) + 1)
+
+
 def _gpu_view(ledger: Ledger, period: int, settings: Any, recorded: int, calibrated: int) -> dict[str, Any]:
     """The gateway-wide receipt's GPU-hours view of its day (ADR 0023's cost report for that day): informational, from
     compute intervals that can still be recorded later; billing uses the per-token view."""

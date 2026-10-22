@@ -11,9 +11,9 @@ from collections import Counter
 from types import SimpleNamespace
 
 import pytest
-from fakes import OPEN_TEACHER, REJECTED_EVAL, RecordingEvaluator, RecordingProvider, RecordingTrainer, _version
+from fakes import OPEN_TEACHER, REJECTED_EVAL, RecordingEvaluator, RecordingProvider, RecordingTrainer, _audit, _version
 
-from ratchet import compare, licenses, tasks
+from ratchet import compare, licenses, similarity, tasks, taskspec
 from ratchet.compare import INVALID, FieldSpec
 from ratchet.confidence import majority, score
 from ratchet.config import Settings
@@ -33,8 +33,8 @@ NO_PRIORITY = json.dumps({"category": "billing", "reply": "Checking."})
 
 
 def one(f: FieldSpec, *, fmt: str | None = None) -> tasks.Task:
-    """A task with the single field `f`."""
-    return tasks.Task("t", fields=(f,), format=fmt)
+    """A task with the single field `f` (scored on 3 samples when it is a similarity field, which needs 2 or more)."""
+    return tasks.Task("t", fields=(f,), format=fmt, policy={"samples": 3} if f.type == "similarity" else {})
 
 
 def comp(text, p=0.9, finish_reason="stop", n=4):
@@ -128,6 +128,58 @@ def test_number_reads_money_separators_and_tolerances():
 def test_parse_number_cases(text, decimal, want):
     got = compare.parse_number(text, decimal)
     assert (None if got is INVALID else got) == want
+
+
+@pytest.mark.req("FR-13.8", "FR-2.14")
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("Rs. 1,23,456.50", 123456.5),  # Indian grouping after 'Rs.'
+        ("Rs.1,23,456.50/-", 123456.5),  # '/-': no paise
+        ("rs 1500", 1500.0),
+        ("Rs1500", 1500.0),
+        ("Re. 1", 1.0),  # one rupee
+        ("INR 1,00,000", 100000.0),
+        ("1,00,000 INR", 100000.0),
+        ("₹10,00,00,000", 100000000.0),  # 10 crore, grouped
+        ("500 Rs.", 500.0),
+        ("500 rupees", 500.0),
+        ("1.5 lakh", 150000.0),
+        ("1.15 lakh", 115000.0),  # scaled in decimal: float would give 114999.99999999999
+        ("₹ 2.5 Crore", 25000000.0),
+        ("Rs. 12 lakhs", 1200000.0),
+        ("3 lacs", 300000.0),
+        ("1 lakh crore", 1e12),
+        ("10 crore rupees", 1e8),
+        ("-Rs. 500", -500.0),
+        ("(Rs. 1,000)", -1000.0),
+        ("Rs. -500", -500.0),
+        ("Rs", None),  # no number
+        ("lakh", None),
+        ("5 Cr", None),  # 'Cr' is credit on a bank statement
+        ("5L", None),
+        ("2 crores lakh", None),
+        ("500 hrs", None),  # 'rs' inside a word is not rupees
+        ("Rest 5", None),
+        ("1,23,45,6789", None),  # broken grouping
+        ("1,5 lakh", None),  # a one-digit group under '.' is still ambiguous
+    ],
+)
+def test_number_reads_indian_amounts(text, want):
+    got = compare.parse_number(text)
+    assert (None if got is INVALID else got) == want
+    if want is not None:  # the comparator agrees with the plain number, exactly
+        assert agree(FieldSpec("total", "number"), text, want)
+
+
+@pytest.mark.req("FR-13.8", "FR-2.14")
+def test_indian_amounts_under_a_comma_decimal_and_with_tolerance():
+    assert compare.parse_number("1,5 lakh", ",") == 150000.0
+    assert compare.parse_number("Rs. 1.234,50", ",") == 1234.5
+    assert compare.parse_number("Rs. 1.23.456,50", ",") is INVALID  # Indian grouping goes with a '.' decimal mark only
+    cents = FieldSpec("total", "number", abs_tol=0.01)
+    assert agree(cents, "Rs. 1,23,456.50", "INR 123456.505") and agree(cents, "₹1.2 lakh", "1,20,000/-")
+    assert not agree(cents, "1.2 lakh", "1.2 crore")
 
 
 @pytest.mark.req("FR-2.14")
@@ -330,7 +382,15 @@ def test_nullable_field_accepts_null():
 @pytest.mark.parametrize(
     ("make", "message"),
     [
-        (lambda: FieldSpec("x", "similarity"), "reserved for a later release"),
+        (lambda: FieldSpec("x", "similarity", metric="bleu"), "metric must be one of"),
+        (lambda: FieldSpec("x", "similarity", threshold=0), "threshold must be a number more than 0"),
+        (lambda: FieldSpec("x", "similarity", threshold=1.5), "threshold must be a number more than 0"),
+        (lambda: FieldSpec("x", "similarity", max_len_ratio=0.5), "max_len_ratio must be a finite number >= 1"),
+        (lambda: FieldSpec("x", "similarity", max_len_ratio=math.inf), "max_len_ratio must be a finite number >= 1"),
+        (lambda: FieldSpec("x", "label", metric="token_f1"), "metric does not apply"),
+        (lambda: FieldSpec("x", "text", threshold=0.5), "threshold does not apply"),
+        (lambda: FieldSpec("r", "records", fields=(FieldSpec("s", "similarity"),)), "cannot be similarity"),
+        (lambda: FieldSpec("x", "set", item="similarity"), "elements must be of a scalar type"),
         (lambda: FieldSpec("x", "tool_calls"), "reserved for a later release"),
         (lambda: FieldSpec("x", "fuzzy"), "unknown type"),
         (lambda: FieldSpec("a..b", "label"), "dot-separated keys"),
@@ -357,7 +417,8 @@ def test_nullable_field_accepts_null():
         (lambda: tasks.Task("t", compare_keys=["a"], fields=(FieldSpec("b"),)), "not both"),
         (lambda: tasks.Task("t", fields=(FieldSpec("a"), FieldSpec("a", "label"))), "same path"),
         (lambda: tasks.Task("t", fields=tuple(FieldSpec(f"f{i}") for i in range(65))), "more than 64 fields"),
-        (lambda: tasks.Task("t", format="sql"), "reserved for a later release"),
+        (lambda: tasks.Task("t", format="tool_calls"), "reserved for a later release"),
+        (lambda: tasks.Task("t", format="sql"), "a sql task needs sql options"),
         (lambda: tasks.Task("t", policy={"sample": 3}), "unknown policy key"),
         (lambda: tasks.Task("t", policy={"audit_rate": 2}), "from 0 to 1"),
         (lambda: tasks.Task("t", tools="student"), "tools must be one of"),
@@ -634,7 +695,7 @@ def test_comparators_are_linear_on_adversarial_answers():
     assert time.perf_counter() - start < 2.0
 
 
-@pytest.mark.req("FR-2.14", "INV-7")
+@pytest.mark.req("FR-2.14", "FR-2.55", "INV-7")
 def test_comparators_never_raise_on_junk():
     """Model output is arbitrary, and every sample is normalised on the request path: on 3,000 seeded junk values (odd
     strings, NaN, huge integers, nested lists and objects) no comparator raises, and every valid value matches itself
@@ -654,6 +715,9 @@ def test_comparators_never_raise_on_junk():
         FieldSpec("x", "set", min_jaccard=0.5, empty_values=("none", None, 0)),
         FieldSpec("x", "records", fields=(FieldSpec("k", "label"), FieldSpec("v", "number", required=False)), key=("k",)),
         FieldSpec("x", "ranking", mode="set", item="date"),
+        FieldSpec("x", "similarity"),
+        FieldSpec("x", "similarity", metric="token_f1", threshold=0.2, max_len_ratio=10),
+        FieldSpec("x", "similarity", metric="rouge_l"),
     ]
     alphabet = "abc 019,.'()%$€₹−-:/TZ+日本語\u00a0"
     samples = ["1,234.50", "(5)", "2026-10-03", "Oct 3 2026", "en", "yes", "lo", "none", "9999-12-31T23:59:59-05:00"]
@@ -783,3 +847,287 @@ def test_dataset_rows_skip_invalid(tmp_path):
         f"only 0 new examples (< 1) ({len(bad_train)} stored answers invalid under the "
         "current spec left out); no training tonight"
     ]
+
+
+# ---------- free text: the similarity comparator (FR-2.55, ADR 0054) ----------
+def _chrf_by_definition(a: str, b: str) -> float:
+    """chrF written out from its definition, independently of `ratchet.similarity`: character n-grams of 1 to 6 of each
+    case-folded text without whitespace; per order, precision and recall of the matched n-grams (an order only one text
+    has counts as 0 and 0, one neither has is skipped); both averaged; F-beta with beta 2, the lower of the two
+    directions."""
+    x, y = "".join(a.casefold().split()), "".join(b.casefold().split())
+    if x == y:
+        return 1.0
+    ps, rs = [], []
+    for n in range(1, 7):
+        gx = Counter(x[i : i + n] for i in range(len(x) - n + 1))
+        gy = Counter(y[i : i + n] for i in range(len(y) - n + 1))
+        if not gx and not gy:
+            continue
+        matched = sum((gx & gy).values())
+        ps.append(matched / sum(gx.values()) if gx else 0.0)
+        rs.append(matched / sum(gy.values()) if gy else 0.0)
+    if not ps:
+        return 0.0
+    p, r = sum(ps) / len(ps), sum(rs) / len(rs)
+
+    def f2(p: float, r: float) -> float:
+        return 5 * p * r / (4 * p + r) if 4 * p + r else 0.0
+
+    return min(f2(p, r), f2(r, p))
+
+
+def _lcs_by_table(a: list[str], b: list[str]) -> int:
+    """The longest common subsequence by the textbook dynamic-programming table."""
+    prev = [0] * (len(b) + 1)
+    for x in a:
+        cur = [0]
+        for j, y in enumerate(b):
+            cur.append(prev[j] + 1 if x == y else max(prev[j + 1], cur[j]))
+        prev = cur
+    return prev[-1]
+
+
+SUMMARY_TASK = tasks.Task(
+    "short-summary", format="text", fields=(FieldSpec("$", "similarity"),), policy={"samples": 3}, source="file"
+)
+
+
+@pytest.mark.req("FR-2.55")
+def test_chrf_identical_one_unrelated_low():
+    a = "The customer was charged twice for the March invoice and wants a refund."
+    assert similarity.score(a, a) == 1.0
+    assert similarity.score(a, "  the CUSTOMER was charged twice for the march invoice and wants a refund.  ") == 1.0
+    assert similarity.score(a, "Quantum chromodynamics describes gluons binding quarks.") < 0.25
+    # By hand: "ab" against "ac" matches one unigram in two each way and no bigram: P = R = 1/4 averaged, F2 = 1/4.
+    assert similarity.score("ab", "ac") == pytest.approx(0.25)
+    # "abc" against "ab": P = (2/3 + 1/2 + 0) / 3, R = (1 + 1 + 0) / 3; the lower direction is 14/33.
+    assert similarity.score("abc", "ab") == pytest.approx(14 / 33) == similarity.score("ab", "abc")
+    # Against the definition on seeded random strings, and symmetric (the pairwise score compares each pair once).
+    rng = random.Random(5)
+    for _ in range(300):
+        x = "".join(rng.choice("ab c") for _ in range(rng.randint(1, 30)))
+        y = "".join(rng.choice("abc d") for _ in range(rng.randint(1, 30)))
+        if not x.strip() or not y.strip():
+            continue
+        assert similarity.score(x, y) == pytest.approx(_chrf_by_definition(x, y)), (x, y)
+        assert similarity.score(x, y) == pytest.approx(similarity.score(y, x))
+    with pytest.raises(ValueError, match="unknown similarity metric"):
+        similarity.score("a", "b", "bleu")
+
+
+@pytest.mark.req("FR-2.55")
+def test_token_f1_and_rouge_l():
+    f1 = "token_f1"
+    # SQuAD: punctuation deleted, the articles a/an/the dropped, a bag of tokens. 3 shared of 3 and 4: 6/7.
+    assert similarity.score("Paris is the capital", "The capital is Paris, France.", f1) == pytest.approx(6 / 7)
+    assert similarity.score("the cat sat on the mat", "a cat sat on a mat", f1) == 1.0
+    assert similarity.score("don't stop", "Dont stop!", f1) == 1.0
+    assert similarity.score("the the", "a an", f1) == 0.0  # nothing left to compare, and the texts differ
+    assert similarity.score("x y z", "p q r", f1) == 0.0
+    # ROUGE-L F1: the longest common subsequence "the cat on the mat" is 5 of 6 tokens each way.
+    rl = "rouge_l"
+    assert similarity.score("the cat sat on the mat", "the cat is on the mat", rl) == pytest.approx(10 / 12)
+    assert similarity.score("Hello, world", "hello world!", rl) == 1.0  # punctuation is not a token
+    assert similarity.score("a b c d", "d c b a", rl) == pytest.approx(2 / 8)  # order matters, unlike token F1
+    assert similarity.score("a b c d", "d c b a", f1) == 1.0
+    # The bit-parallel LCS against the textbook table, on seeded random token lists.
+    rng = random.Random(9)
+    for _ in range(300):
+        a = [rng.choice("abcde") for _ in range(rng.randint(0, 40))]
+        b = [rng.choice("abcdef") for _ in range(rng.randint(0, 40))]
+        assert similarity.lcs_length(a, b) == _lcs_by_table(a, b) == similarity.lcs_length(b, a), (a, b)
+    # ROUGE-L reads at most 512 tokens of each answer: what follows them cannot change the score.
+    head = " ".join(f"w{i}" for i in range(similarity.MAX_LCS_TOKENS))
+    assert similarity.score(head + " tail one", head + " other words entirely", rl) == 1.0
+
+
+@pytest.mark.req("FR-2.55", "FR-2.2")
+def test_similarity_score_picks_medoid():
+    """Similarity is not transitive: A is close to B and B to C, but A is far from C. The pairwise score serves the
+    medoid, the sample with the most matches (B, three votes), even with the lowest token probability; between samples
+    with as many matches as each other, the one with the highest token probability."""
+    task = tasks.Task(
+        "chain", format="text", fields=(FieldSpec("$", "similarity", metric="token_f1", threshold=0.5),), policy={"samples": 3}
+    )
+    a, b, c = "alpha beta gamma delta", "gamma delta epsilon zeta", "epsilon zeta eta theta"
+    assert task.agree(a, b) and task.agree(b, c) and not task.agree(a, c)
+    s = score(task, [comp(a, 0.99), comp(b, 0.40), comp(c, 0.98)])
+    assert s.answer.text == b and s.agreement == 1.0 and s.confidence == pytest.approx(0.4 * 0.40 + 0.6)
+    # Two close answers and an outlier: two votes each for the close pair; the more probable of the two is served.
+    near_a, near_b = "the refund was sent to the card today", "the refund was sent to your card today"
+    far = "please reset your password from the login page"
+    assert task.agree(near_a, near_b) and not task.agree(near_a, far)
+    s = score(task, [comp(near_a, 0.70), comp(far, 0.99), comp(near_b, 0.90)])
+    assert s.answer.text == near_b and s.agreement == pytest.approx(2 / 3)
+    assert s.confidence == pytest.approx(0.4 * 0.90 + 0.6 * 2 / 3)
+    # The n choices a client asks for are the medoid and the samples that match it; never the outlier.
+    samples = [comp(near_a, 0.70), comp(far, 0.99), comp(near_b, 0.90)]
+    s = score(task, samples)
+    assert [x.text for x in majority(task, s, samples, 2)] == [near_b, near_a] and majority(task, s, samples, 3) is None
+
+
+@pytest.mark.req("FR-2.55")
+def test_len_ratio_blocks_match():
+    short, long = "refund issued", "refund issued refund issued refund issued"
+    assert similarity.score(short, long, "token_f1") == pytest.approx(0.5)  # 2 shared of 2 and 6 tokens
+    strict = FieldSpec("$", "similarity", metric="token_f1", threshold=0.5)
+    loose = FieldSpec("$", "similarity", metric="token_f1", threshold=0.5, max_len_ratio=4.0)
+    # The score reaches the threshold, but one answer is over twice as long as the other.
+    assert not strict.match(strict.normalize(short), strict.normalize(long))
+    assert loose.match(loose.normalize(short), loose.normalize(long))
+    # Equal texts always agree, and whitespace and case do not count towards the length.
+    assert strict.match(strict.normalize("Refund  issued"), strict.normalize("refund issued"))
+    t = tasks.Task("s", format="text", fields=(strict,), policy={"samples": 2})
+    assert not t.agree(short, long) and t.agree(short, "Refund issued.")  # text format: trailing '.' dropped
+
+
+@pytest.mark.req("FR-2.55", "FR-2.14", "INV-16")
+def test_mixed_label_and_similarity_fields():
+    task = tasks.Task(
+        "ticket-summary",
+        fields=(FieldSpec("category", "label", values=("billing", "bug")), FieldSpec("summary", "similarity")),
+        policy={"samples": 3},
+    )
+    said = "Customer was charged twice for the March invoice and wants a refund."
+    a = json.dumps({"category": "billing", "summary": said})
+    b = json.dumps(
+        {"category": "Billing", "summary": "The customer was charged twice for the March invoice and asks for a refund."}
+    )
+    other_label = json.dumps({"category": "bug", "summary": said})
+    other_text = json.dumps({"category": "billing", "summary": "The login page shows an error after the update."})
+    assert task.agree(a, b) and not task.agree(a, other_label) and not task.agree(a, other_text)
+    assert task.format == "json" and task.precision_kind == "proxy" and task.free_text and task.verifiable
+    for bad, why in (
+        ({"category": "billing"}, "invalid field summary"),
+        ({"category": "billing", "summary": "   "}, "invalid field summary"),
+        ({"category": "billing", "summary": 12}, "invalid field summary"),
+        ({"category": "refunds", "summary": "x"}, "invalid field category"),
+    ):
+        assert task.check(json.dumps(bad)) == why
+    assert json.loads(task.canonical(b)) == {
+        "category": "billing",
+        "summary": "the customer was charged twice for the march invoice and asks for a refund.",
+    }
+    s = score(task, [comp(a, 0.9), comp(other_text, 0.99), comp(b, 0.8)])
+    assert s.answer.text == a and s.agreement == pytest.approx(2 / 3)  # a and b agree; the outlier gets one vote
+    # Free text alone (no checkable field) is a proxy too; a task of labels is exact and not free text.
+    assert (SUMMARY_TASK.precision_kind, SUMMARY_TASK.free_text, SUMMARY_TASK.verifiable) == ("proxy", True, False)
+    assert (TRIAGE.precision_kind, TRIAGE.free_text, tasks.get("default").free_text) == ("exact", False, True)
+
+
+@pytest.mark.req("FR-2.55", "FR-2.15")
+def test_similarity_task_requires_two_samples():
+    """With one sample a confidence score's agreement is always 1, so a task with a similarity field must say itself
+    that it is scored on two samples or more (RATCHET_SAMPLES=1 cannot take that away)."""
+    field = FieldSpec("$", "similarity")
+    for policy in ({}, {"samples": 1}, {"audit_rate": 0.1}):
+        with pytest.raises(ValueError, match="needs policy.samples of at least 2"):
+            tasks.Task("s", format="text", fields=(field,), policy=policy)
+    assert tasks.Task("s", format="text", fields=(field,), policy={"samples": 2}).sample_count(5) == 2
+    assert TRIAGE.sample_count(3) == 3 and tasks.Task("t", policy={"samples": 7}).sample_count(3) == 7
+    need = "a task with a similarity field needs policy.samples of at least 2 (one sample always agrees with itself)"
+    spec = {"name": "s", "format": "text", "fields": {"$": {"type": "similarity"}}}
+    with pytest.raises(taskspec.SpecError) as caught:
+        taskspec.parse_document({"tasks": [spec]})
+    assert caught.value.errors == [f"tasks[0].policy.samples: {need}"]
+    with pytest.raises(taskspec.SpecError) as caught:
+        taskspec.parse_spec({**spec, "policy": {"samples": 1}})
+    assert caught.value.errors == [f"policy.samples: {need}"]
+    with pytest.raises(taskspec.SpecError) as caught:  # a bad value is reported once, by its own rule
+        taskspec.parse_spec({**spec, "policy": {"samples": 0}})
+    assert caught.value.errors == ["policy.samples: must be a whole number from 1 to 16"]
+    # `extends` that drops the base's samples is refused too.
+    doc = {"tasks": [{**spec, "policy": {"samples": 3}}, {"name": "t", "extends": "s", "policy": {"samples": None}}]}
+    with pytest.raises(taskspec.SpecError) as caught:
+        taskspec.parse_document(doc)
+    assert caught.value.errors == [f"tasks[1].policy.samples: {need}"]
+    (ok,) = taskspec.parse_document({"tasks": [{**spec, "policy": {"samples": 3}}]})
+    assert taskspec.parse_spec(taskspec.document(ok), "file") == ok  # a similarity task round-trips
+
+
+@pytest.mark.req("FR-14.40", "FR-5.1", "FR-2.55")
+def test_router_and_golden_eval_use_policy_samples_per_task():
+    """A task's `policy.samples` is how many samples its confidence score rests on: the router draws that many (the
+    shadow too, and at least the client's n), and the golden eval scores each row on its task's count, so a task is
+    calibrated on what it is served with. A task without it keeps RATCHET_SAMPLES (3 here)."""
+    tasks.register(dataclasses.replace(SUMMARY_TASK, policy={"samples": 5}))
+    led = Ledger(":memory:")
+    _version(led, "live", {"threshold": 0.5})
+    _version(led, "shadow", {"threshold": 0.5})
+    student = RecordingProvider(lambda m, model: VALID if "ticket" in m[-1]["content"] else "The refund was sent today.")
+    s = Settings(teacher_model=OPEN_TEACHER, samples=3, audit_rate=0.0, teacher_reasoning_tokens=0)
+    r = Ratchet(s, led, RecordingProvider("teacher"), lambda v: (student, v.adapter_uri), seed=1)
+    out = r.handle(_ask("summarise"), "short-summary")
+    assert out.served_by == "student" and [c.kwargs["n"] for c in student.calls] == [5, 5]  # live, then the shadow
+    student.calls.clear()
+    r.handle(_ask("summarise"), "short-summary", n=6)
+    assert [c.kwargs["n"] for c in student.calls] == [6, 5]  # six to fill the choices; scored on five, as calibrated
+    student.calls.clear()
+    r.handle(_ask("ticket 1"), "ticket-triage")
+    assert [c.kwargs["n"] for c in student.calls] == [3, 3]
+    # The golden eval: each row sampled as often as its task is in production.
+    rows = [
+        {"task": name, "messages": [{"role": "user", "content": f"{name} {i}"}, {"role": "assistant", "content": ref}]}
+        for i in range(4)
+        for name, ref in (("short-summary", "The refund was sent today."), ("ticket-triage", VALID))
+    ]
+    asked: list[tuple[str, int]] = []
+
+    def sample(prompt, n, params=None):
+        asked.append((prompt[-1]["content"].split()[0], n))
+        return student.complete(prompt, "student-v1", n=n, logprobs=True)
+
+    res = cascade_eval(sample, rows, samples=3)
+    assert asked == [("short-summary", 5), ("ticket-triage", 3)] * 4
+    assert res["tasks"]["short-summary"]["precision_kind"] == "proxy" and res["precision_kind"] == "proxy"
+    assert res["tasks"]["ticket-triage"]["precision_kind"] == "exact"
+    assert cascade_eval(sample, rows[1::2], samples=3)["precision_kind"] == "exact"  # tickets only
+
+
+@pytest.mark.req("FR-2.55", "NFR-1")
+def test_similarity_is_bounded_on_long_answers(monkeypatch):
+    """Every pair of student samples is compared on the request path: a 300,000-character answer normalises, builds its
+    features once and compares in well under the time limit under every metric, and an answer's features are built at
+    most once however many samples it is compared with (and never for a validity check alone)."""
+    huge = " ".join(f"word{i % 977}" for i in range(40_000))
+    other = " ".join(f"word{(i * 7) % 977}" for i in range(40_000))
+    start = time.perf_counter()
+    for metric in similarity.METRICS:
+        f = FieldSpec("$", "similarity", metric=metric)
+        a, b = f.normalize(huge), f.normalize(other)
+        f.match(a, b)
+        f.match(b, a)
+    assert time.perf_counter() - start < 2.0
+    built: list[str] = []
+    real = similarity.features
+    monkeypatch.setattr(similarity, "features", lambda metric, text: built.append(text) or real(metric, text))
+    texts = ["the refund was sent today", "the refund was sent to you today", "your refund went out today"]
+    assert SUMMARY_TASK.valid(texts[0]) and built == []  # a validity check builds nothing
+    score(SUMMARY_TASK, [comp(t) for t in texts])
+    assert sorted(built) == sorted(texts)  # three samples, three pairs (and themselves): each built once
+
+
+@pytest.mark.req("FR-14.40", "FR-7.7")
+def test_stats_report_proxy_precision_and_judge_pass_rate():
+    """/ratchet/stats `tasks[]` says what each task's precision means and, for a free-text task the judge graded, its pass
+    rate, from the live version's per-task records; an older or hand-edited record gives None, never a wrong label."""
+    tasks.register(SUMMARY_TASK)
+    led = Ledger(":memory:")
+
+    def rec(task: tasks.Task, **kw):
+        base = {"test_n": 20, "threshold": 0.8, "precision": 0.97, "coverage": 0.9, "spec_hash": task.spec_hash}
+        return {**base, "precision_kind": task.precision_kind, **kw}
+
+    records = {
+        "short-summary": rec(SUMMARY_TASK, judge_n=18, judge_pass_rate=0.8),
+        "ticket-triage": rec(TRIAGE),
+        "default": rec(tasks.get("default"), precision_kind="fuzzy", judge_pass_rate="high"),
+    }
+    live = _version(led, "live", {"threshold": 0.8, "tasks": records})
+    for name in records:
+        _audit(led, live, 1, task=name)
+    rows = {r["task"]: r for r in led.stats_by_task()}
+    assert (rows["short-summary"]["precision_kind"], rows["short-summary"]["judge_pass_rate"]) == ("proxy", 0.8)
+    assert (rows["ticket-triage"]["precision_kind"], rows["ticket-triage"]["judge_pass_rate"]) == ("exact", None)
+    assert (rows["default"]["precision_kind"], rows["default"]["judge_pass_rate"]) == (None, None)

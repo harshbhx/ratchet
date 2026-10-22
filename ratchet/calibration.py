@@ -85,10 +85,14 @@ def threshold(ev: Mapping[str, Any] | None, task: tasks.Task, default: float) ->
     for it under the current spec (SERVE_NOTHING, 1.01, once the release gate disabled it, or when it had no held-out
     rows); SERVE_NOTHING when the record, or the older `spec_hashes`, names another spec (the teacher answers until a
     night re-scores the version); otherwise `default`, the version's global threshold. A record that names no spec, or
-    whose threshold is not a number, sends the task to the teacher rather than guess."""
+    whose threshold is not a number, sends the task to the teacher rather than guess. A task with critical classes
+    (FR-2.50) gets SERVE_NOTHING without a record that measured them (`critical_measured`): its global threshold says
+    nothing about how often the student misses them."""
     if spec_changed(ev, task):
         return SERVE_NOTHING
     rec = entry(ev, task.name)
+    if task.routing_rules.critical and not critical_measured(rec):
+        return SERVE_NOTHING
     if rec is None:
         return default
     thr = number(rec.get("threshold"))
@@ -99,10 +103,23 @@ def held_back(ev: Mapping[str, Any] | None, task: tasks.Task) -> bool:
     """Whether the version's record for `task`, under the task's current spec, lets the student answer nothing: the
     release gate disabled the task on the version, its eval had no held-out row of it, or its threshold cannot be read.
     The router then does not call the student for the task at all (route `task_disabled`): its samples could not be
-    served, and a below-floor answer must not stand in for the teacher either. A version without a record for the task,
-    or scored under another spec of it (`spec_changed`, which keeps its own path), is not held back here."""
+    served, and a below-floor answer must not stand in for the teacher either. A task with critical classes (FR-2.50) is
+    held back also without a record that measured them (`critical_measured`), as `threshold` gives it SERVE_NOTHING. A
+    version scored under another spec of the task (`spec_changed`, which keeps its own path) is not held back here, nor,
+    for a task without critical classes, one without a record for it."""
     rec = entry(ev, task.name)
-    return rec is not None and rec.get("spec_hash") == task.spec_hash and not serves(rec)
+    if rec is None:
+        return bool(task.routing_rules.critical) and not spec_changed(ev, task)
+    if rec.get("spec_hash") != task.spec_hash:
+        return False
+    return not serves(rec) or (bool(task.routing_rules.critical) and not critical_measured(rec))
+
+
+def critical_measured(rec: Mapping[str, Any] | None) -> bool:
+    """Whether a per-task record carries the golden eval's measurements of its task's critical classes (`critical`, a
+    list per class, FR-2.50). Only the release gate's checks put such a record in front of traffic: `admit` for a
+    candidate, and a night's re-score (`orchestrate.rescore`) for the live version, in the same write."""
+    return rec is not None and isinstance(rec.get("critical"), list)
 
 
 def serves(rec: Mapping[str, Any]) -> bool:

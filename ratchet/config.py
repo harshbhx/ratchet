@@ -26,7 +26,8 @@ import httpx
 from . import licenses
 from .auth import MAX_RPM, MAX_USD, KeyLimits, KeyRing, Token, parse_key_limits
 from .certificate import CALIBRATIONS
-from .openai_compat import DEFAULT_MAX_N, Limits
+from .kpis import check_window_days
+from .openai_compat import AUTO_TASK_MODES, DEFAULT_MAX_N, MODEL_POLICIES, Limits, ModelRouting, parse_aliases
 from .providers import (
     DEFAULT_STUDENT_MAX_TOKENS,
     DEFAULT_STUDENT_PARAMS,
@@ -35,6 +36,7 @@ from .providers import (
     GenPolicy,
     parse_param_allowlist,
 )
+from .redact import STYLES as REDACT_STYLES
 from .resilience import MAX_OPEN_S, BreakerPolicy, RetryPolicy, timeouts
 from .tasks import MAX_TASKS
 from .tasks import valid_name as valid_task_name
@@ -118,6 +120,12 @@ def _fail(var: str, raw: object, expected: str, fallback: Any) -> Any:
         raise error
     sink.extend(error.issues)
     return fallback
+
+
+def default_fixtures_dir() -> str:
+    """RATCHET_FIXTURES_DIR (default `fixtures`, relative to the working directory): `Settings.fixtures_dir`, and what
+    `taskspec` reads when a caller parses a sql task's spec without naming a directory."""
+    return _env("RATCHET_FIXTURES_DIR", "fixtures")
 
 
 def _float(name: str, default: str) -> float:
@@ -228,8 +236,6 @@ def _seconds(env: str, value: object, default: float) -> float:
 # relies on a setting that does nothing yet; the item that builds the feature removes its entries here (and adds its own
 # checks). docs/CONFIGURATION.md lists them under "Reserved settings".
 RESERVED_SETTINGS: dict[str, tuple[str, str, str]] = {
-    "teacher_probes": ("RATCHET_TEACHER_PROBES", "20", "the teacher watch (FR-16.7)"),
-    "adjudicate_max": ("RATCHET_ADJUDICATE_MAX", "50", "the teacher watch (FR-16.7)"),
     "batch_api": ("RATCHET_BATCH_API", "operations", "clean-room backfill (FR-16.8)"),
     "batch_discount": ("RATCHET_BATCH_DISCOUNT", "0.5", "clean-room backfill (FR-16.8)"),
     "backfill_max_tokens": ("RATCHET_BACKFILL_MAX_TOKENS", "2048", "clean-room backfill (FR-16.8)"),
@@ -247,7 +253,9 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "NEBIUS_API_KEY",
             "RATCHET_ADAPTER_ROOT",
             "RATCHET_ADMIN_KEYS",
+            "RATCHET_ADMIN_TOKEN",
             "RATCHET_ALLOW_UNAUTHENTICATED",
+            "RATCHET_API_GUARD",
             "RATCHET_API_KEY",
             "RATCHET_API_KEYS",
             "RATCHET_API_KEY_DAILY_REQUESTS",
@@ -265,6 +273,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_IDEMPOTENCY_CACHE",
             "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
+            "RATCHET_ADJUDICATE_MAX",
+            "RATCHET_KPI_WINDOW_DAYS",
             "RATCHET_LOG_FORMAT",
             "RATCHET_LOG_LEVEL",
             "RATCHET_MAX_BODY_BYTES",
@@ -284,6 +294,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_PUBLIC_BOM",
             "RATCHET_PUBLIC_DASHBOARD",
             "RATCHET_REDACT_PII",
+            "RATCHET_REDACT_PLUGIN",
+            "RATCHET_REDACT_STYLE",
             "RATCHET_SAMPLES",
             "RATCHET_SCOUT_DAILY_BUDGET_USD",
             "RATCHET_SCOUT_MAX_RESULTS",
@@ -352,6 +364,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SCOUT_JUDGE_SESSION_S",
             "RATCHET_STORE_EXAMPLES",
             "RATCHET_TAKE_RATE",
+            "RATCHET_TEACHER_PROBES",
             "RATCHET_TAVILY_CYCLE_DAY",
             "RATCHET_TAVILY_JUDGE_CREDITS",
             "RATCHET_TAVILY_MONTHLY_CREDITS",
@@ -373,20 +386,26 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_MOCK_STRICT",
             "RATCHET_PER_TASK_CALIBRATION",
             "RATCHET_SCHEMA_REPAIR",
+            # Model routing and the other OpenAI endpoints (lane C2: ADR 0048, ADR 0050)
+            "RATCHET_AUTO_TASK",
+            "RATCHET_EMBEDDINGS_BASE",
+            "RATCHET_EMBEDDINGS_KEY",
+            "RATCHET_EMBEDDINGS_MODEL",
+            "RATCHET_MODEL_ALIASES",
+            "RATCHET_MODEL_POLICY",
             "TAVILY_API_KEY",
             *TOOL_ENV,
             *(env for env, _, _ in RESERVED_SETTINGS.values()),
         }
     )
 )
+GUARD_TOKEN_CHARS = 32  # RATCHET_ADMIN_TOKEN: what deploy/vm/Caddyfile requires before it lets a guarded path through
 # RATCHET_* variables only the deploy scripts and the demo VM read (deploy/student_endpoint.sh, deploy/train_job.sh,
 # deploy/vm/.env), never the package. Docker Compose hands the VM's whole .env to the gateway, so the startup check must
 # not call them unknown; the traceability check holds each to a row in docs/CONFIGURATION.md ("Deploy scripts"), and
 # tests/test_live.py checks the list against the Nebius scripts.
 DEPLOY_ENV: frozenset[str] = frozenset(
     {
-        "RATCHET_ADMIN_TOKEN",
-        "RATCHET_API_GUARD",
         "RATCHET_BACKUP_DIR",
         "RATCHET_BACKUP_KEEP",
         "RATCHET_BUCKET_ID",
@@ -562,6 +581,25 @@ class Access:
         return live and self.public_dashboard and not keyed
 
 
+MAX_AUTO_TASKS_LIMIT = MAX_TASKS // 2  # RATCHET_MAX_AUTO_TASKS: auto tasks may hold at most half the task registry
+
+
+def _choice(value: object, env: str, choices: tuple[str, ...]) -> str:
+    """One of `choices` from a setting, in any case; set but empty means the first (the default). ValueError names the
+    variable otherwise."""
+    mode = value.strip().lower() if isinstance(value, str) else None
+    if mode == "":
+        mode = choices[0]
+    if mode not in choices:
+        raise ValueError(f"{env} must be {' or '.join(choices)}, not {value!r}")
+    return mode
+
+
+# The most probes (RATCHET_TEACHER_PROBES) or adjudications (RATCHET_ADJUDICATE_MAX) one night may run: each is paid
+# teacher calls, so a typo cannot turn the nightly job into a relabelling run.
+MAX_TEACHER_WATCH_CALLS = 10_000
+
+
 def _breaker_policy(role: str, failures: object, cooldown: object) -> BreakerPolicy:
     """A breaker policy from RATCHET_<ROLE>_BREAKER_FAILURES and _COOLDOWN_S; ValueError names the bad variable. The
     longest wait is 300 s, or the cooldown itself when that is longer."""
@@ -681,6 +719,15 @@ DEFAULT_PRICES: dict[str, Price] = {
     # this per-token proxy uses the hosted Nano price, which is conservative.
     "student": Price(0.06, 0.24),
 }
+# Embeddings models the /v1/embeddings pass-through prices (FR-1.51): input tokens only. Kept apart from DEFAULT_PRICES,
+# whose models are teachers, judges and students with a license each; an embeddings model writes no training data.
+# Unverified until scripts/day1_check.py passes (INV-9), like every price here. A model with no price here is priced as
+# the teacher (`Settings.price`), which overstates its cost.
+EMBEDDING_PRICES: dict[str, Price] = {
+    "Qwen/Qwen3-Embedding-8B": Price(0.01, 0.0),
+}
+DEFAULT_EMBEDDINGS_MODEL = "Qwen/Qwen3-Embedding-8B"  # RATCHET_EMBEDDINGS_MODEL
+EMBEDDINGS_OFF = "off"  # RATCHET_EMBEDDINGS_BASE=off: /v1/embeddings answers 404 unsupported_endpoint
 
 
 @dataclass
@@ -788,6 +835,12 @@ class Settings:
     # Privacy: replace emails, phone numbers, card numbers etc. with placeholders before a
     # request and the teacher's answer are stored as a training example (ratchet/redact.py).
     redact_pii: bool = field(default_factory=lambda: _env("RATCHET_REDACT_PII", "1") != "0")
+    # Placeholder style (ADR 0082): `label` ([EMAIL], v0.4), `numbered` ([EMAIL_1], the same value the same number in
+    # the prompt and the answer) or `surrogate` (person1@example.com). A task spec's `privacy.redact_style` overrides it.
+    redact_style: str = field(default_factory=lambda: _env("RATCHET_REDACT_STYLE", "label"))
+    # A detector plugin, 'module:function' (redact.Detector), such as an NER model for names. Imported at startup, which
+    # fails when it is missing. Empty: patterns only.
+    redact_plugin: str = field(default_factory=lambda: _env("RATCHET_REDACT_PLUGIN", ""))
     # Storage opt-outs (FR-13.1, ADR 0080). 0 is zero retention: no teacher answer is stored as a training example and
     # Night School skips every night. The requests table (metadata only) is still written.
     store_examples: bool = field(default_factory=lambda: _bool("RATCHET_STORE_EXAMPLES", "1"))
@@ -842,17 +895,30 @@ class Settings:
     openapi: bool | None = field(default_factory=lambda: _switch("RATCHET_OPENAPI"))
     allow_unauthenticated: bool | None = field(default_factory=lambda: _switch("RATCHET_ALLOW_UNAUTHENTICATED"))
     csp: str = field(default_factory=lambda: _env("RATCHET_CSP", ""))
+    # The demo VM's edge guard, which the gateway cannot see: Caddy answers 403 on `/v1/*`, `/openai/*`, `/ratchet/demo/*`
+    # and `/ratchet/admin/*` unless a request carries `X-Ratchet-Admin-Token` (deploy/vm/Caddyfile). Compose hands both
+    # variables to the gateway, which refuses live mode without API keys unless they say the guard is on (`guard_problem`).
+    api_guard: str = field(default_factory=lambda: _env("RATCHET_API_GUARD", "open"))
+    admin_token: str = field(default_factory=lambda: _env("RATCHET_ADMIN_TOKEN", ""), repr=False)
 
     # Tasks (ratchet/taskspec.py, ADR 0022). A JSON (or YAML, with PyYAML) file of task specs registered at startup; a bad
     # file stops startup with every error listed. Empty = the built-in tasks and the ones the admin API stored.
     tasks_file: str = field(default_factory=lambda: _env("RATCHET_TASKS_FILE", ""))
     # What a request naming an unregistered task gets: UNKNOWN_TASK_POLICIES.
     unknown_tasks: str = field(default_factory=lambda: _env("RATCHET_UNKNOWN_TASKS", "distill"))
+    # How a request without a task header or metadata finds its task (ratchet/openai_compat.py, ADR 0048). What a `model`
+    # Ratchet does not know gets: 'lenient' serves it as `ratchet`, 'strict' answers 404 `model_not_found`. Model ids that
+    # name a task ('gpt-4o-mini=ticket-triage,gpt-4o=default'). 'system_prompt': a request no other rule places gets an
+    # auto task per first system message, at most RATCHET_MAX_AUTO_TASKS of them ('off': it gets `default`).
+    model_policy: str = field(default_factory=lambda: _env("RATCHET_MODEL_POLICY", "lenient"))
+    model_aliases: str = field(default_factory=lambda: _env("RATCHET_MODEL_ALIASES", ""))
+    auto_task: str = field(default_factory=lambda: _env("RATCHET_AUTO_TASK", "off"))
     # Where fixture files that a task spec names must live (`taskspec.resolve_fixture`), so a spec cannot read
-    # any other file on the host.
-    fixtures_dir: str = field(default_factory=lambda: _env("RATCHET_FIXTURES_DIR", "fixtures"))
-    # Structured outputs (ratchet/schema_tasks.py, ADR 0042). The most auto tasks (derived from a response_format
-    # json_schema) the registry holds; past it a new schema gets the unknown-task path. 0 turns auto tasks off.
+    # any other file on the host: the SQL scripts sql tasks run their answers on (FR-2.56, ratchet/sqlcheck.py).
+    fixtures_dir: str = field(default_factory=default_fixtures_dir)
+    # The most auto tasks the registry holds (ADR 0042, ADR 0048): those derived from a response_format json_schema
+    # (ratchet/schema_tasks.py; past the cap a new schema gets the unknown-task path) and those made per system prompt
+    # (RATCHET_AUTO_TASK=system_prompt; past the cap `default`) count together. 0 turns auto tasks off.
     max_auto_tasks: int = field(default_factory=lambda: _int("RATCHET_MAX_AUTO_TASKS", "200"))
     # One more teacher call when a teacher answer breaks the request's response_format (0: none).
     schema_repair: bool = field(default_factory=lambda: _env("RATCHET_SCHEMA_REPAIR", "1") != "0")
@@ -870,6 +936,13 @@ class Settings:
     # Content part types besides text that the teacher accepts ("text,image_url"). Such requests go to the teacher
     # only and are never stored; any other non-text part is a 400.
     teacher_modalities: str = field(default_factory=lambda: _env("RATCHET_TEACHER_MODALITIES", "text"))
+    # The /v1/embeddings pass-through (FR-1.51, ADR 0050): the OpenAI-compatible base URL that embeds (empty = the
+    # teacher's, RATCHET_TEACHER_BASE; 'off' turns the endpoint off), the one model it always asks for, whatever a client
+    # names, and its API key (empty = NEBIUS_API_KEY). Nothing of an embeddings request is stored; mock mode embeds
+    # locally.
+    embeddings_base: str = field(default_factory=lambda: _env("RATCHET_EMBEDDINGS_BASE", ""))
+    embeddings_model: str = field(default_factory=lambda: _env("RATCHET_EMBEDDINGS_MODEL", DEFAULT_EMBEDDINGS_MODEL))
+    embeddings_api_key: str = field(default_factory=lambda: _env("RATCHET_EMBEDDINGS_KEY", ""))
 
     # Retries (ADR 0071). Answers kept by Idempotency-Key, in memory: how many (0 = the header is ignored) and for how
     # many seconds after each finished (0 = only a request that arrives while the first runs shares its answer). And the
@@ -897,6 +970,10 @@ class Settings:
     # Mock mode only: hours a day the simulated student endpoint runs (each simulated day records one interval).
     mock_endpoint_hours: float = field(default_factory=lambda: _float("RATCHET_MOCK_ENDPOINT_HOURS", "24"))
 
+    # Success metrics (ratchet/kpis.py, FR-7.9): SM-1 to SM-3 and NFR-1 are measured over the last this many ledger days
+    # with traffic, so they describe the steady state rather than the cold start.
+    kpi_window_days: int = field(default_factory=lambda: _int("RATCHET_KPI_WINDOW_DAYS", "3"))
+
     # Audit focusing (FR-16.1, ADR 0025): the canary's own audit rate, more than 0 and at most 1; unset = RATCHET_AUDIT_RATE.
     # Read with `checked_canary_audit_rate()`.
     canary_audit_rate: float | None = field(default_factory=lambda: _float_or_none("RATCHET_CANARY_AUDIT_RATE"))
@@ -908,6 +985,12 @@ class Settings:
     cert_target: float = field(default_factory=lambda: _float("RATCHET_CERT_TARGET", "0.95"))
     cert_delta: float = field(default_factory=lambda: _float("RATCHET_CERT_DELTA", "0.05"))
 
+    # The teacher watch (FR-16.7, ADR 0033): stored labels Night School re-asks the teacher about per night (probes,
+    # FR-5.40) and contested labels it adjudicates per night with two more teacher answers each (FR-5.41); 0 = none.
+    # Read with `teacher_watch_limits()`.
+    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
+    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+
     # Savings receipts (FR-15.5, ADR 0029): the share of the billable lower bound that is the fee, the audits a task needs
     # before its baseline is calibrated (read with `receipt_policy()`), and, in mock mode only, the mock teacher's mean
     # billed reasoning tokens (unset: the fixed RATCHET_TEACHER_REASONING_TOKENS; `checked_mock_reasoning_mean()`).
@@ -918,10 +1001,8 @@ class Settings:
     )
 
     # The evidence features (ADR 0024). Declared with defaults that keep today's behaviour; reserved until the item that
-    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: teacher-watch probes and adjudications
-    # per night; the backfill's batch API, discount and output cap; the ledger's sync mode.
-    teacher_probes: int = field(default_factory=lambda: _int("RATCHET_TEACHER_PROBES", "20"))
-    adjudicate_max: int = field(default_factory=lambda: _int("RATCHET_ADJUDICATE_MAX", "50"))
+    # reads each one lands (RESERVED_SETTINGS, `check_reserved`). Per feature: the backfill's batch API, discount and
+    # output cap; the ledger's sync mode.
     batch_api: str = field(default_factory=lambda: _env("RATCHET_BATCH_API", "operations"))
     batch_discount: float = field(default_factory=lambda: _float("RATCHET_BATCH_DISCOUNT", "0.5"))
     backfill_max_tokens: int = field(default_factory=lambda: _int("RATCHET_BACKFILL_MAX_TOKENS", "2048"))
@@ -963,7 +1044,7 @@ class Settings:
     # the generic mock world (sim/generic.py) answered every request.
     mock_strict: bool = field(default_factory=lambda: _env("RATCHET_MOCK_STRICT", "0") == "1")
 
-    prices: dict[str, Price] = field(default_factory=lambda: dict(DEFAULT_PRICES))
+    prices: dict[str, Price] = field(default_factory=lambda: {**DEFAULT_PRICES, **EMBEDDING_PRICES})
 
     def teacher_timeout(self) -> httpx.Timeout:
         """Timeouts for Token Factory calls (teacher, judge). A bad value raises ValueError, so live mode fails at startup."""
@@ -1013,6 +1094,28 @@ class Settings:
             raise ValueError(f"RATCHET_UNKNOWN_TASKS must be {', '.join(UNKNOWN_TASK_POLICIES)}, not {self.unknown_tasks!r}")
         return mode
 
+    def redact_detector(self) -> Any:
+        """RATCHET_REDACT_PLUGIN loaded: the detector function, or None when unset. A spec that is not `module:function`,
+        a module that cannot be imported or a detector that fails on an empty text raises ValueError (ADR 0082), here and
+        at startup alike."""
+        from .redact import load_detector  # redact reads no settings; imported here to keep config's imports light
+
+        plugin = self.redact_plugin
+        if not isinstance(plugin, str):
+            raise ValueError(f"RATCHET_REDACT_PLUGIN must be 'module:function', not {plugin!r}")
+        return load_detector(plugin) if plugin.strip() else None
+
+    def redaction_style(self) -> str:
+        """RATCHET_REDACT_STYLE: `label` (the default, also when set but empty), `numbered` or `surrogate`. Case and spaces
+        are ignored; anything else raises ValueError, so a typo stops startup instead of storing another style."""
+        raw = self.redact_style
+        style = raw.strip().lower() if isinstance(raw, str) else None
+        if style == "":
+            style = "label"
+        if style not in REDACT_STYLES:
+            raise ValueError(f"RATCHET_REDACT_STYLE must be {', '.join(REDACT_STYLES)}, not {raw!r}")
+        return style
+
     def no_store_task_names(self) -> frozenset[str]:
         """RATCHET_NO_STORE_TASKS as a set of task names (FR-13.1). A name need not be registered (an unregistered name
         may still be used under RATCHET_UNKNOWN_TASKS=distill), but one that is not a task name raises ValueError, so a
@@ -1047,12 +1150,23 @@ class Settings:
             raise ValueError(f"RATCHET_ERASURE_SHARED must be {' or '.join(ERASURE_SHARED)}, not {raw!r}")
         return Retention(self.example_retention_days, self.request_retention_days, shared)
 
+    def model_routing(self) -> ModelRouting:
+        """RATCHET_MODEL_POLICY, RATCHET_MODEL_ALIASES and RATCHET_AUTO_TASK, checked (ADR 0048): in any case, empty meaning
+        the default (`lenient`, no aliases, `off`). Anything else raises ValueError naming the variable, so a typo stops
+        the gateway at startup instead of routing requests to a task nobody chose."""
+        policy = _choice(self.model_policy, "RATCHET_MODEL_POLICY", MODEL_POLICIES)
+        auto = _choice(self.auto_task, "RATCHET_AUTO_TASK", AUTO_TASK_MODES)
+        if not isinstance(self.model_aliases, str):
+            raise ValueError(f"RATCHET_MODEL_ALIASES must be text, not {self.model_aliases!r}")
+        return ModelRouting(policy, parse_aliases(self.model_aliases), auto)
+
     def auto_task_cap(self) -> int:
-        """RATCHET_MAX_AUTO_TASKS, checked: a whole number from 0 (auto tasks off) to the registry's size. Anything else
+        """RATCHET_MAX_AUTO_TASKS, checked: a whole number from 0 (no auto task is ever made) to MAX_AUTO_TASKS_LIMIT,
+        half the task registry, so request traffic cannot take the places of the file and API tasks. Anything else
         raises ValueError, so the gateway and the simulator stop at startup."""
         n = self.max_auto_tasks
-        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= MAX_TASKS:
-            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number from 0 to {MAX_TASKS}, not {n!r}")
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= MAX_AUTO_TASKS_LIMIT:
+            raise ValueError(f"RATCHET_MAX_AUTO_TASKS must be a whole number from 0 to {MAX_AUTO_TASKS_LIMIT}, not {n!r}")
         return n
 
     def min_task_golden_rows(self) -> int:
@@ -1090,6 +1204,26 @@ class Settings:
             raise ValueError(f"RATCHET_SEEN_DEDUP_S must be 0 to {MAX_RETRY_WINDOW_S:.0f} seconds, not {window!r}")
         return float(window)
 
+    def embeddings_endpoint(self) -> str | None:
+        """The base URL the /v1/embeddings pass-through calls (FR-1.51): RATCHET_EMBEDDINGS_BASE, the teacher's base when
+        it is empty, or None for 'off' (in any case; the endpoint then answers 404). A base that is not an http(s) URL,
+        or an empty or Ratchet-named RATCHET_EMBEDDINGS_MODEL while the endpoint is on, raises ValueError, so the
+        gateway stops at startup instead of failing every embeddings request."""
+        raw = self.embeddings_base.strip() if isinstance(self.embeddings_base, str) else None
+        if raw is None:
+            raise ValueError(f"RATCHET_EMBEDDINGS_BASE must be a URL or 'off', not {self.embeddings_base!r}")
+        if raw.lower() == EMBEDDINGS_OFF:
+            return None
+        base = raw or self.teacher_base
+        if not base.lower().startswith(("http://", "https://")):
+            raise ValueError(f"RATCHET_EMBEDDINGS_BASE must be an http(s) URL or 'off', not {base!r}")
+        model = self.embeddings_model.strip() if isinstance(self.embeddings_model, str) else ""
+        if not model or model != self.embeddings_model or not model.isprintable():
+            raise ValueError(f"RATCHET_EMBEDDINGS_MODEL must be a model id (no spaces around it), not {self.embeddings_model!r}")
+        if model == "ratchet" or model.startswith(("ratchet/", "ratchet:")):
+            raise ValueError(f"RATCHET_EMBEDDINGS_MODEL must name the upstream model, not a Ratchet model id ({model!r})")
+        return base
+
     def gen_policy(self) -> GenPolicy:
         """What each role forwards of a client's generation parameters, and the token caps. A bad value raises
         ValueError, so the gateway fails at startup."""
@@ -1107,6 +1241,15 @@ class Settings:
             student_max_tokens=self.student_max_tokens,
             reasoning_headroom=self.teacher_reasoning_headroom,
         )
+
+    def kpi_window(self) -> int:
+        """RATCHET_KPI_WINDOW_DAYS, checked: a whole number of days from 1 to 3650 (`kpis.check_window_days`). A bad value
+        raises ValueError naming the variable, so the gateway and the simulator stop at startup instead of reporting
+        metrics over a window nobody asked for."""
+        try:
+            return check_window_days(self.kpi_window_days)
+        except ValueError as e:
+            raise ValueError(f"RATCHET_KPI_WINDOW_DAYS: {e}") from None
 
     def cost_policy(self) -> CostPolicy:
         """The cost settings, checked. A bad value raises ValueError naming the variable, so the gateway, the simulator,
@@ -1405,6 +1548,31 @@ class Settings:
             max_inflight=inflight,
         )
 
+    def guard_problem(self) -> str | None:
+        """Why a live gateway without API keys may not answer anyone even with RATCHET_ALLOW_UNAUTHENTICATED=1: the edge
+        guard it says it stands behind is not configured. `RATCHET_ALLOW_UNAUTHENTICATED=1` used to be enough, one typo or a
+        forgotten variable from an open, paid endpoint. It now needs `RATCHET_API_GUARD=guarded` and a
+        `RATCHET_ADMIN_TOKEN` of at least 32 characters (what the Caddyfile checks before it lets a request through), or
+        API keys. None when the guard is configured. Never quotes the token."""
+        guard = self.api_guard.strip().lower() if isinstance(self.api_guard, str) else ""
+        token = self.admin_token.strip() if isinstance(self.admin_token, str) else ""
+        if guard == "guarded" and len(token) >= GUARD_TOKEN_CHARS:
+            return None
+        return (
+            "RATCHET_ALLOW_UNAUTHENTICATED=1 needs the edge guard it relies on: set RATCHET_API_GUARD=guarded and a "
+            f"RATCHET_ADMIN_TOKEN of at least {GUARD_TOKEN_CHARS} characters (openssl rand -hex 32), or set RATCHET_API_KEYS; "
+            "otherwise /v1/* would answer anyone, on your teacher credits"
+        )
+
+    def teacher_watch_limits(self) -> tuple[int, int]:
+        """(RATCHET_TEACHER_PROBES, RATCHET_ADJUDICATE_MAX), checked: whole numbers from 0 to MAX_TEACHER_WATCH_CALLS,
+        because each probe is one teacher call and each adjudication two, paid every night. A bad value raises ValueError,
+        so the gateway, the simulator and the nightly job stop at startup."""
+        for env, value in (("RATCHET_TEACHER_PROBES", self.teacher_probes), ("RATCHET_ADJUDICATE_MAX", self.adjudicate_max)):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_TEACHER_WATCH_CALLS:
+                raise ValueError(f"{env} must be a whole number from 0 to {MAX_TEACHER_WATCH_CALLS:,}, not {value!r}")
+        return self.teacher_probes, self.adjudicate_max
+
     def check_reserved(self) -> None:
         """Stop startup when a reserved setting (RESERVED_SETTINGS) holds anything but its default: it is declared for a
         feature that is not built yet, so it would do nothing. ValueError names the variable and the feature. `Ratchet`
@@ -1510,6 +1678,15 @@ class Settings:
             ("RATCHET_MOCK_TEACHER_REASONING_MEAN", Settings.checked_mock_reasoning_mean),
             ("RATCHET_SCOUT_JUDGE_CODE", Settings.scout_policy),
             ("RATCHET_API_KEY_DAILY_USD", Settings.limit_policy),
+            ("RATCHET_MODEL_POLICY", Settings.model_routing),
+            ("RATCHET_MAX_AUTO_TASKS", Settings.auto_task_cap),
+            ("RATCHET_MIN_TASK_GOLDEN", Settings.min_task_golden_rows),
+            ("RATCHET_TEACHER_PROBES", Settings.teacher_watch_limits),
+            ("RATCHET_KPI_WINDOW_DAYS", Settings.kpi_window),
+            ("RATCHET_REDACT_STYLE", Settings.redaction_style),
+            ("RATCHET_REDACT_PLUGIN", Settings.redact_detector),
+            ("RATCHET_EMBEDDINGS_BASE", Settings.embeddings_endpoint),
+            ("RATCHET_MODEL_ALIASES", _embeddings_alias),
             ("", Settings.check_reserved),
         )
         for var, read in readers:
@@ -1573,13 +1750,17 @@ class Settings:
                     f"RATCHET_METRICS_TOKEN is also the key for {name!r} in {var}; give the scraper its own token",
                 )
         keyed = "RATCHET_API_KEYS" in rings and rings["RATCHET_API_KEYS"].enabled
-        if self.mode == "live" and not keyed and self.allow_unauthenticated is not True and "RATCHET_API_KEYS" in rings:
-            error(
-                "RATCHET_API_KEYS",
-                "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
-                "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
-                "VM's Caddy guard) checks every caller",
-            )
+        if self.mode == "live" and not keyed and "RATCHET_API_KEYS" in rings:
+            if self.allow_unauthenticated is not True:
+                error(
+                    "RATCHET_API_KEYS",
+                    "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
+                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
+                    "VM's Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
+                    "caller",
+                )
+            elif (problem := self.guard_problem()) is not None:
+                error("RATCHET_ALLOW_UNAUTHENTICATED", problem)
 
     def _check_live(self, error: Callable[[str, str], None], warning: Callable[[str, str], None]) -> None:
         """What only live mode needs: a teacher key, a ledger file it can write, a student key, enough audits."""
@@ -1674,6 +1855,15 @@ def _teacher_licenses(settings: Settings) -> object:
     ValueError (ADR 0090)."""
     path = settings.teacher_licenses_file.strip() if isinstance(settings.teacher_licenses_file, str) else ""
     return licenses.load_file(path) if path else None
+
+
+def _embeddings_alias(settings: Settings) -> object:
+    """The gateway's check of the two settings together (`Runtime._embedder`, ADR 0050): with /v1/embeddings on, a model
+    alias spelled like RATCHET_EMBEDDINGS_MODEL (one id, two meanings in /v1/models) raises ValueError."""
+    if settings.embeddings_endpoint() is not None and settings.embeddings_model in settings.model_routing().aliases:
+        model = settings.embeddings_model
+        raise ValueError(f"RATCHET_MODEL_ALIASES: {model!r} is RATCHET_EMBEDDINGS_MODEL; give the alias another id")
+    return None
 
 
 def _end_user_key(settings: Settings) -> object:

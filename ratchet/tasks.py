@@ -2,13 +2,17 @@
 
 A task tells Ratchet which parts of an answer must match for the student to count as agreeing with the teacher: its
 `fields` (FR-2.14, ADR 0021), each a path and a typed comparator from `compare.py` (a label over a vocabulary, a number
-with a tolerance, a date in any common format, a set, records, ...). Free-text fields that are not listed are ignored
-(the judge can score them separately). A field is required unless it says otherwise, so an answer without it is invalid:
-it gets no vote in the confidence score and is never stored as a training example (INV-16). A task without fields
-compares whole answers: canonical JSON when both are JSON, else the text, lower-cased with whitespace collapsed.
+with a tolerance, a date in any common format, a set, records, ...). Free-text fields that are not listed are ignored;
+a `similarity` field compares free text by a score instead (FR-2.55), and the golden eval's judge grades it (FR-14.40). A
+task with such a field needs `policy.samples` of at least 2 (`samples_problem`). A field is required unless it says
+otherwise, so an answer without it is invalid: it gets no vote in the confidence score and is never stored as a training
+example (INV-16). A task without fields compares whole answers: canonical JSON when both are JSON, else the text,
+lower-cased with whitespace collapsed. A task with format `sql` answers with one SQL query, and two answers agree when
+their queries return the same rows on the task's fixture (`sqlcheck.py`, FR-2.56): its `sql` options (`sqlcheck.SqlSpec`)
+take the place of fields.
 
 Every answer is cleaned the same way before it is compared, stored or served (`clean_answer`): reasoning is removed
-(`strip_reasoning`), and a JSON task's answer loses a code fence wrapped around the whole of it. A JSON answer that is
+(`strip_reasoning`), and a JSON or SQL task's answer loses a code fence wrapped around the whole of it. A JSON answer that is
 already one JSON object is kept as it is, so a reply that mentions a `<think>` tag keeps its text.
 
 Structured outputs (FR-1.40, ADR 0042): a request's `response_format` (json_object or json_schema) binds the task to a
@@ -39,28 +43,39 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from . import vocab
+from . import sqlcheck, vocab
 from .compare import INVALID as NO_KEY
 from .compare import MAX_FIELDS, MAX_RECORDS, FieldSpec, Record, jsonable
+from .routing import DEFAULT as DEFAULT_ROUTING
+from .routing import Routing
+from .routing import parse as parse_routing
 
 if TYPE_CHECKING:  # pragma: no cover
     from .schema_tasks import Contract
+from .redact import STYLES as REDACT_STYLES
 
 # Answer formats. `json`: the answer is JSON and fields are paths into it. `text`: the answer is plain text and its one
-# field is '$', the text without surrounding whitespace and trailing `.!,;:`. `tool_calls` and `sql` are reserved for
-# later releases.
+# field is '$', the text without surrounding whitespace and trailing `.!,;:`. `sql`: the answer is one SQL query,
+# compared by what it returns on the task's fixture (`Task.sql`, FR-2.56). `tool_calls` is reserved for a later release.
 FORMATS = ("json", "text", "tool_calls", "sql")
-RESERVED_FORMATS = frozenset({"tool_calls", "sql"})
+RESERVED_FORMATS = frozenset({"tool_calls"})
 # Where a task was defined: in this file, a tasks file, the admin API, derived from a request, or made up for an unknown
 # task name (`get`, never stored in REGISTRY).
 SOURCES = ("builtin", "file", "api", "auto", "adhoc")
 TOOLS = ("teacher", "distill")  # who answers tool calls for this task (distill: opt-in for a later release)
-# A task's own release policy; later releases read it (samples, audit rate and precision targets per task).
+# A task's own release policy: `samples` (the router and the golden eval, FR-2.55), `target_precision` and
+# `min_precision` (per-task calibration, FR-14.1) and `audit_rate` (the share of its served student answers the teacher
+# audits, in place of RATCHET_AUDIT_RATE; FR-2.50).
 POLICY_KEYS = ("samples", "audit_rate", "target_precision", "min_precision")
+# What a task's measured precision means (`Task.precision_kind`): `exact` when its comparators decide agreement, `proxy`
+# when a `similarity` field makes it closeness to the teacher's answer (FR-14.40).
+PRECISION_KINDS = ("exact", "proxy")
 # How a request without a task name may be matched to this task (a later release reads them): its system message starts
 # with `system_prefix`, its `response_format.json_schema.name` is `schema_name`, or its tools are exactly `tools`. Plain
 # comparisons, never a pattern a request could make slow.
 MATCH_KEYS = ("system_prefix", "schema_name", "tools")
+# How a task's examples are stored (ADR 0082): `redact_style`, one of redact.STYLES (null: the deployment's default).
+PRIVACY_KEYS = ("redact_style",)
 MAX_DESCRIPTION = 1000  # characters
 MAX_PREFIX = 2000  # characters of `match.system_prefix`
 MAX_MATCH_TOOLS = 128  # OpenAI's limit on a request's tools
@@ -71,8 +86,9 @@ _TEXT_TRAILING = frozenset(".!,;:")
 
 @dataclass(frozen=True)
 class Task:
-    """A task: its name, whether it is pinned to the teacher, and its spec (`format`, `fields`, `policy`, `routing`,
-    `store`, `tools`). `compare_keys` is the v0.4 shortcut: each key becomes an optional `exact` field, and such a task
+    """A task: its name, whether it is pinned to the teacher, and its spec (`format`, `fields` or `sql`, `policy`,
+    `routing`, `store`, `tools`; `routing` is checked against the fields and parsed once, `routing_rules`). `compare_keys` is the
+    v0.4 shortcut: each key becomes an optional `exact` field, and such a task
     compares, validates and canonicalises answers exactly as v0.4 did. `spec_hash` is derived from the spec (not from
     the name or `source`), so evaluations can tell when a task's rules changed; it cannot be set, so it never drifts
     from the rules (`dataclasses.replace` computes it again). Immutable: `policy`, `routing` and `match_rules` are
@@ -80,7 +96,8 @@ class Task:
 
     `description`, `clients` (the API key names that may use the task; empty: every key) and `match_rules` (a spec
     file's `match`) say who uses the task and how a request finds it, not how its answers compare, so they are left
-    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration.
+    out of `spec()` and `spec_hash`: editing them never sends the task back to the teacher for recalibration. So is
+    `redact_style`, which changes how new examples are stored, not how answers compare.
 
     `contract` is set only on a copy made for one request (`bound`): the request's `response_format`, which its answers
     must meet as well as the task's fields (FR-1.40). It is not a rule of the task, so it is outside `spec()`,
@@ -102,8 +119,13 @@ class Task:
     clients: Sequence[str] = ()  # API key names (RATCHET_API_KEYS) allowed to use this task; empty: every key
     match_rules: Mapping[str, Any] = field(default_factory=dict)  # MATCH_KEYS; a spec file's `match`
     contract: Contract | None = field(default=None, compare=False, repr=False)  # one request's response_format (`bound`)
+    sql: sqlcheck.SqlSpec | None = None  # format 'sql': the fixture its queries run on and how results compare (FR-2.56)
+    # How identifiers in this task's stored examples are replaced (redact.STYLES; a spec's `privacy.redact_style`);
+    # None: RATCHET_REDACT_STYLE (ADR 0082).
+    redact_style: str | None = None
     spec_hash: str = field(init=False, default="")  # sha256 of `spec()`, 16 hex digits
     _root: bool = field(init=False, repr=False, compare=False, default=False)  # a field at '$'
+    _routing: Routing = field(init=False, repr=False, compare=False, default=DEFAULT_ROUTING)  # `routing`, parsed
 
     def __post_init__(self) -> None:
         def fail(message: str) -> None:
@@ -141,13 +163,19 @@ class Task:
         put("compare_keys", keys)
         put("fields", specs)
 
-        fmt = self.format if self.format is not None else ("json" if specs else "text")
+        if self.format is not None:
+            fmt = self.format
+        else:
+            fmt = "sql" if self.sql is not None else "json" if specs else "text"
         if fmt in RESERVED_FORMATS:
             fail(f"format {fmt!r} is reserved for a later release")
         if fmt not in FORMATS:
             fail(f"format must be one of {', '.join(f for f in FORMATS if f not in RESERVED_FORMATS)}")
         if fmt == "text" and any(p != "$" for p in paths):
             fail("a text task has one field, '$' (the whole answer)")
+        problem = sql_problem(fmt, specs, self.sql)
+        if problem is not None:
+            fail(problem)
         put("format", fmt)
 
         if self.tools not in TOOLS:
@@ -169,12 +197,21 @@ class Task:
             if problem is not None:
                 fail(f"match.{key} {problem}")
         put("match_rules", MappingProxyType({k: tuple(v) if k == "tools" else v for k, v in self.match_rules.items()}))
+        if self.redact_style is not None and self.redact_style not in REDACT_STYLES:
+            fail(f"privacy.redact_style must be one of {', '.join(REDACT_STYLES)}")
         put("policy", MappingProxyType(_policy(self.policy, fail)))
+        problem = samples_problem(specs, self.policy)
+        if problem is not None:
+            fail(problem)
         if not isinstance(self.routing, Mapping) or not all(isinstance(k, str) for k in self.routing):
             fail("routing must be a mapping with string keys")
         put("routing", MappingProxyType(dict(self.routing)))
         if self.contract is not None and not callable(getattr(self.contract, "problem", None)):
             fail("contract must be a schema_tasks.Contract")
+        parsed, problems = parse_routing(self.routing, specs)  # FR-2.50: conditions name this task's fields
+        if problems:
+            fail(f"routing.{problems[0]}")
+        put("_routing", parsed)
         try:
             text = json.dumps(self.spec(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         except (TypeError, ValueError, RecursionError):
@@ -184,8 +221,9 @@ class Task:
 
     def spec(self) -> dict[str, Any]:
         """The task's rules as a plain dict (everything but its name, `spec_hash` and `source`): what `spec_hash`
-        covers."""
-        return {
+        covers. A sql task's also hold its `sql` options and its fixture's sha256; no other task's dict has the key, so
+        their hashes are what they were before the format existed."""
+        out = {
             "format": self.format,
             "fields": [f.spec() for f in self.fields],
             "pinned": self.pinned,
@@ -194,12 +232,48 @@ class Task:
             "policy": dict(self.policy),
             "routing": dict(self.routing),
         }
+        if self.sql is not None:
+            out["sql"] = self.sql.spec()
+        return out
+
+    @property
+    def routing_rules(self) -> Routing:
+        """The `routing` block, parsed when the task was defined (`ratchet.routing`, FR-2.50): eligibility, the
+        `escalate_when` rules and the critical classes the router, the golden eval and the release gate read."""
+        return self._routing
 
     @property
     def verifiable(self) -> bool:
-        """The task names fields that can be checked (labels, numbers, dates, ...). A task without fields compares whole
-        answers, which tells little about free text."""
-        return bool(self.fields)
+        """The task names fields that can be checked (labels, numbers, dates, ...), or runs its SQL answers on a fixture.
+        A task without fields compares whole answers, which tells little about free text, and a `similarity` field only
+        says an answer is close to another."""
+        if self.sql is not None:
+            return self.sql.executes
+        return any(f.type != "similarity" for f in self.fields)
+
+    @property
+    def free_text(self) -> bool:
+        """Agreement with the teacher's answer does not show the answer is right: the task has no fields (whole answers
+        compared; a postgres SQL task compares query texts) or a `similarity` field (close enough, by a score). The
+        golden eval asks the judge about such a task's answers too (FR-14.40). A SQL task that runs its answers on a
+        fixture is not free text: agreement there means the same rows."""
+        if self.sql is not None:
+            return not self.sql.executes
+        return not self.fields or any(f.type == "similarity" for f in self.fields)
+
+    @property
+    def precision_kind(self) -> str:
+        """What a precision measured on this task means (`PRECISION_KINDS`): `proxy` with a `similarity` field (the
+        share of served answers close enough to the teacher's), else `exact` (the share that agree under comparators
+        that decide it)."""
+        return "proxy" if any(f.type == "similarity" for f in self.fields) else "exact"
+
+    def sample_count(self, default: int) -> int:
+        """How many student samples one confidence score of this task rests on: its policy's `samples`, else `default`
+        (RATCHET_SAMPLES). The router and the golden eval both read it, so a task is calibrated on what it is served
+        with."""
+        n = self.policy.get("samples")
+        return n if isinstance(n, int) and not isinstance(n, bool) else default
 
     def allows(self, client: str | None) -> bool:
         """Whether the API key named `client` may use this task: always without `clients`; with them, only a key they
@@ -233,6 +307,8 @@ class Task:
             problem = self.contract.problem(clean)
             if problem is not None:
                 return NO_KEY, problem
+        if self.sql is not None:
+            return self.sql.key(clean)
         if not self.fields:
             return _whole_key(clean, self.format == "json")
         if self.format == "text":
@@ -255,16 +331,18 @@ class Task:
         return key, None
 
     def key(self, text: str | None) -> dict[str, Any] | Any:
-        """What of an answer must agree: each field's normalised value by path, or `compare.INVALID` (`tasks.NO_KEY`) for
-        an answer that cannot count: empty after `clean_answer`, not parseable in the task's format, or with a required
-        field missing (or null when it is not nullable) or a field that does not normalise (a label outside its
-        vocabulary). Compute it once per answer and compare keys with `match`."""
+        """What of an answer must agree: each field's normalised value by path (a `sqlcheck.SqlKey` for a sql task), or
+        `compare.INVALID` (`tasks.NO_KEY`) for an answer that cannot count: empty after `clean_answer`, not parseable in
+        the task's format, or with a required field missing (or null when it is not nullable) or a field that does not
+        normalise (a label outside its vocabulary); for a sql task, not one query, or one that fails or hits a limit on
+        the fixture. Compute it once per answer and compare keys with `match`."""
         return self._key(text)[0]
 
     def check(self, text: str | None) -> str | None:
-        """Why an answer is not valid under the task (`empty answer`, `invalid answer`, `invalid field <path>`, and for a
-        bound task `schema mismatch at <path>`), or None when it is. The reason names a path of the spec or the schema,
-        never the answer's text, so it may go into an event (INV-12)."""
+        """Why an answer is not valid under the task (`empty answer`, `invalid answer`, `invalid field <path>`, for a
+        bound task `schema mismatch at <path>`, or for a sql task one of sqlcheck's fixed reasons such as `sql error`), or
+        None when it is. The reason names a path of the spec or the schema, or a fixed string, never the answer's text,
+        so it may go into an event (INV-12)."""
         return self._key(text)[1]
 
     def valid(self, text: str | None) -> bool:
@@ -276,6 +354,8 @@ class Task:
         canonical JSON when both answers are JSON objects or arrays, else their text. NO_KEY never agrees."""
         if ka is NO_KEY or kb is NO_KEY:
             return False
+        if self.sql is not None:
+            return self.sql.match(ka, kb)
         if not self.fields:
             ja, jb = ka["$json"], kb["$json"]
             return ja == jb if ja is not None and jb is not None else ka["$"] == kb["$"]
@@ -293,9 +373,37 @@ class Task:
         key = self.key(text)
         if key is NO_KEY:
             return INVALID
+        if self.sql is not None:
+            return self.sql.canonical(key)
         if not self.fields:
             return key["$"]
         return json.dumps({p: jsonable(v) for p, v in key.items()}, sort_keys=True)
+
+
+def sql_problem(fmt: Any, specs: Sequence[FieldSpec], sql: Any) -> str | None:
+    """Why a task of format `fmt` cannot have these fields and `sql` options, or None: a sql task needs its options (a
+    fixture, or dialect postgres) and has no fields (its answers agree when their queries return the same rows), and
+    only a sql task takes them."""
+    if fmt == "sql":
+        if specs:
+            return "a sql task has no fields: two answers agree when their queries return the same result"
+        if not isinstance(sql, sqlcheck.SqlSpec):
+            return "a sql task needs sql options: a fixture in RATCHET_FIXTURES_DIR, or dialect 'postgres'"
+    elif sql is not None:
+        return "only a task with format 'sql' takes sql options"
+    return None
+
+
+def samples_problem(specs: Sequence[FieldSpec], policy: Mapping[str, Any]) -> str | None:
+    """Why a task with these fields cannot have this policy, or None: a task with a `similarity` field needs
+    `policy.samples` of at least 2 (FR-2.55), because one sample always agrees with itself, so its agreement is 1 and its
+    confidence says nothing; and the task must say so itself, so RATCHET_SAMPLES=1 cannot take that away."""
+    if not any(f.type == "similarity" for f in specs):
+        return None
+    n = policy.get("samples")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 2:
+        return "a task with a similarity field needs policy.samples of at least 2 (one sample always agrees with itself)"
+    return None
 
 
 def policy_problem(key: Any, value: Any) -> str | None:
@@ -521,10 +629,14 @@ def clean_answer(task: Task, text: str | None) -> str:
     object, before or after its reasoning, is returned as that object (`_whole_object`), so tags quoted in its strings
     survive. A task bound to a request's `response_format` (`Task.bound`) is served the JSON its answer holds: when the
     answer is not JSON as a whole, the JSON inside it (`json_span`: a sentence before it, a fence with text after it),
-    as the model wrote it, never re-serialised. Free-text tasks keep their fences, because a code block is part of the
-    content there. Cleaning twice gives the same text."""
+    as the model wrote it, never re-serialised. A sql task's answer loses a code fence around the whole of it
+    (```sql ... ```) unless the body holds another fence. Free-text tasks keep their fences, because a code block is part
+    of the content there. Cleaning twice gives the same text."""
     t = strip_reasoning(text)
     if not task.structured:
+        if task.format == "sql":
+            body = _fence_body(t)
+            return body if body is not None and "```" not in body else t
         return t
     found = _whole_object(text, t)
     if found is not None:
@@ -616,6 +728,12 @@ _NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 def valid_name(name: str) -> bool:
     """1 to 64 letters, digits, '_', '.' or '-', matched in full (a trailing newline is not a valid name)."""
     return _NAME.fullmatch(name) is not None
+
+
+# Task names no spec, chat request or model alias may use (FR-1.51, ADR 0050): `embeddings` is the name the /v1/embeddings
+# pass-through logs its requests under, so that task's row in the stats is only ever those requests.
+EMBEDDINGS_TASK = "embeddings"
+RESERVED_NAMES = frozenset({EMBEDDINGS_TASK})
 
 
 # The tasks defined in code. `reset_builtin` puts REGISTRY back to exactly these.
@@ -851,12 +969,12 @@ def names_for(client: str | None) -> list[str]:
     return sorted(name for name, task in REGISTRY.items() if task.allows(client))
 
 
-def load_file(path: str | Path, known_clients: Iterable[str] | None = None) -> list[Task]:
+def load_file(path: str | Path, known_clients: Iterable[str] | None = None, fixtures_dir: str | Path | None = None) -> list[Task]:
     """The tasks of a tasks file, JSON or (with PyYAML) YAML: `taskspec.load_file`. Raises `taskspec.SpecError` (a
     ValueError) listing every error with its path. Registers nothing (`taskspec.install` does)."""
     from .taskspec import load_file as _load_file  # taskspec imports this module
 
-    return _load_file(path, known_clients)
+    return _load_file(path, known_clients, fixtures_dir)
 
 
 def for_row(row: Mapping[str, Any], task: Task | None = None) -> Task:

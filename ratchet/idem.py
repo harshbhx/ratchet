@@ -64,11 +64,14 @@ def check_key(value: str) -> str:
     return key
 
 
-def fingerprint(body: Any, task_header: str | None = None) -> str:
+def fingerprint(body: Any, task_header: str | None = None, deployment: str | None = None) -> str:
     """sha256 of the request as parsed JSON with sorted keys (so a client that serialises its retry again in another key
-    order still matches), with the X-Ratchet-Task header, which changes what the request means. Headers that differ
-    between attempts (the retry count, a client request id) are not part of it."""
-    blob = json.dumps({"body": body, "task": task_header}, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    order still matches), with the X-Ratchet-Task header and the Azure route's deployment, which change what the request
+    means. Headers that differ between attempts (the retry count, a client request id) are not part of it."""
+    shown: dict[str, Any] = {"body": body, "task": task_header}
+    if deployment is not None:  # only on the Azure route, so every other fingerprint stays as it was
+        shown["deployment"] = deployment
+    blob = json.dumps(shown, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8", "surrogatepass")).hexdigest()
 
 
