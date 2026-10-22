@@ -36,9 +36,9 @@
   <text x="380" y="150" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="88" font-weight="700" fill="#f8fafc" letter-spacing="2">Ratchet</text>
   <text x="384" y="202" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="30" fill="#cbd5e1">Rent intelligence today. Own it tomorrow.</text>
   <g font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="20">
-    <rect x="384" y="236" width="230" height="34" rx="17" fill="#1e3a8a"/>
-    <text x="499" y="259" text-anchor="middle" fill="#bfdbfe">student: owned adapter</text>
-    <rect x="630" y="236" width="200" height="34" rx="17" fill="#7c2d12"/>
-    <text x="730" y="259" text-anchor="middle" fill="#fed7aa">teacher: rented</text>
+    <rect x="384" y="236" width="256" height="34" rx="17" fill="#1e3a8a"/>
+    <text x="512" y="259" text-anchor="middle" fill="#bfdbfe">student: owned adapter</text>
+    <rect x="656" y="236" width="200" height="34" rx="17" fill="#7c2d12"/>
+    <text x="756" y="259" text-anchor="middle" fill="#fed7aa">teacher: rented</text>
   </g>
 </svg>
