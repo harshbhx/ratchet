@@ -3,17 +3,34 @@ title: What is Ratchet
 description: A two-minute explanation of Ratchet, an OpenAI-compatible gateway that moves narrow, repeated work from a rented teacher model to a small student you own, and ships each new student only if it passes a statistical gate.
 ---
 
-import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
+import PlainWords from '../../../components/PlainWords.astro';
 import Who from '../../../components/Who.astro';
+import Stat from '../../../components/Stat.astro';
+import StatRow from '../../../components/StatRow.astro';
+import Compare from '../../../components/Compare.astro';
+import Flow from '../../../components/Flow.astro';
+import FlowStep from '../../../components/FlowStep.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
+import GradientText from '../../../components/ui/GradientText.astro';
 
 <Summary>Ratchet is a gateway you point your OpenAI client at. A small model you own answers the requests it is sure about. A large open model answers the rest, and its answers become training data. Every night a new small model is trained and is released only if it passes a held-out exam, a silent trial and a staged rollout.</Summary>
 
-## In plain words
+<PlainWords>
 
 Your app is a busy restaurant. Today every dish is cooked by a famous head chef from an agency that charges per plate, even when the order is toast for the hundredth time.
 
 Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish a few times. If the results agree and the apprentice is sure, the plate goes out. If not, the head chef cooks it, and the dish goes in a recipe book with the chef's name and a note that copying it is allowed. At night the apprentice studies the book. The next morning's apprentice cooks only if it passes a sealed exam first.
+
+</PlainWords>
+
+<StatRow cols={3} label="Ratchet at a glance">
+  <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
+  <Stat value={95} suffix="%" count={false} label="held-out precision floor" tone="owned" note="A new adapter must reach it on golden rows it never trained on." />
+  <Stat value="Open teachers only" label="license-clean, in code" note="Closed models are refused as teachers." />
+</StatRow>
 
 ## The problem, in numbers you can check
 
@@ -21,11 +38,25 @@ Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish
 - **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors. [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) (both pages read Oct 21, 2026) forbid using outputs to train competing models. A tool that distills that traffic puts its users at risk. Not legal advice.
 - **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
 
+<Compare before="Renting a large model for every call" after="With Ratchet">
+  <div slot="before">Every request, repeated or not, is a paid call to the teacher. Distilling by hand is slow, and closed models forbid training on their outputs.</div>
+  <div slot="after">A student you own answers what it is sure about, the teacher answers the rest, and a better student is trained every night from open teachers only.</div>
+</Compare>
+
 ## The idea
 
-Learn from the traffic you already have, but only from teachers whose license allows it, and never ship a new model on faith.
+Learn from the traffic you already have, but only from teachers whose license allows it, and <GradientText text="never ship a new model on faith" tone="owned" />.
 
 Change one line, your base URL, and four parts start working:
+
+<Flow loop loopLabel="Every night, again" label="The four parts">
+  <FlowStep title="The student answers first" tone="owned" meta="Nano 4B + your LoRA">Sampled 3 times; its confidence decides.</FlowStep>
+  <FlowStep title="The teacher answers the rest" tone="rented" meta="Ultra on Token Factory">And checks a random 5% of the student's answers.</FlowStep>
+  <FlowStep title="Answers become training data" meta="with provenance">Each with its teacher and license, after redaction.</FlowStep>
+  <FlowStep title="Released through gates" meta="every night">Golden set, shadow, canary 10%, 50%, 100%, rollback.</FlowStep>
+</Flow>
+
+In more detail:
 
 | Part | What it does |
 |---|---|
@@ -34,53 +65,77 @@ Change one line, your base URL, and four parts start working:
 | **The ledger** | Every teacher answer is stored, after personal data is redacted, with the teacher that wrote it and the license that permits training on it. Closed models are refused as teachers in code |
 | **Night School and the gate** | Each night a new adapter is trained from teacher answers only and scored on a held-out golden set. It then goes through shadow mode, a canary at 10%, 50% and 100%, and rolls back automatically if audited precision drops |
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  app(["Your app"]) --> gw["Ratchet gateway"]
-  gw --> st["Student: Nano 4B plus your LoRA"]
-  st -->|"confident"| out(["Answer"])
-  st -->|"unsure"| te["Teacher: Nemotron 3 Ultra"]
+flowchart TB
+  app(["Your app"]) ==> gw["Ratchet gateway"]
+  gw ==> st["Student<br/>Nano 4B + your LoRA"]
+  st ==>|"confident"| out(["Answer"])
+  st -->|"unsure"| te["Teacher<br/>Nemotron 3 Ultra"]
   te --> out
-  te --> led[("Ledger: answer, teacher, license")]
-  led --> ns["Night School: nightly training"]
-  ns --> gate["Gate: golden set, shadow, canary, rollback"]
-  gate --> st
-  classDef owned fill:#1e3a8a,stroke:#3b82f6,color:#fff
-  classDef rented fill:#7c2d12,stroke:#f97316,color:#fff
-  class st owned
-  class te rented
+  te --> led[("Ledger<br/>answer, teacher, license")]
+  led --> ns["Night School<br/>trains a new adapter"]
+  ns --> gate{{"Release gate<br/>golden set, shadow, canary"}}
+  gate -.->|"next student"| st
+  class st student
+  class te teacher
+  class led store
+  class gate gate
+  class out ok
 ```
 
-**Reading this diagram.** The blue box is the part you own and the orange box is the part you rent. Requests flow left to right and leave as soon as the student is confident. Only the unsure ones reach the teacher, and every teacher answer also flows down into the ledger. The loop closes at the right: what the ledger collects trains the next student, and the gate decides whether that student replaces the current one. The loop is why the share of rented answers can shrink over time.
+<figcaption>
+
+**Reading this diagram.** Start at the top: every request reaches the student first, and the thick path is the cheap one, where a confident student answers at once. Only unsure requests go to the teacher, and every teacher answer also flows down into the ledger. The dotted line closes the loop: what the ledger collects trains the next student, and the gate decides whether that student replaces the current one. That loop is why the share of rented answers can shrink over time.
+
+<ul class="rt-key">
+  <li class="student">The student you own</li>
+  <li class="teacher">The teacher, rented per token</li>
+  <li class="store">Stored data</li>
+  <li class="gate">A check that can stop a release</li>
+  <li class="edge-main">Main path</li>
+  <li class="edge-optional">Once a night</li>
+</ul>
+
+</figcaption>
+</figure>
 
 The same flow for one request, step by step:
+
+<figure class="rt-diagram">
 
 ```mermaid
 sequenceDiagram
   participant A as Your app
   participant G as Gateway
-  participant S as Student
-  participant T as Teacher
-  participant L as Ledger
-  A->>G: chat request with a task name
-  G->>S: sample three answers
-  S-->>G: answers and token probabilities
+  participant Student as Student
+  participant Teacher as Teacher
+  participant Ledger as Ledger
+  A->>G: chat request
+  G->>Student: sample 3 answers
+  Student-->>G: answers, probabilities
   alt confident
     G-->>A: student answer
   else unsure
-    G->>T: same request
-    T-->>G: teacher answer
-    G->>L: store answer, teacher, license
+    G->>Teacher: same request
+    Teacher-->>G: teacher answer
+    G->>Ledger: store with its license
     G-->>A: teacher answer
   end
   opt random audit
-    G->>T: check the student answer
-    T-->>G: agrees or not
-    G->>L: record the verdict
+    G->>Teacher: check the answer
+    Teacher-->>G: agrees or not
+    G->>Ledger: record the verdict
   end
 ```
 
+<figcaption>
+
 **Reading this diagram.** Time runs downward. The gateway always asks the student first. The `alt` block is the fork: a confident answer returns at once and costs the teacher nothing, while an unsure one is answered by the teacher and stored with its provenance. The `opt` block at the bottom is the audit: on a random share of confident answers the teacher quietly checks the student, so wrong-but-sure answers show up in the numbers instead of staying hidden. For the full detail see [One request's journey](/guides/request-journey/).
+
+</figcaption>
+</figure>
 
 Ratchet also reports the bill honestly: savings per token and by GPU-hours actually paid, and a plain warning when a GPU endpoint costs more than it saves. See [Why it matters](/guides/why-it-matters/).
 
@@ -88,24 +143,28 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 
 | Part | Status |
 |---|---|
-| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with more than 1,700 tests that need no network and no GPU |
-| Teacher calls | Real: Nemotron 3 Ultra on Nebius Token Factory |
-| Student endpoint | **Not served on a Nebius GPU yet.** Until it is, a trained version's calls go to a hosted, untuned Nano model, and pages say so |
-| A text-to-SQL adapter | Trained on a free Colab T4 (not on Nebius). Results are on [Results](/guides/results/) |
-| Savings and precision figures from `sim.simulate` and the story page | **Simulation**: mock models show how the loop behaves, not real model quality |
-| Model ids and prices in `ratchet/config.py` | Unverified until the day-1 check passes with a real key |
+| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,900 tests that need no network and no GPU |
+| Teacher calls | <span class="rt-badge rt-badge--live">Real</span> Nemotron 3 Ultra on Nebius Token Factory. Real teacher calls built the text-to-SQL data on Oct 22, 2026 |
+| Student endpoint | **Not served on a Nebius GPU yet.** Until it is, student calls on the live demo go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages say so |
+| A text-to-SQL adapter | Trained on a free Colab T4, not on Nebius. Its measured results are on [Results](/guides/results/) |
+| Savings and precision figures from `sim.simulate` and the story page | <span class="rt-badge rt-badge--sim">Simulation</span> Mock models show how the loop behaves, not real model quality |
+| Live mode, model ids and prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer. Not legal advice |
 
-In the reference simulation (**simulation**, mock models, 2,000 tickets a day, a corrupted deploy of v3): the teacher answers everything on day 1, the student serves 98% of requests by day 3, the corrupted v3 is rolled back automatically on day 4, and on day 10 the cost is $0.147 per 1,000 requests against $1.093 for all-Ultra, 87% saved at unverified list prices.
+<div class="rt-callout rt-callout--sim">
+
+**Simulation.** In the reference run (mock models, 2,000 tickets a day, a corrupted deploy of v3): the teacher answers everything on day 1, the student serves 98% of requests by day 3, the corrupted v3 is rolled back automatically on day 4, and on day 10 the cost is $0.147 per 1,000 requests against $1.093 for all-Ultra, 87% saved at unverified list prices.
+
+</div>
 
 ## Where to go next
 
-<CardGrid>
-  <LinkCard title="Why it matters" href="/guides/why-it-matters/" description="The value in depth, by audience." />
-  <LinkCard title="One request's journey" href="/guides/request-journey/" description="What happens to a single API call." />
-  <LinkCard title="Proof you can run" href="/guides/proof/" description="Check a claim with one command." />
-  <LinkCard title="For judges" href="/guides/for-judges/" description="A ten-minute tour." />
-</CardGrid>
+<PathGrid cols={2} label="Where to go next">
+  <PathCard title="Why it matters" href="/guides/why-it-matters/" icon="scale" tone="neutral" description="The value in depth, by audience." />
+  <PathCard title="One request's journey" href="/guides/request-journey/" icon="loop" description="What happens to a single API call." />
+  <PathCard title="Proof you can run" href="/guides/proof/" icon="check" tone="neutral" description="Check a claim with one command." />
+  <PathCard title="For judges" href="/guides/for-judges/" icon="start" tone="neutral" description="A ten-minute tour." />
+</PathGrid>
 
 <Aside type="note" title="Common questions">
 Is the student as good as the teacher? It is held to agreement with the teacher on held-out rows, not to ground truth (see [Escalation and audits](/guides/escalation-and-audits/)). Does it always save money? No, see [Cost and savings](/guides/cost-and-savings/). What do you own? The adapter and its signed bill of materials; the Nano base stays under NVIDIA's license. More in the [FAQ](/guides/faq/).

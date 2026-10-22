@@ -7,6 +7,8 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
 
 <Summary>Ratchet writes its claims about each adapter and each day's savings into signed documents whose numbers can be recomputed offline, so a customer or auditor can check them instead of trusting the gateway that served them.</Summary>
 
@@ -23,6 +25,15 @@ A restaurant can say anything about itself. Ratchet hands you things you can che
 Each piece also says plainly what it cannot prove. A stamp shows nobody changed the certificate; it does not show the certificate was true when it was written.
 
 </Eli10>
+
+<PathGrid cols={2} label="The five kinds of evidence">
+  <PathCard title="Signed bills of materials" href="#signed-bills-of-materials" icon="file" eyebrow="Per adapter" description="Every training source and license, signed at training time." />
+  <PathCard title="Certified precision" href="#certified-precision" icon="check" tone="neutral" eyebrow="Per adapter" description="An exact lower bound on how often served answers agree with the teacher." />
+  <PathCard title="Committed training sets" href="#committed-training-sets" icon="layers" tone="neutral" eyebrow="Per adapter" description="Prove one example was, or was not, trained on." />
+  <PathCard title="Ledger replay" href="#ledger-replay" icon="loop" tone="neutral" eyebrow="Any time" description="Last week's traffic at another threshold: an estimate, not signed." />
+  <PathCard title="Verified savings receipts" href="#verified-savings-receipts" icon="coin" tone="neutral" eyebrow="Per day" description="Each day's bill, signed and chained to the day before." />
+  <PathCard title="Proof you can run" href="/guides/proof/" icon="start" tone="neutral" eyebrow="Commands" description="One command per check, and what a failure looks like." />
+</PathGrid>
 
 ## How it really works
 
@@ -42,30 +53,37 @@ The evidence is written at fixed moments, by code that draws no random numbers a
 
 </Steps>
 
-| Evidence | What it proves | What it does not prove | Check it with |
+| Evidence | What it proves | What it does not prove | Check it with `python -m` |
 |---|---|---|---|
-| Signed BOM | The operator signed these claims about this adapter at training time, and nothing changed since | That the weights were trained on that data | `python -m ratchet.bom verify` |
-| Certificate | With probability at least 95%, what this version serves agrees with the teacher at least `lcb` of the time, on traffic like the golden rows | Correctness, or behaviour on traffic unlike the golden rows | `python -m ratchet.stats check` |
-| Committed training set | This example was, or was not, in the committed training or golden set | That the weights came from that set | `python -m ratchet.proof verify` and `heldout` |
-| Ledger replay | An estimate of precision, coverage and cost at another threshold or audit rate | Anything signed: it reads the ledger as it is, and its interval is approximate | `python -m ratchet.replay` |
-| Savings receipt | The day's leaves were not edited after sealing, and the bill follows from them | That the costs written at request time were right | `python -m ratchet.receipt verify` |
+| Signed BOM | The operator signed these claims about this adapter at training time, and nothing changed since | That the weights were trained on that data | `ratchet.bom verify` |
+| Certificate | With probability at least 95%, what this version serves agrees with the teacher at least `lcb` of the time, on traffic like the golden rows | Correctness, or behaviour on traffic unlike the golden rows | `ratchet.stats check` |
+| Committed training set | This example was, or was not, in the committed training or golden set | That the weights came from that set | `ratchet.proof verify` and `heldout` |
+| Ledger replay | An estimate of precision, coverage and cost at another threshold or audit rate | Anything signed: it reads the ledger as it is, and its interval is approximate | `ratchet.replay` |
+| Savings receipt | The day's leaves were not edited after sealing, and the bill follows from them | That the costs written at request time were right | `ratchet.receipt verify` |
+
+<figure class="rt-diagram">
 
 ```mermaid
 sequenceDiagram
   participant N as Night School
-  participant L as Ledger
+  participant Ledger as Ledger
   participant G as Gateway
-  participant C as Customer or auditor
-  N->>L: commit training and golden rows (Merkle roots)
-  N->>N: train, score with certificate, re-score live, sign the BOM
-  N->>L: write leaves once (append-only)
-  G->>L: log every request with its label probability
-  G->>L: seal each ended day into a signed receipt
-  C->>G: fetch BOM, proofs, receipts and the public key
-  C->>C: run bom, stats, proof, receipt checks offline
+  participant C as Auditor
+  N->>Ledger: commit the rows
+  N->>N: train and sign
+  N->>Ledger: write leaves once
+  G->>Ledger: log each request
+  G->>Ledger: seal each day
+  C->>G: fetch the files
+  C->>C: check offline
 ```
 
-**Reading this diagram.** The first three arrows happen once a night and the next two happen all day, so the evidence is made by the same system that does the work but at fixed moments that cannot change a decision. The last two arrows are the point: the customer takes the files and checks them without calling the gateway again. [Proof you can run](/guides/proof/) lists the one command for each check, what it proves and what a failure looks like.
+<figcaption>
+
+**Reading this diagram.** The first three arrows happen once a night: Night School commits the training and golden rows (their Merkle roots), trains, scores the adapter with its certificate, re-scores the live version, signs the bill of materials, and writes the leaves once (append-only). The next two happen all day: the gateway logs every request with its label probability and seals each ended day into a signed receipt. So the evidence is made by the same system that does the work, but at fixed moments that cannot change a decision. The last two arrows are the point: a customer or auditor fetches the BOM, proofs, receipts and public key, and checks them offline without calling the gateway again. [Proof you can run](/guides/proof/) lists the one command for each check.
+
+</figcaption>
+</figure>
 
 A separate, simpler check exists for the text-to-SQL adapter: its exam is scored by running queries, and `measure_adapter.py verify` recomputes every number from the raw answers. That one does not need a gateway at all. See [A text-to-SQL adapter you can check](/guides/text-to-sql/) and [Results](/guides/results/).
 
@@ -86,27 +104,36 @@ All the arithmetic comes from two standard-library modules, [`ratchet/stats.py`]
 - `redactor`: a SHA-256 over the redaction rules, how many there are, and whether redaction was on.
 - `eval`: the golden eval at training time: precision, coverage, threshold, and since v0.5 the certificate, the frontier, the per-task bounds, the per-row outcomes and the paired comparison with the live version.
 
-The manifest is serialised as canonical JSON (sorted keys, no whitespace, UTF-8). The document carries the SHA-256 of those bytes and, when `RATCHET_BOM_SIGNING_KEY` is set, an **Ed25519** signature with the public key and a key id. It is written once and never rewritten (invariant 14): a later re-check changes `/ratchet/stats`, not the signed document. Versions trained before v0.4 have no BOM; v1 documents still verify.
+The manifest is serialised as canonical JSON (sorted keys, no whitespace, UTF-8). The document carries the SHA-256 of those bytes and, when `RATCHET_BOM_SIGNING_KEY` is set, an **Ed25519** signature with the public key and a key id. It is written once and never rewritten: a later re-check changes `/ratchet/stats`, not the signed document. Versions trained before v0.4 have no BOM; v1 documents still verify.
+
+<figure class="rt-diagram">
 
 ```mermaid
-flowchart LR
-  TR["Training rows"] --> R1["Training set root"]
-  GR["Golden rows"] --> R2["Golden set root"]
+flowchart TB
+  TR[("Training rows")] --> R1["Training set root"]
+  GR[("Golden rows")] --> R2["Golden set root"]
+  F["Teachers and licenses,<br/>base model license,<br/>NOTICE.md text and hash,<br/>redaction rules hash,<br/>golden eval, certificate"]
   TR --> M["Manifest"]
   GR --> M
   R1 --> M
   R2 --> M
-  LIC["Teachers, licenses, base model license"] --> M
-  NOT["NOTICE.md text and hash"] --> M
-  RED["Redaction rules hash"] --> M
-  EV["Golden eval with certificate"] --> M
+  F --> M
   M --> CJ["Canonical JSON"]
   CJ --> H["SHA-256"]
   CJ --> SG["Ed25519 signature"]
-  M --> DOC["BOM document"]
-  H --> DOC
+  H --> DOC["BOM document"]
   SG --> DOC
+  M --> DOC
+  class TR,GR store
+  class DOC student
 ```
+
+<figcaption>
+
+**Reading this diagram.** Everything at the top goes into one manifest: the counts and hashes of the exact rows, the roots that commit to each set, and the facts about the adapter. The manifest is written as canonical JSON, and that one byte string is both hashed and signed. The document you receive carries the manifest, its SHA-256 and the signature, so changing any byte of it breaks the check.
+
+</figcaption>
+</figure>
 
 **Check it:**
 
@@ -162,7 +189,7 @@ curl -s localhost:8000/ratchet/versions/2/bom > bom.json
 python -m ratchet.stats check bom.json --public-key <yours>   # recompute every number from the signed counts
 ```
 
-`check` verifies the signature, then recomputes every bound, verdict, frontier row, per-task row, Learn-then-Test step and paired p-value from the signed counts, and the counts from the test vector. It exits 1 on any difference above 1e-9. The certificate endpoint's `status` is `certified` or `not certified` from the latest certificate (the nightly re-score's, else the signed one), or `no certificate` for a version evaluated before v0.5. A `suspended` status is reserved for the drift alarm, which is not built yet.
+`check` verifies the signature, then recomputes every bound, verdict, frontier row, per-task row, Learn-then-Test step and paired p-value from the signed counts, and the counts from the test vector. It exits 1 on any difference above 1e-9. The certificate endpoint's `status` is `certified` or `not certified` from the latest certificate (the nightly re-score's, else the signed one), `suspended` while a drift alarm is open on the version, or `no certificate` for a version evaluated before v0.5.
 
 **What it does not prove.** Precision means agreement with Nemotron 3 Ultra (<Who as="teacher" />) under the task's comparators, not ground truth. The bound assumes the golden rows look like live traffic, and they lean towards requests the student found hard (they come from escalations, audits and arbitrations). The guarantee is about the traffic the golden rows were drawn from, when they were drawn; drift breaks it. Every certificate is served with these assumptions in plain words.
 
@@ -177,25 +204,43 @@ python -m ratchet.stats check bom.json --public-key <yours>   # recompute every 
 - **Tree:** a collapsed sparse Merkle tree split on the key's bits. An empty node is 32 zero bytes, a node with one key is `sha256(0x00 || key || value)`, any other node is `sha256(0x01 || left || right)`. The root depends on the set alone, never on insertion order.
 - **Proof:** the sibling hashes along the key's path, plus where the path ends: the key's own leaf (included), an empty node, or another key's leaf that shares the path (absent).
 
-The **held-out certificate** is the golden set's leaves plus, for every golden key, a proof of absence from the training root: invariants 3 and 6 (golden rows are never trained on; precision is measured on rows the model did not see) as something you verify, not something you are told.
+The **held-out certificate** is the golden set's leaves plus, for every golden key, a proof of absence from the training root: two of the loop's rules (golden rows are never trained on; precision is measured on rows the model did not see) as something you verify, not something you are told.
 
 Absence is sound even against whoever built the tree: a key's path is fixed by its bits, so a proof of inclusion and a proof of absence for the same key against the same root would need a SHA-256 collision. A Merkle tree over a sorted list is not used for absence, because a verifier cannot check that the list was really sorted.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  Req["The request: task and messages"] --> Key["Example key"]
-  PF["Proof: siblings and terminal"] --> Fold["Hash up from the terminal, deepest sibling first, along the key's bits"]
+flowchart TB
+  Req(["The request:<br/>task and messages"]) --> Key["Example key"]
+  PF(["Proof: siblings<br/>and terminal"]) --> Fold["Hash up from the terminal<br/>along the key's bits"]
   Key --> Fold
   Fold --> CR["Computed root"]
-  BOM["The adapter's BOM"] --> Sig{"Signature valid with your public key?"}
-  Sig -->|no| Fail["FAIL"]
-  Sig -->|yes| SR["Signed training root"]
-  CR --> Cmp{"Same root?"}
+  BOM(["The adapter's BOM"]) --> Sig{{"Signature valid with<br/>your public key?"}}
+  Sig -->|"no"| Fail["FAIL"]
+  Sig -->|"yes"| SR["Signed training root"]
+  CR --> Cmp{{"Same root?"}}
   SR --> Cmp
-  Cmp -->|no| Inv["invalid"]
-  Cmp -->|"yes, terminal is the key"| Inc["included"]
-  Cmp -->|"yes, terminal is empty or another key"| Abs["absent"]
+  Cmp -->|"no"| Inv["invalid"]
+  Cmp -->|"yes, terminal<br/>is the key"| Inc["included"]
+  Cmp -->|"yes, terminal is<br/>empty or another key"| Abs["absent"]
+  class Sig,Cmp gate
+  class Fail,Inv danger
+  class Inc,Abs ok
 ```
+
+<figcaption>
+
+**Reading this diagram.** Two roots meet at the bottom. On the left the verifier rebuilds a root from the request and the proof, hashing up from the terminal one level at a time, deepest sibling first. On the right it takes the training root from the BOM, but only after the BOM's signature checks out with your public key. If the two roots are the same, where the proof's path ends says whether the example was included or is absent.
+
+<ul class="rt-key">
+  <li class="gate">A check</li>
+  <li class="ok">A valid answer: included or absent</li>
+  <li class="danger">The proof fails</li>
+</ul>
+
+</figcaption>
+</figure>
 
 The verifier never trusts the root, result or value written in the proof file; it checks against the root the signed BOM names.
 
@@ -257,17 +302,27 @@ python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # t
 
 4. **The bill.** The billable savings (measured requests plus the calibrated tasks' served answers, minus any stand-in losses) less a margin of `ceil(1.645 × sqrt(sum of variances))` give the one-sided 95% **lower bound**. The fee is `RATCHET_TAKE_RATE` (0.25) of that bound, after the day's spend outside requests, when it is positive, rounded down to a nano-USD. With no calibrated task the basis is `formula` and the fee is 0.
 
-5. **Seal.** The leaves form an RFC 9162 Merkle tree (the Certificate Transparency kind). The receipt names its root and size, its totals, the calibration and the bill, and `prev_sha256`, the hash of the same client's previous receipt (64 zeros for the first). It is signed with the BOM key and written once, after the day has ended (on a live ledger, 5 minutes after). The ledger refuses any later change (invariant 17).
+5. **Seal.** The leaves form an RFC 9162 Merkle tree (the Certificate Transparency kind). The receipt names its root and size, its totals, the calibration and the bill, and `prev_sha256`, the hash of the same client's previous receipt (64 zeros for the first). It is signed with the BOM key and written once, after the day has ended (on a live ledger, 5 minutes after). The ledger refuses any later change.
 
 </Steps>
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  D1["Day 1 receipt"] -->|"its sha256 is"| D2["Day 2 receipt: prev_sha256"]
-  D2 -->|"its sha256 is"| D3["Day 3 receipt: prev_sha256"]
-  L["Day 3 request leaves"] --> T["RFC 9162 tree root"]
+flowchart TB
+  D1["Day 1 receipt"] -->|"its sha256 is"| D2["Day 2 receipt:<br/>prev_sha256"]
+  D2 -->|"its sha256 is"| D3["Day 3 receipt:<br/>prev_sha256"]
+  L[("Day 3<br/>request leaves")] --> T["RFC 9162<br/>tree root"]
   T --> D3
+  class L store
 ```
+
+<figcaption>
+
+**Reading this diagram.** Each receipt names the hash of the same client's previous receipt, so the receipts form a chain: change day 1 and day 2's `prev_sha256` no longer matches. Each receipt also names the root of a Merkle tree over that day's request metadata, which is what lets one request be proved to be in it.
+
+</figcaption>
+</figure>
 
 Every chat response carries its ledger row id in `X-Ratchet-Request-Id` and `ratchet.row_id`, so a client can later ask for a proof that its request is in that day's receipt. With API keys on, a key reads only its own receipts and proofs and an admin key reads all of them; live mode without any keys serves no receipts, because the leaves list every request's time, task and cost. The gateway-wide receipt also shows the day's savings by GPU-hours paid, which are often negative at low volume. That view is informational (billing uses the per-token view); the [cost report](/guides/cost-and-savings/) is what says when self-hosting does not pay.
 
@@ -289,8 +344,8 @@ python -m ratchet.live seal                                                    #
 
 **What it does not prove.** Receipts make edits after sealing detectable and tie the baseline to audited teacher bills. They cannot prove the costs written at request time: reconcile the summed teacher spend (`totals.teacher_cost_nusd` over the days) with the Token Factory bill for the same API key. The interval is a normal approximation, and heavier-tailed real bills may need more than 30 audits. The chain shows that a receipt was changed; it does not stop an operator from withholding one, so clients should keep the receipts they receive. Request ids are the ledger's global row ids, so a client can infer the gateway's total volume between two of its own requests.
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Every BOM, certificate, proof, replay and receipt number quoted on this page comes from mock models (simulation). The formats, the signatures and the verifiers are tested offline; no live adapter has been signed and no live day has been sealed yet.
+<Aside type="caution" title="Not run on live traffic yet">
+As of Oct 22, 2026, no adapter has been signed and no day has been sealed on a live gateway, and nothing has run on Nebius GPUs. Real teacher calls on Token Factory built the text-to-SQL data, but every BOM, certificate, proof, replay and receipt number quoted on this page comes from mock models (simulation). The formats, the signatures and the verifiers are tested offline.
 </Aside>
 
 ## For engineers
@@ -305,7 +360,7 @@ As of Oct 21, 2026, Ratchet has not run against a real Nebius account. Every BOM
 | Set commitments | [`ratchet/nightschool/dataset.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/nightschool/dataset.py): `leaf_value`, `commitment`; [`ratchet/proof.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/proof.py): `request_key`, `resolve_key`, `verify_proof`, `verify_heldout`; `python -m ratchet.proof key`, `verify`, `heldout` |
 | Replay | [`ratchet/replay.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/replay.py): `load`, `at`, `sweep`, `frontier`, `ratio`, `suggest`; `python -m ratchet.replay` |
 | Receipts | [`ratchet/receipts.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/receipts.py): `leaf`, `calibrate`, `compute`, `seal_due`, `seal`, `verify_receipt`, `verify_chain`, `verify_proof`, `recheck`; `python -m ratchet.receipt verify` or `seal` |
-| Append-only tables | [`ratchet/ledger.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/ledger.py): `version_leaves` and `receipts`, refused UPDATE and DELETE by trigger (invariant 17) |
+| Append-only tables | [`ratchet/ledger.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/ledger.py): `version_leaves` and `receipts`, refused UPDATE and DELETE by trigger |
 | Tests | `tests/test_stats.py`, `tests/test_provenance.py`, `tests/test_licensing.py`, `tests/test_receipts.py`, `tests/test_nightschool.py` |
 
 | Variable | Default | Effect |

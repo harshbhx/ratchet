@@ -3,7 +3,6 @@ title: Glossary
 description: Every Ratchet term in one line, in alphabetical order, each with a link to the page that explains it.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 
@@ -21,25 +20,36 @@ Every page in these docs uses the same restaurant. If you remember the cast, mos
 
 </Eli10>
 
-<Aside type="note" title="The longer glossary">
-The repository keeps its own glossary with longer definitions, synced into these docs at [Reference: Glossary](/guides/glossary/).
-</Aside>
-
 ## Terms
 
 How the main terms connect, in one picture:
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  req["Request"] --> gw["Gateway"]
-  gw -->|"confident"| st["Student"]
-  gw -->|"escalation"| te["Teacher"]
+flowchart TB
+  req(["Request"]) ==> gw["Gateway"]
+  gw ==> st["Student"]
+  st -->|"escalation"| te["Teacher"]
   st -.->|"audit"| te
   te --> led[("Ledger")]
   led --> ns["Night School"]
-  ns --> gate["Release gate"]
-  gate -->|"shadow, canary, live"| st
+  ns --> gate{{"Release gate"}}
+  gate -.->|"shadow, canary, live"| st
+  class st student
+  class te teacher
+  class led store
+  class gate gate
 ```
+
+<figcaption>
+
+**Reading this diagram.** A request reaches the gateway, which asks the student first. An unsure student's request is an escalation to the teacher; an audit is the teacher checking an answer the student already served. The teacher's answers go to the ledger, Night School trains a new adapter from them, and the release gate decides, through shadow and canary, whether it goes live. Each bold word is defined below.
+
+</figcaption>
+</figure>
+
+<p class="rt-letters">Jump to: <a href="#a">A</a> · <a href="#b">B</a> · <a href="#c">C</a> · <a href="#d">D</a> · <a href="#e">E</a> · <a href="#f">F</a> · <a href="#g">G</a> · <a href="#h">H</a> · <a href="#i">I</a> · <a href="#j">J</a> · <a href="#l">L</a> · <a href="#m">M</a> · <a href="#n">N</a> · <a href="#o">O</a> · <a href="#p">P</a> · <a href="#r">R</a> · <a href="#s">S</a> · <a href="#t">T</a> · <a href="#v">V</a> · <a href="#w">W</a></p>
 
 ### A
 
@@ -57,7 +67,7 @@ flowchart LR
 
 - **Bill of materials (BOM)**: the record of every training source and its license; `GET /ratchet/bom` covers the whole ledger, and each adapter gets its own, written once at training time and signed with Ed25519 when a key is set. ([Evidence](/guides/evidence/))
 - **Break-even**: the number of student answers per endpoint hour at which a GPU endpoint pays for itself: the GPU price per hour divided by the teacher spend each student answer avoids. ([Cost and savings](/guides/cost-and-savings/))
-- **Budget guard**: Scout's limits in live mode (a daily spend cap, a daily run cap and a per-IP hourly limit), kept in the ledger across restarts and required in live mode by invariant 11. ([Scout](/guides/scout/))
+- **Budget guard**: Scout's limits in live mode (a daily spend cap, a daily run cap and a per-IP hourly limit), kept in the ledger across restarts and always on in live mode. ([Scout](/guides/scout/))
 
 ### C
 
@@ -66,7 +76,7 @@ flowchart LR
 - **Canary**: a new version serving a slice of real traffic, 10% and then 50%, while audits check it, before it goes live. ([Release gate](/guides/release-gate/))
 - **Cascade**: try the cheap model first and send the request to the expensive one only when needed. ([The request journey](/guides/request-journey/))
 - **Certificate**: an exact lower bound (one-sided Clopper–Pearson) on how often a version's served answers agree with the teacher, computed on held-out golden rows and signed in its BOM. ([Evidence](/guides/evidence/))
-- **Champion and challenger**: the live version (champion) is scored again on the same golden set as the new candidate (challenger) before the two are compared (invariant 4). ([Night School](/guides/night-school/))
+- **Champion and challenger**: the live version (champion) is scored again on the same golden set as the new candidate (challenger) before the two are compared. ([Night School](/guides/night-school/))
 - **Circuit breaker**: after 5 failed calls in a row the gateway stops calling the student endpoint (or the teacher) for 30 seconds, doubling up to 300 seconds while probes fail; student traffic then goes to the teacher. ([The request journey](/guides/request-journey/))
 - **Cold start**: the time before any student version exists, when the teacher answers every request. ([The request journey](/guides/request-journey/))
 - **Comparator (field comparator)**: how one field of a task's answer is normalised and compared (`label`, `number`, `date`, `set`, `records`, ...); a missing required field makes the whole answer invalid. ([Confidence](/guides/confidence/))
@@ -106,7 +116,7 @@ flowchart LR
 
 ### H
 
-- **Held-out**: data a version never trained on; the even-numbered golden rows set its threshold and the odd-numbered rows measure its precision (invariant 6). ([Night School](/guides/night-school/))
+- **Held-out**: data a version never trained on; the even-numbered golden rows set its threshold and the odd-numbered rows measure its precision. ([Night School](/guides/night-school/))
 - **Held-out certificate**: every golden example's proof of absence from an adapter's committed training set, checkable from the BOM alone. ([Evidence](/guides/evidence/))
 - **Hosted fallback**: the untuned Nemotron 3 Nano 30B on Token Factory that answers student calls while no student endpoint is set; paid per token, held to the default threshold of 0.80, and covered by no certificate. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Human label**: a customer's correction (`POST /v1/ratchet/feedback`) or an attested import, stored as a training example with the provenance `human`; a verdict on its own stores nothing. ([Training on your data](/guides/training-on-your-data/))
@@ -116,7 +126,7 @@ flowchart LR
 
 - **Idempotency key**: an `Idempotency-Key` header that makes a retried request get the first answer back without running the cascade again. ([The request journey](/guides/request-journey/))
 - **Inconclusive**: under the sequential rule, a canary stage that reached 400 audits without enough evidence either way; the version is retired, not rolled back. ([Release gate](/guides/release-gate/))
-- **Invariant**: one of the numbered rules the code must never break, such as "never train on student outputs"; each one is mapped to code and tests. (Requirements matrix)
+- **Invariant**: one of the rules the code must never break, such as "never train on student outputs"; each one is mapped to code and tests. ([Security](/guides/security/#the-safety-rules-the-loop-never-breaks))
 
 ### J
 
@@ -231,7 +241,7 @@ Where the names live in the code (links go to GitHub):
 | Readiness and liveness | [`ratchet/readiness.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/readiness.py), `/healthz` in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) |
 | Scout, budget guard, judges' reserve | [`ratchet/scout/`](https://github.com/harshbhx/ratchet/tree/main/ratchet/scout): `guard.py`, `judge.py`, `credits.py` |
 | Settings and list prices | [`ratchet/config.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/config.py): `Settings`, `DEFAULT_PRICES` |
-| Invariants | Listed as `INV-1` to `INV-26`, each with the code and tests that hold it |
+| The rules the loop never breaks | Each one has code that enforces it and tests that check it; see [Security](/guides/security/#the-safety-rules-the-loop-never-breaks) |
 
 Environment variables are listed in [CONFIGURATION.md](/reference/configuration/) and endpoints in [API.md](/reference/api/).
 
@@ -251,4 +261,4 @@ Because Ratchet makes release decisions by itself, and each decision rests on co
 
 ### A term is missing. Where else can I look?
 
-The repository's own glossary at [Reference: Glossary](/guides/glossary/), the [FAQ](/guides/faq/), and the [architecture](/reference/architecture/) reference.
+The [FAQ](/guides/faq/), the [architecture](/reference/architecture/) reference, and the search box at the top of every page.

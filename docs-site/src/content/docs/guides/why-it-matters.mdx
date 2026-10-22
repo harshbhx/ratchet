@@ -3,28 +3,40 @@ title: Why it matters
 description: What Ratchet is worth to a team paying for LLM calls, a team that must know where its data went, a regulated team and an open-source builder, with the page that backs each claim.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
+import PathCard from '../../../components/PathCard.astro';
+import PathGrid from '../../../components/PathGrid.astro';
 
 <Summary>Ratchet matters for four kinds of reader: the team with a growing LLM bill, the team that must show where its data went, the team that must show a model is safe to ship, and the builder who wants to own the model and its license trail. Each section below says what you get and links to the page that backs it.</Summary>
 
+<PathGrid cols={2} label="Four reasons, one per reader">
+  <PathCard title="If you pay for LLM calls" href="#if-you-pay-for-llm-calls" icon="coin" tone="neutral" eyebrow="Cost" description="The easy share of the traffic moves to a small model, and every request records what it cost and what the teacher alone would have cost." />
+  <PathCard title="If you must know where your data went" href="#if-you-must-know-where-your-data-went" icon="shield" tone="neutral" eyebrow="Data" description="Redaction before storage, opt-outs, final erasure and export, with the teacher and license on every example." />
+  <PathCard title="If you are regulated or careful" href="#if-you-are-regulated-or-careful" icon="gate" tone="neutral" eyebrow="Safe releases" description="A held-out exam, a silent trial and a staged rollout, each leaving a record a reviewer can check." />
+  <PathCard title="If you build on open models" href="#if-you-build-on-open-models" icon="key" eyebrow="License-clean, owned" description="Open teachers only, and an adapter you own that carries its licenses and signed lineage." />
+</PathGrid>
+
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  A["Paying for LLM calls"] --> A1["Cost and savings"]
-  B["Must know where data went"] --> B1["Ledger, Security, Training on your data"]
-  C["Regulated or careful"] --> C1["Evidence, Release gate, Escalation and audits"]
-  D["Open-source builder"] --> D1["Licenses, Night School"]
-  A1 --> P["Proof you can run"]
+flowchart TB
+  A(["Paying for<br/>LLM calls"]) --> A1["Cost and savings"]
+  B(["Must know where<br/>data went"]) --> B1["Ledger and<br/>Security"]
+  C(["Regulated<br/>or careful"]) --> C1["Evidence and<br/>Release gate"]
+  D(["Open-source<br/>builder"]) --> D1["Licenses and<br/>Night School"]
+  A1 --> P{{"Proof you can run"}}
   B1 --> P
   C1 --> P
   D1 --> P
-  classDef who fill:#1e3a8a,stroke:#3b82f6,color:#fff
-  classDef page fill:#14532d,stroke:#22c55e,color:#fff
-  class A,B,C,D who
-  class A1,B1,C1,D1,P page
+  class P ok
 ```
 
-**Reading this diagram.** Blue boxes are the four readers and green boxes are the pages that hold the evidence for them. Each reader has its own path, and all four paths end at the same place: a page of commands you can run yourself. The rest of this page follows the same four paths. Pages: [Cost and savings](/guides/cost-and-savings/), [Ledger](/guides/ledger/), [Security](/guides/security/), [Evidence](/guides/evidence/), [Release gate](/guides/release-gate/), [Licenses](/guides/licenses/), [Proof you can run](/guides/proof/).
+<figcaption>
+
+**Reading this diagram.** The rounded boxes at the top are the four readers and the boxes under them are the pages that hold the evidence for each. Every path ends at the same place: a page of commands you can run yourself. The rest of this page follows the same four paths. Pages: [Cost and savings](/guides/cost-and-savings/), [Ledger](/guides/ledger/), [Security](/guides/security/), [Training on your data](/guides/training-on-your-data/), [Evidence](/guides/evidence/), [Release gate](/guides/release-gate/), [Licenses](/guides/licenses/), [Night School](/guides/night-school/), [Proof you can run](/guides/proof/).
+
+</figcaption>
+</figure>
 
 ## If you pay for LLM calls
 
@@ -45,32 +57,46 @@ break-even = GPU price per hour / teacher spend avoided per student answer
 
 With estimated prices (an L40S at $1.35 a GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and about $0.001 of teacher spend avoided per ticket-triage answer in the simulation), that is about 1,350 student answers an hour, roughly 32,000 a day. All figures here are **estimates**, not measurements.
 
-| Traffic | Student answers per hour | Against break-even (about 1,350) | What Ratchet's report says |
-|---|---|---|---|
-| The demo, 1,500 requests a day | about 60 | Far below | A 24/7 endpoint loses money. Use the hosted fallback or stop the endpoint when idle |
-| 10M requests a month | about 14,000 | About ten times above | Self-hosting beats the teacher, but an untuned hosted Nano may cost less per answer. It then recommends the hosted fallback and says the comparison assumes the hosted model covers as many requests |
-| Very high volume, over about 52,000 an hour (estimate) | Above the crossover | Above | Self-host |
+| Traffic | Student answers an hour, against break-even (about 1,350) | What Ratchet's report says |
+|---|---|---|
+| The demo, 1,500 requests a day | About 60: far below | A 24/7 endpoint loses money. Use the hosted fallback or stop the endpoint when idle |
+| 10M requests a month | About 14,000: about ten times above | Self-hosting beats the teacher, but an untuned hosted Nano may cost less per answer. It then recommends the hosted fallback and says the comparison assumes the hosted model covers as many requests |
+| Very high volume | Over about 52,000 (estimate): above the hosted-fallback crossover too | Self-host |
+
+<figure class="rt-diagram">
 
 ```mermaid
-flowchart TD
-  S["Student answers per endpoint hour"] --> Q1{"Above break-even?"}
-  Q1 -->|"no"| N1["Do not run a 24/7 endpoint: use the hosted fallback or scale to zero"]
-  Q1 -->|"yes"| Q2{"Above the hosted-fallback crossover?"}
-  Q2 -->|"no"| N2["Teacher spend falls, but the hosted fallback costs less per answer"]
-  Q2 -->|"yes"| Y["Self-host: the endpoint wins on both counts"]
-  classDef bad fill:#7c2d12,stroke:#f97316,color:#fff
-  classDef mid fill:#713f12,stroke:#eab308,color:#fff
-  classDef good fill:#14532d,stroke:#22c55e,color:#fff
-  class N1 bad
-  class N2 mid
-  class Y good
+flowchart TB
+  S["Student answers<br/>per endpoint hour"] --> Q1{{"Above break-even?"}}
+  Q1 -->|"no"| N1["Skip the 24/7 endpoint:<br/>hosted fallback or scale to zero"]
+  Q1 -->|"yes"| Q2{{"Above the hosted-<br/>fallback crossover?"}}
+  Q2 -->|"no"| N2["Teacher spend falls, but the<br/>hosted fallback costs less"]
+  Q2 -->|"yes"| Y["Self-host: the endpoint<br/>wins on both counts"]
+  class Q1,Q2 gate
+  class N1 danger
+  class N2 outline
+  class Y ok
 ```
+
+<figcaption>
 
 **Reading this diagram.** The cost curve has two thresholds, not one. Below break-even the GPU costs more than the teacher spend it saves. Between break-even and the crossover the student does save money against the teacher, but a pay-per-token hosted model would save more. Only above both does owning a GPU win. Ratchet's cost report places your traffic on this chart and writes the answer in words, including when the answer is "this loses money". Full method: [Cost and savings](/guides/cost-and-savings/).
 
-<Aside type="caution" title="Simulation">
-The reference simulation shows a 69% saving per token and a loss by GPU-hours at low volume, using mock models. Treat every figure as a demonstration of how the accounting works.
-</Aside>
+<ul class="rt-key">
+  <li class="gate">A threshold</li>
+  <li class="danger">Loses money</li>
+  <li class="outline">The hosted fallback wins</li>
+  <li class="ok">Self-hosting wins</li>
+</ul>
+
+</figcaption>
+</figure>
+
+<div class="rt-callout rt-callout--sim">
+
+**Simulation.** The reference simulation shows a 69% saving per token and a loss by GPU-hours at low volume, using mock models. Treat every figure as a demonstration of how the accounting works.
+
+</div>
 
 ## If you must know where your data went
 
@@ -82,24 +108,29 @@ Every example Ratchet keeps carries its history. The ledger stores, for each tra
 - **Erasure is final.** An erased example leaves only a hash, so it cannot be stored again. Retention windows purge old rows on a schedule.
 - **Export.** Stored data can be exported as NDJSON with its provenance.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  R["Request"] --> O{"Opt-out set?"}
-  O -->|"yes"| NS["Served, never stored"]
+flowchart TB
+  R(["Request"]) --> O{{"Opt-out set?"}}
+  O -->|"yes"| NS["Served,<br/>never stored"]
   O -->|"no"| RD["Redact personal data"]
-  RD --> V{"Complete, valid teacher answer?"}
+  RD --> V{{"Complete, valid<br/>teacher answer?"}}
   V -->|"no"| NS
-  V -->|"yes"| ST[("Ledger: text, teacher, license")]
-  ST --> ER["Erase on request: only a hash stays"]
-  ST --> RT["Retention purge by age"]
-  ST --> EX["Export as NDJSON"]
-  classDef keep fill:#14532d,stroke:#22c55e,color:#fff
-  classDef drop fill:#7c2d12,stroke:#f97316,color:#fff
-  class ST keep
-  class NS,ER drop
+  V -->|"yes"| ST[("Ledger: text,<br/>teacher, license")]
+  ST --> ER["Erase: only<br/>a hash stays"]
+  ST --> RT["Retention<br/>purge by age"]
+  ST --> EX["Export<br/>as NDJSON"]
+  class O,V gate
+  class ST store
 ```
 
+<figcaption>
+
 **Reading this diagram.** Read it as the checks a request passes before it is allowed to become training data. Two gates can stop it: an opt-out, and a check that the teacher's answer is complete and valid. Whatever passes is redacted and stored with its provenance. From the ledger, three exits exist for the data owner: erase it, let it age out, or export it. The student's own answers are never stored as training data. Details: [Ledger](/guides/ledger/), [Security](/guides/security/), [Training on your data](/guides/training-on-your-data/).
+
+</figcaption>
+</figure>
 
 ## If you are regulated or careful
 
@@ -115,23 +146,37 @@ You need to show a model was tested before it served real users, and that you ca
 
 **What this does not show.** Precision means agreement with the teacher, not ground truth. A signed bill of materials is the operator's signed statement: it proves nothing changed after signing, not that the weights were trained on that data. See [Escalation and audits](/guides/escalation-and-audits/).
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  C["Candidate adapter"] --> G{"Golden exam passed?"}
+flowchart TB
+  C["Candidate adapter"] --> G{{"Golden exam passed?"}}
   G -->|"no"| X["Rejected"]
   G -->|"yes"| SH["Shadow: runs silently"]
   SH --> C10["Canary 10%"]
   C10 --> C50["Canary 50%"]
   C50 --> L["Live 100%"]
-  C10 -->|"audits slip"| RB["Automatic rollback"]
-  C50 -->|"audits slip"| RB
-  classDef bad fill:#7c2d12,stroke:#f97316,color:#fff
-  classDef good fill:#14532d,stroke:#22c55e,color:#fff
-  class X,RB bad
-  class L good
+  C10 -.->|"audits slip"| RB["Automatic rollback"]
+  C50 -.->|"audits slip"| RB
+  class C,SH,C10,C50 student
+  class G gate
+  class X,RB danger
+  class L ok
 ```
 
-**Reading this diagram.** A new student only moves right when evidence allows it, and each canary stage can send it back. The first gate is the held-out exam, then a silent trial on real traffic, then growing shares of live traffic judged by teacher audits. Because every step leaves a record in the ledger, a reviewer can ask which version served which request and why it was promoted.
+<figcaption>
+
+**Reading this diagram.** A new student only moves down when evidence allows it, and each canary stage can send it back. The first gate is the held-out exam, then a silent trial on real traffic, then growing shares of live traffic judged by teacher audits. Because every step leaves a record in the ledger, a reviewer can ask which version served which request and why it was promoted.
+
+<ul class="rt-key">
+  <li class="student">The new student, on trial</li>
+  <li class="gate">The held-out exam</li>
+  <li class="ok">Live</li>
+  <li class="danger">Rejected or rolled back</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ## If you build on open models
 
@@ -142,4 +187,8 @@ flowchart LR
 
 ## What is and is not shown today
 
-The loop is built and tested offline. Teacher calls are real on Nebius Token Factory. The student endpoint has not been served on a Nebius GPU yet, and a text-to-SQL adapter was trained on a free Colab T4. Simulation figures use mock models and are labelled. Open question: Token Factory Terms of Service §5(f), asked of Nebius support on Oct 19, 2026. See [What is Ratchet](/guides/what-is-ratchet/) and [Results](/guides/results/).
+<div class="rt-callout rt-callout--note">
+
+The loop is built and tested offline. Real teacher calls on Nebius Token Factory built the text-to-SQL data on Oct 22, 2026; the gateway's own live mode stays unverified until `scripts/day1_check.py` passes with a real key. The student endpoint has not been served on a Nebius GPU yet, and a text-to-SQL adapter was trained on a free Colab T4. Simulation figures use mock models and are labelled. Open question: Token Factory Terms of Service §5(f), asked of Nebius support on Oct 19, 2026. See [What is Ratchet](/guides/what-is-ratchet/) and [Results](/guides/results/).
+
+</div>

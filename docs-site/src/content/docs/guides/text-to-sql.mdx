@@ -8,6 +8,9 @@ import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
 import SqlResults from '../../../components/SqlResults.astro';
+import Flow from '../../../components/Flow.astro';
+import FlowStep from '../../../components/FlowStep.astro';
+import Compare from '../../../components/Compare.astro';
 
 <Summary>A small open model learned to write SQLite queries from a bigger open model's answers, but only from answers that were actually run on a database, and its score comes from whole databases it never trained on, so anyone can recompute that score.</Summary>
 
@@ -23,14 +26,23 @@ Anyone who gets the answer sheet can mark the exam again and must get the same s
 
 </Eli10>
 
+<Flow label="The pipeline">
+  <FlowStep title="The teacher writes the data" tone="rented" meta="Ultra on Token Factory">Databases, business questions and SQL answers.</FlowStep>
+  <FlowStep title="Every answer is run" meta="a read-only sandbox">Kept only if it runs and returns 1 to 100 rows.</FlowStep>
+  <FlowStep title="The student trains" tone="owned" meta="Nano 4B + LoRA">On the kept rows, on a free Colab T4.</FlowStep>
+  <FlowStep title="The exam" meta="unseen databases">Scored by running queries, on a CPU.</FlowStep>
+</Flow>
+
 ## The problem
 
 Teams that keep data in a SQL database get questions all day. A large model can answer them, but two things hurt:
 
-- **Cost.** Every question is a paid call to a big model.
-- **Exposure.** Every call carries your table and column names to someone else's endpoint.
+<Compare before="A large model for every question" after="A small model you run">
+  <div slot="before">**Cost.** Every question is a paid call to a big model. **Exposure.** Every call carries your table and column names to someone else's endpoint.</div>
+  <div slot="after">A small model on a GPU you control fixes both: no bill per question, and the schema stays with you. But only if it is good enough.</div>
+</Compare>
 
-A small model that runs on a GPU you control fixes both, if it is good enough. The honest question is "good enough at what, measured how?" This page and the [Results](/guides/results/) page answer that in a way you can repeat.
+The honest question is "good enough at what, measured how?" This page and the [Results](/guides/results/) page answer that in a way you can repeat.
 
 ## What was built
 
@@ -62,24 +74,47 @@ A small model that runs on a GPU you control fixes both, if it is good enough. T
 
 </Steps>
 
+<div class="rt-callout rt-callout--note">
+
+**Where it was trained.** On a free Colab T4, not on Nebius GPUs. Only the teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
+
+</div>
+
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart LR
-  T["Teacher: Nemotron 3 Ultra on Token Factory"] --> D["Invents a SQLite database<br/>3 to 7 tables, 5+ rows each"]
-  D --> Q["Writes questions and SQL<br/>simple, join, aggregate, hard"]
-  Q --> C{"Run the SQL on that database<br/>one read-only SELECT?<br/>finishes in 2 s?<br/>1 to 100 rows?"}
-  C -->|"yes"| K["Kept"]
-  C -->|"no"| X["Thrown away and counted"]
-  K --> S{"Which side?"}
-  S -->|"training databases<br/>25 industries"| TR["Training set"]
-  S -->|"exam databases<br/>new databases, 5 more industries"| EX["Exam set"]
-  TR --> L["QLoRA on a free T4<br/>4-bit base, LoRA rank 16, fp16"]
-  L --> A["Adapter"]
-  A --> M["Answer every exam question"]
+flowchart TB
+  T["Teacher invents a database,<br/>questions and SQL"] --> C{{"Run on its database:<br/>one read-only SELECT,<br/>under 2 seconds,<br/>1 to 100 rows?"}}
+  C -->|"no"| X["Thrown away<br/>and counted"]
+  C -->|"yes"| S{{"Which database?"}}
+  S -->|"training: 25 industries"| TR[("Training set")]
+  S -->|"exam: new databases,<br/>5 more industries"| EX[("Exam set")]
+  TR --> L["Train the adapter<br/>QLoRA, free Colab T4"]
+  L --> M["Adapter answers<br/>every exam question"]
   EX --> M
-  M --> R["Run student SQL and teacher SQL<br/>on the same database, compare rows"]
+  M --> R["Run student and teacher SQL<br/>on the same database,<br/>compare the rows"]
+  class T teacher
+  class C,S gate
+  class X danger
+  class TR,EX store
+  class L,M student
+  class R ok
 ```
 
-**Reading this diagram.** Read left to right. The teacher writes everything, but nothing it writes is trusted: the diamond in the middle runs each query on the database it was written for, and only queries that pass reach the training or exam pile. The split between training and exam happens by database, not by row, so the student cannot have seen the exam's tables. The last box is the only place a number is made, and it is made by running queries, not by asking a model whether they look right.
+<figcaption>
+
+**Reading this diagram.** Read from the top. The teacher writes everything, but nothing it writes is trusted: the first check runs each query on the database it was written for, and only queries that pass reach the training or exam pile. The split between training and exam happens by database, not by row, so the student cannot have seen the exam's tables. The last box is the only place a number is made, and it is made by running queries, not by asking a model whether they look right. Each database has 3 to 7 tables of at least 5 rows; the questions mix four levels: simple, join, aggregate and hard.
+
+<ul class="rt-key">
+  <li class="teacher">The teacher, Nemotron 3 Ultra</li>
+  <li class="student">The student and its adapter</li>
+  <li class="gate">A check</li>
+  <li class="store">A data set</li>
+  <li class="danger">Rejected</li>
+</ul>
+
+</figcaption>
+</figure>
 
 ### The sandbox
 
@@ -101,21 +136,31 @@ Two queries are the same answer when they return the same rows on the same datab
 - Row order matters only when the teacher's query has an `ORDER BY`. Otherwise the rows are compared as a set, sorted.
 - A query that does not run, is not a read-only `SELECT`, or takes more than 2 seconds counts as wrong.
 
+<figure class="rt-diagram">
+
 ```mermaid
-flowchart TD
-  E["One exam question<br/>and its database"] --> TQ["Teacher SQL"]
+flowchart TB
+  E(["One exam question<br/>and its database"]) --> TQ["Teacher SQL"]
   E --> SQ["Student SQL"]
-  TQ --> TR["Run it: rows and 'does it order?'"]
-  SQ --> SR["Run it: rows or failure"]
-  TR --> CMP{"Compare"}
+  TQ --> TR["Run it: rows, and<br/>does it order?"]
+  SQ --> SR["Run it: rows<br/>or a failure"]
+  TR --> CMP{{"Compare"}}
   SR --> CMP
-  CMP -->|"student failed to run"| W["Wrong"]
-  CMP -->|"teacher orders: same rows, same order"| OK1["Match"]
-  CMP -->|"teacher does not order: same rows in any order"| OK2["Match"]
-  CMP -->|"different rows"| W
+  CMP -->|"failed or<br/>different rows"| W["Wrong"]
+  CMP -->|"same rows, same order<br/>if the teacher orders"| OK["Match"]
+  class TQ teacher
+  class SQ student
+  class CMP gate
+  class W danger
+  class OK ok
 ```
 
-**Reading this diagram.** Both queries are run on the same database, so the only thing that can make them match is giving the same rows. The branch in the middle is the order rule: if the teacher's query sorts, the student must sort the same way, and if it does not, order is ignored. A student query that crashes never gets as far as the comparison.
+<figcaption>
+
+**Reading this diagram.** Both queries are run on the same database, so the only thing that can make them match is giving the same rows. The order rule sits in the comparison: if the teacher's query sorts, the student must sort the same way, and if it does not, order is ignored. A student query that crashes counts as wrong.
+
+</figcaption>
+</figure>
 
 ### The confidence gate
 
@@ -123,24 +168,31 @@ The adapter's confidence in an answer is the average probability of its tokens. 
 
 If no threshold reaches the target on the calibration half, the report says so. In that case the adapter would answer nothing on its own at that target.
 
+<figure class="rt-diagram">
+
 ```mermaid
 sequenceDiagram
-  participant U as User question
-  participant S as Student adapter
-  participant G as Confidence gate
-  participant T as Teacher
-  U->>S: schema and question
-  S->>G: SQL and average token probability
+  participant U as Question
+  participant Student as Student
+  participant G as Gate
+  participant Teacher as Teacher
+  U->>Student: schema and question
+  Student->>G: SQL and confidence
   alt at or above the threshold
     G-->>U: student SQL
   else below the threshold
-    G->>T: same prompt
-    T-->>U: teacher SQL
+    G->>Teacher: same prompt
+    Teacher-->>U: teacher SQL
   end
-  Note over G: The threshold is set on one half of the exam and measured on the other
+  Note over Student,Teacher: threshold set on one half, measured on the other
 ```
 
-**Reading this diagram.** The student always tries first. The gate compares its confidence with the threshold. A confident answer goes straight back, and an unsure one is handed to the teacher, which costs more but is the safer answer. The note at the bottom is the honesty rule: the rows that set the threshold are never the rows that grade it.
+<figcaption>
+
+**Reading this diagram.** The student always tries first, and its confidence is the average probability of the tokens it wrote. The gate compares that confidence with the threshold. A confident answer goes straight back, and an unsure one is handed to the teacher, which costs more but is the safer answer. The note at the bottom is the honesty rule: the rows that set the threshold are never the rows that grade it.
+
+</figcaption>
+</figure>
 
 ## What it scored
 
@@ -152,11 +204,11 @@ More on how to read them is on the [Results](/guides/results/) page, and the ful
 
 ## Reproduce it and check it
 
-Where the code lives: the data, training and scoring scripts for this run are standalone files published next to the adapter. They are not part of the Ratchet package. The three commands that matter:
+Where the code lives: the data and training scripts are in the repository under [`scripts/text2sql/`](https://github.com/harshbhx/ratchet/tree/main/scripts/text2sql) (`gen_sql_data.py`, `train_t4.py`), and the scoring script with the SQL checks is published next to the adapter. They are tools you run by hand, not part of the gateway. The three commands that matter:
 
 ```bash
-# 1. Build the data (needs a Token Factory key; the teacher is paid per token)
-python gen_sql_data.py --out out --max-usd 5
+# 1. Build the data (needs a Token Factory key; the teacher is paid per token, capped by --max-usd)
+python scripts/text2sql/gen_sql_data.py --out out/sql --max-usd 3
 
 # 2. Train on a Colab T4 and answer the exam (GPU)
 #    train_t4.py trains the adapter, then runs: measure_adapter.py generate ...
