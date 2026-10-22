@@ -90,6 +90,9 @@ const Tag = href ? 'a' : 'div';
       border-color var(--rt-dur) ease,
       transform 0.25s var(--rt-ease);
   }
+  a.rt-stat:focus-visible {
+    outline-offset: -2px;
+  }
   a.rt-stat:hover {
     border-color: var(--rt-line-strong);
     transform: translateY(-2px);
@@ -135,7 +138,7 @@ const Tag = href ? 'a' : 'div';
     border: 1px solid color-mix(in srgb, var(--rt-warn) 45%, transparent);
     border-radius: 999px;
     background: var(--rt-warn-soft);
-    color: var(--rt-warn);
+    color: var(--rt-warn-ink);
     font-family: var(--rt-font-mono);
     font-size: 0.65rem;
     letter-spacing: 0.06em;

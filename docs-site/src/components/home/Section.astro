@@ -19,7 +19,8 @@ const { id, title, eyebrow, index, lead, tint = false } = Astro.props;
 
 <section class:list={['rt-home-section', 'rt-ui', { 'rt-home-section--tint': tint }]} id={id} aria-labelledby={`${id}-title`}>
   <div class="rt-home-section__inner">
-    <header class="rt-home-section__head">
+    <!-- A div, not a header: Lucode makes every header inside the layout sticky. -->
+    <div class="rt-home-section__head">
       <div class="rt-home-section__titles">
         {
           eyebrow && (
@@ -34,7 +35,7 @@ const { id, title, eyebrow, index, lead, tint = false } = Astro.props;
         {lead && <p class="rt-home-section__lead">{lead}</p>}
       </div>
       {Astro.slots.has('aside') && <div class="rt-home-section__aside"><slot name="aside" /></div>}
-    </header>
+    </div>
     <slot />
   </div>
 </section>

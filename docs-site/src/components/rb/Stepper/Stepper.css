@@ -64,7 +64,7 @@
 }
 .rb-stepper__segment:focus-visible {
   outline: 2px solid var(--rt-focus);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 .rb-stepper__segment[data-status='active'] {
   color: var(--rt-ink);

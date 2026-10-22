@@ -3,6 +3,7 @@
  * ShinyText (React Bits): one band of light crosses the text when it first scrolls into view, and again on hover.
  * When: a short label that should catch the eye once: an eyebrow, an announcement pill, a "New" tag.
  * Never on body text. It never loops. Reduced motion, no script and print show plain text.
+ * trigger="load" (for the first screen) plays on first paint with CSS only and ships no JavaScript.
  */
 import ShinyTextRB from '../rb/ShinyText/ShinyText.tsx';
 
@@ -14,17 +15,27 @@ interface Props {
   shine?: string;
   speed?: number;
   delay?: number;
+  trigger?: 'view' | 'load';
   class?: string;
 }
 
-const { text, color, shine, speed, delay, class: className } = Astro.props;
+const { text, color, shine, speed, delay, trigger = 'view', class: className } = Astro.props;
+const common = { color, shineColor: shine, speed, delay, trigger, className };
 ---
 
 {
-  text ? (
-    <ShinyTextRB client:visible text={text} color={color} shineColor={shine} speed={speed} delay={delay} className={className} />
+  trigger === 'load' ? (
+    text ? (
+      <ShinyTextRB text={text} {...common} />
+    ) : (
+      <ShinyTextRB {...common}>
+        <slot />
+      </ShinyTextRB>
+    )
+  ) : text ? (
+    <ShinyTextRB client:visible text={text} {...common} />
   ) : (
-    <ShinyTextRB client:visible color={color} shineColor={shine} speed={speed} delay={delay} className={className}>
+    <ShinyTextRB client:visible {...common}>
       <slot />
     </ShinyTextRB>
   )

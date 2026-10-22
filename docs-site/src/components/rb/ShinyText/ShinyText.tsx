@@ -23,6 +23,8 @@ export interface ShinyTextProps {
   delay?: number;
   /** Angle of the band, in degrees. */
   angle?: number;
+  /** 'view' sweeps when it first scrolls into view; 'load' sweeps on first paint and needs no hydration. */
+  trigger?: 'view' | 'load';
   className?: string;
 }
 
@@ -34,12 +36,14 @@ export default function ShinyText({
   speed = 1.6,
   delay = 0.2,
   angle = 115,
+  trigger = 'view',
   className = '',
 }: ShinyTextProps) {
   const ref = useRef<HTMLSpanElement>(null);
-  const [run, setRun] = useState(0);
+  const [run, setRun] = useState(trigger === 'load' ? 1 : 0);
 
   useEffect(() => {
+    if (trigger === 'load') return undefined;
     const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return undefined;
     const observer = new IntersectionObserver(

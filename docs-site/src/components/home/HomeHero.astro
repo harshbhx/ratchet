@@ -37,7 +37,7 @@ const FACTS = ['OpenAI-compatible', 'Open teachers only', 'Apache-2.0'];
           <a class="rt-home-hero__pill" href={announcement.link}>
             <span class="rt-home-hero__pill-tag">Open source</span>
             <span class="rt-home-hero__pill-sep" aria-hidden="true" />
-            <ShinyText text={announcement.text} />
+            <ShinyText text={announcement.text} trigger="load" delay={0.9} />
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" class="rt-home-hero__pill-arrow">
               <path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>

@@ -331,17 +331,17 @@
 .sl-markdown-content .starlight-aside--tip {
   --aside-accent: var(--rt-good);
   --aside-tint: var(--rt-good-soft);
-  --aside-title: var(--rt-good);
+  --aside-title: var(--rt-good-ink);
 }
 .sl-markdown-content .starlight-aside--caution {
   --aside-accent: var(--rt-warn);
   --aside-tint: var(--rt-warn-soft);
-  --aside-title: var(--rt-warn);
+  --aside-title: var(--rt-warn-ink);
 }
 .sl-markdown-content .starlight-aside--danger {
   --aside-accent: var(--rt-bad);
   --aside-tint: var(--rt-bad-soft);
-  --aside-title: var(--rt-bad);
+  --aside-title: var(--rt-bad-ink);
 }
 .sl-markdown-content .starlight-aside__title {
   gap: 0.55rem;
@@ -431,19 +431,19 @@
 .rt-callout.rt-callout--sim {
   --c-accent: var(--rt-warn);
   --c-tint: var(--rt-warn-soft);
-  --c-ink: var(--rt-warn);
+  --c-ink: var(--rt-warn-ink);
   --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 3h6M10 3v6l-5.5 9.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3'/%3E%3Cpath d='M7.5 15h9'/%3E%3C/svg%3E");
 }
 .rt-callout.rt-callout--live {
   --c-accent: var(--rt-good);
   --c-tint: var(--rt-good-soft);
-  --c-ink: var(--rt-good);
+  --c-ink: var(--rt-good-ink);
   --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l3-8 4 16 3-8h4'/%3E%3C/svg%3E");
 }
 .rt-callout.rt-callout--warn {
   --c-accent: var(--rt-bad);
   --c-tint: var(--rt-bad-soft);
-  --c-ink: var(--rt-bad);
+  --c-ink: var(--rt-bad-ink);
   --c-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 2 20h20L12 3z'/%3E%3Cpath d='M12 10v4M12 17h.01'/%3E%3C/svg%3E");
 }
 @media (forced-colors: active) {
@@ -487,19 +487,19 @@
 .rt-badge--live {
   border-color: color-mix(in srgb, var(--rt-good) 45%, transparent);
   background: var(--rt-good-soft);
-  color: var(--rt-good);
+  color: var(--rt-good-ink);
 }
 .sl-markdown-content .sl-badge.caution,
 .rt-badge--sim {
   border-color: color-mix(in srgb, var(--rt-warn) 45%, transparent);
   background: var(--rt-warn-soft);
-  color: var(--rt-warn);
+  color: var(--rt-warn-ink);
 }
 .sl-markdown-content .sl-badge.danger,
 .rt-badge--bad {
   border-color: color-mix(in srgb, var(--rt-bad) 45%, transparent);
   background: var(--rt-bad-soft);
-  color: var(--rt-bad);
+  color: var(--rt-bad-ink);
 }
 
 /* ---------- Starlight cards and link cards ---------- */
@@ -691,7 +691,7 @@ html .sl-openapi-operation-method-badge {
   border: 1px solid color-mix(in srgb, var(--m) 45%, transparent);
   border-radius: var(--rt-radius-sm);
   background: var(--m-soft);
-  color: var(--m);
+  color: var(--m-ink, var(--m));
   font-family: var(--rt-font-mono);
   font-size: 0.72rem;
   font-weight: 600;
@@ -700,14 +700,17 @@ html .sl-openapi-operation-method-badge {
 }
 html .sl-openapi-operation-method-badge.get {
   --m: var(--rt-good);
+  --m-ink: var(--rt-good-ink);
   --m-soft: var(--rt-good-soft);
 }
 html .sl-openapi-operation-method-badge.post {
   --m: var(--rt-warn);
+  --m-ink: var(--rt-warn-ink);
   --m-soft: var(--rt-warn-soft);
 }
 html .sl-openapi-operation-method-badge.delete {
   --m: var(--rt-bad);
+  --m-ink: var(--rt-bad-ink);
   --m-soft: var(--rt-bad-soft);
 }
 html .sl-openapi-overview-navigation-link {

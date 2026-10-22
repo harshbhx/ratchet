@@ -300,7 +300,7 @@ import BlurText from '../../../components/ui/BlurText.astro';
 ```
 
 **`<ShinyText>`**: one band of light crosses a short label when it first comes into view, and on hover. When: an eyebrow or a
-"new" tag. Never on body text.
+"new" tag. Never on body text. On the first screen use `trigger="load"`: it plays with CSS only and ships no JavaScript.
 
 ```mdx
 import ShinyText from '../../../components/ui/ShinyText.astro';

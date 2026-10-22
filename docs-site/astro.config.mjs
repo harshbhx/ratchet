@@ -24,6 +24,13 @@ const httpOperations = createOpenAPISidebarGroup();
 /** Without JavaScript a Stepper shows every step as a list (also for browsers without the `scripting` query). */
 const NOSCRIPT_CSS = '<style>.rb-stepper__ui{display:none!important}.rb-stepper__all{display:block!important}</style>';
 
+/**
+ * Two accessibility fixes to Lucode's markup, run once the page is parsed: its sidebar and mobile-menu group titles
+ * are <h4> elements that come before the page's <h1> and after its <h2>s, so they are given level 2 to keep the
+ * heading outline in order; and the mobile menu's two close controls get a name.
+ */
+const A11Y_FIXES = `document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('h4.entry-title').forEach(function(h){h.setAttribute('aria-level','2')});document.querySelectorAll('#drawer .sheet-overlay,#drawer .drag-icon').forEach(function(b){b.setAttribute('aria-label','Close the menu')})});`;
+
 export default defineConfig({
   site: SITE_URL,
   trailingSlash: 'always',
@@ -67,6 +74,7 @@ export default defineConfig({
         { tag: 'meta', attrs: { name: 'theme-color', content: '#0b0b0c', media: '(prefers-color-scheme: dark)' } },
         { tag: 'meta', attrs: { name: 'color-scheme', content: 'dark light' } },
         { tag: 'noscript', content: NOSCRIPT_CSS },
+        { tag: 'script', content: A11Y_FIXES },
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       expressiveCode: {

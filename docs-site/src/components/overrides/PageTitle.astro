@@ -28,7 +28,8 @@ const isGuide = String(route.id ?? '').startsWith('guides/');
 const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0;
 ---
 
-<header class="rt-page-title">
+<!-- A div, not a header: Lucode makes every header inside the layout sticky. -->
+<div class="rt-page-title">
   <div class="rt-page-title__wash" aria-hidden="true"></div>
   <div class="rt-page-title__top">
     <p class="rt-page-title__eyebrow">{group ?? 'Ratchet docs'}</p>
@@ -64,7 +65,7 @@ const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0
       </p>
     )
   }
-</header>
+</div>
 
 <style>
   .rt-page-title {

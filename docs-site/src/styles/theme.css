@@ -4,6 +4,7 @@
   Tokens come from web/src/styles/globals.css (see web/DESIGN.md):
     owned  (blue)   = the student: Nano with the adapter you own
     rented (orange) = the teacher you rent per token
+  Text on a tinted status background uses the *-ink tokens (AA contrast in both themes).
   Colour carries meaning, so blue and orange appear where the student and the teacher do (diagrams, badges, the
   logo, the home page's loop). The chrome stays neutral, as on the landing page; the owned blue is also the focus
   ring and the "you are here" mark. Caution asides use the warning amber, never the teacher's orange.
@@ -35,10 +36,13 @@
   --rt-rented-soft: rgb(217 89 38 / 0.16);
   --rt-on-rented: #1a0a03;
   --rt-good: #51cf66;
+  --rt-good-ink: #51cf66;
   --rt-good-soft: rgb(81 207 102 / 0.14);
   --rt-warn: #f0b13f;
+  --rt-warn-ink: #f0b13f;
   --rt-warn-soft: rgb(240 177 63 / 0.14);
   --rt-bad: #ff6b6b;
+  --rt-bad-ink: #ff8787;
   --rt-bad-soft: rgb(255 107 107 / 0.14);
   --rt-focus: #86b6ef;
   --rt-grid: rgb(242 241 236 / 0.05);
@@ -114,10 +118,13 @@
   --rt-rented-soft: #fdeae1;
   --rt-on-rented: #1a0a03;
   --rt-good: #1f8f3a;
+  --rt-good-ink: #18722e;
   --rt-good-soft: #e3f4e7;
   --rt-warn: #a86400;
+  --rt-warn-ink: #8a5300;
   --rt-warn-soft: #fbf0dc;
   --rt-bad: #c92a2a;
+  --rt-bad-ink: #a61f1f;
   --rt-bad-soft: #fbe4e4;
   --rt-focus: #2a78d6;
   --rt-grid: rgb(18 18 18 / 0.06);
