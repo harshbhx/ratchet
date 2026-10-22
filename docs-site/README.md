@@ -35,6 +35,29 @@ python docs-site/scripts/export-reference.py          # from the repo root
 python docs-site/scripts/export-reference.py --check  # exit 1 if the committed data is stale (for CI)
 ```
 
+## Regenerating reference data
+
+Four committed files come from the code, by one script that imports the gateway in mock mode (no keys, no network) and
+runs each command line tool with `--help`:
+
+| File | What | Source |
+|---|---|---|
+| `openapi/ratchet.json` | every route, grouped by area | `app.openapi()` in `ratchet/gateway.py` |
+| `generated/env.json` | every environment variable | `ratchet/config.py` (`KNOWN_ENV`, `DEPLOY_ENV`, ...) and `ratchet/release.py` |
+| `generated/cli.json` | every `python -m ratchet.*` tool, script and Make target, with its `--help` | the `CLIS` list in the script |
+| `generated/routes.json` | routes the schema leaves out | `ratchet/gateway.py` |
+
+```bash
+make install                                           # once, from the repo root
+python docs-site/scripts/export-reference.py           # write the four files
+python docs-site/scripts/export-reference.py --check   # exit 1 when they are stale (CI)
+```
+
+The script drops pointers to requirement ids and design records from the text the code wrote for maintainers, and
+joins each usage line so the output does not depend on the Python version. A new command line tool needs an entry in
+`CLIS`. The environment variable and command line pages are built from these files by `scripts/sync-docs.mjs`; the
+endpoint map (`src/content/docs/api/endpoints.mdx`) is written by hand from `ratchet/access.py` and the schema.
+
 ## Deploy
 
 ```bash

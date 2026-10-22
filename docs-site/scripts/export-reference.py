@@ -308,6 +308,21 @@ CLIS: list[dict[str, Any]] = [
         ),
     },
     {
+        "id": "watch",
+        "cmd": "python -m ratchet.watch",
+        "module": "ratchet.watch",
+        "when": (
+            "On the demo VM's host, from cron: restart a hung gateway, probe it through its public URL "
+            "and send signed alerts. Not needed to run a gateway."
+        ),
+    },
+    {
+        "id": "demo-check",
+        "cmd": "python scripts/demo_check.py",
+        "script": "scripts/demo_check.py",
+        "when": "Check a public demo from the outside, as a visitor sees it: OK, WARN or FAIL per check.",
+    },
+    {
         "id": "train",
         "cmd": "python -m ratchet.nightschool.train",
         "module": "ratchet.nightschool.train",
@@ -333,12 +348,6 @@ CLIS: list[dict[str, Any]] = [
         ),
     },
     {
-        "id": "reqtrace",
-        "cmd": "python scripts/reqtrace.py",
-        "script": "scripts/reqtrace.py",
-        "when": ("Regenerate or check the requirements traceability matrix (docs/REQUIREMENTS.md); make lint runs the check."),
-    },
-    {
         "id": "reference-check",
         "cmd": "python scripts/reference_check.py",
         "script": "scripts/reference_check.py",
@@ -357,6 +366,12 @@ CLIS: list[dict[str, Any]] = [
 SUB_RE = re.compile(r"\{([a-z0-9_,-]+)\}\s+\.\.\.")
 
 
+def one_line_usage(text: str) -> str:
+    """Join the usage paragraph into one line: argparse wraps it differently from one Python version to the next."""
+    head, sep, rest = text.partition("\n\n")
+    return re.sub(r"\s*\n\s+", " ", head) + sep + rest
+
+
 def run_help(args: list[str], cwd: str) -> tuple[int, str]:
     env = {**os.environ, "RATCHET_MODE": "mock", "COLUMNS": "100", "PYTHONPATH": str(REPO), "PYTHONIOENCODING": "utf-8"}
     for name in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "RATCHET_DB"):
@@ -364,7 +379,7 @@ def run_help(args: list[str], cwd: str) -> tuple[int, str]:
     p = subprocess.run(
         [sys.executable, *args, "--help"], cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", timeout=120
     )
-    return p.returncode, (p.stdout or p.stderr).replace("\r\n", "\n").rstrip()
+    return p.returncode, one_line_usage((p.stdout or p.stderr).replace("\r\n", "\n").rstrip())
 
 
 def docstring(rel: str) -> str:
@@ -426,6 +441,9 @@ def make_targets() -> list[dict[str, str]]:
             while j < len(lines) and lines[j].startswith("\t"):
                 recipe.append(lines[j].strip())
                 j += 1
+            if m.group(1) == "trace":  # the maintainers' requirements matrix, not part of the public docs
+                comment, i = [], j
+                continue
             targets.append({"name": m.group(1), "comment": " ".join(comment).strip(), "recipe": "\n".join(recipe)})
             comment = []
             i = j
@@ -434,6 +452,34 @@ def make_targets() -> list[dict[str, str]]:
             comment = []
         i += 1
     return targets
+
+
+REF = r"(?:ADR|N?FR|INV|SM)[- ]?[\d.]+(?: to (?:ADR|N?FR|INV|SM)[- ]?[\d.]+)?"
+REF_PAREN = re.compile(rf"\s*\((?:see )?(?:{REF}(?:,\s*|\s+and\s+|;\s*)?)+\)")
+REF_TAIL = re.compile(rf"\s*[,;]\s*{REF}")
+REF_HEAD = re.compile(rf"(?<=\()(?:{REF}[,;]\s*)+")
+
+
+def public_text(text: str) -> str:
+    """Drop the pointers to requirement ids, decision records and the product spec from text the code wrote for
+    maintainers ("(FR-16.4, ADR 0027)", "; ADR 0017)"). The site publishes none of them."""
+    text = REF_PAREN.sub("", text)
+    text = REF_TAIL.sub("", text)
+    text = REF_HEAD.sub("", text)
+    text = text.replace("NFR-1's latency target", "the latency target").replace("SM-1 to SM-3 and NFR-1", "The first three metrics and the latency target")
+    text = text.replace("PRD §8.1's success metrics", "The success metrics")
+    return re.sub(r"\(\s*\)", "", text)
+
+
+def scrub(node: Any) -> Any:
+    """`public_text` on every string of a JSON-like value (keys and identifiers are left alone)."""
+    if isinstance(node, str):
+        return public_text(node)
+    if isinstance(node, dict):
+        return {k: (v if k in ("operationId", "$ref", "url") else scrub(v)) for k, v in node.items()}
+    if isinstance(node, list):
+        return [scrub(v) for v in node]
+    return node
 
 
 def dump(obj: Any) -> str:
@@ -448,10 +494,10 @@ def main(argv: list[str] | None = None) -> int:
     gateway = import_gateway()
     schema, hidden = export_openapi(gateway)
     files = {
-        OPENAPI_OUT: dump(schema),
+        OPENAPI_OUT: dump(scrub(schema)),
         GENERATED / "routes.json": dump({"source": "ratchet/gateway.py", "not_in_schema": hidden}),
         GENERATED / "env.json": dump(export_env()),
-        GENERATED / "cli.json": dump(export_cli()),
+        GENERATED / "cli.json": dump(scrub(export_cli())),
     }
     stale = []
     for path, text in files.items():
