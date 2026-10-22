@@ -53,5 +53,15 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0041](0041-generic-mock-world.md) | A generic mock world: every request gets a deterministic answer in mock mode, keyed by what a model sees | Accepted | 2026-10-20 |
 | [0042](0042-auto-tasks-from-response-format-schemas.md) | Structured outputs: a response_format is a contract, and a json_schema names an auto task | Accepted | 2026-10-21 |
 | [0043](0043-tool-calls-teacher-only-by-default.md) | Tool calls: teacher-only by default, opt-in distillation later | Accepted | 2026-10-21 |
+| [0048](0048-model-field-routing.md) | The model field names a task, never an upstream model; `/v1/models` lists the tasks; an Azure-style route | Accepted | 2026-10-20 |
+| [0049](0049-risk-aware-routing.md) | Risk-aware routing: eligibility, escalation rules on the student's answer, a critical-class miss-rate gate, and a per-task audit rate | Accepted | 2026-10-21 |
+| [0050](0050-adjacent-openai-endpoints.md) | The other OpenAI endpoints: an embeddings pass-through, completions and stateless responses on the chat path, typed 404s | Accepted | 2026-10-21 |
+| [0054](0054-free-text-similarity-and-a-judge-gate.md) | Free-text tasks: a similarity comparator, per-task sample counts and a judge gate; long-form stays pinned | Accepted | 2026-10-21 |
+| [0055](0055-sql-tasks-compared-by-execution.md) | Text-to-SQL tasks compared by what their queries return, in a sandboxed in-memory SQLite fixture | Accepted | 2026-10-21 |
+| [0082](0082-placeholder-styles-detector-plugin-and-indian-identifiers.md) | Placeholder styles for extraction tasks, a detector plugin, and Indian identifiers and amounts | Accepted | 2026-10-21 |
+| [0083](0083-success-metrics-from-the-ledger.md) | Success metrics computed from the ledger, the same way in mock and live mode | Accepted | 2026-10-21 |
+| [0032](0032-label-free-drift-alarm.md) | A label-free drift alarm: a conformal test martingale on each version's own confidence stream, with opt-in actions | Accepted | 2026-10-21 |
+| [0033](0033-teacher-watch.md) | Teacher watch: free self-consistency checks with a first-re-test rule, quarantine and adjudication, a training freeze by e-process, and the sqrt(A) ceiling | Accepted | 2026-10-21 |
+| [0131](0131-golden-prompts-are-golden-in-every-task.md) | A prompt that is golden under one task is golden under every task, and occurrences count across tasks | Accepted | 2026-10-22 |
 
 To add one, copy the format of an existing ADR, take the next number, and link it here.

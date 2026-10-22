@@ -45,7 +45,7 @@ from typing import Any
 
 import httpx
 
-from . import bom, licenses, privacy, receipts, taskspec
+from . import bom, licenses, privacy, receipts, taskspec, teacher_watch
 from .config import Settings
 from .ledger import Ledger, Version
 from .nightschool import dataset, notices
@@ -89,21 +89,39 @@ def _run(cmd: str, run: RunFn = subprocess.run) -> None:
     run(shlex.split(cmd), check=True)
 
 
-def load_adapter(student_base: str, api_key: str, name: str, path: str, client: httpx.Client | None = None) -> None:
+def _vllm_root(student_base: str) -> str:
+    """The vLLM server's root: the student's base URL without `/v1` or a trailing slash."""
+    return student_base.rstrip("/").removesuffix("/v1")
+
+
+def load_adapter(student_base: str, api_key: str, name: str, path: str, client: httpx.Client | None = None) -> httpx.Response:
     """Hot-load a LoRA adapter into a running vLLM server. An adapter that is already loaded is not an error.
 
-    Needs the server started with VLLM_ALLOW_RUNTIME_LORA_UPDATING=True and --enable-lora.
+    Needs the server started with VLLM_ALLOW_RUNTIME_LORA_UPDATING=True and --enable-lora. Returns the response, so
+    a caller can tell a fresh load (200) from a second one (vLLM v0.18.0: 400 "... has already been loaded ...").
     """
-    root = student_base.rstrip("/").removesuffix("/v1")
     post = client.post if client is not None else httpx.post
     r = post(
-        f"{root}/v1/load_lora_adapter",
+        f"{_vllm_root(student_base)}/v1/load_lora_adapter",
         json={"lora_name": name, "lora_path": path},
         headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
         timeout=300,
     )
     if r.status_code >= 400 and "already" not in r.text.lower():
         r.raise_for_status()
+    return r
+
+
+def unload_adapter(student_base: str, api_key: str, name: str, client: httpx.Client | None = None) -> httpx.Response:
+    """Unload a LoRA adapter from a running vLLM server and return the response, whatever its status: vLLM's 404
+    "... cannot be found." means it is already gone, and the caller decides. Only scripts/day1_check.py uses it."""
+    post = client.post if client is not None else httpx.post
+    return post(
+        f"{_vllm_root(student_base)}/v1/unload_lora_adapter",
+        json={"lora_name": name},
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        timeout=60,
+    )
 
 
 class NebiusTrainer:
@@ -171,6 +189,21 @@ def reload_adapters(s: Settings, led: Ledger, http: httpx.Client | None = None) 
         raise RuntimeError(NO_STUDENT_BASE)
     for name in names:
         load_adapter(s.student_base, s.student_api_key, name, f"{root}/{name}", http)
+    return names
+
+
+def reload_before_night(s: Settings, led: Ledger, http: httpx.Client | None = None) -> list[str]:
+    """Load the live, canary and shadow adapters again before a night: the endpoint may have restarted since they were
+    loaded (vLLM forgets runtime-loaded adapters), and the night re-scores the champion and may shadow the others. A
+    failure is an `adapter_reload_failed` event and the night goes on (the evaluator reloads once more on a 404); the
+    adapters that were loaded are an `adapter_reloaded` event. Returns the names loaded."""
+    try:
+        names = reload_adapters(s, led, http)
+    except Exception as e:  # noqa: BLE001 - a night with the endpoint down fails in its own eval, with its own message
+        led.event("adapter_reload_failed", f"before the night: {describe_failure(e)}")
+        return []
+    if names:
+        led.event("adapter_reloaded", f"before the night: {', '.join(names)} loaded again")
     return names
 
 
@@ -428,7 +461,13 @@ def purge(led: Ledger, s: Settings, argv: list[str]) -> dict[str, Any]:
         seal_receipts(led, s)
     try:
         out = privacy.apply_retention(
-            led, s.retention(), client=args.client, example_days=days, request_days=days, dry_run=args.dry_run
+            led,
+            s.retention(),
+            client=args.client,
+            example_days=days,
+            request_days=days,
+            dry_run=args.dry_run,
+            fold_before=receipts.fold_floor(led),
         )
     except ValueError as e:  # a bad --client or window: a message, not a traceback
         raise SystemExit(f"purge: {e}") from None
@@ -459,10 +498,11 @@ def main(
     retention = s.retention()  # a bad retention window stops here too, before anything is deleted or trained
     s.receipt_policy()  # and a bad RATCHET_TAKE_RATE or RATCHET_RECEIPT_MIN_AUDITS (ADR 0029)
     s.checked_mock_reasoning_mean()  # and RATCHET_MOCK_TEACHER_REASONING_MEAN out of range, as in the gateway
+    probes, adjudicate = s.teacher_watch_limits()  # and a bad RATCHET_TEACHER_PROBES or _ADJUDICATE_MAX (ADR 0033)
     led, gate = build(s)
     # The gateway's tasks (RATCHET_TASKS_FILE and the API's), so the night trains and grades with the same specs; a bad
     # file stops here with every error listed.
-    for line in taskspec.install(led, s.tasks_file):
+    for line in taskspec.install(led, s.tasks_file, fixtures_dir=s.fixtures_dir):
         print(f"task skipped: {line}", file=sys.stderr)
     cmd = argv[0] if argv else "night"
     if cmd == "export":  # reads the ledger and writes files only: nothing else to report
@@ -499,11 +539,27 @@ def main(
             cert_delta=cert.delta,
             min_task_n=s.min_task_golden_rows(),
             per_task=s.per_task_calibration,
+            # vLLM forgets runtime-loaded adapters when the endpoint restarts: a 404 for the adapter loads it once more.
+            on_adapter_missing=lambda name: load_adapter(
+                s.student_base, s.student_api_key, name, f"{adapter_root()}/{name}", http
+            ),
         )
         signer = bom.Signer(s.bom_signing_key) if s.bom_signing_key else None
         trainer = NebiusTrainer(s, run, http)
+        reload_before_night(s, led, http)
         if retention.request_days:  # the night folds request rows first: every day that ended is sealed before that
             seal_receipts(led, s)
+        # The teacher watch's probes and adjudications (FR-5.40, FR-5.41) ask the teacher on Token Factory, with the
+        # judge's client (same endpoint, key, timeouts and retries), as an audit asks: temperature 0, one answer.
+        relabel = teacher_watch.relabel_with(
+            judge,
+            s.teacher_model,
+            s.gen_policy(),
+            probes,
+            adjudicate,
+            redact_pii=s.redact_pii,
+            price=s.price(s.teacher_model),
+        )
         # The training job's wall-clock time is recorded as a compute interval for the cost report (FR-15.2).
         rep = run_night(
             led,
@@ -516,6 +572,7 @@ def main(
             redact_pii=s.redact_pii,
             store_examples=s.store_examples,
             retention=retention,  # expired text is purged before the night reads the ledger (FR-13.4)
+            relabel=relabel,
         )
         # Keep the adapter's BOM next to its training data, and in its folder, in the bucket (FR-16.4).
         synced = write_boms(led, rep.version, trainer) if rep.version is not None else True

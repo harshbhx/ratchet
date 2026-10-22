@@ -36,7 +36,7 @@ die() { echo "error: $*" >&2; exit 1; }
 
 # --- checks --------------------------------------------------------------------
 if [[ "$DRY_RUN" != "1" ]]; then
-  command -v nebius >/dev/null || die "nebius CLI not found. Install: curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash"
+  command -v nebius >/dev/null || die "nebius CLI not found. Install: curl -sSL https://artifacts.nebius.cloud/cli/install.sh | bash (Ubuntu or macOS; on Windows use WSL or Cloud Shell)"
   command -v jq >/dev/null || die "jq not found (needed to read the public IP)"
 fi
 [[ -r "$SSH_KEY_PATH" ]] || die "SSH public key not found at $SSH_KEY_PATH (set SSH_PUBLIC_KEY_PATH)"
@@ -49,7 +49,9 @@ SSH_KEY="$(head -n1 "$SSH_KEY_PATH")"
 # --- cloud-init user data ------------------------------------------------------
 USER_DATA="$(<"$HERE/cloud-init.yaml")"
 USER_DATA="${USER_DATA//__SSH_USER__/$SSH_USER}"
-USER_DATA="${USER_DATA//__SSH_PUBLIC_KEY__/$SSH_KEY}"
+# The key sits in single quotes in the YAML: a quote in its comment is doubled, so it cannot end the string.
+SSH_KEY_YAML="${SSH_KEY//\'/\'\'}"
+USER_DATA="${USER_DATA//__SSH_PUBLIC_KEY__/$SSH_KEY_YAML}"
 USER_DATA="${USER_DATA//__REPO_URL__/$REPO_URL}"
 USER_DATA="${USER_DATA//__RATCHET_DOMAIN__/$DOMAIN}"
 
@@ -76,8 +78,7 @@ fi
 # --- subnet ------------------------------------------------------------------------
 SUBNET_ID="${NEBIUS_SUBNET_ID:-}"
 if [[ -z "$SUBNET_ID" ]]; then
-  # The Compute quickstart runs this without --parent-id (it uses the profile's project).
-  # VERIFY ON DAY 1: that `vpc subnet list` accepts --parent-id.
+  # `vpc subnet list` takes --parent-id (the Compute quickstart omits it and uses the profile's project).
   SUBNET_ID="$(run nebius vpc subnet list --parent-id "$PARENT_ID" --format jsonpath='{.items[0].metadata.id}')"
 fi
 [[ -n "$SUBNET_ID" ]] || die "no subnet found; set NEBIUS_SUBNET_ID (nebius vpc subnet list)"

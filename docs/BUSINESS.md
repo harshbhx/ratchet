@@ -93,7 +93,7 @@ The break-even point is simple:
 break-even student-served requests per GPU-hour = GPU price per hour ÷ teacher cost avoided per student-served request
 ```
 
-Worked example with **unverified list prices** (confirm on day 1): an L40S at about $1.55/hour, and about $0.001 of Ultra spend avoided per ticket-triage request (the simulation's all-teacher cost of $1.09 per 1,000). Break-even is about 1,500 student-served requests per GPU-hour, roughly 36,000 a day.
+Worked example with **estimated prices** (confirm on the bill): an L40S at $1.35 per GPU-hour on demand ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026), and about $0.001 of Ultra spend avoided per ticket-triage request (the simulation's all-teacher cost of $1.09 per 1,000). Break-even is about 1,350 student-served requests per GPU-hour, roughly 32,000 a day.
 
 - **At demo volume (1,500 requests a day) a 24/7 endpoint loses money.** Below break-even, use the hosted, untuned Nano fallback on Token Factory (pay per token), or run the endpoint only while traffic arrives (scale to zero).
 - **At customer volume the endpoint beats the teacher.** 10M requests a month is about 14,000 an hour, far above break-even: a GPU running all month (about $1,100 at the price above) is small next to about $9,300 of avoided Ultra spend.

@@ -58,6 +58,7 @@ from ratchet.resilience import (
     BreakerPolicy,
     CircuitOpen,
     RetryPolicy,
+    adapter_missing,
     as_upstream,
     endpoint_down,
     parse_retry_after,
@@ -293,6 +294,8 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "mock_warmup_days": 0,
         # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
@@ -1569,6 +1572,45 @@ def test_adapter_reloader_rate_limits_and_reports():
         adapter_reloader(Settings(student_base=""), led)
 
 
+@pytest.mark.req("FR-2.11")
+def test_adapter_missing_is_the_routers_predicate(gw_env, tmp_path, monkeypatch):
+    """The router's lost-adapter test, shared with scripts/day1_check.py: a 404 whose message names the adapter as a
+    whole name, in vLLM v0.18.0's OpenAI-shaped body and in the older top-level one."""
+
+    def error(status: int, body: Any) -> UpstreamError:
+        return UpstreamError.from_response(httpx.Response(status, json=body))
+
+    v018 = {
+        "error": {"message": "The model `student-v3` does not exist.", "type": "NotFoundError", "param": "model", "code": 404}
+    }
+    legacy = {"object": "error", "message": "The model `student-v3` does not exist.", "type": "NotFoundError", "code": 404}
+    assert adapter_missing(error(404, v018), "student-v3") and adapter_missing(error(404, legacy), "student-v3")
+    assert not adapter_missing(error(404, v018), "student-v30") and not adapter_missing(error(404, v018), "student-v3.1")
+    for other in ("student-v30", "student-v3.1"):
+        assert not adapter_missing(error(404, {"error": {"message": f"The model `{other}` does not exist."}}), "student-v3")
+    assert not adapter_missing(error(400, v018), "student-v3")  # the right text, the wrong status
+    assert not adapter_missing(httpx.ConnectError("refused"), "student-v3") and not adapter_missing(error(404, v018), "")
+
+    # Through a live Runtime on v0.18.0's bodies: a request for the live adapter still queues exactly one reload.
+    gw = gw_env()
+    for name in [n for n in os.environ if n.startswith("RATCHET_")]:
+        monkeypatch.delenv(name)
+    student = FakeOpenAIServer(A, loaded=set(), errors="v0.18.0")
+    teacher = FakeOpenAIServer(B)
+    rt = gw.Runtime(
+        _live_settings(tmp_path, audit_rate=0.0),
+        transports={"teacher": teacher.transport, "student": student.transport},
+        clock=FakeClock(),
+    )
+    monkeypatch.setattr(gw, "rt", rt)
+    _version(rt.ledger, "live", {"threshold": 0.5}, adapter_uri="student-v3")
+    r = TestClient(gw.app).post(CHAT, json={"messages": _ask(0)})
+    assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher"
+    assert rt.reloader.join(5)
+    (load,) = student.calls_to("/load_lora_adapter")
+    assert load.json == {"lora_name": "student-v3", "lora_path": "/data/adapters/student-v3"}
+
+
 @pytest.mark.req("FR-2.11", "FR-8.2", "NFR-2", "INV-7")
 def test_live_gateway_reloads_a_lost_adapter_once_a_minute(gw_env, tmp_path, monkeypatch):
     """vLLM after a restart: every request for the adapter is a 404. The request escalates, the breaker stays closed (the
@@ -2398,13 +2440,16 @@ def test_a_golden_row_the_student_refuses_never_stops_night_school():
     res = LiveEvaluator(student, None, policy=GenPolicy()).evaluate("student-v1", golden)
     assert res["refused_n"] == 0 and not any("tools" in c.json for c in inner.calls_to("/chat/completions"))
 
-    # The judge's candidate call for a free-text row is refused the same way: that row does not pass.
+    # A free-text row refused the same way escalates in production, so nobody gets a student answer to judge: it is
+    # neither judged nor passed, and the night goes on (the bare row calibrates, the refused one is held out).
     free = Ledger(":memory:", golden_fraction=1.0)
     free.add_example("default", _ask("bare"), "an answer", OPEN_TEACHER, "l", "u")
     free.add_example("default", _ask("tools"), "an answer", OPEN_TEACHER, "l", "u", params={"tools": TOOLS})
     judge = RecordingProvider('{"score": 1, "reason": "same"}')
-    res = LiveEvaluator(student, judge, "judge", policy=forwards_tools).evaluate("student-v1", dataset.rows(free, "golden"))
-    assert (res["refused_n"], res["judge_pass_rate"], len(judge.calls)) == (1, 0.5, 1)
+    free_rows = dataset.rows(free, "golden")
+    assert [bool(r["params"]) for r in free_rows] == [False, True]
+    res = LiveEvaluator(student, judge, "judge", policy=forwards_tools).evaluate("student-v1", free_rows)
+    assert (res["refused_n"], res["judge_n"], res["judge_pass_rate"], len(judge.calls)) == (1, 0, None, 0)
 
     denied = OpenAICompatProvider("https://student.test/v1", "k", transport=httpx.MockTransport(lambda r: httpx.Response(401)))
     with pytest.raises(UpstreamError) as stopped:

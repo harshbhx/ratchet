@@ -22,38 +22,51 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/healthz` | both | [public](#access-levels) | Liveness check: the process answers; always public |
 | GET | `/livez` | both | [public](#access-levels) | Liveness under its Kubernetes name, the same answer as `/healthz` |
 | GET | `/readyz` | both | [public](#access-levels) | Readiness for load balancers: 200 `ready` or `degraded`, 503 `not_ready`, with the ledger, teacher and student checks ([Readiness](#get-readyz)) |
-| GET | `/v1/models` | both | [api](#access-levels) | OpenAI-style model list (API key when keys are on) |
+| GET | `/v1/models` | both | [api](#access-levels) | OpenAI-style model list: `ratchet`, `ratchet/<task>` per task, the model aliases (API key when keys are on) |
+| GET | `/v1/models/{id}` | both | [api](#access-levels) | One model of the list, or 404 `model_not_found` (API key when keys are on) |
 | POST | `/v1/chat/completions` | both | [api](#access-levels) | The cascade; `stream: true` supported (API key when keys are on) |
-| POST | `/v1/ratchet/no-train` | both | Register an end user whose requests are never stored as training examples ([End users and storage](#end-users-and-storage)) |
-| DELETE | `/v1/ratchet/no-train` | both | Remove a no-train registration (API key, or admin key) |
-| DELETE | `/v1/ratchet/examples` | both | Erase the stored examples of one of the caller's end users ([Erasure and export](#erasure-and-export)) |
-| POST | `/v1/ratchet/feedback` | both | A verdict on a served answer, optionally with a correction stored as a human label ([Feedback](#feedback)) |
+| POST | `/openai/deployments/{deployment}/chat/completions` | both | [api](#access-levels) | Azure OpenAI's URL for the same cascade, the deployment naming the task ([Azure-style route](#azure-style-route)) |
+| POST | `/v1/completions` | both | [api](#access-levels) | The legacy completions API through the same cascade, one request per prompt ([Completions](#post-v1completions)) |
+| POST | `/v1/responses` | both | [api](#access-levels) | The stateless subset of the Responses API through the same cascade ([Responses](#post-v1responses)) |
+| POST | `/v1/embeddings` | both | [api](#access-levels) | Embeddings, passed through to `RATCHET_EMBEDDINGS_MODEL`; no cascade, nothing stored ([Embeddings](#post-v1embeddings)) |
+| POST | `/v1/moderations` | both | [api](#access-levels) | Not served: 404 `unsupported_endpoint` ([Unsupported endpoints](#unsupported-endpoints)) |
+| GET | `/v1/responses/{response_id}` | both | [api](#access-levels) | Retrieve a stored response (or list its input items): not served (no response state), 404 `unsupported_endpoint` |
+| POST | `/v1/responses/{response_id}` | both | [api](#access-levels) | Cancel a stored response: not served, 404 `unsupported_endpoint` |
+| DELETE | `/v1/responses/{response_id}` | both | [api](#access-levels) | Delete a stored response: not served, 404 `unsupported_endpoint` |
+| POST | `/v1/ratchet/no-train` | both | [api](#access-levels) | Register an end user whose requests are never stored as training examples ([End users and storage](#end-users-and-storage)) |
+| DELETE | `/v1/ratchet/no-train` | both | [api](#access-levels) | Remove a no-train registration (API key, or admin key) |
+| DELETE | `/v1/ratchet/examples` | both | [api](#access-levels) | Erase the stored examples of one of the caller's end users ([Erasure and export](#erasure-and-export)) |
+| POST | `/v1/ratchet/feedback` | both | [api](#access-levels) | A verdict on a served answer, optionally with a correction stored as a human label ([Feedback](#feedback)) |
 | GET | `/v1/ratchet/requests/{request_id}` | both | [api](#access-levels) | One request this API key sent, by its id: metadata and failures, never text ([Request ids](#request-ids)) |
 | GET | `/ratchet/stats` | both | [dashboard](#access-levels) | Everything the dashboard shows |
 | GET | `/ratchet/requests/{request_id}` | both | [dashboard](#access-levels) | Any request by its id: metadata and failures, never text ([Request ids](#request-ids)) |
 | GET | `/metrics` | both | [metrics](#access-levels) | Prometheus metrics, text format 0.0.4 ([Metrics](#get-metrics)) |
 | GET | `/ratchet/bom` | both | [bom](#access-levels) | Bill of materials for the whole ledger (provenance) |
 | GET | `/ratchet/versions/{id}/bom` | both | [bom](#access-levels) | One adapter's bill of materials, written at training time, signed when a key is set |
-| GET | `/ratchet/versions/{id}/certificate` | both | What a version's golden evals certify: the signed and the latest certificate, frontier and per-task bounds, the gate's evidence and the assumptions ([Certificates](#get-ratchetversionsidcertificate)) |
-| POST | `/ratchet/versions/{id}/proof` | both | Whether an example is in a version's committed training (or golden) set, with a membership or non-membership proof against the root its signed BOM carries (admin key; [Committed training sets](#committed-training-sets)) |
-| GET | `/ratchet/versions/{id}/heldout` | both | The held-out certificate: every golden example's proof of absence from the version's training set (admin key) |
+| GET | `/ratchet/versions/{id}/certificate` | both | [dashboard](#access-levels) | What a version's golden evals certify: the signed and the latest certificate, frontier and per-task bounds, the gate's evidence and the assumptions ([Certificates](#get-ratchetversionsidcertificate)) |
+| POST | `/ratchet/versions/{id}/proof` | both | [admin](#access-levels) | Whether an example is in a version's committed training (or golden) set, with a membership or non-membership proof against the root its signed BOM carries (admin key; [Committed training sets](#committed-training-sets)) |
+| GET | `/ratchet/versions/{id}/heldout` | both | [admin](#access-levels) | The held-out certificate: every golden example's proof of absence from the version's training set (admin key) |
+| GET | `/ratchet/drift` | both | [dashboard](#access-levels) | The label-free drift monitor: each (version, task) stream's test martingale on the student's confidence, its alarm and the false-alarm bounds ([Drift](#get-ratchetdrift)) |
+| GET | `/ratchet/teacher` | both | [dashboard](#access-levels) | The teacher watch: the check epoch, the teacher's self-agreement on first re-tests, the freeze rule's e-value, the agreement ceiling and the contested labels ([Teacher watch](#teacher-watch)) |
+| POST | `/ratchet/teacher/ack` | both | [admin](#access-levels) | Acknowledge the teacher watch: a new check epoch, Night School unfrozen (admin key; open in mock mode without admin keys) |
 | GET | `/ratchet/bom/public-key` | both | [public](#access-levels) | Ed25519 public key that verifies adapter BOMs |
 | POST | `/ratchet/redact` | both | [dashboard](#access-levels) | Show what the PII redactor would store for a text (stores nothing) |
+| GET | `/ratchet/kpis` | both | [dashboard](#access-levels) | PRD §8.1's success metrics and NFR-1's latency target, computed from the ledger ([Success metrics](#get-ratchetkpisdaysn)) |
 | GET | `/ratchet/cost` | both | [dashboard](#access-levels) | The cost report: savings per token and by GPU-hours paid, break-even, the hosted-fallback crossover and a recommendation ([Cost](#cost)) |
-| GET | `/ratchet/replay` | both | Replay one version's logged traffic at another threshold or audit rate: coverage, precision, cost, and the calibrated baseline ([Ledger replay](#ledger-replay)) |
-| GET | `/ratchet/replay/frontier` | both | One version's cost-precision frontier over thresholds 0.30 to 1.00, an advisory suggested threshold and the money the current one leaves on the table |
+| GET | `/ratchet/replay` | both | [dashboard](#access-levels) | Replay one version's logged traffic at another threshold or audit rate: coverage, precision, cost, and the calibrated baseline ([Ledger replay](#ledger-replay)) |
+| GET | `/ratchet/replay/frontier` | both | [dashboard](#access-levels) | One version's cost-precision frontier over thresholds 0.30 to 1.00, an advisory suggested threshold and the money the current one leaves on the table |
 | POST | `/ratchet/cost/endpoint` | both | [admin](#access-levels) | Record the student endpoint going up or down (admin key) |
-| GET | `/ratchet/receipts` | both | The sealed savings receipts a caller may read, by day ([Savings receipts](#savings-receipts)) |
-| GET | `/ratchet/receipts/{period}` | both | One day's signed savings receipt: the gateway's, or a client's (`?client=`; an API key gets its own) |
-| GET | `/ratchet/receipts/{period}/proof/{request_id}` | both | That a request (`X-Ratchet-Request-Id`) is in its day's receipt: its leaf and RFC 9162 audit path |
-| GET | `/ratchet/receipts/{period}/leaves` | both | A receipt's leaves as JSON lines, to recompute it offline |
+| GET | `/ratchet/receipts` | both | [api](#access-levels) | The sealed savings receipts a caller may read, by day ([Savings receipts](#savings-receipts)) |
+| GET | `/ratchet/receipts/{period}` | both | [api](#access-levels) | One day's signed savings receipt: the gateway's, or a client's (`?client=`; an API key gets its own) |
+| GET | `/ratchet/receipts/{period}/proof/{request_id}` | both | [api](#access-levels) | That a request (`X-Ratchet-Request-Id`) is in its day's receipt: its leaf and RFC 9162 audit path |
+| GET | `/ratchet/receipts/{period}/leaves` | both | [api](#access-levels) | A receipt's leaves as JSON lines, to recompute it offline |
 | GET | `/ratchet/tasks` | both | [dashboard](#access-levels) | Every registered task with its spec, source, spec hash and traffic ([Tasks](#tasks)) |
 | GET | `/ratchet/tasks/{name}` | both | [dashboard](#access-levels) | One registered task |
 | POST | `/ratchet/tasks/validate` | both | [admin](#access-levels) | Check a task spec or a tasks file without changing anything (admin key) |
 | PUT | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Create or replace an API task (admin key) |
 | DELETE | `/ratchet/tasks/{name}` | both | [admin](#access-levels) | Remove an API task; its stored examples stay (admin key) |
-| POST | `/ratchet/admin/privacy/erase` | both | Erase stored examples by client, end user, hash or text; a dry run by default (admin key; [Erasure and export](#erasure-and-export)) |
-| GET | `/ratchet/admin/export/{kind}` | both | One table (`examples`, `requests`, `versions`, `events`, `erasures`) as NDJSON (admin key) |
+| POST | `/ratchet/admin/privacy/erase` | both | [admin](#access-levels) | Erase stored examples by client, end user, hash or text; a dry run by default (admin key; [Erasure and export](#erasure-and-export)) |
+| GET | `/ratchet/admin/export/{kind}` | both | [admin](#access-levels) | One table (`examples`, `requests`, `versions`, `events`, `erasures`) as NDJSON (admin key) |
 | GET | `/ratchet/admin/versions` | both | [admin](#access-levels) | Every version with its golden eval and its current stage's evidence, and the runtime switches ([Admin](#admin)) |
 | GET | `/ratchet/admin/flags` | both | [admin](#access-levels) | The runtime switches and task pins, with who set each one last |
 | GET | `/ratchet/admin/audit-log?limit=50` | both | [admin](#access-levels) | The newest admin actions: who, what, why, state before and after |
@@ -70,30 +83,47 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | POST | `/ratchet/demo/day` | mock only | [mock](#access-levels) | Simulate one day of traffic and one night of training |
 | POST | `/ratchet/demo/break-next` | mock only | [mock](#access-levels) | Make the next trained student deploy corrupted |
 | POST | `/ratchet/demo/student-outage` | mock only | [mock](#access-levels) | Take the student endpoint down for a while, to show the circuit breaker |
-| GET | `/ratchet/demo/sample-example` | mock only | A committed example's prompt, as a body for the proof endpoint |
+| GET | `/ratchet/demo/sample-example` | mock only | [mock](#access-levels) | A committed example's prompt, as a body for the proof endpoint |
+| POST | `/ratchet/demo/teacher-drift` | mock only | [mock](#access-levels) | Make the mock teacher change labels at random, to show the teacher watch |
 | POST | `/ratchet/demo/reset` | mock only | [mock](#access-levels) | Start over |
 | GET | `/scout/examples` | both | [public](#access-levels) | Example questions and whether free text is allowed |
 | GET | `/scout/status` | both | [public](#access-levels) | Budget guard state, the judges' reserve, search and Tavily credits, and which model answers student calls (`fallback_student`, `student_serving`) |
-| POST | `/scout/judge` | both | Open a judge session: the access code in the body, a signed cookie back |
-| DELETE | `/scout/judge` | both | End a judge session (clears the cookie) |
+| POST | `/scout/judge` | both | [public](#access-levels) | Open a judge session: the access code in the body, a signed cookie back |
+| DELETE | `/scout/judge` | both | [public](#access-levels) | End a judge session (clears the cookie) |
 | GET | `/scout/stream?q=` | both | [public](#access-levels) | Run Scout, stream events (Server-Sent Events) |
 | POST | `/scout/run` | both | [public](#access-levels) | Run Scout, return all events at the end |
 | GET | `/docs`, `/redoc`, `/openapi.json` | both | [public](#access-levels) | FastAPI's interactive docs and schema; they exist only with `RATCHET_OPENAPI=1` (the default in mock mode, not in live mode) |
 
 The three pages are static HTML files with no build step. If a page file is missing, the route returns a small placeholder page with links to the other two.
 
+## OpenAI endpoints
+
+What an OpenAI client pointed at `http://<gateway>/v1` can call ([ADR 0050](adr/0050-adjacent-openai-endpoints.md), FR-1.51). Every route below shares authentication, the body limit, request validation with OpenAI's error envelope, the daily quota and the request log. Error messages for an unsupported endpoint link here.
+
+| Endpoint | Status | What happens |
+|---|---|---|
+| `POST /v1/chat/completions` | Supported | The cascade: student first, teacher when it is unsure, the teacher's answer stored as training data |
+| `POST /openai/deployments/{deployment}/chat/completions` | Supported | The same, for Azure OpenAI clients ([Azure-style route](#azure-style-route)) |
+| `GET /v1/models`, `GET /v1/models/{id}` | Supported | The model ids a client may send, the embeddings model among them |
+| `POST /v1/completions` | Supported, without `suffix`, `echo`, `best_of` > `n` or token-array prompts | Each prompt is one user message through the chat path, so it is answered, logged and stored exactly as that chat request ([Completions](#post-v1completions)) |
+| `POST /v1/responses` | Partial: stateless, not streamed, function tools only | `instructions` and `input` become chat messages, then the chat path ([Responses](#post-v1responses)) |
+| `POST /v1/embeddings` | Supported, as a pass-through | One call to `RATCHET_EMBEDDINGS_MODEL`, whatever `model` says; logged and counted, nothing stored ([Embeddings](#post-v1embeddings)) |
+| `POST /v1/moderations` | Not supported | 404 `unsupported_endpoint`: the gateway has no moderation model |
+| `GET` / `DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items` | Not supported | 404 `unsupported_endpoint`: Ratchet keeps no response state |
+| Anything else under `/v1/` (images, audio, files, uploads, batches, fine-tuning, vector stores, assistants, threads, realtime, ...) | Not supported | 404 `unknown_url` |
+
 ## Authentication
 
-Off by default in mock mode, so the demo and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*`. Live mode refuses to start without them, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says something in front of the gateway (the demo VM's Caddy guard, a private network) checks callers:
+Off by default in mock mode, so the demo and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*` and `/openai/*`. Live mode refuses to start without them, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says something in front of the gateway (the demo VM's Caddy guard, a private network) checks callers:
 
 ```bash
 RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" uvicorn ratchet.gateway:app
 ```
 
-- Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`) or as `X-API-Key: <key>`.
+- Send the key as `Authorization: Bearer <key>` (what every OpenAI SDK sends as `api_key`), as `X-API-Key: <key>`, or as `api-key: <key>` (what Azure OpenAI SDKs send), checked in that order.
 - A missing or wrong key returns **401** `invalid or missing API key` (error code `invalid_api_key`) with `WWW-Authenticate: Bearer`. The key is checked before the body is read.
-- The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients`.
-- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N chat completions per UTC day. Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota. Concurrent requests can overshoot the cap by the number in flight. `RATCHET_KEY_LIMITS` gives a key its own quota, US dollar budgets, rates, task scope and storage switch ([Limits and headers](#limits-and-headers)).
+- The ledger records the key's **name** (`acme`) on every request it sends, never the key. `/ratchet/stats` reports requests, cost and savings per name under `clients` (chat-shaped requests only: embeddings calls count against the quota but not there).
+- `RATCHET_API_KEY_DAILY_REQUESTS=N` caps each key at N requests per UTC day: chat completions, responses, embeddings, and completions at one request per prompt (a batch the quota cannot finish is refused whole, before its first prompt runs; a concurrent request from the same key can still use up the quota before a later prompt, which then [stops the batch](#post-v1completions)). Responses carry `X-RateLimit-Limit-Requests`, `X-RateLimit-Remaining-Requests` and `X-RateLimit-Reset-Requests` (time to 00:00 UTC in OpenAI's duration format, rounded up to the second: `3h12m5s`). Past the cap the gateway returns **429** `insufficient_quota` (code `daily_quota_exceeded`) until 00:00 UTC, with `Retry-After` (seconds until then) and `X-Should-Retry: false`, so OpenAI SDKs send it once and do not retry. Only answered requests count: a refused request (400, 413, 429) uses no quota, and a request that fails gives its room back. Requests in flight hold their room (in memory, in the same step as the check), so concurrent requests are admitted only while the answered ones plus the ones in flight fit: with 3 left, exactly 3 of 8 simultaneous requests run. `RATCHET_KEY_LIMITS` gives a key its own quota, US dollar budgets, rates, task scope and storage switch ([Limits and headers](#limits-and-headers)).
 - **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)); every route under `/ratchet/admin/`, its reads included ([Admin](#admin)); the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` ([Committed training sets](#committed-training-sets)), which would otherwise tell anyone whether a text they can guess was trained on; and they may register or remove a no-train end user for any client ([End users and storage](#end-users-and-storage)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - **Savings receipts** (`/ratchet/receipts*`, [Savings receipts](#savings-receipts)): with API keys on, a key reads only its own receipts and proofs; an admin key reads every receipt; any other caller is **401**. In mock mode without keys they are open; in live mode without any keys they are **403** (`receipts need RATCHET_API_KEYS or RATCHET_ADMIN_KEYS in live mode`), because their leaves list every request's time, task and cost.
 - **Dashboard keys** (`RATCHET_DASHBOARD_KEYS`, same syntax, never an API or admin key) read the dashboard API and write nothing. Who needs which key is the route's access level ([Access levels](#access-levels)): in live mode the dashboard API needs an admin or dashboard key by default.
@@ -119,11 +149,11 @@ On a public dashboard a key is optional: an admin or dashboard key gets the full
 
 **Security headers.** Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and the `Content-Security-Policy` in `RATCHET_CSP` when it is set (none by default, so the pages never break; [CONFIGURATION.md](CONFIGURATION.md#privacy-and-security) has a recommended value).
 
-The demo VM's Caddy config also has an opt-in edge guard for `/v1/*`, `/ratchet/demo/*` and `/ratchet/admin/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
+The demo VM's Caddy config also has an opt-in edge guard for `/v1/*`, `/openai/*` (the [Azure-style route](#azure-style-route) runs the same paid cascade), `/ratchet/demo/*` and `/ratchet/admin/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
 
 ### Limits and headers
 
-What a key, a client address and the whole gateway may spend and send on `POST /v1/chat/completions` ([ADR 0063](adr/0063-spend-and-rate-limits.md); settings in [CONFIGURATION.md](CONFIGURATION.md#spend-and-rate-limits)). Every limit is off by default except the in-flight cap (32) and, in live mode without API keys, the per-IP rate (120 a minute). Limits are per process and keyed by key name, never the key.
+What a key, a client address and the whole gateway may spend and send on `POST /v1/chat/completions` and the other OpenAI endpoints that call a model (the [Azure-style route](#azure-style-route), `/v1/completions`, whose batch needs a request of the quota per prompt, `/v1/responses` and `/v1/embeddings`) ([ADR 0063](adr/0063-spend-and-rate-limits.md); settings in [CONFIGURATION.md](CONFIGURATION.md#spend-and-rate-limits)). Every limit is off by default except the in-flight cap (32) and, in live mode without API keys, the per-IP rate (120 a minute). Limits are per process and keyed by key name, never the key.
 
 ```bash
 RATCHET_API_KEY_DAILY_REQUESTS=10000 RATCHET_API_KEY_RPM=120 \
@@ -160,7 +190,7 @@ The first time a key or the gateway reaches each `RATCHET_BUDGET_ALERT_PCT` shar
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `messages` | array of message objects | yes | 1 to `RATCHET_MAX_MESSAGES` (256) messages ([Messages](#messages)) |
-| `model` | string | no | Ignored; Ratchet chooses the model. Use `"ratchet"` |
+| `model` | string | no | Names the task, never an upstream model: `"ratchet"` (the task comes from the header, metadata or the other rules), `"ratchet/<task>"` (or `"ratchet:<task>"`) for that task, or a model alias (`RATCHET_MODEL_ALIASES`). Any other id is served as `ratchet` with `X-Ratchet-Model-Alias` (`RATCHET_MODEL_POLICY=lenient`, the default) or is a 404 `model_not_found` (`strict`). See [Task resolution](#task-resolution) |
 | `stream` | bool | no | `true` returns Server-Sent Events in the OpenAI chunk format ([Streaming](#streaming)) |
 | `stream_options` | object | no | With `stream: true`, `{"include_usage": true}` ends the stream with a chunk that carries `usage` ([Streaming](#streaming)). Other keys are ignored, and so is the object without a stream. Never forwarded |
 | `metadata` | object | no | Up to 16 string values. `metadata.ratchet_task` is the task name, used if the header is absent. `metadata.ratchet_store` `"false"` or `"0"` keeps the request out of the training set ([End users and storage](#end-users-and-storage)). Echoed in the response, never stored |
@@ -177,9 +207,28 @@ The first time a key or the gateway reaches each `RATCHET_BUDGET_ALERT_PCT` shar
 | Header | Meaning |
 |---|---|
 | `X-Ratchet-Store` | `none`, `0` or `false` (any case) keeps the request's teacher answers out of the training set, like `store: false`; `1` or `true` is the default spelled out, and so is an empty value (a header left unset). Any other value is a 400 `invalid_value` |
-| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. A name that is not registered ([Tasks](#tasks)) follows `RATCHET_UNKNOWN_TASKS`: by default it creates a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); with `teacher` the teacher answers and nothing is stored; with `reject` it is a 400 `unknown_task`. A task with `clients` answers 403 `task_not_allowed` to any other key. A header that is not a valid name means `default` under `distill`, and is a 400 `unknown_task` under `teacher` and `reject`. Missing means `metadata.ratchet_task`, else `default`; with a `response_format` json_schema and no registered name, the schema's auto task ([Structured outputs](#structured-outputs)). No header, metadata key or other field can pin a task: only an operator's spec does |
+| `X-Ratchet-Task` | Task name. Takes precedence over `metadata.ratchet_task`: when both are set, the header wins. A name that is not registered ([Tasks](#tasks)) follows `RATCHET_UNKNOWN_TASKS`: by default it creates a task without fields on the fly, which compares whole answers (see [CONFIGURATION.md](CONFIGURATION.md#tasks)); with `teacher` the teacher answers and nothing is stored; with `reject` it is a 400 `unknown_task`. A task with `clients` answers 403 `task_not_allowed` to any other key. A header that is not a valid name means `default` under `distill`, and is a 400 `unknown_task` under `teacher` and `reject`. Missing means `metadata.ratchet_task`, else the `model` field and the rules below ([Task resolution](#task-resolution)), else `default`. No header, metadata key or other field can pin a task: only an operator's spec does |
 | `Idempotency-Key` | Optional; 1 to 255 printable ASCII characters (else a 400 `invalid_idempotency_key`). Makes the request idempotent for this API key: a retry with the same key and body gets the first answer again instead of a second cascade ([Idempotency and retries](#idempotency-and-retries)). Never stored or logged |
 | `x-stainless-retry-count` | Sent by OpenAI's SDKs (and other Stainless-built ones) on every request: 0 for the first attempt, then 1, 2. Above 0, a teacher answer the request stores never adds to an existing example's `seen`, and `requests.retry_count` records it. A value that is not a plain count is ignored |
+
+| `Authorization`, `X-API-Key`, `api-key` | The API key, when keys are on ([Authentication](#authentication)) |
+
+#### Task resolution
+
+The task is the first of these that names one ([ADR 0048](adr/0048-model-field-routing.md)); the response says which in `ratchet.task_source`:
+
+| # | Rule | `task_source` |
+|---|---|---|
+| 1 | `X-Ratchet-Task` | `header` |
+| 2 | `metadata.ratchet_task` | `metadata` |
+| 3 | `model` of `ratchet/<task>` or `ratchet:<task>`; on the [Azure-style route](#azure-style-route), the deployment in the URL instead (the body's `model` is not read there) | `model`, `deployment` |
+| 4 | A model alias (`RATCHET_MODEL_ALIASES`: `gpt-4o-mini=ticket-triage`), for the `model` or a deployment | `alias` |
+| 5 | The first registered task whose `match` rules all hold ([CONFIGURATION.md](CONFIGURATION.md#task-options): `system_prefix`, `schema_name`, `tools`), in registry order, among the tasks the key may use | `match` |
+| 6 | A `response_format` json_schema: its auto task ([Structured outputs](#structured-outputs)), made on first use (at most `RATCHET_MAX_AUTO_TASKS`, counted together with rule 7's; past it, the unknown-task path) | `response_format` |
+| 7 | With `RATCHET_AUTO_TASK=system_prompt`: `auto-sys-` and 10 hex digits of the SHA-256 of the first system message, an auto task made on its first admitted request (at most `RATCHET_MAX_AUTO_TASKS`, counted with rule 6's, and never into the registry's last 50 slots; then `default`) | `auto_system` |
+| 8 | `default` | `default` |
+
+A name from rules 1 to 4 that is not registered follows `RATCHET_UNKNOWN_TASKS` (the 400's `param` is `model` when the name came from the model field or an alias). The `model` field never selects an upstream model: the teacher always gets `RATCHET_TEACHER_MODEL` (or the fallback teacher's model) and the student its adapter name, and the response's `model` is the model that served. A client that can set only a model name (LangChain's `ChatOpenAI(model=...)`, a no-code tool) uses `model="ratchet/ticket-triage"` or an alias.
 
 #### Idempotency and retries
 
@@ -194,7 +243,7 @@ A client that retries (after a timeout, a dropped connection, a 5xx) can make th
 | The same key and the same request after the first finished | The same answer again, at once, with `Idempotent-Replayed: true`: the same body (the same completion `id`, `created`, `usage` and `ratchet` block, whose `request_id` names the request that ran), or for a stream the same events. No cascade, no ledger row, no daily quota used, and no `X-RateLimit-*` headers; `x-request-id` is the replay's own id |
 | The same key with a different request | **400** `idempotency_key_reused` with `X-Should-Retry: false` (not a 409, which SDKs retry): use a new key for a new request |
 
-"The same request" is the JSON body with keys sorted (so a client that serialises its retry again in another key order still matches) plus the `X-Ratchet-Task` header; headers that differ between attempts do not count. The checks run after the API key (401) and the body's JSON (400) and before validation and the quota, so a replay of an answered request is served even after the key's daily quota is used up. `RATCHET_IDEMPOTENCY_CACHE=0` turns the header off. The cache is per gateway process: with several workers, a retry that reaches another process runs again.
+"The same request" is the JSON body with keys sorted (so a client that serialises its retry again in another key order still matches) plus the `X-Ratchet-Task` header (and on the [Azure-style route](#azure-style-route) the deployment); headers that differ between attempts do not count. The checks run after the API key (401) and the body's JSON (400) and before validation and the quota, so a replay of an answered request is served even after the key's daily quota is used up. `RATCHET_IDEMPOTENCY_CACHE=0` turns the header off. The cache is per gateway process: with several workers, a retry that reaches another process runs again.
 
 ```bash
 curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' -H 'Idempotency-Key: order-7-triage' \
@@ -239,7 +288,8 @@ Each model call gets the client's parameters as its role allows ([ADR 0017](adr/
 | `top_logprobs` | The client's | The client's | No |
 | `stop`, `response_format` | The client's | The client's | The client's |
 | `tools`, `tool_choice`, `parallel_tool_calls` | The client's (only a tool request has them, and the teacher answers it alone: [Tools and function calling](#tools-and-function-calling)) | No | No audit or arbitration runs on a tool request |
-| `seed`, `logit_bias` | The client's | The client's | No |
+| `seed` | The client's | The client's | No |
+| `logit_bias` | The client's | No (it would steer the answer the audits compare; `RATCHET_STUDENT_PARAMS` can name it) | No |
 | `top_p`, `presence_penalty`, `frequency_penalty` | The client's | No | No |
 | `reasoning_effort` | The client's | No | The client's |
 | `model` | `RATCHET_TEACHER_MODEL`, always (invariant 1) | The version's adapter | `RATCHET_TEACHER_MODEL` |
@@ -374,7 +424,9 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
     "request_id": "req_3f1c0a9b8e7d6c5b4a3f2e1d0c9b8a79",
     "row_id": 4512,
     "task": "ticket-triage",
-    "schema_valid": null
+    "task_source": "header",
+    "schema_valid": null,
+    "requested_model": "ratchet"
   }
 }
 ```
@@ -395,6 +447,9 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `request_id` | The request's id, `req_` and 32 hex digits; the response's `id` is `chatcmpl-` and the same digits. It is logged with the request's row (never its text) and names the request in [`POST /v1/ratchet/feedback`](#feedback) |
 | `row_id` | The request's row in the ledger (also the `X-Ratchet-Request-Id` header): what its day's savings receipt proves it by (`GET /ratchet/receipts/{day}/proof/{request_id}`, [Savings receipts](#savings-receipts)). Row ids are global and sequential, unlike `request_id`, which is random: feedback names a request by `request_id`, a receipt proof by `row_id` |
 | `request_id` | The request's id, as in `x-request-id`; `id` is `chatcmpl-` and the same 32 hex digits ([Request ids](#request-ids)) |
+| `task` | The task the request was answered as ([Task resolution](#task-resolution)); also the `X-Ratchet-Task` response header |
+| `task_source` | The rule that chose it: `header`, `metadata`, `deployment`, `model`, `alias`, `match`, `auto_system` or `default` |
+| `requested_model` | The request's `model` as sent (`null` when it sent none); `model` above is the model that served |
 | `usage_breakdown` | Every model call of the request, as `{"in": prompt tokens, "out": completion tokens}` as that model reported them, or `null` for a call that was not made or failed: `student_samples` (one call for all n samples: the prompt once, every sample's output), `served` (the served answer: one of the student's samples, or the teacher's own call; every choice, for `n` > 1), `audit`, `shadow` (the candidate's samples), `arbitration` and `repair` (the teacher answers a schema repair left unused, added up: the first answer, which broke the `response_format`, or a repair answer that was cut off or empty; the answer used is the `served`, `audit` or `arbitration` one) ([Usage](#usage)) |
 | `task` | The task the request was resolved to: the registered task it named, an auto task from its `response_format` schema, an unregistered name, or `default` ([Structured outputs](#structured-outputs)) |
 | `schema_valid` | `true` when every choice meets the request's `response_format`, `false` when one does not (served anyway, never stored), `null` without a `response_format` |
@@ -413,7 +468,7 @@ With `RATCHET_SIDECAR_WORKERS` above 0 (live mode's default, 4), the response do
 
 `finish_reason` is the served answer's: `stop`, `length` (cut off by `max_tokens` or a cap, or over the client's `max_tokens` with the reasoning headroom), `content_filter`, or `tool_calls` (`function_call` for a legacy request) when the message has tool calls ([Tools and function calling](#tools-and-function-calling)); any other value an upstream model reports is returned as `stop`, and `tool_calls` is never sent without `message.tool_calls`. A student answer is always one that ended by itself.
 
-Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Request-Id` (the ledger row, as `ratchet.row_id`), `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set, `Idempotent-Replayed: true` on an answer sent again for an `Idempotency-Key` ([Idempotency and retries](#idempotency-and-retries)), and on every response `x-request-id` and `openai-processing-ms` ([Request ids](#request-ids)).
+Response headers: `X-Ratchet-Served-By: student|teacher`, `X-Ratchet-Request-Id` (the ledger row, as `ratchet.row_id`), `X-Ratchet-Task: <task>`, `X-Ratchet-Degraded: teacher_unavailable` on a degraded answer (and only then; streamed responses too), `X-Ratchet-Model-Alias: <model>` when `RATCHET_MODEL_POLICY=lenient` served a `model` Ratchet does not know as `ratchet` (UTF-8 percent-encoded except for visible ASCII, so spaces and `%` are encoded too and one percent-decoding gives the id back; at most 256 characters), plus `X-RateLimit-Limit-Requests` and `X-RateLimit-Remaining-Requests` when a daily quota is set, `Idempotent-Replayed: true` on an answer sent again for an `Idempotency-Key` ([Idempotency and retries](#idempotency-and-retries)), and on every response `x-request-id` and `openai-processing-ms` ([Request ids](#request-ids)).
 
 #### Request ids
 
@@ -529,10 +584,14 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 |---|---|---|---|---|
 | 400 | `invalid_request_error` | `invalid_json`, `invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `context_length_exceeded`, `unsupported_content_type` | The request breaks a rule in [Request validation](#request-validation); `param` names the field | No |
 | 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
+| 400 | `invalid_request_error` | `reserved_task` | The request names the task `embeddings` (header, `metadata.ratchet_task`, `model` or Azure deployment), the name `/v1/embeddings` logs its requests under ([Embeddings](#post-v1embeddings)); `param` says where it came from. Checked before the quota | No |
 | 400 | `invalid_request_error` | `unknown_task` | `RATCHET_UNKNOWN_TASKS=reject` and the task is not registered (`unknown task "x"; registered: default, page-read, ...`, at most 20 names, only tasks this key may use); `param` is `metadata.ratchet_task` when the name came from there, and `response_format` for a json_schema request that named no task and whose schema gave no auto task ([Structured outputs](#structured-outputs)) | No |
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
 | 403 | `permission_error` | `task_not_allowed` | The task's `clients` do not name this key, or the request has no key, or the key's `tasks` scope does not list the task (`task not allowed for this key`). Checked before the quota, so it uses none | No |
 | 404 | `not_found_error` | `unknown_url` | No such route: `Unknown request URL: POST /v1/foo.` | No |
+| 404 | `not_found_error` | `unsupported_endpoint` | An OpenAI endpoint this gateway knows but does not serve: `POST /v1/moderations`, a stored response (`/v1/responses/{id}`), or `/v1/embeddings` under `RATCHET_EMBEDDINGS_BASE=off`. The message says why and links [OpenAI endpoints](#openai-endpoints). Checked after the key | No |
+| 400 | `invalid_request_error` | `unsupported_parameter` | A field the gateway understands but cannot honour, so serving without it would answer another question: `suffix`, `echo` or `best_of` on `/v1/completions`; `previous_response_id`, `conversation`, `prompt`, `background`, `stream` or a built-in tool on `/v1/responses`. `param` names it | No |
+| 404 | `invalid_request_error` | `model_not_found` | `RATCHET_MODEL_POLICY=strict` and the `model` is not `ratchet`, `ratchet/<task>` or an alias (`The model 'gpt-4o' does not exist.`, `param` `model`); under either policy, `ratchet/` with a name that is not a task name; on the Azure-style route, a deployment that is not a task name (`param` null). Checked before the quota, so it uses none and nothing is logged | No |
 | 405 | `invalid_request_error` | `null` | A route called with the wrong method (`Allow` names the right one) | No |
 | 413 | `invalid_request_error` | `request_too_large` | The body is larger than `RATCHET_MAX_BODY_BYTES` | No |
 | 400 | `invalid_request_error` | `invalid_idempotency_key` | The `Idempotency-Key` header is empty, longer than 255 characters or not printable ASCII (`Invalid Idempotency-Key header: ...`); `X-Should-Retry: false` ([Idempotency and retries](#idempotency-and-retries)) | No |
@@ -551,7 +610,9 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | 502 | `api_error` | `tool_calls_unsupported` | Live mode: the teacher answered a request that offers no tools with a tool call (`The teacher answered with a tool call to a request that offers no tools.`). A request with tools gets the calls back ([Tools and function calling](#tools-and-function-calling)). Nothing is stored. `X-Should-Retry: false` | No |
 | 503 | `api_error` | `overloaded` | `RATCHET_MAX_INFLIGHT` chat requests are in flight (`the gateway has 32 chat requests in flight, its limit; retry in a second`): answered at once instead of queueing; `Retry-After: 1` | Yes, after `Retry-After` |
 | 503 | `api_error` | `teacher_circuit_open` | Live mode: the teacher failed `RATCHET_TEACHER_BREAKER_FAILURES` (5) calls in a row, so its circuit breaker is open and the gateway does not call it until the next probe (`teacher circuit open: recent teacher calls failed, so the gateway is not calling it; retry after 18 s`). Answered at once, for any request that needs the teacher's answer (an escalation, a cold start, a pinned task, a teacher-only request) that no fallback teacher or degraded answer covers. `Retry-After` is the time until the breaker lets a probe through, clamped to 1 to 60 s ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)) | Yes, after `Retry-After` |
+| 502, 504 | `api_error` | `upstream_unavailable`, `upstream_timeout` (and `upstream_auth_error`, `upstream_not_found`, `upstream_rate_limited` as above) | `/v1/embeddings` in live mode: the embeddings model failed after the provider's retries. Mapped by cause as a teacher failure is, with these codes, since no teacher was involved; an upstream 400 (an input over the model's length) is a 400 with its message and code | As for the teacher's |
 | 504 | `api_error` | `teacher_timeout` | Live mode: the teacher did not answer in time (`RATCHET_TEACHER_TIMEOUT_S`, retried once within `RATCHET_TEACHER_DEADLINE_S`), or Token Factory answered 504 (`teacher timeout: upstream 504 upstream_timeout`). Token Factory's `Retry-After`, if it sent one, is passed on (1 to 60 s) | Yes, after `Retry-After` when present |
+| 504 | `api_error` | `batch_deadline_exceeded` | `/v1/completions`: a batch of prompts ran for `RATCHET_TEACHER_DEADLINE_S` before its next prompt, so it stopped. The message names the prompts already answered, logged and billed (not returned); `X-Should-Retry: false`. Any other error of a prompt after the first also carries `X-Should-Retry: false` and that message ([Completions](#post-v1completions)) | No |
 
 OpenAI's Python and Node SDKs retry connection errors, 408, 409, 429 and 5xx responses twice by default, with backoff (or `Retry-After`, up to 60 s), unless the response carries `x-should-retry`. Set `max_retries=0` on the client to turn that off. Each retry of a request the student cannot answer runs the student's samples again, so the gateway marks the errors no retry can fix.
 
@@ -592,6 +653,14 @@ resp = client.chat.completions.create(
 )
 print(resp.choices[0].message.content)
 print(resp.model_extra["ratchet"])  # served_by, confidence, cost_usd, ...
+```
+
+A client that can set only the model name (LangChain, a no-code tool) names the task there:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(base_url="http://localhost:8000/v1", api_key="unused", model="ratchet/ticket-triage")
 ```
 
 OpenAI Node SDK:
@@ -826,11 +895,138 @@ Mock mode checks the ledger only. The probes run on threads of their own (two fo
 
 ## GET `/v1/models`
 
-Needs a key when `RATCHET_API_KEYS` is set.
+The model ids a client can send ([Task resolution](#task-resolution)), each a `model` object the OpenAI SDK's `Model` accepts. Needs a key when `RATCHET_API_KEYS` is set.
+
+- `ratchet` first (its task comes from each request);
+- `ratchet/<task>` for every registered task the key may use (a task whose `clients` do not name it is left out; with keys on, an auto task only to a key whose own requests used it in the last 30 days, since its name is a digest of a client's system prompt), in registry order;
+- unless `RATCHET_UNKNOWN_TASKS=reject`, `ratchet/<name>` for every unregistered name the key's own requests named in the last 30 days (with keys off, any request's), at most 500, the most recently used first;
+- every model alias whose task the key may use, with `alias_of`;
+- the embeddings model (`RATCHET_EMBEDDINGS_MODEL`) unless `RATCHET_EMBEDDINGS_BASE=off`, with `ratchet.endpoint: "embeddings"` and no task: the id `RATCHET_MODEL_POLICY=strict` accepts on `/v1/embeddings`. `ratchet/embeddings` is never listed for it: `embeddings` is the task name embeddings requests are logged under, not a chat task.
 
 ```json
-{"object": "list", "data": [{"id": "ratchet", "object": "model", "owned_by": "you"}]}
+{"object": "list", "data": [
+  {"id": "ratchet", "object": "model", "created": 1792400000, "owned_by": "ratchet",
+   "ratchet": {"task": null, "pinned": false, "format": null, "compare_keys": [], "live_version": 5}},
+  {"id": "ratchet/ticket-triage", "object": "model", "created": 1792310000, "owned_by": "ratchet",
+   "ratchet": {"task": "ticket-triage", "pinned": false, "format": "json", "compare_keys": ["category", "priority"], "live_version": 5}},
+  {"id": "gpt-4o-mini", "object": "model", "created": 1792310000, "owned_by": "ratchet",
+   "ratchet": {"task": "ticket-triage", "pinned": false, "format": "json", "compare_keys": ["category", "priority"], "live_version": 5,
+               "alias_of": "ratchet/ticket-triage"}}
+]}
 ```
+
+`created` is when a request (this key's, with keys on) first named the task, else when the gateway process started. In `ratchet`: the task, whether it is pinned, its answer format, the answer fields that must agree, and the live version that serves it (`null` when the student never does: no live version, a pinned task, or an unregistered task under `RATCHET_UNKNOWN_TASKS=teacher`).
+
+## GET `/v1/models/{id}`
+
+One object of the list above (`client.models.retrieve("ratchet/ticket-triage")`; the SDK sends the slash as `%2F`, which is fine; `ratchet:<task>` finds `ratchet/<task>`). It also finds `ratchet/<name>` for an unregistered task name no request used yet, unless `RATCHET_UNKNOWN_TASKS=reject`, because a chat completion with that model would be served (under either `RATCHET_MODEL_POLICY`), so a client that checks its model first gets the request's answer; `created` is then the process start. Any other id is a 404 `model_not_found`: `{"error": {"message": "The model 'gpt-4o' does not exist.", "type": "invalid_request_error", "param": null, "code": "model_not_found"}}`. Needs a key when `RATCHET_API_KEYS` is set.
+
+## Azure-style route
+
+`POST /openai/deployments/{deployment}/chat/completions?api-version=...` runs the same handler as `/v1/chat/completions` (the same validation, checks, quota, envelope, streaming and `ratchet` block) for clients written against Azure OpenAI. The deployment names the task: a model alias's task, `ratchet` (the other rules decide), `ratchet:<task>`, or a task name, which follows `RATCHET_UNKNOWN_TASKS` when it is not registered; anything else is a 404 `model_not_found`. The body's `model` is not read (so `RATCHET_MODEL_POLICY=strict` does not refuse it), the header and `metadata.ratchet_task` still win, and `api-version` is accepted and ignored. The key may come in Azure's `api-key` header.
+
+```python
+from openai import AzureOpenAI
+
+client = AzureOpenAI(azure_endpoint="http://localhost:8000", api_key="unused", api_version="2024-10-21")
+resp = client.chat.completions.create(model="ticket-triage", messages=[{"role": "user", "content": "I was charged twice."}])
+```
+
+## POST `/v1/embeddings`
+
+A pass-through ([ADR 0050](adr/0050-adjacent-openai-endpoints.md)): one call to `RATCHET_EMBEDDINGS_MODEL` at `RATCHET_EMBEDDINGS_BASE` (by default the teacher's Token Factory endpoint, with `NEBIUS_API_KEY`; another base gets `RATCHET_EMBEDDINGS_KEY`, or no key when that is empty, never the Token Factory key). No student, no teacher, no confidence, no audit, and nothing of the request is stored: vectors are not distilled. Mock mode answers locally with deterministic unit vectors (256 values, seeded from SHA-256 of each input). `RATCHET_EMBEDDINGS_BASE=off` turns the route into a 404 `unsupported_endpoint`.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `input` | string, array of strings, array of token ids, or array of token-id arrays | yes | 1 to 2,048 items, none empty, all of one kind. Their text counts against `RATCHET_MAX_INPUT_CHARS` (a token as 4 characters) |
+| `model` | string | no | Never selects the upstream model: the configured one always answers. Under `RATCHET_MODEL_POLICY=lenient` any id is served (another id than `ratchet` or the configured one is echoed in `X-Ratchet-Model-Alias`); under `strict` only `ratchet` and the configured id, anything else a 404 `model_not_found`, because vectors from another model than an index was built with cannot be compared with it |
+| `encoding_format` | `float` or `base64` | no | What the client gets; the upstream is always asked for floats, and the gateway encodes base64 (little-endian float32, what the OpenAI SDKs ask for by default and decode) |
+| `dimensions` | integer, 1 to 8,192 | no | Sent upstream as is (the mock keeps the first that many values of the full vector and scales them back to length 1) |
+| `user` | string | no | Checked, never forwarded |
+| any other field | | no | Ignored, never forwarded |
+
+The response is OpenAI's (`openai.types.CreateEmbeddingResponse`) plus a `ratchet` block; `model` is the upstream's name for the model that served, and `usage` is the upstream's prompt tokens (about 4 characters a token when it reports none):
+
+```json
+{"object": "list", "model": "Qwen/Qwen3-Embedding-8B",
+ "data": [{"object": "embedding", "index": 0, "embedding": [0.0123, -0.0456, ...]}],
+ "usage": {"prompt_tokens": 5, "total_tokens": 5},
+ "ratchet": {"served_by": "upstream", "route": "passthrough", "task": "embeddings", "cost_usd": 5e-08,
+             "all_teacher_cost_usd": 5e-08, "latency_ms": 41.2, "requested_model": "text-embedding-3-small"}}
+```
+
+Each answered call is one request row (task `embeddings`, served_by `upstream`, route `passthrough`, `stored` 0) priced at the configured model's input price (`EMBEDDING_PRICES` in `ratchet/config.py`, unverified until the day-1 checks pass; a model without a price there is priced as the teacher), so it counts against the key's quota and shows in the cost report and as the `embeddings` row of `/ratchet/stats` `tasks`, with its own cost as its all-teacher baseline. The headline figures (`days`, `totals`, `clients`) leave it out: they describe the distillation, which embeddings are not part of, so a client that embeds once per chat request does not halve its student share. Headers: `X-Ratchet-Served-By: upstream`, `X-Ratchet-Task: embeddings`. The task name `embeddings` is reserved for these rows: a chat, completions or responses request that names it (`X-Ratchet-Task`, `metadata.ratchet_task`, `model: "ratchet/embeddings"`, an Azure deployment) is a 400 `reserved_task`, and no task spec or model alias may use it. A failed call logs nothing; its error is mapped by cause ([Errors](#errors): `upstream_*` codes). The shared mock demo returns at most 131,072 values (inputs x dimensions) per request, about 3 MB of JSON.
+
+```python
+vectors = client.embeddings.create(model="ratchet", input=["refund my order", "reset my password"])
+```
+
+## POST `/v1/completions`
+
+The legacy text API, for clients and tools that still call it. Each prompt becomes one user message, `[{"role": "user", "content": prompt}]`, and runs the chat path: the same validation, task resolution (`X-Ratchet-Task`, `metadata.ratchet_task`, `model: "ratchet/<task>"`, ...), cascade, quota, storage rules and `ratchet` block as a `/v1/chat/completions` request with that message, so a prompt is stored as exactly that chat request's example.
+
+| Field | Notes |
+|---|---|
+| `prompt` | A string, or up to 16 strings (each its own cascade request, logged and counted against the quota; a batch the quota cannot finish is refused before its first prompt runs). Token arrays are a 400 `unsupported_value`: the gateway works in text |
+| `suffix` | A 400 `unsupported_parameter` unless empty: a chat model cannot fill in text before a suffix |
+| `echo` | A 400 `unsupported_parameter` when `true` |
+| `best_of` | A 400 `unsupported_parameter` unless 1 or `n`: the gateway returns the choices it samples, it does not rank more |
+| `logprobs` | 0 to 5: each choice's token logprobs in the legacy shape (`tokens`, `token_logprobs`, `top_logprobs` as `{token: logprob}` per token, `text_offset` counted from the prompt's length), from the chat path's token logprobs with that many alternatives ([Choices and logprobs](#choices-and-logprobs)); `null` when they cannot be given |
+| `model`, `max_tokens`, `temperature`, `top_p`, `n`, `stream`, `stream_options`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `metadata`, others | The chat field of the same name, checked and sent exactly as on `/v1/chat/completions`. `max_tokens` has no default of 16 here: the per-call caps apply ([Generation parameters](#generation-parameters)) |
+
+```json
+{"id": "cmpl-...", "object": "text_completion", "created": 1792400000, "model": "student-v3", "system_fingerprint": "fp_...",
+ "choices": [{"text": "{\"category\": \"billing\", ...}", "index": 0, "logprobs": null, "finish_reason": "stop"}],
+ "usage": {"prompt_tokens": 18, "completion_tokens": 21, "total_tokens": 39, ...},
+ "ratchet": {"served_by": "student", "task": "ticket-triage", ...}}
+```
+
+Prompt p's choice j is choice `p * n + j`, as OpenAI numbers them; `usage` adds up every prompt's. With one prompt `ratchet` is the chat path's block; with several it is `{"prompts": [block, ...]}`, and the headers are the last prompt's (`X-Ratchet-Served-By` is `mixed` when the prompts were not all served the same way). With `stream: true` the answer comes as `text_completion` chunks (`choices: [{text, index, logprobs, finish_reason}]`), each choice's text then its finish chunk, a last chunk with `usage` and no choices under `stream_options.include_usage`, and `[DONE]`; the `ratchet` block rides on the last finish chunk or on the usage chunk, as in a chat stream. The prompts run in order. If the first fails, the request returns its error, as a chat request would. If a later one fails (the teacher fails, or a concurrent request from the same key used up the quota the batch was checked against), or the batch has run for `RATCHET_TEACHER_DEADLINE_S` (180 s) before its next prompt, the request returns that prompt's error (or a 504 `batch_deadline_exceeded`) with `X-Should-Retry: false` and no `Retry-After`, and a message naming the prompts already answered (`The batch stopped at prompt[1] of 2: ... prompt[0] was answered, logged and billed, but this error does not return its answer; resend only the prompts from prompt[1] on.`). Those stay logged, billed and stored; their answers are not returned. OpenAI SDKs then do not resend the batch, which would run, bill and store the earlier prompts again (and count their examples as seen again); send only the prompts from the one named on.
+
+```python
+resp = client.completions.create(model="ratchet/ticket-triage", prompt="I was charged twice this month.")
+print(resp.choices[0].text)
+```
+
+## POST `/v1/responses`
+
+The stateless subset of OpenAI's Responses API. The body becomes a chat request, which runs the chat path (validation, task resolution, cascade, quota, storage, `ratchet` block); the answer comes back as a `response` object (`openai.types.responses.Response`). Ratchet keeps no response state: each response is built for its request and forgotten, so a conversation is sent whole every time.
+
+| Field | Becomes |
+|---|---|
+| `input` | A string: one user message. An array of items: `message` items keep their role (`user`, `assistant`, `system`, `developer`) and content (a string, or `input_text` / `output_text` / `refusal` parts joined as a chat request's text parts are; an `input_image` with an `image_url`, read by the teacher only under `RATCHET_TEACHER_MODALITIES`); consecutive `function_call` items the tool calls of one assistant message (`call_id` the call's id), joined to the assistant `message` item right before them when there is one, as a response's `output` lists its text and then its calls; a `function_call_output` a `tool` message. `reasoning` items are dropped (and split no calls). So a tool loop sent back as input is the chat conversation it would be, and is stored as that request. An `item_reference`, a built-in tool's item, a file, audio or an image by file id is a 400 `unsupported_value` |
+| `instructions` | A leading system message |
+| `text.format` | `response_format`: `json_schema` (its `name`, `schema`, `strict`, `description`), `json_object`, or `text` (none) |
+| `tools`, `tool_choice`, `parallel_tool_calls` | Function tools (`{type: "function", name, description, parameters, strict}`) and a function `tool_choice` become the chat ones and follow their rules ([Generation parameters](#generation-parameters)). A built-in tool (web search, file search, code interpreter, MCP, ...) or a tool choice naming one is a 400 `unsupported_parameter` |
+| `max_output_tokens`, `temperature`, `top_p`, `reasoning.effort` | `max_tokens`, `temperature`, `top_p`, `reasoning_effort` |
+| `model`, `metadata`, `user`, `safety_identifier` | The chat fields of the same name (`model: "ratchet/<task>"` and `metadata.ratchet_task` name the task) |
+| `previous_response_id`, `conversation`, `prompt`, `background: true`, `stream: true` | A 400 `unsupported_parameter`: they need stored state, or a stream of response events, that the gateway does not keep or send. `stream: false` and `background: false` are fine |
+| `include`, `truncation`, `service_tier`, `store`, `top_logprobs`, `max_tool_calls`, `prompt_cache_key` | Accepted, no effect: no reasoning items or logprobs are returned, the input is never cut, and nothing is stored (`store` is `false` in the response) |
+| a chat-only field (`n`, `stop`, `messages`, ...) | Ignored |
+| any other field | An unknown chat field: kept, forwarded only when an allowlist names it ([Request](#request)) |
+
+Errors name the Responses field (`max_output_tokens`, `text.format.name`, `tools[0].name`, `input[2].call_id`).
+
+```json
+{"id": "resp_...", "object": "response", "created_at": 1792400000, "status": "completed", "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+ "output": [{"type": "message", "id": "msg_...", "status": "completed", "role": "assistant",
+             "content": [{"type": "output_text", "text": "Refunds take 5 to 7 days.", "annotations": []}]}],
+ "usage": {"input_tokens": 21, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+           "output_tokens": 9, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 30},
+ "instructions": "Be brief.", "store": false, "previous_response_id": null, "tool_choice": "auto", "tools": [], ...,
+ "ratchet": {"served_by": "teacher", "task": "default", ...}}
+```
+
+`status` is `incomplete` with `incomplete_details.reason` `max_output_tokens` when the answer was cut off (`content_filter` when filtered). Tool calls in an answer become `function_call` items (`call_id`, `name`, `arguments`), which a client answers with a `function_call_output` item carrying the same `call_id`; a teacher answer that is a tool call follows the chat path's rules (`tool_calls_unsupported` until tool calls are returned). The settings the request sent are echoed as sent.
+
+```python
+resp = client.responses.create(model="ratchet", instructions="Be brief.", input="How long do refunds take?")
+print(resp.output_text)
+```
+
+## Unsupported endpoints
+
+`POST /v1/moderations` and the stored-response routes (`GET` and `DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items`) answer 404 `unsupported_endpoint` after the key check, with a message that says why and links [OpenAI endpoints](#openai-endpoints), so a library that calls them fails with a clear reason (`openai.NotFoundError`, `e.code == "unsupported_endpoint"`). Any other path under `/v1/` is a 404 `unknown_url`.
 
 ## GET `/ratchet/stats`
 
@@ -868,13 +1064,13 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
      "human_feedback": 40, "human_agreement": 0.925},
      "audits": 1008, "audit_agreement": 0.98, "threshold": 0.7412, "precision": 0.98, "coverage": 0.91,
      "calibrated": true, "disabled": null, "compare_keys": ["category", "priority"], "compare_source": "registry",
-     "tool_requests": 0},
+     "tool_requests": 0, "precision_kind": "exact", "judge_pass_rate": null},
     {"task": "research-plan", "pinned": true, "requests": 3, "student_share": 0.0, "escalation_rate": 0.0,
      "cost_usd": 0.0039, "baseline_usd": 0.0039, "savings_pct": 0.0, "avg_latency_ms": 2400.0,
      "routes": {"pinned": 3}, "human_feedback": 0, "human_agreement": null,
      "audits": 0, "audit_agreement": null, "threshold": null, "precision": null,
      "coverage": null, "calibrated": null, "disabled": null, "compare_keys": [], "compare_source": "registry",
-     "tool_requests": 0}
+     "tool_requests": 0, "precision_kind": null, "judge_pass_rate": null}
   ],
   "events": [{"id": 57, "ts": 1792400000.0, "day": 9, "kind": "live", "detail": "v5 promoted to 100% (audited precision 94.1%, n=17)"}],
   "totals": {"requests": 13500, "cost_usd": 5.21, "baseline_usd": 14.58, "saved_usd": 9.37, "savings_pct": 0.64,
@@ -891,14 +1087,18 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
               "no_store_clients": [], "end_user_key": "env", "example_retention_days": 180,
               "request_retention_days": 400, "erasure_shared": "delete", "purged_examples": 61,
               "purged_by_reason": {"retention": 58, "erasure": 3}, "erasures": 2, "erasure_refusals": 1,
-              "rolled_up_requests": 120400},
+              "rolled_up_requests": 120400, "redaction_style": "label",
+              "redaction_task_styles": {"invoice-extract": "numbered"}, "redaction_plugin": false},
   "security": {"api_keys": true, "daily_requests_per_key": 500, "bom_signing": true, "bom_key_id": "6cf6bc1a39c4491d",
                "key_limits": true, "ip_rpm": null, "max_inflight": 32},
   "budget": {"daily_usd": 20.0, "mode": "student_only", "spent_today_usd": 3.41, "remaining_usd": 16.59, "exceeded": false,
              "alert_pct": [50, 80, 100]},
   "cost": {"model": "per_token", "endpoint_hours": 216.0, "gpu_hours_savings_pct": -22.49,
            "break_even_student_requests_per_gpu_hour": 1582.0, "recommendation": "hosted_fallback"},
-  "feedback": {"verdicts": 40, "correct": 37, "incorrect": 3, "corrections_sent": 3, "corrections_stored": 2,
+  "drift": {"enabled": true, "threshold": 100.0, "family_bound": 0.03, "alarms": 1, "streams": 3},
+  "teacher_watch": {"enabled": true, "epoch": 1, "frozen": false, "checks": 273, "disagreements": 11,
+                    "self_agreement": 0.9597, "ceiling": 0.9886, "e_value": 96.38, "contested": 0}
+feedback": {"verdicts": 40, "correct": 37, "incorrect": 3, "corrections_sent": 3, "corrections_stored": 2,
                "human_examples": 152, "golden_only_examples": 120, "corrections": true,
                "by_version": [{"version": 5, "verdicts": 31, "correct": 29, "precision": 0.935, "lower": 0.793, "upper": 0.982}]}
   "errors": {"last_hour": {"student": 3, "auth": 1}},
@@ -908,7 +1108,11 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
               "by_version": [{"version": 5, "audits_inline": 0, "shadows_dropped": 0, "audits_abandoned": 0,
                               "shadows_abandoned": 0}]}
   "controls": {"student_disabled": false, "releases_frozen": false, "training_paused": false, "audit_rate": null,
-               "pinned_tasks": []}
+               "pinned_tasks": []},
+  "kpis": {"mode": "mock", "simulated": true, "window_days": 3, "window": {"from": 7, "to": 9, "days": 3, "complete": true},
+           "metrics": {"SM-1": {"name": "Cost reduction vs all-teacher, steady state", "value": 0.84, "target": 0.7,
+                                "op": ">=", "unit": "fraction", "met": true, "detail": {"…": "…"}}, "…": "…"},
+           "summary": {"met": 5, "not_met": 1, "unknown": 0}}
 }
 ```
 
@@ -924,7 +1128,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `certified` | The version's eval carries a certificate that certifies (`certificate.certified`), and our adapter serves. Always `false` for `hosted_fallback`: the certificate was computed for our adapter, never for the hosted model |
 
   While `kind` is `hosted_fallback`, the pages say "Nano 30B · hosted" for a student answer (with the threshold, and "not covered by the certificate"), stop saying "your model", and hide the live version's golden precision ([SCOUT.md](SCOUT.md#who-answered)).
-- `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the simulated model latency.
+- `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `/v1/embeddings` calls (route `passthrough`) are left out of `days`, `totals` and `clients`, and counted in `tasks` (the `embeddings` row) and in `cost`. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the simulated model latency.
 - `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher". `routes` counts the task's requests by how they were served (the ledger's `requests.route`), most frequent first, and adds up to `requests`:
 
   | Route | Served by | Why |
@@ -932,7 +1136,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `student` | student | Its confidence reached the version's threshold (and, for `n` > 1 choices, at least `n` samples agreed) |
   | `confidence` | teacher | The student was unsure (below the threshold) |
   | `cold_start` | teacher | No version serves yet (no live version, and the canary was not picked) |
-  | `pinned` | teacher | A pinned task (by its spec, or at runtime by an operator: [Admin](#admin)), or, before v0.5's FR-1.41, a request with a part only the teacher reads (now route `multimodal`) |
+  | `pinned` | teacher | A pinned task (by its spec, or at runtime by an operator: [Admin](#admin)); before v0.5, also a request with a part only the teacher reads (now route `ineligible:content_type`) |
   | `student_error` | teacher | The student call failed (timeout, connection error, an error status, a lost adapter) |
   | `student_breaker` | teacher | The student's circuit breaker was open, so the student was not called ([ARCHITECTURE.md](ARCHITECTURE.md#student-circuit-breaker)) |
   | `degraded` | student | The student was unsure and the teacher unavailable, so its own answer was served (`RATCHET_ON_TEACHER_FAILURE=serve_student`, `ratchet.degraded`); not audited, stored or shadowed ([ARCHITECTURE.md](ARCHITECTURE.md#when-the-teacher-is-down)) |
@@ -941,18 +1145,21 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `unknown_task` | teacher | The task is not registered and `RATCHET_UNKNOWN_TASKS=teacher`: the student was not called and nothing was stored ([Tasks](#tasks)) |
   | `student_disabled` | teacher | An operator turned the student off (`POST /ratchet/admin/student/disable`, [Admin](#admin)): no student or shadow call; the teacher's answer is stored as on a cold start |
   | `tools` | teacher | A tool request (tools offered, or tool calls or results in its messages): the teacher answered alone, with the tools, and nothing was stored ([Tools and function calling](#tools-and-function-calling)) |
-  | `multimodal` | teacher | A request with a content part only the teacher reads (`RATCHET_TEACHER_MODALITIES`): the student was not called and nothing was stored |
-  | `task_disabled` | teacher | The serving version's per-task record lets the student answer none of this task (the release gate disabled it on that version, or its eval had no held-out row of it), so the student was not called; never served in degraded mode ([per-task calibration](CONFIGURATION.md#per-task-calibration)) |
+  | `multimodal` | teacher | Written only by a caller of `Ratchet.teacher_only` that passes it, for a request with a content part only the teacher reads: the student was not called and nothing was stored. The gateway sends such a request through the cascade, which logs it `ineligible:content_type` (below) |
+  | `task_disabled` | teacher | The serving version's per-task record lets the student answer none of this task (the release gate disabled it on that version, or its eval had no held-out row of it), or the task has critical classes the version's record did not measure under the current spec, or the hosted untuned model would answer it (FR-2.50), so the student was not called; never served in degraded mode ([per-task calibration](CONFIGURATION.md#per-task-calibration)) |
+  | `rule:<i>` | teacher | The student was confident, but rule `i` (from 0) of the task's `escalate_when` held for its answer (`action: teacher`, or a confidence below the rule's `min_confidence`), so the teacher answered and its answer was stored as for any escalation; never served in degraded mode ([risk-aware routing](CONFIGURATION.md#risk-aware-routing)) |
+  | `ineligible:input_tokens` | teacher | The request holds more input than the task's `student_max_input_tokens` (characters of its message text / 4), so no version was picked and the student was not called; stored only with the task's `store_ineligible`; not counted as an escalation |
+  | `ineligible:content_type` | teacher | The request has a content part the student does not read (an image or other part admitted by `RATCHET_TEACHER_MODALITIES`; the student reads text only), so the student was not called and nothing was stored; not counted as an escalation |
   | `unrecorded` | either | Requests logged before v0.5, when the ledger had no route column |
 
   Later versions add routes; a client should show an unknown route as it is. `human_feedback` counts the task's requests that got a verdict ([Feedback](#feedback)), the latest per request, and `human_agreement` is the share of them judged `correct` (`null` without any).
 
   `tool_requests` counts the task's tool requests (FR-1.41), whatever their route (`tools`, `pinned`, `unknown_task`, `multimodal` or `fallback_teacher`); requests logged before the count existed count as none.
 
-  Since FR-14.1 each entry also says how well the student does the task and how it is held to it ([per-task calibration](CONFIGURATION.md#per-task-calibration)). `audits` and `audit_agreement` cover the teacher's audits of the task's student answers over every version (`audit_agreement` is `null` without audits). The rest come from the live version's eval and are `null` without a live version and for a pinned task: `threshold` is the confidence the live student needs to answer the task, as the router applies it (its per-task threshold, 1.01 when the task is disabled, has no held-out rows or its spec changed since the version was scored, else the version's global threshold); `precision` and `coverage` are the task's held-out numbers measured when the version was scored, at the threshold it was calibrated to (for a disabled task, or one whose spec changed since, that measurement stays as it was while `threshold` is 1.01 and the student answers none of the task), `calibrated` whether the threshold is the task's own (enough calibration rows) or never below the global one, and `disabled` why the release gate disabled the task on the live version (a string) or `null`. The last four are `null` when the live version has no per-task record for the task (scored before per-task calibration, or no golden rows of it).
+  Since FR-14.1 each entry also says how well the student does the task and how it is held to it ([per-task calibration](CONFIGURATION.md#per-task-calibration)). `audits` and `audit_agreement` cover the teacher's audits of the task's student answers over every version (`audit_agreement` is `null` without audits). The rest come from the live version's eval and are `null` without a live version and for a pinned task: `threshold` is the confidence the live student needs to answer the task, as the router applies it (its per-task threshold, 1.01 when the task is disabled, has no held-out rows, its spec changed since the version was scored or it has critical classes the version's record did not measure (FR-2.50), else the version's global threshold); `precision` and `coverage` are the task's held-out numbers measured when the version was scored, at the threshold it was calibrated to (for a disabled task, or one whose spec changed since, that measurement stays as it was while `threshold` is 1.01 and the student answers none of the task), `calibrated` whether the threshold is the task's own (enough calibration rows) or never below the global one, and `disabled` why the release gate disabled the task on the live version (a string) or `null`. These (all but `threshold`) are `null` when the live version has no per-task record for the task (scored before per-task calibration, or no golden rows of it). Since FR-14.40 two more come from the same record ([free-text tasks](CONFIGURATION.md#free-text-tasks)): `precision_kind` says what `precision` means, `exact` (agreement under comparators that decide it) or `proxy` (a task with a `similarity` field: the share of served answers close enough to the teacher's, not checked correct), and `judge_pass_rate` is the judge's pass rate on the answers the live version would serve on the task's held-out rows (free-text tasks scored with a judge only, else `null`). Both are `null` where the others are, and for a record written before FR-14.40.
 
   Since FR-14.2 `compare_keys` lists the paths of the fields the task's answers are compared on (empty for a task that compares whole answers, such as `default`), and `compare_source` says where they come from: `schema` for an auto task derived from a `response_format` schema ([Structured outputs](#structured-outputs)), `registry` for a built-in, file or API task, `null` for a name that is not registered.
-- `versions`: every version, oldest first. `eval` is the version's latest golden eval (the nightly re-score's for the live version); since v0.5 it also has `certificate`, `frontier`, `per_task`, `test_vector` and, for a candidate trained while a version was live, `paired` ([Certificates](#get-ratchetversionsidcertificate)), and its `threshold` is exact rather than rounded. `eval` is its golden evaluation (since FR-14.1 with one record per task in `eval.tasks`, [per-task calibration](CONFIGURATION.md#per-task-calibration)). `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4. `evidence` (v0.5) is what the release gate reads for the version in `canary` or `live` state, recomputed from its audit counts on every call (`ReleaseGate.evidence`, [ADR 0025](adr/0025-anytime-valid-release-gate.md)); `null` for every other state. Anyone can re-check a gate decision from it:
+- `versions`: every version, oldest first. `eval` is the version's latest golden eval (the nightly re-score's for the live version); since v0.5 it also has `certificate`, `frontier`, `per_task`, `test_vector` and, for a candidate trained while a version was live, `paired` ([Certificates](#get-ratchetversionsidcertificate)), and its `threshold` is exact rather than rounded. `eval` is its golden evaluation (since FR-14.1 with one record per task in `eval.tasks`, [per-task calibration](CONFIGURATION.md#per-task-calibration)). A task with critical classes (FR-2.50, [risk-aware routing](CONFIGURATION.md#risk-aware-routing)) has `critical` in its record: one entry per class, in the spec's order, with the condition as written (`field` and `equals` or `in`), `max_miss_rate`, `n` (its held-out rows whose teacher reference is in the class), `misses` (those the student would serve with an answer outside it, at the threshold the record stores and past its rules), `miss_rate` (`null` when `n` is 0) and `upper_bound` (the 95% Wilson upper bound, 1.0 when `n` is 0). `excluded_ineligible`, when present, counts golden rows left out because the task's routing block keeps such a request from the student. For a task with `escalate_when` rules, a record's `precision` and `coverage` (and the pooled ones) count only the answers no rule sends to the teacher. `other_tasks`, present only on an eval scored with `RATCHET_PER_TASK_CALIBRATION=0` that has records (the tasks with critical classes), holds the other tasks' held-out rows (`test_n`) and how many of them the pooled threshold serves (`served`). `bom` is `signed`, `unsigned`, or `null` for versions trained before v0.4. `evidence` (v0.5) is what the release gate reads for the version in `canary` or `live` state, recomputed from its audit counts on every call (`ReleaseGate.evidence`, [ADR 0025](adr/0025-anytime-valid-release-gate.md)); `null` for every other state. Anyone can re-check a gate decision from it:
 
   | Key | Meaning |
   |---|---|
@@ -971,7 +1178,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 
   e-values are finite (capped at e^690). With no audits `n` is 0, the e-values are 1 and both intervals are `[0, 1]`.
 - `clients`: one entry per API key name that sent requests, busiest first (`Ledger.stats_by_client`). Empty when keys are off. `end_users` is how many distinct end users its requests named (by hash; only rows still kept count, since folded rows keep no end user); `stored_share` the share of its requests whose teacher answer was stored or matched a stored example (`null` when no request recorded it, as before v0.5). In a scrubbed copy `client` is a pseudonym. Since v0.5 each entry also has `spent_today_usd`, the key's chat-request dollars since 00:00 UTC (failed requests' spend included), and `daily_cap_usd`, its daily US dollar budget (`null` when it has none, when the name is no longer a key, and in a scrubbed copy; [Limits and headers](#limits-and-headers)).
-- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
+- `privacy`: whether redaction is on, how many stored examples had at least one identifier replaced, and how many placeholders were inserted in total (`Ledger.privacy_stats`); how many requests were under a storage opt-out, in all and by reason (`not_stored_requests`, `not_stored_by_reason`; `Ledger.opt_out_stats`), how many end users are registered as no-train (`no_train_end_users`) and how many of those registrations match no request under the current keys (`no_train_unmatched`: scoped to a key name no longer in `RATCHET_API_KEYS`, or keyless while keys are on); and the opt-outs in force: `store_examples` (false under zero retention), `no_store_tasks` (`RATCHET_NO_STORE_TASKS` and tasks whose spec says `store: false`), `no_store_clients` (keys with `store=0`) and where the end-user key comes from (`env` for `RATCHET_END_USER_KEY`, `ledger` for the generated one); the retention windows in force (`example_retention_days`, `request_retention_days`, 0 = forever) and `erasure_shared`; examples whose text was purged, in all and by reason (`purged_examples`, `purged_by_reason`: `retention`, `erasure`), erasures recorded, erased examples offered again and refused (`erasure_refusals`), and request rows folded into daily sums (`rolled_up_requests`; `Ledger.retention_stats`); how identifiers are written in stored examples (`redaction_style`: `label`, `numbered` or `surrogate`, from `RATCHET_REDACT_STYLE`; `redaction_task_styles`: the tasks whose spec overrides it; `redaction_plugin`: whether a detector plugin runs, never its name; [ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). `examples` counts the examples that still have their text. Counts and names only: no end-user hash is ever shown.
 - `security`: whether API keys are required, the daily quota per key (`null` = none), and whether adapter BOMs are signed (with the key id: the first 16 hex characters of the public key's SHA-256). Since v0.5 also whether admin keys and dashboard keys are set (`admin_keys`, `dashboard_keys`), whether the dashboard API is public (`public_dashboard`), and whether this payload is a scrubbed copy (`scrubbed`: client names are pseudonyms `client-1`, ..., and event details carry no URL or error message; [Access levels](#access-levels)); whether any key has a limit of its own (`key_limits`), the per-IP rate of a gateway without keys (`ip_rpm`, `null` when off) and the in-flight cap (`max_inflight`, `null` when off).
 - `budget` (v0.5): the gateway's own daily budget (`daily_usd`, `null` when `RATCHET_DAILY_BUDGET_USD` is 0), what happens past it (`mode`: `block` or `student_only`), what chat requests spent since 00:00 UTC (`spent_today_usd`; Scout is not counted), what is left (`remaining_usd`, `null` without a budget), whether it is spent (`exceeded`) and the shares that write a `budget` event (`alert_pct`). A scrubbed copy leaves the operator's budget out (`daily_usd` and `remaining_usd` are `null`), as the gateway's 429s do.
 - `events`: the last 40 events, oldest first. `id` is the ledger row id (stable, use it as a key); `ts` is Unix time.
@@ -981,11 +1188,15 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
 - `errors.last_hour` (v0.5): the failures of the last hour by stage (`failures.stage`: `teacher`, `student`, `audit`, `shadow`, `quota`, `auth`, `budget`, `rate`, `upstream`, `gateway`), busiest first; `{}` when nothing failed. A failed student call the teacher covered counts here too, although the client got its answer. [RUNBOOK.md](RUNBOOK.md#failures-and-request-ids) explains each stage.
 - `sidecar` (v0.5, [Off-path checks](#off-path-checks)): the queue that runs audits and shadows after the response. `workers` (0: every check runs before the response, mock mode's default), `max_queue`, `audit_places` (the places only a job with an audit may take) and `max_bytes` (the request text queued and running jobs may hold) are the settings; `queued` (places taken, jobs waiting included), `running` and `bytes` (the request text their jobs hold) are now; since start, `submitted`, `done`, `failed` (a job that raised; logged by class), `full` (a place refused because the queue or its byte budget was full), `refused` (a job handed over after shutdown began, which its request ran itself) and `abandoned` (still queued when the shutdown's drain ended: those rows stay pending). `by_version` lists every routed version, and any other version that lost something, with what could not go through the queue: `audits_inline` (drawn audits that ran before the response because the queue was full; an audit is never dropped), `shadows_dropped` (shadows that did not run for that reason), and `audits_abandoned` and `shadows_abandoned` (given up at shutdown). Counts are per process: a restart starts them at 0.
 - `controls` (v0.5): the operator's runtime switches ([Admin](#admin)): whether the student is turned off (`student_disabled`), releases are frozen (`releases_frozen`) and training is paused (`training_paused`), the runtime audit rate (`audit_rate`, `null` while `RATCHET_AUDIT_RATE` applies) and the tasks pinned to the teacher at runtime (`pinned_tasks`, sorted; such a task also shows `pinned: true` under `tasks`).
+- `drift` (v0.5): the [drift monitor](#get-ratchetdrift)'s summary: whether it is on (`RATCHET_DRIFT_ALARM` above 0), its threshold, the chance that any stream it holds ever alarms on unchanged traffic (`family_bound`, K / threshold), how many streams alarmed (`alarms`) and how many it holds (`streams`, a count; the list is in `GET /ratchet/drift`). Off: `enabled` false, `threshold` and `family_bound` `null`, both counts 0.
+- `teacher_watch` (v0.5): the [teacher watch](#teacher-watch)'s summary: whether it acts (`RATCHET_TEACHER_WATCH`), the check epoch, whether Night School is frozen, the epoch's checks and disagreements, the teacher's self-agreement and the agreement ceiling (`null` without checks), the freeze rule's e-value and the contested labels. The same keys as `GET /ratchet/teacher`, without the per-source and per-task rows.
 - `cost`: the [cost report](#cost)'s headline numbers for all days: the headline model (`RATCHET_STUDENT_COST_MODEL`), the student endpoint's recorded hours, the savings share by GPU-hours paid (negative when self-hosting does not pay; `null` without a baseline), the break-even volume (`null` until the student has served) and the recommendation.
+- `kpis`: the [success metrics](#get-ratchetkpisdaysn) over the last `RATCHET_KPI_WINDOW_DAYS` days with traffic, exactly as `GET /ratchet/kpis` returns them.
 
 Compatibility: the keys the dashboard reads are listed with their JSON types in `tests/fixtures/stats_keys.json`, and `test_stats_contract` checks them on every run. New versions add keys; they do not remove or retype existing ones, so a client written against this page keeps working.
 
 Freshness: in live mode the payload is computed at most once every `RATCHET_STATS_TTL_S` seconds (default 2) by one request at a time, and every other read in between gets that payload; in mock mode (default 0) every read computes it. On a ledger file it is read from a read-only connection, so a dashboard never waits for requests nor slows them ([ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)).
+## GET `/ratchet/kpis?days=N`
 
 ## Request lookups
 
@@ -1062,6 +1273,47 @@ scrape_configs:
     static_configs: [{targets: ["ratchet:8000"]}]
 ```
 
+
+PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, computed from the ledger by `ratchet/kpis.py` the same way as in the simulator and in CI ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Access level `dashboard`, like `/ratchet/stats`, whose `kpis` block is this report. SM-1 to SM-3 and NFR-1 cover the last `days` ledger days with traffic (1 to 3,650, default `RATCHET_KPI_WINDOW_DAYS`, 3; anything else is **400**, a non-number **422**); SM-4 and SM-5 cover the whole history. An example from the mock demo (simulation numbers from mock models, `simulated: true`):
+
+```json
+{
+  "mode": "mock",
+  "simulated": true,
+  "window_days": 3,
+  "window": {"from": 8, "to": 10, "days": 3, "complete": true},
+  "metrics": {
+    "SM-1": {"name": "Cost reduction vs all-teacher, steady state", "value": 0.845, "target": 0.7, "op": ">=",
+             "unit": "fraction", "met": true,
+             "detail": {"cost_usd": 1.018, "failed_cost_usd": 0.0, "baseline_usd": 6.559, "requests": 6000,
+                        "cost_model": "per_token"}},
+    "SM-2": {"name": "Audited precision of student-served answers", "value": 0.985, "target": 0.95, "op": ">=",
+             "unit": "fraction", "met": true,
+             "detail": {"audits": 585, "agree": 576, "lower": 0.971, "upper": 0.992, "min_audits": 20}},
+    "SM-3": {"name": "Student share of traffic, steady state", "value": 0.969, "target": 0.8, "op": ">=",
+             "unit": "fraction", "met": true, "detail": {"requests": 6000, "student_served": 5814}},
+    "SM-4": {"name": "Bad deploys reaching 100% traffic", "value": 0, "target": 0, "op": "==", "unit": "versions",
+             "met": true, "detail": {"reached_full_traffic": 4, "bad_versions": []}},
+    "SM-5": {"name": "Time to recover from drift (escalations back to baseline)", "value": 4, "target": 3, "op": "<=",
+             "unit": "nights", "met": false,
+             "detail": {"days_measured": 9,
+                        "episodes": [{"start": 5, "end": 9, "nights": 4, "baseline": 0.022, "peak": 0.1405}]}},
+    "NFR-1": {"name": "Median latency of student-served requests", "value": 327.1, "target": 1000.0, "op": "<",
+              "unit": "ms", "met": true,
+              "detail": {"requests": 5814, "column": "latency_ms", "quantile": 0.5, "served_by": "student"}}
+  },
+  "summary": {"met": 5, "not_met": 1, "unknown": 0}
+}
+```
+
+- Every metric has `name`, `value`, `target`, `op` (`>=`, `<=`, `==`, `<`), `unit` (`fraction` for a share, else `versions`, `nights` or `ms`), `met` and `detail`. `met` is `null` when there is not enough data to say, with a `detail.reason`: no traffic in the window, fewer audits than `RATCHET_MIN_AUDITS` (SM-2), no version at 100% yet (SM-4), fewer than four days on which the student judged at least 50 requests, or a drift episode still open within its target (SM-5). `value` is `null` when there is nothing to measure, and for SM-5 while an episode is open (`detail.open_nights` counts it so far).
+- `simulated` is true in mock mode, where every number comes from mock models. `window` gives the first and last day used and whether the ledger had `window_days` days with traffic (`complete`).
+- **SM-1** is `1 - (cost_usd + failed_cost_usd) / baseline_usd`: per token, as `totals`; `failed_cost_usd` is what failed requests spent without leaving a request row (0 on a ledger without a `failures` table). **SM-2** pools every audit in the window, every version together, with a 95% Wilson interval (`lower`, `upper`); it is met on the point estimate. **SM-3** is the student's share of the window's requests.
+- **SM-4** counts versions that reached 100% of traffic (a `live` event, or live now) and were later named by an `alert` or a `rollback`, or are `rolled_back` now (`bad_versions`, each with its evidence and day). A canary rolled back before 100% does not count.
+- **SM-5** is the longest drift episode in nights over the whole history. A day's escalation rate is the share of the requests the student judged (its samples came back) that it escalated; an episode starts on a day at least 5 points above the lowest of the 3 measured days before it and ends on the first later day at most 2 points above that baseline.
+- **NFR-1** is the nearest-rank median latency of the window's student-served requests, from `requests.wall_ms` when the ledger records it, else `latency_ms` (`column`). Folded request rows keep no latencies.
+- New metrics may be added under `metrics`; a client should show an unknown one as it is.
+
 ## GET `/ratchet/bom`
 
 Access level `bom`: as `/ratchet/stats`, and public with `RATCHET_PUBLIC_BOM=1`.
@@ -1107,7 +1359,7 @@ Access level `bom`, like `/ratchet/bom`. The bill of materials of one adapter, w
     "base_model_license": {"name": "NVIDIA Nemotron Open Model License",
                            "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"},
     "notices": [{"file": "NOTICE.md", "sha256": "5d0c3a…", "text": "# NOTICE\n\nThis folder holds a LoRA adapter…"}],
-    "redactor": {"sha256": "e85726…", "rules": 9, "redact_pii": true},
+    "redactor": {"sha256": "7100b2…", "rules": 11, "redact_pii": true},
     "eval": {"golden_n": 110, "golden_agreement": 0.89, "threshold": 0.65, "coverage": 0.96, "precision": 0.94, "test_n": 55}
   },
   "sha256": "9b1f…",
@@ -1166,20 +1418,21 @@ What a version's golden evals certify about the answers it serves (FR-16.3, [ADR
               "calibration": "point", "paired": null, "rechecked_day": 5},
   "bom": {"sha256": "dd71bf42…", "signed": false},
   "live": {"rule": "wilson", "floor": 0.92, "n": 117, "s": 113, "cs": [0.89, 0.996], "…": "ReleaseGate.evidence"},
-  "drift": null,
+  "drift": {"alarm": false, "threshold": 100.0,
+            "streams": [{"version": 3, "task": "ticket-triage", "n": 2611, "log10_martingale": -2.1383, "…": "as in GET /ratchet/drift"}]},
   "assumptions": ["Golden rows are assumed exchangeable with live traffic, …", "Precision means agreement with the teacher model …", "Which requests are golden is decided by a hash of the request, …"]
 }
 ```
 
 (Mock gateway after five simulated days of mixed traffic; simulation numbers from mock models, rounded here.)
 
-- `status`: `certified` or `not certified` from the latest certificate (`current`'s when the version was re-scored, else `training`'s); `suspended` while a drift alarm is open for the version (FR-16.6, not built yet, so never today); `no certificate` for a version evaluated before v0.5 or by an evaluator that writes none.
+- `status`: `certified` or `not certified` from the latest certificate (`current`'s when the version was re-scored, else `training`'s); `suspended` while a drift alarm is open for the version (FR-16.6): its own traffic stopped looking like its earlier traffic, so the golden rows no longer stand for what it serves. The certificate is still shown. An alarm stays open for the version's life; the next version gets new streams. `no certificate` for a version evaluated before v0.5 or by an evaluator that writes none (also under an alarm).
 - `training`: from the signed BOM's `manifest.eval`, written once at training time (INV-14); `null` without a BOM. `current`: from the version's eval, which the nightly champion re-score overwrites for the live version (with `rechecked_day`, `null` until then). Each holds `certificate`, `frontier`, `per_task`, `threshold`, `calibration` and `paired` (`null` when that eval lacks one).
 - `certificate`: the Clopper–Pearson certificate at the version's threshold, on the held-out half: `served` answers, `errors` among them, `precision`, the one-sided lower bound `lcb` at level `delta` (`RATCHET_CERT_DELTA`), and `certified` (`lcb ≥ target`, `RATCHET_CERT_TARGET`). `calibration` is how the threshold was chosen: `point` (v0.4's rule, 97% on the calibration half) or `ltt` (Learn-then-Test over a fixed grid, `RATCHET_CALIBRATION=ltt`), which adds `ltt_trace` (each grid threshold tested on the calibration half, `{threshold, n, k, p_value}`, highest first, stopping at the first that fails).
 - `frontier`: the same counts at each threshold of the fixed grid 0.95, 0.90, …, 0.50, each `lcb` at `delta / 10` (Bonferroni), so every row holds at once: an operator may pick any threshold on it afterwards and keep the guarantee.
 - `per_task`: the certificate's counts per task, each bound at `delta` on its own. A diagnostic that shows a weak task inside a pooled number; it is not corrected for the number of tasks and never changes routing.
 - `paired` (a candidate trained while a version was live): the exact comparison with that version (`against`) on the same held-out rows. `cov_only_live` and `cov_only_cand` are the rows only one of them serves, with `p_cov` the one-sided McNemar p-value for "the candidate serves less"; `neg_flips` are rows the candidate answers wrong where live's answer was right (served right, or escalated to the teacher), `pos_flips` the reverse, with `p_err`; `nfr` is `neg_flips_served / live_served_ok` (answers live served right that the candidate serves wrong), with its 95% Wilson interval `nfr_95`. The opt-in paired gate reads these ([Configuration](CONFIGURATION.md#release-policy-ratchetreleasepy)).
-- `bom`: the BOM's `sha256` and whether it is signed; `null` without one. `live`: the release gate's evidence from the version's audits (the same object as `/ratchet/stats`' `evidence`) for a version that serves or once served (`canary`, `live`, `rolled_back`, `retired`), else `null`. `drift`: the drift monitor's status for the version (FR-16.6), `null` today.
+- `bom`: the BOM's `sha256` and whether it is signed; `null` without one. `live`: the release gate's evidence from the version's audits (the same object as `/ratchet/stats`' `evidence`) for a version that serves or once served (`canary`, `live`, `rolled_back`, `retired`), else `null`. `drift`: the drift monitor's view of the version ([Drift](#get-ratchetdrift)): `alarm` (true while any of its streams has alarmed), the `threshold`, and its streams without trajectories; `null` when the monitor is off or the version never logged a confidence (a candidate or shadow).
 - `assumptions`: what every certificate assumes, in plain words. Precision is agreement with the teacher, not ground truth; golden rows over-represent hard requests, so a certificate is conservative for easy traffic only to the extent that exchangeability fails in that direction.
 
 Check a downloaded BOM's numbers yourself:
@@ -1198,6 +1451,7 @@ python -m ratchet.stats check bom.json --public-key "<base64 public key>"
 It exits 1 when the signature or hash fails or when any recomputed number differs from the signed one by more than 1e-9, and 0 for a BOM written before v0.5 (no certificate to check).
 
 ## Committed training sets
+## GET `/ratchet/drift`
 
 Every adapter's BOM signs one sparse Merkle root per split ([ADR 0027](adr/0027-committed-training-sets.md)): the keys are the example hashes of exactly the rows it was trained on (`training.commitment`) and graded on (`golden.commitment`), each mapped to the SHA-256 of `{completion, teacher, license, redactions}` (the stored teacher answer, who wrote it, its license and the number of PII placeholders in it). The leaves are written once to the ledger (`version_leaves`, append-only) before the BOM is signed. From them the gateway answers whether one example is in a set, with a proof anyone can check offline against the signed root, and gives a certificate that no golden example was trained on (invariants 3 and 6).
 
@@ -1268,7 +1522,92 @@ python -m ratchet.proof key --task ticket-triage --messages request.json   # the
 ```
 
 `verify` checks the BOM's hash and signature, that the proof is against the root the BOM signs for that split (never the root, `result` or `value` the file states, which only have to agree), and the proof itself. `heldout` rebuilds the golden root from the certificate's leaves, requires it and the size to match the BOM, and checks that every golden key is absent from the signed training root. Both exit 1 on any failure (a bad signature, a root mismatch, an invalid proof, an unexpected `--expect` result, a file that is not JSON) and 2 on bad input (a missing file). `key` reads a messages list or a request body (`--no-redact` for a gateway with `RATCHET_REDACT_PII=0`) and uses the gateway's settings from the environment. A BOM without commitments (v1, or written before v0.5) has nothing to check against: exit 1, `no set commitment`.
+The label-free drift monitor (FR-16.6, [ADR 0032](adr/0032-label-free-drift-alarm.md)). For each version and task, the student's logged confidence is one stream. Each new score gets a conformal p-value (its rank among the stream's earlier scores, small when it is unusually low), and a gambler bets against "traffic has not changed" with those p-values. Its capital is a test martingale: while the traffic a version sees stays exchangeable, the chance that it ever reaches `threshold` is at most 1 / `threshold` (1% at the default 100), however long the stream runs and however often anyone looks. No labels and no teacher calls are needed; the release gate feeds it from the ledger in its tick, so the request path is untouched. Public, like `/ratchet/stats`. `?version=N` narrows `streams` to one version (**422** for a value that is not a whole number); the other numbers stay the monitor's.
 
+```json
+{
+  "enabled": true,
+  "threshold": 100.0,
+  "false_alarm_bound": 0.01,
+  "family_bound": 0.03,
+  "monitored": 3,
+  "alarms": 1,
+  "streams": [
+    {"version": 1, "task": "ticket-triage", "n": 3586, "log10_martingale": 14.7573, "peak_log10": 14.9509,
+     "alarm": true, "alarm_at_request": 6129, "alarm_day": 5, "alarm_n": 3335, "last_request": 6600, "active": true,
+     "trajectory": [[32, -0.6741], [64, -0.8717], [96, -0.9943], "…", [3584, 14.7458]]},
+    {"version": 3, "task": "ticket-triage", "n": 2611, "log10_martingale": -2.1383, "peak_log10": 0.0,
+     "alarm": false, "alarm_at_request": null, "alarm_day": null, "alarm_n": null, "last_request": 9000, "active": true,
+     "trajectory": [[16, -0.6724], [32, -0.7884], "…", [2608, -2.1378]]}
+  ]
+}
+```
+
+(Mock gateway after six simulated days of tickets with a product launch on day 5; simulation numbers from mock models, one stream left out.)
+
+- `enabled`: false when `RATCHET_DRIFT_ALARM=0`; then `threshold`, `false_alarm_bound` and `family_bound` are `null`, the counts 0 and `streams` empty.
+- `false_alarm_bound`: 1 / `threshold`, for one stream. `family_bound`: min(1, K / `threshold`) with K = `monitored`, the chance that any stream the monitor holds ever alarms on unchanged traffic. It grows with every version and task; it is reported, not hidden.
+- A version has at most 16 task streams, opened in the order it first sees each task name; the rows of every later name share one more stream whose `task` is `*` (events call it "other tasks"). Task names come from clients (`X-Ratchet-Task`), so this keeps the monitor's memory and K bounded: at most 17 streams per version ([Threat model](THREAT_MODEL.md) T12).
+- `alarms`: streams that alarmed. Each stream alarms at most once (the alarm latches) and writes one `drift` event, once across restarts and processes.
+- Per stream: `n` confidences seen; `log10_martingale` and `peak_log10`, log10 of the capital now and at its highest (the alarm is at log10 `threshold`, 2 by default); `alarm_at_request` (the request id), `alarm_day` and `alarm_n` of the first crossing, or `null`; `last_request`, the last request id seen; `active`, false for an older version that no longer serves (only its final numbers are kept; should it serve again, its stream is replayed from the ledger first); `alarm_day` is the ledger day of the request that crossed, which is also the `drift` event's `day`, even when the monitor found it later by replaying the ledger; `trajectory`, at most 200 `[n, log10 capital]` points, evenly spaced.
+- The test is one-sided: confidence that rises makes the capital fall. An alarm says traffic changed for this version, not that the model got worse; audits measure that ([Runbook](RUNBOOK.md#drift-event)). It suspends the version's certificate ([Certificates](#get-ratchetversionsidcertificate)) and, opt-in, boosts its audits (`RATCHET_DRIFT_AUDIT_BOOST`) and lets Night School train sooner (`RATCHET_DRIFT_EARLY_NIGHT`).
+
+## Teacher watch
+
+Every number Ratchet reports is measured against the teacher, so the teacher is checked too (FR-16.7, [ADR 0033](adr/0033-teacher-watch.md)). A request that repeats is labelled by the teacher again when it escalates or is audited; its first such re-test in a check epoch is compared with the stored label under the task's comparators, at no extra cost. Night School adds a few probes for traffic with few repeats (`RATCHET_TEACHER_PROBES`). Only labels that can be compared count: the same configured teacher at temperature 0, no redaction placeholders on either side, a registered task that names fields and is not pinned. A label a re-test disagreed with is **contested**: it is left out of training and the golden set until Night School's adjudication (two more teacher answers, a strict majority wins) settles it.
+
+When the epoch's first re-tests disagree too often, the release gate freezes Night School with a `teacher_drift` event: the freeze rule's e-value, a mixture over the epoch's days of `stats.e_bernoulli` against "a fresh label disagrees with an earlier one at most `RATCHET_TEACHER_NOISE_MAX` (5%) of the time", has reached 1 / `RATCHET_ALPHA_TEACHER` (100). A teacher within that noise freezes it with probability at most 1% per epoch, however often the gate looks. Training stays paused until an operator acknowledges ([Runbook](RUNBOOK.md#teacher_drift-event)). A change in the model id the teacher's responses report starts a new epoch on its own (`teacher_model_changed`).
+
+### GET `/ratchet/teacher`
+
+Public and read-only, like `/ratchet/stats`.
+
+```json
+{
+  "enabled": true,
+  "epoch": 1,
+  "epoch_started_day": 1,
+  "frozen": false,
+  "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "noise_max": 0.05,
+  "alpha": 0.01,
+  "threshold": 100.0,
+  "checks": 273,
+  "disagreements": 11,
+  "self_agreement": 0.9597,
+  "interval": [0.9293, 0.9774],
+  "ceiling": 0.9886,
+  "e_value": 96.38,
+  "strongest": {"from_day": 3, "checks": 48, "disagreements": 11},
+  "contested": 0,
+  "sources": {"duplicate": {"checks": 193, "disagreements": 1}, "probe": {"checks": 80, "disagreements": 10}},
+  "tasks": [
+    {"task": "ticket-triage", "checks": 273, "disagreements": 11, "self_agreement": 0.9597, "interval": [0.9293, 0.9774],
+     "ceiling": 0.9886, "e_value": 96.38, "contested": 0}
+  ]
+}
+```
+
+(Mock gateway, four days of tickets, the mock teacher changing 15% of labels from day 3 (`POST /ratchet/demo/teacher-drift`); simulation numbers from mock models, rounded here.)
+
+- `enabled`: `RATCHET_TEACHER_WATCH`. When 0 the checks are still recorded and reported, but nothing acts on them.
+- `epoch`, `epoch_started_day`: the check epoch (1 until the first ack or model change) and the ledger day it started. Each stored request gives at most one check per epoch: its first re-test. That is what keeps the e-value valid (comparing one stored label with several re-tests makes the checks dependent).
+- `frozen`: Night School skips training (`skip` event "teacher labels look unstable") until `POST /ratchet/teacher/ack`.
+- `model`: the model id the teacher's responses last reported (`null` before the first teacher call; at most 200 characters).
+- `noise_max`, `alpha`, `threshold`: the freeze rule (`RATCHET_TEACHER_NOISE_MAX`, `RATCHET_ALPHA_TEACHER`, 1 / alpha).
+- `checks`, `disagreements`: the epoch's first re-tests and how many disagreed. `self_agreement` is 1 − disagreements / checks, `interval` its 95% Wilson interval, and `ceiling` the square root of the interval's upper end: no student can agree with a fresh teacher label more often than that at full coverage (FR-6.43). All three are `null` without checks.
+- `e_value`: the freeze rule's e-value (capped at e^690); `strongest`: the stretch of days from `from_day` on that weighs most in it, with its counts (`null` without checks). The `teacher_drift` event quotes these.
+- `contested`: stored labels quarantined now, of every epoch.
+- `sources`: the checks by where they came from: `duplicate` (a repeated request the teacher labelled again) and `probe` (Night School).
+- `tasks`: per task with checks or contested labels, the same numbers. A task's `e_value` is diagnostic only: the freeze tests the pooled checks.
+
+### POST `/ratchet/teacher/ack`
+
+Starts a new check epoch, unfreezes Night School and writes a `teacher_ack` event naming the admin key (its name, never the key). Needs an admin key (`Authorization: Bearer <admin key>` or `X-API-Key`): **401** for a missing or wrong key, **403** for a regular API key, and **403** in live mode without `RATCHET_ADMIN_KEYS`. Open in mock mode without admin keys (the event names `mock-admin`). No body. Check the teacher's model id first ([Runbook](RUNBOOK.md#teacher_drift-event)).
+
+```json
+{"epoch": 2, "frozen": false}
+```
 ## GET `/ratchet/bom/public-key`
 
 ```json
@@ -1277,9 +1616,9 @@ python -m ratchet.proof key --task ticket-triage --messages request.json   # the
 
 `public_key` and `key_id` are `null` when signing is off. Publish the key somewhere you control as well (README, website): a key served by the same gateway proves nothing if the gateway itself is compromised.
 
-## POST `/ratchet/redact`
+## POST `/ratchet/redact?style=`
 
-Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored. Nothing is logged or stored. Backs the dashboard's **Try the redactor** box. Access level `dashboard`.
+Runs the PII redactor ([ARCHITECTURE.md](ARCHITECTURE.md#pii-redaction)) on a text and returns what would be stored: in the gateway's style (`RATCHET_REDACT_STYLE`) or the one `style` names (`label`, `numbered` or `surrogate`, any case) ([ADR 0082](adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)). Nothing is logged or stored. Backs the dashboard's **Try the redactor** box. Access level `dashboard`; the detector plugin (`RATCHET_REDACT_PLUGIN`), which may be an NER model costing tens of milliseconds a call, runs only for a caller with a valid API or admin key (`Authorization: Bearer <key>` or `X-API-Key`). Anyone else, or a wrong key, gets the patterns alone.
 
 ```bash
 curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
@@ -1287,10 +1626,21 @@ curl -s localhost:8000/ratchet/redact -H 'content-type: application/json' \
 ```
 
 ```json
-{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true}
+{"text": "I am [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": true, "style": "label", "plugin": false, "plugin_skipped": false}
 ```
 
-`enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. **400** when `text` is missing or longer than 5,000 characters.
+```bash
+curl -s 'localhost:8000/ratchet/redact?style=numbered' -H 'content-type: application/json' \
+  -d '{"text": "Sales: ana@x.io. Billing: bo@y.io, cc ana@x.io"}'
+```
+
+```json
+{"text": "Sales: [EMAIL_1]. Billing: [EMAIL_2], cc [EMAIL_1]", "found": {"EMAIL": 3}, "enabled": true, "style": "numbered", "plugin": false, "plugin_skipped": false}
+```
+
+- `found` counts placeholders by label, every occurrence; `style` is the style used; `plugin` says whether the detector plugin ran; `plugin_skipped` is true when one is configured but did not run, because the caller sent no valid key.
+- `enabled` says whether this gateway redacts examples (`RATCHET_REDACT_PII`); the preview runs either way. A task whose spec sets `privacy.redact_style` stores in that style; preview it with `?style=`.
+- **400** when `text` is missing or longer than 5,000 characters, or `style` is not one of the three (`style must be one of label, numbered, surrogate`). **500** when the detector plugin fails (only callers with a key reach it), with a message that names the problem or the exception's class and never the text (`the redaction plugin raised RuntimeError`).
 
 ---
 
@@ -1541,7 +1891,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
   "tasks": [
     {"name": "invoice-extract", "description": "Vendor and total from an invoice", "format": "json",
      "fields": {"vendor": {"type": "text", "strip_suffixes": ["inc", "ltd"]}, "total": {"type": "number", "abs_tol": 0.01}},
-     "pinned": false, "store": true, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
+     "sql": null, "pinned": false, "store": true, "privacy": {}, "match": {}, "routing": {}, "policy": {}, "tools": "teacher", "clients": ["acme"],
      "source": "api", "spec_hash": "1c7e77bb7041b4d8", "verifiable": true,
      "requests": 420, "student_share": 0.81, "recalibrating": false, "runtime_pinned": false}
   ],
@@ -1549,7 +1899,7 @@ The task registry ([ADR 0022](adr/0022-task-registry.md)): the built-in tasks, t
 }
 ```
 
-- `tasks`: every registered task, the built-in ones first, then the file's, then the API and auto tasks. The first eleven keys are the task's spec as a file would hold it (what `PUT` takes back); `source` is `builtin`, `file`, `api` or `auto` (derived from a schema; never pinned); `verifiable` says it names fields that can be checked; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version; `runtime_pinned` (v0.5) is true while an operator has pinned the task to the teacher at runtime ([Admin](#admin)), on top of its spec's `pinned`.
+- `tasks`: every registered task, the built-in ones first, then the file's, then the API and auto tasks. The first twelve keys are the task's spec as a file would hold it (what `PUT` takes back); `sql` is null except for a text-to-SQL task, where it holds every option (`{"fixture": "shop.sql", "dialect": "sqlite", "ordered": "auto", "empty_result": "text", "max_rows": 1000, "max_steps": 200000}`, or `{"dialect": "postgres"}`; [CONFIGURATION.md](CONFIGURATION.md#text-to-sql-tasks)); `source` is `builtin`, `file`, `api` or `auto` (derived from a schema; never pinned); `verifiable` says it names fields that can be checked, or runs its SQL answers on a fixture; `requests` and `student_share` come from the ledger (the same numbers as `/ratchet/stats` `tasks`); `recalibrating` is true when the live version was scored under another spec of the task, so the teacher answers it until a night re-scores the version; `runtime_pinned` (v0.5) is true while an operator has pinned the task to the teacher at runtime ([Admin](#admin)), on top of its spec's `pinned`.
 - `unknown_tasks`: the `RATCHET_UNKNOWN_TASKS` policy. `max_tasks`: how many tasks the registry holds at most, built-in ones included.
 - `unregistered`: names requests used that are not registered (a typo, or a task to register or pin), with their request counts.
 - The dashboard's **Task registry** panel reads this list, `GET /ratchet/tasks/{name}` for its drawer, and the write results below. The keys it reads are listed with their JSON types in `tests/fixtures/tasks_keys.json` and checked by `test_task_registry_contract`; like `/ratchet/stats`, these responses add keys and never remove or retype one. The panel writes API tasks with an admin key the operator types in, sent only as `Authorization: Bearer` and kept in the page's memory ([ADR 0100](adr/0100-dashboard-task-writes-and-derived-breaker-state.md)).
@@ -1580,17 +1930,17 @@ curl -X PUT localhost:8000/ratchet/tasks/invoice-extract -H "Authorization: Bear
 
 | Status | When |
 |---|---|
-| 200 | `{"task": {...entry...}, "spec_hash": "...", "changed": true, "created": true}`. A spec identical to the stored one is a 200 with `changed: false` and changes nothing |
+| 200 | `{"task": {...entry...}, "spec_hash": "...", "changed": true, "created": true}`. A spec identical to the stored one is a 200 with `changed: false` and changes nothing; for a sql task the fixture is read again, so the same body after its text changed is a change (a new `spec_hash`) |
 | 401, 403 | No admin key, a wrong one or an API key; the admin API is off (live mode without `RATCHET_ADMIN_KEYS`) |
 | 403 | The name is a built-in task (`task 'x' is built in; use another name (a spec may extend it)`) or a file task (`task 'x' is defined in RATCHET_TASKS_FILE; edit the file`) |
 | 409 | The registry holds `max_tasks` tasks, or (mock mode) 50 API tasks already |
-| 422 | The body is not strict JSON (NaN is refused), names another task, or breaks a spec rule; `clients` names a key that is not in `RATCHET_API_KEYS` |
+| 422 | The body is not strict JSON (NaN is refused), names another task, or breaks a spec rule; `clients` names a key that is not in `RATCHET_API_KEYS`; a sql task's fixture is outside `RATCHET_FIXTURES_DIR`, missing, over 5 MB, not UTF-8 or does not load (`sql.fixture: fixture '../x.sql' is outside RATCHET_FIXTURES_DIR`), or (Python 3.10) needs Python 3.11 |
 
-The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients` or `match` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
+The event log records `task_registered` (`name (spec <hash>) by <admin>`) or `task_changed` (`name: spec <old> -> <new> by <admin>`; for a change to `description`, `clients`, `match` or `privacy` only, the hash is kept). A changed spec does not touch stored examples: Night School judges them under the current spec, and the serving version keeps the task on the teacher until it is scored under the new one.
 
 ### DELETE `/ratchet/tasks/{name}`
 
-Remove an API or auto task: `{"deleted": "invoice-extract", "spec_hash": "...", "examples_kept": 420}` and a `task_deleted` event. Its stored examples stay, for provenance (and stay trainable under the name's adhoc task unless it is registered again or pinned). Requests that name it then follow `RATCHET_UNKNOWN_TASKS`; the next request with an auto task's schema registers it again from that schema. **403** for a built-in or file task, **404** for a name that is not registered.
+Remove an API or auto task, or an auto task (`RATCHET_AUTO_TASK=system_prompt`), which frees its place under `RATCHET_MAX_AUTO_TASKS` (a request with its system prompt makes it again while there is room): `{"deleted": "invoice-extract", "spec_hash": "...", "examples_kept": 420}` and a `task_deleted` event. Its stored examples stay, for provenance (and stay trainable under the name's adhoc task unless it is registered again or pinned). Requests that name it then follow `RATCHET_UNKNOWN_TASKS`; the next request with an auto task's schema registers it again from that schema. **403** for a built-in or file task, **404** for a name that is not registered.
 
 ## Admin
 
@@ -1716,7 +2066,7 @@ All five return **403** `demo controls are only available in mock mode` when `RA
 
 The mock demo is shared by every visitor, so the controls protect themselves:
 
-- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next` and `student-outage` do not take the lock.)
+- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next`, `student-outage` and `teacher-drift` do not take the lock.)
 - **Reset cooldown.** `reset` returns **429** `the demo was reset less than 30 seconds ago` within 30 seconds (`RESET_COOLDOWN_S`) of the last successful reset.
 
 The dashboard shows these messages under its buttons.
@@ -1768,6 +2118,16 @@ A committed example of `version` (default: the live version; **404** `no live ve
 ```
 
 Post it back with `split=train` for an `included` proof, or take a `golden` sample and post it with `split=train` for an `absent` one.
+
+### POST `/ratchet/demo/teacher-drift?noise=0.15`
+
+Fault injection for the [teacher watch](#teacher-watch): from now on the mock teacher changes the first label of an answer (a ticket's category) to another value with probability `noise` (0 to 1, default 0.15; **400** outside it). 0 makes it stable again; a reset does too. Each draw is seeded by the request text and a call counter, so a run is reproducible. It writes a `fault` event:
+
+```json
+{"noise": 0.15}
+```
+
+Then run days: re-tests and Night School's probes start to disagree with the stored labels, contested labels are adjudicated each night (`teacher_watch` events), and once the e-value reaches 100 a `teacher_drift` event freezes Night School (`skip` events) until `POST /ratchet/teacher/ack`. At 0.15 that takes a few days of mock traffic, because a student that serves most requests leaves few re-tests to the teacher (simulation).
 
 ### POST `/ratchet/demo/reset`
 

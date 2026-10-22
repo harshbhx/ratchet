@@ -1,22 +1,30 @@
-"""The release gate's rules (golden gate, one candidate in flight, shadow, canary, rollback, the anytime-valid canary and
+"""The release gate's rules (golden gate, the judge gate on free-text tasks, one candidate in flight, shadow, canary,
+rollback, the anytime-valid canary and
 live alert) and the router's side of a release: shadow arbitration, the canary traffic split and audit focusing."""
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import random
 from collections import Counter
+from pathlib import Path
+from typing import Any
 
 import pytest
 from fakes import OPEN_TEACHER, RecordingProvider, _audit, _shadow, _version
 from fastapi.testclient import TestClient
 
-from ratchet import stats
+from ratchet import licenses, stats, tasks
+from ratchet.compare import FieldSpec
+from ratchet.confidence import SERVE_NOTHING
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
+from ratchet.nightschool.orchestrate import run_night
 from ratchet.release import CANARY_STEPS, CS_ALPHA, ReleaseGate, ReleasePolicy, wilson
 from ratchet.router import Ratchet
+from sim.mock_models import MockFleet, MockTeacher
 
 GOOD = {"precision": 0.98, "coverage": 0.60, "threshold": 0.5}
 
@@ -53,7 +61,7 @@ def test_tick_runs_each_step_once_in_order_with_the_live_version_it_started_with
     ]
     assert led.live().id == canary and led.version(old_live).state == "retired"
     empty = Ledger(":memory:")
-    ReleaseGate(empty).tick()  # the drift and watcher steps do nothing until their features land
+    ReleaseGate(empty).tick()  # no confidence logged: the drift monitor has nothing to watch; the watchers are not built
     assert empty.events() == []
 
 
@@ -874,3 +882,188 @@ def test_paired_gate_rejects_only_large_significant_regressions():
     assert ok  # 4.7% <= 5%
     ok, _ = _paired_case(live_vec, cand_vec, ReleasePolicy(paired_gate=1, min_precision=0.9, regression_alpha=0.6, tolerance=0.0))
     assert not ok  # a looser alpha and no tolerance: 1 more wrong answer than live, p = 0.5 < 0.6
+
+
+# ---------- the judge gate on free-text tasks (FR-14.40, ADR 0054) ----------
+def _similarity_task(name: str) -> tasks.Task:
+    """Register a free-text task compared by chrF, as a tasks file would."""
+    task = tasks.Task(name, format="text", fields=(FieldSpec("$", "similarity"),), policy={"samples": 3}, source="file")
+    tasks.register(task)
+    return task
+
+
+def _judged_record(name: str, test_n: int, judge_n: int | None, judge_pass_rate: float | None) -> dict[str, Any]:
+    """A per-task record serving every one of its `test_n` held-out rows at 100% precision, with the judge's numbers."""
+    rec = {
+        "golden_n": 2 * test_n,
+        "test_n": test_n,
+        "agreement": 1.0,
+        "threshold": 0.8,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "spec_hash": tasks.get(name).spec_hash,
+        "target_precision": 0.97,
+        "calibrated": True,
+        "precision_kind": tasks.get(name).precision_kind,
+    }
+    if judge_n is not None:
+        rec |= {"judge_n": judge_n, "judge_pass_rate": judge_pass_rate}
+    return rec
+
+
+@pytest.mark.req("FR-14.40", "FR-6.1")
+def test_gate_rejects_below_min_judge_pass(monkeypatch):
+    judged = {**GOOD, "judge_n": 20, "judge_pass_rate": 0.7}
+
+    def admit(ev: dict[str, Any], policy: ReleasePolicy) -> tuple[bool, Ledger, int]:
+        led = Ledger(":memory:")
+        v = _version(led, "candidate", ev)
+        return ReleaseGate(led, policy).admit(v), led, v
+
+    assert admit(judged, ReleasePolicy())[0]  # off by default: the judge's verdict is reported, not enforced
+    ok, led, v = admit(judged, ReleasePolicy(min_judge_pass=0.8))
+    assert not ok and led.version(v).state == "rejected"
+    assert _kinds(led, "rejected")[0]["detail"] == f"v{v}: golden judge pass rate 70.0% on 20 answers < 80%"
+    # At the floor passes, as the other gates do; with nothing served to judge there is nothing to fail.
+    assert admit({**GOOD, "judge_n": 20, "judge_pass_rate": 0.8}, ReleasePolicy(min_judge_pass=0.8))[0]
+    assert admit({**GOOD, "judge_n": 0, "judge_pass_rate": None}, ReleasePolicy(min_judge_pass=0.8))[0]
+    # The golden gate runs first: a candidate below the precision floor is rejected for that.
+    ok, led, v = admit({**judged, "precision": 0.5}, ReleasePolicy(min_judge_pass=0.8))
+    assert not ok and "golden precision" in _kinds(led, "rejected")[0]["detail"]
+    # A free-text task the candidate would answer that no judge graded: the gate cannot be met, so it is refused.
+    _similarity_task("notes")
+    unjudged = {**GOOD, "spec_hashes": {"notes": "x", "ticket-triage": "y"}}
+    ok, led, v = admit(unjudged, ReleasePolicy(min_judge_pass=0.8))
+    assert not ok
+    assert _kinds(led, "rejected")[0]["detail"] == (
+        f"v{v}: free-text tasks notes were not judged; RATCHET_MIN_JUDGE_PASS needs a judge"
+    )
+    records = {"notes": _judged_record("notes", 20, None, None), "ticket-triage": _judged_record("ticket-triage", 20, None, None)}
+    assert not admit({**GOOD, "tasks": records}, ReleasePolicy(min_judge_pass=0.8))[0]
+    # Labels need no judge, and neither does a free-text task the candidate serves nothing of.
+    assert admit({**GOOD, "spec_hashes": {"ticket-triage": "y"}}, ReleasePolicy(min_judge_pass=0.8))[0]
+    off = {**records, "notes": {**records["notes"], "threshold": SERVE_NOTHING}}
+    assert admit({**GOOD, "tasks": off}, ReleasePolicy(min_judge_pass=0.8))[0]
+    # RATCHET_MIN_JUDGE_PASS is read like every policy field, and checked.
+    monkeypatch.setenv("RATCHET_MIN_JUDGE_PASS", "0.85")
+    assert ReleasePolicy.from_env().min_judge_pass == 0.85
+    for bad in (1.5, -0.1, float("nan")):
+        with pytest.raises(ValueError, match="RATCHET_MIN_JUDGE_PASS"):
+            ReleasePolicy(min_judge_pass=bad)
+
+
+def _version_obj(ev: dict[str, Any]):
+    led = Ledger(":memory:")
+    return led.version(_version(led, "candidate", ev))
+
+
+@pytest.mark.req("FR-14.40", "FR-14.1")
+def test_judge_gate_disables_task():
+    """Two free-text tasks and a label task on one adapter. The overall judge pass rate (36 of 40) clears 85%, but one
+    task's own (6 of 10) does not: that task is disabled on the candidate, which ships for the others (`task_mode`
+    'disable'), or the candidate is rejected ('reject'). A task with fewer held-out rows than `min_task_test_n` is left
+    to the overall rate, as the per-task precision check leaves it."""
+    _similarity_task("good-notes"), _similarity_task("bad-notes")
+    records = {
+        "good-notes": _judged_record("good-notes", 30, 30, 1.0),
+        "bad-notes": _judged_record("bad-notes", 10, 10, 0.6),
+        "ticket-triage": _judged_record("ticket-triage", 40, None, None),
+    }
+    ev = {**GOOD, "judge_n": 40, "judge_pass_rate": 0.9, "tasks": records}
+    led = Ledger(":memory:")
+    cand = _version(led, "candidate", ev)
+    gate = ReleaseGate(led, ReleasePolicy(min_judge_pass=0.85))
+    why = "golden judge pass rate 60.0% on 10 answers < 85%"
+    assert gate.judge_problem(led.version(cand)) is None and gate.judge_failures(led.version(cand)) == [("bad-notes", why)]
+    assert gate.admit(cand) and led.version(cand).state == "canary"
+    tasks_now = led.version(cand).eval["tasks"]
+    assert tasks_now["bad-notes"]["threshold"] == SERVE_NOTHING and tasks_now["bad-notes"]["disabled"] == why
+    assert "disabled" not in tasks_now["good-notes"] and "disabled" not in tasks_now["ticket-triage"]
+    assert _kinds(led, "task_disabled")[0]["detail"] == (
+        f"v{cand} bad-notes: {why}; the teacher answers it, v{cand} ships for its other tasks"
+    )
+    r = Ratchet(Settings(teacher_model=OPEN_TEACHER), led, RecordingProvider("x"), lambda v: (RecordingProvider("x"), "a"))
+    assert r.threshold(led.version(cand), "a", "bad-notes") == SERVE_NOTHING
+    # reject mode: the candidate goes, naming the task.
+    led = Ledger(":memory:")
+    cand = _version(led, "candidate", ev)
+    assert not ReleaseGate(led, ReleasePolicy(min_judge_pass=0.85, task_mode="reject")).admit(cand)
+    assert _kinds(led, "rejected")[0]["detail"] == f"v{cand}: task bad-notes: {why}"
+    # Too few held-out rows for a check of its own; a task the judge did not grade fails when it has enough.
+    few = {**records, "bad-notes": _judged_record("bad-notes", 9, 9, 0.6)}
+    assert ReleaseGate(led, ReleasePolicy(min_judge_pass=0.85)).judge_failures(_version_obj({**ev, "tasks": few})) == []
+    missing = {**records, "bad-notes": _judged_record("bad-notes", 10, None, None)}
+    assert ReleaseGate(led, ReleasePolicy(min_judge_pass=0.85)).judge_failures(_version_obj({**ev, "tasks": missing})) == [
+        ("bad-notes", "golden: its answers were not judged; RATCHET_MIN_JUDGE_PASS needs a judge")
+    ]
+    # Off (the default): nothing is disabled for the judge.
+    assert ReleaseGate(led).judge_failures(_version_obj(ev)) == [] and ReleaseGate(led).judge_problem(_version_obj(ev)) is None
+
+
+@pytest.mark.req("FR-14.40", "FR-5.5", "FR-9.3")
+def test_mock_judge_catches_what_the_proxy_misses():
+    """The gate path, offline. A free-text task compared by chrF at 0.7: the mock student's wrong answers keep the
+    teacher's opening and change its closing sentence, which chrF still calls close (about 0.71 to 0.75). A candidate
+    that learned nothing therefore shows 100% proxy precision on the golden set, and only the judge, which in the mock
+    world knows the stored truth, sees that most of its answers are wrong. With RATCHET_MIN_JUDGE_PASS it is rejected;
+    a candidate trained on the task passes. Simulation: mock models."""
+    _similarity_task("note-summary")
+    teacher = MockTeacher(0)
+    model = "nvidia/Nemotron-3-Ultra-550b-a55b"
+    lic = licenses.require_distillable(model)
+
+    def ledger() -> Ledger:
+        led = Ledger(":memory:", golden_fraction=0.6)
+        for i in range(120):
+            note = f"Summarise this note for the team: delivery {i} to the Pune office is late by {i % 5 + 1} days."
+            msgs = [{"role": "user", "content": note}]
+            led.add_example("note-summary", msgs, teacher.complete(msgs, model)[0].text, model, lic.name, lic.url)
+        return led
+
+    fleet = MockFleet()
+
+    class Forgetful:  # a training job that produced an adapter which learned nothing
+        def train(self, rows: list[dict[str, Any]], base_model: str, name: str) -> str:
+            return fleet.train([], base_model, name)
+
+    policy = ReleasePolicy(min_judge_pass=0.9)
+    led = ledger()
+    rep = run_night(led, Forgetful(), fleet, ReleaseGate(led, policy), "base", min_new_examples=1)
+    rec = rep.eval["tasks"]["note-summary"]
+    assert rec["precision_kind"] == "proxy" == rep.eval["precision_kind"]
+    assert rec["precision"] == 1.0 and rec["coverage"] > 0.9  # the proxy sees nothing wrong
+    assert rec["judge_n"] == round(rec["coverage"] * rec["test_n"]) and rec["judge_pass_rate"] < 0.6  # the judge does
+    assert not rep.admitted and "golden judge pass rate" in _kinds(led, "rejected")[0]["detail"]
+    # Without the judge gate the same candidate would ship: what RATCHET_MIN_JUDGE_PASS is for.
+    led = ledger()
+    assert run_night(led, Forgetful(), fleet, ReleaseGate(led), "base", min_new_examples=1).admitted
+    # A candidate trained on the task's examples passes the judge gate.
+    led = ledger()
+    rep = run_night(led, fleet, fleet, ReleaseGate(led, policy), "base", min_new_examples=1)
+    assert rep.admitted and rep.eval["judge_pass_rate"] >= 0.9
+    # Every answer the judge passes agrees with the teacher by the proxy too: the judge only ever lowers the estimate.
+    assert rep.eval["judge_pass_rate"] <= rep.eval["tasks"]["note-summary"]["precision"]
+
+
+# The modules a chat request runs through (`gateway.chat` -> `Ratchet.handle`): scoring, comparing, thresholds, providers.
+REQUEST_PATH = ("router.py", "confidence.py", "compare.py", "similarity.py", "tasks.py", "calibration.py", "providers.py")
+
+
+@pytest.mark.req("FR-14.40")
+def test_judge_never_on_the_request_path():
+    """The judge grades free text at night, in the golden eval (ADR 0008, ADR 0054): no module a chat request runs
+    through names a judge in its code (comments and docstrings aside) or imports the golden eval, so a similarity task
+    costs no judge call per request."""
+    root = Path(__file__).resolve().parent.parent / "ratchet"
+    found = []
+    for name in REQUEST_PATH:
+        tree = ast.parse((root / name).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            word = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+            if word is not None and "judge" in word.lower():
+                found.append(f"{name}:{node.lineno} {word}")
+            if isinstance(node, ast.ImportFrom) and node.module and "evaluate" in node.module:
+                found.append(f"{name}:{node.lineno} imports {node.module}")
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and any("evaluate" in a.name for a in node.names):
+                found.append(f"{name}:{node.lineno} imports {[a.name for a in node.names]}")
+    assert found == []

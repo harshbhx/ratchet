@@ -1236,7 +1236,9 @@ def _live(gw: Any, tmp_path: Any, teacher: FakeOpenAIServer, **overrides: Any) -
         "teacher_params": "",
         "student_params": "",
         "api_keys": "",
-        "allow_unauthenticated": True,  # a live gateway without API keys starts only with this (ADR 0061)
+        "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",  # a live gateway without API keys starts only with this (ADR 0061)
         "admin_keys": "",
         "bom_signing_key": "",
         "mock_warmup_days": 0,

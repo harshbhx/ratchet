@@ -414,12 +414,16 @@ def apply_retention(
     request_days: int | None = None,
     dry_run: bool = False,
     chunk: int = PURGE_CHUNK,
+    fold_before: float | None = None,
 ) -> dict[str, Any]:
     """Apply the retention windows (FR-13.4). Examples last stored or seen more than `example_days` ago (default
     `retention.example_days`; golden ones too) lose their text with reason `retention`: a later duplicate that may be
     stored brings it back. Request rows logged more than `request_days` ago (default `retention.request_days`) are folded
     into `daily_rollup` and deleted, except rows of a release in flight (`Ledger.fold_requests`). 0 skips a window.
-    `client` limits both to one API client's rows; `dry_run` only counts. Examples are purged `chunk` at a time, as
+    `fold_before` caps the request window's cutoff (a moment on the ledger's clock): rows at or after it are never folded,
+    whatever the window says; the gateway, a live night and `python -m ratchet.live purge` pass `receipts.fold_floor`, so
+    a day's rows are folded only once its savings receipt can be sealed from all of them. `client` limits both to one API
+    client's rows; `dry_run` only counts. Examples are purged `chunk` at a time, as
     request rows are folded (`Ledger.fold_requests`). Writes a `purge` event when anything went.
     Runs hourly from the live gateway's tick, at the start of every live night, and from `python -m ratchet.live purge`."""
     if client is not None and not valid_name(client):
@@ -454,7 +458,10 @@ def apply_retention(
             if n == 0 or len(rows) < chunk:
                 break
     if rq_days:
-        out["requests_folded"] = led.fold_requests(now - rq_days * DAY_SECONDS, client, dry_run=dry_run, now=now)
+        cutoff = now - rq_days * DAY_SECONDS
+        if fold_before is not None:
+            cutoff = min(cutoff, float(fold_before))
+        out["requests_folded"] = led.fold_requests(cutoff, client, dry_run=dry_run, now=now)
     if not dry_run and (out["examples_purged"] or out["requests_folded"]):
         parts = []
         if out["examples_purged"]:

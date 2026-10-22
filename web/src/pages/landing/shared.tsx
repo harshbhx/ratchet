@@ -60,7 +60,7 @@ export function Reveal({
 /** One chapter: anchored section with consistent rhythm. */
 export function Chapter({ id, children, className }: { id: ChapterId; children: ReactNode; className?: string }) {
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className={cn("relative scroll-mt-16 py-20 sm:py-28 lg:py-32", className)}>
+    <section id={id} aria-labelledby={`${id}-title`} className={cn("relative scroll-mt-16 py-16 sm:py-20 lg:py-24", className)}>
       {children}
     </section>
   );

@@ -39,6 +39,9 @@
   otherwise, and TRL only warns when the rendered prompt is not a prefix of prompt+answer (FR-8.42). A train
   row whose answer holds a literal `<think>` or `</think>` is left out and counted (`skipped_think_tag`): the
   template renders such an answer without its empty think block, so its prompt would not be a prefix either.
+- A contested row (a later teacher label of the same request disagreed with it; the teacher watch,
+  FR-16.7) is left out of both sets and counted (`excluded_contested` in manifest.json), until Night
+  School's adjudication settles its label. `exclude_contested=False` (RATCHET_TEACHER_WATCH=0) keeps it.
 """
 
 from __future__ import annotations
@@ -49,10 +52,10 @@ from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NamedTuple
 
 from .. import bom, licenses, tasks
-from ..ledger import Ledger, prompt_key, seen_count
+from ..ledger import Ledger, content_key, prompt_key, seen_count
 from ..merkle import KeySet
 
 FREQUENT = 3
@@ -96,32 +99,60 @@ def counts_as_train(r: Any, seen: Counter[str]) -> bool:
     return not (params and "stop" in params)
 
 
-def rows(ledger: Ledger, split: str, task: str | None = None, counts: dict[str, int] | None = None) -> list[dict[str, Any]]:
+def rows(
+    ledger: Ledger,
+    split: str,
+    task: str | None = None,
+    counts: dict[str, int] | None = None,
+    *,
+    exclude_contested: bool = True,
+) -> list[dict[str, Any]]:
     """The examples of one split ('train' or 'golden') as training rows, after the rules above. `counts`, when given,
     gains `skipped_invalid` (train rows left out because the answer is not valid under the task's current spec),
-    `skipped_think_tag` (train rows whose answer holds a literal think tag) and `excluded_pinned` (rows left out because
-    their task is pinned now), each only when it happens."""
+    `skipped_think_tag` (train rows whose answer holds a literal think tag), `excluded_pinned` (rows left out because
+    their task is pinned now) and `excluded_contested` (rows quarantined by the teacher watch), each only when it happens.
+
+    A prompt is one group across tasks (`ledger.content_key`: the same messages under any task or conditions; ADR 0131),
+    because one adapter serves every task: its occurrences add up for the frequent rule, a golden-only row holds every
+    copy out, and a prompt whose copy in another task is golden (and not frequent) is golden in this one too, so no
+    task's golden set holds a prompt the adapter trained on through another task. Rows whose text a purge removed and
+    that predate `content_hash` group by their own task's prompt key, as before. With `task`, every task's rows are
+    still read for the grouping."""
     out = []
     specs: dict[str, tasks.Task] = {}
-    examples = ledger.examples(task=task)
-    keys = [prompt_key(r) for r in examples]
+    examples = ledger.examples()
+    keys = [content_key(r) or prompt_key(r) for r in examples]
     seen: Counter[str] = Counter()
     held: set[str] = set()  # prompts with a golden-only row: every variant stays golden (FR-4.50)
+    golden_anywhere: set[str] = set()  # prompts with a row in the golden split under any task (ADR 0131)
     for r, key in zip(examples, keys, strict=True):
         seen[key] += seen_count(r)  # purged rows count too (INV-3); a label that was no occurrence counts 0
         if _golden_only(r):
             held.add(key)
+        elif r["split"] == "golden":
+            golden_anywhere.add(key)
     for r, key in zip(examples, keys, strict=True):
         if r["purged_ts"] is not None or r["messages"] is None:
             continue  # purged (FR-13.3, FR-13.4): no text to train or grade on
+        if task is not None and r["task"] != task:
+            continue
         frequent = seen[key] >= FREQUENT
-        effective = "golden" if key in held else ("train" if (r["split"] == "train" or frequent) else "golden")
+        if key in held:
+            effective = "golden"
+        elif frequent:
+            effective = "train"
+        else:
+            effective = "golden" if (r["split"] == "golden" or key in golden_anywhere) else "train"
         if effective != split:
             continue
         spec = specs.get(r["task"]) or specs.setdefault(r["task"], tasks.get(r["task"]))
         if spec.pinned:  # INV-10 at read time: the task was pinned after these rows were stored
             if counts is not None:
                 counts["excluded_pinned"] = counts.get("excluded_pinned", 0) + 1
+            continue
+        if exclude_contested and r["contested"]:  # the teacher watch's quarantine (FR-16.7), in both splits
+            if counts is not None:
+                counts["excluded_contested"] = counts.get("excluded_contested", 0) + 1
             continue
         params = json.loads(r["params"]) if r["params"] else None
         if effective == "train" and params and "stop" in params:
@@ -217,11 +248,38 @@ def write_training(items: list[dict[str, Any]], path: str | Path) -> Path:
     return write_jsonl([training_record(it) for it in items], path)
 
 
-def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[str, Any]:
+class Snapshot(NamedTuple):
+    """Both splits of one read of the ledger, and what `rows` left out of each (`counts`)."""
+
+    train: list[dict[str, Any]]
+    golden: list[dict[str, Any]]
+    counts: dict[str, int]
+    golden_counts: dict[str, int]
+
+
+def read_snapshot(ledger: Ledger, task: str | None = None, *, exclude_contested: bool = True) -> Snapshot:
+    """The train and golden rows now, read once. A night builds its manifest from the same rows it trains on: reading
+    again for the trainer would train on an example stored in between that the version's example count and signed
+    dataset hash (`dataset_hash`) do not know."""
     counts: dict[str, int] = {}
     golden_counts: dict[str, int] = {}
-    train = rows(ledger, "train", task, counts)
-    golden = rows(ledger, "golden", task, golden_counts)
+    train = rows(ledger, "train", task, counts, exclude_contested=exclude_contested)
+    golden = rows(ledger, "golden", task, golden_counts, exclude_contested=exclude_contested)
+    return Snapshot(train, golden, counts, golden_counts)
+
+
+def build(
+    ledger: Ledger,
+    out_dir: str | Path,
+    task: str | None = None,
+    *,
+    exclude_contested: bool = True,
+    snapshot: Snapshot | None = None,
+) -> dict[str, Any]:
+    """Write the training and golden files and the manifest of one snapshot (`snapshot`, else a fresh read)."""
+    train, golden, counts, golden_counts = (
+        snapshot if snapshot is not None else read_snapshot(ledger, task, exclude_contested=exclude_contested)
+    )
     out = Path(out_dir)
     write_training(train, out / "train.jsonl")
     write_jsonl(golden, out / "golden.jsonl")  # the eval's rows (messages and stored conditions): never trained on
@@ -232,6 +290,7 @@ def build(ledger: Ledger, out_dir: str | Path, task: str | None = None) -> dict[
         "skipped_invalid": counts.get("skipped_invalid", 0),
         "skipped_think_tag": counts.get("skipped_think_tag", 0),
         "excluded_pinned": counts.get("excluded_pinned", 0) + golden_counts.get("excluded_pinned", 0),
+        "excluded_contested": counts.get("excluded_contested", 0) + golden_counts.get("excluded_contested", 0),
         "bill_of_materials": ledger.bill_of_materials(),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))

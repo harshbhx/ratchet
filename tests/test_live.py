@@ -13,6 +13,7 @@ none passed, the code talks to the real services. No test here opens a socket or
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -35,10 +36,13 @@ from fakes import (
     RecordingRun,
     _examples,
     _version,
+    by_host,
 )
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from ratchet import bom, licenses, live
+from ratchet import bom, licenses, live, tasks
+from ratchet.compare import FieldSpec
 from ratchet.confidence import STUDENT_SAMPLING
 from ratchet.config import Settings
 from ratchet.ledger import Ledger
@@ -103,7 +107,10 @@ def _live_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "mock_warmup_days": 0,
         # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read /ratchet/stats without a key.
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,
+        "stats_ttl_s": 0.0,  # every /ratchet/stats read computed afresh (live mode caches it for 2 s, ADR 0060)
     }
     return Settings(**{**base, **overrides})
 
@@ -256,6 +263,101 @@ def test_reload_adapters_loads_live_canary_shadow(tmp_path, monkeypatch):
         live.reload_adapters(s, led, http=httpx.Client(transport=_failing(503)))
 
 
+@pytest.mark.req("NFR-2", "FR-8.2")
+def test_a_night_after_an_endpoint_restart_reloads_the_adapters_before_it_scores_the_champion(tmp_path, monkeypatch, capsys):
+    """vLLM forgets runtime-loaded adapters when the endpoint restarts. The night re-scores the live version on the golden
+    set first: with its adapter gone every call is a 404 and the night used to end there. It now loads the live, canary and
+    shadow adapters before `run_night`."""
+    db = tmp_path / "live.db"
+    _live_env(
+        monkeypatch,
+        RATCHET_DB=str(db),
+        RATCHET_DATA_DIR=str(tmp_path / "data"),
+        RATCHET_STUDENT_BASE=STUDENT_BASE,
+        RATCHET_STUDENT_KEY=STUDENT_KEY,
+        RATCHET_TEACHER_BASE=TEACHER_BASE,
+        NEBIUS_API_KEY=TEACHER_KEY,
+        RATCHET_JUDGE_MODEL=JUDGE,
+        RATCHET_SAMPLES="3",
+        RATCHET_ADAPTER_ROOT="/mnt/adapters",
+    )
+    led = Ledger(str(db))
+    _examples(led, train=60, golden=6)
+    live_version = _version(led, "live", {"precision": 0.9, "coverage": 0.5, "threshold": 0.8}, train_examples=0)
+    led.db.close()
+    vllm = FakeOpenAIServer(_answer_like_the_teacher, loaded=set(), errors="v0.18.0")  # restarted: nothing is loaded
+    token_factory = FakeOpenAIServer('{"score": 1, "reason": "same answer"}')
+
+    def factory(base_url: str, api_key: str, **options: Any) -> Any:
+        server = vllm if base_url == STUDENT_BASE else token_factory
+        return OpenAICompatProvider(base_url, api_key, transport=server.transport, **options)
+
+    live.main(["night"], provider_factory=factory, run=RecordingRun(), http=_http(vllm))
+    out = capsys.readouterr().out
+    assert "[trained] v2" in out or "NightReport(trained=True" in out
+    loads = [c.json["lora_name"] for c in vllm.calls_to("/load_lora_adapter")]
+    assert loads[0] == f"student-v{live_version}" and "student-v2" in loads  # the champion first, then the new adapter
+    sampled = [c for c in vllm.calls_to("/chat/completions") if c.json.get("logprobs")]
+    assert sampled and all(c.json["model"] in {"student-v1", "student-v2"} for c in sampled)
+    events = Ledger(str(db)).events()
+    assert [e for e in events if e["kind"] == "adapter_reloaded" and "before the night" in e["detail"]]
+    assert not [e for e in events if e["kind"] == "adapter_reload_failed"]
+
+
+@pytest.mark.req("NFR-2", "FR-8.2")
+def test_a_failed_reload_before_the_night_is_an_event_and_the_evaluator_reloads_once_on_a_404(tmp_path, monkeypatch):
+    _live_env(monkeypatch, RATCHET_ADAPTER_ROOT="/mnt/adapters")
+    led = Ledger(":memory:")
+    s = _live_settings(tmp_path)
+    _version(led, "live")
+    assert live.reload_before_night(s, led, http=httpx.Client(transport=_failing(503))) == []
+    (event,) = [e for e in led.events() if e["kind"] == "adapter_reload_failed"]
+    assert "before the night" in event["detail"] and STUDENT_KEY not in event["detail"] and STUDENT_BASE not in event["detail"]
+
+    # The evaluator: one 404 for the adapter loads it and asks again; a second 404 in the same run is not retried.
+    vllm = FakeOpenAIServer(_answer_like_the_teacher, loaded=set(), errors="v0.18.0")
+    loaded: list[str] = []
+
+    def reload(name: str) -> None:
+        loaded.append(name)
+        live.load_adapter(STUDENT_BASE, STUDENT_KEY, name, f"/mnt/adapters/{name}", client=_http(vllm))
+
+    provider = OpenAICompatProvider(STUDENT_BASE, STUDENT_KEY, transport=vllm.transport)
+    rows = [
+        {
+            "task": "default",
+            "messages": [
+                {"role": "user", "content": f"request {i}"},
+                {"role": "assistant", "content": f"teacher answer to request {i}"},
+            ],
+            "params": None,
+            "seen": 1,
+            "provenance": {
+                "teacher": OPEN_TEACHER,
+                "license": "OpenMDW-1.1",
+                "hash": f"{i:064x}",
+                "redactions": 0,
+                "origin": "live",
+            },
+        }
+        for i in range(4)
+    ]
+    ev = LiveEvaluator(provider, samples=3, on_adapter_missing=reload)
+    ev.evaluate("student-v9", rows)
+    assert loaded == ["student-v9"] and "student-v9" in vllm.loaded
+    vllm.restart()
+    ev.evaluate("student-v9", rows)  # a new evaluation may reload again
+    assert loaded == ["student-v9", "student-v9"]
+    never = LiveEvaluator(
+        OpenAICompatProvider(
+            STUDENT_BASE, STUDENT_KEY, transport=FakeOpenAIServer("x", loaded=set(), errors="v0.18.0").transport
+        ),
+        samples=3,
+    )
+    with pytest.raises(Exception, match="404|does not exist|NotFound"):
+        never.evaluate("student-v9", rows)  # without a reload hook the 404 ends the evaluation as before
+
+
 @pytest.mark.req("FR-8.4", "FR-3.6", "FR-15.2", "FR-16.4")
 def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     seed, public_key = bom.keygen()
@@ -332,11 +434,13 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     assert [c.json["lora_name"] for c in vllm.calls_to("/load_lora_adapter")] == ["student-v1"]
     sampled = [c.json for c in vllm.calls_to("/chat/completions") if c.json.get("logprobs")]
     assert len(sampled) == 6 and all(b["model"] == "student-v1" and b["n"] == 3 and b["temperature"] == 0.7 for b in sampled)
+    # The judge grades the answers the student would serve on the held-out half (3 of the 6 rows), from those samples.
     judged = token_factory.calls_to("/chat/completions")
-    assert len(judged) == 6 and all(c.json["model"] == JUDGE for c in judged)
+    assert len(judged) == 3 and all(c.json["model"] == JUDGE for c in judged)
     assert all(c.json["response_format"] == {"type": "json_object"} for c in judged)
     assert all(c.headers["authorization"] == f"Bearer {TEACHER_KEY}" for c in judged)
-    assert led.version(1).eval["judge_pass_rate"] == 1.0 and led.version(1).eval["precision"] == 1.0
+    ev = led.version(1).eval
+    assert (ev["judge_pass_rate"], ev["judge_n"], ev["precision"]) == (1.0, 3, 1.0)
     # The certificate (FR-16.3) is signed with the BOM, at the settings' level (RATCHET_CERT_DELTA).
     cert = doc["manifest"]["eval"]["certificate"]
     assert (cert["calibration"], cert["delta"], cert["target"], cert["served"]) == ("point", 0.1, 0.95, 3), doc["manifest"][
@@ -596,23 +700,22 @@ def test_live_evaluator_uses_production_sampling():
     judge = RecordingProvider(judge_says)
     res = LiveEvaluator(student, judge, JUDGE, samples=4).evaluate("student-v7", rows)
 
-    sampled = [c for c in student.calls if c.kwargs.get("logprobs")]
-    assert [c.messages for c in sampled] == [r["messages"][:-1] for r in rows]  # one cascade call per golden row
+    # One cascade call per golden row, and nothing else: the judge's candidate is the answer chosen from those samples.
+    assert [c.messages for c in student.calls] == [r["messages"][:-1] for r in rows]
     # The router's student parameters for a row stored without conditions: the student's token cap only (FR-5.1).
     plain = {"n": 4, **STUDENT_SAMPLING, "params": GenParams(max_tokens=DEFAULT_STUDENT_MAX_TOKENS)}
-    assert all(c.model == "student-v7" and c.kwargs == plain for c in sampled)
-    candidates = [c for c in student.calls if not c.kwargs.get("logprobs")]  # the judge's candidates (free text only)
-    assert [c.messages for c in candidates] == [r["messages"][:-1] for r in rows[4:]]
-    assert all(c.model == "student-v7" and c.kwargs["params"] == plain["params"] for c in candidates)
+    assert all(c.model == "student-v7" and c.kwargs == plain for c in student.calls)
 
-    # FR-5.5: the judge sees request, reference and candidate in JSON mode, and grades free-text rows only.
-    assert len(judge.calls) == 2
-    for call, row in zip(judge.calls, rows[4:], strict=True):
-        assert call.model == JUDGE and call.kwargs == {"response_format": {"type": "json_object"}}
-        assert call.messages[0] == {"role": "system", "content": JUDGE_PROMPT}
-        sent = json.loads(call.messages[1]["content"])
-        assert sent == {"request": row["messages"][:-1], "reference": row["messages"][-1]["content"], "candidate": "yes"}
-    assert res["judge_pass_rate"] == 0.5 and res["golden_n"] == 6  # "yes" passes, the "no" row gets "{}" and scores 0
+    # FR-5.5: the judge sees request, reference and candidate in JSON mode, and grades the free-text answers the student
+    # would serve on the held-out half only: the "say no" row (row 5, odd), whose served answer "yes" gets "{}".
+    (call,) = judge.calls
+    assert call.model == JUDGE and call.kwargs == {"response_format": {"type": "json_object"}}
+    assert call.messages[0] == {"role": "system", "content": JUDGE_PROMPT}
+    sent = json.loads(call.messages[1]["content"])
+    assert sent == {"request": rows[5]["messages"][:-1], "reference": "no", "candidate": "yes"}
+    assert (res["judge_pass_rate"], res["judge_n"], res["golden_n"]) == (0.0, 1, 6)
+    assert (res["tasks"]["default"]["judge_n"], res["tasks"]["default"]["judge_pass_rate"]) == (1, 0.0)
+    assert "judge_n" not in res["tasks"][TRIAGE]  # labels are checked by their comparators, never judged
 
     # A judge answer that is not a clear {"score": 1} scores 0; fences and reasoning around valid JSON are fine.
     ev = LiveEvaluator(student, RecordingProvider("x"), JUDGE)
@@ -634,6 +737,72 @@ def test_live_evaluator_uses_production_sampling():
     judge = RecordingProvider('{"score": 1}')
     assert "judge_pass_rate" not in LiveEvaluator(student, judge, JUDGE).evaluate("student-v7", rows[:4])
     assert judge.calls == []
+
+
+@pytest.mark.req("FR-5.5", "FR-14.40", "FR-5.1", "INV-10")
+def test_live_evaluator_judge_pass_rate_covers_free_text_rows_only():
+    """The judge grades free-text tasks only (no fields, or a similarity field), never labels and never a pinned task,
+    and only the answers the student would serve on the held-out half: each the answer chosen from the samples drawn
+    with STUDENT_SAMPLING, cleaned as it would be served. Rows are sampled as often as their task's policy says. It
+    reports judge_n and judge_pass_rate overall and per free-text task."""
+    tasks.register(
+        tasks.Task("short-summary", format="text", fields=(FieldSpec("$", "similarity"),), policy={"samples": 5}, source="file")
+    )
+
+    def row(task: str, ask: str, ref: str) -> dict[str, Any]:
+        return {"task": task, "messages": [{"role": "user", "content": ask}, {"role": "assistant", "content": ref}]}
+
+    summary = "The refund was sent."
+    rows = []
+    for i in range(4):
+        rows += [
+            row(TRIAGE, f"ticket {i}", LABELS),
+            row("short-summary", f"summary {i}", summary),
+            row("default", f"say {'no' if i == 3 else 'yes'} {i}", "no" if i == 3 else "yes"),
+        ]
+        if i < 2:
+            rows.append(row("research-plan", f"plan {i}", "a plan"))  # pinned: never sampled, never judged
+
+    def answers(m: list[dict[str, Any]], model: str) -> str:
+        ask = m[-1]["content"]
+        return LABELS if ask.startswith("ticket") else f"<think>short</think>{summary}" if ask.startswith("summary") else "yes"
+
+    student = RecordingProvider(answers)
+
+    def judge_says(messages: list[dict[str, Any]], model: str) -> str:
+        sent = json.loads(messages[-1]["content"])
+        return '{"score": 1}' if sent["candidate"] == sent["reference"] else '{"score": 0}'
+
+    judge = RecordingProvider(judge_says)
+    res = LiveEvaluator(student, judge, JUDGE, samples=3).evaluate("student-v2", rows)
+
+    # One cascade call per row the student may answer, as many samples as its task's score rests on.
+    assert [(c.messages[-1]["content"].split()[0], c.kwargs["n"]) for c in student.calls] == [
+        ("ticket", 3),
+        ("summary", 5),
+        ("say", 3),
+    ] * 4
+    assert all({k: c.kwargs[k] for k in STUDENT_SAMPLING} == dict(STUDENT_SAMPLING) for c in student.calls)
+    # Scored rows alternate calibration / held-out: ticket 0, summary 0, say 0, ticket 1, ... The held-out free-text rows
+    # are summary 0, say 1, summary 2 and say 3; every one is served, and the judge sees each once, in row order.
+    sent = [json.loads(c.messages[-1]["content"]) for c in judge.calls]
+    assert [(x["request"][-1]["content"], x["candidate"], x["reference"]) for x in sent] == [
+        ("summary 0", summary, summary),  # the reasoning is stripped, as it would be served
+        ("say yes 1", "yes", "yes"),
+        ("summary 2", summary, summary),
+        ("say no 3", "yes", "no"),
+    ]
+    assert all(c.model == JUDGE and c.kwargs == {"response_format": {"type": "json_object"}} for c in judge.calls)
+    assert (res["judge_n"], res["judge_pass_rate"], res["excluded_pinned"], res["precision_kind"]) == (4, 0.75, 2, "proxy")
+    per_task = res["tasks"]
+    assert (per_task["short-summary"]["judge_n"], per_task["short-summary"]["judge_pass_rate"]) == (2, 1.0)
+    assert (per_task["default"]["judge_n"], per_task["default"]["judge_pass_rate"]) == (2, 0.5)
+    assert "judge_n" not in per_task[TRIAGE] and "research-plan" not in per_task
+    assert (per_task["short-summary"]["precision_kind"], per_task["default"]["precision_kind"]) == ("proxy", "exact")
+    # Without per-task records the same rows are judged at the global threshold.
+    judge.calls.clear()
+    flat = LiveEvaluator(student, judge, JUDGE, samples=3, per_task=False).evaluate("student-v2", rows)
+    assert (flat["judge_n"], flat["judge_pass_rate"], len(judge.calls)) == (4, 0.75, 4) and "tasks" not in flat
 
 
 @pytest.mark.req("FR-5.1", "FR-2.1")
@@ -761,14 +930,15 @@ def test_scout_cli_over_http(gw_env, monkeypatch, capsys):
     assert err.startswith("error: HTTPStatusError") and "401" in err
 
 
-@pytest.mark.req("FR-9.4", "FR-15.3")
+@pytest.mark.req("FR-9.4", "FR-15.3", "FR-7.9")
 def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     out = tmp_path / "sim.json"
     simulate.main(["--days", "2", "--requests", "200", "--drift-day", "0", "--workload", "mixed", "--out", str(out)])
     printed = capsys.readouterr().out
     res = json.loads(out.read_text(encoding="utf-8"))
     assert set(res) == {
-        "days", "nights", "versions", "events", "totals", "bill_of_materials", "cost", "exposure", "rollbacks", "served",
+        "days", "nights", "versions", "events", "totals", "bill_of_materials", "cost", "exposure", "rollbacks", "served", "kpis",
+        "drift", "teacher",
     }  # fmt: skip
     assert res["exposure"] == {} and res["rollbacks"] == []  # nothing rolled back in two days
     assert [d["day"] for d in res["days"]] == [1, 2] and [n["night"] for n in res["nights"]] == [1, 2]
@@ -783,6 +953,13 @@ def test_sim_cli_writes_json_and_table(tmp_path, capsys):
     assert f"total: 400 requests, ${res['totals']['cost_usd']:.2f} vs ${res['totals']['baseline_usd']:.2f}" in printed
     assert "events:" in printed and "[trained]" in printed and lines[-1] == f"wrote {out}"
     assert lines[-3] == "simulation: mock models, workload mixed, seed 7; not a measure of real model quality"
+    # PRD §8.1's success metrics (FR-7.9), labelled as simulation, one line per metric with its target and verdict.
+    k = res["kpis"]
+    assert k["simulated"] is True and k["window"]["to"] == 2
+    assert "success metrics (simulation; SM-1 to SM-3 and NFR-1 over the last 2 days):" in printed
+    for rid in ("SM-1", "SM-2", "SM-3", "SM-4", "SM-5", "NFR-1"):
+        (line,) = [ln for ln in lines if ln.split()[:1] == [rid]]
+        assert "target" in line and line.rstrip().endswith(("met", "not met", "not known yet")), line
     for e in res["events"]:
         assert f"  day {e['day']}: [{e['kind']}] {e['detail']}" in lines
 
@@ -1126,10 +1303,16 @@ def test_lease_is_taken_in_the_lifespan_only(gw_env, tmp_path, monkeypatch):
     assert rt.ledger.lease_holder("gateway") is None
 
 
-@pytest.mark.req("FR-8.5", "INV-9")
+@pytest.mark.req("FR-8.5", "INV-9", "FR-1.51")
 def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch, capsys):
     want = list(day1_check.WANT)
     assert len(want) >= 4
+    embed = day1_check.WANT_EMBEDDINGS[0]
+    monkeypatch.setattr(day1_check, "EMBEDDINGS", embed)
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "")
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "")
+    vectors = {"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}], "usage": {"prompt_tokens": 6}}
+    embed_reply: list[httpx.Response] = [httpx.Response(200, json=vectors)]
     good = {
         "choices": [
             {
@@ -1152,6 +1335,8 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
                 ids = present + ["nvidia/Some-Other-Nemotron", "meta/llama-3.3-70b"]
                 return httpx.Response(200, json={"data": [{"id": m} for m in ids]})
             body = json.loads(request.content)
+            if request.url.path == "/v1/embeddings":
+                return embed_reply[0]
             if "seed" in body and gen is not None:  # the generation-parameter check
                 return gen
             return special.get(body["model"]) or httpx.Response(200, json=good)
@@ -1170,7 +1355,7 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     client, seen = serve(want[:-1], {want[1]: no_logprobs, want[2]: httpx.Response(500, text="upstream error")})
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
-    assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out
+    assert f"[ok] model {want[0]}" in out and f"[MISSING] model {want[-1]}" in out and f"[MISSING] model {embed}" in out
     assert "'nvidia/Some-Other-Nemotron'" in out and "llama" not in out  # lists the NVIDIA models it does have
     assert f"[ok] {want[0]}: json ok, logprobs=yes, finish_reason=stop" in out  # INV-16 stores only these
     assert f"[ok] {want[1]}: json NOT parseable, logprobs=NO" in out  # reported; confidence falls back to agreement
@@ -1190,12 +1375,44 @@ def test_day1_check_reports_missing_models_and_logprobs(day1_check, monkeypatch,
     assert schema == {**probe, "response_format": day1_check.SCHEMA_FORMAT}
     assert f"[ok] {want[0]} accepts response_format json_schema (strict): the answer matches the schema" in out
 
-    client, _ = serve(want, {})
-    assert day1_check.main(client) == 0 and capsys.readouterr().out.rstrip().endswith("All good.")
+    client, seen = serve(want + [embed], {})
+    assert day1_check.main(client) == 0
+    out = capsys.readouterr().out
+    assert out.rstrip().endswith("All good.") and f"[ok] embeddings {embed}: 2 dimensions" in out
+    (sent,) = [json.loads(r.content) for r in seen if r.url.path == "/v1/embeddings"]
+    assert sent == {"model": embed, "input": ["Ratchet day-1 check", "refund"]}
+
+    # The embeddings model answering with an error, or with vectors of different lengths, fails the check; `off` skips it.
+    for reply in (
+        httpx.Response(500, text="down"),
+        httpx.Response(200, json={"data": [{"embedding": [1.0]}, {"embedding": []}]}),
+    ):
+        embed_reply[0] = reply
+        client, _ = serve(want + [embed], {})
+        assert day1_check.main(client) == 1 and f"[FAIL] embeddings {embed}" in capsys.readouterr().out
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "off")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0 and "[skip] embeddings" in capsys.readouterr().out
+    assert not any(r.url.path == "/v1/embeddings" for r in seen)
+    # Another provider's base: not looked up in Token Factory's list, and never sent the Token Factory key.
+    embed_reply[0] = httpx.Response(200, json=vectors)
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "https://tei.test/v1")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0
+    (call,) = [r for r in seen if r.url.path == "/v1/embeddings"]
+    assert call.url.host == "tei.test" and "authorization" not in call.headers
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "tei-key")
+    client, seen = serve(want, {})
+    assert day1_check.main(client) == 0
+    (call,) = [r for r in seen if r.url.path == "/v1/embeddings"]
+    assert call.headers["authorization"] == "Bearer tei-key"
+    capsys.readouterr()
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_KEY", "")
+    monkeypatch.setattr(day1_check, "EMBEDDINGS_BASE", "")
 
     # A teacher that refuses the cap (above the model's output limit) fails the check: every escalation would get a 4xx.
     over = httpx.Response(400, json={"error": {"message": "max_tokens must be at most 4096"}})
-    client, _ = serve(want, {}, gen=over)
+    client, _ = serve(want + [embed], {}, gen=over)
     assert day1_check.main(client) == 1
     out = capsys.readouterr().out
     assert f"[FAIL] {want[0]} with max_tokens=8192, stop, seed: HTTP 400" in out and "RATCHET_TEACHER_MAX_TOKENS" in out
@@ -1293,6 +1510,61 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     backup = ROOT / "deploy" / "vm" / "backup.sh"
     r = subprocess.run([BASH, str(backup)], env={**env, "RATCHET_MODE": "mock"}, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
+
+
+@pytest.mark.req("NFR-5", "FR-11.1")
+def test_cloud_init_takes_an_ssh_key_with_quotes_and_waits_for_the_apt_lock():
+    """`create_vm.sh` puts the public key into the cloud-init YAML: the placeholder is single-quoted and a quote in the key's
+    comment is doubled (YAML's escape), so no key line can end the string or add a key of its own. The two apt calls wait
+    for the dpkg lock the first boot's unattended upgrades hold."""
+    yaml = pytest.importorskip("yaml")
+    vm = ROOT / "deploy" / "vm"
+    script = (vm / "create_vm.sh").read_text(encoding="utf-8")
+    lines = [ln for ln in script.splitlines() if ln.startswith("SSH_KEY_YAML=") or "__SSH_PUBLIC_KEY__/$SSH_KEY_YAML" in ln]
+    assert len(lines) == 2
+    cloud = (vm / "cloud-init.yaml").read_text(encoding="utf-8")
+    assert "'__SSH_PUBLIC_KEY__'" in cloud and cloud.count("DPkg::Lock::Timeout=600") == 2
+    for comment in ("it's me", 'a "quoted" one', "x'' y", "plain"):
+        key = f"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyForTests {comment}"
+        program = chr(10).join(
+            [
+                "shopt -u patsub_replacement 2>/dev/null || true",
+                f'USER_DATA="$(<"{vm / "cloud-init.yaml"}")"',
+                f"SSH_KEY={shlex.quote(key)}",
+                *lines,
+                'printf "%s" "$USER_DATA"',
+            ]
+        )
+        r = subprocess.run([BASH, "-c", program], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+        doc = yaml.safe_load(r.stdout)
+        assert doc["users"][0]["ssh_authorized_keys"] == [key], comment
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-11.1", "FR-12.30")
+def test_update_names_the_settings_the_env_file_lacks_and_the_example_sets_prices_verified(tmp_path):
+    """`update.sh` prints the names (never values) of the settings `.env.vm.example` lists that `.env` does not set, so a
+    setting a release added is not missed; the example lists RATCHET_PRICES_VERIFIED."""
+    assert BASH is not None
+    vm = ROOT / "deploy" / "vm"
+    example = vm / ".env.vm.example"
+    assert "RATCHET_PRICES_VERIFIED=0" in example.read_text(encoding="utf-8").splitlines()
+    mine = tmp_path / ".env"
+    lines = ["RATCHET_DOMAIN=x.example", "NEBIUS_API_KEY=sk-secret-value-123", "# RATCHET_MODE=live is commented out"]
+    mine.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+    r = subprocess.run([BASH, str(vm / "env_missing.sh"), str(example), str(mine)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    names = r.stdout.split()
+    assert "RATCHET_PRICES_VERIFIED" in names and "RATCHET_MODE" in names  # a commented-out line is not a setting
+    assert "RATCHET_DOMAIN" not in names and "NEBIUS_API_KEY" not in names and "sk-secret-value-123" not in r.stdout
+    every = [ln.split("=")[0] for ln in example.read_text(encoding="utf-8").splitlines() if re.match(r"^[A-Z][A-Z0-9_]*=", ln)]
+    assert set(names) == set(every) - {"RATCHET_DOMAIN", "NEBIUS_API_KEY"}
+    full = tmp_path / "full.env"
+    full.write_text(chr(10).join(f"{name}=1" for name in every) + chr(10), encoding="utf-8")
+    r = subprocess.run([BASH, str(vm / "env_missing.sh"), str(example), str(full)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and r.stdout == ""
+    assert "env_missing.sh" in (vm / "update.sh").read_text(encoding="utf-8")
 
 
 # ---------- deploy scripts against a fake `nebius` (W0: the documented CLI commands) ----------
@@ -1868,6 +2140,10 @@ class LiveRunWorld:
             "RATCHET_TRAIN_CMD": "true {version}",
             "RATCHET_API_KEYS": f"liverun:{LR_KEY},other:{OTHER_KEY}",
             "RATCHET_LIVERUN_KEY": LR_KEY,
+            # Simulated time: the gate ticks after every request and audits run inline, as the run's pacing assumes
+            # (live mode's defaults throttle the tick to 5 s and run audits after the response; ADR 0060, ADR 0072).
+            "RATCHET_TICK_INTERVAL_S": "0",
+            "RATCHET_SIDECAR_WORKERS": "0",
             **(env or {}),
         }
         self.gateway_overrides = dict(gateway or {})
@@ -1899,10 +2175,14 @@ class LiveRunWorld:
         self.gw = importlib.import_module("ratchet.gateway")
         for name, value in self.env.items():
             self.mp.setenv(name, value)
-        if self.rt is None:
-            transports = {"teacher": self.tf.transport, "student": self.vllm.transport}
-            self.rt = self.gw.Runtime(Settings(**self.gateway_overrides), transports=transports)
-            self.client = _GatewayClient(self.gw.app, self.inject_before, self.canned)
+        try:
+            if self.rt is None:
+                transports = {"teacher": self.tf.transport, "student": self.vllm.transport}
+                self.rt = self.gw.Runtime(Settings(**self.gateway_overrides), transports=transports)
+                self.client = _GatewayClient(self.gw.app, self.inject_before, self.canned)
+        except BaseException:  # `__exit__` never runs then: the environment must not leak into later tests
+            self.mp.undo()
+            raise
         self.mp.setattr(self.gw, "rt", self.rt)
         return self
 
@@ -1945,8 +2225,8 @@ def _results(path: Path) -> dict[str, Any]:
 MAIN_RUN = ("--rounds", "3", "--requests", "100", "--control-share", "0.5", "--batch", "20", "--max-usd", "20")
 
 
-def _main_world(root: Path, control_share: str = "0.5") -> LiveRunWorld:
-    world = LiveRunWorld(root, inject_before="-r2-20")
+def _main_world(root: Path, control_share: str = "0.5", env: dict[str, str] | None = None) -> LiveRunWorld:
+    world = LiveRunWorld(root, inject_before="-r2-20", env=env)
     with world:
         world.endpoint_up()
         args = [*MAIN_RUN]
@@ -2020,7 +2300,15 @@ def test_liverun_refuses_mock_gateway_and_wrong_ledger(tmp_path, gw_env):
     assert len(world.client.calls) == 2  # /healthz and the probe
 
     # A gateway without RATCHET_API_KEYS: the row carries no key name.
-    world = LiveRunWorld(tmp_path / "open", gateway={"api_keys": ""})
+    world = LiveRunWorld(
+        tmp_path / "open",
+        gateway={
+            "api_keys": "",
+            "allow_unauthenticated": True,
+            "api_guard": "guarded",
+            "admin_token": "0123456789abcdef0123456789abcdef",
+        },
+    )
     with world:
         code, out = world.main("smoke", "--base-url", LR_BASE, "--out", str(tmp_path / "open" / "run"))
     assert code == 2 and "add liverun:<key> to RATCHET_API_KEYS" in out
@@ -2096,8 +2384,9 @@ def test_liverun_end_to_end_offline(liverun_world):
     assert final["client"]["student_share"] > 0.8 and final["ledger"]["audits"]["n"] > 20
     assert res["values"]["live.final.audited_precision_pct"] == 100.0 and res["values"]["live.final.audits"] > 20
     assert res["values"]["live.final.student_p50_client_ms"] == pytest.approx(5.0)
-    assert "live.final.student_p50_wall_ms" not in res["values"]  # wall_ms comes with lane D
-    assert "OPS-PERF-HOTPATH" in res["sources"]["live.final.student_p50_wall_ms"]
+    # wall_ms is recorded (the hot path, ADR 0060): the server-side median of the last round's student answers.
+    assert res["values"]["live.final.student_p50_wall_ms"] >= 0
+    assert "median wall_ms" in res["sources"]["live.final.student_p50_wall_ms"]
     assert res["cost"]["endpoint_hours"] > 0 and res["values"]["live.run.endpoint_hours"] == res["cost"]["endpoint_hours"]
     assert res["cost"]["total_usd"] == pytest.approx(
         res["cost"]["teacher_usd"]
@@ -2170,7 +2459,9 @@ def test_liverun_control_arm_is_never_stored(liverun_world, tmp_path):
     controls = [r for r in records if (r.get("control") or {}).get("ok")]
     assert len(controls) > 100
     # The same rounds with no control arm, on a fresh copy of the world, store exactly as many examples.
-    again = _main_world(tmp_path / "nocontrol", control_share="0")
+    # The teacher watch's nightly probes also reach the teacher through `live.main`'s client (FR-5.40): off here, so the
+    # harness's calls in this copy are control calls or nothing.
+    again = _main_world(tmp_path / "nocontrol", control_share="0", env={"RATCHET_TEACHER_WATCH": "0"})
     assert again.code == 0
     other = Ledger(str(again.db))
     assert len(other.examples()) == len(led.examples()) and len(other.examples("golden")) == len(led.examples("golden"))
@@ -2810,3 +3101,464 @@ def test_liverun_repeat_run_and_report(tmp_path, monkeypatch):
     (tmp_path / "evidence" / "live" / "results.json").write_text(json.dumps(edited), encoding="utf-8")
     out = __import__("io").StringIO()
     assert liverun.main(["verify", "evidence/live"], out=out) == 1 and "repeat table" in out.getvalue()
+
+
+@pytest.mark.req("NFR-5", "FR-1.50")
+def test_caddy_guard_covers_every_paid_route(gw):
+    """RATCHET_API_GUARD=guarded is offered as the demo VM's alternative to API keys, so it must cover every route that
+    runs the paid cascade: each route under the gateway's OpenAI-compatible prefixes (/v1/ and the Azure-style
+    /openai/) and the mock demo controls match a path the Caddyfile's guarded block protects."""
+    text = (ROOT / "deploy" / "vm" / "Caddyfile").read_text(encoding="utf-8")
+    block = re.search(r"\(guarded\) \{\s*@protected \{\s*path ([^\n]+)\n", text)
+    assert block is not None, "the guarded block's path matcher moved; update this test"
+    guarded = block.group(1).split()
+    routes = [r.path for r in gw.app.routes if isinstance(r, APIRoute)]
+    paid = [p for p in routes if p.startswith(gw.API_PREFIXES) or p.startswith("/ratchet/demo/")]
+    assert {"/v1/chat/completions", "/openai/deployments/{deployment}/chat/completions"} <= set(paid)
+    for path in paid:
+        assert any(fnmatch.fnmatchcase(path, pattern) for pattern in guarded), f"{path} is not behind RATCHET_API_GUARD"
+    assert {f"{prefix}*" for prefix in gw.API_PREFIXES} <= set(guarded)  # a later route under a prefix is covered too
+
+
+# ---------- day-1 probes (scripts/day1_check.py: choices, reasoning, student, tavily, cli, --json) ----------
+TF = "https://tf.test/v1"
+TF_KEY = "tf-day1-key"
+TAVILY_KEY = "tvly-day1-secret-key"
+NANO4B = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"  # RATCHET_STUDENT_BASE_MODEL's default: vLLM serves the base under it
+PROBE = "day1-probe"
+NEBIUS_FLAGS = "--name --image --auth --args --timeout --container-command --id --type --format"
+
+
+def _day1(day1_check: Any, monkeypatch: pytest.MonkeyPatch, key: str = TF_KEY, **env: str) -> None:
+    """A clean environment and the script's module constants pointed at the fakes, as the default-flow test does."""
+    _live_env(monkeypatch, **env)
+    for name, value in (
+        ("BASE", TF),
+        ("KEY", key),
+        ("TEACHER", OPEN_TEACHER),
+        ("TEACHER_MAX_TOKENS", 8192),
+        ("EMBEDDINGS_BASE", "off"),  # the embeddings model is checked in test_day1_check_reports_missing_models_and_logprobs
+    ):
+        monkeypatch.setattr(day1_check, name, value)
+
+
+def _student_env(**extra: str) -> dict[str, str]:
+    return {"RATCHET_STUDENT_BASE": STUDENT_BASE, "RATCHET_STUDENT_KEY": STUDENT_KEY, "RATCHET_SAMPLES": "3", **extra}
+
+
+def _tf(day1_check: Any, models: list[str] | None = None, **kw: Any) -> FakeOpenAIServer:
+    """Token Factory listing every WANT model (or `models`), answering JSON with token logprobs."""
+    return FakeOpenAIServer(LABELS, models=list(day1_check.WANT) if models is None else models, **kw)
+
+
+def _vllm(**kw: Any) -> FakeOpenAIServer:
+    """The student endpoint on vLLM v0.18.0: the base model is served, and each model answers in its own words."""
+    kw.setdefault("loaded", {NANO4B})
+    kw.setdefault("errors", "v0.18.0")
+    return FakeOpenAIServer(kw.pop("text", lambda body: f"answer from {body['model']}"), **kw)
+
+
+def _route(server: FakeOpenAIServer) -> list[tuple[str, Any]]:
+    """Each call to a fake as (path, chat model or adapter name)."""
+    return [(httpx.URL(c.url).path, (c.json or {}).get("model") or (c.json or {}).get("lora_name")) for c in server.calls]
+
+
+@pytest.mark.req("FR-8.5", "INV-9")
+def test_day1_check_default_is_the_teacher_check(day1_check, monkeypatch, capsys, tmp_path):
+    _day1(day1_check, monkeypatch)
+    assert isinstance(day1_check.WANT, list) and day1_check.WANT[0] == OPEN_TEACHER
+
+    runs = []
+    for args in ((), ([],), (["teacher"],)):
+        tf = _tf(day1_check)
+        assert day1_check.main(httpx.Client(transport=tf.transport), *args) == 0
+        runs.append(([(c.method, c.url, c.json) for c in tf.calls], capsys.readouterr().out))
+    assert runs[0] == runs[1] == runs[2] and runs[0][1].rstrip().endswith("All good.")
+    # /models, one call per model, the generation parameters, then the json_schema request (ADR 0042)
+    assert len(runs[0][0]) == 1 + len(day1_check.WANT) + 1 + 1
+
+    # main never reads sys.argv: only the __main__ block passes it.
+    monkeypatch.setattr(sys, "argv", ["day1_check.py", "student"])
+    tf = _tf(day1_check)
+    assert day1_check.main(httpx.Client(transport=tf.transport)) == 0
+    assert all(httpx.URL(c.url).host == "tf.test" for c in tf.calls) and "student:" not in capsys.readouterr().out
+
+    tf = _tf(day1_check)
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["bogus"]) == 2 and tf.calls == []
+    assert day1_check.main(None, ["--help"]) == 0 and "--adapter-path" in capsys.readouterr().out
+
+    # Token Factory lists Ultra in lower case: a hint, and the fact in the JSON.
+    tf = _tf(day1_check, models=[OPEN_TEACHER.lower(), *day1_check.WANT[1:]])
+    path = tmp_path / "day1" / "day1.json"
+    code = day1_check.main(httpx.Client(transport=tf.transport), ["teacher", "--json", str(path)], run=RecordingRun())
+    out = capsys.readouterr().out
+    assert code == 1 and f"[hint] {OPEN_TEACHER} is listed as {OPEN_TEACHER.lower()} (case differs)" in out
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert doc["checks"]["teacher"]["models"]["case_mismatch"] == {OPEN_TEACHER: OPEN_TEACHER.lower()}
+    assert doc["exit_code"] == 1 and doc["checks_run"] == ["teacher"] and doc["checks"]["teacher"]["outcome"] == "fail"
+
+
+@pytest.mark.req("FR-2.11", "FR-8.2")
+def test_day1_student_probe_on_vllm_0_18_0(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+    # The fake's body is vLLM v0.18.0's, from `OpenAIServing._check_model`.
+    missing = httpx.Client(transport=_vllm().transport).post(f"{STUDENT_BASE}/chat/completions", json={"model": "student-v1"})
+    assert missing.status_code == 404 and missing.json() == {
+        "error": {"message": "The model `student-v1` does not exist.", "type": "NotFoundError", "param": "model", "code": 404}
+    }
+
+    vllm = _vllm()
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student"], transport=vllm.transport) == 0
+    out = capsys.readouterr().out
+    assert "adapter_missing ok" in out and out.rstrip().endswith("All good.") and "student.test" not in out
+    chat = "/v1/chat/completions"
+    assert _route(vllm) == [
+        ("/v1/load_lora_adapter", PROBE),
+        ("/v1/load_lora_adapter", PROBE),  # vLLM's 400 'already loaded'
+        (chat, PROBE),  # the samples
+        (chat, NANO4B),  # the base model
+        (chat, PROBE),  # the adapter at temperature 0
+        (chat, PROBE),  # the thinking switch
+        (chat, "student-v0"),
+        ("/v1/unload_lora_adapter", PROBE),
+    ]
+    load, _, samples, base, adapter, thinking, lost, unload = [c.json for c in vllm.calls]
+    assert load == {"lora_name": PROBE, "lora_path": "/data/adapters/test"}
+    student_max = Settings().gen_policy().plan(None).student.max_tokens
+    assert (samples["n"], samples["temperature"], samples["logprobs"], samples["max_tokens"]) == (3, 0.7, True, student_max)
+    assert base["temperature"] == adapter["temperature"] == 0.0 and base["max_tokens"] == 64
+    assert thinking["chat_template_kwargs"] == {"enable_thinking": False} and "chat_template_kwargs" not in samples
+    assert lost["n"] == 1 and unload == {"lora_name": PROBE}
+    assert all(c.headers["authorization"] == f"Bearer {STUDENT_KEY}" for c in vllm.calls)
+    assert vllm.loaded == {NANO4B}  # the probe adapter is gone again
+
+
+@pytest.mark.req("FR-2.11")
+def test_day1_adapter_missing_fails_when_the_front_end_rewrites_the_404(day1_check, monkeypatch, capsys, tmp_path):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+    rewritten = (
+        httpx.Response(404, json={"detail": "Not Found"}),
+        httpx.Response(404, text="<html><body><h1>404 Not Found</h1></body></html>"),
+        httpx.Response(200, json={"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}),
+    )
+    for answer in rewritten:
+        vllm = _vllm()
+
+        def front_end(request: httpx.Request, vllm: FakeOpenAIServer = vllm, answer: httpx.Response = answer) -> httpx.Response:
+            body = json.loads(request.content) if request.content else {}
+            return answer if body.get("model") == "student-v0" else vllm(request)
+
+        transport = by_host({"student.test": front_end})
+        path = tmp_path / "rewritten.json"
+        args = ["student", "--json", str(path)]
+        assert day1_check.main(httpx.Client(transport=transport), args, transport=transport, run=RecordingRun()) == 1
+        assert "[FAIL] student: adapter_missing" in capsys.readouterr().out
+        record = json.loads(path.read_text(encoding="utf-8"))["checks"]["student"]["adapter_missing"]
+        assert record["router_reloads"] is False and record["http"] == answer.status_code
+
+    # vLLM before its OpenAI-shaped errors (the fake's legacy body) still names the adapter.
+    vllm = _vllm(errors="legacy")
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student"], transport=vllm.transport) == 0
+    assert "adapter_missing ok" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-8.2")
+def test_day1_student_probe_reports_load_and_unload_outcomes(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+
+    def probe(vllm: FakeOpenAIServer, transport: httpx.BaseTransport | None = None) -> tuple[int, str]:
+        t = transport or vllm.transport
+        code = day1_check.main(httpx.Client(transport=t), ["student"], transport=t, which=lambda _: None)
+        return code, capsys.readouterr().out
+
+    refused = "While loading /data/adapters/test, expected target modules in {'qkv_proj', 'o_proj'} but received ['in_proj']"
+    vllm = _vllm(load=lambda body: (400, refused))
+    code, out = probe(vllm)
+    assert code == 1 and "/data/adapters/test" in out and "vLLM refused a module train.py trained" in out
+    assert _route(vllm) == [
+        ("/v1/load_lora_adapter", PROBE),
+        ("/v1/chat/completions", NANO4B),  # DAY1 row 5 still runs
+        ("/v1/chat/completions", "student-v0"),
+    ]
+    code, out = probe(_vllm(load=lambda body: (404, "Not Found")))
+    assert code == 1 and "VLLM_ALLOW_RUNTIME_LORA_UPDATING" in out
+
+    # A second load answering 200 is harmless but not v0.18.0; one answering 500 would break a reload.
+    code, out = probe(_vllm(errors="legacy"))
+    assert code == 0 and "[warn] student: a second load answered 200" in out
+    loads = iter([(200, "Success"), (500, "boom")])
+    code, out = probe(_vllm(errors="legacy", load=lambda body: next(loads)))
+    assert code == 1 and "a second load of day1-probe raised HTTPStatusError 500" in out
+    code, out = probe(_vllm(unload=lambda body: (404, "The lora adapter 'day1-probe' cannot be found.")))
+    assert code == 0 and "day1-probe was already gone" in out
+
+    # The samples: all n with logprobs, ended by themselves, within the student's timeout.
+    code, out = probe(_vllm(finish_reason="length"))
+    assert code == 0 and "[warn] student: samples" in out and "token cap" in out
+    code, out = probe(_vllm(logprob=None))
+    assert code == 1 and "3 of 3 choices, 0 with token logprobs" in out
+
+    def samples(vllm: FakeOpenAIServer, change: Any) -> httpx.MockTransport:
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/chat/completions") and json.loads(request.content).get("n") == 3:
+                return change(request)
+            return vllm(request)
+
+        return httpx.MockTransport(handle)
+
+    def two_of_three(request: httpx.Request) -> httpx.Response:
+        data = vllm(request).json()
+        return httpx.Response(200, json={**data, "choices": data["choices"][:2]})
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    vllm = _vllm()
+    code, out = probe(vllm, samples(vllm, two_of_three))
+    assert code == 1 and "2 of 3 choices" in out
+    vllm = _vllm()
+    code, out = probe(vllm, samples(vllm, timeout))
+    assert code == 1 and "UpstreamError 504 upstream_timeout" in out and "RATCHET_STUDENT_TIMEOUT_S" in out
+
+
+@pytest.mark.req("FR-8.2")
+def test_day1_student_probe_flags_an_adapter_that_changes_nothing(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", **_student_env())
+    vllm = _vllm(text="the same answer")
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student"], transport=vllm.transport) == 0
+    assert "vLLM may have skipped its weights" in capsys.readouterr().out
+    vllm = _vllm()
+    assert day1_check.main(httpx.Client(transport=vllm.transport), ["student", "--adapter-name", "student-v3"]) == 2
+    assert vllm.calls == [] and "use a name production does not serve" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-1.14")
+def test_day1_choices_and_reasoning_probes(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch)
+
+    def run(checks: str, t: httpx.BaseTransport) -> tuple[int, str]:
+        code = day1_check.main(httpx.Client(transport=t), [checks], transport=t, which=lambda _: None)
+        return code, capsys.readouterr().out
+
+    tf = _tf(day1_check)
+    code, out = run("choices", tf.transport)
+    (call,) = tf.calls
+    assert code == 0 and "returned 2 choices, each with token logprobs" in out
+    sent = {k: call.json[k] for k in ("model", "n", "temperature", "logprobs", "max_tokens")}
+    assert sent == {"model": OPEN_TEACHER, "n": 2, "temperature": 0.7, "logprobs": True, "max_tokens": 8192}
+    assert "top_logprobs" not in call.json and call.headers["authorization"] == f"Bearer {TF_KEY}"
+    one = httpx.MockTransport(lambda r: httpx.Response(200, json=tf.completion({**json.loads(r.content), "n": 1})))
+    code, out = run("choices", one)
+    assert code == 0 and "returned 1 of 2 choices" in out and "RATCHET_MAX_N" in out
+    code, out = run("choices", _tf(day1_check, logprob=None).transport)
+    assert code == 0 and "RATCHET_TEACHER_PARAMS" in out
+    code, out = run("choices", httpx.MockTransport(lambda r: httpx.Response(400, json={"error": {"message": "n too large"}})))
+    assert code == 1 and "[FAIL] choices" in out and "n too large" in out
+
+    # Reasoning: four raw bodies per listed model. A refusal is a fact (a warning); a failing default call fails.
+    listed = list(day1_check.WANT[:3])
+    tf = _tf(day1_check, models=listed, reasoning_tokens=100)
+    seen: list[dict[str, Any]] = []
+
+    def token_factory(request: httpx.Request, default_status: int = 200) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return tf(request)
+        body = json.loads(request.content)
+        seen.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(400, json={"error": {"message": "reasoning_effort is not supported"}})
+        plain = "chat_template_kwargs" not in body and "extra_body" not in body
+        if body["model"] == listed[2] and plain and default_status != 200:
+            return httpx.Response(default_status, text="upstream error")
+        data = tf.completion(body)
+        if "chat_template_kwargs" in body:
+            data["usage"]["completion_tokens_details"] = {"reasoning_tokens": 0}
+        if body["model"] == listed[1]:
+            data["usage"].pop("completion_tokens_details", None)
+        return httpx.Response(200, json=data)
+
+    code, out = run("reasoning", httpx.MockTransport(token_factory))
+    assert code == 0 and [b["model"] for b in seen] == [m for m in listed for _ in range(4)]
+    assert all(b["max_tokens"] == 1024 and b["temperature"] == 0 for b in seen)
+    assert set(seen[0]) == {"model", "messages", "max_tokens", "temperature"}
+    assert seen[1]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert seen[2]["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert seen[3]["reasoning_effort"] == "none"
+    assert f"[warn] reasoning {listed[0]}: default 200 (reasoning 100) | chat_template_kwargs 200 (reasoning 0)" in out
+    assert "reasoning_effort none 400" in out and f"{listed[1]}: default 200 (reasoning not reported)" in out
+    code, out = run("reasoning", httpx.MockTransport(lambda r: token_factory(r, 500)))
+    assert code == 1 and f"[FAIL] reasoning {listed[2]}: default 500" in out
+
+
+@pytest.mark.req("FR-10.3")
+def test_day1_tavily_probe_is_one_basic_search(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch, key="", TAVILY_API_KEY=TAVILY_KEY)
+    seen: list[httpx.Request] = []
+    results = [{"title": f"t{i}", "url": f"https://example.org/{i}", "content": "LoRA"} for i in range(3)]
+
+    def tavily(request: httpx.Request, status: int = 200) -> httpx.Response:
+        seen.append(request)
+        if status != 200:
+            return httpx.Response(status, json={"detail": {"error": "This request exceeds your plan's set usage limit."}})
+        return httpx.Response(200, json={"results": results, "usage": {"credits": 1}})
+
+    t = by_host({"api.tavily.com": tavily})
+    assert day1_check.main(httpx.Client(transport=t), ["tavily"], which=lambda _: None) == 0
+    (request,) = seen
+    body = json.loads(request.content)
+    assert str(request.url) == "https://api.tavily.com/search" and request.headers["authorization"] == f"Bearer {TAVILY_KEY}"
+    assert body["search_depth"] == "basic" and body["max_results"] == 4
+    assert "[ok] tavily: 3 hits" in capsys.readouterr().out
+    seen.clear()
+    t = by_host({"api.tavily.com": lambda r: tavily(r, 432)})
+    assert day1_check.main(httpx.Client(transport=t), ["tavily"], which=lambda _: None) == 1
+    assert len(seen) == 1 and "no credits are left for judging" in capsys.readouterr().out
+
+    _live_env(monkeypatch)
+    assert day1_check.main(httpx.Client(transport=t), ["tavily"]) == 2 and len(seen) == 1
+    assert "Set TAVILY_API_KEY first." in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-15.2")
+def test_day1_cli_probe_checks_the_flags_the_scripts_use(day1_check, monkeypatch, capsys, tmp_path):
+    script = "\n".join(
+        [
+            "# nebius ai endpoint delete --name x   (a comment, not a command)",
+            'nebius ai endpoint create --name "${NAME}" --image img \\',
+            '  --auth token --args "--model ${BASE} --enable-lora --max-lora-rank 16"',
+            'nebius ai endpoint stop --name "${NAME}"',
+            "local cmd=(nebius ai job create",
+            '  --name "${1}" --timeout=2h',
+            "  --container-command bash)",
+            'run_or_show nebius ai endpoint start --id "${id}"',
+            'listing="$(nebius ai endpoint list --format json)"',
+        ]
+    )
+    found = day1_check.nebius_commands(script)
+    assert [(c.line, " ".join(c.path), c.flags) for c in found] == [
+        (2, "ai endpoint create", ("--name", "--image", "--auth", "--args")),
+        (4, "ai endpoint stop", ("--name",)),
+        (5, "ai job create", ("--name", "--timeout", "--container-command")),
+        (8, "ai endpoint start", ("--id",)),
+    ]
+    # The real scripts, whatever their shape after the day-1 fixes: nebius commands only, never vLLM's flags.
+    for name in day1_check.DEPLOY_SCRIPTS:
+        commands = day1_check.nebius_commands((ROOT / name).read_text(encoding="utf-8"))
+        assert commands and all(c.path[0] == "ai" for c in commands), name
+        assert not {"--enable-lora", "--model", "--max-lora-rank"} & {f for c in commands for f in c.flags}, name
+
+    helps = {
+        ("ai", "endpoint", "stop"): "Stops an endpoint.\n  --id string  [required]\n  --async",
+        ("ai", "create"): "Interactively creates a Serverless AI job, endpoint, or Devlab.\n  --type --name --image",
+    }
+
+    def result(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        if argv == ["nebius", "version"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="nebius 0.12.3\n", stderr="")
+        path = tuple(argv[1:-1])
+        if path == ("ai", "endpoint", "start"):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="unknown command")
+        text = helps.get(path, f"Creates it (deterministic and non-interactive).\n{NEBIUS_FLAGS}")
+        return subprocess.CompletedProcess(argv, 0, stdout=text, stderr="")
+
+    def check(text: str, which: str | None = "/usr/bin/nebius") -> tuple[int, str, RecordingRun]:
+        (tmp_path / "deploy").mkdir(exist_ok=True)
+        (tmp_path / "deploy" / "fake.sh").write_text(text, encoding="utf-8")
+        run = RecordingRun(result=result)
+        code = day1_check.main(None, ["cli"], run=run, which=lambda _: which)
+        return code, capsys.readouterr().out, run
+
+    _day1(day1_check, monkeypatch, key="")
+    monkeypatch.setattr(day1_check, "DEPLOY_SCRIPTS", ("deploy/fake.sh",))
+    monkeypatch.setattr(day1_check, "ROOT", tmp_path)
+    code, out, run = check(script)
+    assert code == 0 and "[warn] cli: deploy/fake.sh:4 nebius ai endpoint stop: --name is not in its --help" in out
+    assert "[ok] cli: nebius ai endpoint create takes every flag deploy/fake.sh uses (4)" in out
+    assert "[warn] cli: nebius ai endpoint start --help exited 1" in out and "interactive" not in out
+    assert all(c == "nebius version" or c.endswith("--help") for c in run.commands)  # read-only
+    code, out, _ = check(script + '\nnebius ai create --type job --name "${1}"')
+    assert code == 0 and "nebius ai create describes itself as interactive" in out
+    code, out, run = check(script, which=None)
+    assert code == 0 and "[skip] cli: nebius is not installed here" in out and run.calls == []
+
+
+@pytest.mark.req("INV-13", "FR-8.5")
+def test_day1_json_holds_the_facts_and_no_secret(day1_check, monkeypatch, capsys, tmp_path):
+    _day1(day1_check, monkeypatch, **_student_env(TAVILY_API_KEY=TAVILY_KEY))
+    tf, vllm = _tf(day1_check), _vllm()
+    leak = f"{TF_KEY} {STUDENT_KEY} {TAVILY_KEY} at {TF} and {STUDENT_BASE}"
+
+    def token_factory(request: httpx.Request) -> httpx.Response:
+        if b"reasoning_effort" in request.content:
+            return httpx.Response(400, json={"error": {"message": f"refused for {leak}"}})
+        return tf(request)
+
+    def student(request: httpx.Request) -> httpx.Response:
+        if b'"student-v0"' in request.content:
+            message = f"The model `student-v0` does not exist. ({leak})"
+            return httpx.Response(404, json={"error": {"message": message, "type": "NotFoundError", "code": 404}})
+        return vllm(request)
+
+    def tavily(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [{"title": "t", "url": "https://example.org/a", "content": leak}]})
+
+    def result(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, stdout=f"help for {leak}\n{NEBIUS_FLAGS}", stderr="")
+
+    t = by_host({"tf.test": token_factory, "student.test": student, "api.tavily.com": tavily})
+    path = tmp_path / "day1" / "day1.json"
+    code = day1_check.main(
+        httpx.Client(transport=t),
+        ["all", "--json", str(path)],
+        transport=t,
+        run=RecordingRun(result=result),
+        which=lambda _: "/usr/bin/nebius",
+        now=lambda: 1_792_744_443.0,
+    )
+    out = capsys.readouterr().out
+    text = path.read_text(encoding="utf-8")
+    doc = json.loads(text)
+    assert code == doc["exit_code"] == 0 and doc["checks_run"] == list(day1_check.CHECKS)
+    assert {"generator", "checked_at", "checks_run", "exit_code", "ratchet_version", "git_sha", "note", "checks"} <= set(doc)
+    assert doc["checked_at"] == "2026-10-23T08:34:03Z" and all("outcome" in sec for sec in doc["checks"].values())
+    assert doc["checks"]["student"]["adapter_missing"]["router_reloads"] is True
+    assert doc["checks"]["reasoning"]["outcome"] == "warn" and doc["checks"]["tavily"]["credits_source"] == "table"
+    for secret in (TF_KEY, STUDENT_KEY, TAVILY_KEY, "tf.test", "student.test", "api.tavily.com", "://"):
+        assert secret not in text and secret not in out, secret
+
+
+@pytest.mark.req("FR-8.5")
+def test_day1_checks_need_their_prerequisites(day1_check, monkeypatch, capsys):
+    _day1(day1_check, monkeypatch)
+    tf = _tf(day1_check)
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["student"]) == 2 and tf.calls == []
+    assert "Set RATCHET_STUDENT_BASE first" in capsys.readouterr().out
+
+    code = day1_check.main(httpx.Client(transport=tf.transport), ["all"], transport=tf.transport, which=lambda _: None)
+    out = capsys.readouterr().out
+    assert code == 0 and "[skip] student: Set RATCHET_STUDENT_BASE first" in out and "[skip] tavily:" in out
+    assert "[skip] cli: nebius is not installed here" in out and "[ok] choices" in out and "reasoning " in out
+
+    _day1(day1_check, monkeypatch, key="")
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["all"], which=lambda _: None) == 2
+    _day1(day1_check, monkeypatch, **_student_env(RATCHET_SAMPLES="three"))
+    calls = len(tf.calls)
+    assert day1_check.main(httpx.Client(transport=tf.transport), ["student"]) == 2 and len(tf.calls) == calls
+    assert "Settings:" in capsys.readouterr().out
+
+
+@pytest.mark.req("FR-8.2")
+def test_load_and_unload_adapter_return_the_response():
+    vllm = _vllm(loaded=set())
+    r = live.load_adapter(STUDENT_BASE, STUDENT_KEY, "student-v1", "/data/adapters/student-v1", client=_http(vllm))
+    assert r.status_code == 200 and vllm.loaded == {"student-v1"}
+    again = live.load_adapter(STUDENT_BASE, STUDENT_KEY, "student-v1", "/data/adapters/student-v1", client=_http(vllm))
+    assert again.status_code == 400 and "already been loaded" in again.text  # still not an error
+    for base in ("https://student.test/v1", "https://student.test/v1/", "https://student.test"):
+        server = _vllm(loaded={"student-v1"})
+        r = live.unload_adapter(base, STUDENT_KEY, "student-v1", client=_http(server))
+        (call,) = server.calls
+        assert r.status_code == 200 and call.url == "https://student.test/v1/unload_lora_adapter"
+        assert call.json == {"lora_name": "student-v1"} and call.headers["authorization"] == f"Bearer {STUDENT_KEY}"
+        gone = live.unload_adapter(base, "", "student-v1", client=_http(server))  # a 404 is returned, never raised
+        assert gone.status_code == 404 and "cannot be found" in gone.text and "authorization" not in server.calls[1].headers

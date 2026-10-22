@@ -88,7 +88,7 @@ RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000                # http:
 make web                                                                 # optional: rebuild the React UI (Node 22)
 RATCHET_MODE=mock RATCHET_MOCK_WARMUP_DAYS=4 uvicorn ratchet.gateway:app --port 8000   # same, starts with a trained student
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1   # Scout as an outside client
-pytest -q                                                                # 1412 tests
+pytest -q                                                                # 1781 tests
 ```
 
 `RATCHET_MOCK_WARMUP_DAYS=4` runs four simulated days and nights at startup (about 2 s), so the dashboard and Scout open on a student that is already live. The Scout CLI also takes `--api-key` and `--max-results` (default 4). Without `TAVILY_API_KEY` it uses simulated search results, which only cover the example questions and only work against a mock-mode gateway.
@@ -104,6 +104,18 @@ day  student  escal. audit ok     $/1k all-Ultra  saved
   9      98%      2%      97%    0.162     1.093    85%     <- learned overnight
  10      98%      2%      99%    0.147     1.093    87%
 ```
+
+Success metrics for that run (PRD §8.1, computed by `ratchet/kpis.py` over the last three days; simulation, mock models, not real model quality):
+
+| Metric | Target | Simulation (seed 7) |
+|---|---|---|
+| SM-1 cost reduction vs all-teacher | ≥ 70% | 84.5%, met |
+| SM-2 audited precision (585 audits pooled) | ≥ 95% | 98.5%, met (Wilson 97.1–99.2%) |
+| SM-3 student share | ≥ 80% | 96.9%, met |
+| SM-4 bad deploys reaching 100% traffic | 0 | 0, met (v3 rolled back at 10%) |
+| SM-5 time to recover from drift | ≤ 3 nights | 4 nights, **not met** |
+
+`GET /ratchet/kpis` computes the same metrics from a live ledger, and `python -m sim.simulate` prints them. No live run has been measured yet.
 
 `--workload research` sends Scout's triage and reader calls instead of tickets, and `--workload mixed` sends half of each. Simulation, mock models, seed 7, 8 days × 1,500 requests: the student answered 92% of research calls on day 8 (81% saved that day, 62% over all 8 days), and 94% of mixed calls (82% saved that day, 51% overall), with per-task calibration on (the default: each task held to its own threshold and golden check). With `RATCHET_PER_TASK_CALIBRATION=0` (one pooled threshold, as in v0.4) the same runs give 96% of research calls (85% that day, 63% overall) and 98% of mixed calls (86%, 54%). See [docs/TESTING.md](docs/TESTING.md#workloads-research-and-mixed). `--workload schema` sends structured-output requests and `--workload tools` support requests with tool definitions, from the generic mock world, which also answers any other request the mock gateway gets (free text, an instance of the request's JSON schema, or a mock tool call) instead of refusing it ([docs/TESTING.md](docs/TESTING.md#workloads-schema-and-tools)). Tool calls pass through to the teacher and come back as `message.tool_calls` (also streamed, and in the legacy `function_call` form); a tool request is answered by the teacher alone and never stored, so the `tools` workload saves nothing until tool-call distillation ([ADR 0043](docs/adr/0043-tool-calls-teacher-only-by-default.md)).
 
@@ -171,7 +183,7 @@ Per token, a student answer costs a fraction of a teacher answer. But the self-h
 break-even student answers per endpoint hour = GPU price per hour ÷ teacher spend avoided per student answer
 ```
 
-With **unverified list prices** (an L40S at about $1.55/hour, about $0.001 of Ultra spend avoided per ticket-triage answer in the simulation) that is about 1,500 student answers an hour, roughly 36,000 a day. At the demo's 1,500 requests a day a 24/7 endpoint loses money, and the report says so and recommends the hosted fallback or scaling the endpoint to zero. At customer volume (10M requests a month, about 14,000 an hour) the endpoint beats the teacher by a wide margin, but per answer the untuned hosted Nano is cheaper still below roughly 52,000 student answers an hour, so the report says "Self-hosting beats the teacher, but the hosted fallback would cost less per answer" and recommends `hosted_fallback`, adding that this assumes the hosted model serves as many requests as the tuned student. One GPU serving many LoRA adapters raises the volume per GPU-hour ([ADR 0023](docs/adr/0023-utilization-aware-cost-accounting.md)).
+With **estimated prices** (an L40S at $1.35 per GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and about $0.001 of Ultra spend avoided per ticket-triage answer in the simulation) that is about 1,350 student answers an hour, roughly 32,000 a day. At the demo's 1,500 requests a day a 24/7 endpoint loses money, and the report says so and recommends the hosted fallback or scaling the endpoint to zero. At customer volume (10M requests a month, about 14,000 an hour) the endpoint beats the teacher by a wide margin, but per answer the untuned hosted Nano is cheaper still below roughly 52,000 student answers an hour, so the report says "Self-hosting beats the teacher, but the hosted fallback would cost less per answer" and recommends `hosted_fallback`, adding that this assumes the hosted model serves as many requests as the tuned student. One GPU serving many LoRA adapters raises the volume per GPU-hour ([ADR 0023](docs/adr/0023-utilization-aware-cost-accounting.md)).
 
 ## How the safety works
 
@@ -200,6 +212,7 @@ python -m ratchet.stats check bom.json --public-key <yours>     # recompute ever
 ```
 
 ## Proving what an adapter was trained on
+A certificate holds only while traffic looks like what it was measured on. A **drift alarm** watches for that without labels ([ADR 0032](docs/adr/0032-label-free-drift-alarm.md)): for each version and task, a gambler bets against "traffic has not changed" using the rank of each new confidence score among the earlier ones. On unchanged traffic the bet's capital reaches 100 with probability at most 1% over the stream's whole life, however often anyone looks. When it does, a `drift` event says the traffic changed (not that the model got worse) and the version's certificate reads `suspended` (`curl -s localhost:8000/ratchet/drift`). In simulation (mock models), a product launch on day 5 raised the alarm on day 5 for six seeds out of six, and runs without the launch raised none.
 
 Every adapter's signed bill of materials also commits to its exact training and golden sets ([ADR 0027](docs/adr/0027-committed-training-sets.md)): one sparse Merkle root per set, over each example's hash mapped to a hash of its label, teacher, license and redaction count. From the BOM alone, anyone can then check a short proof that one request was, or was not, in an adapter's training set, and a held-out certificate that **no golden example was trained on**: invariants 3 and 6 as something you verify, not something you are told. The proofs show the operator's signed commitment, at training time, to the dataset; they do not show that the weights came from it. With guessable texts the proof endpoint would tell anyone what was trained on, so it needs an admin key.
 
@@ -232,12 +245,12 @@ curl -s localhost:8000/ratchet/receipts/3/proof/3006 > p.json                  #
 python -m ratchet.receipt verify r3.json --public-key <yours> --proof p.json  # OK: signature, OK: proof
 python -m sim.simulate --receipts --teacher-reasoning-mean 420                 # the bound next to the true cost (simulation)
 ```
-
+Every one of these numbers is agreement with the teacher, so the **teacher watch** checks the teacher too ([ADR 0033](docs/adr/0033-teacher-watch.md)). A request that repeats is labelled by the teacher again when it escalates or is audited; its first re-test in each check epoch is compared with the label stored for it, at no extra cost, and Night School adds 20 probes a night. A label a re-test disagrees with leaves training and the golden set until two more teacher answers settle it. When the disagreements pass 5% by enough that a stable teacher would get there at most 1% of the time, a `teacher_drift` event pauses Night School until an operator acknowledges (`curl -s localhost:8000/ratchet/teacher`); a new model id in the teacher's responses starts a fresh epoch. In simulation (mock models), a teacher that changed 15% of labels from day 5 froze training on day 5 to 7 for six seeds out of six, and a stable one never did.
 ## Privacy and security
 
 Built for real traffic, not only the demo ([threat model](docs/THREAT_MODEL.md)):
 
-- **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default; names and addresses are not covered yet ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md)).
+- **PII redaction before training.** Emails, phone numbers, card numbers (Luhn-checked), IBANs, Aadhaar, SSNs, PANs, GSTINs, UPI ids, IP addresses and API secrets are replaced with placeholders like `[EMAIL]` before a request becomes a training example, so an adapter cannot memorise them. The teacher still sees the original. On by default. Extraction tasks can use numbered (`[EMAIL_1]`) or surrogate placeholders, consistent between the prompt and the answer, and names and addresses are covered when you plug in a detector such as Presidio ([ADR 0009](docs/adr/0009-pattern-based-pii-redaction.md), [ADR 0082](docs/adr/0082-placeholder-styles-detector-plugin-and-indian-identifiers.md)).
 - **Gateway API keys** (`RATCHET_API_KEYS=acme:<key>,...`) with a daily quota per key, cost and savings per client, and each client's own signed savings receipts ([above](#savings-you-can-check)).
 - **Private by default in live mode**: every route has an access level; the dashboard API needs an admin or read-only dashboard key unless you make it public, and then anonymous readers see client pseudonyms, not names. Live mode does not start without API keys, `/docs` is off, and every response carries `nosniff` and `no-referrer` ([ADR 0061](docs/adr/0061-endpoint-access-levels.md)).
 - **Streaming** (`stream: true`) in the OpenAI chunk format, so streaming clients work unchanged.
@@ -324,6 +337,8 @@ ratchet/confidence.py   confidence score (pairwise agreement) + threshold calibr
 ratchet/release.py      golden gate, shadow, canary, rollback (Wilson bounds, or an anytime-valid e-process)
 ratchet/certificate.py  certified precision: Clopper-Pearson certificates, frontier, paired McNemar comparison
 ratchet/stats.py        exact statistics, `python -m ratchet.stats plan|bound|mcnemar|check`
+ratchet/drift.py        label-free drift alarm: a conformal test martingale on each version's confidence stream
+ratchet/teacher_watch.py teacher watch: free re-test checks, quarantine and adjudication, a training freeze by e-process
 ratchet/ledger.py       SQLite: requests, provenance, versions, events
 ratchet/licenses.py     teacher license registry; closed teachers refused
 ratchet/redact.py       PII placeholders before examples are stored

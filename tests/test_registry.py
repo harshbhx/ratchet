@@ -95,6 +95,8 @@ def _live(tmp_path: Path, **overrides: Any) -> Settings:
         "mock_warmup_days": 0,
         # No API keys and a public dashboard (ADR 0061): these tests call /v1/* and read the task list without a key.
         "allow_unauthenticated": True,
+        "api_guard": "guarded",
+        "admin_token": "0123456789abcdef0123456789abcdef",
         "public_dashboard": True,
     }
     return Settings(**{**base, **overrides})
@@ -202,8 +204,9 @@ def test_tasks_file_unknown_key_fails_startup_with_path(gw_env, tmp_path, monkey
         gw.Runtime(Settings(mode="mock", tasks_file=str(path), mock_warmup_days=0))
     e = caught.value
     assert isinstance(e, SpecError) and e.errors == [
-        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, match, routing, policy, tools,"
-        " clients, extends",
+        "tasks[0].feilds: unknown key; use name, description, format, fields, sql, pinned, store, privacy, match, routing,"
+        " policy,"
+        " tools, clients, extends",
         "tasks[1].fields.total.abs_tol: must be a number >= 0",
     ]
     assert str(e).startswith(f"RATCHET_TASKS_FILE {path}: invalid task spec (2 errors):")
@@ -236,7 +239,7 @@ def test_spec_errors_list_every_problem_with_its_path():
     doc = {
         "version": 2,
         "tasks": [
-            {"name": "a", "feilds": {}, "pinned": "yes", "format": "sql"},
+            {"name": "a", "feilds": {}, "pinned": "yes", "format": "tool_calls"},
             {
                 "name": "b",
                 "fields": {
@@ -246,7 +249,7 @@ def test_spec_errors_list_every_problem_with_its_path():
                     "bad-path": {"type": "bool"},
                     "tags": {"type": "set", "item": {"type": "records"}},
                     "lines": {"type": "records", "key": ["sku"], "fields": {"qty": {"type": "number", "rel_tol": "1%"}}},
-                    "summary": {"type": "similarity"},
+                    "summary": {"type": "similarity", "metric": "bleu", "threshold": 0},
                     "x": {"type": "label", "values": ["a"], "aliases": {"b": "c"}},
                     "missing": {},
                 },
@@ -271,13 +274,14 @@ def test_spec_errors_list_every_problem_with_its_path():
     with pytest.raises(SpecError) as caught:
         taskspec.parse_document(doc)
     options = ", ".join(sorted(taskspec.OPTIONS))
-    types = "exact, label, bool, number, ordinal, text, date, language, set, records, ranking"
+    types = "exact, label, bool, number, ordinal, text, date, language, set, records, ranking, similarity"
     deep = "tasks[11].fields.r" + ".fields.r" * 4 + ".fields"
     assert caught.value.errors == [
         "version: unknown key; use tasks",
-        "tasks[0].feilds: unknown key; use name, description, format, fields, pinned, store, match, routing, policy, tools,"
-        " clients, extends",
-        "tasks[0].format: 'sql' is reserved for a later release",
+        "tasks[0].feilds: unknown key; use name, description, format, fields, sql, pinned, store, privacy, match, routing,"
+        " policy,"
+        " tools, clients, extends",
+        "tasks[0].format: 'tool_calls' is reserved for a later release",
         "tasks[0].pinned: must be true or false",
         "tasks[1].fields.total.abs_tol: must be a number >= 0",
         "tasks[1].fields.total.decimal: must be one of '.', ','",
@@ -289,7 +293,8 @@ def test_spec_errors_list_every_problem_with_its_path():
         "tasks[1].fields.tags.item.type: elements compare by value, so use one of bool, date, exact, label, language,"
         " number, ordinal, text",
         "tasks[1].fields.lines.fields.qty.rel_tol: must be a number >= 0",
-        "tasks[1].fields.summary.type: 'similarity' is reserved for a later release",
+        "tasks[1].fields.summary.metric: must be one of 'chrf', 'token_f1', 'rouge_l'",
+        "tasks[1].fields.summary.threshold: must be a number more than 0 and at most 1",
         "tasks[1].fields.x: an alias names a label outside the vocabulary",
         f"tasks[1].fields.missing.type: missing; use one of {types}",
         "tasks[1].tools: must be one of teacher, distill",
@@ -390,7 +395,16 @@ def test_specs_round_trip_and_every_option_is_checked():
         "pinned": False,
         "store": False,
         "match": {"system_prefix": "You extract", "schema_name": "everything", "tools": ["lookup"]},
-        "routing": {"rules": [{"if": {"field": "n", "gt": 100}, "then": "teacher"}]},
+        "routing": {
+            "student_max_input_tokens": 1800,
+            "student_content_types": ["text"],
+            "store_ineligible": True,
+            "escalate_when": [
+                {"field": "b", "equals": True, "action": "teacher"},
+                {"field": "n", "in": [100, 200.5], "min_confidence": 0.9},
+            ],
+            "critical": [{"field": "l", "equals": "x", "max_miss_rate": 0.05}],  # 'x' is an alias of 'a'
+        },
         "policy": {"samples": 5, "audit_rate": 0.2},
         "tools": "teacher",
         "clients": ["acme"],
@@ -577,9 +591,9 @@ def test_admin_keys_are_their_own(gw_env):
     gw = gw_env()
     with pytest.raises(ValueError, match="RATCHET_ADMIN_KEYS: the key for 'ops' is also an API key"):
         gw.Runtime(Settings(mode="mock", api_keys=f"acme:{ACME_KEY}", admin_keys=f"ops:{ACME_KEY}", mock_warmup_days=0))
-    with pytest.raises(ValueError, match="RATCHET_ADMIN_KEYS: the key for 'ops' is shorter than 16"):
+    with pytest.raises(ValueError, match="RATCHET_ADMIN_KEYS: the key in entry 1 is shorter than 16"):
         gw.Runtime(Settings(mode="mock", admin_keys="ops:short", mock_warmup_days=0))
-    with pytest.raises(ValueError, match="RATCHET_API_KEYS: name 'acme' appears twice"):
+    with pytest.raises(ValueError, match="RATCHET_API_KEYS: entry 2 has the same name as an earlier entry"):
         KeyRing(f"acme:{ACME_KEY},acme:{GLOBEX_KEY}")
     admins, clients = KeyRing(f"ops:{ADMIN_KEY},bot:{ACME_KEY}", env="RATCHET_ADMIN_KEYS"), KeyRing(f"acme:{ACME_KEY}")
     assert (admins.env, admins.shared(clients), clients.shared(admins)) == ("RATCHET_ADMIN_KEYS", ["bot"], ["acme"])
@@ -685,7 +699,7 @@ def test_task_lifecycle_through_the_admin_api(gw_env):
     assert changed["changed"] and not changed["created"] and new_hash != old_hash
     assert events("task_changed") == [f"support-triage: spec {old_hash} -> {new_hash} by ops"]
     c.put(url, json={**ordinal, "description": "now with a priority tolerance"}, headers=ADMIN)
-    assert events("task_changed")[-1] == f"support-triage: spec {new_hash} kept; description, clients or match by ops"
+    assert events("task_changed")[-1] == f"support-triage: spec {new_hash} kept; description, clients, match or privacy by ops"
     # The live version was scored under the first spec, so the listing says the task is waiting for recalibration.
     _version(gw.rt.ledger, "live", {"threshold": 0.5, "spec_hashes": {"support-triage": old_hash}})
     assert c.get(url).json()["recalibrating"] and not c.get("/ratchet/tasks/ticket-triage").json()["recalibrating"]
@@ -766,8 +780,8 @@ def test_stored_task_that_no_longer_parses_is_skipped(gw_env, tmp_path):
     assert tasks.lookup("support-triage").source == "file"
     assert skipped == [  # oldest first; the hand-written row has no created_ts
         "garbled: the stored spec is no longer valid ($: must be an object (one task spec)); it is not registered",
-        "broken: the stored spec is no longer valid (fields.x.type: 'similarity' is reserved for a later release); "
-        "it is not registered",
+        "broken: the stored spec is no longer valid (policy.samples: a task with a similarity field needs policy.samples"
+        " of at least 2 (one sample always agrees with itself)); it is not registered",
         "support-triage: task 'support-triage' is defined in RATCHET_TASKS_FILE; an api task cannot replace it; "
         "the stored api task is not registered",
     ]
@@ -788,7 +802,10 @@ def test_validate_endpoint_has_no_side_effects(gw_env):
     bad = {"tasks": [SUPPORT, {"name": "x", "fields": {"a": {"type": "similarity"}}}]}
     assert c.post("/ratchet/tasks/validate", json=bad).json() == {
         "valid": False,
-        "errors": ["tasks[1].fields.a.type: 'similarity' is reserved for a later release"],
+        "errors": [
+            "tasks[1].policy.samples: a task with a similarity field needs policy.samples of at least 2 (one sample always"
+            " agrees with itself)"
+        ],
         "tasks": [],
     }
     r = c.post("/ratchet/tasks/validate", content=b"{nope").json()
@@ -939,6 +956,35 @@ def test_unknown_tasks_teacher_policy_stores_nothing(gw_env):
     r = c.post(CHAT, json={"messages": msgs}, headers={"X-Ratchet-Task": "bad name!"})
     assert (r.status_code, r.json()["error"]["code"], r.json()["error"]["param"]) == (400, "unknown_task", None)
     assert gw.rt.ledger.examples() == [] and gw.rt.ledger.totals()["requests"] == 1
+
+
+@pytest.mark.req("FR-14.40", "FR-2.15", "INV-10")
+def test_unknown_free_text_not_stored_under_teacher_policy(gw_env, tmp_path):
+    """Free text no operator registered (a summary, a reply) stays out of training under RATCHET_UNKNOWN_TASKS=teacher:
+    the teacher answers, nothing is stored and the student is never asked. Under the default, distill, the same request
+    becomes training data, compared as a whole answer. A long-form task the operator pinned is never stored either way,
+    and a short free-text task registered with a similarity field (and samples) is distilled."""
+    doc = {
+        "tasks": [
+            {"name": "long-form-writing", "pinned": True},
+            {"name": "short-summary", "format": "text", "fields": {"$": {"type": "similarity"}}, "policy": {"samples": 3}},
+        ]
+    }
+    path = _file(tmp_path, doc)
+    ask = [{"role": "user", "content": "Summarise for the team: the Pune shipment is two days late after a customs check."}]
+    for policy, stored in (("teacher", 0), ("distill", 1)):
+        gw = gw_env(RATCHET_UNKNOWN_TASKS=policy, RATCHET_TASKS_FILE=str(path))
+        c = TestClient(gw.app)
+        r = c.post(CHAT, json={"messages": ask}, headers={"X-Ratchet-Task": "team-summary"})
+        assert r.status_code == 200 and r.json()["ratchet"]["served_by"] == "teacher", policy
+        assert r.json()["choices"][0]["message"]["content"].startswith("[mock teacher]")  # free text, from the mock world
+        assert len(gw.rt.ledger.examples(task="team-summary")) == stored, policy
+        route = _rows(gw.rt.ledger, "SELECT route, stored FROM requests ORDER BY id DESC LIMIT 1")
+        assert route == [{"route": "unknown_task" if policy == "teacher" else "cold_start", "stored": stored}]
+        for name, kept in (("long-form-writing", 0), ("short-summary", 1)):
+            r = c.post(CHAT, json={"messages": ask}, headers={"X-Ratchet-Task": name})
+            assert r.status_code == 200 and len(gw.rt.ledger.examples(task=name)) == kept, (policy, name)
+        assert tasks.get("short-summary").precision_kind == "proxy"
 
 
 @pytest.mark.req("FR-1.3")

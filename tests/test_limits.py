@@ -359,7 +359,10 @@ def test_quota_path_issues_no_count_query(gw_env):
     finally:
         gw.rt.ledger.db.set_trace_callback(None)
     assert r.status_code == 200 and r.headers["x-ratelimit-remaining-requests"] == "4"
-    assert statements and not [s for s in statements if re.search(r"\bCOUNT\s*\(", s, re.IGNORECASE)]  # no count of any kind
+    # No count of the key's requests (the quota reads the meter). The gate's own tick may count `teacher_checks` rows
+    # (the teacher watch, FR-16.7); that is not the quota path.
+    counts = [s for s in statements if re.search(r"\bCOUNT\s*\(.*\bFROM\s+requests\b", s, re.IGNORECASE)]
+    assert statements and not counts
 
 
 # ---------- the gateway's budget ----------
@@ -651,6 +654,63 @@ def test_concurrency_one_refuses_a_second_request_while_the_first_runs(gw_env, t
     assert _post(c, ACME, tag=4).status_code == 200  # the slot was given back
 
 
+@pytest.mark.req("FR-12.2", "NFR-5")
+def test_daily_quota_holds_room_for_requests_in_flight(gw_env, tmp_path, monkeypatch):
+    """The daily request quota is checked before the cascade and the request is counted after it, so concurrent requests
+    used to read the same count and all pass. With a quota of 3 and three requests held in the teacher, a fourth is
+    refused at once; the held room is given back when a request fails, and the count is exact when they finish."""
+    entered, release = threading.Semaphore(0), threading.Event()
+
+    def text(body: dict[str, Any]) -> str:
+        if "hold" in json.dumps(body["messages"]):
+            entered.release()
+            release.wait(10)
+        return A
+
+    teacher = FakeOpenAIServer(text)
+    gw, rt = _gateway(gw_env, monkeypatch, _live(tmp_path, key_limits="acme:daily_requests=3"), teacher=teacher.transport)
+    c = TestClient(gw.app)
+    workers, outs = [], []
+    try:
+        for i in range(3):
+            out: list[httpx.Response] = []
+            worker = threading.Thread(target=lambda out=out, i=i: out.append(_post(c, ACME, tag=f"hold {i}")))
+            worker.start()
+            workers.append(worker)
+            outs.append(out)
+        assert all(entered.acquire(timeout=10) for _ in range(3))  # all three are inside the teacher, none counted yet
+        assert rt.meter.usage("acme").day_requests == 0 and rt.meter.held("acme") == 3
+        fourth = _post(c, ACME, tag=4)
+        assert fourth.status_code == 429 and _error(fourth) == ("insufficient_quota", "daily_quota_exceeded")
+        assert fourth.headers["x-ratelimit-remaining-requests"] == "0" and "used up" in fourth.json()["error"]["message"]
+        assert _post(c, GLOBEX, tag=5).status_code == 200  # another key's quota is its own
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(10)
+    assert [o[0].status_code for o in outs] == [200, 200, 200]
+    assert rt.meter.usage("acme").day_requests == 3 and rt.meter.held("acme") == 0  # counted once, nothing left held
+    assert _post(c, ACME, tag=6).status_code == 429  # the quota is used up, exactly
+
+
+@pytest.mark.req("FR-12.2")
+def test_a_failed_request_gives_its_quota_room_back(gw_env, tmp_path, monkeypatch):
+    broken = {"on": True}
+
+    def text(body: dict[str, Any]) -> str:
+        if broken["on"]:
+            raise RuntimeError("boom")
+        return A
+
+    teacher = FakeOpenAIServer(text)
+    gw, rt = _gateway(gw_env, monkeypatch, _live(tmp_path, key_limits="acme:daily_requests=1"), teacher=teacher.transport)
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    assert _post(c, ACME, tag=1).status_code >= 500
+    assert rt.meter.held("acme") == 0 and rt.meter.usage("acme").day_requests == 0  # a failed request is not counted
+    broken["on"] = False
+    assert _post(c, ACME, tag=2).status_code == 200 and _post(c, ACME, tag=3).status_code == 429
+
+
 @pytest.mark.req("FR-12.3", "NFR-5")
 def test_max_inflight_answers_503_instead_of_queueing(gw_env, tmp_path, monkeypatch):
     teacher, entered, release = _blocking_teacher()
@@ -763,7 +823,15 @@ def test_per_ip_rate_on_a_gateway_without_keys(gw_env, tmp_path, monkeypatch):
     live, mock = (Settings(mode=mode, ip_rpm=None).limit_policy().ip_rpm for mode in ("live", "mock"))
     assert (live, mock) == (120, 0)
     clock = FakeClock()
-    settings = _live(tmp_path, api_keys="", allow_unauthenticated=True, ip_rpm=6, trust_proxy=True)
+    settings = _live(
+        tmp_path,
+        api_keys="",
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",
+        ip_rpm=6,
+        trust_proxy=True,
+    )
     gw, rt = _gateway(gw_env, monkeypatch, settings, clock=clock)
     c = TestClient(gw.app)
     one = {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}

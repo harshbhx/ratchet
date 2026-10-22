@@ -219,6 +219,25 @@ def token_entries(text: str, logprob: float, count: int, top: int = 0) -> list[d
 
 
 # ---------- the live-mode boundary: HTTP endpoints and commands ----------
+# vLLM v0.18.0's error bodies (vllm/entrypoints/openai/engine/serving.py `_check_model`; models/serving.py for loads and
+# unloads), as `ErrorResponse(error=ErrorInfo(message, type, param, code))`.
+VLLM_ERRORS = {
+    "missing_model": (404, "The model `{}` does not exist.", "NotFoundError", "model"),
+    "already_loaded": (
+        400,
+        "The lora adapter '{}' has already been loaded. If you want to load the adapter in place, set 'load_inplace' to True.",
+        "InvalidUserInput",
+        None,
+    ),
+    "not_found": (404, "The lora adapter '{}' cannot be found.", "NotFoundError", None),
+}
+
+
+def vllm_error(kind: str, name: str) -> dict[str, Any]:
+    status, message, type_, param = VLLM_ERRORS[kind]
+    return {"error": {"message": message.format(name), "type": type_, "param": param, "code": status}}
+
+
 class HttpCall(NamedTuple):
     method: str
     url: str
@@ -233,13 +252,18 @@ class FakeOpenAIServer:
     asks for them (`out_tokens` tokens that spell the text, `token_entries`, with the body's `top_logprobs` alternatives;
     `logprob=None` plays a server that never returns them), and usage of `in_tokens` and `out_tokens` per choice.
     `POST .../load_lora_adapter` answers `load(body)` as `(status, text)`, 200 by default. `GET .../models` lists
-    `models`. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
+    `models`. `POST .../embeddings` returns one vector of `embedding_dims` floats per input (`embeddings(body)`) with
+    `in_tokens` prompt tokens. Anything else is a 404, as on a server without that route. With `loaded` (a set of adapter names)
     it keeps vLLM's adapter state: a chat request for a model not in it is vLLM's 404 (`The model `x` does not
     exist.`), a successful load adds the adapter, and `restart()` forgets them all. Every request is recorded as an
     `HttpCall`; `calls_to(suffix)` picks the ones to one route. Thread-safe, because Scout calls from several threads.
     `finish_reason` is what every choice reports (`"length"`: cut off by the token limit; None leaves the field out).
     `reasoning_tokens` (per choice, part of `out_tokens`) and `cached_tokens` (of the prompt) add
     `usage.completion_tokens_details` and `usage.prompt_tokens_details` when they are not 0, as Token Factory does.
+    `errors="v0.18.0"` answers with vLLM v0.18.0's exact bodies (`VLLM_ERRORS`): the OpenAI-shaped missing-model 404, a
+    second load of a loaded name as a 400 "already been loaded", and an unknown unload as a 404 "cannot be found";
+    `"legacy"` (the default) keeps the older top-level `{"object": "error", ...}` 404. `POST .../unload_lora_adapter`
+    answers `unload(body)` when given, else removes the name from `loaded` (404 when it is not there), else 200.
     Pass `server.transport` to `OpenAICompatProvider(transport=...)`, `Runtime(transports=...)` or `httpx.Client`."""
 
     def __init__(
@@ -255,8 +279,16 @@ class FakeOpenAIServer:
         finish_reason: str | None = "stop",
         reasoning_tokens: int = 0,
         cached_tokens: int = 0,
+        embedding_dims: int = 4,
+        errors: str = "legacy",
+        unload: Callable[[dict[str, Any]], tuple[int, str]] | None = None,
     ) -> None:
+        if errors not in ("legacy", "v0.18.0"):
+            raise ValueError(f"errors must be 'legacy' or 'v0.18.0', not {errors!r}")
+        self.errors = errors
+        self.unload = unload
         self.text = text
+        self.embedding_dims = embedding_dims
         self.logprob = logprob
         self.in_tokens = in_tokens
         self.out_tokens = out_tokens
@@ -293,15 +325,34 @@ class FakeOpenAIServer:
                 missing = self.loaded is not None and body["model"] not in self.loaded
             if missing:  # vLLM's error body for a model it does not serve
                 message = f"The model `{body['model']}` does not exist."
+                if self.errors == "v0.18.0":
+                    return httpx.Response(404, json=vllm_error("missing_model", body["model"]))
                 return httpx.Response(404, json={"object": "error", "message": message, "type": "NotFoundError", "code": 404})
             return httpx.Response(200, json=self.completion(body))
         if request.method == "POST" and path.endswith("/load_lora_adapter"):
+            with self._lock:
+                twice = self.errors == "v0.18.0" and self.loaded is not None and body["lora_name"] in self.loaded
+            if twice:
+                return httpx.Response(400, json=vllm_error("already_loaded", body["lora_name"]))
             status, text = self.load(body)
             if status < 400:
                 with self._lock:
                     if self.loaded is not None:
                         self.loaded.add(body["lora_name"])
             return httpx.Response(status, text=text)
+        if request.method == "POST" and path.endswith("/embeddings"):
+            return httpx.Response(200, json=self.embeddings(body))
+        if request.method == "POST" and path.endswith("/unload_lora_adapter"):
+            if self.unload is not None:
+                status, text = self.unload(body)
+                return httpx.Response(status, text=text)
+            with self._lock:
+                if self.loaded is None:
+                    return httpx.Response(200, text="")
+                if body["lora_name"] not in self.loaded:
+                    return httpx.Response(404, json=vllm_error("not_found", body["lora_name"]))
+                self.loaded.discard(body["lora_name"])
+            return httpx.Response(200, text=f"Success: LoRA adapter '{body['lora_name']}' removed successfully.")
         if request.method == "GET" and path.endswith("/models"):
             return httpx.Response(200, json={"object": "list", "data": [{"id": m, "object": "model"} for m in self.models]})
         return httpx.Response(404, json={"detail": "Not Found"})
@@ -328,13 +379,34 @@ class FakeOpenAIServer:
             "usage": usage,
         }
 
+    def embeddings(self, body: dict[str, Any]) -> dict[str, Any]:
+        """An OpenAI embeddings body: input i's vector is `[i + 1, len(str(input)), 0.5, ...]` (`embedding_dims` long)."""
+        inputs = body["input"] if isinstance(body["input"], list) and not isinstance(body["input"][0], int) else [body["input"]]
+        dims = int(body.get("dimensions") or self.embedding_dims)
+        data = [
+            {"object": "embedding", "index": i, "embedding": ([float(i + 1), float(len(str(x)))] + [0.5] * dims)[:dims]}
+            for i, x in enumerate(inputs)
+        ]
+        return {
+            "object": "list",
+            "data": data,
+            "model": body["model"],
+            "usage": {"prompt_tokens": self.in_tokens, "total_tokens": self.in_tokens},
+        }
+
 
 class RecordingRun:
     """Stands in for `subprocess.run`: records each command (argv list) and its keyword arguments and runs nothing.
-    `on_call(argv)` runs first, to look at the world at that moment or to raise as a failing command would."""
+    `on_call(argv)` runs first, to look at the world at that moment or to raise as a failing command would.
+    `result(argv)` supplies the `CompletedProcess` (output such as a help text); by default code 0 and no output."""
 
-    def __init__(self, on_call: Callable[[list[str]], None] | None = None) -> None:
+    def __init__(
+        self,
+        on_call: Callable[[list[str]], None] | None = None,
+        result: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
         self.on_call = on_call
+        self.result = result
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
 
     @property
@@ -345,7 +417,21 @@ class RecordingRun:
         self.calls.append((list(args), dict(kwargs)))
         if self.on_call is not None:
             self.on_call(list(args))
+        if self.result is not None:
+            return self.result(list(args))
         return subprocess.CompletedProcess(list(args), 0)
+
+
+def by_host(mapping: Mapping[str, Callable[[httpx.Request], httpx.Response]]) -> httpx.MockTransport:
+    """One transport for several upstreams: each request goes to the handler for its host (`tf.test`, `student.test`,
+    `api.tavily.com`), so one client serves every probe of a test. A request to any other host fails the test."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        handler = mapping.get(request.url.host)
+        assert handler is not None, f"unexpected request to {request.url.host}"
+        return handler(request)
+
+    return httpx.MockTransport(handle)
 
 
 class AppTransport(httpx.BaseTransport):

@@ -78,7 +78,7 @@ Ratchet is an OpenAI-compatible gateway. You change one line, your base URL. The
 
 The dashboard shows dollars saved against an all-Ultra baseline, the share of traffic your own model answers, results by task, every version and its state, the release log, and a model bill of materials.
 
-It is honest about cost. A self-hosted endpoint bills GPU-hours whether requests arrive or not, so Ratchet records when the endpoint and the training jobs ran and reports savings two ways: per token, and by the GPU-hours actually paid. It works out the break-even volume (about 1,500 student answers per endpoint hour at unverified L40S list prices) and says plainly when self-hosting does not pay, recommending the hosted fallback or scaling the endpoint to zero instead. At demo volume it says exactly that.
+It is honest about cost. A self-hosted endpoint bills GPU-hours whether requests arrive or not, so Ratchet records when the endpoint and the training jobs ran and reports savings two ways: per token, and by the GPU-hours actually paid. It works out the break-even volume (about 1,350 student answers per endpoint hour at the L40S on-demand price Nebius lists, $1.35 per GPU-hour, an estimate until the bill confirms it) and says plainly when self-hosting does not pay, recommending the hosted fallback or scaling the endpoint to zero instead. At demo volume it says exactly that.
 
 It is built for real traffic: personal data (emails, phones, card numbers, IBANs, national IDs, IPs, API secrets) is replaced with placeholders before anything becomes training data; the gateway takes API keys with a daily quota per client; it streams like the OpenAI API; and every trained adapter ships with its own bill of materials, signed with Ed25519, that anyone with the public key can verify offline.
 
@@ -129,7 +129,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 1412 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 1781 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 92% of them by day 8 and that day cost 81% less than all-Ultra (62% over all 8 days, including the cold start), with per-task calibration on (the default), which holds each of the two tasks to its own threshold; with one pooled threshold (`RATCHET_PER_TASK_CALIBRATION=0`, v0.4) 96%, 85% and 63%.
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.
@@ -145,7 +145,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## What's next
 
-A name and address detector (candidates: NVIDIA's gliner-PII, Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
+A bundled name and address detector (the plugin hook exists; candidates: NVIDIA's gliner-PII, Presidio) on top of the pattern-based redactor, a Postgres ledger, multiple tasks per deployment with their own golden sets, Nemotron Nano 30B students, and a managed Ratchet Cloud with savings-based pricing built on the per-client receipts.
 
 ## Built with
 

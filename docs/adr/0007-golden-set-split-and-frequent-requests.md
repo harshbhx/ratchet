@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-19
+- **Amended:** [ADR 0131](0131-golden-prompts-are-golden-in-every-task.md) groups a prompt across tasks: golden under one task, golden under all; occurrences add up across tasks.
 
 ## Context
 

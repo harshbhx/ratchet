@@ -409,6 +409,22 @@ def test_keyring_parses_and_identifies():
     assert bearer(f"Bearer {KEY_A}") == KEY_A and bearer("Basic abc", "k") == "k" and bearer(None) is None
 
 
+@pytest.mark.req("NFR-5", "INV-13")
+def test_keyring_errors_name_the_entry_never_the_name_or_the_key():
+    """With the name left out, the text before the first ':' of an entry is part of the key, so no message may quote it."""
+    secret = "sk-live-0123456789abcdefghij"
+    cases = (
+        (f"{secret}:short", "RATCHET_API_KEYS: the key in entry 1 is shorter than"),  # a pasted key that holds a ':'
+        (f"acme:{KEY_A}, bad name {secret}:{KEY_B}", "RATCHET_API_KEYS: entry 2 has a bad name"),
+        (f"acme:{KEY_A}, acme:{KEY_B}", "RATCHET_API_KEYS: entry 2 has the same name as an earlier entry"),
+    )
+    for spec, message in cases:
+        with pytest.raises(ValueError, match=message) as caught:
+            KeyRing(spec)
+        text = str(caught.value)
+        assert secret not in text and "acme" not in text and KEY_A not in text and KEY_B not in text
+
+
 @pytest.mark.req("FR-1.7", "NFR-5", "INV-13")
 def test_api_keys_protect_v1_and_name_the_client(gw_env):
     from fastapi.testclient import TestClient
@@ -641,7 +657,14 @@ def test_redact_preview_endpoint(gw_env):
 
     c = TestClient(gw_env().app)
     r = c.post("/ratchet/redact", json={"text": "I'm bob@example.com, card 4111 1111 1111 1111"}).json()
-    assert r == {"text": "I'm [EMAIL], card [CARD]", "found": {"EMAIL": 1, "CARD": 1}, "enabled": True}
+    assert r == {
+        "text": "I'm [EMAIL], card [CARD]",
+        "found": {"EMAIL": 1, "CARD": 1},
+        "enabled": True,
+        "style": "label",
+        "plugin": False,
+        "plugin_skipped": False,
+    }
     assert c.post("/ratchet/redact", json={"text": "x" * 5001}).status_code == 400
     assert c.post("/ratchet/redact", json={}).status_code == 400
 
@@ -1322,8 +1345,6 @@ def test_committed_leaves_and_sealed_receipts_are_append_only():
 
 # A value other than the default for every reserved setting (config.RESERVED_SETTINGS).
 RESERVED_ENV = {
-    "RATCHET_TEACHER_PROBES": "5",
-    "RATCHET_ADJUDICATE_MAX": "7",
     "RATCHET_BATCH_API": "openai",
     "RATCHET_BATCH_DISCOUNT": "0.4",
     "RATCHET_BACKFILL_MAX_TOKENS": "1024",
@@ -1361,32 +1382,36 @@ def test_reserved_settings_stop_startup_until_their_feature_lands(monkeypatch, t
         Settings()
 
 
-# A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY).
-RESERVED_POLICY_ENV = {
-    "drift_alarm": "50",
-    "drift_audit_boost": "3",
-    "drift_early_night": "1",
-    "teacher_noise_max": "0.1",
-    "alpha_teacher": "0.05",
-}
+# A valid value other than the default for every reserved ReleasePolicy field (release.RESERVED_POLICY). Every field
+# declared for the evidence features is built now; the check stays for the next one.
+RESERVED_POLICY_ENV: dict[str, str] = {}
 
 
 def test_reserved_release_policy_fields_stop_startup(monkeypatch):
+    from ratchet import release
     from ratchet.release import RESERVED_POLICY
 
     assert set(RESERVED_POLICY_ENV) == set(RESERVED_POLICY)
     for name in RESERVED_POLICY:
         monkeypatch.delenv(f"RATCHET_{name.upper()}", raising=False)
     assert ReleasePolicy.from_env() == ReleasePolicy()
-    monkeypatch.setenv("RATCHET_ALPHA_TEACHER", "0.01")  # the default, set explicitly
+    monkeypatch.setenv("RATCHET_ALPHA_TEACHER", "0.05")  # the teacher watch's fields are no longer reserved (ADR 0033)
+    monkeypatch.setenv("RATCHET_TEACHER_NOISE_MAX", "0.1")
     monkeypatch.setenv("RATCHET_DRIFT_ALARM", "100")
-    assert ReleasePolicy.from_env() == ReleasePolicy()
+    assert ReleasePolicy.from_env() == ReleasePolicy(alpha_teacher=0.05, teacher_noise_max=0.1)
     for name, value in RESERVED_POLICY_ENV.items():
         env = f"RATCHET_{name.upper()}"
         monkeypatch.setenv(env, value)
         with pytest.raises(ValueError, match=f"{env}.*no effect yet"):
             ReleasePolicy.from_env()
         monkeypatch.delenv(env)
+    # The mechanism itself, for the next feature that reserves a field before it is built.
+    monkeypatch.setitem(release.RESERVED_POLICY, "min_audits", "a feature not built yet")
+    monkeypatch.setenv("RATCHET_MIN_AUDITS", "30")
+    with pytest.raises(ValueError, match="RATCHET_MIN_AUDITS=30 has no effect yet.*a feature not built yet"):
+        ReleasePolicy.from_env()
+    monkeypatch.setenv("RATCHET_MIN_AUDITS", "20")  # its default: fine
+    assert ReleasePolicy.from_env().min_audits == 20
 
 
 @pytest.mark.parametrize(
@@ -1600,6 +1625,10 @@ def test_replay_current_threshold_is_the_one_the_router_uses(gw_env, tmp_path, m
         bom_signing_key="",
         tavily_api_key="",
         mock_warmup_days=0,
+        allow_unauthenticated=True,
+        api_guard="guarded",
+        admin_token="0123456789abcdef0123456789abcdef",  # no API keys (ADR 0061)
+        public_dashboard=True,
     )
     rt = gw.Runtime(settings, transports={"teacher": FakeOpenAIServer("ok").transport})
     monkeypatch.setattr(gw, "rt", rt)
