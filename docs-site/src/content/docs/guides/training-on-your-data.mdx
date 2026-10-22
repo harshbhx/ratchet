@@ -9,7 +9,6 @@ import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
-import NebiusDeployment from '../../../components/diagrams/NebiusDeployment.astro';
 
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains a new LoRA adapter from them, which the endpoint then loads from your bucket.</Summary>
 
@@ -65,7 +64,72 @@ When the station is **closed to save money**, a different, untrained cook from t
 
 ### The Nebius pieces
 
-<NebiusDeployment />
+```mermaid
+flowchart TB
+  subgraph Host["Your gateway host: VM or laptop"]
+    GW["Gateway: FastAPI"]
+    DB[("Ledger: SQLite")]
+    NS["Night School: python -m ratchet.live night"]
+  end
+  subgraph Nebius["Nebius AI Cloud"]
+    BK[("Object Storage bucket, mounted at /data")]
+    JOB["Serverless Job: LoRA training on one L40S"]
+    EP["Serverless Endpoint: vLLM, base model and adapters"]
+  end
+  subgraph TF["Token Factory"]
+    TEA["Teacher: Nemotron 3 Ultra"]
+    JDG["Judge: Nemotron 3 Super"]
+  end
+  GW --> DB
+  GW -->|"student calls"| EP
+  GW -->|"escalations and audits"| TEA
+  NS --> DB
+  NS -->|"upload night/train.jsonl"| BK
+  NS -->|"submit job"| JOB
+  BK --> JOB
+  JOB -->|"adapters/student-vN"| BK
+  BK --> EP
+  NS -->|"load_lora_adapter, golden eval"| EP
+  NS -->|"free-text grading"| JDG
+```
+
+**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. Nothing on Nebius ever writes to the ledger; only the host does.
+
+### How one training example is made
+
+```mermaid
+flowchart TD
+  R["Request"] --> T["Teacher answers"]
+  T --> Q{"Complete, valid, no opt-out, task not pinned?"}
+  Q -->|no| X["Served, not stored"]
+  Q -->|yes| RED["Redact prompt, answer and conditions"]
+  RED --> V{"Still valid after redaction?"}
+  V -->|no| X
+  V -->|yes| H["Hash task and redacted messages"]
+  H --> D{"Known hash?"}
+  D -->|"tombstoned"| X
+  D -->|"yes, seen again"| B["seen plus 1, unless a retry"]
+  D -->|new| SP{"Hash bucket"}
+  SP -->|"about 90 percent"| TR["Training split"]
+  SP -->|"about 10 percent"| GO["Golden split"]
+  B --> F{"seen 3 or more?"}
+  F -->|yes| TR
+  F -->|no| KEEP["Stays where it is"]
+  TR --> J["night/train.jsonl, teacher answer as target"]
+  GO --> E["Golden eval only: calibration and held-out halves"]
+```
+
+**Reading this diagram.** A request can fall out of the path at four places, always on the safe side: the answer is still served, only storage is skipped. After redaction the example gets a hash, and the hash does three jobs: it merges repeats, it blocks erased examples for good, and it fixes the split without anyone choosing it. The golden split is never trained on, with one exception: a prompt seen three or more times moves to training, so a question people ask all the time does not stay hidden forever.
+
+### What each part of an example is used for
+
+| Part | Used by | Notes |
+|---|---|---|
+| Redacted messages | `prompt` in the training row, the golden prompt | Placeholders such as `[EMAIL]` replace identifiers |
+| Teacher answer | `completion`, the loss target, the golden reference | The student's own answers are never targets |
+| Stored conditions | The golden eval only (it samples under them) | Never reach the chat template |
+| Provenance: teacher, license, hash, redactions, origin | The signed BOM and NOTICE.md | Travels with the adapter |
+| Client and end-user hash | Erasure and opt-outs | Never in the training file |
 
 ### Where your data goes
 
@@ -80,6 +144,8 @@ flowchart LR
   AD -->|"load_lora_adapter"| EP["Student endpoint: vLLM"]
   EP -->|"answers as student-vN"| GW
 ```
+
+**Reading this diagram.** The loop is closed: answers go out left to right, and the adapter comes back along the bottom. The only arrow that carries your text is the one from the ledger to the training file, and by then it is redacted.
 
 ### One live night, with the real commands
 
@@ -111,6 +177,8 @@ sequenceDiagram
   Live->>Data: ratchet_bom.json and NOTICE.md into the adapter folder
   Live->>Bucket: RATCHET_SYNC_CMD again (upload only)
 ```
+
+**Reading this diagram.** Read it as a checklist in time order. Night School re-scores the old adapter before it trains, so the champion and the challenger sit the same exam. The script, not the job, is what `ratchet.live` waits on: it polls for the weights file. The last two lines matter for licensing: the weights are in the bucket from the job, and the BOM and NOTICE.md are added after the gate has decided, so the folder holds the adapter and its licenses together.
 
 ### The student endpoint only answers
 
@@ -266,6 +334,18 @@ python -m ratchet.bom verify student-v3-export/ratchet_bom.json --public-key <yo
 ```
 
 The export checks the stored BOM against its own SHA-256 and signature first, copies the adapter files when they are on this machine, writes the BOM and the exact `NOTICE.md` it signed, and prints the BOM's `sha256`. Without the weights it says where in the bucket to copy them from. The output folder must be new or empty and outside `RATCHET_DATA_DIR` (the next sync would upload it). Keep `NOTICE.md` with the adapter wherever it goes. See [licenses](/guides/licenses/).
+
+### What can go wrong
+
+| Failure | What the system does | Where you see it |
+|---|---|---|
+| No student endpoint is set | The night stops before any paid call | `skip` or an error naming `RATCHET_STUDENT_BASE` |
+| The job request is refused, or the job writes no adapter | The script exits non-zero (after 2 hours when waiting); no version is created | the night's exit code, a "training failed" note in the compute log |
+| A bad training row or a chat-template mismatch | The job stops within seconds, before the GPU trains | `row N: ...` or `TemplateMismatch` in the job log |
+| The endpoint restarts and forgets adapters | A 404 queues a reload; that request goes to the teacher | `adapter_reloaded` or `adapter_reload_failed` events |
+| The second upload (BOM and NOTICE) fails | The version stands; the command exits non-zero | `sync_failed` event |
+| Too few new examples, a release in flight, or training paused | The night is skipped | `skip` event with the reason |
+| Someone erases examples after an adapter trained | The adapter is reported as possibly affected, never edited | the erasure's `affected_versions` |
 
 ### What is verified and what is not
 
