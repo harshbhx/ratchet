@@ -25,6 +25,10 @@ interface Env {
 /** The defaults. Any RATCHET_* variable or secret on the Worker replaces the entry of the same name. */
 const DEFAULTS: Record<string, string> = {
   RATCHET_MODE: "live",
+  // The image's /data volume does not exist on Cloudflare Containers, and live mode refuses a ledger whose folder is missing.
+  // /tmp is on the container's own disk: the ledger starts empty whenever the container does (see the note above).
+  RATCHET_DB: "/tmp/ratchet.db",
+  RATCHET_DATA_DIR: "/tmp/ratchet-data",
   RATCHET_KEY_LIMITS: "demo:daily_requests=300,daily_usd=1.5,rpm=10,concurrency=2",
   RATCHET_DAILY_BUDGET_USD: "2.5",
   RATCHET_BUDGET_MODE: "block",
