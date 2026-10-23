@@ -1,0 +1,617 @@
+{
+ "schema": "ratchet.scout-recording/v1",
+ "recorded_at": "2026-10-23T23:13:45Z",
+ "host": "127.0.0.1",
+ "mode": "live",
+ "question": "What is LoRA fine-tuning and why is it cheaper than full fine-tuning?",
+ "duration_ms": 16173,
+ "events": [
+  {
+   "type": "start",
+   "run_id": "9dbc0092",
+   "question": "What is LoRA fine-tuning and why is it cheaper than full fine-tuning?",
+   "mode": "live",
+   "t_ms": 0
+  },
+  {
+   "type": "step",
+   "agent": "planner",
+   "task": "research-plan",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001299,
+   "baseline_usd": 0.001299,
+   "latency_ms": 1769.2,
+   "detail": {
+    "queries": [
+     "LoRA low-rank adaptation fine-tuning",
+     "LoRA vs full fine-tuning parameter efficiency cost",
+     "why LoRA fine-tuning cheaper than full fine-tuning"
+    ]
+   },
+   "t_ms": 1768
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 2630.9,
+   "detail": {
+    "query": "LoRA low-rank adaptation fine-tuning",
+    "results": [
+     {
+      "id": 1,
+      "title": "LoRA (Low-Rank Adaptation) · Hugging Face",
+      "url": "https://huggingface.co/learn/llm-course/en/chapter11/4",
+      "snippet": "LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning technique that freezes the pre-trained model weights and injects trainable rank decomposition matrices into the model’s layers. Instead of training all model parameters during fine-tuning, LoRA decomposes the weight updates into smaller matrices through low-rank decomposition, significantly reducing the number of trainable parameters while maintaining model performance. For example, when applied to GPT-3 175B, LoRA reduced [...] Fin"
+     },
+     {
+      "id": 2,
+      "title": "LoRA (machine learning) - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/LoRA_(machine_learning)",
+      "snippet": "LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning \"Fine-tuning (deep learning)\") technique for large language models and other deep neural networks. Introduced in 2021 by researchers at Microsoft, LoRA enables adaptation of pre-trained models to specific tasks while requiring significantly fewer computational resources and trainable parameters than traditional full model fine-tuning. ## Background [edit&action=edit&section=1 \"Edit section: Background\")]"
+     },
+     {
+      "id": 3,
+      "title": "LoRA Explained: Low-Rank Adaptation for Fine-Tuning LLMs | by Zilliz | Medium",
+      "url": "https://medium.com/@zilliz_learn/lora-explained-low-rank-adaptation-for-fine-tuning-llms-066c9bdd0b32",
+      "snippet": "LoRA (Low-Rank Adaptation) is a technique for efficiently fine-tuning large language models (LLMs)) by introducing low-rank trainable weight matrices into specific model layers. It enables us to fine-tune large models, even those with tens of billions of parameters. In this article, we’ll discuss what LoRA is and how it works. Let’s first explore why we need LoRA in the first place. ### The Problems with Traditional Fine-Tuning Approaches [...] ### Conclusion LoRA provides a powerful and efficie"
+     },
+     {
+      "id": 4,
+      "title": "Low Rank Adaptation: Reduce the Cost of Model Fine-Tuning | Coursera",
+      "url": "https://www.coursera.org/articles/low-rank-adaptation",
+      "snippet": "Ends soon! Get $70+ in savings and build skills with Coursera Plus. Save 40% for 3 months. # Low Rank Adaptation: Reduce the Cost of Model Fine-Tuning Written by Coursera Staff • Updated on Low rank adaptation (LoRA) is a retraining method that repurposes a foundation language model for a specific task. Explore how LoRA allows you to leverage the technology of an LLM and train it in a fast and efficient way for your needs. [...] ![[Feature Image] An instructor explains low rank adaptation to a r"
+     }
+    ]
+   },
+   "t_ms": 4398
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1989.9,
+   "detail": {
+    "query": "LoRA vs full fine-tuning parameter efficiency cost",
+    "results": [
+     {
+      "id": 5,
+      "title": "Fine-Tuning LLMs: In-Depth Analysis with LLAMA-2 | Anyscale",
+      "url": "https://www.anyscale.com/blog/fine-tuning-llms-lora-or-full-parameter-an-in-depth-analysis-with-llama-2",
+      "snippet": "Our tests show that both methods yield comparable perplexities after a 20-minute training period. Hence, in terms of cost-effectiveness for reaching a similar-quality checkpoint, LoRA and full-parameter fine-tuning are largely on par. That said, if you're operating multiple models, LoRA's more resource-efficient deployment could be a real game-changer. ### LinkMemory usage benefits of LoRA [...] In this blog, we compare full-parameter fine-tuning with LoRA and answer questions around the strengt"
+     },
+     {
+      "id": 6,
+      "title": "Efficient Fine-tuning with PEFT and LoRA | Niklas Heidloff",
+      "url": "https://heidloff.net/article/efficient-fine-tuning-lora",
+      "snippet": "“This [LoRA] tutorial was created and run on a g5.2xlarge AWS EC2 Instance, including 1 NVIDIA A10G. The training took ~10:36:00 and cost ~13$ for 10h of training. For comparison a full fine-tuning on FLAN-T5-XXL with the same duration (10h) requires 8x A100 40GBs and costs ~322$.” ## PEFT PEFT is a library from Hugging Face which comes with several options to train models efficiently, one of them is LoRA. [...] > PEFT, or Parameter-Efficient Fine-Tuning (PEFT), is a library for efficiently adap"
+     },
+     {
+      "id": 7,
+      "title": "LoRA vs. Full Fine-Tuning: A Theoretical Perspective | alphaXiv",
+      "url": "https://www.alphaxiv.org/abs/2605.19018",
+      "snippet": "Fine-tuning adapts a pre-trained model to downstream tasks using a small amount of labeled data. Low-Rank Adaptation (LoRA) is an efficient fine-tuning method that reduces memory and computation costs while often achieving performance close to full fine-tuning. Despite its widespread use, the theoretical behavior of LoRA is not yet well understood. In this paper, we study LoRA in a simple linear regression setting and compare its excess risk with that of full fine-tuning. Our analysis [...] Our "
+     },
+     {
+      "id": 8,
+      "title": "LoRA vs. Full Finetuning of Language Models",
+      "url": "https://sebastianraschka.com/faq/docs/lora-vs-full-finetuning.html",
+      "snippet": "The comparison should use the same data split and evaluation procedure. LoRA results also depend on the adapter rank, scaling factor, and target modules. A weak LoRA configuration is not evidence that parameter-efficient finetuning has reached its limit. For related details, see Why is full finetuning so expensive compared with LoRA?, How do rank and alpha affect LoRA behavior in practice?, and Where should LoRA adapters be inserted in an LLM for the biggest impact?. [...] Ahead of AI logo Sebas"
+     }
+    ]
+   },
+   "t_ms": 6388
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1161.9,
+   "detail": {
+    "query": "why LoRA fine-tuning cheaper than full fine-tuning",
+    "results": [
+     {
+      "id": 9,
+      "title": "I Thought LoRA Was Just Cheap Fine-Tuning. This Paper Proved Me Wrong | by Harsh Maniya | Towards AI",
+      "url": "https://pub.towardsai.net/i-thought-lora-was-just-cheap-fine-tuning-this-paper-proved-me-wrong-241e598af4b3",
+      "snippet": "1. LoRA fine-tuning is better understood as persistent adaptive state than as cheap full fine-tuning. The design implications are different. 2. Low-rank instability is an initialization problem, not a capacity problem — OLoRA-tail is worth your attention. 3. A population of diverse LoRA adapters, properly aggregated, can outperform a single stronger adapter. Start thinking about adapters as ensembles."
+     },
+     {
+      "id": 10,
+      "title": "Why is full finetuning so expensive compared with LoRA?",
+      "url": "https://sebastianraschka.com/faq/docs/full-finetuning-vs-lora-cost.html",
+      "snippet": "This saves the memory associated with training the base weights, and it makes task-specific checkpoints much smaller. Several adapters can share one copy of the original model rather than storing a complete finetuned checkpoint for every task. LoRA still has to load the frozen base model. Plain LoRA does not make those weights disappear or automatically quantize them. QLoRA combines low-rank adapters with a quantized frozen base and can reduce this part of the memory footprint further. [...] Ful"
+     },
+     {
+      "id": 11,
+      "title": "LoRA vs Full Fine-Tuning: Cost, Speed and Quality (2026)",
+      "url": "https://leanlm.ai/blog/lora-adapters",
+      "snippet": "The cost reason to avoid fine-tuning LLMs used to be real: training a 70B parameter model required a rack of H100s and weeks of compute budget. LoRA changed that. By training only a small set of adapter weights instead of the full model, LoRA makes fine-tuning accessible at a fraction of the original cost. It also opens a path to replacing expensive frontier API calls with a purpose-built model that costs 50–200× less per token at inference time. [...] LoRA reduces trainable parameters by 99%+ c"
+     },
+     {
+      "id": 12,
+      "title": "How LoRA Makes AI Fine-Tuning Faster, Cheaper, and More Practical | Exxact Bog",
+      "url": "https://www.exxactcorp.com/blog/deep-learning/ai-fine-tuning-with-lora",
+      "snippet": "Prompt engineering is fast but limited. Full fine-tuning is powerful but expensive. LoRA delivers near-full fine-tuning quality at a fraction of the compute cost, with reusable lightweight adapters—making it ideal for enterprises seeking customized AI without overspending. ## Conclusion [...] Prompt engineering is fast but limited. Full fine-tuning is powerful but expensive. LoRA delivers near-full fine-tuning quality at a fraction of the compute cost, with reusable lightweight adapters—making i"
+     }
+    ]
+   },
+   "t_ms": 7552
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000774,
+   "baseline_usd": 0.000774,
+   "latency_ms": 1365.6,
+   "detail": {
+    "id": 3,
+    "url": "https://medium.com/@zilliz_learn/lora-explained-low-rank-adaptation-for-fine-tuning-llms-066c9bdd0b32",
+    "title": "LoRA Explained: Low-Rank Adaptation for Fine-Tuning LLMs | by Zilliz | Medium",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The article explains LoRA fine-tuning and its cost advantages over full fine-tuning."
+   },
+   "t_ms": 8920
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000852,
+   "baseline_usd": 0.000852,
+   "latency_ms": 1393.3,
+   "detail": {
+    "id": 5,
+    "url": "https://www.anyscale.com/blog/fine-tuning-llms-lora-or-full-parameter-an-in-depth-analysis-with-llama-2",
+    "title": "Fine-Tuning LLMs: In-Depth Analysis with LLAMA-2 | Anyscale",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "Blog post directly compares LoRA and full-parameter fine-tuning, discussing cost-effectiveness and memory usage benefits."
+   },
+   "t_ms": 8948
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001014,
+   "baseline_usd": 0.001014,
+   "latency_ms": 1666.9,
+   "detail": {
+    "id": 6,
+    "url": "https://heidloff.net/article/efficient-fine-tuning-lora",
+    "title": "Efficient Fine-tuning with PEFT and LoRA | Niklas Heidloff",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "Provides concrete cost comparison showing LoRA fine-tuning is significantly cheaper than full fine-tuning."
+   },
+   "t_ms": 9224
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000985,
+   "baseline_usd": 0.000985,
+   "latency_ms": 1679.4,
+   "detail": {
+    "id": 1,
+    "url": "https://huggingface.co/learn/llm-course/en/chapter11/4",
+    "title": "LoRA (Low-Rank Adaptation) · Hugging Face",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "The Hugging Face LLM course page directly explains LoRA as a parameter-efficient fine-tuning method that reduces trainable parameters by freezing base weights and adding low-rank matrices, addressing both what it is and why it's cheaper."
+   },
+   "t_ms": 9232
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.00107,
+   "baseline_usd": 0.00107,
+   "latency_ms": 1772.0,
+   "detail": {
+    "id": 2,
+    "url": "https://en.wikipedia.org/wiki/LoRA_(machine_learning)",
+    "title": "LoRA (machine learning) - Wikipedia",
+    "relevant": true,
+    "source_type": "other",
+    "reason": "The Wikipedia article defines LoRA and explains its parameter efficiency and lower computational cost compared to full fine-tuning."
+   },
+   "t_ms": 9328
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.00124,
+   "baseline_usd": 0.00124,
+   "latency_ms": 2030.8,
+   "detail": {
+    "id": 4,
+    "url": "https://www.coursera.org/articles/low-rank-adaptation",
+    "title": "Low Rank Adaptation: Reduce the Cost of Model Fine-Tuning | Coursera",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The Coursera article explains LoRA as a low-rank adaptation method that reduces fine-tuning cost, directly addressing the question."
+   },
+   "t_ms": 9585
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000915,
+   "baseline_usd": 0.000915,
+   "latency_ms": 1008.1,
+   "detail": {
+    "id": 7,
+    "url": "https://www.alphaxiv.org/abs/2605.19018",
+    "title": "LoRA vs. Full Fine-Tuning: A Theoretical Perspective | alphaXiv",
+    "relevant": true,
+    "source_type": "paper",
+    "reason": "The paper directly compares LoRA and full fine-tuning, explaining LoRA's efficiency and cost advantages."
+   },
+   "t_ms": 9930
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001117,
+   "baseline_usd": 0.001117,
+   "latency_ms": 1184.9,
+   "detail": {
+    "id": 8,
+    "url": "https://sebastianraschka.com/faq/docs/lora-vs-full-finetuning.html",
+    "title": "LoRA vs. Full Finetuning of Language Models",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "The page directly compares LoRA and full fine-tuning and includes a section on why full fine-tuning is more expensive, addressing the core question."
+   },
+   "t_ms": 10135
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000843,
+   "baseline_usd": 0.000843,
+   "latency_ms": 848.4,
+   "detail": {
+    "id": 11,
+    "url": "https://leanlm.ai/blog/lora-adapters",
+    "title": "LoRA vs Full Fine-Tuning: Cost, Speed and Quality (2026)",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The blog post directly compares LoRA and full fine-tuning, explaining LoRA's parameter reduction and cost benefits."
+   },
+   "t_ms": 10178
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000822,
+   "baseline_usd": 0.000822,
+   "latency_ms": 1101.8,
+   "detail": {
+    "id": 10,
+    "url": "https://sebastianraschka.com/faq/docs/full-finetuning-vs-lora-cost.html",
+    "title": "Why is full finetuning so expensive compared with LoRA?",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "The article directly explains why LoRA fine-tuning is cheaper than full fine-tuning by detailing memory savings and smaller checkpoints."
+   },
+   "t_ms": 10336
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001121,
+   "baseline_usd": 0.001121,
+   "latency_ms": 1327.4,
+   "detail": {
+    "id": 9,
+    "url": "https://pub.towardsai.net/i-thought-lora-was-just-cheap-fine-tuning-this-paper-proved-me-wrong-241e598af4b3",
+    "title": "I Thought LoRA Was Just Cheap Fine-Tuning. This Paper Proved Me Wrong | by Harsh Maniya | Towards AI",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "Blog post discusses LoRA fine-tuning and its cost advantages over full fine-tuning."
+   },
+   "t_ms": 10552
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000892,
+   "baseline_usd": 0.000892,
+   "latency_ms": 1056.8,
+   "detail": {
+    "id": 12,
+    "url": "https://www.exxactcorp.com/blog/deep-learning/ai-fine-tuning-with-lora",
+    "title": "How LoRA Makes AI Fine-Tuning Faster, Cheaper, and More Practical | Exxact Bog",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The blog post directly addresses LoRA fine-tuning, explaining it as lightweight adapters that achieve near-full fine-tuning quality at a fraction of the compute cost."
+   },
+   "t_ms": 10644
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001018,
+   "baseline_usd": 0.001018,
+   "latency_ms": 1065.2,
+   "detail": {
+    "id": 1,
+    "url": "https://huggingface.co/learn/llm-course/en/chapter11/4",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "LoRA (Low-Rank Adaptation) freezes the pre-trained model weights and injects small trainable low-rank matrices, reducing trainable parameters by about 90% and making fine-tuning far cheaper than full fine-tuning."
+   },
+   "t_ms": 11712
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001462,
+   "baseline_usd": 0.001462,
+   "latency_ms": 1417.3,
+   "detail": {
+    "id": 2,
+    "url": "https://en.wikipedia.org/wiki/LoRA_(machine_learning)",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning technique that adapts pre-trained models to specific tasks using far fewer trainable parameters and computational resources than full fine-tuning."
+   },
+   "t_ms": 12065
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001735,
+   "baseline_usd": 0.001735,
+   "latency_ms": 1526.9,
+   "detail": {
+    "id": 4,
+    "url": "https://www.coursera.org/articles/low-rank-adaptation",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "LoRA (Low Rank Adaptation) is a lightweight fine-tuning method that repurposes a pre-trained language model for a specific task by drastically reducing the number of trainable parameters, making it faster and more memory-efficient than full fine-tuning."
+   },
+   "t_ms": 12176
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.00183,
+   "baseline_usd": 0.00183,
+   "latency_ms": 1700.6,
+   "detail": {
+    "id": 3,
+    "url": "https://medium.com/@zilliz_learn/lora-explained-low-rank-adaptation-for-fine-tuning-llms-066c9bdd0b32",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "LoRA fine-tunes large language models by inserting low-rank trainable weight matrices into specific layers, avoiding updates to the full pre-trained weights and drastically reducing storage and computation costs."
+   },
+   "t_ms": 12349
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.002334,
+   "baseline_usd": 0.002334,
+   "latency_ms": 2293.3,
+   "detail": {
+    "id": 6,
+    "url": "https://heidloff.net/article/efficient-fine-tuning-lora",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "LoRA is a parameter-efficient fine-tuning technique that only trains a small number of additional parameters, making it far less computationally expensive than full fine-tuning."
+   },
+   "t_ms": 12943
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.004314,
+   "baseline_usd": 0.004314,
+   "latency_ms": 3786.4,
+   "detail": {
+    "id": 5,
+    "url": "https://www.anyscale.com/blog/fine-tuning-llms-lora-or-full-parameter-an-in-depth-analysis-with-llama-2",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "LoRA fine-tuning is a low-rank approximation technique that offers more resource-efficient deployment, particularly when serving multiple models, while achieving comparable training cost-effectiveness to full-parameter fine-tuning."
+   },
+   "t_ms": 14435
+  },
+  {
+   "type": "step",
+   "agent": "writer",
+   "task": "research-write",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.002033,
+   "baseline_usd": 0.002033,
+   "latency_ms": 1735.5,
+   "detail": {
+    "answer": "LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning method that freezes the pre-trained model weights and injects small trainable low-rank matrices, drastically reducing the number of trainable parameters by about 90% [1][2]. By only training these additional low-rank matrices, LoRA requires far fewer computational resources and less memory, making it faster and cheaper than full fine-tuning [4].",
+    "citations": [
+     {
+      "n": 1,
+      "title": "LoRA (Low-Rank Adaptation) · Hugging Face",
+      "url": "https://huggingface.co/learn/llm-course/en/chapter11/4"
+     },
+     {
+      "n": 2,
+      "title": "LoRA (machine learning) - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/LoRA_(machine_learning)"
+     },
+     {
+      "n": 4,
+      "title": "Low Rank Adaptation: Reduce the Cost of Model Fine-Tuning | Coursera",
+      "url": "https://www.coursera.org/articles/low-rank-adaptation"
+     }
+    ],
+    "search_unavailable": false
+   },
+   "t_ms": 16173
+  },
+  {
+   "type": "done",
+   "run_id": "9dbc0092",
+   "answer": "LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning method that freezes the pre-trained model weights and injects small trainable low-rank matrices, drastically reducing the number of trainable parameters by about 90% [1][2]. By only training these additional low-rank matrices, LoRA requires far fewer computational resources and less memory, making it faster and cheaper than full fine-tuning [4].",
+   "citations": [
+    {
+     "n": 1,
+     "title": "LoRA (Low-Rank Adaptation) · Hugging Face",
+     "url": "https://huggingface.co/learn/llm-course/en/chapter11/4"
+    },
+    {
+     "n": 2,
+     "title": "LoRA (machine learning) - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/LoRA_(machine_learning)"
+    },
+    {
+     "n": 4,
+     "title": "Low Rank Adaptation: Reduce the Cost of Model Fine-Tuning | Coursera",
+     "url": "https://www.coursera.org/articles/low-rank-adaptation"
+    }
+   ],
+   "totals": {
+    "calls": 23,
+    "llm_calls": 20,
+    "student_calls": 0,
+    "teacher_calls": 20,
+    "cost_usd": 0.02767,
+    "baseline_usd": 0.02767,
+    "savings_pct": 0.0,
+    "wall_ms": 16176.4
+   },
+   "search": {
+    "available": true,
+    "partial": false,
+    "reason": null
+   },
+   "t_ms": 16173
+  }
+ ],
+ "totals": {
+  "calls": 23,
+  "llm_calls": 20,
+  "student_calls": 0,
+  "teacher_calls": 20,
+  "cost_usd": 0.02767,
+  "baseline_usd": 0.02767,
+  "savings_pct": 0.0,
+  "wall_ms": 16176.4
+ }
+}

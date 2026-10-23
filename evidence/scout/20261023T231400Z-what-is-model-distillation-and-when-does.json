@@ -1,0 +1,543 @@
+{
+ "schema": "ratchet.scout-recording/v1",
+ "recorded_at": "2026-10-23T23:14:00Z",
+ "host": "127.0.0.1",
+ "mode": "live",
+ "question": "What is model distillation and when does it fail?",
+ "duration_ms": 13212,
+ "events": [
+  {
+   "type": "start",
+   "run_id": "3fcb80a0",
+   "question": "What is model distillation and when does it fail?",
+   "mode": "live",
+   "t_ms": 0
+  },
+  {
+   "type": "step",
+   "agent": "planner",
+   "task": "research-plan",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000454,
+   "baseline_usd": 0.000454,
+   "latency_ms": 931.5,
+   "detail": {
+    "queries": [
+     "model distillation definition machine learning",
+     "model distillation failure cases limitations",
+     "knowledge distillation when does it fail performance degradation"
+    ]
+   },
+   "t_ms": 932
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 2033.1,
+   "detail": {
+    "query": "model distillation definition machine learning",
+    "results": [
+     {
+      "id": 1,
+      "title": "Knowledge distillation - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Knowledge_distillation",
+      "snippet": "In machine learning, knowledge distillation or model distillation is the process of transferring knowledge from a large model to a smaller one. While large models (such as very deep neural networks or ensembles of many models ) have more knowledge capacity than small models, this capacity might not be fully utilized. It can be just as computationally expensive to evaluate a model even if it utilizes little of its knowledge capacity. Knowledge distillation transfers knowledge from a large model ["
+     },
+     {
+      "id": 2,
+      "title": "What is Model Distillation?",
+      "url": "https://labelbox.com/guides/model-distillation",
+      "snippet": "To solve this challenge, model distillation comes in handy. Model distillation, also known as knowledge distillation, is a machine learning technique that involves transferring knowledge from a large model to a smaller one that can be deployed to production. It bridges the gap between computational demand and the cost of enormous models in the training lab and the real-world application of these models while maintaining performance. ## Why Model Distillation? [...] The AI models currently being "
+     },
+     {
+      "id": 3,
+      "title": "Understanding the Essentials of Model Distillation in AI",
+      "url": "https://medium.com/stream-zero/understanding-the-essentials-of-model-distillation-in-ai-1e97403bee8a",
+      "snippet": "Model distillation is a technique used to create smaller, faster models that retain much of the performance of a larger, more complex model. The larger model is referred to as the “teacher,” and the smaller model as the “student.” The goal of model distillation is to compress the knowledge of the teacher model into the student model, often by training the student to replicate the teacher’s output distributions (soft targets) rather than just achieving high accuracy on a training set. [...] Model"
+     },
+     {
+      "id": 4,
+      "title": "AI model distillation",
+      "url": "https://www.youtube.com/watch?v=Ko0jM3YjprY",
+      "snippet": "### Description 20,299 views Posted: 2025-02-19 AI model distillation is a technique used to transfer knowledge from large AI models (teacher models) to smaller, more efficient models (student models). Large models, while highly capable, require significant computational resources, making them costly to train and deploy. Smaller models, on the other hand, are faster, cheaper, and more energy-efficient, making them suitable for applications on devices like phones and laptops. [...] Watch this vid"
+     }
+    ]
+   },
+   "t_ms": 2965
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1752.1,
+   "detail": {
+    "query": "model distillation failure cases limitations",
+    "results": [
+     {
+      "id": 5,
+      "title": "AI Insights: Model Distillation (HTML) - GOV.UK",
+      "url": "https://www.gov.uk/government/publications/ai-insights/ai-insights-model-distillation-html",
+      "snippet": "While knowledge distillation is a powerful tool for creating computationally efficient models, it comes with limitations such as: ### Task breadth The student’s performance is inherently limited by the scope of the teacher’s behaviour it encounters during training. When the deployment task involves diverse topics, discourse styles or reasoning formats, it becomes increasingly unlikely that the training data covers all the necessary edge cases it may experience operationally. [...] Domain-specifi"
+     },
+     {
+      "id": 6,
+      "title": "Everything You Need to Know about Knowledge Distillation",
+      "url": "https://huggingface.co/blog/Kseniase/kd",
+      "snippet": "Knowledge distillation provides a powerful way to leverage the prowess of state-of-the-art models in practical settings using more compact efficient models. However, some issues remain. ## Not without limitations Like any technique, while knowledge distillation offers many benefits, it also has several limitations and challenges: Despite these limitations, knowledge distillation is a widespread technique that continues to be used in many cases, even with top-tier models. [...] Small models are a"
+     },
+     {
+      "id": 7,
+      "title": "Knowledge Distillation Must Account for What It Loses",
+      "url": "https://arxiv.org/html/2604.25110v2",
+      "snippet": "The main limitation of this position is that off-metric capabilities are difficult to define and measure, especially when the teacher is black-box and the relevant capability is only observable through imperfect behavioral proxies. Some teacher behaviors also should not be preserved, because they may encode bias, overconfidence, unsafe refusals, or other undesirable traits. These limitations do not remove the need for loss accounting. They clarify its purpose: distillation papers should not [..."
+     }
+    ]
+   },
+   "t_ms": 4718
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1514.0,
+   "detail": {
+    "query": "knowledge distillation when does it fail performance degradation",
+    "results": [
+     {
+      "id": 8,
+      "title": "How Knowledge Distillation Cuts AI Model Inference Costs | Galileo",
+      "url": "https://galileo.ai/blog/knowledge-distillation-ai-models",
+      "snippet": "Real-Time Production Performance Monitoring: Advanced monitoring systems track distilled model performance continuously in production environments, detecting drift patterns and performance degradation before they impact business operations while providing actionable insights for model optimization. [...] Evaluating knowledge distillation effectiveness requires comprehensive assessments that extend beyond traditional accuracy metrics to capture the nuanced performance characteristics of compresse"
+     },
+     {
+      "id": 9,
+      "title": "[PDF] Does Knowledge Distillation Really Work? - NIPS papers",
+      "url": "https://proceedings.neurips.cc/paper_files/paper/2021/file/376c6b9ff3bedbbea56751a84fffc10c-Paper.pdf",
+      "snippet": "In theory, any data augmentation should help with identiﬁability: if a student matches a teacher on more data, it is more likely to match the teacher elsewhere. However, the Noise and OOD augmentation strategies based on noise and out-of-distribution data fail on all metrics, decreasing performance compared to the baseline. In practice, data augmentation has an effect beyond improving identiﬁability — it has a regularizing effect, making optimization more challenging. We explore this facet of [."
+     },
+     {
+      "id": 10,
+      "title": "[Discussion] Knowledge distillation is badly defined : r/MachineLearning",
+      "url": "https://www.reddit.com/r/MachineLearning/comments/18681i4/discussion_knowledge_distillation_is_badly_defined",
+      "snippet": "In the case of (1), it isn't really surprising that the student won't outperform the teacher, given that the student is usually smaller or has a simpler architecture. The student cannot beat the teacher on his field, if the student is evaluated on the same test set as the teacher. However, the student might completely fail to match the teacher prediction on out-of-distributions (OOD) data, as it has never been trained on OOD samples. In these cases I am not sure whether the student might [...] ,"
+     }
+    ]
+   },
+   "t_ms": 6232
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000652,
+   "baseline_usd": 0.000652,
+   "latency_ms": 1270.2,
+   "detail": {
+    "id": 6,
+    "url": "https://huggingface.co/blog/Kseniase/kd",
+    "title": "Everything You Need to Know about Knowledge Distillation",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The blog post covers knowledge distillation and its limitations, directly addressing what it is and when it fails."
+   },
+   "t_ms": 7508
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000993,
+   "baseline_usd": 0.000993,
+   "latency_ms": 1409.7,
+   "detail": {
+    "id": 5,
+    "url": "https://www.gov.uk/government/publications/ai-insights/ai-insights-model-distillation-html",
+    "title": "AI Insights: Model Distillation (HTML) - GOV.UK",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "The snippet explicitly discusses limitations of knowledge distillation, such as task breadth constraints and edge-case coverage failures, directly addressing when model distillation fails."
+   },
+   "t_ms": 7647
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000942,
+   "baseline_usd": 0.000942,
+   "latency_ms": 1698.8,
+   "detail": {
+    "id": 1,
+    "url": "https://en.wikipedia.org/wiki/Knowledge_distillation",
+    "title": "Knowledge distillation - Wikipedia",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "Wikipedia article defines knowledge distillation and likely covers limitations and failure cases."
+   },
+   "t_ms": 7932
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001335,
+   "baseline_usd": 0.001335,
+   "latency_ms": 1765.5,
+   "detail": {
+    "id": 4,
+    "url": "https://www.youtube.com/watch?v=Ko0jM3YjprY",
+    "title": "AI model distillation",
+    "relevant": true,
+    "source_type": "other",
+    "reason": "Video explains model distillation but snippet does not mention when it fails."
+   },
+   "t_ms": 8004
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001295,
+   "baseline_usd": 0.001295,
+   "latency_ms": 1972.7,
+   "detail": {
+    "id": 2,
+    "url": "https://labelbox.com/guides/model-distillation",
+    "title": "What is Model Distillation?",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "Provides a clear definition of model distillation but does not address when it fails."
+   },
+   "t_ms": 8209
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000741,
+   "baseline_usd": 0.000741,
+   "latency_ms": 872.7,
+   "detail": {
+    "id": 7,
+    "url": "https://arxiv.org/html/2604.25110v2",
+    "title": "Knowledge Distillation Must Account for What It Loses",
+    "relevant": true,
+    "source_type": "paper",
+    "reason": "Discusses limitations and failure modes of knowledge distillation, relevant to when model distillation fails."
+   },
+   "t_ms": 8383
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000788,
+   "baseline_usd": 0.000788,
+   "latency_ms": 947.8,
+   "detail": {
+    "id": 8,
+    "url": "https://galileo.ai/blog/knowledge-distillation-ai-models",
+    "title": "How Knowledge Distillation Cuts AI Model Inference Costs | Galileo",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "Discusses knowledge distillation effectiveness and production monitoring for performance degradation."
+   },
+   "t_ms": 8597
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000811,
+   "baseline_usd": 0.000811,
+   "latency_ms": 846.1,
+   "detail": {
+    "id": 9,
+    "url": "https://proceedings.neurips.cc/paper_files/paper/2021/file/376c6b9ff3bedbbea56751a84fffc10c-Paper.pdf",
+    "title": "[PDF] Does Knowledge Distillation Really Work? - NIPS papers",
+    "relevant": true,
+    "source_type": "paper",
+    "reason": "The paper examines knowledge distillation effectiveness and identifies failure cases like noise and out-of-distribution augmentation strategies."
+   },
+   "t_ms": 8782
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000911,
+   "baseline_usd": 0.000911,
+   "latency_ms": 2575.1,
+   "detail": {
+    "id": 3,
+    "url": "https://medium.com/stream-zero/understanding-the-essentials-of-model-distillation-in-ai-1e97403bee8a",
+    "title": "Understanding the Essentials of Model Distillation in AI",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The article explains model distillation fundamentals, addressing the 'what is' part of the question."
+   },
+   "t_ms": 8812
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000955,
+   "baseline_usd": 0.000955,
+   "latency_ms": 1198.5,
+   "detail": {
+    "id": 10,
+    "url": "https://www.reddit.com/r/MachineLearning/comments/18681i4/discussion_knowledge_distillation_is_badly_defined",
+    "title": "[Discussion] Knowledge distillation is badly defined : r/MachineLearning",
+    "relevant": true,
+    "source_type": "forum",
+    "reason": "Discusses knowledge distillation and failure cases like out-of-distribution data."
+   },
+   "t_ms": 9202
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000867,
+   "baseline_usd": 0.000867,
+   "latency_ms": 1186.0,
+   "detail": {
+    "id": 3,
+    "url": "https://medium.com/stream-zero/understanding-the-essentials-of-model-distillation-in-ai-1e97403bee8a",
+    "answers_question": false,
+    "fact_type": "definition",
+    "key_fact": "Model distillation (knowledge distillation) transfers knowledge from a large, complex teacher model to a smaller, simpler student model so the student replicates the teacher's performance while reducing computational demands."
+   },
+   "t_ms": 10392
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001376,
+   "baseline_usd": 0.001376,
+   "latency_ms": 1515.1,
+   "detail": {
+    "id": 2,
+    "url": "https://labelbox.com/guides/model-distillation",
+    "answers_question": false,
+    "fact_type": "definition",
+    "key_fact": "Model distillation (knowledge distillation) is a machine learning technique that transfers knowledge from a large teacher model to a smaller student model for deployment, reducing computational demands while maintaining performance."
+   },
+   "t_ms": 10721
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001343,
+   "baseline_usd": 0.001343,
+   "latency_ms": 1611.5,
+   "detail": {
+    "id": 6,
+    "url": "https://huggingface.co/blog/Kseniase/kd",
+    "answers_question": false,
+    "fact_type": "none",
+    "key_fact": ""
+   },
+   "t_ms": 10818
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.002038,
+   "baseline_usd": 0.002038,
+   "latency_ms": 2121.3,
+   "detail": {
+    "id": 4,
+    "url": "https://www.youtube.com/watch?v=Ko0jM3YjprY",
+    "answers_question": false,
+    "fact_type": "definition",
+    "key_fact": "Model distillation transfers knowledge from large teacher models to smaller student models, making them faster, cheaper, and more energy-efficient."
+   },
+   "t_ms": 11328
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.002473,
+   "baseline_usd": 0.002473,
+   "latency_ms": 2531.1,
+   "detail": {
+    "id": 1,
+    "url": "https://en.wikipedia.org/wiki/Knowledge_distillation",
+    "answers_question": false,
+    "fact_type": "definition",
+    "key_fact": "Model distillation is the process of transferring knowledge from a large model to a smaller one."
+   },
+   "t_ms": 11739
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.003341,
+   "baseline_usd": 0.003341,
+   "latency_ms": 2909.3,
+   "detail": {
+    "id": 5,
+    "url": "https://www.gov.uk/government/publications/ai-insights/ai-insights-model-distillation-html",
+    "answers_question": true,
+    "fact_type": "none",
+    "key_fact": "Model distillation creates efficient student models but fails when deployment tasks involve diverse topics, reasoning formats, or edge cases not covered by the teacher's training data, and when domain-specific terminology and safety filters limit transfer to unrelated fields."
+   },
+   "t_ms": 12116
+  },
+  {
+   "type": "step",
+   "agent": "writer",
+   "task": "research-write",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001032,
+   "baseline_usd": 0.001032,
+   "latency_ms": 1094.4,
+   "detail": {
+    "answer": "Model distillation creates efficient student models from a teacher model. It fails when deployment tasks involve diverse topics, reasoning formats, or edge cases not covered by the teacher's training data, and when domain-specific terminology and safety filters limit transfer to unrelated fields.",
+    "citations": [
+     {
+      "n": 1,
+      "title": "AI Insights: Model Distillation (HTML) - GOV.UK",
+      "url": "https://www.gov.uk/government/publications/ai-insights/ai-insights-model-distillation-html"
+     }
+    ],
+    "search_unavailable": false
+   },
+   "t_ms": 13212
+  },
+  {
+   "type": "done",
+   "run_id": "3fcb80a0",
+   "answer": "Model distillation creates efficient student models from a teacher model. It fails when deployment tasks involve diverse topics, reasoning formats, or edge cases not covered by the teacher's training data, and when domain-specific terminology and safety filters limit transfer to unrelated fields.",
+   "citations": [
+    {
+     "n": 1,
+     "title": "AI Insights: Model Distillation (HTML) - GOV.UK",
+     "url": "https://www.gov.uk/government/publications/ai-insights/ai-insights-model-distillation-html"
+    }
+   ],
+   "totals": {
+    "calls": 21,
+    "llm_calls": 18,
+    "student_calls": 0,
+    "teacher_calls": 18,
+    "cost_usd": 0.022347,
+    "baseline_usd": 0.022347,
+    "savings_pct": 0.0,
+    "wall_ms": 13211.9
+   },
+   "search": {
+    "available": true,
+    "partial": false,
+    "reason": null
+   },
+   "t_ms": 13212
+  }
+ ],
+ "totals": {
+  "calls": 21,
+  "llm_calls": 18,
+  "student_calls": 0,
+  "teacher_calls": 18,
+  "cost_usd": 0.022347,
+  "baseline_usd": 0.022347,
+  "savings_pct": 0.0,
+  "wall_ms": 13211.9
+ }
+}
