@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { CheckCircle2, EyeOff, FileCode2, FileSignature, Receipt, ScrollText, Split, Target, Undo2, XCircle, type LucideIcon } from "lucide-react";
+import { ArrowDown, EyeOff, FileCode2, FileSignature, Receipt, ScrollText, Split, Target, Undo2, type LucideIcon } from "lucide-react";
 import { BentoGrid, bentoSpan } from "@/components/fx/bento-grid";
 import { GlowOrbs } from "@/components/fx/glow-orbs";
 import { SpotlightCard } from "@/components/fx/spotlight-card";
-import { Badge } from "@/components/ui/badge";
 import { Container, Eyebrow, H2, Lead } from "@/components/ui/section";
 import { REPO_URL, cn } from "@/lib/utils";
-import { EASE, list } from "@/lib/motion";
+import { EASE } from "@/lib/motion";
 import { WHY, type WhyId } from "../why-model";
 import { Reveal } from "../shared";
 
@@ -31,49 +30,12 @@ const TONE: Record<WhyId, "owned" | "rented" | "ink" | "good" | "bad"> = {
 
 /* ---------- the little drawings in each card: what the code does, in miniature ---------- */
 
-function LicenseMini() {
-  const rows = [
-    { id: "gpt-*", ok: false },
-    { id: "claude-*", ok: false },
-    { id: "nvidia/Nemotron-3-Ultra-550b-a55b", ok: true },
-  ];
+/** Chapter 02 draws the license check and the bill of materials in full; these two cards point there instead of repeating them. */
+function SeeChapter() {
   return (
-    <motion.ul variants={list.parent} initial="hidden" whileInView="show" viewport={{ once: true, margin: "0px 0px -10% 0px" }} className="space-y-1.5">
-      {rows.map((r) => (
-        <motion.li key={r.id} variants={list.child} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-bg-sunken/70 px-2.5 py-1.5">
-          <code className="min-w-0 truncate font-mono text-[12px] text-ink-2">{r.id}</code>
-          {r.ok ? (
-            <Badge tone="good">
-              <CheckCircle2 aria-hidden /> Allowed
-            </Badge>
-          ) : (
-            <Badge tone="bad">
-              <XCircle aria-hidden /> Refused
-            </Badge>
-          )}
-        </motion.li>
-      ))}
-    </motion.ul>
-  );
-}
-
-function BomMini() {
-  const lines = [
-    ["teacher", "nvidia/Nemotron-3-Ultra-550b-a55b"],
-    ["license", "OpenMDW-1.1"],
-    ["training.root", "sha256, 64 hex"],  // the signed Merkle root of the training rows; no value drawn here
-    ["signature", "Ed25519"],
-  ];
-  return (
-    <dl className="space-y-1 font-mono text-[11.5px]">
-      {lines.map(([k, v]) => (
-        <div key={k} className="flex items-baseline gap-2">
-          <dt className="shrink-0 text-muted">{k}</dt>
-          <span aria-hidden className="h-px min-w-3 flex-1 translate-y-[-3px] border-b border-dotted border-line-strong" />
-          <dd className="min-w-0 truncate text-ink-2">{v}</dd>
-        </div>
-      ))}
-    </dl>
+    <a href="#catch" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink">
+      Shown in full in chapter 02 <ArrowDown className="size-3.5" aria-hidden />
+    </a>
   );
 }
 
@@ -160,8 +122,8 @@ function ReceiptMini() {
 }
 
 const MINI: Record<WhyId, () => ReactNode> = {
-  licenses: LicenseMini,
-  bom: BomMini,
+  licenses: SeeChapter,
+  bom: SeeChapter,
   golden: GoldenMini,
   release: ReleaseMini,
   redaction: RedactMini,

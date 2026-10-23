@@ -18,6 +18,7 @@ import { Rent } from "./sections/rent";
 import { Safety } from "./sections/safety";
 import { Scout } from "./sections/scout";
 import { Stack } from "./sections/stack";
+import { TryIt } from "./sections/try-it";
 import { Why } from "./sections/why";
 import { ChapterRail } from "./rail";
 
@@ -36,6 +37,7 @@ export default function LandingPage() {
         <ChapterRail />
         <Hero />
         <RealRun />
+        <TryIt />
         <WhatsIn />
         <LiveStrip stats={stats} />
         <Rent />

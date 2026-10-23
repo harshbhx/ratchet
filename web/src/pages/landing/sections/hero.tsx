@@ -1,17 +1,16 @@
 import { Suspense, lazy, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, LayoutDashboard, ShieldCheck, Undo2 } from "lucide-react";
-import { Magnet } from "@/components/fx/magnet";
-import { MovingBorderLink } from "@/components/fx/moving-border";
+import { Link } from "react-router";
+import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, ShieldCheck, Undo2 } from "lucide-react";
 import { ShinyText } from "@/components/fx/shiny-text";
 import { SplitText } from "@/components/fx/split-text";
 import { TiltCard } from "@/components/fx/tilt-card";
-import { ButtonA, ButtonLink } from "@/components/ui/button";
+import { ButtonA } from "@/components/ui/button";
 import { tok } from "@/components/ui/code-block";
 import { LogoMark } from "@/components/ui/logo";
 import { Container } from "@/components/ui/section";
 import { enter } from "@/lib/motion";
-import { DEMO_URL, REPO_URL } from "@/lib/utils";
+import { REPO_URL } from "@/lib/utils";
 import { HeroFlow } from "./hero-flow";
 
 // The aurora is a WebGL shader: it loads after the hero's text has painted, and the page is complete without it.
@@ -118,20 +117,12 @@ export function Hero() {
               <BaseUrlDiff />
             </motion.div>
             <motion.div {...enter(0.66)} className="mt-6 flex flex-wrap items-center gap-3">
-              <ButtonA href="#real-run" size="lg" className="w-full min-[440px]:w-auto">
-                See the real results <ArrowRight aria-hidden />
+              <ButtonA href="#try" size="lg" className="w-full min-[440px]:w-auto">
+                Try it in a minute <ArrowRight aria-hidden />
               </ButtonA>
-              <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg" className="w-full min-[440px]:w-auto">
-                Try the live demo (simulation) <ArrowUpRight aria-hidden />
+              <ButtonA href="#real-run" variant="outline" size="lg" className="w-full bg-surface/80 backdrop-blur-md min-[440px]:w-auto">
+                See the real results
               </ButtonA>
-              <MovingBorderLink to="/scout" containerClassName="w-full min-[440px]:w-auto">
-                Try the Scout demo <ArrowRight aria-hidden />
-              </MovingBorderLink>
-              <Magnet className="w-full min-[440px]:w-auto">
-                <ButtonLink to="/dashboard" variant="outline" size="lg" className="w-full bg-surface/80 backdrop-blur-md min-[440px]:w-auto">
-                  <LayoutDashboard aria-hidden /> Open the dashboard
-                </ButtonLink>
-              </Magnet>
             </motion.div>
             <motion.p {...enter(0.74)} className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
               <a
@@ -140,6 +131,12 @@ export function Hero() {
               >
                 Watch it learn
               </a>
+              <Link to="/scout" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
+                Scout demo
+              </Link>
+              <Link to="/dashboard" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
+                Dashboard
+              </Link>
               <a
                 href={REPO_URL}
                 target="_blank"
