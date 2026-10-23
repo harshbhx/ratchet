@@ -6,6 +6,7 @@ sim_results.json
 data/
 !docs-site/src/data/
 !evidence/**/data/
+!web/src/data/
 .env
 
 # Web app
