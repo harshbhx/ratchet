@@ -11,9 +11,25 @@
     }
   ],
   "durable_objects": {
-    "bindings": [{ "class_name": "RatchetDemo", "name": "RATCHET_DEMO" }]
+    "bindings": [
+      {
+        "class_name": "RatchetDemo",
+        "name": "RATCHET_DEMO"
+      }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RatchetDemo"] }],
-  "triggers": { "crons": ["*/5 * * * *"] },
-  "routes": [{ "pattern": "demo.ratchet.dualmindlab.tech", "custom_domain": true }]
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "RatchetDemo"
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "demo.ratchet.dualmindlab.tech",
+      "custom_domain": true
+    }
+  ]
 }
