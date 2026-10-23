@@ -1,0 +1,207 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE judges (
+    judge_id        INTEGER PRIMARY KEY,
+    full_name       TEXT NOT NULL,
+    courtroom       TEXT NOT NULL,
+    appointed_date  TEXT NOT NULL,
+    specialty       TEXT
+);
+
+CREATE TABLE attorneys (
+    attorney_id         INTEGER PRIMARY KEY,
+    full_name           TEXT NOT NULL,
+    firm_name           TEXT NOT NULL,
+    bar_admission_year  INTEGER NOT NULL,
+    hourly_rate         REAL
+);
+
+CREATE TABLE cases (
+    case_id               INTEGER PRIMARY KEY,
+    case_number           TEXT NOT NULL UNIQUE,
+    title                 TEXT NOT NULL,
+    case_type             TEXT NOT NULL,
+    filing_date           TEXT NOT NULL,
+    status                TEXT NOT NULL,
+    judge_id              INTEGER NOT NULL,
+    plaintiff_attorney_id INTEGER NOT NULL,
+    defense_attorney_id   INTEGER,
+    filing_fee            REAL NOT NULL,
+    claim_amount          REAL,
+    closed_date           TEXT,
+    FOREIGN KEY (judge_id) REFERENCES judges(judge_id),
+    FOREIGN KEY (plaintiff_attorney_id) REFERENCES attorneys(attorney_id),
+    FOREIGN KEY (defense_attorney_id) REFERENCES attorneys(attorney_id)
+);
+
+CREATE TABLE hearings (
+    hearing_id        INTEGER PRIMARY KEY,
+    case_id           INTEGER NOT NULL,
+    hearing_date      TEXT NOT NULL,
+    hearing_type      TEXT NOT NULL,
+    outcome           TEXT,
+    duration_minutes  INTEGER,
+    FOREIGN KEY (case_id) REFERENCES cases(case_id)
+);
+
+INSERT INTO judges (judge_id, full_name, courtroom, appointed_date, specialty) VALUES
+(1, 'Margaret Holloway', '3A', '2008-06-15', 'Civil'),
+(2, 'Daniel Okafor', '2B', '2012-03-01', 'Criminal'),
+(3, 'Priya Raman', '4C', '2015-09-20', 'Family'),
+(4, 'Thomas Whitfield', '1A', '2003-01-10', 'Civil'),
+(5, 'Elena Vasquez', '3B', '2018-07-02', 'Criminal'),
+(6, 'Robert Chen', '2A', '2010-11-30', 'Probate'),
+(7, 'Sandra Lindqvist', '4A', '2019-02-14', 'Family'),
+(8, 'Marcus Bell', '1B', '2021-05-03', 'Civil'),
+(9, 'Harold Jensen', '5A', '2001-08-22', 'Criminal'),
+(10, 'Aisha Rahman', '5B', '2016-04-18', NULL);
+
+INSERT INTO attorneys (attorney_id, full_name, firm_name, bar_admission_year, hourly_rate) VALUES
+(1, 'Laura Gibbs', 'Gibbs & Partners', 2005, 350.0),
+(2, 'Kevin Marsh', 'Marsh Law Group', 2011, 275.0),
+(3, 'Natalie Ortiz', 'Ortiz Legal', 2014, 240.0),
+(4, 'Samuel Price', 'Price & Dunn', 1998, 450.0),
+(5, 'Hannah Kim', 'Kim Associates', 2016, 210.0),
+(6, 'Victor Alvarez', 'Public Defender Office', 2009, NULL),
+(7, 'Rebecca Stone', 'Stone Whitaker LLP', 2002, 400.0),
+(8, 'Omar Haddad', 'Haddad Law', 2018, 190.0),
+(9, 'Julia Bennett', 'Public Defender Office', 2013, NULL),
+(10, 'Peter Novak', 'Price & Dunn', 2007, 320.0),
+(11, 'Grace Liu', 'District Attorney Office', 2010, NULL),
+(12, 'Andrew Foster', 'Marsh Law Group', 2015, 260.0);
+
+INSERT INTO cases (case_id, case_number, title, case_type, filing_date, status, judge_id, plaintiff_attorney_id, defense_attorney_id, filing_fee, claim_amount, closed_date) VALUES
+(1, '2022-CV-0101', 'Harper v. Delta Logistics', 'Civil', '2022-02-14', 'Closed', 1, 1, 2, 400.0, 85000.0, '2023-01-20'),
+(2, '2022-CR-0045', 'State v. Reyes', 'Criminal', '2022-03-09', 'Closed', 2, 11, 6, 0.0, NULL, '2022-11-02'),
+(3, '2022-FM-0210', 'Nguyen v. Nguyen', 'Family', '2022-05-17', 'Closed', 3, 3, 5, 250.0, NULL, '2022-12-15'),
+(4, '2023-CV-0033', 'Brightway Corp v. Summit Builders', 'Civil', '2023-01-23', 'Open', 4, 4, 7, 450.0, 1250000.0, NULL),
+(5, '2023-CR-0078', 'State v. Whitman', 'Criminal', '2023-02-28', 'Closed', 5, 11, 9, 0.0, NULL, '2023-09-14'),
+(6, '2023-PR-0012', 'Estate of Calloway', 'Probate', '2023-03-12', 'Open', 6, 8, NULL, 300.0, 640000.0, NULL),
+(7, '2023-FM-0155', 'Patel v. Patel', 'Family', '2023-06-05', 'Open', 7, 5, 3, 250.0, NULL, NULL),
+(8, '2023-CV-0190', 'Okonkwo v. Metro Transit', 'Civil', '2023-07-19', 'Open', 1, 1, 10, 400.0, 220000.0, NULL),
+(9, '2023-CR-0142', 'State v. Duggan', 'Criminal', '2023-08-30', 'Open', 9, 11, 6, 0.0, NULL, NULL),
+(10, '2024-CV-0021', 'Larkspur Apartments v. Torres', 'Civil', '2024-01-16', 'Closed', 8, 12, NULL, 350.0, 12500.0, '2024-04-25'),
+(11, '2024-FM-0044', 'Sanders v. Sanders', 'Family', '2024-02-08', 'Open', 3, 3, 8, 250.0, NULL, NULL),
+(12, '2024-CR-0067', 'State v. Kowalski', 'Criminal', '2024-03-21', 'Open', 2, 11, 9, 0.0, NULL, NULL),
+(13, '2024-CV-0102', 'Ibrahim v. Greenfield Insurance', 'Civil', '2024-04-11', 'Open', 4, 2, 7, 400.0, 98000.0, NULL),
+(14, '2024-PR-0019', 'Estate of Mendoza', 'Probate', '2024-05-02', 'Closed', 6, 8, NULL, 300.0, 410000.0, '2024-10-08'),
+(15, '2024-CV-0150', 'Frontier Bank v. Lowell', 'Civil', '2024-06-14', 'Open', 8, 10, 12, 350.0, 56000.0, NULL);
+
+INSERT INTO hearings (hearing_id, case_id, hearing_date, hearing_type, outcome, duration_minutes) VALUES
+(1, 1, '2022-04-05', 'Motion', 'Granted', 45),
+(2, 1, '2022-11-15', 'Trial', 'Verdict', 240),
+(3, 2, '2022-04-01', 'Arraignment', 'Plea Entered', 30),
+(4, 2, '2022-10-20', 'Trial', 'Verdict', 360),
+(5, 3, '2022-07-12', 'Mediation', 'Settled', 90),
+(6, 4, '2023-04-10', 'Motion', 'Denied', 60),
+(7, 4, '2023-11-02', 'Pretrial', 'Continued', 35),
+(8, 5, '2023-04-03', 'Arraignment', 'Plea Entered', 25),
+(9, 5, '2023-09-12', 'Sentencing', 'Sentenced', 50),
+(10, 6, '2023-05-22', 'Status', 'Continued', 20),
+(11, 7, '2023-09-18', 'Mediation', NULL, 75),
+(12, 8, '2023-10-25', 'Pretrial', 'Continued', 40),
+(13, 9, '2023-10-05', 'Arraignment', 'Plea Entered', 30),
+(14, 9, '2024-01-17', 'Motion', 'Granted', 55),
+(15, 12, '2024-04-15', 'Arraignment', 'Plea Entered', 30);
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which civil cases are still open, and when were they filed?
+SQL: SELECT case_number, title, filing_date FROM cases WHERE case_type = 'Civil' AND status = 'Open' ORDER BY filing_date;
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are the five biggest claims in dollar terms?
+SQL: SELECT title, claim_amount FROM cases WHERE claim_amount IS NOT NULL ORDER BY claim_amount DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which lawyers were admitted to the bar before 2008, starting with the most senior?
+SQL: SELECT full_name, firm_name, bar_admission_year FROM attorneys WHERE bar_admission_year < 2008 ORDER BY bar_admission_year;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Which hearings ran longer than 100 minutes?
+SQL: SELECT hearing_id, hearing_date, hearing_type, duration_minutes FROM hearings WHERE duration_minutes > 100 ORDER BY duration_minutes DESC;
+
+### 5
+DIFFICULTY: simple
+QUESTION: Which judges have no area of specialty on record, and what courtroom are they in?
+SQL: SELECT full_name, courtroom FROM judges WHERE specialty IS NULL;
+
+### 6
+DIFFICULTY: simple
+QUESTION: What are the five most recently filed cases?
+SQL: SELECT case_number, title, filing_date FROM cases ORDER BY filing_date DESC LIMIT 5;
+
+### 7
+DIFFICULTY: join
+QUESTION: Who is the presiding judge on each criminal case that is still open?
+SQL: SELECT c.case_number, c.title, j.full_name AS judge FROM cases c JOIN judges j ON j.judge_id = c.judge_id WHERE c.case_type = 'Criminal' AND c.status = 'Open' ORDER BY c.case_number;
+
+### 8
+DIFFICULTY: join
+QUESTION: For which cases were arraignment hearings held, and on what dates?
+SQL: SELECT h.hearing_date, c.title FROM hearings h JOIN cases c ON c.case_id = h.case_id WHERE h.hearing_type = 'Arraignment' ORDER BY h.hearing_date;
+
+### 9
+DIFFICULTY: join
+QUESTION: Who represents the filing side in each family case, and which firm are they with?
+SQL: SELECT c.case_number, c.title, a.full_name AS attorney, a.firm_name FROM cases c JOIN attorneys a ON a.attorney_id = c.plaintiff_attorney_id WHERE c.case_type = 'Family' ORDER BY c.case_number;
+
+### 10
+DIFFICULTY: join
+QUESTION: Which cases are being defended by someone from the Public Defender Office, and by whom?
+SQL: SELECT c.case_number, c.title, a.full_name AS defender FROM cases c JOIN attorneys a ON a.attorney_id = c.defense_attorney_id WHERE a.firm_name = 'Public Defender Office' ORDER BY c.case_number;
+
+### 11
+DIFFICULTY: join
+QUESTION: Which cases have no defense lawyer assigned, and which judge has each one?
+SQL: SELECT c.case_number, c.title, j.full_name AS judge FROM cases c JOIN judges j ON j.judge_id = c.judge_id WHERE c.defense_attorney_id IS NULL ORDER BY c.case_number;
+
+### 12
+DIFFICULTY: join
+QUESTION: For hearings that ended up being continued, what was the case title, the judge, and the hearing date?
+SQL: SELECT h.hearing_date, c.title, j.full_name AS judge FROM hearings h JOIN cases c ON c.case_id = h.case_id JOIN judges j ON j.judge_id = c.judge_id WHERE h.outcome = 'Continued' ORDER BY h.hearing_date;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many cases do we have of each type?
+SQL: SELECT case_type, COUNT(*) AS case_count FROM cases GROUP BY case_type ORDER BY case_count DESC;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: What is the average length of a hearing for each kind of hearing, in minutes?
+SQL: SELECT hearing_type, ROUND(AVG(duration_minutes), 1) AS avg_minutes FROM hearings GROUP BY hearing_type ORDER BY avg_minutes DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: How many cases are open versus closed, and how much in filing fees did each group bring in?
+SQL: SELECT status, COUNT(*) AS case_count, SUM(filing_fee) AS total_fees FROM cases GROUP BY status;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How many cases were filed in each year?
+SQL: SELECT substr(filing_date, 1, 4) AS filing_year, COUNT(*) AS case_count FROM cases GROUP BY filing_year ORDER BY filing_year;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which judges are currently handling more than one open case?
+SQL: SELECT j.full_name, COUNT(*) AS open_cases FROM judges j JOIN cases c ON c.judge_id = j.judge_id WHERE c.status = 'Open' GROUP BY j.judge_id, j.full_name HAVING COUNT(*) > 1;
+
+### 18
+DIFFICULTY: hard
+QUESTION: Among cases that have been closed, which five took the most days from filing to closing?
+SQL: SELECT case_number, title, CAST(julianday(closed_date) - julianday(filing_date) AS INTEGER) AS days_to_close FROM cases WHERE closed_date IS NOT NULL ORDER BY days_to_close DESC LIMIT 5;
+
+### 19
+DIFFICULTY: hard
+QUESTION: Which cases have never had a hearing recorded?
+SQL: SELECT case_number, title FROM cases WHERE case_id NOT IN (SELECT case_id FROM hearings) ORDER BY case_number;
+
+### 20
+DIFFICULTY: hard
+QUESTION: For cases with a dollar claim, can you label each as large (500,000 or more), medium (50,000 to under 500,000) or small?
+SQL: SELECT title, claim_amount, CASE WHEN claim_amount >= 500000 THEN 'Large' WHEN claim_amount >= 50000 THEN 'Medium' ELSE 'Small' END AS claim_size FROM cases WHERE claim_amount IS NOT NULL ORDER BY claim_amount DESC;

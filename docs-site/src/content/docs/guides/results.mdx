@@ -95,6 +95,29 @@ Round 2 trained a second adapter on {extra.round2.training.rows} rows (the first
 
 Training: {extra.round2.training.steps} steps over {extra.round2.training.epochs} epochs in {extra.round2.training.hours} hours on a {extra.round2.training.gpu}, loss {extra.round2.training.loss_first} to {extra.round2.training.loss_last}; the extra teacher labels cost ${extra.round2.teacher_labels_cost_usd}. Neither run used Nebius GPUs. The files and the recompute command are in `evidence/text2sql-round2` in the repository.
 
+## A second exam, written by a different model
+
+The first exam was written by the same teacher that wrote the training labels, which flatters the teacher and anything trained to copy it. So we built a second exam: {extra.exam2.rows} questions on 10 industries that appear neither in training nor in the first exam, with the databases and the questions written by Claude Sonnet 5.5, used for evaluation only. Every reference query was run and kept only if it worked, nothing overlaps with the training data, and its fingerprint was recorded before any model answered. The same four models answered it, scored the same strict way.
+
+<table>
+  <thead><tr><th>Who answered</th><th>Exam 1 (172, written by Ultra)</th><th>Exam 2 ({extra.exam2.rows}, written by Claude)</th></tr></thead>
+  <tbody>
+    <tr><td>Base model</td><td>{A.base_v1.agree} = {pct(A.base_v1)}</td><td>{extra.exam2.base.agree} = <strong>{pct(extra.exam2.base)}</strong> ({rng(extra.exam2.base)})</td></tr>
+    <tr><td>Teacher answering the exam prompt</td><td>{A.teacher.agree} = {pct(A.teacher)}</td><td>{extra.exam2.teacher.agree} = <strong>{pct(extra.exam2.teacher)}</strong> ({rng(extra.exam2.teacher)})</td></tr>
+    <tr><td>Adapter, round 1 (821 rows)</td><td>{A.adapter_v1.agree} = {pct(A.adapter_v1)}</td><td>{extra.exam2.adapter_v1.agree} = <strong>{pct(extra.exam2.adapter_v1)}</strong> ({rng(extra.exam2.adapter_v1)})</td></tr>
+    <tr><td>Adapter, round 2 ({extra.round2.training.rows} rows)</td><td>{extra.round2.adapter.agree} = {pct(extra.round2.adapter)}</td><td>{extra.exam2.adapter_v2.agree} = <strong>{pct(extra.exam2.adapter_v2)}</strong> ({rng(extra.exam2.adapter_v2)})</td></tr>
+  </tbody>
+</table>
+
+- **The training effect shows up on an exam the adapter's data never touched.** The base model scores about the same on both ({pct(A.base_v1)} and {pct(extra.exam2.base)}), and the round 2 adapter is about {(extra.exam2.adapter_v2.agree / extra.exam2.base.agree).toFixed(1)} times the base model on the new exam.
+- **Round 2 beat round 1 on both exams,** by 10 questions each time. On exam 2, {extra.exam2.v1_to_v2.wrong_to_right} questions went from wrong to right and {extra.exam2.v1_to_v2.right_to_wrong} from right to wrong (p = {extra.exam2.v1_to_v2.two_sided_p}). The direction repeats, but neither exam alone settles it.
+- **Both adapters score 5 to 6 points lower than on exam 1,** as expected on an exam from a different author.
+- **By difficulty on exam 2** (base, round 1, round 2): simple {extra.exam2.by_difficulty.simple.base}, {extra.exam2.by_difficulty.simple.v1}, {extra.exam2.by_difficulty.simple.v2} of {extra.exam2.by_difficulty.simple.n}; join {extra.exam2.by_difficulty.join.base}, {extra.exam2.by_difficulty.join.v1}, {extra.exam2.by_difficulty.join.v2} of {extra.exam2.by_difficulty.join.n}; aggregate {extra.exam2.by_difficulty.aggregate.base}, {extra.exam2.by_difficulty.aggregate.v1}, {extra.exam2.by_difficulty.aggregate.v2} of {extra.exam2.by_difficulty.aggregate.n}; hard {extra.exam2.by_difficulty.hard.base}, {extra.exam2.by_difficulty.hard.v1}, {extra.exam2.by_difficulty.hard.v2} of {extra.exam2.by_difficulty.hard.n}. Join questions improved most, again.
+- **The teacher scores low here for a reason of shape, not skill.** Of its {extra.exam2.rows} answers, {extra.exam2.teacher_miss_shape.right_rows_different_columns} return the right number of rows with a different number of columns, which the strict exam marks wrong. We do not claim the adapter beats the teacher.
+- **The confidence gate still does not pass at the 95% precision target:** {extra.exam2.gate.answered} of {extra.exam2.gate.of} questions on the measurement half, for either adapter. The adapter does not yet replace the teacher.
+
+The exam, its fingerprint, every answer and the command that recomputes the scores are in `evidence/text2sql-exam2` in the repository.
+
 ## How it really works
 
 <Steps>

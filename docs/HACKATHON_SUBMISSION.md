@@ -10,7 +10,7 @@ Keep this split in the submission text. Do not describe the scripted parts as ha
 |---|---|
 | Teacher labels from Nemotron 3 Ultra on Token Factory | Ran (22 to 23 Oct). 821 training rows and a 172-row exam for text-to-SQL, about $3 |
 | Adapter training | Ran on a free Colab T4, not on Nebius GPUs |
-| Exam result | Measured: adapter 33.1% against 12.8% for the base model on 172 held-out rows (`evidence/text2sql-round1/`) |
+| Exam result | Measured on two exams (strict): the round 2 adapter 39.0% and 33.0% against 12.8% and 12.5% for the base model (`evidence/text2sql-round1/`, `evidence/text2sql-round2/`, `evidence/text2sql-exam2/`) |
 | Demo, dashboard and the cost figures on them | Simulation (mock models), on a Cloudflare Container |
 | Gateway in live mode, Nebius Serverless Jobs, Endpoints, Object Storage, Tavily | Written and tested offline, not run on Nebius yet (no GPU budget) |
 

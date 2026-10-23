@@ -187,5 +187,86 @@
    "table_name_sets_in_training": 0,
    "of": 172
   }
+ },
+ "exam2": {
+  "what": "Exam 2: 200 questions on 10 new industries, written by Claude Sonnet 5.5 (evaluation only), answered by the same four models. Recomputed from evidence/text2sql-exam2.",
+  "rows": 200,
+  "golden_sha256": "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058",
+  "base": {
+   "agree": 25,
+   "n": 200,
+   "rate": 0.125,
+   "wilson95": [
+    0.0861,
+    0.178
+   ]
+  },
+  "teacher": {
+   "agree": 30,
+   "n": 200,
+   "rate": 0.15,
+   "wilson95": [
+    0.1071,
+    0.2061
+   ]
+  },
+  "adapter_v1": {
+   "agree": 56,
+   "n": 200,
+   "rate": 0.28,
+   "wilson95": [
+    0.2224,
+    0.3459
+   ]
+  },
+  "adapter_v2": {
+   "agree": 66,
+   "n": 200,
+   "rate": 0.33,
+   "wilson95": [
+    0.2686,
+    0.3978
+   ]
+  },
+  "v1_to_v2": {
+   "wrong_to_right": 23,
+   "right_to_wrong": 13,
+   "two_sided_p": 0.132
+  },
+  "by_difficulty": {
+   "simple": {
+    "n": 60,
+    "base": 15,
+    "v1": 19,
+    "v2": 16
+   },
+   "join": {
+    "n": 60,
+    "base": 3,
+    "v1": 5,
+    "v2": 12
+   },
+   "aggregate": {
+    "n": 40,
+    "base": 5,
+    "v1": 22,
+    "v2": 24
+   },
+   "hard": {
+    "n": 40,
+    "base": 2,
+    "v1": 10,
+    "v2": 14
+   }
+  },
+  "teacher_miss_shape": {
+   "right_rows_different_columns": 102,
+   "same_rows_count_different_values": 48,
+   "different_row_count": 20
+  },
+  "gate": {
+   "answered": 0,
+   "of": 100
+  }
  }
 }

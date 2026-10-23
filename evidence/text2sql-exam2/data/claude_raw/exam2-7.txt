@@ -1,0 +1,224 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE hosts (
+    host_id       INTEGER PRIMARY KEY,
+    full_name     TEXT NOT NULL,
+    email         TEXT,
+    country       TEXT,
+    hourly_rate   REAL,
+    joined_date   TEXT
+);
+
+CREATE TABLE shows (
+    show_id       INTEGER PRIMARY KEY,
+    title         TEXT NOT NULL,
+    genre         TEXT,
+    host_id       INTEGER NOT NULL,
+    launch_date   TEXT,
+    language      TEXT,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (host_id) REFERENCES hosts(host_id)
+);
+
+CREATE TABLE episodes (
+    episode_id        INTEGER PRIMARY KEY,
+    show_id           INTEGER NOT NULL,
+    title             TEXT NOT NULL,
+    episode_number    INTEGER,
+    publish_date      TEXT,
+    duration_minutes  INTEGER,
+    downloads         INTEGER,
+    guest_name        TEXT,
+    FOREIGN KEY (show_id) REFERENCES shows(show_id)
+);
+
+CREATE TABLE sponsors (
+    sponsor_id     INTEGER PRIMARY KEY,
+    company_name   TEXT NOT NULL,
+    industry       TEXT,
+    contact_email  TEXT
+);
+
+CREATE TABLE ad_deals (
+    deal_id            INTEGER PRIMARY KEY,
+    sponsor_id         INTEGER NOT NULL,
+    show_id            INTEGER NOT NULL,
+    start_date         TEXT,
+    end_date           TEXT,
+    episodes_booked    INTEGER,
+    price_per_episode  REAL,
+    status             TEXT,
+    FOREIGN KEY (sponsor_id) REFERENCES sponsors(sponsor_id),
+    FOREIGN KEY (show_id) REFERENCES shows(show_id)
+);
+
+INSERT INTO hosts (host_id, full_name, email, country, hourly_rate, joined_date) VALUES
+(1, 'Maya Patel', 'maya.patel@example.com', 'USA', 85.0, '2019-03-12'),
+(2, 'Liam O''Connor', 'liam.oconnor@example.com', 'Ireland', 70.5, '2019-07-01'),
+(3, 'Sofia Ramirez', 'sofia.ramirez@example.com', 'Mexico', 60.0, '2020-01-15'),
+(4, 'Daniel Kim', 'daniel.kim@example.com', 'USA', 95.0, '2020-05-20'),
+(5, 'Aisha Khan', 'aisha.khan@example.com', 'UK', 75.0, '2020-09-09'),
+(6, 'Tom Becker', 'tom.becker@example.com', 'Germany', NULL, '2021-02-14'),
+(7, 'Chloe Dubois', NULL, 'France', 55.0, '2021-06-30'),
+(8, 'Marcus Johnson', 'marcus.johnson@example.com', 'USA', 100.0, '2018-11-05'),
+(9, 'Yuki Tanaka', 'yuki.tanaka@example.com', 'Japan', 65.0, '2022-03-18'),
+(10, 'Priya Nair', 'priya.nair@example.com', 'India', NULL, '2022-08-01');
+
+INSERT INTO shows (show_id, title, genre, host_id, launch_date, language, is_active) VALUES
+(1, 'The Daily Brief', 'News', 1, '2019-04-01', 'English', 1),
+(2, 'Founders Unfiltered', 'Business', 4, '2020-06-15', 'English', 1),
+(3, 'Crime Files', 'True Crime', 8, '2018-12-01', 'English', 1),
+(4, 'Mind Matters', 'Health', 5, '2020-10-10', 'English', 1),
+(5, 'Cocinando Historias', 'Food', 3, '2020-02-20', 'Spanish', 1),
+(6, 'Tech Tonic', 'Technology', 4, '2021-01-05', 'English', 1),
+(7, 'Laugh Track', 'Comedy', 2, '2019-08-12', 'English', 0),
+(8, 'Berlin Bytes', 'Technology', 6, '2021-03-22', 'German', 1),
+(9, 'Midnight Mysteries', 'True Crime', 8, '2021-09-09', 'English', 1),
+(10, 'Le Petit Voyage', 'Travel', 7, '2021-07-15', 'French', 1),
+(11, 'Money Moves', 'Business', 1, '2022-01-10', 'English', 0),
+(12, 'Tokyo Tales', 'Travel', 9, '2022-04-04', 'Japanese', 1);
+
+INSERT INTO episodes (episode_id, show_id, title, episode_number, publish_date, duration_minutes, downloads, guest_name) VALUES
+(1, 1, 'Budget Showdown', 101, '2023-01-10', 28, 15400, NULL),
+(2, 1, 'Election Recap', 102, '2023-02-14', 32, 18200, 'Sen. Alan Reed'),
+(3, 2, 'From Garage to IPO', 21, '2023-01-25', 55, 9800, 'Rachel Wu'),
+(4, 2, 'Raising the First Round', 22, '2023-03-08', 48, 11250, NULL),
+(5, 3, 'The Vanishing Banker', 45, '2023-02-02', 62, 31200, NULL),
+(6, 3, 'Cold Case Reopened', 46, '2023-03-16', 58, 35600, 'Det. Karen Lowe'),
+(7, 4, 'Sleep and Stress', 12, '2023-02-20', 40, 7600, 'Dr. Omar Haddad'),
+(8, 5, 'La Receta de la Abuela', 8, '2023-03-01', 35, 4300, NULL),
+(9, 6, 'AI in Your Pocket', 30, '2023-01-18', 45, 12900, 'Nina Shah'),
+(10, 6, 'Chips and Geopolitics', 31, '2023-04-05', 50, 14100, NULL),
+(11, 7, 'Worst Date Ever', 77, '2022-11-22', 38, 6100, 'Ben Carter'),
+(12, 8, 'Rust fuer Anfaenger', 5, '2023-03-30', 42, 3900, NULL),
+(13, 9, 'The Lighthouse Letters', 9, '2023-04-12', 66, 22800, NULL),
+(14, 10, 'Lisbonne en Trois Jours', 14, '2023-02-27', 30, 2700, 'Julien Moreau'),
+(15, 12, 'Ramen Trails', 3, '2023-04-18', 25, 3300, NULL);
+
+INSERT INTO sponsors (sponsor_id, company_name, industry, contact_email) VALUES
+(1, 'BrightVPN', 'Software', 'ads@brightvpn.example.com'),
+(2, 'MealBox', 'Food', 'partners@mealbox.example.com'),
+(3, 'SafeHarbor Insurance', 'Finance', 'media@safeharbor.example.com'),
+(4, 'PureSleep Mattress', 'Retail', NULL),
+(5, 'CodeCamp Academy', 'Education', 'marketing@codecamp.example.com'),
+(6, 'Voyage Airlines', 'Travel', 'promo@voyage.example.com'),
+(7, 'NordBank', 'Finance', 'sponsor@nordbank.example.com'),
+(8, 'GreenSip Tea', 'Food', NULL),
+(9, 'PixelPhone', 'Technology', 'ads@pixelphone.example.com'),
+(10, 'LegalEase', 'Legal', NULL);
+
+INSERT INTO ad_deals (deal_id, sponsor_id, show_id, start_date, end_date, episodes_booked, price_per_episode, status) VALUES
+(1, 1, 6, '2023-01-01', '2023-03-31', 12, 1500.0, 'completed'),
+(2, 1, 3, '2023-02-01', '2023-06-30', 20, 2200.0, 'active'),
+(3, 2, 5, '2023-01-15', '2023-04-15', 8, 600.0, 'completed'),
+(4, 3, 1, '2023-03-01', '2023-08-31', 24, 1800.0, 'active'),
+(5, 4, 4, '2023-02-01', '2023-05-01', 10, 900.0, 'completed'),
+(6, 5, 8, '2023-03-01', '2023-05-31', 6, 500.0, 'active'),
+(7, 6, 10, '2023-04-01', '2023-09-30', 10, 750.0, 'active'),
+(8, 7, 2, '2023-01-10', '2023-04-10', 12, 1400.0, 'completed'),
+(9, 8, 7, '2022-10-01', '2022-12-31', 8, 700.0, 'completed'),
+(10, 9, 6, '2023-04-01', NULL, 16, 1600.0, 'active'),
+(11, 3, 3, '2023-05-01', '2023-07-31', 12, 2000.0, 'cancelled'),
+(12, 2, 12, '2023-04-15', '2023-07-15', 6, 650.0, 'active');
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which of our shows are in the technology category, and what language are they in?
+SQL: SELECT title, language FROM shows WHERE genre = 'Technology';
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are the five most downloaded episodes?
+SQL: SELECT title, downloads FROM episodes ORDER BY downloads DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which of our hosts are based in the USA, and who charges the most per hour?
+SQL: SELECT full_name, hourly_rate FROM hosts WHERE country = 'USA' ORDER BY hourly_rate DESC;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Which episodes run longer than 50 minutes and had no guest?
+SQL: SELECT title, duration_minutes FROM episodes WHERE duration_minutes > 50 AND guest_name IS NULL ORDER BY duration_minutes DESC;
+
+### 5
+DIFFICULTY: simple
+QUESTION: Which sponsors don't have a contact email on file?
+SQL: SELECT company_name, industry FROM sponsors WHERE contact_email IS NULL ORDER BY company_name;
+
+### 6
+DIFFICULTY: simple
+QUESTION: What are our three oldest shows by launch date?
+SQL: SELECT title, launch_date FROM shows ORDER BY launch_date ASC LIMIT 3;
+
+### 7
+DIFFICULTY: join
+QUESTION: List every show along with the name of the person who hosts it.
+SQL: SELECT s.title, h.full_name FROM shows s JOIN hosts h ON h.host_id = s.host_id ORDER BY s.title;
+
+### 8
+DIFFICULTY: join
+QUESTION: Which episodes belong to true crime shows, and what are those shows called?
+SQL: SELECT e.title AS episode_title, s.title AS show_title FROM episodes e JOIN shows s ON s.show_id = e.show_id WHERE s.genre = 'True Crime' ORDER BY e.publish_date;
+
+### 9
+DIFFICULTY: join
+QUESTION: Which companies have bought advertising on Tech Tonic?
+SQL: SELECT sp.company_name, d.start_date, d.status FROM ad_deals d JOIN sponsors sp ON sp.sponsor_id = d.sponsor_id JOIN shows s ON s.show_id = d.show_id WHERE s.title = 'Tech Tonic' ORDER BY d.start_date;
+
+### 10
+DIFFICULTY: join
+QUESTION: Which hosts on our roster don't currently host any show?
+SQL: SELECT h.full_name, h.country FROM hosts h LEFT JOIN shows s ON s.host_id = h.host_id WHERE s.show_id IS NULL;
+
+### 11
+DIFFICULTY: join
+QUESTION: Which shows have never published an episode?
+SQL: SELECT s.title, s.launch_date FROM shows s LEFT JOIN episodes e ON e.show_id = s.show_id WHERE e.episode_id IS NULL;
+
+### 12
+DIFFICULTY: join
+QUESTION: For episodes with a guest that came out in February or March 2023, who was the guest, which show was it on, and who hosts that show?
+SQL: SELECT e.guest_name, e.title AS episode_title, s.title AS show_title, h.full_name AS host_name FROM episodes e JOIN shows s ON s.show_id = e.show_id JOIN hosts h ON h.host_id = s.host_id WHERE e.guest_name IS NOT NULL AND e.publish_date BETWEEN '2023-02-01' AND '2023-03-31' ORDER BY e.publish_date;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many shows do we have in each genre, starting with the biggest genres?
+SQL: SELECT genre, COUNT(*) AS show_count FROM shows GROUP BY genre ORDER BY show_count DESC, genre;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: What are the total downloads for each show, from highest to lowest?
+SQL: SELECT s.title, SUM(e.downloads) AS total_downloads FROM shows s JOIN episodes e ON e.show_id = s.show_id GROUP BY s.show_id, s.title ORDER BY total_downloads DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: What is the average episode length for each language we publish in?
+SQL: SELECT s.language, ROUND(AVG(e.duration_minutes), 1) AS avg_minutes FROM episodes e JOIN shows s ON s.show_id = e.show_id GROUP BY s.language ORDER BY avg_minutes DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How much advertising revenue is booked per sponsor industry, leaving out cancelled deals?
+SQL: SELECT sp.industry, SUM(d.episodes_booked * d.price_per_episode) AS total_value FROM ad_deals d JOIN sponsors sp ON sp.sponsor_id = d.sponsor_id WHERE d.status <> 'cancelled' GROUP BY sp.industry ORDER BY total_value DESC;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which episodes got more downloads than the average episode?
+SQL: SELECT title, downloads FROM episodes WHERE downloads > (SELECT AVG(downloads) FROM episodes) ORDER BY downloads DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: Which sponsors have signed more than one ad deal, and how many?
+SQL: SELECT sp.company_name, COUNT(*) AS deal_count FROM sponsors sp JOIN ad_deals d ON d.sponsor_id = sp.sponsor_id GROUP BY sp.sponsor_id, sp.company_name HAVING COUNT(*) > 1 ORDER BY deal_count DESC, sp.company_name;
+
+### 19
+DIFFICULTY: hard
+QUESTION: How many episodes are short (under 30 minutes), medium (30 to 50 minutes) or long (over 50 minutes)?
+SQL: SELECT CASE WHEN duration_minutes < 30 THEN 'Short' WHEN duration_minutes <= 50 THEN 'Medium' ELSE 'Long' END AS length_category, COUNT(*) AS episode_count FROM episodes GROUP BY length_category ORDER BY episode_count DESC;
+
+### 20
+DIFFICULTY: hard
+QUESTION: Among ad deals that have an end date, which five ran the longest, and how many days did each last?
+SQL: SELECT sp.company_name, d.start_date, d.end_date, CAST(julianday(d.end_date) - julianday(d.start_date) AS INTEGER) AS days_long FROM ad_deals d JOIN sponsors sp ON sp.sponsor_id = d.sponsor_id WHERE d.end_date IS NOT NULL ORDER BY days_long DESC LIMIT 5;

@@ -1,0 +1,232 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE producers (
+    producer_id       INTEGER PRIMARY KEY,
+    name              TEXT NOT NULL,
+    country           TEXT NOT NULL,
+    region            TEXT,
+    founded_year      INTEGER,
+    organic_certified INTEGER  -- 1 = yes, 0 = no, NULL = unknown
+);
+
+CREATE TABLE wines (
+    wine_id      INTEGER PRIMARY KEY,
+    producer_id  INTEGER NOT NULL,
+    wine_name    TEXT NOT NULL,
+    varietal     TEXT,
+    vintage      INTEGER,        -- NULL for non-vintage
+    color        TEXT NOT NULL,  -- Red, White, Rose, Sparkling
+    bottle_price REAL NOT NULL,  -- wholesale cost per bottle
+    alcohol_pct  REAL,
+    FOREIGN KEY (producer_id) REFERENCES producers(producer_id)
+);
+
+CREATE TABLE customers (
+    customer_id    INTEGER PRIMARY KEY,
+    business_name  TEXT NOT NULL,
+    customer_type  TEXT NOT NULL,  -- Restaurant, Retail Shop, Bar, Hotel
+    city           TEXT,
+    state          TEXT,
+    account_opened TEXT,           -- ISO date
+    credit_limit   REAL
+);
+
+CREATE TABLE orders (
+    order_id    INTEGER PRIMARY KEY,
+    customer_id INTEGER NOT NULL,
+    order_date  TEXT NOT NULL,   -- ISO date
+    ship_date   TEXT,            -- ISO date, NULL if not shipped
+    status      TEXT NOT NULL,   -- Delivered, Shipped, Pending, Cancelled
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+);
+
+CREATE TABLE order_items (
+    item_id      INTEGER PRIMARY KEY,
+    order_id     INTEGER NOT NULL,
+    wine_id      INTEGER NOT NULL,
+    quantity     INTEGER NOT NULL,  -- bottles
+    unit_price   REAL NOT NULL,     -- price charged per bottle
+    discount_pct REAL,              -- NULL = no discount
+    FOREIGN KEY (order_id) REFERENCES orders(order_id),
+    FOREIGN KEY (wine_id) REFERENCES wines(wine_id)
+);
+
+INSERT INTO producers VALUES
+(1,  'Domaine Laurent',        'France',       'Burgundy',     1952, 1),
+(2,  'Castello di Verano',     'Italy',        'Tuscany',      1978, 0),
+(3,  'Bodega Alta Luna',       'Spain',        'Rioja',        1989, 0),
+(4,  'Silver Creek Vineyards', 'USA',          'California',   1995, 1),
+(5,  'Weingut Brandt',         'Germany',      'Mosel',        1921, 0),
+(6,  'Casa Montoya',           'Argentina',    'Mendoza',      2003, 1),
+(7,  'Cape Ridge Estate',      'South Africa', 'Stellenbosch', 1999, 0),
+(8,  'Maison Etoile',          'France',       'Champagne',    1887, 0),
+(9,  'Tenuta Bellavista',      'Italy',        'Piedmont',     1965, 1),
+(10, 'Willow Bend Cellars',    'USA',          'Oregon',       2008, 1),
+(11, 'Quinta do Vale',         'Portugal',     'Douro',        NULL, 0),
+(12, 'Kiwi Point Wines',       'New Zealand',  'Marlborough',  2011, NULL);
+
+INSERT INTO wines VALUES
+(1,  1,  'Pinot Noir Les Vignes',    'Pinot Noir',         2019, 'Red',       28.50, 13.0),
+(2,  2,  'Chianti Classico Riserva', 'Sangiovese',         2018, 'Red',       22.00, 13.5),
+(3,  3,  'Rioja Reserva',            'Tempranillo',        2016, 'Red',       18.75, 14.0),
+(4,  4,  'Cabernet Sauvignon Estate','Cabernet Sauvignon', 2018, 'Red',       31.00, 14.5),
+(5,  5,  'Riesling Kabinett',        'Riesling',           2021, 'White',     16.50, 9.5),
+(6,  6,  'Malbec Reserva',           'Malbec',             2020, 'Red',       14.25, 14.0),
+(7,  7,  'Chenin Blanc',             'Chenin Blanc',       2022, 'White',      9.80, 12.5),
+(8,  8,  'Brut Reserve Champagne',   'Chardonnay',         NULL, 'Sparkling', 42.00, 12.0),
+(9,  9,  'Barolo',                   'Nebbiolo',           2017, 'Red',       48.00, 14.5),
+(10, 10, 'Pinot Noir Willamette',    'Pinot Noir',         2020, 'Red',       26.00, 13.5),
+(11, 11, 'Douro Tinto',              'Touriga Nacional',   2019, 'Red',       12.50, 13.5),
+(12, 12, 'Sauvignon Blanc',          'Sauvignon Blanc',    2022, 'White',     11.25, 12.5),
+(13, 4,  'Chardonnay Reserve',       'Chardonnay',         2020, 'White',     24.00, 13.5),
+(14, 3,  'Rosado',                   'Garnacha',           2022, 'Rose',       8.90, 12.0),
+(15, 9,  'Moscato d''Asti',          'Moscato',            2022, 'Sparkling', 13.40, 5.5);
+
+INSERT INTO customers VALUES
+(1,  'The Gilded Fork',      'Restaurant',  'Chicago',   'IL', '2019-03-14', 15000),
+(2,  'Harbor Wine & Spirits','Retail Shop', 'Boston',    'MA', '2018-07-02', 25000),
+(3,  'Hotel Bellamy',        'Hotel',       'New York',  'NY', '2020-01-20', 40000),
+(4,  'Corner Tap House',     'Bar',         'Austin',    'TX', '2021-05-11', 5000),
+(5,  'Vino Vault',           'Retail Shop', 'Seattle',   'WA', '2017-11-30', 30000),
+(6,  'Sunset Bistro',        'Restaurant',  'San Diego', 'CA', '2022-02-08', NULL),
+(7,  'Lakeside Grill',       'Restaurant',  'Chicago',   'IL', '2021-09-23', 12000),
+(8,  'Grand Meridian Hotel', 'Hotel',       'Boston',    'MA', '2019-08-15', 50000),
+(9,  'Cask & Barrel',        'Bar',         'New York',  'NY', '2023-01-17', 8000),
+(10, 'Fine Vine Market',     'Retail Shop', 'Austin',    'TX', '2020-10-05', 20000),
+(11, 'Rustic Olive',         'Restaurant',  'Seattle',   'WA', '2023-04-02', NULL),
+(12, 'Palm Court Lounge',    'Bar',         'Miami',     'FL', '2022-06-19', 7500);
+
+INSERT INTO orders VALUES
+(1,  1,  '2023-01-10', '2023-01-12', 'Delivered'),
+(2,  2,  '2023-01-24', '2023-01-27', 'Delivered'),
+(3,  3,  '2023-02-14', '2023-02-16', 'Delivered'),
+(4,  5,  '2023-03-03', '2023-03-07', 'Delivered'),
+(5,  4,  '2023-03-21', '2023-03-23', 'Delivered'),
+(6,  8,  '2023-04-09', '2023-04-12', 'Delivered'),
+(7,  1,  '2023-05-15', '2023-05-17', 'Delivered'),
+(8,  10, '2023-06-02', NULL,         'Cancelled'),
+(9,  2,  '2023-06-20', '2023-06-23', 'Delivered'),
+(10, 7,  '2023-07-11', '2023-07-13', 'Delivered'),
+(11, 3,  '2023-08-05', NULL,         'Pending'),
+(12, 9,  '2023-08-22', NULL,         'Pending'),
+(13, 5,  '2023-09-12', '2023-09-14', 'Shipped'),
+(14, 12, '2023-09-30', NULL,         'Pending');
+
+INSERT INTO order_items VALUES
+(1,  1,  1,  12, 30.00, NULL),
+(2,  1,  9,  6,  50.00, 5.0),
+(3,  2,  3,  24, 20.00, NULL),
+(4,  2,  6,  36, 15.50, 10.0),
+(5,  3,  8,  24, 45.00, NULL),
+(6,  3,  4,  12, 33.00, NULL),
+(7,  4,  2,  18, 24.00, 5.0),
+(8,  5,  7,  48, 11.00, NULL),
+(9,  6,  8,  36, 44.00, 8.0),
+(10, 7,  10, 12, 28.00, NULL),
+(11, 8,  5,  24, 18.00, NULL),
+(12, 9,  12, 30, 12.50, NULL),
+(13, 10, 13, 12, 26.00, NULL),
+(14, 11, 9,  12, 50.00, NULL),
+(15, 12, 15, 24, 14.50, NULL);
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which wines cost us more than $25 a bottle, starting with the priciest?
+SQL: SELECT wine_name, varietal, bottle_price FROM wines WHERE bottle_price > 25 ORDER BY bottle_price DESC;
+
+### 2
+DIFFICULTY: simple
+QUESTION: Who are our three newest customers?
+SQL: SELECT business_name, city, account_opened FROM customers ORDER BY account_opened DESC LIMIT 3;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which orders are still pending and haven't gone out the door yet?
+SQL: SELECT order_id, customer_id, order_date FROM orders WHERE status = 'Pending' AND ship_date IS NULL ORDER BY order_date;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Which customers don't have a credit limit set up?
+SQL: SELECT business_name, customer_type, city FROM customers WHERE credit_limit IS NULL;
+
+### 5
+DIFFICULTY: simple
+QUESTION: Which American wineries hold an organic certification?
+SQL: SELECT name, region, founded_year FROM producers WHERE country = 'USA' AND organic_certified = 1;
+
+### 6
+DIFFICULTY: simple
+QUESTION: What white wines from the 2022 vintage do we carry?
+SQL: SELECT wine_name, varietal, bottle_price FROM wines WHERE color = 'White' AND vintage = 2022 ORDER BY wine_name;
+
+### 7
+DIFFICULTY: join
+QUESTION: Which wines do we get from French producers, and who makes them?
+SQL: SELECT p.name AS producer, w.wine_name FROM producers p JOIN wines w ON w.producer_id = p.producer_id WHERE p.country = 'France' ORDER BY p.name;
+
+### 8
+DIFFICULTY: join
+QUESTION: Which businesses placed orders from July 2023 onward, and on what dates?
+SQL: SELECT o.order_id, c.business_name, o.order_date, o.status FROM orders o JOIN customers c ON c.customer_id = o.customer_id WHERE o.order_date >= '2023-07-01' ORDER BY o.order_date;
+
+### 9
+DIFFICULTY: join
+QUESTION: What wines has Harbor Wine & Spirits bought from us?
+SQL: SELECT DISTINCT w.wine_name, w.varietal FROM customers c JOIN orders o ON o.customer_id = c.customer_id JOIN order_items oi ON oi.order_id = o.order_id JOIN wines w ON w.wine_id = oi.wine_id WHERE c.business_name = 'Harbor Wine & Spirits' ORDER BY w.wine_name;
+
+### 10
+DIFFICULTY: join
+QUESTION: Which restaurants have placed orders, and when did they order?
+SQL: SELECT c.business_name, o.order_id, o.order_date FROM customers c JOIN orders o ON o.customer_id = c.customer_id WHERE c.customer_type = 'Restaurant' ORDER BY c.business_name, o.order_date;
+
+### 11
+DIFFICULTY: join
+QUESTION: How many bottles of Italian wine have been ordered on each order line, and from which producer?
+SQL: SELECT w.wine_name, p.name AS producer, oi.order_id, oi.quantity FROM order_items oi JOIN wines w ON w.wine_id = oi.wine_id JOIN producers p ON p.producer_id = w.producer_id WHERE p.country = 'Italy' ORDER BY oi.order_id;
+
+### 12
+DIFFICULTY: join
+QUESTION: Which customers have never placed an order?
+SQL: SELECT c.business_name, c.customer_type, c.city FROM customers c LEFT JOIN orders o ON o.customer_id = c.customer_id WHERE o.order_id IS NULL;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many customers do we have of each business type?
+SQL: SELECT customer_type, COUNT(*) AS customer_count FROM customers GROUP BY customer_type ORDER BY customer_count DESC;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: What is the average bottle cost for each wine color?
+SQL: SELECT color, ROUND(AVG(bottle_price), 2) AS avg_price FROM wines GROUP BY color ORDER BY avg_price DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: How many bottles are tied up in orders under each order status?
+SQL: SELECT o.status, SUM(oi.quantity) AS total_bottles FROM orders o JOIN order_items oi ON oi.order_id = o.order_id GROUP BY o.status ORDER BY total_bottles DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How many different wines do we stock from each producing country?
+SQL: SELECT p.country, COUNT(*) AS wine_count FROM wines w JOIN producers p ON p.producer_id = w.producer_id GROUP BY p.country ORDER BY wine_count DESC, p.country;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which customers have spent more than $1,000 on non-cancelled orders once discounts are taken off, and how much was it?
+SQL: SELECT c.business_name, ROUND(SUM(oi.quantity * oi.unit_price * (1 - COALESCE(oi.discount_pct, 0) / 100.0)), 2) AS total_spent FROM customers c JOIN orders o ON o.customer_id = c.customer_id JOIN order_items oi ON oi.order_id = o.order_id WHERE o.status <> 'Cancelled' GROUP BY c.customer_id, c.business_name HAVING total_spent > 1000 ORDER BY total_spent DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: Which wines in our catalog have never appeared on any order?
+SQL: SELECT wine_name, color, bottle_price FROM wines WHERE wine_id NOT IN (SELECT wine_id FROM order_items) ORDER BY wine_name;
+
+### 19
+DIFFICULTY: hard
+QUESTION: What are the five slowest orders to ship, measured in days between ordering and shipping?
+SQL: SELECT order_id, order_date, ship_date, CAST(julianday(ship_date) - julianday(order_date) AS INTEGER) AS days_to_ship FROM orders WHERE ship_date IS NOT NULL ORDER BY days_to_ship DESC, order_id LIMIT 5;
+
+### 20
+DIFFICULTY: hard
+QUESTION: How many customers fall into each credit tier: high (30,000 or more), medium (10,000 to under 30,000), low (under 10,000), or none set?
+SQL: SELECT CASE WHEN credit_limit IS NULL THEN 'No limit set' WHEN credit_limit >= 30000 THEN 'High' WHEN credit_limit >= 10000 THEN 'Medium' ELSE 'Low' END AS credit_tier, COUNT(*) AS customer_count FROM customers GROUP BY credit_tier ORDER BY customer_count DESC;

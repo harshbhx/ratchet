@@ -1,0 +1,226 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE productions (
+    production_id   INTEGER PRIMARY KEY,
+    title           TEXT NOT NULL,
+    genre           TEXT NOT NULL,
+    budget_usd      REAL NOT NULL,
+    planned_start   TEXT NOT NULL,
+    planned_wrap    TEXT,
+    status          TEXT NOT NULL
+);
+
+CREATE TABLE locations (
+    location_id     INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL,
+    city            TEXT NOT NULL,
+    country         TEXT NOT NULL,
+    daily_rate      REAL NOT NULL,
+    indoor          INTEGER NOT NULL
+);
+
+CREATE TABLE crew_members (
+    crew_id         INTEGER PRIMARY KEY,
+    full_name       TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    department      TEXT NOT NULL,
+    day_rate        REAL NOT NULL,
+    hire_date       TEXT
+);
+
+CREATE TABLE shoot_days (
+    shoot_id            INTEGER PRIMARY KEY,
+    production_id       INTEGER NOT NULL,
+    location_id         INTEGER NOT NULL,
+    shoot_date          TEXT NOT NULL,
+    call_time           TEXT NOT NULL,
+    scenes_planned      INTEGER NOT NULL,
+    scenes_completed    INTEGER,
+    weather_delay_hours REAL,
+    notes               TEXT,
+    FOREIGN KEY (production_id) REFERENCES productions(production_id),
+    FOREIGN KEY (location_id) REFERENCES locations(location_id)
+);
+
+CREATE TABLE crew_assignments (
+    assignment_id   INTEGER PRIMARY KEY,
+    shoot_id        INTEGER NOT NULL,
+    crew_id         INTEGER NOT NULL,
+    hours_worked    REAL,
+    FOREIGN KEY (shoot_id) REFERENCES shoot_days(shoot_id),
+    FOREIGN KEY (crew_id) REFERENCES crew_members(crew_id)
+);
+
+INSERT INTO productions VALUES
+(1, 'Midnight Harbor', 'Thriller', 12500000, '2024-03-04', '2024-06-14', 'Completed'),
+(2, 'The Last Orchard', 'Drama', 4200000, '2024-05-13', '2024-07-26', 'Completed'),
+(3, 'Neon Drift', 'Sci-Fi', 48000000, '2024-09-02', '2025-01-31', 'Shooting'),
+(4, 'Paper Moons', 'Romance', 6800000, '2024-10-07', '2024-12-20', 'Shooting'),
+(5, 'Iron Valley', 'Western', 22000000, '2025-02-10', '2025-05-30', 'Pre-production'),
+(6, 'Salt and Ember', 'Drama', 3100000, '2025-03-03', NULL, 'Pre-production'),
+(7, 'Echoes of Tomorrow', 'Sci-Fi', 65000000, '2025-06-02', '2025-11-14', 'Pre-production'),
+(8, 'Quiet Fields', 'Documentary', 900000, '2024-04-01', '2024-05-10', 'Completed'),
+(9, 'Backstreet Kings', 'Thriller', 9500000, '2024-11-04', '2025-02-28', 'Shooting'),
+(10, 'Harvest Moon Wedding', 'Romance', 5400000, '2025-04-14', '2025-06-27', 'Pre-production');
+
+INSERT INTO locations VALUES
+(1, 'Pier 9 Warehouse', 'Baltimore', 'USA', 2500, 0),
+(2, 'Willow Creek Farm', 'Asheville', 'USA', 1200, 0),
+(3, 'Stage 4 Studio', 'Atlanta', 'USA', 8000, 1),
+(4, 'Old Town Plaza', 'Santa Fe', 'USA', 3500, 0),
+(5, 'Docklands Studio B', 'London', 'UK', 7000, 1),
+(6, 'Glass Tower Atrium', 'Chicago', 'USA', 4800, 1),
+(7, 'Red Mesa Ranch', 'Albuquerque', 'USA', 2800, 0),
+(8, 'Lakeside Chapel', 'Vancouver', 'Canada', 1800, 0),
+(9, 'Harbor Diner', 'Baltimore', 'USA', 900, 1),
+(10, 'Mount Hollis Quarry', 'Burlington', 'USA', 1500, 0);
+
+INSERT INTO crew_members VALUES
+(1, 'Maria Alvarez', 'Director', 'Direction', 3500, '2019-02-11'),
+(2, 'James Okafor', 'Director of Photography', 'Camera', 2400, '2018-06-03'),
+(3, 'Linda Chen', 'Production Manager', 'Production', 1800, '2020-01-20'),
+(4, 'Tom Becker', 'Gaffer', 'Electric', 950, '2021-04-15'),
+(5, 'Priya Nair', 'Sound Mixer', 'Sound', 1100, '2020-09-08'),
+(6, 'Carlos Mendez', 'Script Supervisor', 'Direction', 850, '2022-03-01'),
+(7, 'Hannah Wright', 'Costume Designer', 'Wardrobe', 1300, '2019-11-12'),
+(8, 'Derek Stone', 'Key Grip', 'Grip', 900, '2017-07-25'),
+(9, 'Aisha Rahman', 'Assistant Director', 'Direction', 1500, '2021-08-30'),
+(10, 'Luke Fischer', 'Camera Operator', 'Camera', 1000, NULL),
+(11, 'Sofia Rossi', 'Production Designer', 'Art', 2000, '2018-10-05'),
+(12, 'Ben Torres', 'Boom Operator', 'Sound', 700, '2023-02-14');
+
+INSERT INTO shoot_days VALUES
+(1, 1, 1, '2024-03-11', '06:00', 8, 8, 0, NULL),
+(2, 1, 9, '2024-03-18', '07:30', 6, 5, 1.5, 'Rain delay'),
+(3, 1, 1, '2024-04-02', '18:00', 10, 10, 0, 'Night shoot'),
+(4, 2, 2, '2024-05-20', '06:30', 5, 5, 0, NULL),
+(5, 2, 2, '2024-05-21', '06:30', 7, 6, 2.0, 'Equipment failure'),
+(6, 8, 10, '2024-04-08', '08:00', 4, 4, 0, NULL),
+(7, 3, 3, '2024-09-09', '07:00', 6, 6, 0, NULL),
+(8, 3, 5, '2024-10-14', '08:00', 5, 4, 0.5, 'Late actor arrival'),
+(9, 3, 6, '2024-11-12', '07:00', 7, 7, 0, NULL),
+(10, 4, 8, '2024-10-21', '07:00', 5, 5, 0, NULL),
+(11, 4, 8, '2024-10-22', '07:00', 5, 3, 3.5, 'Storm'),
+(12, 9, 1, '2024-11-18', '19:00', 8, 8, 0, 'Night shoot'),
+(13, 9, 9, '2024-11-25', '09:00', 4, NULL, NULL, 'Rescheduled'),
+(14, 5, 4, '2025-02-17', '06:00', 6, NULL, NULL, NULL),
+(15, 5, 7, '2025-02-24', '06:30', 7, NULL, NULL, NULL);
+
+INSERT INTO crew_assignments VALUES
+(1, 1, 1, 12),
+(2, 1, 2, 12),
+(3, 1, 4, 11.5),
+(4, 2, 1, 10),
+(5, 2, 5, 10.5),
+(6, 3, 2, 13),
+(7, 3, 8, 12.5),
+(8, 4, 1, 11),
+(9, 4, 7, 9),
+(10, 5, 5, 12),
+(11, 7, 2, 11),
+(12, 7, 3, 10),
+(13, 8, 1, NULL),
+(14, 10, 9, 10),
+(15, 12, 4, 12);
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which films are still in pre-production, and when are they due to start, earliest first?
+SQL: SELECT title, planned_start FROM productions WHERE status = 'Pre-production' ORDER BY planned_start;
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are our five biggest-budget films?
+SQL: SELECT title, budget_usd FROM productions ORDER BY budget_usd DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which crew members don't have a start date on file?
+SQL: SELECT full_name, role FROM crew_members WHERE hire_date IS NULL;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Which indoor venues in the USA do we have, starting with the most expensive per day?
+SQL: SELECT name, city, daily_rate FROM locations WHERE indoor = 1 AND country = 'USA' ORDER BY daily_rate DESC;
+
+### 5
+DIFFICULTY: simple
+QUESTION: On which shoot days did we lose more than an hour to weather, and what was noted?
+SQL: SELECT shoot_date, weather_delay_hours, notes FROM shoot_days WHERE weather_delay_hours > 1 ORDER BY weather_delay_hours DESC;
+
+### 6
+DIFFICULTY: simple
+QUESTION: Who are the five crew members with the highest daily pay?
+SQL: SELECT full_name, role, day_rate FROM crew_members ORDER BY day_rate DESC LIMIT 5;
+
+### 7
+DIFFICULTY: join
+QUESTION: Which night shoots have we had, and for which film and at what venue?
+SQL: SELECT s.shoot_date, p.title, l.name AS location_name FROM shoot_days s JOIN productions p ON p.production_id = s.production_id JOIN locations l ON l.location_id = s.location_id WHERE s.notes = 'Night shoot' ORDER BY s.shoot_date;
+
+### 8
+DIFFICULTY: join
+QUESTION: Show every shoot day that took place in Baltimore along with the film being shot.
+SQL: SELECT s.shoot_date, p.title, l.name AS location_name FROM shoot_days s JOIN productions p ON p.production_id = s.production_id JOIN locations l ON l.location_id = s.location_id WHERE l.city = 'Baltimore' ORDER BY s.shoot_date;
+
+### 9
+DIFFICULTY: join
+QUESTION: Who worked on Midnight Harbor, and on which dates?
+SQL: SELECT c.full_name, c.role, s.shoot_date FROM crew_assignments a JOIN crew_members c ON c.crew_id = a.crew_id JOIN shoot_days s ON s.shoot_id = a.shoot_id JOIN productions p ON p.production_id = s.production_id WHERE p.title = 'Midnight Harbor' ORDER BY s.shoot_date, c.full_name;
+
+### 10
+DIFFICULTY: join
+QUESTION: Which crew members have never been assigned to any shoot day?
+SQL: SELECT c.full_name, c.role FROM crew_members c LEFT JOIN crew_assignments a ON a.crew_id = c.crew_id WHERE a.assignment_id IS NULL ORDER BY c.full_name;
+
+### 11
+DIFFICULTY: join
+QUESTION: Where was Neon Drift filmed, in which city and country, and on what dates?
+SQL: SELECT s.shoot_date, l.name, l.city, l.country FROM shoot_days s JOIN productions p ON p.production_id = s.production_id JOIN locations l ON l.location_id = s.location_id WHERE p.title = 'Neon Drift' ORDER BY s.shoot_date;
+
+### 12
+DIFFICULTY: join
+QUESTION: List the shoot days for films with a budget above 20 million dollars.
+SQL: SELECT p.title, p.budget_usd, s.shoot_date FROM productions p JOIN shoot_days s ON s.production_id = p.production_id WHERE p.budget_usd > 20000000 ORDER BY p.title, s.shoot_date;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many shoot days has each film had scheduled?
+SQL: SELECT p.title, COUNT(*) AS shoot_day_count FROM productions p JOIN shoot_days s ON s.production_id = p.production_id GROUP BY p.production_id, p.title ORDER BY shoot_day_count DESC, p.title;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: What is the average daily rental cost of our venues in each country?
+SQL: SELECT country, ROUND(AVG(daily_rate), 2) AS avg_daily_rate, COUNT(*) AS venue_count FROM locations GROUP BY country ORDER BY avg_daily_rate DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: For each genre, how many films do we have and what is their combined budget?
+SQL: SELECT genre, COUNT(*) AS film_count, SUM(budget_usd) AS total_budget FROM productions GROUP BY genre ORDER BY total_budget DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How many hours of weather delay has each film accumulated so far?
+SQL: SELECT p.title, SUM(s.weather_delay_hours) AS total_delay_hours FROM productions p JOIN shoot_days s ON s.production_id = p.production_id GROUP BY p.production_id, p.title ORDER BY total_delay_hours DESC;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which films have lost more than an hour and a half in total to weather delays?
+SQL: SELECT p.title, SUM(s.weather_delay_hours) AS total_delay_hours FROM productions p JOIN shoot_days s ON s.production_id = p.production_id GROUP BY p.production_id, p.title HAVING SUM(s.weather_delay_hours) > 1.5 ORDER BY total_delay_hours DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: On which days did we finish fewer scenes than planned, and what percentage of the plan did we get done?
+SQL: SELECT s.shoot_date, p.title, s.scenes_planned, s.scenes_completed, ROUND(100.0 * s.scenes_completed / s.scenes_planned, 1) AS percent_done, CASE WHEN 100.0 * s.scenes_completed / s.scenes_planned < 70 THEN 'Badly behind' ELSE 'Slightly behind' END AS pace FROM shoot_days s JOIN productions p ON p.production_id = s.production_id WHERE s.scenes_completed < s.scenes_planned ORDER BY percent_done;
+
+### 19
+DIFFICULTY: hard
+QUESTION: Which five films have the longest planned schedules, and how many days is each scheduled to run from start to wrap?
+SQL: SELECT title, planned_start, planned_wrap, CAST(julianday(planned_wrap) - julianday(planned_start) AS INTEGER) AS planned_days FROM productions WHERE planned_wrap IS NOT NULL ORDER BY planned_days DESC LIMIT 5;
+
+### 20
+DIFFICULTY: hard
+QUESTION: Which crew members are paid more per day than the average crew member?
+SQL: SELECT full_name, role, day_rate FROM crew_members WHERE day_rate > (SELECT AVG(day_rate) FROM crew_members) ORDER BY day_rate DESC;

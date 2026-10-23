@@ -1,0 +1,17 @@
+{
+  "what": "the teacher answering the exam prompt, scored against the stored label by running both on the same database",
+  "n": 200,
+  "answered": 200,
+  "agree": 30,
+  "rate": 0.15,
+  "wilson95": [
+    0.1071,
+    0.2061
+  ],
+  "spend_usd_estimate": 0.1101,
+  "tokens": {
+    "in": 78820,
+    "out": 10423
+  },
+  "model": "nvidia/Nemotron-3-Ultra-550b-a55b"
+}

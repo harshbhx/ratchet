@@ -1,0 +1,36 @@
+{
+  "what": "A second text-to-SQL exam, written by a different model than the training labels. Evaluation only; never trained on.",
+  "author_model": "claude-sonnet-5-5",
+  "industries": [
+    "museum collections",
+    "veterinary clinic",
+    "wine distribution",
+    "film production schedule",
+    "wind farm maintenance",
+    "court case management",
+    "recycling plant operations",
+    "podcast network",
+    "cinema chain",
+    "fishing fleet"
+  ],
+  "rows": 200,
+  "by_difficulty": {
+    "simple": 60,
+    "join": 60,
+    "aggregate": 40,
+    "hard": 40
+  },
+  "databases": 10,
+  "failed_databases": 0,
+  "rejected_by_execution_check": 0,
+  "dropped_for_overlap_with_training": 0,
+  "api_calls": 10,
+  "tokens": {
+    "in": 4454,
+    "out": 105545
+  },
+  "sha256": {
+    "golden.jsonl": "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058",
+    "dbs.json": "5d85d2603bc8ea4f6ceb1779cc6c5016cfb770ce1fff24ba0729bb3d337c3b35"
+  }
+}

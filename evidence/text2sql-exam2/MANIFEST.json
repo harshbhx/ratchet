@@ -1,0 +1,117 @@
+{
+ "made": "2026-10-24",
+ "exam": "200 questions on 10 industries, written by Claude Sonnet 5.5 for evaluation only; golden.jsonl sha256 b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058",
+ "adapters": "round 1 weights sha256 a883bcf6bbf4152efb5a874520b8fa1a09d9bead55c172507725dc255f18236a, round 2 weights sha256 38f99d441e0527b75fdf8fd9d10acbf4473dcf70db7febe3ad73fccd631a6aa7 (40.5 MB each, not in git)",
+ "files": [
+  {
+   "file": "README.md",
+   "bytes": 5082,
+   "sha256": "9ccafb7053368e4929b7e0534b4d850e01e5c77273ab76569800f37a26f7da8a"
+  },
+  {
+   "file": "answers/raw_v1.jsonl",
+   "bytes": 154451,
+   "sha256": "9e03e35489a9e14dfcb301f937385f17bfeecdca20cffab4beb536c9e4389851"
+  },
+  {
+   "file": "answers/raw_v2.jsonl",
+   "bytes": 153372,
+   "sha256": "e0a0048c521cc449d1ba49e08453432ef3e70e88649103d217cd1145462547c9"
+  },
+  {
+   "file": "answers/teacher2.jsonl",
+   "bytes": 43339,
+   "sha256": "0ef7cde709229bd0c55dafbfabc34f14b18d3e6a8075a27208df1e4b600a73ce"
+  },
+  {
+   "file": "data/claude_raw/exam2-0.txt",
+   "bytes": 10590,
+   "sha256": "315511e3a6cb80ef8205255742d5166ece6532849fe50a2b191e9dab5ea2fc7b"
+  },
+  {
+   "file": "data/claude_raw/exam2-1.txt",
+   "bytes": 10870,
+   "sha256": "8d139b5238d2badcae32a4a600b5cbf83664af2829269d3f982cb74d7f119dfb"
+  },
+  {
+   "file": "data/claude_raw/exam2-2.txt",
+   "bytes": 12052,
+   "sha256": "00670f839f1c8ce2e050d7c3f8a19c9aab98d0ac4f833db87cd93a42810e8bc9"
+  },
+  {
+   "file": "data/claude_raw/exam2-3.txt",
+   "bytes": 11068,
+   "sha256": "e503c641715eb35b6775b6c2d99f84595b48e2b8a46e9d9aa72155560dcb9675"
+  },
+  {
+   "file": "data/claude_raw/exam2-4.txt",
+   "bytes": 11784,
+   "sha256": "693f4b225f097808f45134cfe0b5814db637d1701b6dcf935c0fdd1e302a8db3"
+  },
+  {
+   "file": "data/claude_raw/exam2-5.txt",
+   "bytes": 10877,
+   "sha256": "70f88ac3967a6325d898b746baa353d0c32d1d837380ec2b0df5457c7d2fb887"
+  },
+  {
+   "file": "data/claude_raw/exam2-6.txt",
+   "bytes": 12127,
+   "sha256": "857f6a36c7b332610fb939e630c37c3a635cb4827dc258ee96d903d085a04ae3"
+  },
+  {
+   "file": "data/claude_raw/exam2-7.txt",
+   "bytes": 11268,
+   "sha256": "f4211dc6118c995bf2ae5c466e124f056337da54a3291025f4719b90bd72aded"
+  },
+  {
+   "file": "data/claude_raw/exam2-8.txt",
+   "bytes": 11255,
+   "sha256": "0dae2a85fa5d5255cb39957b18b4264828c2783cf358986cbbbc1877a38bd009"
+  },
+  {
+   "file": "data/claude_raw/exam2-9.txt",
+   "bytes": 9503,
+   "sha256": "48d741c79f4ff5ec947a17b94fff3e9b597d74eec57d63cb06e13616bdb064e1"
+  },
+  {
+   "file": "data/dbs.json",
+   "bytes": 55285,
+   "sha256": "5d85d2603bc8ea4f6ceb1779cc6c5016cfb770ce1fff24ba0729bb3d337c3b35"
+  },
+  {
+   "file": "data/exam_manifest.json",
+   "bytes": 987,
+   "sha256": "5ef98084d3b03f72f14c4cb48db6469b5d20e0226bb2a1b923d1df808cbf15e2"
+  },
+  {
+   "file": "data/golden.jsonl",
+   "bytes": 430443,
+   "sha256": "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058"
+  },
+  {
+   "file": "results/results_v1.json",
+   "bytes": 3538,
+   "sha256": "b19b76c969d158c64f44f11728dd71e30a2ff403e3e6051329ee062d3718f86b"
+  },
+  {
+   "file": "results/results_v2.json",
+   "bytes": 3540,
+   "sha256": "11a02a9d398231d068115c7b9a4a1b50aca9ee8ad21ea1c1f6445494e35f3c1e"
+  },
+  {
+   "file": "results/teacher_selfcheck.json",
+   "bytes": 378,
+   "sha256": "c964ac797558ca6e42d78c896c98f040bbc7d717beb1136a0ecb83f77a590667"
+  },
+  {
+   "file": "results/verify_output_v1.txt",
+   "bytes": 76,
+   "sha256": "91db098ab6393e97ba738a6bd336c9165b4e3ac68396e75d6222c4f364d7f410"
+  },
+  {
+   "file": "results/verify_output_v2.txt",
+   "bytes": 76,
+   "sha256": "91db098ab6393e97ba738a6bd336c9165b4e3ac68396e75d6222c4f364d7f410"
+  }
+ ]
+}

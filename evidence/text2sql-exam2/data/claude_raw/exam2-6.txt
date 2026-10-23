@@ -1,0 +1,223 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE suppliers (
+    supplier_id     INTEGER PRIMARY KEY,
+    supplier_name   TEXT NOT NULL,
+    supplier_type   TEXT NOT NULL,      -- Municipal, Commercial, Residential, Industrial
+    city            TEXT NOT NULL,
+    contract_start  TEXT NOT NULL,      -- ISO date
+    contact_email   TEXT
+);
+
+CREATE TABLE materials (
+    material_id      INTEGER PRIMARY KEY,
+    material_name    TEXT NOT NULL,
+    category         TEXT NOT NULL,     -- Plastic, Metal, Paper, Glass
+    price_per_tonne  REAL NOT NULL
+);
+
+CREATE TABLE deliveries (
+    delivery_id        INTEGER PRIMARY KEY,
+    supplier_id        INTEGER NOT NULL,
+    material_id        INTEGER NOT NULL,
+    delivery_date      TEXT NOT NULL,   -- ISO date
+    weight_kg          INTEGER NOT NULL,
+    contamination_pct  REAL,
+    truck_plate        TEXT,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id),
+    FOREIGN KEY (material_id) REFERENCES materials(material_id)
+);
+
+CREATE TABLE processing_batches (
+    batch_id     INTEGER PRIMARY KEY,
+    material_id  INTEGER NOT NULL,
+    batch_date   TEXT NOT NULL,         -- ISO date
+    input_kg     INTEGER NOT NULL,
+    output_kg    INTEGER,
+    line_name    TEXT NOT NULL,
+    supervisor   TEXT NOT NULL,
+    status       TEXT NOT NULL,         -- Completed, In Progress, Rejected
+    FOREIGN KEY (material_id) REFERENCES materials(material_id)
+);
+
+CREATE TABLE sales (
+    sale_id         INTEGER PRIMARY KEY,
+    material_id     INTEGER NOT NULL,
+    buyer_name      TEXT NOT NULL,
+    sale_date       TEXT NOT NULL,      -- ISO date
+    weight_kg       INTEGER NOT NULL,
+    total_revenue   REAL NOT NULL,
+    payment_status  TEXT,
+    FOREIGN KEY (material_id) REFERENCES materials(material_id)
+);
+
+INSERT INTO suppliers VALUES
+(1, 'GreenCity Municipal Collection', 'Municipal', 'Portland', '2019-03-15', 'dispatch@greencity.example'),
+(2, 'Harbor Foods Distribution', 'Commercial', 'Seattle', '2020-07-01', 'ops@harborfoods.example'),
+(3, 'Metro Apartments Group', 'Residential', 'Portland', '2021-01-10', NULL),
+(4, 'Riverbend Manufacturing', 'Industrial', 'Tacoma', '2018-11-20', 'env@riverbend.example'),
+(5, 'City of Salem Waste Dept', 'Municipal', 'Salem', '2022-04-05', 'waste@salem.example'),
+(6, 'Bright Office Park', 'Commercial', 'Seattle', '2022-09-12', NULL),
+(7, 'Evergreen Scrap Traders', 'Industrial', 'Tacoma', '2017-06-30', 'sales@evergreenscrap.example'),
+(8, 'Valley School District', 'Municipal', 'Eugene', '2023-02-01', 'facilities@valleysd.example'),
+(9, 'Sunrise Brewery', 'Commercial', 'Portland', '2021-08-18', 'green@sunrisebrew.example'),
+(10, 'Cascade Electric Co-op', 'Industrial', 'Salem', '2020-02-25', NULL);
+
+INSERT INTO materials VALUES
+(1, 'PET Plastic', 'Plastic', 320.0),
+(2, 'HDPE Plastic', 'Plastic', 280.0),
+(3, 'Aluminum Cans', 'Metal', 1450.0),
+(4, 'Steel Scrap', 'Metal', 260.0),
+(5, 'Cardboard', 'Paper', 90.0),
+(6, 'Mixed Paper', 'Paper', 55.0),
+(7, 'Clear Glass', 'Glass', 40.0),
+(8, 'Brown Glass', 'Glass', 35.0),
+(9, 'Copper Wire', 'Metal', 6200.0),
+(10, 'LDPE Film', 'Plastic', 150.0);
+
+INSERT INTO deliveries VALUES
+(1, 1, 1, '2024-01-08', 4200, 6.5, 'OR-4521'),
+(2, 1, 5, '2024-01-15', 8600, 4.2, 'OR-4521'),
+(3, 2, 5, '2024-01-22', 5400, 3.1, 'WA-7788'),
+(4, 3, 6, '2024-02-02', 3100, 12.8, 'OR-1190'),
+(5, 4, 4, '2024-02-09', 15200, 1.5, 'WA-3302'),
+(6, 4, 3, '2024-02-14', 980, 0.8, 'WA-3302'),
+(7, 5, 7, '2024-02-21', 9800, 2.4, 'OR-6034'),
+(8, 6, 6, '2024-03-04', 2700, NULL, 'WA-5521'),
+(9, 7, 9, '2024-03-11', 640, 0.3, 'WA-9012'),
+(10, 7, 4, '2024-03-18', 18400, 2.0, 'WA-9012'),
+(11, 8, 8, '2024-03-25', 3600, 5.7, NULL),
+(12, 9, 7, '2024-04-02', 7200, 1.9, 'OR-2276'),
+(13, 10, 9, '2024-04-09', 1150, NULL, 'OR-8845'),
+(14, 1, 2, '2024-04-16', 3900, 7.3, 'OR-4521'),
+(15, 5, 1, '2024-04-23', 4800, 9.1, 'OR-6034');
+
+INSERT INTO processing_batches VALUES
+(1, 1, '2024-01-10', 4000, 3550, 'Line A', 'Maria Lopez', 'Completed'),
+(2, 5, '2024-01-18', 8000, 7600, 'Line B', 'Tom Reed', 'Completed'),
+(3, 6, '2024-02-05', 3000, 2400, 'Line B', 'Tom Reed', 'Completed'),
+(4, 4, '2024-02-12', 15000, 14700, 'Line C', 'Priya Shah', 'Completed'),
+(5, 3, '2024-02-16', 950, 925, 'Line C', 'Priya Shah', 'Completed'),
+(6, 7, '2024-02-24', 9500, 9100, 'Line D', 'Jake Nguyen', 'Completed'),
+(7, 9, '2024-03-13', 600, 590, 'Line C', 'Priya Shah', 'Completed'),
+(8, 4, '2024-03-20', 18000, 17500, 'Line C', 'Priya Shah', 'Completed'),
+(9, 8, '2024-03-27', 3500, NULL, 'Line D', 'Jake Nguyen', 'Rejected'),
+(10, 2, '2024-04-18', 3800, 3300, 'Line A', 'Maria Lopez', 'Completed'),
+(11, 1, '2024-04-25', 4700, NULL, 'Line A', 'Maria Lopez', 'In Progress'),
+(12, 7, '2024-04-04', 7000, 6750, 'Line D', 'Jake Nguyen', 'Completed');
+
+INSERT INTO sales VALUES
+(1, 1, 'PolyForm Industries', '2024-01-30', 3500, 1120.00, 'Paid'),
+(2, 5, 'Pacific Paper Mill', '2024-02-05', 7500, 675.00, 'Paid'),
+(3, 6, 'Pacific Paper Mill', '2024-02-20', 2300, 126.50, 'Paid'),
+(4, 4, 'Northwest Steelworks', '2024-02-28', 14500, 3770.00, 'Paid'),
+(5, 3, 'AlumiCast Corp', '2024-03-01', 900, 1305.00, 'Paid'),
+(6, 7, 'ClearBottle Glass', '2024-03-08', 9000, 360.00, 'Paid'),
+(7, 9, 'Copperline Metals', '2024-03-25', 580, 3596.00, 'Pending'),
+(8, 4, 'Northwest Steelworks', '2024-04-02', 17000, 4420.00, 'Paid'),
+(9, 2, 'PolyForm Industries', '2024-04-26', 3200, 896.00, 'Pending'),
+(10, 7, 'ClearBottle Glass', '2024-04-30', 6700, 268.00, NULL),
+(11, 5, 'Cascade Packaging', '2024-03-15', 4000, 360.00, 'Paid'),
+(12, 1, 'GreenFiber Textiles', '2024-03-29', 2000, 640.00, 'Paid');
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which of our suppliers are based in Portland? Please list them alphabetically.
+SQL: SELECT supplier_name, supplier_type, contract_start FROM suppliers WHERE city = 'Portland' ORDER BY supplier_name;
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are the five biggest loads we've received, by weight?
+SQL: SELECT delivery_id, delivery_date, weight_kg FROM deliveries ORDER BY weight_kg DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which incoming loads never had a contamination reading taken?
+SQL: SELECT delivery_id, delivery_date, weight_kg FROM deliveries WHERE contamination_pct IS NULL ORDER BY delivery_date;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Which metal materials are worth more than $1,000 a tonne?
+SQL: SELECT material_name, price_per_tonne FROM materials WHERE category = 'Metal' AND price_per_tonne > 1000 ORDER BY price_per_tonne DESC;
+
+### 5
+DIFFICULTY: simple
+QUESTION: Which processing runs were rejected or are still underway?
+SQL: SELECT batch_id, batch_date, input_kg, line_name, status FROM processing_batches WHERE status IN ('Rejected', 'In Progress') ORDER BY batch_date;
+
+### 6
+DIFFICULTY: simple
+QUESTION: Which sales have not been confirmed as paid yet?
+SQL: SELECT sale_id, buyer_name, sale_date, total_revenue, payment_status FROM sales WHERE payment_status IS NULL OR payment_status <> 'Paid' ORDER BY sale_date;
+
+### 7
+DIFFICULTY: join
+QUESTION: For the loads that arrived in March 2024, who sent them and what material was it?
+SQL: SELECT d.delivery_date, s.supplier_name, m.material_name, d.weight_kg FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id JOIN materials m ON m.material_id = d.material_id WHERE d.delivery_date BETWEEN '2024-03-01' AND '2024-03-31' ORDER BY d.delivery_date;
+
+### 8
+DIFFICULTY: join
+QUESTION: What have our industrial suppliers brought in, and how much of it?
+SQL: SELECT s.supplier_name, m.material_name, d.delivery_date, d.weight_kg FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id JOIN materials m ON m.material_id = d.material_id WHERE s.supplier_type = 'Industrial' ORDER BY d.delivery_date;
+
+### 9
+DIFFICULTY: join
+QUESTION: What materials were processed on Line C, and in what category do they fall?
+SQL: SELECT b.batch_id, b.batch_date, m.material_name, m.category, b.input_kg FROM processing_batches b JOIN materials m ON m.material_id = b.material_id WHERE b.line_name = 'Line C' ORDER BY b.batch_date;
+
+### 10
+DIFFICULTY: join
+QUESTION: Show me every sale of plastic material with the buyer and the type of plastic.
+SQL: SELECT sa.sale_date, sa.buyer_name, m.material_name, sa.weight_kg, sa.total_revenue FROM sales sa JOIN materials m ON m.material_id = sa.material_id WHERE m.category = 'Plastic' ORDER BY sa.sale_date;
+
+### 11
+DIFFICULTY: join
+QUESTION: Which suppliers have sent us glass?
+SQL: SELECT DISTINCT s.supplier_name, s.city FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id JOIN materials m ON m.material_id = d.material_id WHERE m.category = 'Glass' ORDER BY s.supplier_name;
+
+### 12
+DIFFICULTY: join
+QUESTION: Which loads came in with more than 5% contamination, who delivered them, and which truck was it?
+SQL: SELECT d.delivery_date, s.supplier_name, d.contamination_pct, d.truck_plate FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id WHERE d.contamination_pct > 5 ORDER BY d.contamination_pct DESC;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many kilograms have we received in total for each type of material category?
+SQL: SELECT m.category, SUM(d.weight_kg) AS total_kg FROM deliveries d JOIN materials m ON m.material_id = d.material_id GROUP BY m.category ORDER BY total_kg DESC;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: How many deliveries have we had from each kind of supplier?
+SQL: SELECT s.supplier_type, COUNT(*) AS delivery_count FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id GROUP BY s.supplier_type ORDER BY delivery_count DESC, s.supplier_type;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: For each processing line, how many runs were there and how much material went in altogether?
+SQL: SELECT line_name, COUNT(*) AS batch_count, SUM(input_kg) AS total_input_kg FROM processing_batches GROUP BY line_name ORDER BY total_input_kg DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How much money has each buyer brought in, from highest to lowest?
+SQL: SELECT buyer_name, SUM(total_revenue) AS revenue FROM sales GROUP BY buyer_name ORDER BY revenue DESC;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which suppliers have an average contamination level higher than the average across all measured loads?
+SQL: SELECT s.supplier_name, ROUND(AVG(d.contamination_pct), 2) AS avg_contamination FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id GROUP BY s.supplier_id, s.supplier_name HAVING AVG(d.contamination_pct) > (SELECT AVG(contamination_pct) FROM deliveries) ORDER BY avg_contamination DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: For finished runs with a recorded output, what was the recovery rate, and how would you rate it as high (93% or more), medium (85% to under 93%) or low?
+SQL: SELECT b.batch_id, m.material_name, ROUND(100.0 * b.output_kg / b.input_kg, 1) AS yield_pct, CASE WHEN 1.0 * b.output_kg / b.input_kg >= 0.93 THEN 'High' WHEN 1.0 * b.output_kg / b.input_kg >= 0.85 THEN 'Medium' ELSE 'Low' END AS yield_rating FROM processing_batches b JOIN materials m ON m.material_id = b.material_id WHERE b.status = 'Completed' AND b.output_kg IS NOT NULL ORDER BY yield_pct DESC;
+
+### 19
+DIFFICULTY: hard
+QUESTION: For suppliers who have delivered more than once, how many days passed between their first and their most recent delivery?
+SQL: SELECT s.supplier_name, MIN(d.delivery_date) AS first_delivery, MAX(d.delivery_date) AS last_delivery, CAST(julianday(MAX(d.delivery_date)) - julianday(MIN(d.delivery_date)) AS INTEGER) AS days_between FROM deliveries d JOIN suppliers s ON s.supplier_id = d.supplier_id GROUP BY s.supplier_id, s.supplier_name HAVING COUNT(*) > 1 ORDER BY days_between DESC;
+
+### 20
+DIFFICULTY: hard
+QUESTION: Which materials have we received at the plant but never sold?
+SQL: SELECT material_name, category FROM materials WHERE material_id IN (SELECT material_id FROM deliveries) AND material_id NOT IN (SELECT material_id FROM sales) ORDER BY material_name;
