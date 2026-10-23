@@ -1,0 +1,7 @@
+Leakage check, round 1 (23 Oct 2026): does anything from the exam appear in the training data?
+exam prompts also in training: 0 of 172
+exam answer-key queries also a training answer, word for word: 0 of 172
+exam questions also asked in training: 0 of 172
+exam rows whose exact set of table names also occurs in training: 0 of 172
+adapter answer identical to the key, text for text, unseen domains: 8 of 57
+adapter answer identical to the key, text for text, seen domains: 16 of 115

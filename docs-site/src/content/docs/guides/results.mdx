@@ -10,9 +10,18 @@ import SqlResults from '../../../components/SqlResults.astro';
 import Stat from '../../../components/Stat.astro';
 import StatRow from '../../../components/StatRow.astro';
 import sqlResults from '../../../data/sql-results.json';
+import extra from '../../../data/sql-extra.json';
 
 export const run = sqlResults;
 export const measured = run?.status !== 'pending' && run?.mode === 'sql';
+export const pct = (c) => (100 * c.agree / c.n).toFixed(1) + '%';
+export const rng = (c) => (100 * c.wilson95[0]).toFixed(1) + ' to ' + (100 * c.wilson95[1]).toFixed(1) + '%';
+export const A = extra.all_rows;
+export const lines = [
+  ['Base model', A.base_v1, A.base_v2],
+  ['Teacher answering the exam prompt', A.teacher, null],
+  ['Adapter', A.adapter_v1, A.adapter_v2],
+];
 
 <Summary>This page shows what the text-to-SQL adapter measured on an exam of databases it never trained on, read straight from the run's results file, and keeps those numbers apart from the simulation numbers used elsewhere in these docs.</Summary>
 
@@ -39,6 +48,29 @@ Every score comes with a range, like "somewhere between 64% and 82%". A small ex
     : <span class="rt-badge rt-badge--sim">Pending: the run's results file is not in yet</span>}</p>
 
 <SqlResults />
+
+## What the first real run showed
+
+Same exam, same scoring, all {A.n} questions. A query is right when running it returns the same rows as the teacher's stored query on the same database.
+
+<table>
+  <thead><tr><th>Who answered</th><th>Original prompt</th><th>With one extra line (prompt v2)</th></tr></thead>
+  <tbody>
+    {lines.map(([name, v1, v2]) => (
+      <tr><td>{name}</td><td>{v1.agree} of {v1.n} = <strong>{pct(v1)}</strong> ({rng(v1)})</td><td>{v2 ? <>{v2.agree} of {v2.n} = <strong>{pct(v2)}</strong> ({rng(v2)})</> : 'not run'}</td></tr>
+    ))}
+  </tbody>
+</table>
+
+Prompt v2 adds "Select only the columns the question asks for." to the end of every question, for both models. The ranges are 95% Wilson ranges.
+
+- **The adapter is about three times better than the base model** under both prompts, and the ranges do not overlap.
+- **The adapter is in the same range as the teacher, not above it.** The teacher itself returns the stored query's rows only {pct(A.teacher)} of the time, because each question has one stored query, written together with the question. A correct query with other columns or another sort order counts as a miss. The adapter learned the stored queries' style, so we do not claim it beats the teacher.
+- **Prompt v2 changed nothing that holds up.** Row by row the adapter gained a few questions and lost a few. Treat the two prompts as one result: about a third of the questions for the adapter, about an eighth for the base model.
+- **The adapter does not yet replace the teacher.** At the 95% precision target only {extra.gate_v1.answered} of {extra.gate_v1.of} test questions pass the confidence gate and {extra.gate_v1.right} of those are right, so the cost saved at that coverage is {extra.gate_v1.saved_pct}%. Token probability does not tell the adapter's right answers from its wrong ones.
+- **No exam question leaked into training:** {extra.leakage.exam_prompts_in_training} of {extra.leakage.of} exam prompts, questions, stored queries or table-name sets appear in the training data.
+
+Training: {extra.training.rows} teacher-labelled rows, {extra.training.steps} steps, {extra.training.minutes} minutes on a {extra.training.gpu}; teacher labels cost ${extra.teacher_labels_cost_usd}. The files behind every number, and the command that recomputes them, are in `evidence/text2sql-round1` in the repository.
 
 ## How it really works
 

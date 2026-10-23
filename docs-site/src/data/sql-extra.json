@@ -1,0 +1,88 @@
+{
+ "what": "Extra numbers that sit next to results.json: all 172 exam rows, the teacher as a yardstick, prompt v2, and the failure breakdown. Every figure is recomputed from the answers in evidence/text2sql-round1 by scripts/measure_adapter.py.",
+ "all_rows": {
+  "n": 172,
+  "base_v1": {
+   "agree": 22,
+   "n": 172,
+   "rate": 0.1279,
+   "wilson95": [
+    0.086,
+    0.1861
+   ]
+  },
+  "adapter_v1": {
+   "agree": 57,
+   "n": 172,
+   "rate": 0.3314,
+   "wilson95": [
+    0.2654,
+    0.4048
+   ]
+  },
+  "base_v2": {
+   "agree": 19,
+   "n": 172,
+   "rate": 0.1105,
+   "wilson95": [
+    0.0719,
+    0.1661
+   ]
+  },
+  "adapter_v2": {
+   "agree": 59,
+   "n": 172,
+   "rate": 0.343,
+   "wilson95": [
+    0.2762,
+    0.4167
+   ]
+  },
+  "teacher": {
+   "agree": 44,
+   "n": 172,
+   "rate": 0.2558,
+   "wilson95": [
+    0.1964,
+    0.3259
+   ]
+  }
+ },
+ "teacher_check": {
+  "cost_usd_estimate": 0.14,
+  "note": "The teacher (Nemotron 3 Ultra) answered the same exam prompts a second time, temperature 0, thinking off, scored like the student. The stored label was written together with the question, so this is a yardstick and not the same call twice."
+ },
+ "prompt_v2": "The same questions with the line 'Select only the columns the question asks for.' added to the end of each, for both models, same adapter.",
+ "leakage": {
+  "exam_prompts_in_training": 0,
+  "answer_keys_in_training": 0,
+  "questions_in_training": 0,
+  "table_name_sets_in_training": 0,
+  "of": 172
+ },
+ "gate_v1": {
+  "threshold": 0.9856,
+  "answered": 4,
+  "of": 86,
+  "right": 2,
+  "saved_pct": 3.49
+ },
+ "gate_v2": {
+  "answered": 3,
+  "of": 86,
+  "right": 1,
+  "saved_pct": 2.56
+ },
+ "training": {
+  "rows": 821,
+  "steps": 206,
+  "epochs": 2,
+  "minutes": 66,
+  "loss_first": 0.334,
+  "loss_last": 0.075,
+  "gpu": "free Colab T4 (not Nebius GPUs)",
+  "lora_r": 16,
+  "adapter_mb": 40.5
+ },
+ "teacher_labels_cost_usd": 2.87
+}

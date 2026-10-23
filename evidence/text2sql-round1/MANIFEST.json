@@ -1,0 +1,86 @@
+{
+ "made": "2026-10-23T13:09:39+05:30",
+ "adapter_model.safetensors_sha256": "a883bcf6bbf4152efb5a874520b8fa1a09d9bead55c172507725dc255f18236a",
+ "files": [
+  {
+   "file": "adapter/adapter_config.json",
+   "bytes": 1175,
+   "sha256": "8ae511992e16c5eeeaa8e74216c2f590650858f9cbd3bb53e370dc7824f4d19a"
+  },
+  {
+   "file": "adapter/run_info.json",
+   "bytes": 503,
+   "sha256": "e3df6e06a0d18966599938d66f94607c401adbcad8fd17f4ed71df1369a058ac"
+  },
+  {
+   "file": "answers/raw.jsonl",
+   "bytes": 162746,
+   "sha256": "81f8462d9e5243c3ee22fa91c97f4b9cc5dd21216cdc05970191f2aae215c55f"
+  },
+  {
+   "file": "answers/raw_v2.jsonl",
+   "bytes": 160386,
+   "sha256": "a430f34978a2f76709aae2e635bb6c5fc44fac34147b47706af3058bb2e4a368"
+  },
+  {
+   "file": "answers/teacher2.jsonl",
+   "bytes": 58210,
+   "sha256": "ba2b7542415869473b7abf16c2d5dfdeeb2a5923e64983445ad364883f2cb45c"
+  },
+  {
+   "file": "data/dbs.json",
+   "bytes": 151450,
+   "sha256": "fa7b6c709366771a8c6232e1f072d5b277674cbcf3d7a00f296a9c4eda8700dc"
+  },
+  {
+   "file": "data/golden.jsonl",
+   "bytes": 486555,
+   "sha256": "6b9c1db49bbe2aecf4157ed27845fe024d1b4fcb540f93d81b6987b982b22864"
+  },
+  {
+   "file": "data/teacher_manifest.json",
+   "bytes": 1396,
+   "sha256": "b5b6250e0b4b017cc02bb538f814c0e3af84cd2ea5525eb64f893b45f3e8c9c1"
+  },
+  {
+   "file": "data/train.jsonl",
+   "bytes": 2241197,
+   "sha256": "30735534c9a45c5ef4444a2a1e1707387a83c8fad26e1136d05fd7371af27c57"
+  },
+  {
+   "file": "logs/training_log.txt",
+   "bytes": 137424,
+   "sha256": "c4a2a08294cc0412f2c08b700b58730c4fcd9439fd05de0e5387c8e3dae5e584"
+  },
+  {
+   "file": "results/leakage_check.txt",
+   "bytes": 489,
+   "sha256": "1d2f61d097b8393ddf60174849d5c23ea5dccb9db808de3af9f436d48e40f68b"
+  },
+  {
+   "file": "results/results.json",
+   "bytes": 4087,
+   "sha256": "424cd8b381ea50db4872e64d283d6ee4b54a406b0ab511d4daac6cfc1981ccb5"
+  },
+  {
+   "file": "results/results_v2.json",
+   "bytes": 4056,
+   "sha256": "df2e1ab486a43b4e12b09332b92583ebc7d54af7053ad5bb10efbeae67b9a0ea"
+  },
+  {
+   "file": "results/teacher_selfcheck.json",
+   "bytes": 378,
+   "sha256": "043a9e84cde417780349981330d66e05ec4543f40c32b3e14390922df79354d3"
+  },
+  {
+   "file": "results/verify_output.txt",
+   "bytes": 79,
+   "sha256": "6a868c4fc4f0c98cf50e38fe9bf2cab5476059e3562782e105dfcfea4fa308c2"
+  },
+  {
+   "file": "results/verify_output_v2.txt",
+   "bytes": 76,
+   "sha256": "91db098ab6393e97ba738a6bd336c9165b4e3ac68396e75d6222c4f364d7f410"
+  }
+ ]
+}
