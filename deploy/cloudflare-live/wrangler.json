@@ -31,5 +31,6 @@
       "pattern": "live.ratchet.dualmindlab.tech",
       "custom_domain": true
     }
-  ]
+  ],
+  "keep_vars": true
 }

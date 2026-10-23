@@ -23,7 +23,25 @@ npx wrangler secret put TAVILY_API_KEY --name ratchet-live      # optional: Scou
 Then deploy: Actions, `deploy-cloudflare-live`, Run workflow, type `deploy-live` (the workflow uses the same two repository
 secrets as the simulation demo, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`).
 
-## Spending is capped three ways (set in `src/index.ts`)
+## Change anything without a push or a deploy
+
+Every variable or secret on the Worker whose name starts with `RATCHET_` is passed to the gateway and **overrides the default in `src/index.ts`**. Edit them in the
+Cloudflare dashboard: Workers & Pages, `ratchet-live`, Settings, Variables and Secrets. The ones you will want:
+
+| To change | Set |
+|---|---|
+| The student's GPU endpoint (once one is hosted) | `RATCHET_STUDENT_BASE` = `https://<endpoint>/v1`, and the secret `RATCHET_STUDENT_KEY` |
+| A key's limits | `RATCHET_KEY_LIMITS`, for example `demo:daily_requests=300,daily_usd=1.5,rpm=10,concurrency=2` |
+| The whole gateway's daily spend | `RATCHET_DAILY_BUDGET_USD` and `RATCHET_BUDGET_MODE` |
+| Scout's spend and rate | `RATCHET_SCOUT_DAILY_BUDGET_USD`, `RATCHET_SCOUT_RUNS_PER_HOUR` |
+| The per-IP rate | `RATCHET_IP_RPM`, `RATCHET_MAX_INFLIGHT` |
+| Anything else in `docs/CONFIGURATION.md` | the variable of that name |
+
+`wrangler.json` has `keep_vars`, so a later deploy does not erase what you set in the dashboard. A change reaches the gateway **the next time its container starts**:
+it sleeps 30 minutes after the last request, or press Redeploy on the Worker to apply it at once. A value that the gateway rejects stops the container at startup
+with its config check; `python -m ratchet.config check` runs the same check on your laptop.
+
+## Spending is capped three ways (the defaults are in `src/index.ts`; override any of them as above)
 
 | Cap | Value |
 |---|---|

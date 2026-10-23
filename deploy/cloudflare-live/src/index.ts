@@ -1,9 +1,16 @@
 // The Ratchet demo in LIVE mode as a Cloudflare Container: the repo's image, answering through real Token Factory calls.
-// The keys are Worker secrets (never in this file, the repo or the image): NEBIUS_API_KEY for Token Factory, DEMO_API_KEY for the
-// gateway's own demo key, TAVILY_API_KEY (optional) for Scout's searches. Spending is capped three ways: the demo key's own limits,
-// the gateway's daily budget and a per-IP rate, all set below. On demand like the simulation demo: it sleeps 30 minutes after the
-// last request and keeps no state across a restart (its ledger is on the container's disk), so every restart also resets the day's counters:
-// the caps are therefore set low, and the Token Factory balance is the last limit.
+//
+// EVERYTHING TUNABLE IS A CLOUDFLARE SETTING, NOT CODE. Any variable or secret on this Worker whose name starts with RATCHET_ is passed to the gateway
+// as it is, and overrides the default below. So you can change, in the Cloudflare dashboard (Workers & Pages, ratchet-live, Settings, Variables and
+// Secrets) and without a push or a deploy:
+//   - the GPU endpoint of the student:      RATCHET_STUDENT_BASE (https://<endpoint>/v1)  and the secret  RATCHET_STUDENT_KEY
+//   - the limits:                           RATCHET_KEY_LIMITS, RATCHET_DAILY_BUDGET_USD, RATCHET_SCOUT_DAILY_BUDGET_USD, RATCHET_IP_RPM, ...
+//   - any other setting in docs/CONFIGURATION.md.
+// A change reaches the gateway the next time its container starts: the container sleeps 30 minutes after the last request, or press
+// "Redeploy" on the Worker to apply it at once. The three secrets below are never in this file, the repo or the image:
+//   NEBIUS_API_KEY (Token Factory), DEMO_API_KEY (the gateway's own demo key; any long random string), TAVILY_API_KEY (optional, Scout's searches).
+// Spending is capped three ways by default: the demo key's own limits, the gateway's daily budget and a per-IP rate. The container keeps its ledger
+// on its own disk, so a restart resets the day's counters: the defaults are low for that reason, and the Token Factory balance is the last limit.
 import { Container, getContainer } from "@cloudflare/containers";
 import { WAKING_HTML } from "./waking";
 
@@ -12,31 +19,46 @@ interface Env {
   NEBIUS_API_KEY: string;
   DEMO_API_KEY: string;
   TAVILY_API_KEY?: string;
+  [name: string]: unknown;
+}
+
+/** The defaults. Any RATCHET_* variable or secret on the Worker replaces the entry of the same name. */
+const DEFAULTS: Record<string, string> = {
+  RATCHET_MODE: "live",
+  RATCHET_KEY_LIMITS: "demo:daily_requests=300,daily_usd=1.5,rpm=10,concurrency=2",
+  RATCHET_DAILY_BUDGET_USD: "2.5",
+  RATCHET_BUDGET_MODE: "block",
+  RATCHET_SCOUT_DAILY_BUDGET_USD: "1.5",
+  RATCHET_SCOUT_RUNS_PER_HOUR: "6",
+  RATCHET_PUBLIC_DASHBOARD: "1",
+  RATCHET_TRUST_PROXY: "1",
+  RATCHET_IP_RPM: "30",
+  RATCHET_MAX_INFLIGHT: "6",
+  RATCHET_STATS_TTL_S: "2",
+};
+
+/** The container's environment: keys, then the defaults, then every RATCHET_* setting from the dashboard on top. */
+function containerEnv(env: Env): Record<string, string> {
+  const out: Record<string, string> = {
+    NEBIUS_API_KEY: String(env.NEBIUS_API_KEY ?? ""),
+    TAVILY_API_KEY: String(env.TAVILY_API_KEY ?? ""),
+    // One named key for the demo's own pages; the Worker adds it, a visitor never sees it.
+    RATCHET_API_KEYS: `demo:${env.DEMO_API_KEY}`,
+    ...DEFAULTS,
+  };
+  for (const [name, value] of Object.entries(env)) {
+    if (name.startsWith("RATCHET_") && typeof value === "string" && value.trim() !== "") out[name] = value.trim();
+  }
+  return out;
 }
 
 export class RatchetLive extends Container<Env> {
   defaultPort = 8000;
   sleepAfter = "30m";
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
-    this.envVars = {
-      RATCHET_MODE: "live",
-      NEBIUS_API_KEY: env.NEBIUS_API_KEY,
-      TAVILY_API_KEY: env.TAVILY_API_KEY ?? "",
-      // One named key for the demo's own pages; the Worker adds it, a visitor never sees it.
-      RATCHET_API_KEYS: `demo:${env.DEMO_API_KEY}`,
-      RATCHET_KEY_LIMITS: "demo:daily_requests=300,daily_usd=1.5,rpm=10,concurrency=2",
-      RATCHET_DAILY_BUDGET_USD: "2.5",
-      RATCHET_BUDGET_MODE: "block",
-      RATCHET_SCOUT_DAILY_BUDGET_USD: "1.5",
-      RATCHET_SCOUT_RUNS_PER_HOUR: "6",
-      RATCHET_PUBLIC_DASHBOARD: "1",
-      RATCHET_TRUST_PROXY: "1",
-      RATCHET_IP_RPM: "30",
-      RATCHET_MAX_INFLIGHT: "6",
-      RATCHET_STATS_TTL_S: "2",
-    };
+    this.envVars = containerEnv(env);
   }
 }
 
