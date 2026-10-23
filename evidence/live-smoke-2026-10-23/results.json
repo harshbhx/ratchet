@@ -1,0 +1,642 @@
+{
+  "generator": "ratchet.liverun/1",
+  "kind": "smoke",
+  "mode": "live",
+  "run_id": "20261023T211213Z",
+  "started": 1792789933.1226478,
+  "finished": 1792789941.264699,
+  "stopped": null,
+  "code": {
+    "git_sha": "f02e47280379107e0e091afc6d181616b04b76bd",
+    "code_digest": "sha256:125a1297723c2c6419a6236cfba5f97bf180031bd406339f582f697890c0a020",
+    "version": "0.4.0"
+  },
+  "models": {
+    "teacher": {
+      "listed_nvidia": [
+        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+        "nvidia/Nemotron-3-Ultra-550b-a55b",
+        "nvidia/Nemotron-3.5-Super-VL",
+        "nvidia/Nemotron-3_5-Lightning",
+        "nvidia/nemotron-3-super-120b-a12b"
+      ],
+      "teacher_model_listed": true,
+      "judge_model_listed": true,
+      "fallback_student_model_listed": true,
+      "error": null
+    },
+    "student": {
+      "listed": [],
+      "error": null,
+      "note": "no student endpoint: the hosted fallback model answers"
+    }
+  },
+  "client": "liverun",
+  "workload": {
+    "name": "tickets",
+    "seed": 7,
+    "label": "synthetic tickets, template labels",
+    "drift_round": null
+  },
+  "settings": {
+    "teacher_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+    "judge_model": "nvidia/nemotron-3-super-120b-a12b",
+    "fallback_student_model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+    "student_base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "student_endpoint": false,
+    "samples": 3,
+    "audit_rate": 0.05,
+    "canary_audit_rate": null,
+    "golden_fraction": 0.1,
+    "confidence_threshold": 0.8,
+    "teacher_reasoning_tokens": 300,
+    "gen": {
+      "teacher_max_tokens": 8192,
+      "student_max_tokens": 1024,
+      "reasoning_headroom": 0
+    },
+    "cost_policy": {
+      "model": "per_token",
+      "student": {
+        "usd_per_gpu_hour": 1.55,
+        "gpus": 1
+      },
+      "train": {
+        "usd_per_gpu_hour": 1.55,
+        "gpus": 1
+      },
+      "mock_endpoint_hours": 24.0,
+      "prices_verified": false
+    },
+    "prices_verified": false,
+    "teacher_usd_per_m_tokens": {
+      "input": 1.0,
+      "output": 3.0
+    },
+    "fallback_student_usd_per_m_tokens": {
+      "input": 0.06,
+      "output": 0.24
+    },
+    "cert_policy": {
+      "calibration": "point",
+      "target": 0.95,
+      "delta": 0.05
+    },
+    "release_policy": {
+      "min_precision": 0.95,
+      "min_coverage": 0.25,
+      "tolerance": 0.02,
+      "min_shadow": 100,
+      "min_audits": 20,
+      "live_floor": 0.92,
+      "min_task_test_n": 10,
+      "task_mode": "disable",
+      "min_judge_pass": 0.0,
+      "sequential": 0,
+      "alpha_rollback": 0.05,
+      "promote_evidence": 0,
+      "alpha_promote": 0.05,
+      "max_stage_audits": 400,
+      "alert_eprocess": 1,
+      "alpha_alert": 0.01,
+      "min_certified_precision": 0.0,
+      "paired_gate": 0,
+      "regression_alpha": 0.05,
+      "max_nfr": 1.0,
+      "drift_alarm": 100.0,
+      "drift_audit_boost": 1.0,
+      "drift_early_night": 0,
+      "teacher_noise_max": 0.05,
+      "alpha_teacher": 0.01,
+      "teacher_watch": 1
+    },
+    "redact_pii": true,
+    "gate_profile": {
+      "wanted": {
+        "RATCHET_SEQUENTIAL": "1",
+        "RATCHET_CANARY_AUDIT_RATE": "0.5"
+      },
+      "in_force": {
+        "RATCHET_SEQUENTIAL": "0",
+        "RATCHET_CANARY_AUDIT_RATE": "unset"
+      },
+      "matches": false,
+      "differs": [
+        "RATCHET_SEQUENTIAL",
+        "RATCHET_CANARY_AUDIT_RATE"
+      ],
+      "mode": "as-set"
+    },
+    "arms_teacher_key": "NEBIUS_API_KEY"
+  },
+  "plan": {
+    "inputs": {
+      "rounds": 1,
+      "requests": 20,
+      "share": 0.7,
+      "train_hours": 0.5,
+      "night_minutes": 45.0,
+      "control_share": 0.25,
+      "control_max_usd": 0.2,
+      "concurrency": 4,
+      "nights": false,
+      "scout_runs": 0,
+      "audit_rate": 0.05,
+      "canary_rate": null,
+      "min_audits": 20,
+      "min_shadow": 100,
+      "golden_fraction": 0.1,
+      "cert_target": 0.95,
+      "cert_delta": 0.05,
+      "prompt_tokens": 101,
+      "teacher_out_tokens": 360,
+      "teacher_call_usd": 0.001181,
+      "student_endpoint": false,
+      "endpoint_usd_per_hour": 1.55,
+      "train_usd_per_hour": 1.55,
+      "hosted_student_call_usd": 4.926e-05,
+      "has_live": false,
+      "prices_verified": false,
+      "max_usd": 1.0,
+      "measured": {},
+      "profile": {
+        "wanted": {
+          "RATCHET_SEQUENTIAL": "1",
+          "RATCHET_CANARY_AUDIT_RATE": "0.5"
+        },
+        "in_force": {
+          "RATCHET_SEQUENTIAL": "0",
+          "RATCHET_CANARY_AUDIT_RATE": "unset"
+        },
+        "matches": false,
+        "differs": [
+          "RATCHET_SEQUENTIAL",
+          "RATCHET_CANARY_AUDIT_RATE"
+        ]
+      }
+    },
+    "start_round": 1,
+    "spent_usd": 0.0,
+    "stages": {
+      "canary 10%": {
+        "configured": 7398,
+        "0.5": 737,
+        "1.0": 367
+      },
+      "canary 50%": {
+        "configured": 1477,
+        "0.5": 145,
+        "1.0": 71
+      },
+      "shadow": {
+        "configured": 153,
+        "0.5": 153,
+        "1.0": 153
+      }
+    },
+    "golden": {
+      "held_out_rows": 59,
+      "stored_answers_needed": 1686,
+      "round_one_requests": 20,
+      "enough": false
+    },
+    "nights": {
+      "min_new_examples": 50,
+      "first_round_training_examples": 18.0,
+      "enough": false
+    },
+    "rounds": [
+      {
+        "round": 1,
+        "teacher_calls": 20.0,
+        "teacher_usd": 0.024801,
+        "student_token_usd": 0.0,
+        "control_calls": 5.0,
+        "control_usd": 0.005905,
+        "training_usd": 0.0,
+        "endpoint_hours": 0.0,
+        "endpoint_usd": 0.0,
+        "round_usd": 0.030706,
+        "cumulative_usd": 0.030706
+      }
+    ],
+    "scout": {
+      "runs": 0,
+      "usd": 0.0,
+      "tavily_credits_max": 0
+    },
+    "total_usd": 0.030706,
+    "max_usd": 1.0,
+    "within": true
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "after_id": 1,
+      "upto_id": 21,
+      "base": 20,
+      "sent": 20,
+      "extension": 0,
+      "settled": true,
+      "done": true,
+      "night": null,
+      "errors": {},
+      "spend_today": null,
+      "t0": 1792789934.9540966,
+      "t1": 1792789941.2390144,
+      "started": 1792789934.9540968,
+      "other_clients": 0,
+      "unrecorded": 0,
+      "finished": 1792789941.2390149,
+      "duration_s": 6.2849180698394775,
+      "window": {
+        "after_id": 1,
+        "upto_id": 21
+      },
+      "ledger": {
+        "rows": 20,
+        "served_by": {
+          "teacher": 20
+        },
+        "routes": {
+          "cold_start": 20
+        },
+        "escalated": 0,
+        "stored": 20,
+        "optional_failed": 0,
+        "audits": {
+          "n": 0,
+          "agree": 0,
+          "precision": null,
+          "cp_lower": null,
+          "wilson": null
+        },
+        "by_version": {},
+        "label_p": [],
+        "cost": {
+          "cost_usd": 0.009778,
+          "baseline_cost_usd": 0.009778,
+          "teacher_usd": 0.009778,
+          "student_usd": 0.0,
+          "split_unknown": 0
+        },
+        "latency_ms": {
+          "by_route": {
+            "cold_start": {
+              "n": 20,
+              "p50": 916.1242999980459,
+              "p95": 1312.1068000000378
+            }
+          },
+          "by_served_by": {
+            "teacher": {
+              "n": 20,
+              "p50": 916.1242999980459,
+              "p95": 1312.1068000000378
+            }
+          }
+        },
+        "wall_ms": {
+          "by_route": {
+            "cold_start": {
+              "n": 20,
+              "p50": 917.5443999993149,
+              "p95": 1314.1431999974884
+            }
+          },
+          "by_served_by": {
+            "teacher": {
+              "n": 20,
+              "p50": 917.5443999993149,
+              "p95": 1314.1431999974884
+            }
+          }
+        }
+      },
+      "client": {
+        "requests": 20,
+        "ok": 20,
+        "errors": {},
+        "retried": 0,
+        "student_served": 0,
+        "student_share": 0.0,
+        "escalated": 0,
+        "degraded": 0,
+        "client_ms": {
+          "student": {
+            "n": 0,
+            "p50": null,
+            "p95": null
+          },
+          "teacher": {
+            "n": 20,
+            "p50": 928.2826999988174,
+            "p95": 1331.7422000000079
+          },
+          "control": {
+            "n": 6,
+            "p50": 892.2662999975728,
+            "p95": 1301.0508000006666
+          }
+        },
+        "accuracy": {
+          "label": "synthetic tickets, template labels",
+          "cascade": {
+            "n": 20,
+            "accurate": 15,
+            "invalid": 0,
+            "pct": 75.0,
+            "by_served_by": {
+              "teacher": {
+                "n": 20,
+                "accurate": 15,
+                "invalid": 0,
+                "pct": 75.0
+              }
+            },
+            "by_difficulty": {
+              "easy": {
+                "n": 11,
+                "accurate": 7,
+                "invalid": 0,
+                "pct": 63.63636363636363
+              },
+              "hard": {
+                "n": 9,
+                "accurate": 8,
+                "invalid": 0,
+                "pct": 88.88888888888889
+              }
+            },
+            "fields": {
+              "category": {
+                "n": 20,
+                "agree": 20,
+                "pct": 100.0
+              },
+              "priority": {
+                "n": 20,
+                "agree": 15,
+                "pct": 75.0
+              }
+            }
+          },
+          "control": {
+            "n": 6,
+            "accurate": 4,
+            "invalid": 0,
+            "pct": 66.66666666666667,
+            "by_difficulty": {
+              "easy": {
+                "n": 4,
+                "accurate": 2,
+                "invalid": 0,
+                "pct": 50.0
+              },
+              "hard": {
+                "n": 2,
+                "accurate": 2,
+                "invalid": 0,
+                "pct": 100.0
+              }
+            },
+            "fields": {
+              "category": {
+                "n": 6,
+                "agree": 6,
+                "pct": 100.0
+              },
+              "priority": {
+                "n": 6,
+                "agree": 4,
+                "pct": 66.66666666666667
+              }
+            }
+          }
+        },
+        "control": {
+          "status": "insufficient",
+          "selected": 6,
+          "called": 6,
+          "ok": 6,
+          "failed": {},
+          "skipped_cap": 0,
+          "pairs": {
+            "student": 0,
+            "teacher": 6
+          },
+          "ratio_student": {
+            "ratio": null,
+            "se": null,
+            "n": 0,
+            "status": "insufficient"
+          },
+          "ratio_teacher": {
+            "ratio": 1.0385015608740895,
+            "se": 0.05590625921067238,
+            "n": 6,
+            "status": "ok"
+          },
+          "cascade_usd": 0.009778,
+          "baseline_recorded_usd": 0.009778,
+          "baseline_measured_usd": null,
+          "baseline_measured_ci95": null,
+          "measured_reduction": null,
+          "recorded_reduction": 0.0,
+          "cost_model": "per_token",
+          "reasoning_tokens": {
+            "mean": 80.83333333333333,
+            "p50": 67.0,
+            "p95": 111.0,
+            "formula": 300
+          },
+          "cached_tokens": 0,
+          "agreement": {
+            "n": 0,
+            "agree": 0,
+            "pct": null,
+            "cp_lower": null
+          },
+          "spend_usd": 0.002994
+        }
+      },
+      "endpoint_hours": 0.0,
+      "endpoint_usd": 0.0
+    }
+  ],
+  "arms": {
+    "control": {
+      "status": "insufficient",
+      "selected": 6,
+      "called": 6,
+      "ok": 6,
+      "failed": {},
+      "skipped_cap": 0,
+      "pairs": {
+        "student": 0,
+        "teacher": 6
+      },
+      "ratio_student": {
+        "ratio": null,
+        "se": null,
+        "n": 0,
+        "status": "insufficient"
+      },
+      "ratio_teacher": {
+        "ratio": 1.0385015608740895,
+        "se": 0.05590625921067238,
+        "n": 6,
+        "status": "ok"
+      },
+      "cascade_usd": 0.009778,
+      "baseline_recorded_usd": 0.009778,
+      "baseline_measured_usd": null,
+      "baseline_measured_ci95": null,
+      "measured_reduction": null,
+      "recorded_reduction": 0.0,
+      "cost_model": "per_token",
+      "reasoning_tokens": {
+        "mean": 80.83333333333333,
+        "p50": 67.0,
+        "p95": 111.0,
+        "formula": 300
+      },
+      "cached_tokens": 0,
+      "agreement": {
+        "n": 0,
+        "agree": 0,
+        "pct": null,
+        "cp_lower": null
+      },
+      "spend_usd": 0.002994,
+      "meter": {
+        "spent_usd": 0.002994,
+        "calls": 6,
+        "max_call_usd": 0.000584,
+        "failures": {}
+      },
+      "label": "the serving teacher's call, sent straight to it"
+    },
+    "untuned": null,
+    "scout": null
+  },
+  "cost": {
+    "window": {
+      "t0": 1792789933.1240678,
+      "t1": 1792789941.2654836
+    },
+    "teacher_usd": 0.010261999999999999,
+    "student_token_usd": 0.0,
+    "split_unknown": 0,
+    "endpoint_hours": 0.0,
+    "endpoint_usd": 0.0,
+    "training_hours": 0.0,
+    "training_usd": 0.0,
+    "nights": [],
+    "control_usd": 0.002994,
+    "untuned_usd": 0.0,
+    "total_usd": 0.013255999999999999,
+    "rounds_teacher_usd": 0.009778,
+    "baseline_measured_run_usd": null,
+    "gpu_hours_reduction": null,
+    "cost_model": "gpu_hours: teacher calls + endpoint GPU-hours + training GPU-hours against the measured baseline",
+    "prices_verified": false,
+    "cost_report": {
+      "label": "whole gateway",
+      "days": 1,
+      "recommendation": "insufficient_data",
+      "explanation": "Not enough data. No student endpoint uptime is recorded in this window, so the GPU-hour cost is unknown. Record it with `python -m ratchet.cost endpoint up` and `down` (or POST /ratchet/cost/endpoint). Savings by GPU-hours paid: $0.00 (0%); per token: $0.00 (0%).",
+      "break_even_student_requests_per_gpu_hour": null,
+      "self_host_beats_hosted_above_requests_per_hour": null,
+      "prices_verified": false
+    },
+    "nebius_bill": {
+      "usd": null,
+      "note": null,
+      "entered": null
+    }
+  },
+  "kpis": {
+    "gateway": "absent",
+    "formulas": "PRD section 8.1 on the run's windows",
+    "per_round": [
+      {
+        "round": 1,
+        "sm1_cost_reduction": 0.0,
+        "sm1_baseline": "recorded",
+        "sm2_audited_precision": null,
+        "sm3_student_share": 0.0,
+        "escalation_share": 0.0
+      }
+    ],
+    "run_versions": [],
+    "run_versions_live": [],
+    "sm4_bad_deploys_reaching_live": 0,
+    "sm5": null
+  },
+  "repeat": null,
+  "values": {
+    "live.accuracy.cascade_easy_pct": 63.63636363636363,
+    "live.accuracy.cascade_hard_pct": 88.88888888888889,
+    "live.accuracy.ultra_easy_pct": 50.0,
+    "live.accuracy.ultra_hard_pct": 100.0,
+    "live.control.n": 6.0,
+    "live.control.reasoning_tokens_mean": 80.83333333333333,
+    "live.final.audits": 0.0,
+    "live.final.cost_reduction_recorded_pct": 0.0,
+    "live.final.student_share_pct": 0.0,
+    "live.final.teacher_p50_wall_ms": 917.5443999993149,
+    "live.final.ultra_p50_client_ms": 892.2662999975728,
+    "live.run.cost_reduction_recorded_pct": 0.0,
+    "live.run.requests": 20.0,
+    "live.run.total_usd": 0.013255999999999999,
+    "live.run.versions_live": 0.0,
+    "live.run.versions_trained": 0.0
+  },
+  "sources": {
+    "live.accuracy.cascade_easy_pct": "round 1: cascade answers matching the template labels on easy templates (invalid counts as wrong)",
+    "live.accuracy.cascade_hard_pct": "round 1: cascade answers matching the template labels on hard templates (invalid counts as wrong)",
+    "live.accuracy.ultra_easy_pct": "every round: control (teacher alone) answers matching the template labels on easy templates (invalid counts as wrong)",
+    "live.accuracy.ultra_hard_pct": "every round: control (teacher alone) answers matching the template labels on hard templates (invalid counts as wrong)",
+    "live.bill.nebius_usd": "not measured: enter the bill with report --bill-usd",
+    "live.control.n": "every round: control calls that answered",
+    "live.control.ratio_student": "not measured: fewer than 10 student-served requests paired with a control call",
+    "live.control.reasoning_tokens_mean": "every round: mean reasoning tokens per control call (the formula assumes 300)",
+    "live.final.audited_precision_lcb_pct": "not measured: no audit in the last round",
+    "live.final.audited_precision_pct": "not measured: no audit of a student-served answer in the last round",
+    "live.final.audits": "round 1: ledger audits",
+    "live.final.cost_reduction_measured_pct": "not measured: fewer than 10 student-served requests paired with a control call",
+    "live.final.cost_reduction_recorded_pct": "round 1: 1 - cascade cost / the gateway's recorded all-teacher baseline (token formula); per token",
+    "live.final.paired_agreement_pct": "not measured: no paired student-served request",
+    "live.final.student_p50_client_ms": "not measured: no student-served request in the last round",
+    "live.final.student_p50_wall_ms": "not measured: no student-route request",
+    "live.final.student_p95_wall_ms": "not measured: no student-route request",
+    "live.final.student_share_pct": "round 1: student-served share of answered requests",
+    "live.final.teacher_p50_wall_ms": "round 1: median wall_ms of teacher-served requests",
+    "live.final.ultra_p50_client_ms": "round 1: median client-observed time of the control arm's direct teacher calls, timed on the harness host (nearest rank)",
+    "live.run.break_even_per_gpu_hour": "not measured: the cost report has no break-even yet",
+    "live.run.cost_reduction_measured_pct": "not measured: fewer than 10 student-served requests paired with a control call",
+    "live.run.cost_reduction_recorded_pct": "every round: 1 - cascade cost / recorded all-teacher baseline; per token",
+    "live.run.endpoint_hours": "not measured: no student endpoint (hosted fallback)",
+    "live.run.gpu_hours_reduction_pct": "not measured: no measured baseline",
+    "live.run.requests": "every round: cascade requests answered (200)",
+    "live.run.total_usd": "teacher + endpoint + training + control + untuned arm (list prices unless verified)",
+    "live.run.versions_live": "versions the run's nights trained that the release gate promoted to live during the run (a live event)",
+    "live.run.versions_trained": "versions trained by the run's nights",
+    "live.scout.llm_calls": "not measured: no Scout phase (--scout-runs 0)",
+    "live.scout.savings_pct": "not measured: no Scout phase (--scout-runs 0)",
+    "live.scout.student_calls": "not measured: no Scout phase (--scout-runs 0)",
+    "live.tuned.coverage_pct": "not measured: the untuned arm did not run",
+    "live.untuned.coverage_pct": "not measured: the untuned arm did not run"
+  },
+  "caveats": [
+    "A single run: no repetition, so no between-run variance is reported.",
+    "Workload: synthetic tickets, template labels. Template labels are the template author's, not independent ground truth; they are independent of the teacher only in that the teacher never wrote them.",
+    "The hard templates are deliberately ambiguous: read their accuracy apart from the easy ones.",
+    "Latency was measured at concurrency 4 from the harness host; client times include the gateway and the network.",
+    "Whether Token Factory caches prompts is unverified; the control arm randomises call order and recorded 0 cached input tokens.",
+    "Every dollar figure uses list prices, unverified until the day-1 checks pass (RATCHET_PRICES_VERIFIED=0).",
+    "The measured all-teacher baseline is a ratio estimate from the control sample with a normal-approximation interval.",
+    "A smoke run: it never backs a number in the docs."
+  ]
+}

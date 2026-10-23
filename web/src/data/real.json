@@ -125,16 +125,49 @@
     },
     {
       "id": "gateway-live",
-      "claim": "The gateway in live mode on Nebius",
+      "claim": "The student and its training on Nebius GPUs (Serverless Jobs and Endpoints)",
       "status": "not-run",
-      "evidence": "Live mode (the student on a Nebius endpoint and the teacher on Token Factory, through the gateway) and its day-1 checks have not been run yet.",
+      "evidence": "The tuned student has not been served on a Nebius endpoint and no training job has run on Nebius GPUs: round 1 trained on a free Colab T4 and round 2 on a rented Modal T4. The scripts exist and are tested offline; running them needs GPU access this project did not have.",
       "check": {
         "label": "The day-1 checks, with a Token Factory key",
         "command": "make day1"
       },
-      "paths": ["scripts/day1_check.py", "docs/DAY1.md"],
-      "date": "2026-10-23",
+      "paths": [
+        "scripts/day1_check.py",
+        "docs/DAY1.md"
+      ],
+      "date": "2026-10-24",
       "facts": [],
+      "metrics": []
+    },
+    {
+      "id": "live-gateway-smoke",
+      "claim": "The gateway in live mode, answering through real Token Factory calls",
+      "status": "real",
+      "evidence": "On 23 Oct 2026 the gateway ran in live mode and served 20 real requests through its OpenAI-compatible API. Every one was answered by Nemotron 3 Ultra on Nebius Token Factory, for about $0.01. No trained student exists yet in live mode, so the student's share was 0%. The per-request records are published and the harness recomputes its client-side numbers from them.",
+      "check": {
+        "label": "Recompute the run's client-side numbers from its records",
+        "command": "python -m ratchet.liverun verify evidence/live-smoke-2026-10-23"
+      },
+      "paths": [
+        "ratchet/liverun.py",
+        "evidence/live-smoke-2026-10-23/results.json"
+      ],
+      "date": "2026-10-24",
+      "facts": [
+        {
+          "label": "Requests",
+          "value": "20, all answered by the teacher"
+        },
+        {
+          "label": "Spend",
+          "value": "about $0.01"
+        },
+        {
+          "label": "Teacher",
+          "value": "nvidia/Nemotron-3-Ultra-550b-a55b on Nebius Token Factory"
+        }
+      ],
       "metrics": []
     },
     {

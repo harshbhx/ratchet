@@ -1,0 +1,17 @@
+plan: 1 rounds x 20 requests, control share 0.25, nights off
+assumptions: student share 0.70, 101 input and 360 output tokens per teacher call ($0.00118 each, list prices, unverified), training 0.50 h a night, nights 45 min, 5 s per teacher-served and 1 s per student-served request at concurrency 4
+audit rates: RATCHET_AUDIT_RATE 0.05; RATCHET_CANARY_AUDIT_RATE unset (= RATCHET_AUDIT_RATE)
+gate profile: RATCHET_SEQUENTIAL=1 (in force: 0), RATCHET_CANARY_AUDIT_RATE=0.5 (in force: unset): NOT in force: run refuses until it is (or --gate-profile as-set)
+release stages: requests for 20 audits (shadow: 100 would-serve answers) with 90% probability
+  stage          configured   canary 0.5   canary 1.0
+  canary 10%          7,398          737          367
+  canary 50%          1,477          145           71
+  shadow                153          153          153
+  note: RATCHET_CANARY_AUDIT_RATE is unset, so the 10% canary stage alone needs about 370 times the round size; set RATCHET_CANARY_AUDIT_RATE=0.5 on the gateway
+golden: a certifiable first version needs about 1,686 stored teacher answers in round 1 (59 held-out served rows at 0.95 / 0.05, coverage 0.70, golden fraction 0.1); round 1 sends 20: short
+  round  teacher calls    teacher    control   training   endpoint      total
+      1             20      $0.02      $0.01      $0.00      $0.00      $0.03
+Tavily credits: up to 3 x 0 = 0; Scout $0.00
+verdict: planned total $0.03 within --max-usd $1.00
+round 1  sent 20/20  student 0.0%  spend $0.01 of $1.00
+results: evidence\live\20261023T211213Z\results.json
