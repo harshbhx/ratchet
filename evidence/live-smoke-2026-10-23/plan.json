@@ -1,0 +1,100 @@
+{
+  "inputs": {
+    "rounds": 1,
+    "requests": 20,
+    "share": 0.7,
+    "train_hours": 0.5,
+    "night_minutes": 45.0,
+    "control_share": 0.25,
+    "control_max_usd": 0.2,
+    "concurrency": 4,
+    "nights": false,
+    "scout_runs": 0,
+    "audit_rate": 0.05,
+    "canary_rate": null,
+    "min_audits": 20,
+    "min_shadow": 100,
+    "golden_fraction": 0.1,
+    "cert_target": 0.95,
+    "cert_delta": 0.05,
+    "prompt_tokens": 101,
+    "teacher_out_tokens": 360,
+    "teacher_call_usd": 0.001181,
+    "student_endpoint": false,
+    "endpoint_usd_per_hour": 1.55,
+    "train_usd_per_hour": 1.55,
+    "hosted_student_call_usd": 4.926e-05,
+    "has_live": false,
+    "prices_verified": false,
+    "max_usd": 1.0,
+    "measured": {},
+    "profile": {
+      "wanted": {
+        "RATCHET_SEQUENTIAL": "1",
+        "RATCHET_CANARY_AUDIT_RATE": "0.5"
+      },
+      "in_force": {
+        "RATCHET_SEQUENTIAL": "0",
+        "RATCHET_CANARY_AUDIT_RATE": "unset"
+      },
+      "matches": false,
+      "differs": [
+        "RATCHET_SEQUENTIAL",
+        "RATCHET_CANARY_AUDIT_RATE"
+      ]
+    }
+  },
+  "start_round": 1,
+  "spent_usd": 0.0,
+  "stages": {
+    "canary 10%": {
+      "configured": 7398,
+      "0.5": 737,
+      "1.0": 367
+    },
+    "canary 50%": {
+      "configured": 1477,
+      "0.5": 145,
+      "1.0": 71
+    },
+    "shadow": {
+      "configured": 153,
+      "0.5": 153,
+      "1.0": 153
+    }
+  },
+  "golden": {
+    "held_out_rows": 59,
+    "stored_answers_needed": 1686,
+    "round_one_requests": 20,
+    "enough": false
+  },
+  "nights": {
+    "min_new_examples": 50,
+    "first_round_training_examples": 18.0,
+    "enough": false
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "teacher_calls": 20.0,
+      "teacher_usd": 0.024801,
+      "student_token_usd": 0.0,
+      "control_calls": 5.0,
+      "control_usd": 0.005905,
+      "training_usd": 0.0,
+      "endpoint_hours": 0.0,
+      "endpoint_usd": 0.0,
+      "round_usd": 0.030706,
+      "cumulative_usd": 0.030706
+    }
+  ],
+  "scout": {
+    "runs": 0,
+    "usd": 0.0,
+    "tavily_credits_max": 0
+  },
+  "total_usd": 0.030706,
+  "max_usd": 1.0,
+  "within": true
+}
