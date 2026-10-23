@@ -72,6 +72,29 @@ Prompt v2 adds "Select only the columns the question asks for." to the end of ev
 
 Training: {extra.training.rows} teacher-labelled rows, {extra.training.steps} steps, {extra.training.minutes} minutes on a {extra.training.gpu}; teacher labels cost ${extra.teacher_labels_cost_usd}. The files behind every number, and the command that recomputes them, are in `evidence/text2sql-round1` in the repository.
 
+## What the second run showed
+
+Round 2 trained a second adapter on {extra.round2.training.rows} rows (the first run's 821 plus {extra.round2.training.new_rows} new teacher-labelled rows) and answered the same {A.n}-question exam, scored the same way.
+
+<table>
+  <thead><tr><th>Who answered</th><th>Right</th><th>95% range</th></tr></thead>
+  <tbody>
+    <tr><td>Base model</td><td>{A.base_v1.agree} of {A.n} = <strong>{pct(A.base_v1)}</strong></td><td>{rng(A.base_v1)}</td></tr>
+    <tr><td>Teacher answering the exam prompt</td><td>{A.teacher.agree} of {A.n} = <strong>{pct(A.teacher)}</strong></td><td>{rng(A.teacher)}</td></tr>
+    <tr><td>Adapter, round 1 (821 rows)</td><td>{A.adapter_v1.agree} of {A.n} = <strong>{pct(A.adapter_v1)}</strong></td><td>{rng(A.adapter_v1)}</td></tr>
+    <tr><td>Adapter, round 2 ({extra.round2.training.rows} rows)</td><td>{extra.round2.adapter.agree} of {A.n} = <strong>{pct(extra.round2.adapter)}</strong></td><td>{rng(extra.round2.adapter)}</td></tr>
+  </tbody>
+</table>
+
+- **Better than round 1, but the exam cannot call it settled.** Row by row, {extra.round2.flips_vs_round1.wrong_to_right} questions went from wrong to right and {extra.round2.flips_vs_round1.right_to_wrong} from right to wrong. The two ranges overlap, and a test on those changes gives p = {extra.round2.flips_vs_round1.two_sided_p}, so some of the gain could be chance.
+- **The gain is on familiar industries.** On industries seen in training the adapter went from {extra.round2.round1_by_domain.seen[0]} to {extra.round2.by_domain.seen[0]} of {extra.round2.by_domain.seen[1]}. On the five industries it never saw it stayed at {extra.round2.by_domain.unseen[0]} of {extra.round2.by_domain.unseen[1]}.
+- **By difficulty:** simple {extra.round2.by_difficulty.simple[0]} of {extra.round2.by_difficulty.simple[1]}, join {extra.round2.by_difficulty.join[0]} of {extra.round2.by_difficulty.join[1]}, aggregate {extra.round2.by_difficulty.aggregate[0]} of {extra.round2.by_difficulty.aggregate[1]}, hard {extra.round2.by_difficulty.hard[0]} of {extra.round2.by_difficulty.hard[1]}.
+- **The point estimate is above the teacher's, but we do not claim it beats the teacher.** The exam has one stored query per question, written together with the question, and the two ranges only just separate.
+- **The confidence gate did not improve.** At the 95% precision target {extra.round2.gate.answered} of {extra.round2.gate.of} test questions pass, so the cost saved at that coverage is {extra.round2.gate.saved_pct}%. The adapter still does not replace the teacher.
+- **No exam question leaked into training:** {extra.round2.leakage.exam_prompts_in_training} of {extra.round2.leakage.of} for prompts, questions, stored queries and table-name sets. Six generated rows that shared a question or a query with the exam were removed before training.
+
+Training: {extra.round2.training.steps} steps over {extra.round2.training.epochs} epochs in {extra.round2.training.hours} hours on a {extra.round2.training.gpu}, loss {extra.round2.training.loss_first} to {extra.round2.training.loss_last}; the extra teacher labels cost ${extra.round2.teacher_labels_cost_usd}. Neither run used Nebius GPUs. The files and the recompute command are in `evidence/text2sql-round2` in the repository.
+
 ## How it really works
 
 <Steps>

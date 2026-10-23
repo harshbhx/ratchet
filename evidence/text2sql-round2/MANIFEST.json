@@ -1,0 +1,63 @@
+{
+ "made": "2026-10-23",
+ "adapter_model.safetensors_sha256": "38f99d441e0527b75fdf8fd9d10acbf4473dcf70db7febe3ad73fccd631a6aa7",
+ "adapter_weights_note": "40.5 MB, not in git; the hash identifies the exact weights the answers came from",
+ "exam": "the same 172 rows as round 1 (evidence/text2sql-round1/data/golden.jsonl)",
+ "files": [
+  {
+   "file": "README.md",
+   "bytes": 3996,
+   "sha256": "4378b38c87c830e2bbb64ff090073b542e33cf827d21a17953b38f468ebd6013"
+  },
+  {
+   "file": "adapter/adapter_config.json",
+   "bytes": 1175,
+   "sha256": "b9b69af5f84c5601816098250bcba53bc25d03f8b88b0f9d09fed7065f76298c"
+  },
+  {
+   "file": "adapter/run_info.json",
+   "bytes": 504,
+   "sha256": "603cdfca559c3c94fce38b84ac7c35074709f368afe3dc2da2c9fc0b86d42bf8"
+  },
+  {
+   "file": "answers/raw_r2.jsonl",
+   "bytes": 164791,
+   "sha256": "7d98dececf5dd269243da82c4fab01f1f12cc404468c5129a31e320a948cd84f"
+  },
+  {
+   "file": "data/merge_and_check.py",
+   "bytes": 2901,
+   "sha256": "08ad59eb5c6941f6704b7fdc165dfeb422076a944b83b3537015f3cf0617e266"
+  },
+  {
+   "file": "data/teacher_manifest_round2.json",
+   "bytes": 1368,
+   "sha256": "05cae598b02c452abc8d71296b1e6de3d061bd34abeb5c68f2e8011568b7f57c"
+  },
+  {
+   "file": "data/train_round2_new.jsonl.gz",
+   "bytes": 511941,
+   "sha256": "bfbb3d4db1b3441552dd38b1eadfea25c737236f85c3d738773a100c344d7ea4"
+  },
+  {
+   "file": "logs/final_status.json",
+   "bytes": 7158,
+   "sha256": "950ddeb4b0f50d237a8523ed78895ba0ae356a60567a7964de307ea21dcfbd5b"
+  },
+  {
+   "file": "results/leakage_check_round2.txt",
+   "bytes": 407,
+   "sha256": "3394505884cbd884b977118816b6ce00891f42a39a14bddf91ef862f86554f8e"
+  },
+  {
+   "file": "results/results_r2.json",
+   "bytes": 3910,
+   "sha256": "7be09ed788ba8947675767df51c8577e21dec12a5bf7d968129242aaa07f2f8e"
+  },
+  {
+   "file": "results/verify_output_r2.txt",
+   "bytes": 76,
+   "sha256": "91db098ab6393e97ba738a6bd336c9165b4e3ac68396e75d6222c4f364d7f410"
+  }
+ ]
+}

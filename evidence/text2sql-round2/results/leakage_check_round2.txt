@@ -1,0 +1,11 @@
+{
+ "train rows round 1": 821,
+ "train rows round 2": 3507,
+ "duplicates dropped": 0,
+ "rows dropped for sharing an exam question or answer": 6,
+ "merged": 4322,
+ "merged rows whose full prompt is an exam prompt": 0,
+ "merged rows asking an exam question": 0,
+ "merged rows whose answer is an exam answer word for word": 0,
+ "merged rows whose exact set of table names is an exam database's": 0
+}
