@@ -55,9 +55,28 @@ function containerEnv(env: Env): Record<string, string> {
   return out;
 }
 
+/** TEMPORARY (see the entrypoint below): an obscure path, so the startup log is not served to anyone who does not know it. */
+const BOOT_PATH = "/__boot/7f3a9c1e5b2d48e6a0c4d9b1";
+const BOOT_SERVER = [
+  "import http.server",
+  "class H(http.server.BaseHTTPRequestHandler):",
+  "    def do_GET(s):",
+  `        ok = s.path == "${BOOT_PATH}"`,
+  '        b = open("/tmp/boot.log", "rb").read()[-6000:] if ok else b"gateway failed to start"',
+  "        s.send_response(200 if ok else 503)",
+  '        s.send_header("content-type", "text/plain")',
+  "        s.end_headers()",
+  "        s.wfile.write(b)",
+  'http.server.HTTPServer(("0.0.0.0", 8000), H).serve_forever()',
+].join("\n");
+
 export class RatchetLive extends Container<Env> {
   defaultPort = 8000;
   sleepAfter = "30m";
+
+  // TEMPORARY diagnostic: if the gateway exits at start, a tiny server keeps port 8000 open and serves the gateway's own startup log
+  // at BOOT_PATH (and a 503 everywhere else), so the reason can be read instead of guessed. Remove once the gateway starts.
+  entrypoint = ["sh", "-c", `uvicorn ratchet.gateway:app --host 0.0.0.0 --port 8000 >/tmp/boot.log 2>&1; echo "exit=$?" >>/tmp/boot.log; python -c '${BOOT_SERVER}'`];
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
