@@ -126,6 +126,12 @@ export default {
     const url = new URL(request.url);
     const live = getContainer(env.RATCHET_LIVE);
 
+    // TEMPORARY (with the boot-log stand-in): stop the container so the next request starts a fresh one with the current settings.
+    if (url.pathname === `/__restart${BOOT_PATH.slice("/__boot".length)}`) {
+      await live.destroy();
+      return Response.json({ restarted: true }, { headers: { "cache-control": "no-store" } });
+    }
+
     if (url.pathname === "/__ready") {
       const answer = live.fetch(new Request(new URL("/healthz", url.origin)));
       ctx.waitUntil(answer.then(() => undefined).catch(() => undefined));
