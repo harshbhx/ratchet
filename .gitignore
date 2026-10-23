@@ -26,3 +26,6 @@ evidence/live/[0-9]*T*Z/
 *.db-wal
 *.db-shm
 out/
+
+# Cloudflare local emulator state
+.wrangler/

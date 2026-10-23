@@ -1,0 +1,57 @@
+# Publishes a PREVIEW of the story site and the docs for any branch except main, to Cloudflare Pages preview addresses
+# (https://<branch>.ratchet-aec.pages.dev and https://<branch>.ratchet-docs.pages.dev). It never touches production:
+# production is only ever published by deploy-pages-production, a manual workflow that deploys main.
+# It uses the same two repository secrets as the demo deploys (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID); the token needs the
+# "Cloudflare Pages: Edit" permission. Secrets are not available to forks, so a fork's push publishes nothing.
+name: preview-pages
+
+on:
+  push:
+    branches-ignore: [main]
+    paths:
+      - "web/**"
+      - "ratchet/web/dist/**"
+      - "docs-site/**"
+      - ".github/workflows/preview-pages.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-pages-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Publish the story site preview (the committed build, which CI checks against a fresh build)
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        run: npx --yes wrangler@4.129.0 pages deploy ratchet/web/dist --project-name ratchet --branch "${{ github.ref_name }}" --commit-dirty=true
+
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Build the docs
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        working-directory: docs-site
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Publish the docs preview
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        run: npx --yes wrangler@4.129.0 pages deploy docs-site/dist --project-name ratchet-docs --branch "${{ github.ref_name }}" --commit-dirty=true

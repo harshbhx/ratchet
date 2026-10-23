@@ -1,0 +1,49 @@
+# Publishes the story site and the docs to PRODUCTION (ratchet.dualmindlab.tech and ratchet-docs.pages.dev) from main.
+# MANUAL ONLY: it never runs on a push, a merge or a schedule. Run it from the Actions tab (Run workflow) and type "deploy-pages".
+# It uses the same repository secrets as the other deploys; the token needs the "Cloudflare Pages: Edit" permission.
+name: deploy-pages-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy-pages" to publish main to ratchet.dualmindlab.tech and ratchet-docs.pages.dev'
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    if: ${{ inputs.confirm == 'deploy-pages' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Publish the story site
+        run: npx --yes wrangler@4.129.0 pages deploy ratchet/web/dist --project-name ratchet --branch main --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  docs:
+    if: ${{ inputs.confirm == 'deploy-pages' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Build the docs
+        working-directory: docs-site
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Publish the docs
+        run: npx --yes wrangler@4.129.0 pages deploy docs-site/dist --project-name ratchet-docs --branch main --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
