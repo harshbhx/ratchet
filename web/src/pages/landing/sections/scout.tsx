@@ -158,11 +158,11 @@ export function Scout() {
         <div className="mt-12">
           <Pipeline />
         </div>
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-center lg:gap-10">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-stretch lg:gap-8">
           <Reveal>
             <RunStrip />
           </Reveal>
-          <Reveal delay={0.1} className="lg:pl-4">
+          <Reveal delay={0.1} className="flex flex-col justify-between gap-6 rounded-[22px] border border-line bg-surface-2/50 p-5 sm:p-6">
             <p className="text-pretty text-[17px] leading-relaxed text-ink-2">
               Ask Scout a question and watch every call arrive, each tagged with who answered it and what it cost against Ultra alone.
             </p>

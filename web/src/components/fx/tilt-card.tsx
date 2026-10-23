@@ -34,7 +34,7 @@ export function TiltCard({ children, className, max = 6, scale = 1.012 }: { chil
   };
   return (
     <div ref={ref} onPointerMove={onMove} onPointerLeave={reset} className={cn("[perspective:1100px]", className)}>
-      <motion.div style={{ rotateX: srx, rotateY: sry, scale: ssc, transformStyle: "preserve-3d" }} className="will-change-transform">
+      <motion.div style={{ rotateX: srx, rotateY: sry, scale: ssc, transformStyle: "preserve-3d" }} className="h-full will-change-transform">
         {children}
       </motion.div>
     </div>

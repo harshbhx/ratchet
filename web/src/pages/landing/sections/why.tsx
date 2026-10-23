@@ -146,6 +146,7 @@ export function Why() {
             invariant that states it.
           </Lead>
         </Reveal>
+        {/* Rows are 4+2, 2+4, then two halves, so no row ends with a gap. */}
         <BentoGrid className="mt-12">
           {WHY.map((w, i) => {
             const Icon = ICON[w.id];
@@ -157,7 +158,7 @@ export function Why() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: "0px 0px -8% 0px" }}
                 transition={{ duration: 0.6, ease: EASE, delay: (i % 3) * 0.08 }}
-                className={cn("min-w-0", bentoSpan(w.wide))}
+                className={cn("min-w-0", i >= WHY.length - 2 ? "md:col-span-3" : bentoSpan(w.wide))}
               >
                 <SpotlightCard tone={TONE[w.id]} className="h-full">
                   <div className="flex flex-1 flex-col p-5 sm:p-6">
