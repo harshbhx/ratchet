@@ -32,5 +32,8 @@
       "custom_domain": true
     }
   ],
-  "keep_vars": true
+  "keep_vars": true,
+  "observability": {
+    "enabled": true
+  }
 }

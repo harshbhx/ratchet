@@ -11,7 +11,7 @@
 //   NEBIUS_API_KEY (Token Factory), DEMO_API_KEY (the gateway's own demo key; any long random string), TAVILY_API_KEY (optional, Scout's searches).
 // Spending is capped three ways by default: the demo key's own limits, the gateway's daily budget and a per-IP rate. The container keeps its ledger
 // on its own disk, so a restart resets the day's counters: the defaults are low for that reason, and the Token Factory balance is the last limit.
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container, getContainer, type StopParams } from "@cloudflare/containers";
 import { WAKING_HTML } from "./waking";
 
 interface Env {
@@ -62,6 +62,20 @@ export class RatchetLive extends Container<Env> {
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);
     this.envVars = containerEnv(env);
+  }
+
+  // What the container did, in the Worker's logs (no keys, no request text): an exit code of 1 is a crash at start, 137 a kill.
+  override onStart(): void {
+    console.log(JSON.stringify({ event: "container_start" }));
+  }
+
+  override onStop(params: StopParams): void {
+    console.log(JSON.stringify({ event: "container_stop", exitCode: params.exitCode, reason: params.reason }));
+  }
+
+  override onError(error: unknown): unknown {
+    console.log(JSON.stringify({ event: "container_error", error: String(error).slice(0, 300) }));
+    throw error;
   }
 }
 
