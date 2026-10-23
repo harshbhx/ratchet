@@ -1,50 +1,11 @@
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Check, CircleSlash, Copy, FlaskConical, Loader2, Lock, Play, ServerOff, ShieldAlert, Unplug } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, CircleSlash, Copy, FlaskConical, Loader2, Lock, Play, ServerOff, ShieldAlert, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { RealBadge } from "@/components/ui/real-badge";
-import type { RealStatus } from "@/lib/real-model";
 import { cn } from "@/lib/utils";
 import { useJudges, type DemoAction } from "./data";
-import { GROUP_LABEL, JUDGE_CHAPTERS } from "./chapters";
 import { unavailable, type Fetched } from "./judges-model";
 
-/** One chapter: an anchored section whose head (title, lead, status and its "Try it" strip) is what the tour lights. */
-export function Chapter({
-  id,
-  title,
-  lead,
-  status,
-  tryIt,
-  children,
-  aside,
-}: {
-  id: string;
-  title: ReactNode;
-  lead?: ReactNode;
-  status?: RealStatus | null;
-  tryIt?: ReactNode;
-  children?: ReactNode;
-  aside?: ReactNode;
-}) {
-  const ch = JUDGE_CHAPTERS.find((c) => c.id === id);
-  return (
-    <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-44 border-t border-line py-12 first:border-t-0 first:pt-0 sm:py-14 lg:scroll-mt-32">
-      <div id={`${id}-head`} className="max-w-[72ch]">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          {ch && <p className="font-mono text-[12px] text-muted">{GROUP_LABEL[ch.group]}</p>}
-          {status && <RealBadge status={status} />}
-          {aside}
-        </div>
-        <h2 id={`${id}-title`} tabIndex={-1} className="mt-2.5 outline-nonetext-balance text-[26px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[30px]">
-          {title}
-        </h2>
-        {lead && <div className="mt-3 space-y-3 text-pretty text-[16px] leading-relaxed text-ink-2">{lead}</div>}
-        {tryIt}
-      </div>
-      {children && <div className="mt-7 min-w-0">{children}</div>}
-    </section>
-  );
-}
+export { Chapter, ChapterProvider, useChapters } from "./chapter";
 
 const ACTION_LABEL: Record<DemoAction, string> = {
   day: "Run a simulated day",
@@ -219,5 +180,21 @@ export function Meter({ value, tone = "ink", label }: { value: number; tone?: "i
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-line" role="img" aria-label={label}>
       <div className={cn("h-full rounded-full", bg)} style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }} />
     </div>
+  );
+}
+
+/** A native disclosure for detail a reader may skip (a table, more charts): keyboard and screen readers work without script. */
+export function Disclosure({ title, hint, children, className }: { title: ReactNode; hint?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <details className={cn("group/d rounded-2xl border border-line bg-surface shadow-card open:border-line-strong", className)}>
+      <summary className="flex cursor-pointer list-none items-center gap-3 rounded-2xl px-4 py-3.5 text-left transition-colors hover:bg-surface-2/60 sm:px-5 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14.5px] font-semibold text-ink">{title}</span>
+          {hint && <span className="mt-0.5 block text-[13px] text-muted">{hint}</span>}
+        </span>
+        <ChevronDown className="size-4 shrink-0 text-muted transition-transform duration-300 group-open/d:rotate-180 motion-reduce:transition-none" aria-hidden />
+      </summary>
+      <div className="border-t border-line p-4 sm:p-5">{children}</div>
+    </details>
   );
 }
