@@ -6,7 +6,8 @@ The mock-mode demo (the repo's Dockerfile, no keys, nothing secret), run as a Cl
 - **Manual deploys only.** The workflow `.github/workflows/deploy-cloudflare-demo.yml` runs only from the Actions tab
   (Run workflow, type `deploy`). Pushes and merges never deploy it, and nothing rebuilds it on a schedule.
 - **On demand.** Nothing calls it in the background (no cron, no keep-alive). The first visitor starts it; the mock warm-up (two
-  simulated days) takes about a minute, so that first page load is slow. It sleeps again 20 minutes after the last request, so it costs
+  simulated days) takes about a minute, so that first page load is slow. A visitor never sees a blank page: after 2 seconds without an answer the Worker shows a
+  "Waking up the demo server" page with a seconds counter, which checks `/__ready` every 2 seconds and opens the demo by itself. It sleeps again 20 minutes after the last request, so it costs
   nothing while nobody is looking. Instance type `standard-2` (1 vCPU, 6 GiB), at most one instance.
 - **State** is in memory and resets when the container restarts or is redeployed.
 
