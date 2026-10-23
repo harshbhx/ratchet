@@ -1,0 +1,154 @@
+{
+  "updated": "2026-10-23",
+  "links": {
+    "repo": "https://github.com/harshbhx/ratchet",
+    "docs": "https://ratchet-docs.pages.dev/",
+    "demo": "https://demo.ratchet.dualmindlab.tech",
+    "video": null
+  },
+  "entries": [
+    {
+      "id": "teacher-labels",
+      "claim": "A real teacher wrote the text-to-SQL training data",
+      "status": "real",
+      "evidence": "Nemotron 3 Ultra on Nebius Token Factory wrote the databases, questions and SQL. Every SQL query ran in a sandbox and was kept only if it ran and returned rows. 821 training rows; 172 exam rows from held-out database domains.",
+      "check": {
+        "label": "Read the generator: a query is kept only if it runs and returns rows",
+        "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/gen_sql_data.py"
+      },
+      "paths": ["scripts/text2sql/gen_sql_data.py", "scripts/text2sql/README.md"],
+      "date": "2026-10-22",
+      "facts": [
+        { "label": "Training rows", "value": "821" },
+        { "label": "Exam rows (held-out domains)", "value": "172" },
+        { "label": "Teacher spend", "value": "$2.87 of a $5 cap" }
+      ],
+      "metrics": []
+    },
+    {
+      "id": "adapter-training",
+      "claim": "A LoRA adapter was trained on that data",
+      "status": "real",
+      "evidence": "Trained on a free Google Colab T4 GPU, not on Nebius GPUs: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 206 steps over 2 epochs in 66 minutes. Training loss went from 0.334 to 0.075; a training loss is not a quality result.",
+      "check": {
+        "label": "Read the training script that ran on the T4",
+        "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/train_t4.py"
+      },
+      "paths": ["scripts/text2sql/train_t4.py"],
+      "date": "2026-10-22",
+      "facts": [
+        { "label": "Hardware", "value": "Free Colab T4" },
+        { "label": "Adapter", "value": "4-bit LoRA, r=16" },
+        { "label": "Steps", "value": "206 over 2 epochs in 66 minutes" },
+        { "label": "Training loss", "value": "0.334 to 0.075" }
+      ],
+      "metrics": []
+    },
+    {
+      "id": "exam-result",
+      "claim": "How well the adapter does on the held-out exam",
+      "status": "pending",
+      "evidence": "Being measured now: the base model and the adapter answer the 172 held-out exam rows, and every number is computed from those answers by one script.",
+      "check": {
+        "label": "Recompute the numbers from the raw answers, once they are published",
+        "command": "python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json"
+      },
+      "paths": ["scripts/measure_adapter.py"],
+      "date": "2026-10-23",
+      "facts": [],
+      "metrics": [
+        { "id": "accuracy", "label": "Accuracy", "value": null },
+        { "id": "coverage", "label": "Coverage (answered by the adapter)", "value": null },
+        { "id": "precision", "label": "Precision when answered", "value": null },
+        { "id": "cost", "label": "Cost per 1,000 requests", "value": null }
+      ]
+    },
+    {
+      "id": "hf-publish",
+      "claim": "The adapter and its dataset on Hugging Face",
+      "status": "pending",
+      "evidence": "To be published under the harshbhx account: the adapter as harshbhx/ratchet-nemotron-nano-4b-text2sql and the synthetic data as harshbhx/ratchet-text2sql-synthetic. Not published yet.",
+      "check": {
+        "label": "The account the two repositories will appear under",
+        "href": "https://huggingface.co/harshbhx"
+      },
+      "paths": ["scripts/text2sql/README.md"],
+      "date": "2026-10-23",
+      "facts": [
+        { "label": "Model repo", "value": "harshbhx/ratchet-nemotron-nano-4b-text2sql" },
+        { "label": "Dataset repo", "value": "harshbhx/ratchet-text2sql-synthetic" }
+      ],
+      "metrics": []
+    },
+    {
+      "id": "gateway-live",
+      "claim": "The gateway in live mode on Nebius",
+      "status": "not-run",
+      "evidence": "Live mode (the student on a Nebius endpoint and the teacher on Token Factory, through the gateway) and its day-1 checks have not been run yet.",
+      "check": {
+        "label": "The day-1 checks, with a Token Factory key",
+        "command": "make day1"
+      },
+      "paths": ["scripts/day1_check.py", "docs/DAY1.md"],
+      "date": "2026-10-23",
+      "facts": [],
+      "metrics": []
+    },
+    {
+      "id": "scout-tavily",
+      "claim": "Scout with real Tavily searches",
+      "status": "not-run",
+      "evidence": "Scout runs on a mock research world in the demo. Recorded live runs with real Tavily searches are planned.",
+      "check": {
+        "label": "How Scout is built",
+        "href": "https://github.com/harshbhx/ratchet/blob/main/docs/SCOUT.md"
+      },
+      "paths": ["docs/SCOUT.md", "ratchet/scout/credits.py"],
+      "date": "2026-10-23",
+      "facts": [],
+      "metrics": []
+    },
+    {
+      "id": "demo-numbers",
+      "claim": "The demo and the dashboard numbers",
+      "status": "simulation",
+      "evidence": "The demo at demo.ratchet.dualmindlab.tech runs in mock mode on a Cloudflare Container: mock models answer every request, and the story page replays the reference run. None of these numbers measures a real model.",
+      "check": {
+        "label": "Run the reference simulation yourself",
+        "command": "python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3"
+      },
+      "paths": ["sim/simulate.py"],
+      "date": "2026-10-23",
+      "facts": [],
+      "metrics": []
+    },
+    {
+      "id": "machinery",
+      "claim": "The cascade, release gate, signed BOM, certificates and receipts",
+      "status": "real",
+      "evidence": "Real as code and tests (more than 1,900 automated tests, no network and no GPU), shown here in simulation.",
+      "check": {
+        "label": "Run the test suite",
+        "command": "make test"
+      },
+      "paths": ["ratchet/router.py", "ratchet/release.py", "ratchet/bom.py", "ratchet/certificate.py", "ratchet/receipts.py"],
+      "date": "2026-10-23",
+      "facts": [],
+      "metrics": []
+    },
+    {
+      "id": "license-rule",
+      "claim": "Only open teachers: the license-clean rule",
+      "status": "real",
+      "evidence": "Enforced in code: every teacher passes the license registry, and closed models are refused as teachers.",
+      "check": {
+        "label": "Run the license tests",
+        "command": "python -m pytest -q tests/test_licensing.py"
+      },
+      "paths": ["ratchet/licenses.py", "tests/test_licensing.py"],
+      "date": "2026-10-23",
+      "facts": [],
+      "metrics": []
+    }
+  ]
+}

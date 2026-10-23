@@ -1,12 +1,14 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { Layout } from "@/components/layout/layout";
+import { TourHost } from "@/components/tour/tour";
 import { ButtonLink } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 
 const Landing = lazy(() => import("@/pages/landing"));
 const Scout = lazy(() => import("@/pages/scout"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
+const Judges = lazy(() => import("@/pages/judges"));
 
 function Loading() {
   return <div className="min-h-[60vh]" aria-busy="true" />;
@@ -31,10 +33,12 @@ export default function App() {
             <Route index element={<Landing />} />
             <Route path="scout" element={<Scout />} />
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="judges" element={<Judges />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
       </Suspense>
+      <TourHost />
     </BrowserRouter>
   );
 }

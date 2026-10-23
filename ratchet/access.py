@@ -38,6 +38,7 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/"): PUBLIC,
     ("GET", "/dashboard"): PUBLIC,
     ("GET", "/scout"): PUBLIC,
+    ("GET", "/judges"): PUBLIC,
     ("GET", "/lite"): PUBLIC,
     ("GET", "/lite/dashboard"): PUBLIC,
     ("GET", "/lite/scout"): PUBLIC,

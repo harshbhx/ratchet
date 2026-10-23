@@ -16,6 +16,7 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 | GET | `/` | both | [public](#access-levels) | Story page: the React app (`ratchet/web/dist/index.html`); falls back to `ratchet/web/landing.html` if the build is missing |
 | GET | `/dashboard` | both | [public](#access-levels) | Dashboard (React app; fallback `ratchet/dashboard.html`) |
 | GET | `/scout` | both | [public](#access-levels) | Scout demo page (React app; fallback `ratchet/web/scout.html`) |
+| GET | `/judges` | both | [public](#access-levels) | The judges' console: what is real, the gateway's own read endpoints chapter by chapter, and a guided tour (React app; a placeholder page without the build) |
 | GET | `/assets/*` | both | [public](#access-levels) | Built JavaScript, CSS and fonts of the React app |
 | GET | `/lite`, `/lite/scout`, `/lite/dashboard` | both | [public](#access-levels) | The hand-written pages (no build step, no JavaScript framework) |
 | GET | `/favicon.svg` | both | [public](#access-levels) | The site icon, from the React build (404 without it) |

@@ -73,6 +73,28 @@
         ]
       }
     },
+    "/judges": {
+      "get": {
+        "summary": "Judges Page",
+        "description": "The judges' console (React app only; without the build, the placeholder page with links to the others).",
+        "operationId": "judges_page_judges_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
     "/lite": {
       "get": {
         "summary": "Lite Landing",

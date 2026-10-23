@@ -1413,6 +1413,12 @@ def scout_page() -> HTMLResponse:
     return _spa_or(SCOUT_PAGE, "Scout")
 
 
+@app.get("/judges", response_class=HTMLResponse)
+def judges_page() -> HTMLResponse:
+    """The judges' console (React app only; without the build, the placeholder page with links to the others)."""
+    return _spa_or(HERE / "web" / "judges.html", "Ratchet for judges")
+
+
 # The original single-file pages stay available (no JavaScript build, no fonts).
 @app.get("/lite", response_class=HTMLResponse)
 def lite_landing() -> str:
