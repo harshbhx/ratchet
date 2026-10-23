@@ -18,7 +18,10 @@ MODE = os.environ.get("MODE", "pipeline-test")
 EPOCHS = float(os.environ.get("EPOCHS", "2"))
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "0"))
 MAX_SEQ = int(os.environ.get("MAX_SEQ", "768"))
-OUT = "/content/adapter"
+SMOKE = os.environ.get("SMOKE") == "1"  # 3 steps on 16 rows, save, answer 3 held-out rows: proves every step before the long run
+OUT = "/content/adapter_smoke" if SMOKE else "/content/adapter"
+CKPT = "/content/ckpt_smoke" if SMOKE else "/content/ckpt"
+RAW = "/content/raw_smoke.jsonl" if SMOKE else "/content/raw.jsonl"
 T0 = time.time()
 
 
@@ -69,6 +72,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 rows = [json.loads(line) for line in open("/content/train.jsonl")]
+if SMOKE:
+    rows, MAX_STEPS = rows[:16], 3
+    open("/content/golden_smoke.jsonl", "w").write("".join(open("/content/golden.jsonl").readlines()[:3]))
 log(f"{MODE}: {len(rows)} training rows on {torch.cuda.get_device_name(0)}")
 tok = AutoTokenizer.from_pretrained(BASE, trust_remote_code=True)
 r0 = rows[0]
@@ -99,17 +105,23 @@ model = get_peft_model(
         target_modules=os.environ.get("TARGETS", "q_proj,k_proj,v_proj,o_proj,up_proj,down_proj").split(","),
     ),
 )
+for _n, _p in model.named_parameters():  # fp16 mixed precision cannot unscale bf16 grads: weights fp16, trainable adapters fp32
+    if _p.dtype == torch.bfloat16:
+        _p.data = _p.data.to(torch.float16)
+    if _p.requires_grad:
+        _p.data = _p.data.float()
+log("trainable dtypes: " + ", ".join(sorted({str(p.dtype) for p in model.parameters() if p.requires_grad})))
 args = SFTConfig(
-    output_dir="/content/ckpt",
+    output_dir=CKPT,
     num_train_epochs=EPOCHS,
     max_steps=MAX_STEPS or -1,
     per_device_train_batch_size=2,
     gradient_accumulation_steps=4,
     learning_rate=2e-4,
     max_length=MAX_SEQ,
-    logging_steps=5,
+    logging_steps=1 if SMOKE else 5,
     save_strategy="steps",
-    save_steps=50,
+    save_steps=1 if SMOKE else 50,
     save_total_limit=2,
     fp16=True,
     bf16=False,
@@ -118,12 +130,32 @@ args = SFTConfig(
     report_to=[],
 )
 tr = SFTTrainer(model=model, processing_class=tok, train_dataset=Dataset.from_list(rows), args=args)
+for _p in (
+    tr.model.parameters()
+):  # the trainer re-casts the adapters to the model's bf16: put the trainable ones back to fp32 for fp16 AMP
+    if _p.requires_grad and _p.dtype != torch.float32:
+        _p.data = _p.data.float()
+log("trainable dtypes after the trainer: " + ", ".join(sorted({str(p.dtype) for p in tr.model.parameters() if p.requires_grad})))
 log("training")
-res = tr.train()
+_ck = glob.glob(CKPT + "/checkpoint-*")
+if _ck and not SMOKE:
+    log(f"resuming from {sorted(_ck)[-1]}")
+try:
+    res = tr.train(resume_from_checkpoint=bool(_ck) and not SMOKE)
+except Exception as _e:  # say which dtypes were involved, so the next fix rests on evidence
+    from collections import Counter
+
+    c = Counter(
+        (str(p.dtype), str(p.grad.dtype) if p.grad is not None else "none") for p in tr.model.parameters() if p.requires_grad
+    )
+    log(f"TRAIN FAILED {type(_e).__name__}: {str(_e)[:200]}")
+    log(f"trainable (param dtype, grad dtype): {dict(c)}")
+    log("all param dtypes: " + str(dict(Counter(str(p.dtype) for p in tr.model.parameters()))))
+    raise
 losses = [h["loss"] for h in tr.state.log_history if "loss" in h]
+assert losses and all(x == x and x < 1e4 for x in losses), f"bad losses {losses}"
 log(
-    f"trained: loss {losses[:1]} -> {losses[-1:]} in {res.metrics.get('train_runtime', 0):.0f}s, "
-    f"peak {torch.cuda.max_memory_allocated() / 2**30:.1f} GB"
+    f"trained: loss {losses[:1]} -> {losses[-1:]} in {res.metrics.get('train_runtime', 0):.0f}s, peak {torch.cuda.max_memory_allocated() / 2**30:.1f} GB"  # noqa: E501
 )
 os.makedirs(OUT, exist_ok=True)
 model.save_pretrained(OUT)
@@ -153,14 +185,26 @@ json.dump(
 log("adapter saved")
 
 # ---- 3. Measure: raw answers on the held-out rows, base and base+adapter
+if (
+    os.environ.get("DEFER_GEN") == "1"
+):  # answering in a child process while this one still holds GPU memory ran out of memory on a T4
+    if SMOKE:
+        print("SMOKE_TRAIN_OK", flush=True)
+    else:
+        shutil.make_archive("/content/package", "zip", OUT)
+        print("PACKAGE_READY", flush=True)
+    sys.exit(0)
 del tr, model
 gc.collect()
 torch.cuda.empty_cache()
 rc = sh(
-    "python /content/measure_adapter.py generate --golden /content/golden.jsonl "
-    f"--adapter {OUT} --out /content/raw.jsonl --max-new {os.environ.get('MAX_NEW', '160')}"
+    f"python /content/measure_adapter.py generate --golden {'/content/golden_smoke.jsonl' if SMOKE else '/content/golden.jsonl'} --adapter {OUT} --out {RAW} --max-new {64 if SMOKE else os.environ.get('MAX_NEW', '160')}"  # noqa: E501
 )
 log(f"measure generate rc={rc}")
+if SMOKE:
+    ok = rc == 0 and os.path.getsize(RAW) > 0
+    print("SMOKE_OK" if ok else "SMOKE_FAILED", flush=True)
+    sys.exit(0 if ok else 4)
 shutil.make_archive("/content/package", "zip", OUT)
 print("PACKAGE_READY", flush=True)
 sys.exit(0 if rc == 0 else 4)

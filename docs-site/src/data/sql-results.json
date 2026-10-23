@@ -1,3 +1,192 @@
 {
-  "status": "pending"
+  "mode": "sql",
+  "breakdown_answering_every_row": {
+    "difficulty=aggregate": {
+      "base": {
+        "n": 18,
+        "agree": 2,
+        "rate": 0.1111,
+        "wilson95": [
+          0.031,
+          0.328
+        ]
+      },
+      "adapter": {
+        "n": 18,
+        "agree": 9,
+        "rate": 0.5,
+        "wilson95": [
+          0.2903,
+          0.7097
+        ]
+      }
+    },
+    "difficulty=hard": {
+      "base": {
+        "n": 16,
+        "agree": 1,
+        "rate": 0.0625,
+        "wilson95": [
+          0.0111,
+          0.2833
+        ]
+      },
+      "adapter": {
+        "n": 16,
+        "agree": 3,
+        "rate": 0.1875,
+        "wilson95": [
+          0.0659,
+          0.4301
+        ]
+      }
+    },
+    "difficulty=join": {
+      "base": {
+        "n": 25,
+        "agree": 7,
+        "rate": 0.28,
+        "wilson95": [
+          0.1428,
+          0.4758
+        ]
+      },
+      "adapter": {
+        "n": 25,
+        "agree": 6,
+        "rate": 0.24,
+        "wilson95": [
+          0.115,
+          0.4343
+        ]
+      }
+    },
+    "difficulty=simple": {
+      "base": {
+        "n": 27,
+        "agree": 3,
+        "rate": 0.1111,
+        "wilson95": [
+          0.0385,
+          0.2806
+        ]
+      },
+      "adapter": {
+        "n": 27,
+        "agree": 10,
+        "rate": 0.3704,
+        "wilson95": [
+          0.2153,
+          0.5577
+        ]
+      }
+    },
+    "domain=unseen": {
+      "base": {
+        "n": 28,
+        "agree": 3,
+        "rate": 0.1071,
+        "wilson95": [
+          0.0371,
+          0.272
+        ]
+      },
+      "adapter": {
+        "n": 28,
+        "agree": 10,
+        "rate": 0.3571,
+        "wilson95": [
+          0.2071,
+          0.5417
+        ]
+      }
+    },
+    "domain=seen": {
+      "base": {
+        "n": 58,
+        "agree": 10,
+        "rate": 0.1724,
+        "wilson95": [
+          0.0964,
+          0.2891
+        ]
+      },
+      "adapter": {
+        "n": 58,
+        "agree": 18,
+        "rate": 0.3103,
+        "wilson95": [
+          0.2062,
+          0.438
+        ]
+      }
+    }
+  },
+  "rows": {
+    "total": 172,
+    "calibration": 86,
+    "measured": 86
+  },
+  "base_model_agreement": {
+    "n": 86,
+    "agree": 13,
+    "rate": 0.1512,
+    "wilson95": [
+      0.0905,
+      0.2416
+    ]
+  },
+  "adapter_agreement": {
+    "n": 86,
+    "agree": 28,
+    "rate": 0.3256,
+    "wilson95": [
+      0.2359,
+      0.4302
+    ]
+  },
+  "confidence_threshold": 0.9856,
+  "target_precision": 0.95,
+  "coverage": {
+    "answered": 4,
+    "of": 86,
+    "rate": 0.0465
+  },
+  "precision_when_answered": {
+    "n": 4,
+    "agree": 2,
+    "rate": 0.5,
+    "wilson95": [
+      0.15,
+      0.85
+    ]
+  },
+  "cost_usd_on_measured_rows": {
+    "all_teacher": 0.064381,
+    "with_student": 0.062133,
+    "saved_pct": 3.49,
+    "prices_per_million_tokens": {
+      "teacher_in": 1.0,
+      "teacher_out": 3.0,
+      "student": 0.06
+    }
+  },
+  "label": "estimate: token counts are measured, prices are inputs (see prices_per_million_tokens)",
+  "provenance": {
+    "raw_sha256": "81f8462d9e5243c3ee22fa91c97f4b9cc5dd21216cdc05970191f2aae215c55f",
+    "golden_sha256": "6b9c1db49bbe2aecf4157ed27845fe024d1b4fcb540f93d81b6987b982b22864",
+    "dbs_sha256": "fa7b6c709366771a8c6232e1f072d5b277674cbcf3d7a00f296a9c4eda8700dc",
+    "adapter_sha256": "a883bcf6bbf4152efb5a874520b8fa1a09d9bead55c172507725dc255f18236a",
+    "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "python": "3.13.5",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "gpu": "Tesla T4 (free Colab)",
+    "run_note": "text-to-SQL, 172 held-out rows from unseen databases; trained on a free Colab T4, not on Nebius GPUs; answers produced by fast_generate.py (cached greedy decoder)",
+    "args": {
+      "target_precision": 0.95,
+      "teacher_in_per_m": 1.0,
+      "teacher_out_per_m": 3.0,
+      "student_per_m": 0.06
+    }
+  }
 }

@@ -193,15 +193,12 @@ QUESTION_SYSTEM = "You write business questions and exact SQLite answers. Follow
 def question_prompt(script: str, n: int) -> str:
     return (
         f"Here is a SQLite database (schema and data):\n\n{script}\n\n"
-        f"Write {n} different questions a business user might ask about this data, "
-        "each with the SQLite SELECT query that answers it.\n"
-        "Mix: 3 'simple' (one table: filter, sort or top-N), 3 'join' (two or more tables), "
-        "2 'aggregate' (GROUP BY, COUNT, SUM, AVG), "
+        f"Write {n} different questions a business user might ask about this data, each with the SQLite SELECT query that answers it.\n"  # noqa: E501
+        "Mix: 3 'simple' (one table: filter, sort or top-N), 3 'join' (two or more tables), 2 'aggregate' (GROUP BY, COUNT, SUM, AVG), "  # noqa: E501
         "2 'hard' (subquery, HAVING, three tables, CASE, or a date calculation).\n"
         "Rules: phrase each question the way a person would, without copying table or column names; every query must be one "
         "read-only SELECT, valid SQLite, answerable from the data above, and return between 1 and 20 rows.\n"
-        "Output format, for each item exactly:\n### <number>\nDIFFICULTY: <simple|join|aggregate|hard>\n"
-        "QUESTION: <question>\nSQL: <query>\n"
+        "Output format, for each item exactly:\n### <number>\nDIFFICULTY: <simple|join|aggregate|hard>\nQUESTION: <question>\nSQL: <query>\n"  # noqa: E501
     )
 
 
