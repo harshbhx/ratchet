@@ -38,6 +38,14 @@ export const MORE_NAV: readonly NavItem[] = [{ label: "GitHub", href: REPO_URL a
 const docs = (path: string) => `${DOCS_URL}${path}` as `https://${string}`;
 const repo = (path: string) => `${REPO_URL}${path}` as `https://${string}`;
 
+const HF = "https://huggingface.co/harshbhx";
+/** Where each real artifact lives; the footer and the dashboard's results panel link the same addresses. */
+export const HF_MODEL = `${HF}/ratchet-nemotron-nano-4b-text2sql` as `https://${string}`;
+export const HF_TRAIN = "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic" as `https://${string}`;
+export const HF_EXAMS = "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams" as `https://${string}`;
+/** The maintainer's answer on the license question for the docs site's adapted components. */
+export const REACT_BITS_PERMISSION = "https://github.com/DavidHDev/react-bits/discussions/1111" as `https://${string}`;
+
 /** The footer's link columns. Every external URL was checked to resolve when it was added. */
 export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[] }[] = [
   {
@@ -47,7 +55,16 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
       { label: "Scout", href: "/scout", kind: "route" },
       { label: "Dashboard", href: "/dashboard", kind: "route" },
       { label: "For judges", href: "/judges", kind: "route" },
-      { label: "Live demo", href: DEMO_URL as `https://${string}`, kind: "external" },
+      { label: "Simulation demo", href: DEMO_URL as `https://${string}`, kind: "external" },
+    ],
+  },
+  {
+    title: "Real results",
+    items: [
+      { label: "Exam scores", href: "/judges", kind: "route" },
+      { label: "Trained adapter", href: HF_MODEL, kind: "external" },
+      { label: "Training data", href: HF_TRAIN, kind: "external" },
+      { label: "Exams and answers", href: HF_EXAMS, kind: "external" },
     ],
   },
   {
