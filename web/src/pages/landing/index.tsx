@@ -12,6 +12,7 @@ import { Lifecycle } from "./sections/lifecycle";
 import { Learn } from "./sections/learn";
 import { LiveStrip } from "./sections/live-strip";
 import { OpenSource } from "./sections/open-source";
+import { RealRun } from "./sections/real-run";
 import { Rent } from "./sections/rent";
 import { Safety } from "./sections/safety";
 import { Scout } from "./sections/scout";
@@ -41,6 +42,7 @@ export default function LandingPage() {
         <Lifecycle />
         <Safety />
         <Learn />
+        <RealRun />
         <HonestBill stats={stats} />
         <Checked stats={stats} />
         <Scout />
