@@ -15,3 +15,12 @@ web/*.tsbuildinfo
 
 # Live-run harness: run directories stay local; report --publish copies results to evidence/live/
 evidence/live/[0-9]*T*Z/
+
+# Local tool state and databases
+.mcp.json
+.claude/
+.env.*
+!.env.example
+*.db-wal
+*.db-shm
+out/

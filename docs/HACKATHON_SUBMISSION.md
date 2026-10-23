@@ -2,11 +2,24 @@
 
 Ready to paste. Fill each `[LIVE NUMBER]` from `evidence/live/results.json` using the placeholder map in `docs/LIVE_RESULTS.md`, and put its `<!-- claim:live.* -->` anchor right after the number. Keep simulation results labelled as simulation.
 
+## Status today (23 Oct 2026): what runs and what is only scripted
+
+Keep this split in the submission text. Do not describe the scripted parts as having run.
+
+| Part | State |
+|---|---|
+| Teacher labels from Nemotron 3 Ultra on Token Factory | Ran (22 to 23 Oct). 821 training rows and a 172-row exam for text-to-SQL, about $3 |
+| Adapter training | Ran on a free Colab T4, not on Nebius GPUs |
+| Exam result | Measured: adapter 33.1% against 12.8% for the base model on 172 held-out rows (`evidence/text2sql-round1/`) |
+| Demo, dashboard and the cost figures on them | Simulation (mock models), on a Cloudflare Container |
+| Gateway in live mode, Nebius Serverless Jobs, Endpoints, Object Storage, Tavily | Written and tested offline, not run on Nebius yet (no GPU budget) |
+
+
 - **Deadline:** Oct 30, 2026, 10:00 AM PDT (10:30 PM IST). Target: submit Oct 29.
 - **Track:** Best Apps and Agents ("Useful applications and agents powered by Nemotron models through Token Factory").
 - **Also eligible for:** Best Use of Tavily (Scout's searcher uses the Tavily Search API). It needs a working runtime call to Tavily, so only live mode counts.
 - **Judging:** a pass/fail Stage One check against the submission requirements, then four equally weighted criteria: Technological Implementation, Design, Potential Impact, Quality of the Idea. Judging runs Dec 1–15, 2026.
-- **Demo URLs:** [DEMO URL] (live: Token Factory and Tavily; the URL for Stage One) and [SIM URL] (simulation, mock models: run days, break a deploy, watch the rollback), both hosted on one Nebius VM (see [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Pages on each: `/` landing, `/scout` Scout demo, `/dashboard` dashboard.
+- **Demo URLs:** [DEMO URL] (live: Token Factory and Tavily; the URL for Stage One, not online yet) and the simulation demo at https://demo.ratchet.dualmindlab.tech (mock models: run days, break a deploy, watch the rollback; a Cloudflare Container, not a Nebius VM). Pages on each: `/` landing, `/scout` Scout demo, `/dashboard` dashboard.
 
 ### Prizes and field (as reported, Oct 2026)
 
@@ -111,10 +124,10 @@ The Scout page shows each call as it happens, with a badge for who answered it (
 | Judge | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | Reference-based scoring of free-text answers, JSON mode |
 | Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Keeps the app running when our endpoint is stopped |
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA | The customer owns the adapter; the base stays under the NVIDIA Nemotron Open Model License |
-| Training | **Nebius Serverless Jobs** (L40S) | Nightly LoRA fine-tune |
-| Serving | **Nebius Serverless Endpoints** (vLLM) | Student inference with runtime LoRA loading |
-| Storage | **Nebius Object Storage** | Datasets and adapters |
-| Demo hosting | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | Runs the gateway, the pages and Scout for judges |
+| Training | **Nebius Serverless Jobs** (L40S), scripted, not run yet; the round 1 adapter was trained on a free Colab T4 | Nightly LoRA fine-tune |
+| Serving | **Nebius Serverless Endpoints** (vLLM), scripted, not run yet | Student inference with runtime LoRA loading |
+| Storage | **Nebius Object Storage**, scripted, not run yet | Datasets and adapters |
+| Demo hosting | Cloudflare Container (simulation demo today); a Nebius CPU VM (`2vcpu-8gb`) is scripted, not used | Runs the gateway, the pages and Scout for judges |
 | Web search | **Tavily Search API** (not NVIDIA or Nebius) | Scout's searcher agent (`search_depth: basic`, 1 credit per query) |
 
 Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and fallback; three Nemotron sizes on the same endpoint made routing by difficulty trivial.
