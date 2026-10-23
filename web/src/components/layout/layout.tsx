@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
+import { useStats } from "@/lib/hooks";
 
 const TITLES: Record<string, string> = {
   "/": "Ratchet: own the model your traffic trains",
@@ -73,6 +74,8 @@ function scrollToHash(hash: string): () => void {
 
 export function Layout() {
   const { pathname, hash } = useLocation();
+  // One stats call per page load for the header's surface switch and the footer's status line, not live numbers.
+  const { stats, error } = useStats(0);
   useEffect(() => {
     document.title = TITLES[pathname] ?? "Ratchet";
     if (!hash) {
@@ -83,11 +86,11 @@ export function Layout() {
   }, [pathname, hash]);
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <SiteHeader />
+      <SiteHeader stats={stats} />
       <main id="main" className="flex-1">
         <Outlet />
       </main>
-      <SiteFooter />
+      <SiteFooter stats={stats} error={error} />
     </div>
   );
 }
