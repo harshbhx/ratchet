@@ -27,6 +27,7 @@ export const PAGE_NAV: readonly NavItem[] = [
   { label: "Story", href: "/", kind: "route" },
   { label: "Scout", href: "/scout", kind: "route" },
   { label: "Dashboard", href: "/dashboard", kind: "route" },
+  { label: "For judges", href: "/judges", kind: "route" },
   { label: "Docs", href: DOCS_URL as `https://${string}`, kind: "external" },
 ];
 
@@ -44,6 +45,7 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
       { label: "Story", href: "/", kind: "route" },
       { label: "Scout", href: "/scout", kind: "route" },
       { label: "Dashboard", href: "/dashboard", kind: "route" },
+      { label: "For judges", href: "/judges", kind: "route" },
       { label: "Live demo", href: DEMO_URL as `https://${string}`, kind: "external" },
     ],
   },
