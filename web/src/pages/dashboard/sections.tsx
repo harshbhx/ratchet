@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 
 /** The dashboard's sections, in page order. The jump bar and each heading read this list, so a section is added in one place. */
 export const SECTIONS = [
-  { id: "measured", label: "Measured" },
   { id: "overview", label: "Overview" },
   { id: "money", label: "Money" },
   { id: "versions", label: "Versions and tasks" },
   { id: "reliability", label: "Reliability" },
   { id: "trust", label: "Trust" },
   { id: "activity", label: "Activity" },
+  { id: "measured", label: "Measured" },
 ] as const;
 
 export type SectionId = (typeof SECTIONS)[number]["id"];

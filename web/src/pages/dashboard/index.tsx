@@ -438,14 +438,8 @@ export default function DashboardPage() {
                 />
               )}
 
-              <div className={cn("space-y-4 transition-opacity duration-300", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
+              <div className={cn("space-y-4 transition-opacity duration-500 ease-out", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
                 {cold && <ColdStart mock={mock} onRun={() => void runDay()} busy={busy != null} />}
-
-                <Group id="measured" title="Measured" hint="Real models, not the simulation">
-                  <Reveal>
-                    <MeasuredResults />
-                  </Reveal>
-                </Group>
 
                 <Group id="overview" title="Overview" hint={mock ? "Simulation" : "Live"}>
                   <Reveal>
@@ -519,6 +513,12 @@ export default function DashboardPage() {
                       />
                       <Provenance bom={stats.bill_of_materials} />
                     </div>
+                  </Reveal>
+                </Group>
+
+                <Group id="measured" title="Measured" hint="Real models, not the simulation">
+                  <Reveal>
+                    <MeasuredResults />
                   </Reveal>
                 </Group>
 
