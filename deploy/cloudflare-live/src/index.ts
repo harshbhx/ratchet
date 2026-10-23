@@ -37,13 +37,16 @@ const DEFAULTS: Record<string, string> = {
   RATCHET_STATS_TTL_S: "2",
 };
 
+/** A secret as a clean string: a value piped in from PowerShell carries a trailing line break, which would break an environment variable or a header. */
+const clean = (v: unknown): string => String(v ?? "").trim();
+
 /** The container's environment: keys, then the defaults, then every RATCHET_* setting from the dashboard on top. */
 function containerEnv(env: Env): Record<string, string> {
   const out: Record<string, string> = {
-    NEBIUS_API_KEY: String(env.NEBIUS_API_KEY ?? ""),
-    TAVILY_API_KEY: String(env.TAVILY_API_KEY ?? ""),
+    NEBIUS_API_KEY: clean(env.NEBIUS_API_KEY),
+    TAVILY_API_KEY: clean(env.TAVILY_API_KEY),
     // One named key for the demo's own pages; the Worker adds it, a visitor never sees it.
-    RATCHET_API_KEYS: `demo:${env.DEMO_API_KEY}`,
+    RATCHET_API_KEYS: `demo:${clean(env.DEMO_API_KEY)}`,
     ...DEFAULTS,
   };
   for (const [name, value] of Object.entries(env)) {
@@ -76,7 +79,7 @@ function withDemoKey(request: Request, env: Env): Request {
   const ip = request.headers.get("cf-connecting-ip");
   if (ip) headers.set("x-forwarded-for", ip);
   if (url.pathname.startsWith("/v1/") && !headers.get("authorization")) {
-    headers.set("authorization", `Bearer ${env.DEMO_API_KEY}`);
+    headers.set("authorization", `Bearer ${clean(env.DEMO_API_KEY)}`);
   }
   return new Request(request, { headers });
 }
