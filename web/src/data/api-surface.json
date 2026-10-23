@@ -1,0 +1,61 @@
+{
+  "levels": [
+    { "level": "public", "who": "Anyone" },
+    { "level": "api", "who": "An API key when keys are set; anyone on the open demo" },
+    { "level": "dashboard", "who": "An admin or dashboard key in live mode; anyone in mock mode" },
+    { "level": "bom", "who": "As dashboard, or anyone when bills of materials are made public" },
+    { "level": "metrics", "who": "As dashboard, or a metrics scraper's token" },
+    { "level": "admin", "who": "An admin key; anyone in mock mode without admin keys" },
+    { "level": "mock", "who": "Anyone, in mock mode only" }
+  ],
+  "groups": [
+    {
+      "name": "OpenAI-compatible",
+      "routes": [
+        { "method": "POST", "path": "/v1/chat/completions", "level": "api", "what": "The cascade: student first, teacher when it is unsure; streaming too" },
+        { "method": "POST", "path": "/v1/completions", "level": "api", "what": "Legacy completions, through the same cascade" },
+        { "method": "POST", "path": "/v1/responses", "level": "api", "what": "The stateless part of the Responses API, through the same cascade" },
+        { "method": "POST", "path": "/v1/embeddings", "level": "api", "what": "Passed through to an embeddings model; nothing stored" },
+        { "method": "GET", "path": "/v1/models", "level": "api", "what": "The model ids a client may send, one per task" },
+        { "method": "POST", "path": "/openai/deployments/{deployment}/chat/completions", "level": "api", "what": "Azure OpenAI's URL for the same cascade" }
+      ]
+    },
+    {
+      "name": "Your own requests and data",
+      "routes": [
+        { "method": "GET", "path": "/v1/ratchet/requests/{request_id}", "level": "api", "what": "One of your requests: metadata, never text" },
+        { "method": "POST", "path": "/v1/ratchet/feedback", "level": "api", "what": "A verdict on an answer, optionally with a correction" },
+        { "method": "POST", "path": "/v1/ratchet/no-train", "level": "api", "what": "Never store an end user's requests as training data" },
+        { "method": "DELETE", "path": "/v1/ratchet/examples", "level": "api", "what": "Erase an end user's stored examples" }
+      ]
+    },
+    {
+      "name": "Evidence and reports",
+      "routes": [
+        { "method": "GET", "path": "/ratchet/stats", "level": "dashboard", "what": "Everything the dashboard shows" },
+        { "method": "GET", "path": "/ratchet/requests/{request_id}", "level": "dashboard", "what": "Any request by its id: route, cost, verdicts" },
+        { "method": "GET", "path": "/ratchet/versions/{vid}/bom", "level": "bom", "what": "One adapter's bill of materials" },
+        { "method": "GET", "path": "/ratchet/versions/{vid}/certificate", "level": "dashboard", "what": "A version's precision certificate" },
+        { "method": "POST", "path": "/ratchet/versions/{vid}/proof", "level": "admin", "what": "Whether an example is in a version's training set, with a proof" },
+        { "method": "GET", "path": "/ratchet/receipts", "level": "api", "what": "Sealed daily savings receipts" },
+        { "method": "GET", "path": "/ratchet/receipts/{period}/proof/{request_id}", "level": "api", "what": "That a request is in its day's receipt" },
+        { "method": "GET", "path": "/ratchet/drift", "level": "dashboard", "what": "The label-free drift alarm" },
+        { "method": "GET", "path": "/ratchet/teacher", "level": "dashboard", "what": "The teacher watch" },
+        { "method": "GET", "path": "/ratchet/cost", "level": "dashboard", "what": "Per token and by GPU-hours paid, with the break-even" },
+        { "method": "POST", "path": "/ratchet/redact", "level": "dashboard", "what": "What the redactor would store for a text" },
+        { "method": "GET", "path": "/ratchet/bom/public-key", "level": "public", "what": "The key that verifies bills of materials and receipts" }
+      ]
+    },
+    {
+      "name": "Operations",
+      "routes": [
+        { "method": "GET", "path": "/readyz", "level": "public", "what": "Readiness: ledger, teacher and student checks" },
+        { "method": "GET", "path": "/metrics", "level": "metrics", "what": "Prometheus metrics" },
+        { "method": "POST", "path": "/ratchet/admin/versions/{vid}/rollback", "level": "admin", "what": "Roll a canary back, with a reason in the audit log" },
+        { "method": "PUT", "path": "/ratchet/tasks/{name}", "level": "admin", "what": "Register or change a task" },
+        { "method": "POST", "path": "/ratchet/demo/day", "level": "mock", "what": "Simulate a day of traffic and a night of training" }
+      ]
+    }
+  ],
+  "error_example": "{\n  \"error\": {\n    \"message\": \"Invalid value for 'temperature': expected a number from 0 to 2, but got 3 instead.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"temperature\",\n    \"code\": \"invalid_value\"\n  },\n  \"request_id\": \"req_…\"\n}"
+}
