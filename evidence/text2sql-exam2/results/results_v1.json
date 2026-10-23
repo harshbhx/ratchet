@@ -1,0 +1,172 @@
+{
+  "mode": "sql",
+  "breakdown_answering_every_row": {
+    "difficulty=aggregate": {
+      "base": {
+        "n": 20,
+        "agree": 3,
+        "rate": 0.15,
+        "wilson95": [
+          0.0524,
+          0.3604
+        ]
+      },
+      "adapter": {
+        "n": 20,
+        "agree": 11,
+        "rate": 0.55,
+        "wilson95": [
+          0.3421,
+          0.7418
+        ]
+      }
+    },
+    "difficulty=hard": {
+      "base": {
+        "n": 20,
+        "agree": 2,
+        "rate": 0.1,
+        "wilson95": [
+          0.0279,
+          0.301
+        ]
+      },
+      "adapter": {
+        "n": 20,
+        "agree": 4,
+        "rate": 0.2,
+        "wilson95": [
+          0.0807,
+          0.416
+        ]
+      }
+    },
+    "difficulty=join": {
+      "base": {
+        "n": 30,
+        "agree": 2,
+        "rate": 0.0667,
+        "wilson95": [
+          0.0185,
+          0.2132
+        ]
+      },
+      "adapter": {
+        "n": 30,
+        "agree": 2,
+        "rate": 0.0667,
+        "wilson95": [
+          0.0185,
+          0.2132
+        ]
+      }
+    },
+    "difficulty=simple": {
+      "base": {
+        "n": 30,
+        "agree": 7,
+        "rate": 0.2333,
+        "wilson95": [
+          0.1179,
+          0.4093
+        ]
+      },
+      "adapter": {
+        "n": 30,
+        "agree": 9,
+        "rate": 0.3,
+        "wilson95": [
+          0.1666,
+          0.4788
+        ]
+      }
+    },
+    "domain=unseen": {
+      "base": {
+        "n": 100,
+        "agree": 14,
+        "rate": 0.14,
+        "wilson95": [
+          0.0853,
+          0.2214
+        ]
+      },
+      "adapter": {
+        "n": 100,
+        "agree": 26,
+        "rate": 0.26,
+        "wilson95": [
+          0.184,
+          0.3537
+        ]
+      }
+    }
+  },
+  "rows": {
+    "total": 200,
+    "calibration": 100,
+    "measured": 100
+  },
+  "base_model_agreement": {
+    "n": 100,
+    "agree": 14,
+    "rate": 0.14,
+    "wilson95": [
+      0.0853,
+      0.2214
+    ]
+  },
+  "adapter_agreement": {
+    "n": 100,
+    "agree": 26,
+    "rate": 0.26,
+    "wilson95": [
+      0.184,
+      0.3537
+    ]
+  },
+  "confidence_threshold": 1.01,
+  "target_precision": 0.95,
+  "coverage": {
+    "answered": 0,
+    "of": 100,
+    "rate": 0.0
+  },
+  "precision_when_answered": {
+    "n": 0,
+    "agree": 0,
+    "rate": null,
+    "wilson95": [
+      0.0,
+      1.0
+    ]
+  },
+  "cost_usd_on_measured_rows": {
+    "all_teacher": 0.054105,
+    "with_student": 0.054105,
+    "saved_pct": 0.0,
+    "prices_per_million_tokens": {
+      "teacher_in": 1.0,
+      "teacher_out": 3.0,
+      "student": 0.06
+    }
+  },
+  "label": "estimate: token counts are measured, prices are inputs (see prices_per_million_tokens)",
+  "provenance": {
+    "raw_sha256": "9e03e35489a9e14dfcb301f937385f17bfeecdca20cffab4beb536c9e4389851",
+    "golden_sha256": "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058",
+    "dbs_sha256": "5d85d2603bc8ea4f6ceb1779cc6c5016cfb770ce1fff24ba0729bb3d337c3b35",
+    "adapter_sha256": "a883bcf6bbf4152efb5a874520b8fa1a09d9bead55c172507725dc255f18236a",
+    "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "python": "3.13.5",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "gpu": null,
+    "run_note": null,
+    "args": {
+      "target_precision": 0.95,
+      "teacher_in_per_m": 1.0,
+      "teacher_out_per_m": 3.0,
+      "student_per_m": 0.06
+    }
+  }
+}

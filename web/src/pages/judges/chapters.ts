@@ -38,7 +38,14 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     label: "What's real",
     pinned: true,
     tourTitle: "What is real, and what is not",
-    tour: "Every claim has one status: real, measured, simulation, pending or not run. The exam result stays pending until it is measured.",
+    tour: "Every claim has one status: real, measured, simulation, pending or not run. The exam results are measured and can be recomputed from the saved answers.",
+  },
+  {
+    id: "exams",
+    group: "start",
+    label: "The exams",
+    tourTitle: "Two exams, two authors",
+    tour: "Exam 1 was written by the teacher and exam 2 by a different model, for testing only. Both adapters, the teacher and the untrained model took both; the charts show every score with its range.",
   },
   {
     id: "client",

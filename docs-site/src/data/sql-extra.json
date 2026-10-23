@@ -84,5 +84,189 @@
   "lora_r": 16,
   "adapter_mb": 40.5
  },
- "teacher_labels_cost_usd": 2.87
+ "teacher_labels_cost_usd": 2.87,
+ "round2": {
+  "what": "Round 2: the same 172-row exam, a second adapter trained on 4,322 rows (round 1's 821 plus 3,501 new). Recomputed from evidence/text2sql-round2/answers/raw_r2.jsonl.",
+  "adapter": {
+   "agree": 67,
+   "n": 172,
+   "rate": 0.3895,
+   "wilson95": [
+    0.3198,
+    0.4641
+   ]
+  },
+  "base": {
+   "agree": 22,
+   "n": 172,
+   "rate": 0.1279,
+   "wilson95": [
+    0.086,
+    0.1861
+   ]
+  },
+  "flips_vs_round1": {
+   "wrong_to_right": 22,
+   "right_to_wrong": 12,
+   "both_right": 45,
+   "two_sided_p": 0.121
+  },
+  "by_difficulty": {
+   "simple": [
+    16,
+    51
+   ],
+   "join": [
+    26,
+    53
+   ],
+   "aggregate": [
+    18,
+    36
+   ],
+   "hard": [
+    7,
+    32
+   ]
+  },
+  "by_domain": {
+   "seen": [
+    44,
+    115
+   ],
+   "unseen": [
+    23,
+    57
+   ]
+  },
+  "round1_by_domain": {
+   "seen": [
+    34,
+    115
+   ],
+   "unseen": [
+    23,
+    57
+   ]
+  },
+  "gate": {
+   "threshold": 0.9914,
+   "answered": 1,
+   "of": 86,
+   "right": 1,
+   "saved_pct": 1.03
+  },
+  "measurement_half": {
+   "adapter": [
+    34,
+    86
+   ],
+   "base": [
+    13,
+    86
+   ]
+  },
+  "training": {
+   "rows": 4322,
+   "new_rows": 3501,
+   "rows_dropped_for_exam_overlap": 6,
+   "steps": 1080,
+   "epochs": 2,
+   "hours": 5.2,
+   "loss_first": 0.345,
+   "loss_last": 0.087,
+   "gpu": "Modal T4 (not Nebius GPUs)",
+   "max_seq": 1536,
+   "adapter_mb": 40.5
+  },
+  "teacher_labels_cost_usd": 9.18,
+  "leakage": {
+   "exam_prompts_in_training": 0,
+   "questions_in_training": 0,
+   "answers_in_training": 0,
+   "table_name_sets_in_training": 0,
+   "of": 172
+  }
+ },
+ "exam2": {
+  "what": "Exam 2: 200 questions on 10 new industries, written by Claude Sonnet 5.5 (evaluation only), answered by the same four models. Recomputed from evidence/text2sql-exam2.",
+  "rows": 200,
+  "golden_sha256": "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058",
+  "base": {
+   "agree": 25,
+   "n": 200,
+   "rate": 0.125,
+   "wilson95": [
+    0.0861,
+    0.178
+   ]
+  },
+  "teacher": {
+   "agree": 30,
+   "n": 200,
+   "rate": 0.15,
+   "wilson95": [
+    0.1071,
+    0.2061
+   ]
+  },
+  "adapter_v1": {
+   "agree": 56,
+   "n": 200,
+   "rate": 0.28,
+   "wilson95": [
+    0.2224,
+    0.3459
+   ]
+  },
+  "adapter_v2": {
+   "agree": 66,
+   "n": 200,
+   "rate": 0.33,
+   "wilson95": [
+    0.2686,
+    0.3978
+   ]
+  },
+  "v1_to_v2": {
+   "wrong_to_right": 23,
+   "right_to_wrong": 13,
+   "two_sided_p": 0.132
+  },
+  "by_difficulty": {
+   "simple": {
+    "n": 60,
+    "base": 15,
+    "v1": 19,
+    "v2": 16
+   },
+   "join": {
+    "n": 60,
+    "base": 3,
+    "v1": 5,
+    "v2": 12
+   },
+   "aggregate": {
+    "n": 40,
+    "base": 5,
+    "v1": 22,
+    "v2": 24
+   },
+   "hard": {
+    "n": 40,
+    "base": 2,
+    "v1": 10,
+    "v2": 14
+   }
+  },
+  "teacher_miss_shape": {
+   "right_rows_different_columns": 102,
+   "same_rows_count_different_values": 48,
+   "different_row_count": 20
+  },
+  "gate": {
+   "answered": 0,
+   "of": 100
+  }
+ }
 }

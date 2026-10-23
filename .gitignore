@@ -5,6 +5,7 @@ __pycache__/
 sim_results.json
 data/
 !docs-site/src/data/
+!evidence/**/data/
 .env
 
 # Web app

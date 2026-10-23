@@ -8,6 +8,7 @@ import { cn, fmtInt } from "@/lib/utils";
 import { GROUP_LABEL, JUDGE_CHAPTERS, type ChapterGroup } from "./chapters";
 import { JudgesProvider, useJudges } from "./data";
 import { Legend, StartHere, WhatsReal } from "./start";
+import { ExamsChapter } from "./exams";
 import { ApiChapter, ClientChapter, FeaturesChapter } from "./outside";
 import { ArchitectureChapter, CascadeChapter, LedgerChapter, ReleaseChapter } from "./inside-a";
 import { CertificateChapter, ProofChapter, ReceiptsChapter, WatchChapter } from "./inside-b";
@@ -271,6 +272,7 @@ function Page() {
           <div className="min-w-0 pb-20">
             <StartHere />
             <WhatsReal />
+            <ExamsChapter />
             <ClientChapter />
             <ApiChapter />
             <FeaturesChapter />

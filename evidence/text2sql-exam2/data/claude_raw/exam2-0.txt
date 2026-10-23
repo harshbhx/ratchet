@@ -1,0 +1,226 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE galleries (
+    gallery_id   INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL,
+    floor        INTEGER NOT NULL,
+    area_sqm     REAL
+);
+
+CREATE TABLE artists (
+    artist_id    INTEGER PRIMARY KEY,
+    full_name    TEXT NOT NULL,
+    nationality  TEXT,
+    birth_year   INTEGER,
+    death_year   INTEGER
+);
+
+CREATE TABLE artworks (
+    artwork_id        INTEGER PRIMARY KEY,
+    title             TEXT NOT NULL,
+    artist_id         INTEGER NOT NULL,
+    creation_year     INTEGER,
+    medium            TEXT,
+    acquisition_date  TEXT,
+    acquisition_cost  REAL,
+    condition_rating  INTEGER,
+    gallery_id        INTEGER,
+    FOREIGN KEY (artist_id) REFERENCES artists(artist_id),
+    FOREIGN KEY (gallery_id) REFERENCES galleries(gallery_id)
+);
+
+CREATE TABLE exhibitions (
+    exhibition_id  INTEGER PRIMARY KEY,
+    title          TEXT NOT NULL,
+    start_date     TEXT NOT NULL,
+    end_date       TEXT,
+    gallery_id     INTEGER NOT NULL,
+    ticket_price   REAL,
+    FOREIGN KEY (gallery_id) REFERENCES galleries(gallery_id)
+);
+
+CREATE TABLE exhibition_artworks (
+    exhibition_id  INTEGER NOT NULL,
+    artwork_id     INTEGER NOT NULL,
+    insured_value  REAL,
+    PRIMARY KEY (exhibition_id, artwork_id),
+    FOREIGN KEY (exhibition_id) REFERENCES exhibitions(exhibition_id),
+    FOREIGN KEY (artwork_id) REFERENCES artworks(artwork_id)
+);
+
+INSERT INTO galleries (gallery_id, name, floor, area_sqm) VALUES
+(1, 'Hall of Antiquities', 1, 220.5),
+(2, 'Renaissance Room', 1, 180.0),
+(3, 'Impressionist Gallery', 2, 250.0),
+(4, 'Modern Wing East', 2, 300.0),
+(5, 'Modern Wing West', 2, 280.0),
+(6, 'Sculpture Court', 0, 400.0),
+(7, 'Photography Corridor', 3, 120.0),
+(8, 'Asian Art Pavilion', 1, 210.0),
+(9, 'Textile Studio', 3, 95.5),
+(10, 'Contemporary Box', 3, 150.0),
+(11, 'Print Room', 3, 60.0),
+(12, 'Temporary Hall', 0, 500.0);
+
+INSERT INTO artists (artist_id, full_name, nationality, birth_year, death_year) VALUES
+(1, 'Claude Monet', 'French', 1840, 1926),
+(2, 'Vincent van Gogh', 'Dutch', 1853, 1890),
+(3, 'Auguste Rodin', 'French', 1840, 1917),
+(4, 'Frida Kahlo', 'Mexican', 1907, 1954),
+(5, 'Katsushika Hokusai', 'Japanese', 1760, 1849),
+(6, 'Pablo Picasso', 'Spanish', 1881, 1973),
+(7, 'Ansel Adams', 'American', 1902, 1984),
+(8, 'Georgia O''Keeffe', 'American', 1887, 1986),
+(9, 'Yayoi Kusama', 'Japanese', 1929, NULL),
+(10, 'Artemisia Gentileschi', 'Italian', 1593, 1653),
+(11, 'Anonymous', NULL, NULL, NULL),
+(12, 'Kehinde Wiley', 'American', 1977, NULL);
+
+INSERT INTO artworks (artwork_id, title, artist_id, creation_year, medium, acquisition_date, acquisition_cost, condition_rating, gallery_id) VALUES
+(1, 'Water Lilies Study', 1, 1906, 'Oil on canvas', '1952-04-12', 85000.0, 4, 3),
+(2, 'Haystacks at Dusk', 1, 1890, 'Oil on canvas', '1978-09-30', 120000.0, 3, 3),
+(3, 'Wheat Field with Cypresses', 2, 1889, 'Oil on canvas', '1965-06-15', 250000.0, 5, 3),
+(4, 'The Thinker Maquette', 3, 1902, 'Bronze', '1971-11-02', 45000.0, 4, 6),
+(5, 'Self-Portrait with Monkey', 4, 1938, 'Oil on masonite', '1999-03-18', 300000.0, 5, 4),
+(6, 'The Great Wave Print', 5, 1831, 'Woodblock print', '1985-01-20', 60000.0, 2, 11),
+(7, 'Guernica Sketch', 6, 1937, 'Charcoal on paper', '1990-05-07', 175000.0, 3, 4),
+(8, 'Moonrise Hernandez', 7, 1941, 'Gelatin silver print', '2005-10-10', 22000.0, 4, 7),
+(9, 'Black Iris', 8, 1926, 'Oil on canvas', '1988-08-25', 210000.0, 4, 5),
+(10, 'Infinity Mirror Room', 9, 2016, 'Mixed media', '2018-02-14', 500000.0, 5, 10),
+(11, 'Judith Slaying Holofernes Study', 10, 1612, 'Oil on canvas', '2001-07-01', 190000.0, 3, 2),
+(12, 'Tang Dynasty Horse', 11, 750, 'Ceramic', '1958-12-05', 15000.0, 2, 8),
+(13, 'Portrait of a Young Man', 12, 2012, 'Oil on canvas', '2015-04-22', NULL, NULL, NULL),
+(14, 'Bathers', 6, 1920, 'Oil on canvas', '2010-09-09', 95000.0, 4, NULL);
+
+INSERT INTO exhibitions (exhibition_id, title, start_date, end_date, gallery_id, ticket_price) VALUES
+(1, 'Light and Water', '2022-03-01', '2022-08-31', 3, 18.0),
+(2, 'Bronze and Stone', '2021-05-15', '2021-11-15', 6, 12.5),
+(3, 'Women Who Shaped Art', '2023-02-10', '2023-06-30', 12, 20.0),
+(4, 'Waves of Japan', '2020-09-01', '2021-01-31', 8, 15.0),
+(5, 'Modern Masters', '2023-09-15', '2024-02-29', 4, 22.0),
+(6, 'Through the Lens', '2019-04-05', '2019-09-01', 7, 10.0),
+(7, 'Infinite Dots', '2024-03-01', '2024-09-30', 10, 25.0),
+(8, 'Prints and Process', '2022-10-01', '2023-01-15', 11, NULL),
+(9, 'Spanish Visions', '2018-06-01', '2018-10-31', 4, 14.0),
+(10, 'Faces of Today', '2024-10-05', '2025-03-31', 12, 19.5),
+(11, 'Ancient Treasures', '2019-11-01', '2020-03-15', 1, 11.0),
+(12, 'Garden Colors', '2025-04-01', NULL, 3, 16.0);
+
+INSERT INTO exhibition_artworks (exhibition_id, artwork_id, insured_value) VALUES
+(1, 1, 100000.0),
+(1, 2, 150000.0),
+(1, 3, 300000.0),
+(2, 4, 50000.0),
+(3, 5, 350000.0),
+(3, 11, 220000.0),
+(3, 9, 240000.0),
+(4, 6, 70000.0),
+(5, 5, 360000.0),
+(5, 7, 200000.0),
+(6, 8, 25000.0),
+(7, 10, 600000.0),
+(9, 7, 180000.0),
+(10, 13, NULL),
+(11, 12, 18000.0);
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which oil paintings on canvas came into the collection before 1970, and when were they acquired?
+SQL: SELECT title, acquisition_date FROM artworks WHERE medium = 'Oil on canvas' AND acquisition_date < '1970-01-01' ORDER BY acquisition_date;
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are the five most expensive purchases we have made?
+SQL: SELECT title, acquisition_cost FROM artworks WHERE acquisition_cost IS NOT NULL ORDER BY acquisition_cost DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: List the rooms on the second floor from largest to smallest, with their sizes.
+SQL: SELECT name, area_sqm FROM galleries WHERE floor = 2 ORDER BY area_sqm DESC;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Which exhibitions have no ticket price set?
+SQL: SELECT title, start_date, end_date FROM exhibitions WHERE ticket_price IS NULL;
+
+### 5
+DIFFICULTY: simple
+QUESTION: Which known living artists, with a recorded nationality, are represented in our records?
+SQL: SELECT full_name, nationality, birth_year FROM artists WHERE death_year IS NULL AND nationality IS NOT NULL ORDER BY full_name;
+
+### 6
+DIFFICULTY: simple
+QUESTION: Which pieces are in poor condition (rated 2 or lower), worst first?
+SQL: SELECT title, condition_rating FROM artworks WHERE condition_rating <= 2 ORDER BY condition_rating, title;
+
+### 7
+DIFFICULTY: join
+QUESTION: Which pieces in the collection were made by American artists, and who made them?
+SQL: SELECT aw.title, ar.full_name FROM artworks aw JOIN artists ar ON ar.artist_id = aw.artist_id WHERE ar.nationality = 'American' ORDER BY aw.title;
+
+### 8
+DIFFICULTY: join
+QUESTION: What is on display in rooms on the top floor (floor 3), and in which room is each piece?
+SQL: SELECT aw.title, g.name AS room FROM artworks aw JOIN galleries g ON g.gallery_id = aw.gallery_id WHERE g.floor = 3 ORDER BY g.name;
+
+### 9
+DIFFICULTY: join
+QUESTION: Which pieces are not currently assigned to any room, and who are the artists?
+SQL: SELECT aw.title, ar.full_name FROM artworks aw JOIN artists ar ON ar.artist_id = aw.artist_id WHERE aw.gallery_id IS NULL;
+
+### 10
+DIFFICULTY: join
+QUESTION: Which artworks were shown in the Modern Masters exhibition, and what was each insured for?
+SQL: SELECT aw.title, ea.insured_value FROM exhibition_artworks ea JOIN exhibitions e ON e.exhibition_id = ea.exhibition_id JOIN artworks aw ON aw.artwork_id = ea.artwork_id WHERE e.title = 'Modern Masters';
+
+### 11
+DIFFICULTY: join
+QUESTION: For exhibitions charging more than 15 for entry, which room hosted each one?
+SQL: SELECT e.title, g.name AS room, e.ticket_price FROM exhibitions e JOIN galleries g ON g.gallery_id = e.gallery_id WHERE e.ticket_price > 15 ORDER BY e.ticket_price DESC;
+
+### 12
+DIFFICULTY: join
+QUESTION: Which exhibitions have no artworks recorded against them yet?
+SQL: SELECT e.title, e.start_date FROM exhibitions e LEFT JOIN exhibition_artworks ea ON ea.exhibition_id = e.exhibition_id WHERE ea.artwork_id IS NULL;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many pieces do we hold in each type of medium?
+SQL: SELECT medium, COUNT(*) AS piece_count FROM artworks GROUP BY medium ORDER BY piece_count DESC, medium;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: How much have we spent acquiring works from artists of each nationality?
+SQL: SELECT ar.nationality, SUM(aw.acquisition_cost) AS total_spent FROM artworks aw JOIN artists ar ON ar.artist_id = aw.artist_id GROUP BY ar.nationality ORDER BY total_spent DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: What is the average ticket price of exhibitions on each floor of the building?
+SQL: SELECT g.floor, AVG(e.ticket_price) AS avg_price FROM exhibitions e JOIN galleries g ON g.gallery_id = e.gallery_id GROUP BY g.floor ORDER BY g.floor;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How many exhibitions opened in each year?
+SQL: SELECT strftime('%Y', start_date) AS year, COUNT(*) AS exhibitions_opened FROM exhibitions GROUP BY year ORDER BY year;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which pieces cost more to acquire than the average purchase price across the collection?
+SQL: SELECT title, acquisition_cost FROM artworks WHERE acquisition_cost > (SELECT AVG(acquisition_cost) FROM artworks) ORDER BY acquisition_cost DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: Which artists have more than one piece in our collection, and how many do we have?
+SQL: SELECT ar.full_name, COUNT(*) AS works_held FROM artists ar JOIN artworks aw ON aw.artist_id = ar.artist_id GROUP BY ar.artist_id, ar.full_name HAVING COUNT(*) > 1 ORDER BY works_held DESC, ar.full_name;
+
+### 19
+DIFFICULTY: hard
+QUESTION: How many pieces come from each broad period: before 1800, the 1800s, the 1900s, and the 2000s onward?
+SQL: SELECT CASE WHEN creation_year < 1800 THEN 'Before 1800' WHEN creation_year < 1900 THEN '19th century' WHEN creation_year < 2000 THEN '20th century' ELSE '21st century' END AS period, COUNT(*) AS piece_count FROM artworks WHERE creation_year IS NOT NULL GROUP BY period ORDER BY MIN(creation_year);
+
+### 20
+DIFFICULTY: hard
+QUESTION: Among exhibitions that have already ended, which five ran the longest, and how many days did each last?
+SQL: SELECT title, CAST(julianday(end_date) - julianday(start_date) AS INTEGER) AS days_open FROM exhibitions WHERE end_date IS NOT NULL ORDER BY days_open DESC LIMIT 5;

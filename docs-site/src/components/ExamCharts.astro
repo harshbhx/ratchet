@@ -1,0 +1,251 @@
+---
+/**
+ * <ExamCharts>: charts and cards for the two text-to-SQL exams, drawn at build time from src/data/exams.json (written by
+ * scripts/text2sql/exam_numbers.py from the saved answers; tests/test_exam_numbers.py fails when it is stale).
+ *
+ *   <ExamCharts kind="scores" exam="exam2" />       bars: how many questions each model got right, with the 95% range
+ *   <ExamCharts kind="difficulty" exam="exam2" />   bars by question difficulty: base model and the two adapters
+ *   <ExamCharts kind="flips" />                     questions that changed between the round 1 and round 2 adapter
+ *   <ExamCharts kind="authors" />                   who wrote the training examples and each exam, and how it was checked
+ */
+import data from '../data/exams.json';
+
+interface Props {
+  kind: 'scores' | 'difficulty' | 'flips' | 'authors';
+  exam?: 'exam1' | 'exam2';
+}
+const { kind, exam = 'exam1' } = Astro.props;
+
+const MODELS = ['base', 'teacher', 'r1', 'r2'] as const;
+const STYLE: Record<string, { color: string; opacity: number }> = {
+  base: { color: 'var(--rt-muted)', opacity: 0.55 },
+  teacher: { color: 'var(--rt-rented)', opacity: 1 },
+  r1: { color: 'var(--rt-owned)', opacity: 0.55 },
+  r2: { color: 'var(--rt-owned)', opacity: 1 },
+};
+const short: Record<string, string> = Object.fromEntries(data.models.map((m) => [m.id, m.short]));
+const info = data.exams.find((e) => e.id === exam)!;
+const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
+const LABEL_W = 124;
+const X0 = LABEL_W + 6;
+const BW = 168;
+const W = X0 + BW + 62;
+const xOf = (v: number, max: number) => Math.max(0, Math.min(1, v / max)) * BW;
+const ticks = (max: number, step: number) => {
+  const t: number[] = [];
+  for (let v = 0; v <= max + 1e-9; v += step) t.push(Math.round(v * 100) / 100);
+  return t;
+};
+
+// scores
+const scoreMax = 0.6;
+const rowH = 40;
+const scoreH = 6 + MODELS.length * rowH + 22;
+// difficulty
+const diffMax = 0.8;
+const group = 74;
+const diffIds = ['base', 'r1', 'r2'] as const;
+const diffs = ['simple', 'join', 'aggregate', 'hard'] as const;
+const diffH = 6 + diffs.length * group + 20;
+// flips
+const flipMax = 26;
+const half = 84;
+const mid = LABEL_W + 6 + half;
+---
+
+{
+  kind === 'scores' && (
+    <figure class="rt-xc">
+      <svg viewBox={`0 0 ${W} ${scoreH}`} role="img" aria-label={`${info.name}: share of ${info.rows} questions answered exactly right, by model`}>
+        {ticks(scoreMax, 0.2).map((t) => (
+          <g aria-hidden="true">
+            <line x1={X0 + xOf(t, scoreMax)} x2={X0 + xOf(t, scoreMax)} y1={6} y2={6 + MODELS.length * rowH} stroke="var(--rt-grid)" />
+            <text x={X0 + xOf(t, scoreMax)} y={6 + MODELS.length * rowH + 13} text-anchor="middle" font-size="10" fill="var(--rt-muted)">{Math.round(t * 100)}%</text>
+          </g>
+        ))}
+        {MODELS.map((id, i) => {
+          const s = (data.scores as any)[exam][id];
+          const y = 6 + i * rowH;
+          const st = STYLE[id];
+          return (
+            <g>
+              <text x={LABEL_W} y={y + 21} text-anchor="end" font-size="12.5" font-weight={id === 'r2' ? 700 : 500} fill="var(--rt-ink)">{short[id]}</text>
+              <rect x={X0} y={y + 8} width={Math.max(2, xOf(s.rate, scoreMax))} height="20" rx="4" fill={st.color} opacity={st.opacity} />
+              <line x1={X0 + xOf(s.lo, scoreMax)} x2={X0 + xOf(s.hi, scoreMax)} y1={y + 18} y2={y + 18} stroke="var(--rt-ink)" stroke-width="1.4" opacity="0.75" />
+              <line x1={X0 + xOf(s.lo, scoreMax)} x2={X0 + xOf(s.lo, scoreMax)} y1={y + 13} y2={y + 23} stroke="var(--rt-ink)" stroke-width="1.4" opacity="0.75" />
+              <line x1={X0 + xOf(s.hi, scoreMax)} x2={X0 + xOf(s.hi, scoreMax)} y1={y + 13} y2={y + 23} stroke="var(--rt-ink)" stroke-width="1.4" opacity="0.75" />
+              <text x={X0 + xOf(s.hi, scoreMax) + 6} y={y + 22} font-size="12.5" font-weight="700" fill="var(--rt-ink)">{pct(s.rate)}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <figcaption>
+        {info.name}: {info.rows} questions, written by {info.writer.split(',')[0]}. The line on each bar is the 95% range.
+      </figcaption>
+    </figure>
+  )
+}
+
+{
+  kind === 'difficulty' && (
+    <figure class="rt-xc">
+      <svg viewBox={`0 0 ${W} ${diffH}`} role="img" aria-label={`${info.name}: share right by question difficulty, base model and the two adapters`}>
+        {ticks(diffMax, 0.2).map((t) => (
+          <g aria-hidden="true">
+            <line x1={X0 + xOf(t, diffMax)} x2={X0 + xOf(t, diffMax)} y1={6} y2={6 + diffs.length * group - 8} stroke="var(--rt-grid)" />
+            <text x={X0 + xOf(t, diffMax)} y={6 + diffs.length * group + 5} text-anchor="middle" font-size="10" fill="var(--rt-muted)">{Math.round(t * 100)}%</text>
+          </g>
+        ))}
+        {diffs.map((d, gi) => {
+          const row = (data.difficulty as any)[exam][d];
+          const y0 = 6 + gi * group;
+          return (
+            <g>
+              <text x={LABEL_W} y={y0 + 28} text-anchor="end" font-size="12.5" font-weight="600" fill="var(--rt-ink)">{d}</text>
+              <text x={LABEL_W} y={y0 + 44} text-anchor="end" font-size="10.5" fill="var(--rt-muted)">{row.n} questions</text>
+              {diffIds.map((id, bi) => {
+                const rate = row[id] / row.n;
+                const y = y0 + 8 + bi * 20;
+                const st = STYLE[id];
+                return (
+                  <g>
+                    <rect x={X0} y={y} width={Math.max(2, xOf(rate, diffMax))} height="16" rx="3" fill={st.color} opacity={st.opacity} />
+                    <text x={X0 + xOf(rate, diffMax) + 5} y={y + 12} font-size="10.5" fill="var(--rt-ink)">{id === 'base' ? 'base' : id === 'r1' ? 'round 1' : 'round 2'} {row[id]}/{row.n}</text>
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+      <figcaption>{info.name}, by difficulty. Join questions improved most from round 1 to round 2; simple questions did not.</figcaption>
+    </figure>
+  )
+}
+
+{
+  kind === 'flips' && (
+    <figure class="rt-xc">
+      <svg viewBox={`0 0 ${mid + half + 70} ${2 * 44 + 28}`} role="img" aria-label="Questions that changed between the round 1 and the round 2 adapter, on both exams">
+        <line x1={mid} x2={mid} y1={2} y2={2 * 44 + 2} stroke="var(--rt-line-strong)" />
+        {(['exam1', 'exam2'] as const).map((ex, i) => {
+          const f = (data.r1_to_r2 as any)[ex];
+          const y = 6 + i * 44;
+          return (
+            <g>
+              <text x={LABEL_W} y={y + 24} text-anchor="end" font-size="12.5" font-weight="600" fill="var(--rt-ink)">{ex === 'exam1' ? 'Exam 1' : 'Exam 2'}</text>
+              <rect x={mid - xOf(f.right_to_wrong, flipMax) * (half / BW)} y={y + 8} width={xOf(f.right_to_wrong, flipMax) * (half / BW)} height="20" rx="3" fill="var(--rt-bad)" opacity="0.85" />
+              <text x={mid - xOf(f.right_to_wrong, flipMax) * (half / BW) - 5} y={y + 23} text-anchor="end" font-size="12" font-weight="700" fill="var(--rt-ink)">−{f.right_to_wrong}</text>
+              <rect x={mid} y={y + 8} width={xOf(f.wrong_to_right, flipMax) * (half / BW)} height="20" rx="3" fill="var(--rt-good)" opacity="0.9" />
+              <text x={mid + xOf(f.wrong_to_right, flipMax) * (half / BW) + 5} y={y + 23} font-size="12" font-weight="700" fill="var(--rt-ink)">+{f.wrong_to_right}</text>
+            </g>
+          );
+        })}
+        <text x={mid - 6} y={2 * 44 + 20} text-anchor="end" font-size="10.5" fill="var(--rt-muted)">right in round 1 only</text>
+        <text x={mid + 6} y={2 * 44 + 20} font-size="10.5" fill="var(--rt-muted)">right in round 2 only</text>
+      </svg>
+      <figcaption>
+        Questions whose answer changed between the two adapters. Round 2 wins more of them on both exams (p = {data.r1_to_r2.exam1.p} and {data.r1_to_r2.exam2.p}), so the direction repeats, but neither exam alone settles it.
+      </figcaption>
+    </figure>
+  )
+}
+
+{
+  kind === 'authors' && (
+    <div class="rt-xa">
+      <article>
+        <p class="rt-xa__k">Teaches the adapter</p>
+        <h4>Training examples</h4>
+        <dl>
+          <dt>Written by</dt><dd>Nemotron 3 Ultra, the teacher (open model, OpenMDW-1.1)</dd>
+          <dt>What</dt><dd>821 examples in round 1 and 3,501 more in round 2, written on Nebius Token Factory. Every query was run before it was kept.</dd>
+          <dt>Kept apart from the exams</dt><dd>Never used to score anything, and never overlapping with either exam (0 of 172 and 0 of 200 questions, queries or table sets).</dd>
+        </dl>
+      </article>
+      {data.exams.map((e) => (
+        <article>
+          <p class="rt-xa__k">Tests the adapter · {e.rows} questions · {e.built}</p>
+          <h4>{e.name}</h4>
+          <dl>
+            <dt>Written by</dt><dd>{e.writer}</dd>
+            <dt>Why that matters</dt><dd>{e.writer_note}</dd>
+            <dt>Industries</dt><dd>{e.industries}</dd>
+            <dt>How it was checked</dt><dd>{e.checked}</dd>
+            <dt>Fingerprint (SHA-256)</dt><dd class="rt-xa__hash">{e.fingerprint}</dd>
+          </dl>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+<style>
+  .rt-xc {
+    margin: 1.25rem 0;
+    padding: 1rem;
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-lg, 16px);
+    background: var(--rt-surface);
+    max-width: 34rem;
+  }
+  .rt-xc svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .rt-xc figcaption {
+    margin-top: 0.5rem;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: var(--rt-muted);
+  }
+  .rt-xa {
+    display: grid;
+    gap: 0.75rem;
+    margin: 1.25rem 0;
+    grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+    width: 100%;
+  }
+  .rt-xa > article {
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-lg, 16px);
+    background: var(--rt-surface);
+    padding: 1rem;
+    min-width: 0;
+    margin: 0 !important;
+  }
+  .rt-xa dl,
+  .rt-xa dt,
+  .rt-xa dd,
+  .rt-xa h4,
+  .rt-xa p {
+    margin-inline: 0;
+  }
+  .rt-xa__k {
+    margin: 0;
+    font: 0.75rem var(--rt-font-mono, monospace);
+    color: var(--rt-muted);
+  }
+  .rt-xa h4 {
+    margin: 0.25rem 0 0.5rem !important;
+    font-size: 1rem;
+    color: var(--rt-ink);
+  }
+  .rt-xa dt {
+    margin-top: 0.6rem !important;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--rt-muted);
+  }
+  .rt-xa dd {
+    margin: 0.1rem 0 0 !important;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: var(--rt-ink-2);
+  }
+  .rt-xa__hash {
+    font: 0.72rem var(--rt-font-mono, monospace);
+    overflow-wrap: anywhere;
+  }
+</style>

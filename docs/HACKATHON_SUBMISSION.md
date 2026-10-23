@@ -10,7 +10,7 @@ Keep this split in the submission text. Do not describe the scripted parts as ha
 |---|---|
 | Teacher labels from Nemotron 3 Ultra on Token Factory | Ran (22 to 23 Oct). 821 training rows and a 172-row exam for text-to-SQL, about $3 |
 | Adapter training | Ran on a free Colab T4, not on Nebius GPUs |
-| Exam result | Measured: adapter 33.1% against 12.8% for the base model on 172 held-out rows (`evidence/text2sql-round1/`) |
+| Exam result | Measured on two exams (strict): the round 2 adapter 39.0% and 33.0% against 12.8% and 12.5% for the base model (`evidence/text2sql-round1/`, `evidence/text2sql-round2/`, `evidence/text2sql-exam2/`) |
 | Demo, dashboard and the cost figures on them | Simulation (mock models), on a Cloudflare Container |
 | Gateway in live mode, Nebius Serverless Jobs, Endpoints, Object Storage, Tavily | Written and tested offline, not run on Nebius yet (no GPU budget) |
 
@@ -142,7 +142,7 @@ Where Token Factory sped us up: one OpenAI-compatible API for teacher, judge and
 
 ## Accomplishments we're proud of
 
-- A full, tested loop: 1905 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
+- A full, tested loop: 1909 tests (96% line coverage), including end-to-end simulations of cold start, drift and rollback, Scout end to end, the privacy and security features, and every live-mode entry point run offline against fake Nebius endpoints. CI traces every PRD requirement to its code and tests, and lists the ones that can only be checked live.
 - In simulation (mock models): the student answered 98% of requests by day 3, savings reached 85–87%, a corrupted deploy was rolled back at 41% audited precision, and a product-launch drift recovered within four nights.
 - In simulation (mock models), on Scout's triage and reader calls: the student answered 92% of them by day 8 and that day cost 81% less than all-Ultra (62% over all 8 days, including the cold start), with per-task calibration on (the default), which holds each of the two tasks to its own threshold; with one pooled threshold (`RATCHET_PER_TASK_CALIBRATION=0`, v0.4) 96%, 85% and 63%.
 - Live Scout run: [LIVE NUMBER] of [LIVE NUMBER] LLM calls answered by the student, [LIVE NUMBER]% cheaper than all-Ultra.

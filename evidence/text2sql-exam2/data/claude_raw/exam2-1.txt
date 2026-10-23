@@ -1,0 +1,206 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE owners (
+    owner_id        INTEGER PRIMARY KEY,
+    first_name      TEXT NOT NULL,
+    last_name       TEXT NOT NULL,
+    phone           TEXT,
+    email           TEXT,
+    city            TEXT,
+    registered_date TEXT NOT NULL
+);
+
+CREATE TABLE vets (
+    vet_id      INTEGER PRIMARY KEY,
+    full_name   TEXT NOT NULL,
+    specialty   TEXT NOT NULL,
+    hire_date   TEXT NOT NULL,
+    hourly_rate REAL
+);
+
+CREATE TABLE pets (
+    pet_id       INTEGER PRIMARY KEY,
+    owner_id     INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    species      TEXT NOT NULL,
+    breed        TEXT,
+    birth_date   TEXT,
+    weight_kg    REAL,
+    microchip_id TEXT,
+    FOREIGN KEY (owner_id) REFERENCES owners(owner_id)
+);
+
+CREATE TABLE visits (
+    visit_id          INTEGER PRIMARY KEY,
+    pet_id            INTEGER NOT NULL,
+    vet_id            INTEGER NOT NULL,
+    visit_date        TEXT NOT NULL,
+    reason            TEXT NOT NULL,
+    diagnosis         TEXT,
+    fee               REAL NOT NULL,
+    follow_up_needed  INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (pet_id) REFERENCES pets(pet_id),
+    FOREIGN KEY (vet_id) REFERENCES vets(vet_id)
+);
+
+INSERT INTO owners (owner_id, first_name, last_name, phone, email, city, registered_date) VALUES
+(1, 'Maria', 'Gonzalez', '555-0101', 'maria.g@example.com', 'Austin', '2019-03-14'),
+(2, 'James', 'Carter', '555-0102', 'jcarter@example.com', 'Austin', '2019-07-22'),
+(3, 'Priya', 'Patel', '555-0103', 'ppatel@example.com', 'Round Rock', '2020-01-10'),
+(4, 'Liam', 'O''Brien', '555-0104', NULL, 'Austin', '2020-05-18'),
+(5, 'Sofia', 'Rossi', '555-0105', 'sofia.rossi@example.com', 'Cedar Park', '2020-11-02'),
+(6, 'Daniel', 'Kim', '555-0106', 'dkim@example.com', 'Round Rock', '2021-02-27'),
+(7, 'Emily', 'Johnson', '555-0107', 'emilyj@example.com', 'Austin', '2021-06-09'),
+(8, 'Omar', 'Hassan', '555-0108', NULL, 'Pflugerville', '2021-09-30'),
+(9, 'Hannah', 'Mueller', '555-0109', 'hmueller@example.com', 'Cedar Park', '2022-01-15'),
+(10, 'Carlos', 'Ramirez', '555-0110', 'cramirez@example.com', 'Austin', '2022-04-04'),
+(11, 'Grace', 'Lee', NULL, 'grace.lee@example.com', 'Round Rock', '2023-02-12'),
+(12, 'Tom', 'Nguyen', '555-0112', NULL, 'Pflugerville', '2023-08-21');
+
+INSERT INTO vets (vet_id, full_name, specialty, hire_date, hourly_rate) VALUES
+(1, 'Dr. Alice Warren', 'General Practice', '2015-04-01', 62.50),
+(2, 'Dr. Benjamin Hall', 'Surgery', '2016-09-12', 85.00),
+(3, 'Dr. Chloe Martin', 'Dentistry', '2018-02-20', 74.00),
+(4, 'Dr. David Singh', 'General Practice', '2019-06-03', 58.00),
+(5, 'Dr. Elena Petrova', 'Dermatology', '2020-01-13', 72.50),
+(6, 'Dr. Frank Olsen', 'Exotics', '2020-10-05', 68.00),
+(7, 'Dr. Grace Adams', 'Surgery', '2021-03-22', 80.00),
+(8, 'Dr. Henry Brooks', 'General Practice', '2022-07-18', 55.00),
+(9, 'Dr. Isabel Cruz', 'Cardiology', '2022-11-01', 90.00),
+(10, 'Dr. Jack Turner', 'Emergency', '2023-05-15', NULL);
+
+INSERT INTO pets (pet_id, owner_id, name, species, breed, birth_date, weight_kg, microchip_id) VALUES
+(1, 1, 'Bella', 'Dog', 'Labrador Retriever', '2018-05-10', 29.5, 'CHIP0001'),
+(2, 1, 'Milo', 'Cat', 'Siamese', '2019-08-21', 4.2, 'CHIP0002'),
+(3, 2, 'Max', 'Dog', 'German Shepherd', '2017-02-14', 34.8, 'CHIP0003'),
+(4, 3, 'Luna', 'Cat', 'Domestic Shorthair', '2020-04-30', 3.9, NULL),
+(5, 4, 'Charlie', 'Dog', 'Beagle', '2021-01-17', 11.3, 'CHIP0005'),
+(6, 5, 'Coco', 'Rabbit', 'Holland Lop', '2022-03-05', 1.8, NULL),
+(7, 6, 'Rocky', 'Dog', 'Boxer', '2016-11-09', 31.0, 'CHIP0007'),
+(8, 7, 'Daisy', 'Dog', 'Golden Retriever', '2019-06-25', 27.4, 'CHIP0008'),
+(9, 7, 'Oliver', 'Cat', 'Maine Coon', '2018-12-12', 6.7, 'CHIP0009'),
+(10, 8, 'Kiwi', 'Bird', 'Cockatiel', '2021-09-01', 0.09, NULL),
+(11, 9, 'Buddy', 'Dog', 'Poodle', '2020-07-19', 8.6, 'CHIP0011'),
+(12, 10, 'Nala', 'Cat', 'Bengal', '2022-10-08', 4.5, 'CHIP0012'),
+(13, 2, 'Shadow', 'Cat', 'Domestic Shorthair', '2015-03-23', 5.1, NULL),
+(14, 11, 'Peanut', 'Guinea Pig', NULL, '2023-01-20', 0.95, NULL),
+(15, 3, 'Zeus', 'Dog', 'Rottweiler', '2023-04-02', 22.0, 'CHIP0015');
+
+INSERT INTO visits (visit_id, pet_id, vet_id, visit_date, reason, diagnosis, fee, follow_up_needed) VALUES
+(1, 1, 1, '2023-01-15', 'Annual checkup', 'Healthy', 65.00, 0),
+(2, 3, 2, '2023-02-03', 'Limping', 'Torn cruciate ligament', 1250.00, 1),
+(3, 2, 1, '2023-02-20', 'Vaccination', NULL, 45.00, 0),
+(4, 4, 4, '2023-03-11', 'Vomiting', 'Dietary indiscretion', 120.00, 0),
+(5, 5, 1, '2023-04-05', 'Vaccination', NULL, 45.00, 0),
+(6, 6, 6, '2023-05-16', 'Dental overgrowth', 'Malocclusion', 180.00, 1),
+(7, 7, 9, '2023-06-02', 'Heart murmur', 'Mild mitral valve disease', 320.00, 1),
+(8, 8, 5, '2023-06-28', 'Itchy skin', 'Allergic dermatitis', 140.00, 1),
+(9, 10, 6, '2023-07-14', 'Feather plucking', 'Stress-related behavior', 95.00, 0),
+(10, 11, 3, '2023-08-09', 'Dental cleaning', 'Gingivitis', 410.00, 0),
+(11, 12, 4, '2023-09-12', 'Annual checkup', 'Healthy', 65.00, 0),
+(12, 3, 2, '2023-10-05', 'Post-surgery recheck', 'Healing well', 70.00, 0),
+(13, 9, 8, '2023-10-30', 'Ear infection', 'Otitis externa', 85.00, 1),
+(14, 13, 10, '2023-11-18', 'Hit by car', 'Fractured pelvis', 2100.00, 1),
+(15, 1, 8, '2024-01-09', 'Annual checkup', NULL, 65.00, 0);
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which dogs weigh more than 25 kg, from heaviest to lightest?
+SQL: SELECT name, breed, weight_kg FROM pets WHERE species = 'Dog' AND weight_kg > 25 ORDER BY weight_kg DESC;
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are the five most expensive visits we've had?
+SQL: SELECT visit_id, visit_date, reason, fee FROM visits ORDER BY fee DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which pets don't have a microchip on record?
+SQL: SELECT name, species FROM pets WHERE microchip_id IS NULL ORDER BY name;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Who are our clients in Round Rock, listed by who signed up first?
+SQL: SELECT first_name, last_name, phone FROM owners WHERE city = 'Round Rock' ORDER BY registered_date ASC;
+
+### 5
+DIFFICULTY: simple
+QUESTION: Which veterinarians joined in 2020 or later, newest first?
+SQL: SELECT full_name, specialty, hire_date FROM vets WHERE hire_date >= '2020-01-01' ORDER BY hire_date DESC;
+
+### 6
+DIFFICULTY: simple
+QUESTION: Which visits require a follow-up, in date order?
+SQL: SELECT visit_id, visit_date, reason FROM visits WHERE follow_up_needed = 1 ORDER BY visit_date;
+
+### 7
+DIFFICULTY: join
+QUESTION: For the visits in the second half of 2023, what was the date, the pet, the vet and the reason?
+SQL: SELECT v.visit_date, p.name AS pet_name, vt.full_name AS vet_name, v.reason FROM visits v JOIN pets p ON p.pet_id = v.pet_id JOIN vets vt ON vt.vet_id = v.vet_id WHERE v.visit_date >= '2023-07-01' AND v.visit_date <= '2023-12-31' ORDER BY v.visit_date;
+
+### 8
+DIFFICULTY: join
+QUESTION: Which clients own cats, and what are the cats called?
+SQL: SELECT o.first_name, o.last_name, p.name AS cat_name FROM owners o JOIN pets p ON p.owner_id = o.owner_id WHERE p.species = 'Cat' ORDER BY o.last_name, p.name;
+
+### 9
+DIFFICULTY: join
+QUESTION: Which vets has Bella seen, and on what dates?
+SQL: SELECT vt.full_name, v.visit_date, v.reason FROM visits v JOIN pets p ON p.pet_id = v.pet_id JOIN vets vt ON vt.vet_id = v.vet_id WHERE p.name = 'Bella' ORDER BY v.visit_date;
+
+### 10
+DIFFICULTY: join
+QUESTION: Are there any registered clients who haven't added a pet yet?
+SQL: SELECT o.first_name, o.last_name, o.registered_date FROM owners o LEFT JOIN pets p ON p.owner_id = o.owner_id WHERE p.pet_id IS NULL;
+
+### 11
+DIFFICULTY: join
+QUESTION: What did the surgeons treat, and which pets were involved?
+SQL: SELECT vt.full_name, p.name AS pet_name, v.visit_date, v.diagnosis FROM visits v JOIN vets vt ON vt.vet_id = v.vet_id JOIN pets p ON p.pet_id = v.pet_id WHERE vt.specialty = 'Surgery' ORDER BY v.visit_date;
+
+### 12
+DIFFICULTY: join
+QUESTION: Which pets have never been brought in for a visit, and who owns them?
+SQL: SELECT p.name AS pet_name, p.species, o.first_name, o.last_name FROM pets p JOIN owners o ON o.owner_id = p.owner_id LEFT JOIN visits v ON v.pet_id = p.pet_id WHERE v.visit_id IS NULL;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many pets do we have of each kind of animal?
+SQL: SELECT species, COUNT(*) AS pet_count FROM pets GROUP BY species ORDER BY pet_count DESC, species;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: How many clients do we have in each city?
+SQL: SELECT city, COUNT(*) AS client_count FROM owners GROUP BY city ORDER BY client_count DESC, city;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: How many visits has each vet handled and how much did those visits bring in?
+SQL: SELECT vt.full_name, COUNT(v.visit_id) AS visit_count, SUM(v.fee) AS total_fees FROM vets vt JOIN visits v ON v.vet_id = vt.vet_id GROUP BY vt.vet_id, vt.full_name ORDER BY total_fees DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: What is the average weight for each type of animal?
+SQL: SELECT species, ROUND(AVG(weight_kg), 2) AS avg_weight_kg FROM pets GROUP BY species ORDER BY avg_weight_kg DESC;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which visits cost more than the average visit, and which pets were they for?
+SQL: SELECT p.name AS pet_name, v.visit_date, v.reason, v.fee FROM visits v JOIN pets p ON p.pet_id = v.pet_id WHERE v.fee > (SELECT AVG(fee) FROM visits) ORDER BY v.fee DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: Which clients have had their pets in for at least two visits in total, and how much have they spent?
+SQL: SELECT o.first_name, o.last_name, COUNT(v.visit_id) AS visit_count, SUM(v.fee) AS total_spent FROM owners o JOIN pets p ON p.owner_id = o.owner_id JOIN visits v ON v.pet_id = p.pet_id GROUP BY o.owner_id, o.first_name, o.last_name HAVING COUNT(v.visit_id) >= 2 ORDER BY total_spent DESC;
+
+### 19
+DIFFICULTY: hard
+QUESTION: As of January 1, 2024, how many pets are young (under 3 years), adult (3 to 8 years) or senior (over 8 years)?
+SQL: SELECT CASE WHEN age < 3 THEN 'Young' WHEN age <= 8 THEN 'Adult' ELSE 'Senior' END AS age_group, COUNT(*) AS pet_count FROM (SELECT (julianday('2024-01-01') - julianday(birth_date)) / 365.25 AS age FROM pets WHERE birth_date IS NOT NULL) GROUP BY age_group ORDER BY pet_count DESC;
+
+### 20
+DIFFICULTY: hard
+QUESTION: For pets that have come in more than once, how many visits have they had and how many days passed between their first and latest visit?
+SQL: SELECT p.name AS pet_name, COUNT(*) AS visit_count, CAST(julianday(MAX(v.visit_date)) - julianday(MIN(v.visit_date)) AS INTEGER) AS days_between_first_and_last FROM visits v JOIN pets p ON p.pet_id = v.pet_id GROUP BY p.pet_id, p.name HAVING COUNT(*) > 1 ORDER BY days_between_first_and_last DESC;

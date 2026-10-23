@@ -1,0 +1,44 @@
+{
+  "mode": "real teacher",
+  "task": "text-to-SQL (SQLite), every label executed and checked",
+  "teacher_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "teacher_base_url": "https://api.tokenfactory.nebius.com/v1",
+  "teacher_license": "OpenMDW-1.1 (NVIDIA Nemotron 3 Ultra model card)",
+  "rows": {
+    "train": 3507,
+    "golden": 0
+  },
+  "databases": {
+    "train": 369,
+    "exam": 0,
+    "failed_to_build": 165
+  },
+  "exam_rows_by_difficulty": {},
+  "exam_rows_from_unseen_domains": 0,
+  "held_out_domains": [
+    "airline operations",
+    "pharmacy inventory",
+    "ride sharing",
+    "construction projects",
+    "IoT sensor readings"
+  ],
+  "sql_rejected_by_execution_check": 173,
+  "verification": "each SQL executed on its database; kept only if one read-only SELECT returning 1 to 100 rows",
+  "spent_usd_estimate": 9.1845,
+  "teacher_calls": 914,
+  "tokens": {
+    "in": 1627344,
+    "out": 2519045
+  },
+  "stopped_for_budget": false,
+  "prices_per_million": {
+    "in": 1.0,
+    "out": 3.0
+  },
+  "sha256": {
+    "train.jsonl": "f479a49217e149df4edc42174e7ff6ebb74bab222488f4ba494c56714fd2197f",
+    "golden.jsonl": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+    "dbs.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  "overlap_train_exam_databases": 0
+}

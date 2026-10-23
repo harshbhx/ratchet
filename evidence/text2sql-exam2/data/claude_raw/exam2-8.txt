@@ -1,0 +1,224 @@
+```sql
+CREATE TABLE cinemas (
+    cinema_id      INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL,
+    city           TEXT NOT NULL,
+    opened_date    TEXT NOT NULL,
+    screen_count   INTEGER NOT NULL,
+    manager_name   TEXT
+);
+
+CREATE TABLE movies (
+    movie_id       INTEGER PRIMARY KEY,
+    title          TEXT NOT NULL,
+    genre          TEXT NOT NULL,
+    duration_min   INTEGER NOT NULL,
+    rating         TEXT NOT NULL,
+    release_date   TEXT NOT NULL,
+    imdb_score     REAL
+);
+
+CREATE TABLE customers (
+    customer_id    INTEGER PRIMARY KEY,
+    full_name      TEXT NOT NULL,
+    email          TEXT,
+    join_date      TEXT NOT NULL,
+    loyalty_tier   TEXT NOT NULL
+);
+
+CREATE TABLE screenings (
+    screening_id   INTEGER PRIMARY KEY,
+    cinema_id      INTEGER NOT NULL,
+    movie_id       INTEGER NOT NULL,
+    screen_number  INTEGER NOT NULL,
+    start_time     TEXT NOT NULL,
+    ticket_price   REAL NOT NULL,
+    seats_sold     INTEGER NOT NULL,
+    FOREIGN KEY (cinema_id) REFERENCES cinemas(cinema_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id)
+);
+
+CREATE TABLE bookings (
+    booking_id      INTEGER PRIMARY KEY,
+    screening_id    INTEGER NOT NULL,
+    customer_id     INTEGER,
+    tickets_count   INTEGER NOT NULL,
+    total_paid      REAL NOT NULL,
+    booking_date    TEXT NOT NULL,
+    payment_method  TEXT NOT NULL,
+    FOREIGN KEY (screening_id) REFERENCES screenings(screening_id),
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+);
+
+INSERT INTO cinemas (cinema_id, name, city, opened_date, screen_count, manager_name) VALUES
+(1, 'Starlight Downtown', 'Chicago', '2005-06-15', 8, 'Maria Lopez'),
+(2, 'Starlight Lakeside', 'Chicago', '2012-11-02', 6, 'James Carter'),
+(3, 'Starlight Riverside', 'Milwaukee', '2009-03-21', 10, NULL),
+(4, 'Starlight Harbor', 'Boston', '2015-07-30', 5, 'Priya Nair'),
+(5, 'Starlight Heights', 'Denver', '2018-09-14', 7, 'Tom Becker'),
+(6, 'Starlight Plaza', 'Denver', '2020-12-05', 4, 'Alice Kim'),
+(7, 'Starlight Central', 'Austin', '2003-05-10', 12, 'Luis Ortega'),
+(8, 'Starlight Oaks', 'Austin', '2016-02-18', 6, NULL),
+(9, 'Starlight Bay', 'Seattle', '2011-08-25', 9, 'Hannah Moore'),
+(10, 'Starlight Pines', 'Seattle', '2022-04-01', 3, 'Derek Shaw');
+
+INSERT INTO movies (movie_id, title, genre, duration_min, rating, release_date, imdb_score) VALUES
+(1, 'Midnight Express Run', 'Action', 118, 'PG-13', '2024-03-08', 7.1),
+(2, 'The Last Orchard', 'Drama', 134, 'R', '2024-01-19', 8.2),
+(3, 'Laugh Track', 'Comedy', 96, 'PG-13', '2024-02-14', 6.4),
+(4, 'Galaxy Drifters', 'Sci-Fi', 142, 'PG-13', '2024-05-03', 7.8),
+(5, 'Paper Moons', 'Animation', 92, 'G', '2024-04-12', 7.5),
+(6, 'Shadow Lane', 'Horror', 101, 'R', '2024-02-23', 5.9),
+(7, 'Heart of Lisbon', 'Romance', 109, 'PG', '2024-02-09', NULL),
+(8, 'Iron Tide', 'Action', 127, 'PG-13', '2024-06-07', 6.8),
+(9, 'Tiny Dragons', 'Animation', 88, 'G', '2024-06-21', 7.0),
+(10, 'Echoes of Tomorrow', 'Sci-Fi', 150, 'PG-13', '2024-07-12', 8.0),
+(11, 'The Quiet Hour', 'Drama', 115, 'PG-13', '2024-03-29', 7.3),
+(12, 'Grandma''s Getaway', 'Comedy', 99, 'PG', '2024-05-17', NULL);
+
+INSERT INTO customers (customer_id, full_name, email, join_date, loyalty_tier) VALUES
+(1, 'Olivia Reed', 'olivia.reed@example.com', '2021-03-12', 'Gold'),
+(2, 'Noah Bennett', 'noah.b@example.com', '2022-07-08', 'Silver'),
+(3, 'Emma Davis', NULL, '2023-01-25', 'Basic'),
+(4, 'Liam Foster', 'liam.foster@example.com', '2020-11-30', 'Gold'),
+(5, 'Sophia Nguyen', 'sophia.n@example.com', '2023-05-17', 'Basic'),
+(6, 'Mason Clark', 'mason.clark@example.com', '2019-09-04', 'Platinum'),
+(7, 'Ava Patel', 'ava.patel@example.com', '2022-02-14', 'Silver'),
+(8, 'Ethan Brooks', NULL, '2024-01-10', 'Basic'),
+(9, 'Isabella Rossi', 'isabella.r@example.com', '2021-10-22', 'Gold'),
+(10, 'Lucas Meyer', 'lucas.meyer@example.com', '2023-08-09', 'Basic'),
+(11, 'Mia Tanaka', 'mia.tanaka@example.com', '2020-06-18', 'Platinum'),
+(12, 'Henry Walker', 'henry.w@example.com', '2024-02-02', 'Basic');
+
+INSERT INTO screenings (screening_id, cinema_id, movie_id, screen_number, start_time, ticket_price, seats_sold) VALUES
+(1, 1, 2, 1, '2024-03-01 19:30', 14.50, 92),
+(2, 1, 4, 3, '2024-05-10 20:00', 16.00, 140),
+(3, 2, 1, 2, '2024-03-15 18:15', 12.50, 75),
+(4, 3, 5, 4, '2024-04-20 14:00', 9.00, 60),
+(5, 4, 6, 1, '2024-03-02 22:00', 13.00, 48),
+(6, 5, 10, 5, '2024-07-13 19:00', 15.50, 110),
+(7, 7, 10, 2, '2024-07-14 21:00', 17.00, 180),
+(8, 7, 8, 6, '2024-06-08 20:30', 14.00, 130),
+(9, 9, 9, 3, '2024-06-22 11:00', 8.50, 45),
+(10, 9, 3, 1, '2024-02-16 17:45', 11.00, 58),
+(11, 6, 11, 2, '2024-04-05 19:15', 12.00, 40),
+(12, 8, 12, 1, '2024-05-18 15:30', 10.50, 52),
+(13, 10, 7, 2, '2024-02-10 20:00', 13.50, 33),
+(14, 3, 4, 7, '2024-05-04 18:00', 15.00, 95);
+
+INSERT INTO bookings (booking_id, screening_id, customer_id, tickets_count, total_paid, booking_date, payment_method) VALUES
+(1, 1, 1, 2, 29.00, '2024-02-25', 'card'),
+(2, 2, 4, 4, 64.00, '2024-05-08', 'card'),
+(3, 3, 2, 3, 37.50, '2024-03-14', 'cash'),
+(4, 4, 5, 2, 18.00, '2024-04-18', 'card'),
+(5, 5, 6, 1, 13.00, '2024-03-02', 'mobile'),
+(6, 6, 9, 2, 31.00, '2024-07-10', 'card'),
+(7, 7, 6, 3, 51.00, '2024-07-12', 'mobile'),
+(8, 7, 11, 2, 34.00, '2024-07-13', 'card'),
+(9, 8, 3, 1, 14.00, '2024-06-07', 'cash'),
+(10, 9, 7, 4, 34.00, '2024-06-20', 'card'),
+(11, 10, NULL, 2, 22.00, '2024-02-16', 'cash'),
+(12, 11, 10, 2, 24.00, '2024-04-04', 'mobile'),
+(13, 2, 1, 2, 32.00, '2024-05-09', 'mobile'),
+(14, 14, 4, 2, 30.00, '2024-05-03', 'card');
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which movies are suitable for all ages (rated G), and how long are they?
+SQL: SELECT title, duration_min FROM movies WHERE rating = 'G';
+
+### 2
+DIFFICULTY: simple
+QUESTION: What are the five longest movies we show?
+SQL: SELECT title, duration_min FROM movies ORDER BY duration_min DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which of our cinemas currently have no manager on record?
+SQL: SELECT name, city FROM cinemas WHERE manager_name IS NULL;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Show me our Gold and Platinum members in alphabetical order.
+SQL: SELECT full_name, loyalty_tier FROM customers WHERE loyalty_tier IN ('Gold', 'Platinum') ORDER BY full_name;
+
+### 5
+DIFFICULTY: simple
+QUESTION: What are the three highest ticket prices charged for a showing?
+SQL: SELECT screening_id, start_time, ticket_price FROM screenings ORDER BY ticket_price DESC LIMIT 3;
+
+### 6
+DIFFICULTY: simple
+QUESTION: Which films opened between April and June 2024, in order of release?
+SQL: SELECT title, release_date FROM movies WHERE release_date BETWEEN '2024-04-01' AND '2024-06-30' ORDER BY release_date;
+
+### 7
+DIFFICULTY: join
+QUESTION: Which movies were shown in July 2024 or later, and at which cinemas?
+SQL: SELECT m.title, c.name AS cinema, s.start_time FROM screenings s JOIN movies m ON m.movie_id = s.movie_id JOIN cinemas c ON c.cinema_id = s.cinema_id WHERE s.start_time >= '2024-07-01' ORDER BY s.start_time;
+
+### 8
+DIFFICULTY: join
+QUESTION: Who has booked tickets to see Galaxy Drifters, and how many seats did each booking cover?
+SQL: SELECT cu.full_name, b.tickets_count, b.booking_date FROM bookings b JOIN customers cu ON cu.customer_id = b.customer_id JOIN screenings s ON s.screening_id = b.screening_id JOIN movies m ON m.movie_id = s.movie_id WHERE m.title = 'Galaxy Drifters' ORDER BY b.booking_date;
+
+### 9
+DIFFICULTY: join
+QUESTION: What was shown at our Chicago locations, and what did a ticket cost?
+SQL: SELECT c.name AS cinema, m.title, s.start_time, s.ticket_price FROM cinemas c JOIN screenings s ON s.cinema_id = c.cinema_id JOIN movies m ON m.movie_id = s.movie_id WHERE c.city = 'Chicago' ORDER BY s.start_time;
+
+### 10
+DIFFICULTY: join
+QUESTION: For bookings paid through the mobile app, who paid and which film was it for?
+SQL: SELECT cu.full_name, m.title, b.total_paid FROM bookings b JOIN customers cu ON cu.customer_id = b.customer_id JOIN screenings s ON s.screening_id = b.screening_id JOIN movies m ON m.movie_id = s.movie_id WHERE b.payment_method = 'mobile' ORDER BY b.total_paid DESC;
+
+### 11
+DIFFICULTY: join
+QUESTION: Which cinemas have screened a sci-fi film?
+SQL: SELECT DISTINCT c.name, c.city FROM cinemas c JOIN screenings s ON s.cinema_id = c.cinema_id JOIN movies m ON m.movie_id = s.movie_id WHERE m.genre = 'Sci-Fi' ORDER BY c.name;
+
+### 12
+DIFFICULTY: join
+QUESTION: List every booking with the buyer's name (or "Guest" if unknown), the film and the cinema.
+SQL: SELECT b.booking_id, COALESCE(cu.full_name, 'Guest') AS buyer, m.title, c.name AS cinema, b.total_paid FROM bookings b LEFT JOIN customers cu ON cu.customer_id = b.customer_id JOIN screenings s ON s.screening_id = b.screening_id JOIN movies m ON m.movie_id = s.movie_id JOIN cinemas c ON c.cinema_id = s.cinema_id ORDER BY b.booking_id;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many movies do we have in each genre?
+SQL: SELECT genre, COUNT(*) AS movie_count FROM movies GROUP BY genre ORDER BY movie_count DESC, genre;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: How much money came in through each payment method, and how many bookings were there?
+SQL: SELECT payment_method, COUNT(*) AS bookings, SUM(total_paid) AS revenue FROM bookings GROUP BY payment_method ORDER BY revenue DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: What is the average ticket price in each city?
+SQL: SELECT c.city, ROUND(AVG(s.ticket_price), 2) AS avg_price FROM cinemas c JOIN screenings s ON s.cinema_id = c.cinema_id GROUP BY c.city ORDER BY avg_price DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: Which five movies have sold the most seats overall?
+SQL: SELECT m.title, SUM(s.seats_sold) AS total_seats FROM movies m JOIN screenings s ON s.movie_id = m.movie_id GROUP BY m.movie_id, m.title ORDER BY total_seats DESC LIMIT 5;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which movies have a critic score higher than the average across all scored movies?
+SQL: SELECT title, imdb_score FROM movies WHERE imdb_score > (SELECT AVG(imdb_score) FROM movies) ORDER BY imdb_score DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: Which customers have spent more than $50 in total on bookings, and how much?
+SQL: SELECT cu.full_name, SUM(b.total_paid) AS total_spent FROM customers cu JOIN bookings b ON b.customer_id = cu.customer_id GROUP BY cu.customer_id, cu.full_name HAVING SUM(b.total_paid) > 50 ORDER BY total_spent DESC;
+
+### 19
+DIFFICULTY: hard
+QUESTION: How do daytime showings (starting before 5 PM) compare with evening ones in number of showings and seats sold?
+SQL: SELECT CASE WHEN CAST(strftime('%H', start_time) AS INTEGER) < 17 THEN 'Matinee' ELSE 'Evening' END AS slot, COUNT(*) AS showings, SUM(seats_sold) AS total_seats FROM screenings GROUP BY slot;
+
+### 20
+DIFFICULTY: hard
+QUESTION: Which five cinemas have been open the longest, and how many full years had they been open as of the end of 2024?
+SQL: SELECT name, city, opened_date, CAST((julianday('2024-12-31') - julianday(opened_date)) / 365.25 AS INTEGER) AS years_open FROM cinemas ORDER BY opened_date ASC LIMIT 5;

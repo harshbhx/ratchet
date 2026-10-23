@@ -42,3 +42,18 @@ Overrides for step 1: `RATCHET_TEACHER_BASE` and `RATCHET_TEACHER_MODEL` (defaul
 Keep the Mamba `in_proj`, `out_proj` and `lm_head` layers out of 4-bit; cast the LoRA weights to fp32 after the trainer is built;
 answer the exam in a separate process from training; copy partial answers off a free Colab machine every few minutes, because
 Colab takes the machine back without warning.
+
+## Round 2 on Modal
+
+`modal_train.py` runs the same `train_t4.py` and `fast_generate.py` on a rented T4 at Modal, as one detached pipeline (train, then answer the
+exam) that survives the laptop being off, with a cost cap enforced in code and a read-only progress endpoint (`modal_status_app.py`). Put
+`train_t4.py`, `fast_generate.py`, `golden.jsonl` and the merged training file (`train_r2.jsonl`, see
+`evidence/text2sql-round2/data/merge_and_check.py`) in one folder with these two scripts, then:
+
+```bash
+python -m modal run modal_train.py::build                 # once: compile the Mamba kernels for the T4
+python -m modal run --detach modal_train.py::pipeline     # train, then answer the exam
+python -m modal volume get ratchet-out raw_r2.jsonl .     # the answers; the adapter is in the volume's adapter/ folder
+```
+
+The first training step compiles GPU code for 15 to 25 minutes while the GPU sits idle; that is normal.

@@ -1,0 +1,206 @@
+```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE wind_farms (
+    farm_id         INTEGER PRIMARY KEY,
+    farm_name       TEXT NOT NULL,
+    state           TEXT NOT NULL,
+    commissioned_date TEXT,
+    capacity_mw     REAL,
+    operator        TEXT
+);
+
+CREATE TABLE turbines (
+    turbine_id      INTEGER PRIMARY KEY,
+    farm_id         INTEGER NOT NULL,
+    turbine_tag     TEXT NOT NULL,
+    model           TEXT,
+    manufacturer    TEXT,
+    rated_kw        INTEGER,
+    install_date    TEXT,
+    status          TEXT NOT NULL,
+    FOREIGN KEY (farm_id) REFERENCES wind_farms(farm_id)
+);
+
+CREATE TABLE technicians (
+    tech_id             INTEGER PRIMARY KEY,
+    full_name           TEXT NOT NULL,
+    certification_level TEXT NOT NULL,
+    hire_date           TEXT,
+    hourly_rate         REAL,
+    home_base           TEXT
+);
+
+CREATE TABLE work_orders (
+    work_order_id   INTEGER PRIMARY KEY,
+    turbine_id      INTEGER NOT NULL,
+    tech_id         INTEGER,
+    order_type      TEXT NOT NULL,
+    priority        TEXT NOT NULL,
+    opened_date     TEXT NOT NULL,
+    completed_date  TEXT,
+    labor_hours     REAL,
+    parts_cost      REAL,
+    description     TEXT,
+    FOREIGN KEY (turbine_id) REFERENCES turbines(turbine_id),
+    FOREIGN KEY (tech_id) REFERENCES technicians(tech_id)
+);
+
+INSERT INTO wind_farms (farm_id, farm_name, state, commissioned_date, capacity_mw, operator) VALUES
+(1, 'Prairie Wind', 'Iowa', '2012-05-14', 150.0, 'Midwest Renewables'),
+(2, 'Red Mesa', 'Texas', '2015-09-01', 200.5, 'Lone Star Energy'),
+(3, 'Coastal Breeze', 'Texas', '2018-03-20', 120.0, 'Lone Star Energy'),
+(4, 'High Plains', 'Kansas', '2010-11-30', 99.0, 'Heartland Power'),
+(5, 'Cedar Ridge', 'Iowa', '2019-07-08', 175.0, 'Midwest Renewables'),
+(6, 'Northern Gale', 'North Dakota', '2016-10-12', 210.0, 'Heartland Power'),
+(7, 'Sage Valley', 'Wyoming', '2020-04-25', 160.0, 'Summit Wind'),
+(8, 'Blue Hills', 'Oklahoma', '2014-06-18', 130.0, 'Heartland Power'),
+(9, 'Windy Gap', 'Wyoming', '2021-09-09', 88.5, 'Summit Wind'),
+(10, 'Lakeshore', 'Michigan', '2017-12-02', 95.0, NULL);
+
+INSERT INTO turbines (turbine_id, farm_id, turbine_tag, model, manufacturer, rated_kw, install_date, status) VALUES
+(1, 1, 'PW-01', 'V110-2.0', 'Vestas', 2000, '2012-04-10', 'Operational'),
+(2, 1, 'PW-02', 'V110-2.0', 'Vestas', 2000, '2012-04-22', 'Operational'),
+(3, 2, 'RM-01', 'GE 2.5-120', 'GE', 2500, '2015-08-05', 'Operational'),
+(4, 2, 'RM-02', 'GE 2.5-120', 'GE', 2500, '2015-08-19', 'Under Maintenance'),
+(5, 3, 'CB-01', 'SG 3.4-132', 'Siemens Gamesa', 3400, '2018-02-11', 'Operational'),
+(6, 4, 'HP-01', 'V90-1.8', 'Vestas', 1800, '2010-10-15', 'Offline'),
+(7, 4, 'HP-02', 'V90-1.8', 'Vestas', 1800, '2010-10-20', 'Operational'),
+(8, 5, 'CR-01', 'GE 2.8-127', 'GE', 2800, '2019-06-01', 'Operational'),
+(9, 6, 'NG-01', 'SG 3.4-132', 'Siemens Gamesa', 3400, '2016-09-20', 'Operational'),
+(10, 6, 'NG-02', 'V136-3.45', 'Vestas', 3450, '2020-01-15', 'Under Maintenance'),
+(11, 7, 'SV-01', 'GE 2.8-127', 'GE', 2800, '2020-03-30', 'Operational'),
+(12, 8, 'BH-01', 'V110-2.0', 'Vestas', 2000, '2014-05-22', 'Operational'),
+(13, 9, 'WG-01', 'SG 3.4-132', 'Siemens Gamesa', 3400, '2021-08-14', 'Operational'),
+(14, 10, 'LS-01', 'GE 2.5-120', 'GE', 2500, '2017-11-10', 'Offline'),
+(15, 5, 'CR-02', 'V136-3.45', 'Vestas', 3450, '2019-06-10', 'Operational');
+
+INSERT INTO technicians (tech_id, full_name, certification_level, hire_date, hourly_rate, home_base) VALUES
+(1, 'Maria Alvarez', 'Level 3', '2013-03-04', 62.5, 'Des Moines'),
+(2, 'James Connor', 'Level 2', '2016-07-18', 48.0, 'Amarillo'),
+(3, 'Priya Nair', 'Level 2', '2018-01-22', 50.0, 'Wichita'),
+(4, 'Tom Becker', 'Level 1', '2022-05-09', 36.5, 'Des Moines'),
+(5, 'Lena Johansson', 'Level 3', '2011-09-12', 65.0, 'Fargo'),
+(6, 'Carlos Mendez', 'Level 1', '2023-02-13', 34.0, 'Amarillo'),
+(7, 'Aisha Khan', 'Level 2', '2019-10-07', 49.5, 'Casper'),
+(8, 'Derek Hollis', 'Level 2', '2017-04-03', 47.0, 'Oklahoma City'),
+(9, 'Sophie Turner', 'Level 1', '2021-08-30', 35.0, 'Casper'),
+(10, 'Bill Nakamura', 'Level 3', '2014-06-16', 60.0, 'Wichita');
+
+INSERT INTO work_orders (work_order_id, turbine_id, tech_id, order_type, priority, opened_date, completed_date, labor_hours, parts_cost, description) VALUES
+(1, 1, 1, 'Preventive', 'Low', '2023-01-10', '2023-01-11', 6.0, 450.0, 'Annual gearbox oil change'),
+(2, 3, 2, 'Preventive', 'Low', '2023-02-05', '2023-02-06', 5.5, 380.0, 'Blade bolt torque check'),
+(3, 4, 2, 'Corrective', 'High', '2023-03-14', '2023-03-18', 22.0, 8200.0, 'Yaw motor replacement'),
+(4, 6, 3, 'Emergency', 'Critical', '2023-04-02', '2023-04-09', 40.0, 25600.0, 'Gearbox failure'),
+(5, 9, 5, 'Inspection', 'Medium', '2023-04-20', '2023-04-20', 4.0, 0.0, 'Drone blade inspection'),
+(6, 10, 5, 'Corrective', 'High', '2023-05-11', NULL, 12.0, 5400.0, 'Pitch system fault'),
+(7, 5, 2, 'Preventive', 'Low', '2023-05-25', '2023-05-26', 6.5, 520.0, 'Main bearing greasing'),
+(8, 8, 1, 'Inspection', 'Medium', '2023-06-08', '2023-06-08', 3.5, NULL, 'Tower weld inspection'),
+(9, 14, 8, 'Emergency', 'Critical', '2023-07-19', '2023-07-27', 36.0, 18900.0, 'Generator winding short'),
+(10, 12, 8, 'Preventive', 'Low', '2023-08-03', '2023-08-04', 5.0, 410.0, 'Brake pad replacement'),
+(11, 2, NULL, 'Corrective', 'Medium', '2023-08-21', NULL, NULL, NULL, 'Anemometer calibration drift, awaiting assignment'),
+(12, 11, 7, 'Corrective', 'Medium', '2023-09-12', '2023-09-14', 14.0, 2300.0, 'Hydraulic leak repair'),
+(13, 13, 9, 'Inspection', 'Low', '2023-10-05', '2023-10-05', 3.0, 0.0, 'Post-warranty inspection'),
+(14, 4, 10, 'Corrective', 'High', '2023-11-02', NULL, 8.0, 3100.0, 'Yaw bearing noise investigation'),
+(15, 7, 3, 'Preventive', 'Low', '2023-11-15', '2023-11-16', 6.0, 470.0, 'Cooling filter replacement');
+```
+
+### 1
+DIFFICULTY: simple
+QUESTION: Which turbines are currently offline?
+SQL: SELECT turbine_id, turbine_tag, model, status FROM turbines WHERE status = 'Offline';
+
+### 2
+DIFFICULTY: simple
+QUESTION: Who are our five best-paid technicians?
+SQL: SELECT full_name, hourly_rate FROM technicians ORDER BY hourly_rate DESC LIMIT 5;
+
+### 3
+DIFFICULTY: simple
+QUESTION: Which maintenance jobs are still open, oldest first?
+SQL: SELECT work_order_id, order_type, priority, opened_date FROM work_orders WHERE completed_date IS NULL ORDER BY opened_date ASC;
+
+### 4
+DIFFICULTY: simple
+QUESTION: Show the wind farms in Texas or Wyoming, biggest capacity first.
+SQL: SELECT farm_name, state, capacity_mw FROM wind_farms WHERE state IN ('Texas', 'Wyoming') ORDER BY capacity_mw DESC;
+
+### 5
+DIFFICULTY: simple
+QUESTION: What were the three jobs with the highest spend on parts?
+SQL: SELECT work_order_id, description, parts_cost FROM work_orders WHERE parts_cost IS NOT NULL ORDER BY parts_cost DESC LIMIT 3;
+
+### 6
+DIFFICULTY: simple
+QUESTION: Which technicians joined the company in 2019 or later, in order of when they started?
+SQL: SELECT full_name, hire_date, certification_level FROM technicians WHERE hire_date >= '2019-01-01' ORDER BY hire_date ASC;
+
+### 7
+DIFFICULTY: join
+QUESTION: List the high-priority and critical jobs along with the name of the farm where each one happened.
+SQL: SELECT w.work_order_id, w.priority, w.description, f.farm_name FROM work_orders w JOIN turbines t ON t.turbine_id = w.turbine_id JOIN wind_farms f ON f.farm_id = t.farm_id WHERE w.priority IN ('High', 'Critical') ORDER BY w.opened_date;
+
+### 8
+DIFFICULTY: join
+QUESTION: Which technicians have worked on emergency repairs?
+SQL: SELECT DISTINCT te.full_name FROM work_orders w JOIN technicians te ON te.tech_id = w.tech_id WHERE w.order_type = 'Emergency';
+
+### 9
+DIFFICULTY: join
+QUESTION: What work has been done on Vestas turbines, and which turbine model was involved?
+SQL: SELECT w.work_order_id, t.turbine_tag, t.model, w.order_type, w.description FROM work_orders w JOIN turbines t ON t.turbine_id = w.turbine_id WHERE t.manufacturer = 'Vestas' ORDER BY w.work_order_id;
+
+### 10
+DIFFICULTY: join
+QUESTION: What jobs have been logged against turbines at our Iowa farms?
+SQL: SELECT f.farm_name, t.turbine_tag, w.order_type, w.opened_date FROM wind_farms f JOIN turbines t ON t.farm_id = f.farm_id JOIN work_orders w ON w.turbine_id = t.turbine_id WHERE f.state = 'Iowa' ORDER BY w.opened_date;
+
+### 11
+DIFFICULTY: join
+QUESTION: Which technicians have never been assigned to a job?
+SQL: SELECT te.full_name, te.home_base FROM technicians te LEFT JOIN work_orders w ON w.tech_id = te.tech_id WHERE w.work_order_id IS NULL;
+
+### 12
+DIFFICULTY: join
+QUESTION: For every unfinished job, show the turbine, the farm, the priority and who is handling it, saying "Unassigned" if nobody is.
+SQL: SELECT w.work_order_id, t.turbine_tag, f.farm_name, w.priority, COALESCE(te.full_name, 'Unassigned') AS technician FROM work_orders w JOIN turbines t ON t.turbine_id = w.turbine_id JOIN wind_farms f ON f.farm_id = t.farm_id LEFT JOIN technicians te ON te.tech_id = w.tech_id WHERE w.completed_date IS NULL ORDER BY w.work_order_id;
+
+### 13
+DIFFICULTY: aggregate
+QUESTION: How many jobs do we have of each type?
+SQL: SELECT order_type, COUNT(*) AS job_count FROM work_orders GROUP BY order_type ORDER BY job_count DESC;
+
+### 14
+DIFFICULTY: aggregate
+QUESTION: How much have we spent on parts at each farm in total?
+SQL: SELECT f.farm_name, SUM(w.parts_cost) AS total_parts_cost FROM wind_farms f JOIN turbines t ON t.farm_id = f.farm_id JOIN work_orders w ON w.turbine_id = t.turbine_id GROUP BY f.farm_id, f.farm_name ORDER BY total_parts_cost DESC;
+
+### 15
+DIFFICULTY: aggregate
+QUESTION: On average, how many labor hours does a job take at each priority level?
+SQL: SELECT priority, ROUND(AVG(labor_hours), 2) AS avg_labor_hours FROM work_orders WHERE labor_hours IS NOT NULL GROUP BY priority ORDER BY avg_labor_hours DESC;
+
+### 16
+DIFFICULTY: aggregate
+QUESTION: How many technicians are there at each certification level, and what is their average hourly pay?
+SQL: SELECT certification_level, COUNT(*) AS technician_count, ROUND(AVG(hourly_rate), 2) AS avg_hourly_rate FROM technicians GROUP BY certification_level ORDER BY certification_level;
+
+### 17
+DIFFICULTY: hard
+QUESTION: Which farms have spent more than $10,000 on parts overall?
+SQL: SELECT f.farm_name, SUM(w.parts_cost) AS total_parts_cost FROM wind_farms f JOIN turbines t ON t.farm_id = f.farm_id JOIN work_orders w ON w.turbine_id = t.turbine_id GROUP BY f.farm_id, f.farm_name HAVING SUM(w.parts_cost) > 10000 ORDER BY total_parts_cost DESC;
+
+### 18
+DIFFICULTY: hard
+QUESTION: For finished corrective and emergency repairs, how many days did each take from opening to completion, and was it slow (a week or more) or normal?
+SQL: SELECT work_order_id, order_type, opened_date, completed_date, CAST(julianday(completed_date) - julianday(opened_date) AS INTEGER) AS days_to_complete, CASE WHEN julianday(completed_date) - julianday(opened_date) >= 7 THEN 'Slow' ELSE 'Normal' END AS speed FROM work_orders WHERE order_type IN ('Corrective', 'Emergency') AND completed_date IS NOT NULL ORDER BY days_to_complete DESC;
+
+### 19
+DIFFICULTY: hard
+QUESTION: Which turbines have had more than one job logged against them?
+SQL: SELECT t.turbine_tag, t.model, COUNT(*) AS job_count FROM turbines t JOIN work_orders w ON w.turbine_id = t.turbine_id GROUP BY t.turbine_id, t.turbine_tag, t.model HAVING COUNT(*) > 1;
+
+### 20
+DIFFICULTY: hard
+QUESTION: Which technicians earn more per hour than the average technician?
+SQL: SELECT full_name, hourly_rate FROM technicians WHERE hourly_rate > (SELECT AVG(hourly_rate) FROM technicians) ORDER BY hourly_rate DESC;
