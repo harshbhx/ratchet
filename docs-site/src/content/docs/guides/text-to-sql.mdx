@@ -245,8 +245,8 @@ python measure_adapter.py verify --raw raw.jsonl --results results.json \
 | What | Where |
 |---|---|
 | Data generation and sandbox | `gen_sql_data.py`: `build_db`, `run_select`, `make_db`, `HELD_OUT_DOMAINS`, the `teacher_manifest.json` it writes |
-| Training | `train_t4.py` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss) and `pipeline.sh` (drives a free Colab T4) |
-| Scoring | `measure_adapter.py`: `sql_same`, `annotate`, `calibrate`, `build_report`, `verify` |
+| Training | `train_t4.py` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss), run on a free Colab T4 |
+| Scoring | `scripts/measure_adapter.py`: `report` runs each answer and the reference query on the same database and compares the rows; `verify` recomputes every number from the raw answers |
 | In-gateway SQL tasks | [`ratchet/sqlcheck.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/sqlcheck.py): `SqlSpec`, `Sandbox`, `parse_query` |
 | Statistics used for the ranges | Wilson 95% interval in `measure_adapter.py`; exact intervals in [`ratchet/stats.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/stats.py) |
 
