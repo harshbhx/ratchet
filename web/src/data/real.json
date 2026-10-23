@@ -108,18 +108,30 @@
     },
     {
       "id": "hf-publish",
-      "claim": "The adapter and its dataset on Hugging Face",
-      "status": "pending",
-      "evidence": "To be published under the harshbhx account: the adapter as harshbhx/ratchet-nemotron-nano-4b-text2sql and the synthetic data as harshbhx/ratchet-text2sql-synthetic. Not published yet.",
+      "claim": "The adapter, its training data and the exams on Hugging Face",
+      "status": "real",
+      "evidence": "Published and public under the harshbhx account on 24 Oct 2026: the round 2 and round 1 adapters (with NVIDIA's license, a NOTICE and a manifest), all 4,322 training examples with their provenance, and both exams with every model's answers and scores. The adapter weights downloaded from the public repository match the recorded SHA-256 hashes.",
       "check": {
-        "label": "The account the two repositories will appear under",
-        "href": "https://huggingface.co/harshbhx"
+        "label": "Open the adapter's page",
+        "href": "https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql"
       },
-      "paths": ["scripts/text2sql/README.md"],
-      "date": "2026-10-23",
+      "paths": [
+        "scripts/text2sql/README.md"
+      ],
+      "date": "2026-10-24",
       "facts": [
-        { "label": "Model repo", "value": "harshbhx/ratchet-nemotron-nano-4b-text2sql" },
-        { "label": "Dataset repo", "value": "harshbhx/ratchet-text2sql-synthetic" }
+        {
+          "label": "Adapter",
+          "value": "harshbhx/ratchet-nemotron-nano-4b-text2sql"
+        },
+        {
+          "label": "Training data",
+          "value": "harshbhx/ratchet-text2sql-synthetic"
+        },
+        {
+          "label": "Exams and answers",
+          "value": "harshbhx/ratchet-text2sql-exams"
+        }
       ],
       "metrics": []
     },

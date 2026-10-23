@@ -13,6 +13,7 @@ import { Learn } from "./sections/learn";
 import { LiveStrip } from "./sections/live-strip";
 import { OpenSource } from "./sections/open-source";
 import { RealRun } from "./sections/real-run";
+import { WhatsIn } from "./sections/whats-in";
 import { Rent } from "./sections/rent";
 import { Safety } from "./sections/safety";
 import { Scout } from "./sections/scout";
@@ -34,6 +35,8 @@ export default function LandingPage() {
       <div className="overflow-x-clip">
         <ChapterRail />
         <Hero />
+        <RealRun />
+        <WhatsIn />
         <LiveStrip stats={stats} />
         <Rent />
         <Catch />
@@ -42,7 +45,6 @@ export default function LandingPage() {
         <Lifecycle />
         <Safety />
         <Learn />
-        <RealRun />
         <HonestBill stats={stats} />
         <Checked stats={stats} />
         <Scout />

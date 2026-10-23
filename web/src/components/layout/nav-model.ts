@@ -8,12 +8,13 @@ import { DEMO_URL, DOCS_URL, REPO_URL } from "@/lib/utils";
 export type NavKind = "section" | "route" | "external";
 
 export type NavItem =
-  | { label: string; href: `#${ChapterId}`; kind: "section" }
+  | { label: string; href: `#${ChapterId | "real-run"}`; kind: "section" }
   | { label: string; href: `/${string}`; kind: "route" }
   | { label: string; href: `https://${string}`; kind: "external" };
 
 /** The story page's chapters the pill follows as the reader scrolls (ids from CHAPTERS in pages/landing/shared.tsx). */
 export const STORY_NAV: readonly NavItem[] = [
+  { label: "Results", href: "#real-run", kind: "section" },
   { label: "How it works", href: "#how", kind: "section" },
   { label: "Safety", href: "#safety", kind: "section" },
   { label: "Learn", href: "#learn", kind: "section" },
