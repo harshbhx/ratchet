@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="960" height="400" role="img" aria-label="Strict exam scores for the untrained model, the teacher and two trained adapters on two text-to-SQL exams">
+<style>text{font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif}.h{fill:#f8fafc;font-size:17px;font-weight:600}.s{fill:#94a3b8;font-size:12.5px}.t{fill:#cbd5e1;font-size:12px}.t2{fill:#94a3b8;font-size:11px}.v{fill:#f8fafc;font-size:13px;font-weight:600}.g{stroke:#1e293b;stroke-width:1}.w{stroke:#e2e8f0;stroke-width:1.5}.n{fill:#94a3b8;font-size:12px}</style>
+<rect width="960" height="400" rx="16" fill="#0b1220"/>
+<text x="70" y="62" class="h">Exam 1</text>
+<text x="70" y="82" class="s">172 questions, written by the teacher</text>
+<line x1="70" x2="450" y1="316.0" y2="316.0" class="g"/>
+<text x="62" y="320.0" class="t" text-anchor="end">0%</text>
+<line x1="70" x2="450" y1="272.0" y2="272.0" class="g"/>
+<text x="62" y="276.0" class="t" text-anchor="end">10%</text>
+<line x1="70" x2="450" y1="228.0" y2="228.0" class="g"/>
+<text x="62" y="232.0" class="t" text-anchor="end">20%</text>
+<line x1="70" x2="450" y1="184.0" y2="184.0" class="g"/>
+<text x="62" y="188.0" class="t" text-anchor="end">30%</text>
+<line x1="70" x2="450" y1="140.0" y2="140.0" class="g"/>
+<text x="62" y="144.0" class="t" text-anchor="end">40%</text>
+<line x1="70" x2="450" y1="96.0" y2="96.0" class="g"/>
+<text x="62" y="100.0" class="t" text-anchor="end">50%</text>
+<rect x="90.9" y="259.7" width="53.2" height="56.3" rx="5" fill="#94a3b8"/>
+<line x1="117.5" x2="117.5" y1="278.2" y2="234.1" class="w"/>
+<line x1="111.5" x2="123.5" y1="278.2" y2="278.2" class="w"/>
+<line x1="111.5" x2="123.5" y1="234.1" y2="234.1" class="w"/>
+<text x="117.5" y="226.1" class="v" text-anchor="middle">12.8%</text>
+<text x="117.5" y="338" class="t" text-anchor="middle">Untrained</text>
+<text x="117.5" y="354" class="t2" text-anchor="middle">22 of 172</text>
+<rect x="185.9" y="203.4" width="53.2" height="112.6" rx="5" fill="#f97316"/>
+<line x1="212.5" x2="212.5" y1="229.6" y2="172.6" class="w"/>
+<line x1="206.5" x2="218.5" y1="229.6" y2="229.6" class="w"/>
+<line x1="206.5" x2="218.5" y1="172.6" y2="172.6" class="w"/>
+<text x="212.5" y="164.6" class="v" text-anchor="middle">25.6%</text>
+<text x="212.5" y="338" class="t" text-anchor="middle">Teacher</text>
+<text x="212.5" y="354" class="t2" text-anchor="middle">44 of 172</text>
+<rect x="280.9" y="170.2" width="53.2" height="145.8" rx="5" fill="#60a5fa"/>
+<line x1="307.5" x2="307.5" y1="199.2" y2="137.9" class="w"/>
+<line x1="301.5" x2="313.5" y1="199.2" y2="199.2" class="w"/>
+<line x1="301.5" x2="313.5" y1="137.9" y2="137.9" class="w"/>
+<text x="307.5" y="129.9" class="v" text-anchor="middle">33.1%</text>
+<text x="307.5" y="338" class="t" text-anchor="middle">Round 1</text>
+<text x="307.5" y="354" class="t2" text-anchor="middle">57 of 172</text>
+<rect x="375.9" y="144.6" width="53.2" height="171.4" rx="5" fill="#2563eb"/>
+<line x1="402.5" x2="402.5" y1="175.3" y2="111.8" class="w"/>
+<line x1="396.5" x2="408.5" y1="175.3" y2="175.3" class="w"/>
+<line x1="396.5" x2="408.5" y1="111.8" y2="111.8" class="w"/>
+<text x="402.5" y="103.8" class="v" text-anchor="middle">39.0%</text>
+<text x="402.5" y="338" class="t" text-anchor="middle">Round 2</text>
+<text x="402.5" y="354" class="t2" text-anchor="middle">67 of 172</text>
+<text x="540" y="62" class="h">Exam 2</text>
+<text x="540" y="82" class="s">200 questions, written by a different model</text>
+<line x1="540" x2="920" y1="316.0" y2="316.0" class="g"/>
+<text x="532" y="320.0" class="t" text-anchor="end">0%</text>
+<line x1="540" x2="920" y1="272.0" y2="272.0" class="g"/>
+<text x="532" y="276.0" class="t" text-anchor="end">10%</text>
+<line x1="540" x2="920" y1="228.0" y2="228.0" class="g"/>
+<text x="532" y="232.0" class="t" text-anchor="end">20%</text>
+<line x1="540" x2="920" y1="184.0" y2="184.0" class="g"/>
+<text x="532" y="188.0" class="t" text-anchor="end">30%</text>
+<line x1="540" x2="920" y1="140.0" y2="140.0" class="g"/>
+<text x="532" y="144.0" class="t" text-anchor="end">40%</text>
+<line x1="540" x2="920" y1="96.0" y2="96.0" class="g"/>
+<text x="532" y="100.0" class="t" text-anchor="end">50%</text>
+<rect x="560.9" y="261.0" width="53.2" height="55.0" rx="5" fill="#94a3b8"/>
+<line x1="587.5" x2="587.5" y1="278.1" y2="237.7" class="w"/>
+<line x1="581.5" x2="593.5" y1="278.1" y2="278.1" class="w"/>
+<line x1="581.5" x2="593.5" y1="237.7" y2="237.7" class="w"/>
+<text x="587.5" y="229.7" class="v" text-anchor="middle">12.5%</text>
+<text x="587.5" y="338" class="t" text-anchor="middle">Untrained</text>
+<text x="587.5" y="354" class="t2" text-anchor="middle">25 of 200</text>
+<rect x="655.9" y="250.0" width="53.2" height="66.0" rx="5" fill="#f97316"/>
+<line x1="682.5" x2="682.5" y1="268.9" y2="225.3" class="w"/>
+<line x1="676.5" x2="688.5" y1="268.9" y2="268.9" class="w"/>
+<line x1="676.5" x2="688.5" y1="225.3" y2="225.3" class="w"/>
+<text x="682.5" y="217.3" class="v" text-anchor="middle">15.0%</text>
+<text x="682.5" y="338" class="t" text-anchor="middle">Teacher</text>
+<text x="682.5" y="354" class="t2" text-anchor="middle">30 of 200</text>
+<rect x="750.9" y="192.8" width="53.2" height="123.2" rx="5" fill="#60a5fa"/>
+<line x1="777.5" x2="777.5" y1="218.1" y2="163.8" class="w"/>
+<line x1="771.5" x2="783.5" y1="218.1" y2="218.1" class="w"/>
+<line x1="771.5" x2="783.5" y1="163.8" y2="163.8" class="w"/>
+<text x="777.5" y="155.8" class="v" text-anchor="middle">28.0%</text>
+<text x="777.5" y="338" class="t" text-anchor="middle">Round 1</text>
+<text x="777.5" y="354" class="t2" text-anchor="middle">56 of 200</text>
+<rect x="845.9" y="170.8" width="53.2" height="145.2" rx="5" fill="#2563eb"/>
+<line x1="872.5" x2="872.5" y1="197.8" y2="141.0" class="w"/>
+<line x1="866.5" x2="878.5" y1="197.8" y2="197.8" class="w"/>
+<line x1="866.5" x2="878.5" y1="141.0" y2="141.0" class="w"/>
+<text x="872.5" y="133.0" class="v" text-anchor="middle">33.0%</text>
+<text x="872.5" y="338" class="t" text-anchor="middle">Round 2</text>
+<text x="872.5" y="354" class="t2" text-anchor="middle">66 of 200</text>
+<text x="480.0" y="378" class="n" text-anchor="middle">Strict exact-match score on text-to-SQL, with the 95% range. Rounds 1 and 2 are the adapter after each training round. Exact rows only. Real models, 22 to 24 Oct 2026.</text>
+</svg>
