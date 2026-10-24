@@ -2,46 +2,79 @@
 
 Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base). Start with the [project README](../README.md) for a quick start.
 
-## Product
+## Where to start
+
+| You are | Read, in this order |
+|---|---|
+| **A judge, with five minutes** | [README](../README.md) (the results chart and the judges' path) → [the judges' page](https://ratchet.dualmindlab.tech/judges) → [FEATURES](FEATURES.md) for how each claim is checked |
+| **A developer who wants it running** | [README: Quick start](../README.md#quick-start) → [API](API.md) → [CONFIGURATION](CONFIGURATION.md) |
+| **An operator hosting it** | [DEPLOYMENT](DEPLOYMENT.md) → [LIVE_MODE](LIVE_MODE.md) → [RUNBOOK](RUNBOOK.md) |
+| **Reviewing security or licenses** | [THREAT_MODEL](THREAT_MODEL.md) → [README: Why license-clean](../README.md#why-license-clean) → [ADR 0001](adr/0001-open-teacher-only.md) and [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md) |
+| **Contributing** | [../CONTRIBUTING.md](../CONTRIBUTING.md) → [ARCHITECTURE](ARCHITECTURE.md) → [TESTING](TESTING.md) |
+
+## Understand it
 
 | Doc | What it covers |
 |---|---|
 | [PRD.md](PRD.md) | Product requirements: problem, users, goals, scope, requirements, success metrics |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
-| [RESEARCH_SUMMARY.md](RESEARCH_SUMMARY.md) | Market, competitor and feasibility research, with sources |
-| [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) | Who else does distillation, routing and gateways, and where Ratchet wins |
-| [BUSINESS.md](BUSINESS.md) | Business model, pricing, go-to-market, sizing |
-| [ROADMAP.md](ROADMAP.md) | What ships when, from the hackathon to Ratchet Cloud |
-| [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md) | Devpost submission text for the Nebius x NVIDIA Global AI Hackathon |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, request path, nightly loop, data model, version state machine, confidence math, cost accounting |
+| [FEATURES.md](FEATURES.md) | The longer explanations: the reference simulation, economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
+| [SCOUT.md](SCOUT.md) | Scout, the multi-agent research demo: agents, routes, event contract, budget guard, mock research world |
 | [GLOSSARY.md](GLOSSARY.md) | Terms: teacher, student, cascade, golden set, canary, coverage, precision… |
+| [adr/](adr/README.md) | Architecture decision records: one file per decision, with context, the decision, consequences and alternatives |
 
-## Technical
+## Use and integrate it
 
 | Doc | What it covers |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, request path, nightly loop, data model, version state machine, confidence math, cost accounting |
 | [API.md](API.md) | Every HTTP endpoint (pages, OpenAI API with keys and streaming, stats, adapter BOMs, redaction preview, demo controls, Scout) with schemas, errors, and curl and SDK examples |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every environment variable (incl. privacy and security), prices, release policy, tasks (distillable and pinned), licenses |
-| [SCOUT.md](SCOUT.md) | Scout, the multi-agent research demo: agents, routes, event contract, budget guard, mock research world |
+
+## Run and operate it
+
+| Doc | What it covers |
+|---|---|
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the demo alive |
+| [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
 | [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | Hosting the public demo on one Nebius CPU VM: setup, mock to live, costs, monitoring, backups, security, teardown |
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Security and privacy: assets, trust boundaries, threats, mitigations present vs planned |
-| [FEATURES.md](FEATURES.md) | The longer explanations: the reference simulation, economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
-| [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
-| [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), requirements traceability check, simulation method and assumptions, bugs found and fixed, seed robustness |
-| [adr/](adr/README.md) | Architecture Decision Records 0001–0016 |
+| [DAY1.md](DAY1.md) | The checks to run before relying on live mode: the risky Nebius and Token Factory pieces, with fallbacks |
 
-## Hackathon working docs
+## Check the evidence
+
+| Doc or folder | What it covers |
+|---|---|
+| [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), the traceability check, simulation method and assumptions, bugs found and fixed, seed robustness |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
+| [../evidence/text2sql-round1](../evidence/text2sql-round1), [round2](../evidence/text2sql-round2), [exam2](../evidence/text2sql-exam2) | The measured text-to-SQL results: data, exams, every answer, scores and the scripts that recompute them |
+| [../evidence/live-smoke-2026-10-23](../evidence/live-smoke-2026-10-23) | A real run through the live gateway: 20 requests to Token Factory, about $0.01, every record published |
+| [../evidence/scout](../evidence/scout) | Two recorded live Scout runs (real Token Factory and Tavily calls), replayed by the gateway |
+
+## Business and research
 
 | Doc | What it covers |
 |---|---|
-| [DAY1.md](DAY1.md) | Day-1 checklist: the risky Nebius and Token Factory pieces to verify first, with fallbacks |
+| [BUSINESS.md](BUSINESS.md) | Business model, pricing, go-to-market, sizing |
+| [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) | Who else does distillation, routing and gateways, and where Ratchet differs, with dated sources |
+| [RESEARCH_SUMMARY.md](RESEARCH_SUMMARY.md) | Market, competitor and feasibility research, with sources |
+| [ROADMAP.md](ROADMAP.md) | What ships when, from the hackathon to Ratchet Cloud |
+
+## Hackathon
+
+| Doc | What it covers |
+|---|---|
+| [DEVPOST_FINAL.md](DEVPOST_FINAL.md) | The Devpost text as of 24 Oct 2026: it says only what ran. Where it differs from the older planning notes below, it is right |
+| [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md) | The older Devpost planning notes for the Nebius x NVIDIA Global AI Hackathon |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | The 3-minute demo video, shot by shot |
+
+## Working notes
+
+[lanes/](lanes/) holds the invariants and deviations each build lane proposed before it merged (`c-invariants.md`, `f2-invariants.md` and so on). They are history; the numbered invariants in [../CLAUDE.md](../CLAUDE.md) are the current rules.
 
 ## Images
 
-`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models).
+`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/anim/` holds the README's animations.
 
 ## Repo-level files
 
