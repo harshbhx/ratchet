@@ -134,7 +134,7 @@ sequenceDiagram
 The [request journey](/guides/request-journey/) walks through the same cascade from the HTTP side, and [escalation and audits](/guides/escalation-and-audits/) covers what happens on each branch.
 
 <Aside type="caution" title="Live mode is unverified">
-As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but the vLLM student endpoint and the training job have not run on a Nebius GPU, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
+As of Oct 24, 2026, the teacher runs on Nebius Token Factory and a 20-request live smoke run has gone through the gateway in live mode (see `evidence/live-smoke-2026-10-23/`), but with no student endpoint: every answer came from the teacher or the hosted untuned fallback. The vLLM student endpoint and the training job have not run on a Nebius GPU, and `scripts/day1_check.py` is the check to run with a real key before relying on live mode. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
 </Aside>
 
 ## For engineers
@@ -354,7 +354,7 @@ The registry is module state in [`ratchet/tasks.py`](https://github.com/harshbhx
 - `tasks.register(taskspec.parse_spec(spec, "api"))` adds one task in memory, for example `{"name": "invoice-fields", "format": "json", "fields": {"currency": {"type": "exact"}, "total": {"type": "number", "abs_tol": 0.01}}}`. It is not saved: put tasks that Night School (another process) must grade in `RATCHET_TASKS_FILE`, or create them through the [admin API](/reference/api/#put-ratchettasksname), which stores them in the ledger.
 - Tests that register tasks should call `tasks.reset_builtin()` afterwards, as `tests/conftest.py` does.
 
-See [training on your data](/guides/training-on-your-data/) for task specs for the rules.
+See [training on your data](/guides/training-on-your-data/) for the task spec rules.
 
 ### Off-path checks and `close`
 
