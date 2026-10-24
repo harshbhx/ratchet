@@ -34,6 +34,9 @@ export const LINKS = {
   menlo: "https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/",
   gemini: "https://ai.google.dev/gemini-api/terms",
   nebiusChallenge: "https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners",
+  hfModel: "https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql",
+  hfTrain: "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic",
+  hfExams: "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams",
 };
 
 /** Fade + rise once, when scrolled into view. */

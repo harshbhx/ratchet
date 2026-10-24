@@ -13,6 +13,8 @@ import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
 import { EconomicsPanel, hasEconomics } from "./economics";
 import { KpiSkeleton, Kpis } from "./kpis";
+import { MeasuredResults } from "./measured";
+import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
 import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
 import { Pipeline } from "./pipeline";
 import { Provenance } from "./provenance";
@@ -389,11 +391,14 @@ export default function DashboardPage() {
   const mock = stats?.mode === "mock";
   const cold = stats != null && stats.days.length === 0;
   const fault = stats ? armedFault(stats) : null;
+  const shown: SectionId[] = SECTIONS.map((x) => x.id);
 
   return (
     <div className="[--teacher-only:var(--line-strong)]">
       <Container className="py-8 sm:py-10">
         <Header stats={stats} updatedAt={updatedAt} refreshing={refreshing} onRefresh={() => void refresh()} />
+
+        {stats && <JumpBar show={shown} />}
 
         <div className="mt-6 space-y-4">
           {!stats && loading && <Skeleton />}
@@ -433,75 +438,89 @@ export default function DashboardPage() {
                 />
               )}
 
-              <div className={cn("space-y-4 transition-opacity duration-300", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
+              <div className={cn("space-y-4 transition-opacity duration-500 ease-out", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
                 {cold && <ColdStart mock={mock} onRun={() => void runDay()} busy={busy != null} />}
 
-                <Reveal>
-                  <Kpis stats={stats} />
-                </Reveal>
-
-                <Reveal delay={0.05}>
-                  <Pipeline versions={stats.versions} faultId={fault?.id} />
-                </Reveal>
-
-                {hasEconomics(stats, cost) && (
-                  <Reveal delay={0.08}>
-                    <EconomicsPanel stats={stats} cost={cost} />
+                <Group id="overview" title="Overview" hint={mock ? "Simulation" : "Live"}>
+                  <Reveal>
+                    <Kpis stats={stats} />
                   </Reveal>
-                )}
-
-                <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
-                  <CostChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
-                  <ShareChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
-                </Reveal>
-
-                <Reveal delay={0.12}>
-                  <VersionsTable versions={stats.versions} />
-                </Reveal>
-
-                <Reveal delay={0.13}>
-                  <TasksTable tasks={stats.tasks} hosted={hostedServing(stats.student_serving)} />
-                </Reveal>
-
-                {!registry.missing && (
-                  <Reveal delay={0.14}>
-                    <TaskRegistryPanel state={registry} mode={stats.mode} onChanged={() => void refresh()} />
+                  <Reveal delay={0.05}>
+                    <Pipeline versions={stats.versions} faultId={fault?.id} />
                   </Reveal>
-                )}
+                </Group>
 
-                <Reveal delay={0.15}>
-                  <ResiliencePanel
-                    stats={stats}
-                    demo={
-                      mock
-                        ? {
-                            busy,
-                            onOutage: studentOutage,
-                            onRunDay: () => void runDay(),
-                            onOutageEnd: onOutageEnd,
-                            skewMs,
-                          }
-                        : undefined
-                    }
-                  />
-                </Reveal>
+                <Group id="money" title="Money" hint="What each answer cost, and what the student saved">
+                  {hasEconomics(stats, cost) && (
+                    <Reveal delay={0.08}>
+                      <EconomicsPanel stats={stats} cost={cost} />
+                    </Reveal>
+                  )}
+                  <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
+                    <CostChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
+                    <ShareChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
+                  </Reveal>
+                </Group>
 
-                <Reveal delay={0.16}>
-                  <TrustPanel stats={stats} />
-                </Reveal>
+                <Group id="versions" title="Versions and tasks" hint="Which student is serving, and for which tasks">
+                  <Reveal delay={0.12}>
+                    <VersionsTable versions={stats.versions} />
+                  </Reveal>
+                  <Reveal delay={0.13}>
+                    <TasksTable tasks={stats.tasks} hosted={hostedServing(stats.student_serving)} />
+                  </Reveal>
+                  {!registry.missing && (
+                    <Reveal delay={0.14}>
+                      <TaskRegistryPanel state={registry} mode={stats.mode} onChanged={() => void refresh()} />
+                    </Reveal>
+                  )}
+                </Group>
 
-                <Reveal delay={0.17} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-                  <ReleaseLog events={stats.events} fresh={fresh} />
-                  <div className="flex min-w-0 flex-col gap-4">
-                    <PrecisionChart
-                      days={stats.days}
-                      rollbacks={stats.events
-                        .filter((e) => e.kind === "rollback")
-                        .map((e) => ({ day: e.day, label: `${/\bv\d+\b/.exec(e.detail)?.[0] ?? ""} rolled back`.trim() }))}
+                <Group id="reliability" title="Reliability" hint="Breakers, fallbacks and the outage drill">
+                  <Reveal delay={0.15}>
+                    <ResiliencePanel
+                      stats={stats}
+                      demo={
+                        mock
+                          ? {
+                              busy,
+                              onOutage: studentOutage,
+                              onRunDay: () => void runDay(),
+                              onOutageEnd: onOutageEnd,
+                              skewMs,
+                            }
+                          : undefined
+                      }
                     />
-                    <Provenance bom={stats.bill_of_materials} />
-                  </div>
-                </Reveal>
+                  </Reveal>
+                </Group>
+
+                <Group id="trust" title="Trust" hint="Privacy, licenses and the signed bill of materials">
+                  <Reveal delay={0.16}>
+                    <TrustPanel stats={stats} />
+                  </Reveal>
+                </Group>
+
+                <Group id="activity" title="Activity" hint="The release log and precision over time">
+                  <Reveal delay={0.17} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+                    <ReleaseLog events={stats.events} fresh={fresh} />
+                    <div className="flex min-w-0 flex-col gap-4">
+                      <PrecisionChart
+                        days={stats.days}
+                        rollbacks={stats.events
+                          .filter((e) => e.kind === "rollback")
+                          .map((e) => ({ day: e.day, label: `${/\bv\d+\b/.exec(e.detail)?.[0] ?? ""} rolled back`.trim() }))}
+                      />
+                      <Provenance bom={stats.bill_of_materials} />
+                    </div>
+                  </Reveal>
+                </Group>
+
+                <Group id="measured" title="Measured" hint="Real models, not the simulation">
+                  <Reveal>
+                    <MeasuredResults />
+                  </Reveal>
+                </Group>
 
                 {mock && (
                   <p className="pt-2 text-center text-[12px] text-muted">
