@@ -1,0 +1,94 @@
+{
+ "what": "Hard independent tool-calling exam, 20 NEW tools in 8 areas, written by claude-sonnet-5-5 (Anthropic API). EVALUATION ONLY, never trained on.",
+ "rows": 150,
+ "sha256_exam_jsonl": "e26b6d020caedf2ce050b48641d5c2a55a96202826f51ca66ad81be9d04dada2",
+ "author_model": "claude-sonnet-5-5",
+ "today": "2026-10-24",
+ "kind_mix": {
+  "trap": 31,
+  "easy": 15,
+  "none": 38,
+  "lookalike": 36,
+  "date": 30
+ },
+ "none_subtypes": {
+  "unrelated": 10,
+  "near": 28
+ },
+ "answer_tool_counts": {
+  "propose_meeting_times": 4,
+  "subscribe_to_podcast": 7,
+  "none": 38,
+  "subscribe_to_channel": 6,
+  "categorize_transaction": 4,
+  "log_blood_pressure": 9,
+  "log_body_weight": 9,
+  "track_container": 7,
+  "forecast_cashflow": 4,
+  "set_recurring_block": 6,
+  "reserve_meeting_room": 5,
+  "preview_rollout": 4,
+  "quote_courier_rate": 4,
+  "request_visa_checklist": 5,
+  "hold_hotel_room": 4,
+  "track_parcel": 6,
+  "log_blood_glucose": 8,
+  "categorize_transactions_bulk": 5,
+  "set_desk_height": 3,
+  "fetch_build_logs": 4,
+  "execute_rollout": 8
+ },
+ "tools": [
+  "preview_rollout",
+  "execute_rollout",
+  "fetch_build_logs",
+  "categorize_transaction",
+  "categorize_transactions_bulk",
+  "forecast_cashflow",
+  "track_parcel",
+  "track_container",
+  "quote_courier_rate",
+  "log_blood_pressure",
+  "log_blood_glucose",
+  "log_body_weight",
+  "reserve_meeting_room",
+  "set_desk_height",
+  "subscribe_to_podcast",
+  "subscribe_to_channel",
+  "hold_hotel_room",
+  "request_visa_checklist",
+  "propose_meeting_times",
+  "set_recurring_block"
+ ],
+ "key_check": {
+  "generated": 173,
+  "valid_after_checks": 172,
+  "validation_drops": {
+   "duplicate_request": 1
+  },
+  "blind_disagreements": 3,
+  "adjudicated_key_right": 1,
+  "fixed_key": 1,
+  "dropped": 1,
+  "drop_causes": {
+   "dropped_ambiguous": 1
+  },
+  "kept": 171,
+  "kept_by_kind": {
+   "easy": 18,
+   "lookalike": 36,
+   "date": 35,
+   "trap": 36,
+   "none": 46
+  },
+  "claude_spend": {
+   "calls": 175,
+   "failed": 0,
+   "tin": 200469,
+   "tout": 11980,
+   "usd": 0.7811
+  }
+ },
+ "claude_spend_usd_assumed_3in_15out_per_M": 1.909,
+ "frozen_before_any_model_answered": true
+}

@@ -1,0 +1,1352 @@
+[
+ {
+  "id": "tx000",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"propose_meeting_times\", \"arguments\": {\"attendee_emails\": [\"dana.cho@northwind.io\", \"ravi.k@northwind.io\", \"mei.tan@northwind.io\"], \"earliest_date\": \"2026-11-09\", \"latest_date\": \"2026-11-13\", \"duration_minutes\": 90, \"max_options\": 3}}"
+ },
+ {
+  "id": "tx001",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://feeds.example.com/deepdive.xml\", \"auto_download\": \"latest_only\", \"start_from\": \"2026-10-01\"}}"
+ },
+ {
+  "id": "tx002",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://feeds.example.com/deepdive.xml\", \"auto_download\": \"latest_only\"}}"
+ },
+ {
+  "id": "tx003",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx004",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx005",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@pixelcooks\", \"notify_mode\": \"highlights\"}}"
+ },
+ {
+  "id": "tx006",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@codecraft\", \"notify_mode\": \"highlights\"}}"
+ },
+ {
+  "id": "tx007",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transaction\", \"arguments\": {\"transaction_id\": \"txn_77204\", \"category\": \"utilities\"}}"
+ },
+ {
+  "id": "tx008",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 135, \"diastolic\": 88, \"measured_at\": \"2026-10-24T18:30:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx009",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 78.5, \"measured_on\": \"2026-10-23\", \"time_of_day\": \"evening\"}}"
+ },
+ {
+  "id": "tx010",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"TGHU5589021\", \"include_port_events\": true}}"
+ },
+ {
+  "id": "tx011",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"forecast_cashflow\", \"arguments\": {\"account_id\": \"acc_8830\", \"start_date\": \"2026-11-01\", \"horizon_days\": 90, \"extra_monthly_spend\": 250}}"
+ },
+ {
+  "id": "tx012",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"propose_meeting_times\", \"arguments\": {\"attendee_emails\": [\"ana.ruiz@corp.com\", \"ben.okafor@corp.com\", \"chi.tan@corp.com\"], \"earliest_date\": \"2026-11-02\", \"latest_date\": \"2026-11-06\", \"duration_minutes\": 90}}"
+ },
+ {
+  "id": "tx013",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@retrowrench\", \"notify_mode\": \"highlights\"}}"
+ },
+ {
+  "id": "tx014",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-24T07:45:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx015",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx016",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-23T07:30:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx017",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"propose_meeting_times\", \"arguments\": {\"attendee_emails\": [\"ana.ruiz@corpmail.com\", \"ben.okafor@corpmail.com\"], \"earliest_date\": \"2026-10-26\", \"latest_date\": \"2026-10-31\", \"duration_minutes\": 45}}"
+ },
+ {
+  "id": "tx018",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@pixelcooking\", \"notify_mode\": \"highlights\"}}"
+ },
+ {
+  "id": "tx019",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-22T07:15:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx020",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_recurring_block\", \"arguments\": {\"title\": \"Deep work\", \"start_date\": \"2026-11-02\", \"repeat\": \"weekly\", \"length_minutes\": 120, \"days\": [\"mon\", \"wed\", \"fri\"]}}"
+ },
+ {
+  "id": "tx021",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"forecast_cashflow\", \"arguments\": {\"account_id\": \"acc_5521\", \"start_date\": \"2026-11-02\", \"horizon_days\": 42, \"scenario\": \"pessimistic\"}}"
+ },
+ {
+  "id": "tx022",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"MSKU7745210\", \"include_port_events\": true}}"
+ },
+ {
+  "id": "tx023",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-24T07:45:00\", \"arm\": \"right\"}}"
+ },
+ {
+  "id": "tx024",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"reserve_meeting_room\", \"arguments\": {\"room_id\": \"room_3B\", \"start\": \"2026-10-25T14:30:00\", \"duration_minutes\": 45}}"
+ },
+ {
+  "id": "tx025",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx026",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"preview_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v2.4.1\", \"strategy\": \"canary\", \"target_env\": \"staging\"}}"
+ },
+ {
+  "id": "tx027",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"quote_courier_rate\", \"arguments\": {\"origin_postal\": \"94107\", \"destination_postal\": \"10001\", \"weight_kg\": 2.5, \"service_level\": \"overnight\"}}"
+ },
+ {
+  "id": "tx028",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"request_visa_checklist\", \"arguments\": {\"nationality\": \"BR\", \"destination_country\": \"DE\", \"travel_date\": \"2026-11-23\", \"purpose\": \"business\", \"documents_held\": [\"passport\", \"invitation letter\"]}}"
+ },
+ {
+  "id": "tx029",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx030",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"hold_hotel_room\", \"arguments\": {\"hotel_id\": \"htl_2207\", \"check_in\": \"2026-10-25\", \"check_out\": \"2026-10-30\", \"room_type\": \"double\"}}"
+ },
+ {
+  "id": "tx031",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_parcel\", \"arguments\": {\"tracking_number\": \"1Z999AA10123456784\"}}"
+ },
+ {
+  "id": "tx032",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 134, \"diastolic\": 88, \"measured_at\": \"2026-10-23T18:40:00\", \"arm\": \"right\"}}"
+ },
+ {
+  "id": "tx033",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 72.4, \"measured_on\": \"2026-10-24\", \"time_of_day\": \"morning\"}}"
+ },
+ {
+  "id": "tx034",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"quote_courier_rate\", \"arguments\": {\"origin_postal\": \"94107\", \"destination_postal\": \"10001\", \"weight_kg\": 2.5, \"service_level\": \"express\", \"ship_date\": \"2026-10-31\"}}"
+ },
+ {
+  "id": "tx035",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"TGHU4829105\", \"include_port_events\": true}}"
+ },
+ {
+  "id": "tx036",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx037",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx038",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 72.4, \"measured_on\": \"2026-10-22\"}}"
+ },
+ {
+  "id": "tx039",
+  "kind": "none",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"quote_courier_rate\", \"arguments\": {\"origin_postal\": \"94105\", \"destination_postal\": \"10001\", \"weight_kg\": 3, \"service_level\": \"express\", \"ship_date\": \"2026-10-25\"}}"
+ },
+ {
+  "id": "tx040",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"request_visa_checklist\", \"arguments\": {\"nationality\": \"CA\", \"destination_country\": \"JP\", \"travel_date\": \"2026-12-05\", \"purpose\": \"tourism\", \"documents_held\": [\"passport\"]}}"
+ },
+ {
+  "id": "tx041",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_parcel\", \"arguments\": {\"tracking_number\": \"9400111899223345\"}}"
+ },
+ {
+  "id": "tx042",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://feeds.example.com/deepdive.xml\", \"auto_download\": \"latest_only\"}}"
+ },
+ {
+  "id": "tx043",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx044",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx045",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 79.5, \"measured_on\": \"2026-10-23\", \"time_of_day\": \"morning\"}}"
+ },
+ {
+  "id": "tx046",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@trailnotes\", \"notify_mode\": \"all_uploads\"}}"
+ },
+ {
+  "id": "tx047",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx048",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-22T07:15:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx049",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_recurring_block\", \"arguments\": {\"title\": \"Deep work\", \"start_date\": \"2026-11-03\", \"repeat\": \"weekly\", \"length_minutes\": 90}}"
+ },
+ {
+  "id": "tx050",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx051",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@cooking_with_mara\", \"notify_mode\": \"highlights\"}}"
+ },
+ {
+  "id": "tx052",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 104, \"measured_at\": \"2026-10-23T06:45:00\", \"context\": \"fasting\"}}"
+ },
+ {
+  "id": "tx053",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transactions_bulk\", \"arguments\": {\"transaction_ids\": [\"txn_90313\", \"txn_90314\", \"txn_90322\"], \"category\": \"groceries\"}}"
+ },
+ {
+  "id": "tx054",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"propose_meeting_times\", \"arguments\": {\"attendee_emails\": [\"ana.ruiz@corp.com\", \"ben.kato@corp.com\"], \"earliest_date\": \"2026-10-25\", \"latest_date\": \"2026-11-07\", \"duration_minutes\": 45}}"
+ },
+ {
+  "id": "tx055",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx056",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"reserve_meeting_room\", \"arguments\": {\"room_id\": \"room_3B\", \"start\": \"2026-10-28T14:30:00\", \"duration_minutes\": 90, \"attendee_emails\": [\"dana@acme.com\", \"lee@acme.com\"]}}"
+ },
+ {
+  "id": "tx057",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"MSKU1234567\"}}"
+ },
+ {
+  "id": "tx058",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 104, \"measured_at\": \"2026-10-24T06:45:00\", \"context\": \"fasting\"}}"
+ },
+ {
+  "id": "tx059",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_parcel\", \"arguments\": {\"tracking_number\": \"1Z999AA10123456784\"}}"
+ },
+ {
+  "id": "tx060",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://feeds.example.com/deepdive.xml\", \"auto_download\": \"latest_only\"}}"
+ },
+ {
+  "id": "tx061",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx062",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"hold_hotel_room\", \"arguments\": {\"hotel_id\": \"htl_2207\", \"check_in\": \"2026-11-12\", \"check_out\": \"2026-11-15\", \"room_type\": \"double\"}}"
+ },
+ {
+  "id": "tx063",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transactions_bulk\", \"arguments\": {\"transaction_ids\": [\"txn_90311\", \"txn_90315\", \"txn_90322\"], \"category\": \"groceries\", \"overwrite_existing\": true}}"
+ },
+ {
+  "id": "tx064",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://feeds.example.com/gardentalk.xml\", \"auto_download\": \"latest_only\", \"start_from\": \"2026-09-14\"}}"
+ },
+ {
+  "id": "tx065",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"preview_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v2.4.1\", \"strategy\": \"canary\", \"target_env\": \"staging\"}}"
+ },
+ {
+  "id": "tx066",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_desk_height\", \"arguments\": {\"desk_id\": \"desk_204\", \"height_cm\": 101.6}}"
+ },
+ {
+  "id": "tx067",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_parcel\", \"arguments\": {\"tracking_number\": \"1Z999AA10123456784\", \"include_scan_history\": true}}"
+ },
+ {
+  "id": "tx068",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx069",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"hold_hotel_room\", \"arguments\": {\"hotel_id\": \"htl_2207\", \"check_in\": \"2026-11-03\", \"check_out\": \"2026-11-10\", \"room_type\": \"double\"}}"
+ },
+ {
+  "id": "tx070",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx071",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx072",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 112, \"measured_at\": \"2026-10-24T07:30:00\", \"context\": \"fasting\"}}"
+ },
+ {
+  "id": "tx073",
+  "kind": "none",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"subscribe_to_channel\", \"arguments\": {\"channel_handle\": \"@retrogamer\", \"notify_mode\": \"all_uploads\"}}"
+ },
+ {
+  "id": "tx074",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-24T07:30:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx075",
+  "kind": "trap",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 138, \"measured_at\": \"2026-10-24T22:30:00\", \"context\": \"after_meal\"}}"
+ },
+ {
+  "id": "tx076",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"set_recurring_block\", \"arguments\": {\"title\": \"Writing time\", \"start_date\": \"2026-10-22\", \"repeat\": \"weekly\", \"length_minutes\": 90}}"
+ },
+ {
+  "id": "tx077",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_parcel\", \"arguments\": {\"tracking_number\": \"1Z999AA10123456784\", \"include_scan_history\": true}}"
+ },
+ {
+  "id": "tx078",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx079",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 104, \"measured_at\": \"2026-10-24T07:15:00\", \"context\": \"fasting\"}}"
+ },
+ {
+  "id": "tx080",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx081",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx082",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx083",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx084",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 72.4, \"measured_on\": \"2026-10-24\", \"time_of_day\": \"morning\"}}"
+ },
+ {
+  "id": "tx085",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_recurring_block\", \"arguments\": {\"title\": \"Deep work\", \"start_date\": \"2026-10-26\", \"repeat\": \"weekly\", \"length_minutes\": 120}}"
+ },
+ {
+  "id": "tx086",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_recurring_block\", \"arguments\": {\"title\": \"Inbox zero\", \"start_date\": \"2026-11-03\", \"repeat\": \"biweekly\", \"length_minutes\": 30}}"
+ },
+ {
+  "id": "tx087",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 105, \"measured_at\": \"2026-10-23T07:30:00\", \"context\": \"fasting\"}}"
+ },
+ {
+  "id": "tx088",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"preview_rollout\", \"arguments\": {\"service\": \"auth-service\", \"version\": \"v1.9.0\", \"strategy\": \"rolling\", \"target_env\": \"qa\"}}"
+ },
+ {
+  "id": "tx089",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx090",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://pod.example.org/rss/mathhour\", \"auto_download\": \"none\", \"start_from\": \"2026-11-14\"}}"
+ },
+ {
+  "id": "tx091",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx092",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"forecast_cashflow\", \"arguments\": {\"account_id\": \"acc_5521\", \"start_date\": \"2026-10-26\", \"horizon_days\": 45, \"scenario\": \"pessimistic\"}}"
+ },
+ {
+  "id": "tx093",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 72.4, \"measured_on\": \"2026-10-23\"}}"
+ },
+ {
+  "id": "tx094",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"fetch_build_logs\", \"arguments\": {\"build_id\": \"bld_4821\", \"severity\": \"error\", \"since\": \"2026-10-23T08:00:00\", \"max_lines\": 100}}"
+ },
+ {
+  "id": "tx095",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_recurring_block\", \"arguments\": {\"title\": \"Deep Work\", \"start_date\": \"2026-11-02\", \"repeat\": \"weekly\", \"length_minutes\": 90, \"days\": [\"mon\", \"wed\"]}}"
+ },
+ {
+  "id": "tx096",
+  "kind": "date",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"fetch_build_logs\", \"arguments\": {\"build_id\": \"bld_4821\", \"severity\": \"error\", \"since\": \"2026-10-23T08:00:00\", \"max_lines\": 100}}"
+ },
+ {
+  "id": "tx097",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v2.4.1\", \"strategy\": \"canary\"}}"
+ },
+ {
+  "id": "tx098",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"fetch_build_logs\", \"arguments\": {\"build_id\": \"bld_5307\", \"severity\": \"warning\"}}"
+ },
+ {
+  "id": "tx099",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 72.4, \"measured_on\": \"2026-10-22\"}}"
+ },
+ {
+  "id": "tx100",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx101",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transactions_bulk\", \"arguments\": {\"transaction_ids\": [\"txn_30112\", \"txn_30115\", \"txn_30121\", \"txn_30134\"], \"category\": \"groceries\"}}"
+ },
+ {
+  "id": "tx102",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx103",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"hold_hotel_room\", \"arguments\": {\"hotel_id\": \"htl_2207\", \"check_in\": \"2026-11-06\", \"check_out\": \"2026-11-09\", \"room_type\": \"double\"}}"
+ },
+ {
+  "id": "tx104",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx105",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx106",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"quote_courier_rate\", \"arguments\": {\"origin_postal\": \"60614\", \"destination_postal\": \"94107\", \"weight_kg\": 3.5, \"service_level\": \"express\"}}"
+ },
+ {
+  "id": "tx107",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx108",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"MSKU7734512\", \"include_port_events\": true}}"
+ },
+ {
+  "id": "tx109",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_parcel\", \"arguments\": {\"tracking_number\": \"9400111899223344556677\"}}"
+ },
+ {
+  "id": "tx110",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx111",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transaction\", \"arguments\": {\"transaction_id\": \"txn_77412\", \"category\": \"transport\"}}"
+ },
+ {
+  "id": "tx112",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx113",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx114",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"quote_courier_rate\", \"arguments\": {\"origin_postal\": \"60614\", \"destination_postal\": \"94107\", \"weight_kg\": 3.5, \"service_level\": \"express\", \"ship_date\": \"2026-10-26\"}}"
+ },
+ {
+  "id": "tx115",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx116",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v2.4.1\", \"strategy\": \"canary\", \"scheduled_for\": \"2026-10-25T03:00:00\"}}"
+ },
+ {
+  "id": "tx117",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transactions_bulk\", \"arguments\": {\"transaction_ids\": [\"txn_90313\", \"txn_90314\", \"txn_90322\"], \"category\": \"groceries\"}}"
+ },
+ {
+  "id": "tx118",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx119",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transaction\", \"arguments\": {\"transaction_id\": \"txn_90313\", \"category\": \"dining\"}}"
+ },
+ {
+  "id": "tx120",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"request_visa_checklist\", \"arguments\": {\"nationality\": \"CA\", \"destination_country\": \"JP\", \"travel_date\": \"2026-11-14\", \"purpose\": \"tourism\"}}"
+ },
+ {
+  "id": "tx121",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"MSKU1234567\", \"include_port_events\": true}}"
+ },
+ {
+  "id": "tx122",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 81.6, \"measured_on\": \"2026-10-24\", \"time_of_day\": \"morning\"}}"
+ },
+ {
+  "id": "tx123",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transactions_bulk\", \"arguments\": {\"transaction_ids\": [\"txn_90313\", \"txn_90314\", \"txn_90320\"], \"category\": \"groceries\"}}"
+ },
+ {
+  "id": "tx124",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_arguments",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 112, \"measured_at\": \"2026-10-24T07:15:00\", \"context\": \"fasting\", \"note\": \"before breakfast\"}}"
+ },
+ {
+  "id": "tx125",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"reserve_meeting_room\", \"arguments\": {\"room_id\": \"room_3B\", \"start\": \"2026-11-01T14:30:00\", \"duration_minutes\": 45}}"
+ },
+ {
+  "id": "tx126",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v2.4.1\", \"strategy\": \"canary\", \"scheduled_for\": \"2026-10-31T22:00:00\"}}"
+ },
+ {
+  "id": "tx127",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx128",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"reserve_meeting_room\", \"arguments\": {\"room_id\": \"room_5A\", \"start\": \"2026-11-03T09:30:00\", \"duration_minutes\": 60}}"
+ },
+ {
+  "id": "tx129",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"search-api\", \"version\": \"v1.9.2\", \"strategy\": \"blue_green\", \"scheduled_for\": \"2026-10-27T02:00:00\"}}"
+ },
+ {
+  "id": "tx130",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_body_weight\", \"arguments\": {\"weight_kg\": 72.4, \"measured_on\": \"2026-10-24\", \"time_of_day\": \"morning\"}}"
+ },
+ {
+  "id": "tx131",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_desk_height\", \"arguments\": {\"desk_id\": \"desk_117\", \"height_cm\": 110}}"
+ },
+ {
+  "id": "tx132",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"checkout-web\", \"version\": \"v3.1.0\", \"strategy\": \"blue_green\"}}"
+ },
+ {
+  "id": "tx133",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"fetch_build_logs\", \"arguments\": {\"build_id\": \"bld_4821\", \"severity\": \"error\", \"since\": \"2026-10-23T14:00:00\", \"max_lines\": 50}}"
+ },
+ {
+  "id": "tx134",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"track_container\", \"arguments\": {\"container_number\": \"MSKU7284015\", \"include_port_events\": true}}"
+ },
+ {
+  "id": "tx135",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"forecast_cashflow\", \"arguments\": {\"account_id\": \"acc_7314\", \"start_date\": \"2026-11-01\", \"horizon_days\": 84, \"scenario\": \"pessimistic\", \"extra_monthly_spend\": 250}}"
+ },
+ {
+  "id": "tx136",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_glucose\", \"arguments\": {\"glucose\": 104, \"measured_at\": \"2026-10-24T06:30:00\", \"context\": \"fasting\"}}"
+ },
+ {
+  "id": "tx137",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"log_blood_pressure\", \"arguments\": {\"systolic\": 128, \"diastolic\": 82, \"measured_at\": \"2026-10-24T08:15:00\", \"arm\": \"left\"}}"
+ },
+ {
+  "id": "tx138",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"set_desk_height\", \"arguments\": {\"desk_id\": \"desk_117\", \"height_cm\": 112, \"mode\": \"standing\"}}"
+ },
+ {
+  "id": "tx139",
+  "kind": "date",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"request_visa_checklist\", \"arguments\": {\"nationality\": \"IN\", \"destination_country\": \"DE\", \"travel_date\": \"2026-11-01\", \"purpose\": \"study\"}}"
+ },
+ {
+  "id": "tx140",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx141",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"categorize_transaction\", \"arguments\": {\"transaction_id\": \"txn_90313\", \"category\": \"dining\"}}"
+ },
+ {
+  "id": "tx142",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v2.4.1\", \"strategy\": \"blue_green\", \"scheduled_for\": \"2026-10-27T02:00:00\"}}"
+ },
+ {
+  "id": "tx143",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"billing-api\", \"version\": \"v3.1.0\", \"strategy\": \"canary\"}}"
+ },
+ {
+  "id": "tx144",
+  "kind": "none",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "tx145",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"subscribe_to_podcast\", \"arguments\": {\"feed_url\": \"https://feeds.example.org/nightshift.rss\", \"auto_download\": \"latest_only\"}}"
+ },
+ {
+  "id": "tx146",
+  "kind": "easy",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"reserve_meeting_room\", \"arguments\": {\"room_id\": \"room_3B\", \"start\": \"2026-10-25T14:00:00\", \"duration_minutes\": 45}}"
+ },
+ {
+  "id": "tx147",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"request_visa_checklist\", \"arguments\": {\"nationality\": \"IN\", \"destination_country\": \"JP\", \"travel_date\": \"2026-12-14\", \"purpose\": \"study\", \"documents_held\": [\"passport\", \"bank statement\"]}}"
+ },
+ {
+  "id": "tx148",
+  "kind": "lookalike",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"execute_rollout\", \"arguments\": {\"service\": \"checkout-web\", \"version\": \"v5.0.2\", \"strategy\": \"blue_green\"}}"
+ },
+ {
+  "id": "tx149",
+  "kind": "trap",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"preview_rollout\", \"arguments\": {\"service\": \"payments-gateway\", \"version\": \"v3.1.0\", \"strategy\": \"blue_green\", \"target_env\": \"staging\"}}"
+ }
+]

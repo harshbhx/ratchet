@@ -356,7 +356,7 @@ def paired_line(p: dict) -> str:
 
 CAVEATS = (
     "Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as "
-    "create_ticket (9 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training."
+    "create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training."
 )
 SETTING = (
     "The adapter was trained on a rented Modal T4, not on Nebius GPUs, on synthetic data. "
@@ -476,7 +476,15 @@ def render(r: dict) -> dict[str, str]:
             for e in EXAMS
             for m in ("base", "ultra", "adapter")
         ],
-        "metrics": [],
+        "metrics": [
+            {
+                "id": "accuracy",
+                "label": "Accuracy (strict)",
+                "value": f"{pct(r['scores']['hard']['adapter']['rate'])} on the hard exam and "
+                f"{pct(r['scores']['bfcl']['adapter']['rate'])} on BFCL (untrained model "
+                f"{pct(r['scores']['hard']['base']['rate'])} and {pct(r['scores']['bfcl']['base']['rate'])})",
+            }
+        ],
     }
     return {
         "README_block.md": readme,

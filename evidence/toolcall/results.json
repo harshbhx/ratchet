@@ -1,0 +1,319 @@
+{
+ "schema": "ratchet.toolcall-results/v1",
+ "strict": true,
+ "exams": {
+  "hard": {
+   "rows": 150,
+   "sha256": "e26b6d020caedf2ce050b48641d5c2a55a96202826f51ca66ad81be9d04dada2",
+   "kinds": {
+    "date": 30,
+    "easy": 15,
+    "lookalike": 36,
+    "none": 38,
+    "trap": 31
+   },
+   "writer": "claude-sonnet-5-5",
+   "tools": 20,
+   "areas": 8,
+   "date": "2026-10-24"
+  },
+  "bfcl": {
+   "rows": 300,
+   "sha256": "c6b2e9dd3abd6bb2a5e7b33105e0de372612be51e82e2117087e6c36faeccb37",
+   "kinds": {
+    "irrelevance": 100,
+    "multiple": 100,
+    "simple": 100
+   },
+   "source": "Berkeley Function Calling Leaderboard v3",
+   "license": "Apache-2.0",
+   "seed": 20261024
+  }
+ },
+ "scores": {
+  "hard": {
+   "base": {
+    "agree": 94,
+    "n": 150,
+    "rate": 0.6267,
+    "lo": 0.547,
+    "hi": 0.7
+   },
+   "adapter": {
+    "agree": 136,
+    "n": 150,
+    "rate": 0.9067,
+    "lo": 0.8494,
+    "hi": 0.9436
+   },
+   "ultra": {
+    "agree": 137,
+    "n": 150,
+    "rate": 0.9133,
+    "lo": 0.8574,
+    "hi": 0.9487
+   }
+  },
+  "bfcl": {
+   "base": {
+    "agree": 232,
+    "n": 300,
+    "rate": 0.7733,
+    "lo": 0.7227,
+    "hi": 0.8171
+   },
+   "adapter": {
+    "agree": 241,
+    "n": 300,
+    "rate": 0.8033,
+    "lo": 0.7546,
+    "hi": 0.8444
+   },
+   "ultra": {
+    "agree": 265,
+    "n": 300,
+    "rate": 0.8833,
+    "lo": 0.8421,
+    "hi": 0.9149
+   }
+  }
+ },
+ "kinds": {
+  "hard": {
+   "base": {
+    "date": {
+     "agree": 7,
+     "n": 30,
+     "rate": 0.2333,
+     "lo": 0.1179,
+     "hi": 0.4093
+    },
+    "easy": {
+     "agree": 13,
+     "n": 15,
+     "rate": 0.8667,
+     "lo": 0.6212,
+     "hi": 0.9626
+    },
+    "lookalike": {
+     "agree": 24,
+     "n": 36,
+     "rate": 0.6667,
+     "lo": 0.5033,
+     "hi": 0.7979
+    },
+    "none": {
+     "agree": 26,
+     "n": 38,
+     "rate": 0.6842,
+     "lo": 0.5254,
+     "hi": 0.8092
+    },
+    "trap": {
+     "agree": 24,
+     "n": 31,
+     "rate": 0.7742,
+     "lo": 0.6019,
+     "hi": 0.8861
+    }
+   },
+   "adapter": {
+    "date": {
+     "agree": 22,
+     "n": 30,
+     "rate": 0.7333,
+     "lo": 0.5555,
+     "hi": 0.8582
+    },
+    "easy": {
+     "agree": 15,
+     "n": 15,
+     "rate": 1.0,
+     "lo": 0.7961,
+     "hi": 1.0
+    },
+    "lookalike": {
+     "agree": 33,
+     "n": 36,
+     "rate": 0.9167,
+     "lo": 0.7817,
+     "hi": 0.9713
+    },
+    "none": {
+     "agree": 36,
+     "n": 38,
+     "rate": 0.9474,
+     "lo": 0.8271,
+     "hi": 0.9854
+    },
+    "trap": {
+     "agree": 30,
+     "n": 31,
+     "rate": 0.9677,
+     "lo": 0.8381,
+     "hi": 0.9943
+    }
+   },
+   "ultra": {
+    "date": {
+     "agree": 26,
+     "n": 30,
+     "rate": 0.8667,
+     "lo": 0.7032,
+     "hi": 0.9469
+    },
+    "easy": {
+     "agree": 15,
+     "n": 15,
+     "rate": 1.0,
+     "lo": 0.7961,
+     "hi": 1.0
+    },
+    "lookalike": {
+     "agree": 32,
+     "n": 36,
+     "rate": 0.8889,
+     "lo": 0.7468,
+     "hi": 0.9559
+    },
+    "none": {
+     "agree": 34,
+     "n": 38,
+     "rate": 0.8947,
+     "lo": 0.7587,
+     "hi": 0.9583
+    },
+    "trap": {
+     "agree": 30,
+     "n": 31,
+     "rate": 0.9677,
+     "lo": 0.8381,
+     "hi": 0.9943
+    }
+   }
+  },
+  "bfcl": {
+   "base": {
+    "irrelevance": {
+     "agree": 59,
+     "n": 100,
+     "rate": 0.59,
+     "lo": 0.492,
+     "hi": 0.6813
+    },
+    "multiple": {
+     "agree": 86,
+     "n": 100,
+     "rate": 0.86,
+     "lo": 0.7786,
+     "hi": 0.9147
+    },
+    "simple": {
+     "agree": 87,
+     "n": 100,
+     "rate": 0.87,
+     "lo": 0.7902,
+     "hi": 0.9224
+    }
+   },
+   "adapter": {
+    "irrelevance": {
+     "agree": 71,
+     "n": 100,
+     "rate": 0.71,
+     "lo": 0.6146,
+     "hi": 0.7899
+    },
+    "multiple": {
+     "agree": 85,
+     "n": 100,
+     "rate": 0.85,
+     "lo": 0.7672,
+     "hi": 0.9069
+    },
+    "simple": {
+     "agree": 85,
+     "n": 100,
+     "rate": 0.85,
+     "lo": 0.7672,
+     "hi": 0.9069
+    }
+   },
+   "ultra": {
+    "irrelevance": {
+     "agree": 83,
+     "n": 100,
+     "rate": 0.83,
+     "lo": 0.7445,
+     "hi": 0.8911
+    },
+    "multiple": {
+     "agree": 89,
+     "n": 100,
+     "rate": 0.89,
+     "lo": 0.8137,
+     "hi": 0.9375
+    },
+    "simple": {
+     "agree": 93,
+     "n": 100,
+     "rate": 0.93,
+     "lo": 0.8625,
+     "hi": 0.9657
+    }
+   }
+  }
+ },
+ "unanswered": {
+  "hard": {
+   "base": 0,
+   "adapter": 0,
+   "ultra": 0
+  },
+  "bfcl": {
+   "base": 0,
+   "adapter": 0,
+   "ultra": 0
+  }
+ },
+ "paired": {
+  "hard": {
+   "adapter_vs_base": {
+    "fixed": 42,
+    "broke": 0,
+    "both_right": 94,
+    "both_wrong": 14,
+    "p": 0.0
+   }
+  },
+  "bfcl": {
+   "adapter_vs_base": {
+    "fixed": 15,
+    "broke": 6,
+    "both_right": 226,
+    "both_wrong": 53,
+    "p": 0.0784
+   }
+  }
+ },
+ "comparisons": {
+  "hard": {
+   "adapter_vs_base": "above",
+   "adapter_vs_ultra": "about_same"
+  },
+  "bfcl": {
+   "adapter_vs_base": "about_same",
+   "adapter_vs_ultra": "about_same"
+  }
+ },
+ "headline": {
+  "variant": "A",
+  "rule": "B (tool calling leads) only when the adapter's 95% range is above the untrained model's on BOTH exams, with no overlap; otherwise A (text-to-SQL stays the headline)",
+  "reason": "adapter not above the untrained model on both exams (hard: above, bfcl: about_same)"
+ },
+ "date": "2026-10-24",
+ "training": {
+  "rows": 2940,
+  "cost_usd": 2.33
+ }
+}
