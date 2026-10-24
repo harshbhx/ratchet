@@ -1,0 +1,70 @@
+{
+ "what": "Round 3 tool-calling exams: scored answers and the exams, copied unchanged",
+ "files": [
+  {
+   "file": "scored/scored_adapter_hard.json",
+   "bytes": 38941,
+   "sha256": "9ba12bd271eedaad6e947d476c47d64b444d8fb80cce5f7df44422a4f6f7c939"
+  },
+  {
+   "file": "scored/scored_adapter_bfcl.json",
+   "bytes": 77329,
+   "sha256": "e0bd39004299856668b5a9ad8e61a10d7549096c3d1aec6da2abb88bc0e1df93"
+  },
+  {
+   "file": "scored/scored_base_hard.json",
+   "bytes": 43897,
+   "sha256": "e1133d682ab1ce2258932290dda06204067a639be41f1e93656e79ae29677c13"
+  },
+  {
+   "file": "scored/scored_base_bfcl.json",
+   "bytes": 82098,
+   "sha256": "e3e7421a05e2e5fff909847525272dc50cbe26cdc5fad7223b23f8b7b7300631"
+  },
+  {
+   "file": "scored/scored_ultra_bfcl.json",
+   "bytes": 76366,
+   "sha256": "2ea973f7f55c7e968086540a49b658a4a98171a31a5c1971f88b7e6ae1b330ae"
+  },
+  {
+   "file": "ultra/ultra_answers_hard.jsonl",
+   "bytes": 66920,
+   "sha256": "6f86ffb959e00e1087cd5e6f1fc79493770595f103cb6d7f337b62f6d9c98bcf"
+  },
+  {
+   "file": "ultra/ultra_results_hard.json",
+   "bytes": 2697,
+   "sha256": "73eb2607ecf78ea2c82965f1c160509db33803ee52bd7a6ee5f29662c2968fbf"
+  },
+  {
+   "file": "exams/exam_hard.jsonl",
+   "bytes": 570716,
+   "sha256": "e26b6d020caedf2ce050b48641d5c2a55a96202826f51ca66ad81be9d04dada2"
+  },
+  {
+   "file": "exams/exam_hard_manifest.json",
+   "bytes": 2231,
+   "sha256": "f9877563592ad90e7409dc28ee3c7701d9f14b114c76c989b453f4924c5f8bd5"
+  },
+  {
+   "file": "exams/exam_bfcl.jsonl",
+   "bytes": 574076,
+   "sha256": "c6b2e9dd3abd6bb2a5e7b33105e0de372612be51e82e2117087e6c36faeccb37"
+  },
+  {
+   "file": "exams/exam_bfcl_manifest.json",
+   "bytes": 10436,
+   "sha256": "fdd17b88eaa588b398bf59aa9405415eeec4322ffaf1a01886e0eb44526fb9f5"
+  },
+  {
+   "file": "scorers/common.py",
+   "bytes": 6861,
+   "sha256": "339455c6ebf461443afd484fc5a5c318dda399c0cc442ef4a5d94ffbeb5674c0"
+  },
+  {
+   "file": "scorers/scorer.py",
+   "bytes": 3312,
+   "sha256": "2389facde87427bc5c3eb7a0b24f13d2478c7729591603679814e2127893e61f"
+  }
+ ]
+}

@@ -1,0 +1,2702 @@
+[
+ {
+  "id": "simple_285",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"find_concert\", \"arguments\": {\"location\": \"Chicago, IL\", \"price\": 100, \"genre\": \"Rock\"}}"
+ },
+ {
+  "id": "irrelevance_217",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_53-24-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"todo_add\", \"arguments\": {\"content\": \"go for shopping at 9 pm\"}}"
+ },
+ {
+  "id": "irrelevance_171",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_162-63-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_detail_adriel_project\", \"arguments\": {\"project_name\": \"e-commerce-web\", \"include_financials\": false, \"date_format\": \"YYYY-MM-DD\"}}"
+ },
+ {
+  "id": "live_multiple_787-174-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "missing_required",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Homes_2_FindHomeByArea\", \"arguments\": {\"area\": \"Berkeley, CA\", \"intent\": \"rent\", \"number_of_beds\": 2, \"in_unit_laundry\": true}}"
+ },
+ {
+  "id": "multiple_81",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"concert.book_ticket\", \"arguments\": {\"artist\": \"Eminem\", \"location\": \"New York City\", \"add_ons\": [\"Backstage Pass\"]}}"
+ },
+ {
+  "id": "irrelevance_239",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_date\", \"arguments\": {\"location_1\": \"San Francisco\", \"location_2\": \"Los Angeles\", \"unit\": \"kilometers\"}}"
+ },
+ {
+  "id": "multiple_42",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_final_temperature\", \"arguments\": {\"quantity1\": 2, \"temperature1\": 300, \"quantity2\": 3, \"temperature2\": 400}}"
+ },
+ {
+  "id": "simple_247",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"historical_contrib.get_contrib\", \"arguments\": {\"scientist\": \"Albert Einstein\", \"date\": \"1915-03-17\", \"category\": \"Physics\"}}"
+ },
+ {
+  "id": "live_simple_0-0-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_user_info\", \"arguments\": {\"user_id\": 7890, \"special\": \"black\"}}"
+ },
+ {
+  "id": "multiple_49",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calc_Compound_Interest\", \"arguments\": {\"principle_amount\": 1500, \"duration\": 2, \"annual_rate\": 2.5}}"
+ },
+ {
+  "id": "irrelevance_147",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_18-4-10",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"HNA_NEWS.search\", \"arguments\": {\"keyword\": \"airtificial intelligence\", \"date_range\": \"2023.10.01 to 2023.10.07\", \"sort_by\": \"date\", \"language\": \"EN\", \"category\": \"Technology\"}}"
+ },
+ {
+  "id": "multiple_127",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"finance.calculate_quarterly_dividend_per_share\", \"arguments\": {\"total_payout\": 50000000, \"outstanding_shares\": 100000000}}"
+ },
+ {
+  "id": "irrelevance_100",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_144",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"air_quality\", \"arguments\": {\"location\": \"London\", \"date\": \"2022/08/16\"}}"
+ },
+ {
+  "id": "live_simple_79-40-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"search_hotels\", \"arguments\": {\"location\": \"San Diego, CA\"}}"
+ },
+ {
+  "id": "irrelevance_106",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_47",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_boiling_melting_points\", \"arguments\": {\"substance\": \"water\", \"sea_level\": 5000}}"
+ },
+ {
+  "id": "irrelevance_30",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_332",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"chess.rating\", \"arguments\": {\"player_name\": \"Magnus Carlsen\", \"variant\": \"classical\"}}"
+ },
+ {
+  "id": "irrelevance_84",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_132",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_1001-232-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"api_token_api.APITokenApi.get_api_tokens\", \"arguments\": {\"user_id\": \"098-293\"}}"
+ },
+ {
+  "id": "simple_172",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"legal_case.fetch\", \"arguments\": {\"case_id\": \"R vs Adams\", \"details\": true}}"
+ },
+ {
+  "id": "multiple_92",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"walmart.vegan_products\", \"arguments\": {\"location\": \"Denver, CO\", \"categories\": [\"gluten-free\"]}}"
+ },
+ {
+  "id": "live_simple_140-93-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"greet_partner\", \"arguments\": {\"user_name\": \"Emily\", \"partner_name\": \"Jeff\", \"relationship\": \"husband\"}}"
+ },
+ {
+  "id": "simple_132",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_return_on_equity\", \"arguments\": {\"net_income\": 2000000, \"shareholder_equity\": 10000000, \"dividends_paid\": 200000}}"
+ },
+ {
+  "id": "simple_106",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"train_random_forest_classifier\", \"arguments\": {\"dataset\": \"your_dataset_name\", \"max_depth\": 5, \"n_estimators\": 100}}"
+ },
+ {
+  "id": "irrelevance_133",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_32",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_final_speed\", \"arguments\": {\"initial_velocity\": 0, \"height\": 100}}"
+ },
+ {
+  "id": "irrelevance_193",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_sport_team_details\", \"arguments\": {\"team_name\": \"Los Angeles Lakers\", \"details\": [\"roster\"]}}"
+ },
+ {
+  "id": "live_multiple_952-201-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"uber.eat.order\", \"arguments\": {\"restaurant\": \"mc donalds\", \"items\": [\"fries\"], \"quantities\": [5]}}"
+ },
+ {
+  "id": "live_multiple_0-0-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "extra_text_around_json",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"ChaDri.change_drink\", \"arguments\": {\"drink_id\": \"latte\", \"new_preferences\": {\"size\": \"large\", \"temperature\": \"hot\", \"sweetness_level\": \"extra\", \"milk_type\": \"coconut\", \"special_instructions\": \"boiling hot\"}}}]"
+ },
+ {
+  "id": "simple_359",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"recipe_search\", \"arguments\": {\"dietary_restriction\": \"Vegetarian\", \"ingredients\": [\"pasta\", \"cheese\"], \"servings\": 2}}"
+ },
+ {
+  "id": "live_simple_125-81-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"concat_strings\", \"arguments\": {\"strings\": [\"John\", \"Doe\"], \"separator\": \" \"}}"
+ },
+ {
+  "id": "irrelevance_29",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_cell_function\", \"arguments\": {\"cell_part\": \"mitochondria\", \"detail_level\": \"basic\"}}"
+ },
+ {
+  "id": "irrelevance_159",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"artwork_search\", \"arguments\": {\"artwork_name\": \"The Scream\", \"specific_details\": \"artist\"}}"
+ },
+ {
+  "id": "irrelevance_67",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_174",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_top_cases\", \"arguments\": {\"field_of_law\": \"constitutional law\", \"top_number\": 10, \"country\": \"China\"}}"
+ },
+ {
+  "id": "irrelevance_157",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_10",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_924-191-12",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_service_providers\", \"arguments\": {\"avg_rating\": 4, \"province_id\": 1, \"district_name\": \"Sukhumvit\", \"start_available_date\": \"2024-03-04 15:00:00\", \"min_age\": 25, \"max_age\": 35, \"service_id\": 1}}"
+ },
+ {
+  "id": "multiple_139",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"lawsuit_details.find\", \"arguments\": {\"company_name\": \"Apple Inc.\", \"year\": 2010, \"case_type\": \"Patent\"}}"
+ },
+ {
+  "id": "live_multiple_802-175-8",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Weather_1_GetWeather\", \"arguments\": {\"city\": \"Santa Rosa, CA\", \"date\": \"2023-04-09\"}}"
+ },
+ {
+  "id": "live_multiple_638-161-6",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Music_3_LookupMusic\", \"arguments\": {\"genre\": \"Holiday\", \"album\": \"Everyday Is Christmas\", \"artist\": \"Sia\", \"year\": \"dontcare\"}}"
+ },
+ {
+  "id": "irrelevance_188",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"sports.ranking.get_champion\", \"arguments\": {\"event\": \"World Series\", \"year\": 2020}}"
+ },
+ {
+  "id": "live_simple_71-35-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"extract_parameters_v1\", \"arguments\": {\"demographics\": [\"millennials\"], \"targets\": [\"brand:Apple\"], \"metrics\": [\"favorability\", \"view\"], \"min_date\": \"2022-07-01\", \"max_date\": \"2026-10-24\", \"interval\": \"month\"}}"
+ },
+ {
+  "id": "simple_8",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"geometry.area_circle\", \"arguments\": {\"radius\": 10}}"
+ },
+ {
+  "id": "multiple_46",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"sort_list\", \"arguments\": {\"elements\": [\"Sam\", \"Alice\", \"Jack\"], \"order\": \"asc\"}}"
+ },
+ {
+  "id": "live_multiple_763-170-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Buses_3_FindBus\", \"arguments\": {\"from_city\": \"Los Angeles, CA\", \"to_city\": \"Salina, SD\", \"departure_date\": \"2023-10-01\", \"num_passengers\": 2}}"
+ },
+ {
+  "id": "simple_312",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"player_statistic\", \"arguments\": {\"player_name\": \"Ronaldo\", \"year\": 2021}}"
+ },
+ {
+  "id": "irrelevance_161",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_386",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"book_hotel\", \"arguments\": {\"hotel_name\": \"Hotel Paradise\", \"location\": \"Las Vegas\", \"room_type\": \"luxury\", \"start_date\": \"05-12-2022\", \"stay_duration\": 3, \"view\": \"city view\"}}"
+ },
+ {
+  "id": "irrelevance_203",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_144-95-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"taskkill /f /im firefox.exe\", \"unit\": \"seconds\"}}"
+ },
+ {
+  "id": "irrelevance_95",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_81",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_339",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"poker_probability.full_house\", \"arguments\": {\"deck_size\": 52, \"hand_size\": 5}}"
+ },
+ {
+  "id": "multiple_40",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"electromagnetism.biot_savart_law\", \"arguments\": {\"current\": 12, \"distance\": 8}}"
+ },
+ {
+  "id": "irrelevance_206",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"game.find_best_weapon\", \"arguments\": {\"player_level\": 15, \"enemy_type\": \"dragon\"}}"
+ },
+ {
+  "id": "live_simple_27-7-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"uber.eat.order\", \"arguments\": {\"restaurant\": \"uber pitada\", \"items\": [\"burgers\", \"chicken wings\"], \"quantities\": [5, 6]}}"
+ },
+ {
+  "id": "multiple_5",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"weather.get_by_coordinates_date\", \"arguments\": {\"coordinates\": [46.603354, 1.8883340], \"date\": \"2019-12-13\"}}"
+ },
+ {
+  "id": "irrelevance_222",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"grocery_store.item_details\", \"arguments\": {\"item_name\": \"tomato\", \"details_level\": \"detailed\"}}"
+ },
+ {
+  "id": "simple_232",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"monarch.getMonarchOfYear\", \"arguments\": {\"location\": \"England\", \"year\": 1800, \"fullName\": true}}"
+ },
+ {
+  "id": "simple_255",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"religious_history.get_papal_biography\", \"arguments\": {\"papal_name\": \"Pope Innocent III\", \"include_contributions\": true}}"
+ },
+ {
+  "id": "live_multiple_536-151-12",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Music\", \"city\": \"Portland, OR\", \"date\": \"03/09/2023\"}}"
+ },
+ {
+  "id": "irrelevance_89",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_34",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_492-148-2",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Music\", \"city\": \"Berkeley, CA\", \"date\": \"2023-03-10\"}}"
+ },
+ {
+  "id": "irrelevance_227",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_62",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"nature_park.find_nearby\", \"arguments\": {\"location\": \"Boston, MA\", \"features\": [\"Camping\", \"Scenic View\"]}}"
+ },
+ {
+  "id": "simple_133",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"finance.predict_future_value\", \"arguments\": {\"present_value\": 5000, \"annual_interest_rate\": 0.05, \"compounding_periods_per_year\": 12, \"time_years\": 3}}"
+ },
+ {
+  "id": "irrelevance_124",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_social_trends\", \"arguments\": {\"category\": \"technology\"}}"
+ },
+ {
+  "id": "irrelevance_109",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"calculate_water_needs\", \"arguments\": {\"plant_type\": \"cactus\", \"location\": \"Arizona\", \"season\": \"summer\"}}"
+ },
+ {
+  "id": "multiple_195",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calc_heat_capacity\", \"arguments\": {\"temp\": 298, \"volume\": 10}}"
+ },
+ {
+  "id": "irrelevance_143",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_177",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_32",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cellBiology.getCellType\", \"arguments\": {\"organism_type\": \"mammal\", \"membrane_type\": \"Phospholipid bi-layer\"}}"
+ },
+ {
+  "id": "simple_242",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_scientist_for_discovery\", \"arguments\": {\"discovery\": \"theory of evolution\"}}"
+ },
+ {
+  "id": "irrelevance_33",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"identify_species\", \"arguments\": {\"sequence\": \"ATCG\"}}"
+ },
+ {
+  "id": "live_multiple_120-45-5",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"version_api.VersionApi.get_version\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_72",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_1",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_141",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"lawsuit.check_case\", \"arguments\": {\"case_id\": 1234, \"closed_status\": true}}"
+ },
+ {
+  "id": "live_multiple_639-161-7",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Music_3_LookupMusic\", \"arguments\": {\"album\": \"High Expectations\", \"year\": \"2019\"}}"
+ },
+ {
+  "id": "live_simple_216-117-8",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_3_FindMovies\", \"arguments\": {\"directed_by\": \"David Leitch\", \"genre\": \"Action\", \"cast\": \"Alex King\"}}"
+ },
+ {
+  "id": "irrelevance_158",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_54-25-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"todo\", \"arguments\": {\"type\": \"delete\", \"content\": \"todo random\"}}"
+ },
+ {
+  "id": "irrelevance_77",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_17",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_331-132-21",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_3_FindMovies\", \"arguments\": {\"directed_by\": \"Josephine Decker\", \"genre\": \"Thriller\", \"cast\": \"Sunita Mani\"}}"
+ },
+ {
+  "id": "irrelevance_153",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_257",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"identify_color_rgb\", \"arguments\": {\"color_name\": \"Sea Green\", \"standard\": \"basic\"}}"
+ },
+ {
+  "id": "live_multiple_337-133-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Music_3_PlayMedia\", \"arguments\": {\"track\": \"Remind Me\", \"artist\": \"Carrie Underwood\", \"device\": \"Living room\", \"album\": \"dontcare\"}}"
+ },
+ {
+  "id": "irrelevance_172",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"music_composer.composition_info\", \"arguments\": {\"composition_name\": \"Don Quixote\", \"need_detailed_info\": false}}"
+ },
+ {
+  "id": "simple_135",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_return_on_investment\", \"arguments\": {\"purchase_price\": 20, \"sale_price\": 25, \"dividend\": 2}}"
+ },
+ {
+  "id": "simple_360",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"find_recipe\", \"arguments\": {\"recipeName\": \"pasta carbonara\", \"maxCalories\": 500}}"
+ },
+ {
+  "id": "multiple_70",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"european_history.get_monarchs\", \"arguments\": {\"country\": \"France\", \"century\": 18}}"
+ },
+ {
+  "id": "simple_94",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "extra_text_around_json",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"update_user_info\", \"arguments\": {\"user_id\": 43523, \"update_info\": {\"name\": \"John Doe\", \"email\": \"johndoe@email.com\"}}}]"
+ },
+ {
+  "id": "simple_180",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"lawsuits_search\", \"arguments\": {\"company_name\": \"Google\", \"location\": \"California\", \"year\": 2020}}"
+ },
+ {
+  "id": "live_simple_45-18-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "missing_required",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"ThinQ_Connect\", \"arguments\": {\"currentJobMode\": \"COOL\", \"coolTargetTemperature\": 20, \"airCleanOperationMode\": \"START\"}}"
+ },
+ {
+  "id": "multiple_79",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"exhibition_info\", \"arguments\": {\"museum_name\": \"Museum of Modern Art, New York\", \"month\": 1}}"
+ },
+ {
+  "id": "irrelevance_103",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_853-180-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Buses_3_BuyBusTicket\", \"arguments\": {\"from_city\": \"San Francisco, CA\", \"to_city\": \"Los Angeles, CA\", \"departure_date\": \"2026-03-07\", \"departure_time\": \"14:00\", \"num_passengers\": 2}}"
+ },
+ {
+  "id": "irrelevance_228",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_local_time\", \"arguments\": {\"location\": \"Sydney, Australia\", \"format\": \"24\"}}"
+ },
+ {
+  "id": "simple_243",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_discoverer\", \"arguments\": {\"discovery\": \"neutron\", \"detail\": true}}"
+ },
+ {
+  "id": "live_simple_162-96-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_items\", \"arguments\": {\"items\": [\"Red and blue circle logo\", \"Red and yellow circle logo\", \"Green circle logo\", \"Black circle logo\"]}}"
+ },
+ {
+  "id": "irrelevance_92",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"search_lawyer\", \"arguments\": {\"area\": \"New York\", \"specialization\": \"security guard\", \"min_experience\": 0}}"
+ },
+ {
+  "id": "live_multiple_794-175-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Weather_1_GetWeather\", \"arguments\": {\"city\": \"Pinole, CA\", \"date\": \"2023-03-21\"}}"
+ },
+ {
+  "id": "irrelevance_49",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_500-148-10",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Music\", \"city\": \"San Francisco, CA\", \"date\": \"2026-10-24\"}}"
+ },
+ {
+  "id": "live_multiple_453-145-4",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Travel_1_FindAttractions\", \"arguments\": {\"location\": \"San Francisco, CA\", \"free_entry\": \"True\", \"good_for_kids\": \"True\"}}"
+ },
+ {
+  "id": "live_simple_238-125-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"play_spotify_song\", \"arguments\": {\"query\": \"track:Dil Nu artist:Maninder Buttar\"}}"
+ },
+ {
+  "id": "irrelevance_214",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_128",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_163",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"property_records.get\", \"arguments\": {\"address\": \"123 main street\", \"parcel_number\": \"1234567890\", \"county\": \"Santa Clara\", \"include_owner\": true}}"
+ },
+ {
+  "id": "live_simple_47-20-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"multiply\", \"arguments\": {\"a\": 3, \"b\": 2}}"
+ },
+ {
+  "id": "simple_328",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"boardgame.get_info\", \"arguments\": {\"name\": \"Ticket to Ride\", \"parameters\": [\"player count\", \"rating\"]}}"
+ },
+ {
+  "id": "irrelevance_12",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_270",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"building.get_dimensions\", \"arguments\": {\"building_name\": \"Empire State building\", \"unit\": \"feet\"}}"
+ },
+ {
+  "id": "multiple_162",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"analyze_structure\", \"arguments\": {\"building_id\": \"B1004\", \"floors\": [2, 3, 4], \"mode\": \"dynamic\"}}"
+ },
+ {
+  "id": "simple_372",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"whole_foods.find_top_brands\", \"arguments\": {\"product\": \"bananas\", \"number\": 5, \"organic\": true}}"
+ },
+ {
+  "id": "simple_287",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"concert.search\", \"arguments\": {\"genre\": \"classical\", \"location\": \"Los Angeles\", \"date\": \"this weekend\", \"price_range\": \"cheap\"}}"
+ },
+ {
+  "id": "multiple_78",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_type",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"museum_info\", \"arguments\": {\"museum\": \"Natural History Museum\", \"city\": \"London\", \"features\": \"timings, exhibitions, accessibility\"}}"
+ },
+ {
+  "id": "irrelevance_164",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"search_music_instrument_players\", \"arguments\": {\"instrument\": \"singer\", \"genre\": \"Jazz\", \"top\": 1}}"
+ },
+ {
+  "id": "irrelevance_186",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"sports_ranking.get_MVP\", \"arguments\": {\"season\": \"2026\", \"sport_type\": \"football\"}}"
+ },
+ {
+  "id": "simple_18",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"number_analysis.prime_factors\", \"arguments\": {\"number\": 123456}}"
+ },
+ {
+  "id": "irrelevance_173",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"music_analysis.find_common_chords\", \"arguments\": {\"genre\": \"C major\", \"num_chords\": 3}}"
+ },
+ {
+  "id": "multiple_189",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"timezone.convert\", \"arguments\": {\"time\": \"3pm\", \"from_timezone\": \"America/New_York\", \"to_timezone\": \"Europe/London\"}}"
+ },
+ {
+  "id": "multiple_29",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"functions.intersect\", \"arguments\": {\"function1\": \"3x+2\", \"function2\": \"2x+3\"}}"
+ },
+ {
+  "id": "live_multiple_177-74-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_trip\", \"arguments\": {\"location\": \"New York, NY\"}}"
+ },
+ {
+  "id": "live_multiple_511-149-8",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Flights_4_SearchOnewayFlight\", \"arguments\": {\"origin_airport\": \"Chicago\", \"destination_airport\": \"Shanghai\", \"departure_date\": \"2023-04-15\", \"seating_class\": \"Economy\", \"number_of_tickets\": 1, \"airlines\": \"Delta Airlines\"}}"
+ },
+ {
+  "id": "simple_326",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_team_score\", \"arguments\": {\"team_name\": \"Los Angeles Lakers\", \"league\": \"NBA\"}}"
+ },
+ {
+  "id": "live_simple_38-15-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_current_weather\", \"arguments\": {\"location\": \"Mariposa, CA\", \"unit\": \"fahrenheit\"}}"
+ },
+ {
+  "id": "simple_138",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"portfolio_future_value\", \"arguments\": {\"stock\": \"X\", \"invested_amount\": 5000, \"expected_annual_return\": 0.05, \"years\": 7}}"
+ },
+ {
+  "id": "live_simple_158-95-15",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"taskkill /f /im code.exe\", \"unit\": \"seconds\"}}"
+ },
+ {
+  "id": "irrelevance_43",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"evolve_creatures\", \"arguments\": {\"population_size\": 100, \"mutation_rate\": 0.01, \"generations\": 50}}"
+ },
+ {
+  "id": "live_multiple_1043-270-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Weather_1_GetWeather\", \"arguments\": {\"city\": \"Marshall\", \"date\": \"2023.3.1\"}}"
+ },
+ {
+  "id": "simple_44",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_electric_field_strength\", \"arguments\": {\"charge\": 0.01, \"distance\": 4}}"
+ },
+ {
+  "id": "live_multiple_662-162-4",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Music\", \"city\": \"New York, NY\", \"date\": \"2023-10-07\"}}"
+ },
+ {
+  "id": "irrelevance_39",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_169-99-3",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"d:/playground/pc_contoller/env/Scripts/python.exe d:/playground/pc_contoller/test.py\"}}"
+ },
+ {
+  "id": "irrelevance_105",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_100-59-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"connectBluetooth\", \"arguments\": {\"device_name\": \"JBL Flip 4\"}}"
+ },
+ {
+  "id": "multiple_186",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"find_recipe\", \"arguments\": {\"dietary_restrictions\": \"vegan\", \"recipe_type\": \"dessert\", \"time\": 30}}"
+ },
+ {
+  "id": "live_multiple_913-191-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_service_providers\", \"arguments\": {\"avg_rating\": 4.9, \"start_available_date\": \"2024-03-19 12:00:00\", \"province_id\": 1, \"district_name\": \"Bangna\", \"service_id\": 1}}"
+ },
+ {
+  "id": "live_simple_155-95-12",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"date\", \"unit\": \"seconds\"}}"
+ },
+ {
+  "id": "irrelevance_88",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_113",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"probability.dice_roll\", \"arguments\": {\"desired_number\": 6, \"number_of_rolls\": 2}}"
+ },
+ {
+  "id": "simple_300",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"music.calculate_note_duration\", \"arguments\": {\"first_note_frequency\": 440, \"second_note_frequency\": 880}}"
+ },
+ {
+  "id": "irrelevance_51",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_438-142-4",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"RentalCars_3_GetCarsAvailable\", \"arguments\": {\"city\": \"Los Angeles, CA\", \"start_date\": \"2023-04-24\", \"pickup_time\": \"10:00\", \"end_date\": \"2023-04-28\", \"car_type\": \"dontcare\"}}"
+ },
+ {
+  "id": "irrelevance_140",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_188",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"weather.humidity_forecast\", \"arguments\": {\"location\": \"Miami, Florida\", \"days\": 7}}"
+ },
+ {
+  "id": "multiple_74",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"art_auction.fetch_artwork_price\", \"arguments\": {\"artwork_name\": \"Starry Night\", \"artist\": \"Van Gogh\", \"platform\": \"all\"}}"
+ },
+ {
+  "id": "simple_151",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"highest_grossing_banks\", \"arguments\": {\"country\": \"U.S\", \"year\": 2020, \"top_n\": 1}}"
+ },
+ {
+  "id": "multiple_39",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"ride_hailing.get_rides\", \"arguments\": {\"source\": \"New York\", \"destination\": \"Philadelphia\", \"max_cost\": 50}}"
+ },
+ {
+  "id": "irrelevance_169",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_1000-231-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"MaintenanceConfigurationApi.get_maintenance_config\", \"arguments\": {\"id\": \"sandcastle\"}}"
+ },
+ {
+  "id": "irrelevance_25",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_182",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_nba_player_stats\", \"arguments\": {\"player_name\": \"Michael Jordan\", \"stat_type\": \"championships\"}}"
+ },
+ {
+  "id": "simple_88",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_BMI\", \"arguments\": {\"weight_kg\": 70, \"height_m\": 1.75}}"
+ },
+ {
+  "id": "multiple_45",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"geology.get_era\", \"arguments\": {\"era_name\": \"Ice age\", \"calculate_years_ago\": true}}"
+ },
+ {
+  "id": "irrelevance_162",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_museum_artists\", \"arguments\": {\"museum_name\": \"National Museum of Dance\", \"period\": \"19th Century\", \"country\": \"USA\"}}"
+ },
+ {
+  "id": "live_multiple_418-141-7",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_1_BuyMovieTickets\", \"arguments\": {\"movie_name\": \"Space Adventure\", \"number_of_tickets\": 2, \"show_date\": \"2023-04-15\", \"location\": \"New York, NY\", \"show_time\": \"19:30\"}}"
+ },
+ {
+  "id": "simple_361",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"restaurant_finder\", \"arguments\": {\"city\": \"New York\", \"cuisine\": \"Italian\", \"diet\": \"Gluten-free\"}}"
+ },
+ {
+  "id": "irrelevance_3",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_171-99-5",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"echo %date%\"}}"
+ },
+ {
+  "id": "live_multiple_436-142-2",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"RentalCars_3_GetCarsAvailable\", \"arguments\": {\"city\": \"Portland, OR\", \"start_date\": \"2023-04-22\", \"pickup_time\": \"10:00\", \"end_date\": \"2023-04-27\"}}"
+ },
+ {
+  "id": "simple_225",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"psych_research.get_preference\", \"arguments\": {\"category\": \"reading\", \"option_one\": \"digital reading\", \"option_two\": \"physical books\"}}"
+ },
+ {
+  "id": "irrelevance_152",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_80",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_148",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_stock_info\", \"arguments\": {\"company_name\": \"Apple Inc.\", \"detail_level\": \"detailed\"}}"
+ },
+ {
+  "id": "simple_45",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"thermo.calculate_energy\", \"arguments\": {\"mass\": 100, \"phase_transition\": \"vaporization\", \"substance\": \"water\"}}"
+ },
+ {
+  "id": "live_simple_230-121-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"play_song\", \"arguments\": {\"song_id\": \"wjeiruhuq_roar\", \"artist\": \"Katy Perry\", \"quality\": \"high\"}}"
+ },
+ {
+  "id": "irrelevance_8",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_86-47-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"sort_array\", \"arguments\": {\"array\": [1, 54, 3, 1, 76, 2343, 21]}}"
+ },
+ {
+  "id": "irrelevance_183",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_21",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"number_theory.gcd\", \"arguments\": {\"number1\": 36, \"number2\": 48}}"
+ },
+ {
+  "id": "live_simple_202-116-10",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Weather_1_GetWeather\", \"arguments\": {\"city\": \"Foster City\", \"date\": \"2023-04-25\"}}"
+ },
+ {
+  "id": "simple_244",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"publication_year.find\", \"arguments\": {\"author\": \"Isaac Newton\", \"work_title\": \"law of universal gravitation\"}}"
+ },
+ {
+  "id": "live_simple_157-95-14",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"echo %time%\", \"unit\": \"seconds\"}}"
+ },
+ {
+  "id": "irrelevance_204",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_808-175-14",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Weather_1_GetWeather\", \"arguments\": {\"city\": \"Antioch, CA\", \"date\": \"2023-10-01\"}}"
+ },
+ {
+  "id": "live_simple_48-21-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"find_beer\", \"arguments\": {\"brewery\": \"Sierra Nevada\", \"taste\": \"bitter\", \"aroma\": \"hoppy\", \"color\": \"pale\", \"style\": \"lager\"}}"
+ },
+ {
+  "id": "simple_57",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_cell_density\", \"arguments\": {\"optical_density\": 0.6, \"dilution\": 5}}"
+ },
+ {
+  "id": "irrelevance_71",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_16",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculus.derivative\", \"arguments\": {\"function\": \"2x^2\", \"value\": 1}}"
+ },
+ {
+  "id": "live_multiple_615-159-8",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Music\", \"city\": \"San Diego, CA\", \"date\": \"2023-04-08\"}}"
+ },
+ {
+  "id": "live_multiple_587-157-8",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Media_3_FindMovies\", \"arguments\": {\"genre\": \"Horror\", \"starring\": \"Christopher Lee\"}}"
+ },
+ {
+  "id": "multiple_163",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"metropolitan_museum.get_top_artworks\", \"arguments\": {\"number\": 5, \"sort_by\": \"popularity\"}}"
+ },
+ {
+  "id": "simple_345",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"game_valuation\", \"arguments\": {\"game_name\": \"Super Mario Bros.\", \"release_year\": 1985, \"condition\": \"Like New\"}}"
+ },
+ {
+  "id": "live_simple_8-3-4",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_current_weather\", \"arguments\": {\"location\": \"London, UK\", \"unit\": \"fahrenheit\"}}"
+ },
+ {
+  "id": "multiple_152",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"history.get_key_events\", \"arguments\": {\"country\": \"Germany\", \"start_year\": 1871, \"end_year\": 1945, \"event_type\": [\"War\"]}}"
+ },
+ {
+  "id": "live_multiple_521-150-9",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_1_FindMovies\", \"arguments\": {\"location\": \"Sonoma, CA\", \"genre\": \"Family\", \"show_type\": \"3d\"}}"
+ },
+ {
+  "id": "multiple_192",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"currency_conversion.convert\", \"arguments\": {\"amount\": 150, \"from_currency\": \"EUR\", \"to_currency\": \"CAD\"}}"
+ },
+ {
+  "id": "live_simple_240-125-3",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"play_spotify_song\", \"arguments\": {\"query\": \"Baby Shark\"}}"
+ },
+ {
+  "id": "live_multiple_617-159-10",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Music\", \"city\": \"Los Angeles, CA\", \"date\": \"2026-03-10\"}}"
+ },
+ {
+  "id": "live_multiple_355-134-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_3_FindMovies\", \"arguments\": {\"cast\": \"Ronald Young\", \"directed_by\": \"Herbert Ross\", \"genre\": \"Family\"}}"
+ },
+ {
+  "id": "irrelevance_11",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_150",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_118",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"playoff.brackets\", \"arguments\": {\"year\": 1996, \"round\": \"Finals\"}}"
+ },
+ {
+  "id": "live_multiple_484-146-9",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Music_3_LookupMusic\", \"arguments\": {\"album\": \"The New Classic\", \"year\": \"2017\"}}"
+ },
+ {
+  "id": "irrelevance_45",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_145",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_375",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"walmart.check_price\", \"arguments\": {\"items\": [\"pumpkin\", \"egg\"], \"quantities\": [3, 24]}}"
+ },
+ {
+  "id": "live_simple_32-9-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"answer.string\", \"arguments\": {\"answer\": \"Logistic regression is not present in the text, therefore I cannot answer this question.\"}}"
+ },
+ {
+  "id": "irrelevance_135",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_189",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"weather_forecast_detailed\", \"arguments\": {\"location\": \"New York, USA\", \"days\": 3, \"details\": true}}"
+ },
+ {
+  "id": "irrelevance_119",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_334",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"blackjack.check_winner\", \"arguments\": {\"player_cards\": [\"A\", \"10\"], \"dealer_cards\": [\"10\", \"9\"], \"ace_value\": 1}}"
+ },
+ {
+  "id": "irrelevance_178",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_177",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"board_game.chess.get_top_players\", \"arguments\": {\"location\": \"New York\", \"minimum_rating\": 2300}}"
+ },
+ {
+  "id": "irrelevance_237",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_117-73-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"reverse_input\", \"arguments\": {\"input_value\": \"hi\"}}"
+ },
+ {
+  "id": "live_simple_222-117-14",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_3_FindMovies\", \"arguments\": {\"directed_by\": \"Thurop Van Orman\", \"cast\": \"sterling K. Brown\"}}"
+ },
+ {
+  "id": "irrelevance_130",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"calculate_big_five_traits\", \"arguments\": {\"answers\": [1, 2, 3, 4, 5], \"calculate_percentile\": true}}"
+ },
+ {
+  "id": "live_multiple_826-178-1",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Music_3_LookupMusic\", \"arguments\": {\"year\": \"2015\"}}"
+ },
+ {
+  "id": "live_multiple_885-184-2",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Buses_3_FindBus\", \"arguments\": {\"from_city\": \"New York, NY\", \"to_city\": \"Boston, MA\", \"departure_date\": \"2023-05-15\"}}"
+ },
+ {
+  "id": "multiple_113",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_fitness\", \"arguments\": {\"trait_values\": [0.8, 0.7], \"trait_contributions\": [0.4, 0.6]}}"
+ },
+ {
+  "id": "multiple_69",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"five_factor_model.analyse\", \"arguments\": {\"talkative\": true, \"nervous\": true, \"artistic_interests\": false, \"lazy\": true, \"forgiving\": true}}"
+ },
+ {
+  "id": "irrelevance_223",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"grocery_shop.find_specific_product\", \"arguments\": {\"city\": \"Chicago\", \"product\": \"sourdough bread\"}}"
+ },
+ {
+  "id": "live_simple_95-56-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"process_data\", \"arguments\": {\"data\": [2.5, 3.6, 4.1, 5.2], \"normalize\": true, \"categories\": [\"red\", \"blue\", \"green\"], \"encoding_type\": \"one-hot\"}}"
+ },
+ {
+  "id": "simple_294",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"music_generation.create_chord_progression\", \"arguments\": {\"key\": \"C\", \"chords\": 4}}"
+ },
+ {
+  "id": "live_multiple_17-4-9",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cookbook.search_recipe\", \"arguments\": {\"keyword\": \"sikhae\", \"cuisine\": \"Korean\", \"max_results\": 10}}"
+ },
+ {
+  "id": "live_multiple_602-158-8",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Hotels_4_SearchHotel\", \"arguments\": {\"location\": \"Nairobi, Kenya\", \"star_rating\": \"4\"}}"
+ },
+ {
+  "id": "irrelevance_198",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_443-144-3",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Services_4_FindProvider\", \"arguments\": {\"city\": \"Pittsburg, PA\", \"type\": \"Psychiatrist\"}}"
+ },
+ {
+  "id": "multiple_24",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"route_planner.calculate_route\", \"arguments\": {\"start\": \"London\", \"destination\": \"Edinburgh\", \"method\": \"fastest\"}}"
+ },
+ {
+  "id": "multiple_13",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"corporate_finance.revenue_forecast\", \"arguments\": {\"company\": \"XYZ\", \"product\": \"A\", \"sales_units_increase_percentage\": 10}}"
+ },
+ {
+  "id": "live_simple_111-67-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_tool",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_balance_start\", \"arguments\": {\"acc_routing_start\": [], \"atm_finder_start\": [\"Where is the closest ATM to my current location?\", \"Find ATM for immediate cash needs\"], \"faq_link_accounts_start\": [], \"get_balance_start\": [\"What is my balance?\", \"Tell me my available balance, please\", \"What is my current available balance?\", \"Please provide my current account balance\", \"Show me my balance information.\", \"What is the balance in my account at this moment?\", \"How much money is in my account?\", \"Tell me my available balance\"], \"outofscope\": []}}"
+ },
+ {
+  "id": "irrelevance_73",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"finance.predict_revenue\", \"arguments\": {\"company_name\": \"XYZ\", \"period\": \"next year\", \"industry_trends\": false}}"
+ },
+ {
+  "id": "multiple_44",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate.weight_in_space\", \"arguments\": {\"weight_earth_kg\": 70, \"planet\": \"Mars\"}}"
+ },
+ {
+  "id": "irrelevance_75",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_370",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"safeway.order\", \"arguments\": {\"location\": \"Palo Alto, CA\", \"items\": [\"olive oil\", \"rice\"], \"quantity\": [3, 5]}}"
+ },
+ {
+  "id": "live_multiple_533-151-9",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Theater\", \"city\": \"London, UK\"}}"
+ },
+ {
+  "id": "live_simple_232-122-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"reschedule_event\", \"arguments\": {\"event_identifier\": \"med123\", \"new_datetime\": \"2021-04-15T13:45:00Z\"}}"
+ },
+ {
+  "id": "irrelevance_151",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "simple_118",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"stats.t_test\", \"arguments\": {\"array_1\": [10, 15, 12, 14, 11], \"array_2\": [18, 16, 17, 20, 22], \"alpha\": 0.05}}"
+ },
+ {
+  "id": "simple_114",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"prob_dist.binomial\", \"arguments\": {\"trials\": 10, \"successes\": 5}}"
+ },
+ {
+  "id": "irrelevance_6",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_36",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_158",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"religious_history.get_papal_biography\", \"arguments\": {\"papal_name\": \"Innocent III\", \"include_contributions\": true}}"
+ },
+ {
+  "id": "multiple_97",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"geometry.area_circle\", \"arguments\": {\"radius\": 10}}"
+ },
+ {
+  "id": "multiple_104",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_shortest_driving_distance\", \"arguments\": {\"origin\": \"New York City\", \"destination\": \"Washington D.C.\"}}"
+ },
+ {
+  "id": "multiple_154",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"US_president.in_year\", \"arguments\": {\"year\": 1861, \"full_name\": true}}"
+ },
+ {
+  "id": "live_simple_23-5-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"ChaFod\", \"arguments\": {\"TheFod\": \"PIZZA\"}}"
+ },
+ {
+  "id": "simple_126",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"linear_regression.get_r_squared\", \"arguments\": {\"dataset_path\": \"C:/data/cars.csv\", \"independent_variables\": [\"engine size\", \"fuel economy\"], \"dependent_variable\": \"car_price\"}}"
+ },
+ {
+  "id": "irrelevance_115",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"calculate_distance\", \"arguments\": {\"origin\": {\"latitude\": 42.3601, \"longitude\": -71.0589}, \"destination\": {\"latitude\": 40.7128, \"longitude\": -74.006}, \"speed\": 60}}"
+ },
+ {
+  "id": "simple_223",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"group_dynamics.pattern\", \"arguments\": {\"total\": 50, \"extroverts\": 15, \"introverts\": 35}}"
+ },
+ {
+  "id": "live_multiple_325-132-15",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_3_FindMovies\", \"arguments\": {\"directed_by\": \"Riley Stearns\"}}"
+ },
+ {
+  "id": "irrelevance_126",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_happiness_index\", \"arguments\": {\"demographic_group\": \"low income\"}}"
+ },
+ {
+  "id": "multiple_188",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"grocery_store.find_best\", \"arguments\": {\"my_location\": \"Berkeley\", \"rating\": 4.5, \"products\": [\"tomatoes\", \"pet food\"]}}"
+ },
+ {
+  "id": "irrelevance_35",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_multiple_400-139-4",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Theater\", \"city\": \"Chicago, IL\", \"date\": \"2023-10-02\"}}"
+ },
+ {
+  "id": "multiple_129",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"compound_interest\", \"arguments\": {\"principal\": 10000, \"annual_rate\": 5, \"compounding_freq\": \"monthly\", \"time_in_years\": 5}}"
+ },
+ {
+  "id": "multiple_65",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"geodistance.find\", \"arguments\": {\"origin\": \"New York City\", \"destination\": \"Los Angeles\"}}"
+ },
+ {
+  "id": "irrelevance_144",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"search_holy_books\", \"arguments\": {\"book\": \"holy book\"}}"
+ },
+ {
+  "id": "multiple_157",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_earliest_reference\", \"arguments\": {\"name\": \"Jesus Christ\", \"source\": \"historical records\"}}"
+ },
+ {
+  "id": "live_multiple_312-132-2",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Movies_3_FindMovies\", \"arguments\": {\"directed_by\": \"Jordan Peele\", \"genre\": \"Horror\", \"cast\": \"Lupita Nyong'o\"}}"
+ },
+ {
+  "id": "live_multiple_888-184-5",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"Buses_3_FindBus\", \"arguments\": {\"from_city\": \"Los Angeles, CA\", \"to_city\": \"San Diego, CA\", \"departure_date\": \"2023-10-01\"}}"
+ },
+ {
+  "id": "irrelevance_163",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_110-67-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_tool",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"atm_finder_start\", \"arguments\": {\"atm_finder_start\": [\"Need ATM location\"]}}"
+ },
+ {
+  "id": "irrelevance_4",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_9",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"calculate_average\", \"arguments\": {\"gradeDict\": {\"math\": 90, \"science\": 75, \"history\": 82, \"music\": 89}}}"
+ },
+ {
+  "id": "irrelevance_229",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_190-115-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"raptor.mpn.specs\", \"arguments\": {\"identifier\": \"ACHD\", \"search_type\": \"MPN\", \"include_images\": true}}"
+ },
+ {
+  "id": "multiple_183",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"recipe_info.get_calories\", \"arguments\": {\"website\": \"Foodnetwork.com\", \"recipe\": \"Beef Lasagna\"}}"
+ },
+ {
+  "id": "simple_123",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"hypothesis_testing.two_sample_t_test\", \"arguments\": {\"group1\": [12.4, 15.6, 11.2, 18.9], \"group2\": [10.5, 9.8, 15.2, 13.8], \"alpha\": 0.05}}"
+ },
+ {
+  "id": "multiple_34",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"math.lcm\", \"arguments\": {\"num1\": 18, \"num2\": 12}}"
+ },
+ {
+  "id": "simple_394",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"maps.get_distance_duration\", \"arguments\": {\"start_location\": \"Eiffel Tower\", \"end_location\": \"Louvre Museum\"}}"
+ },
+ {
+  "id": "multiple_77",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"artwork_search.find\", \"arguments\": {\"type\": \"sculpture\", \"location\": \"New York\", \"era\": \"contemporary\"}}"
+ },
+ {
+  "id": "simple_218",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"patient.get_mri_report\", \"arguments\": {\"patient_id\": \"546382\", \"mri_type\": \"brain\", \"status\": \"concluded\"}}"
+ },
+ {
+  "id": "multiple_114",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"prediction.evolution\", \"arguments\": {\"species\": \"Homo Sapiens\", \"years\": 50, \"model\": \"Darwin\"}}"
+ },
+ {
+  "id": "irrelevance_61",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "multiple_120",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"light_travel_time\", \"arguments\": {\"distance_in_light_years\": 4}}"
+ },
+ {
+  "id": "live_multiple_1032-260-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_synthetic_locations\", \"arguments\": {\"limit\": 5}}"
+ },
+ {
+  "id": "irrelevance_93",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_216",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_97-57-1",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"get_current_weather\", \"arguments\": {\"location\": \"El Gastor, Andalusia\", \"unit\": \"celsius\"}}"
+ },
+ {
+  "id": "multiple_131",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"market_performance.get_data\", \"arguments\": {\"indexes\": [\"S&P 500\", \"Dow Jones\"], \"days\": 5}}"
+ },
+ {
+  "id": "multiple_173",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_defense_ranking\", \"arguments\": {\"season\": 2021, \"top\": 1}}"
+ },
+ {
+  "id": "live_multiple_223-97-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"list_directory_contents\", \"arguments\": {\"dir_path\": \"/out/programs\", \"include_hidden\": true, \"sort_order\": \"desc\"}}"
+ },
+ {
+  "id": "live_multiple_528-151-4",
+  "kind": "multiple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"Events_3_FindEvents\", \"arguments\": {\"event_type\": \"Theater\", \"city\": \"New York, NY\", \"date\": \"10/24/2026\"}}"
+ },
+ {
+  "id": "live_multiple_1017-246-0",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"events_api.EventsApi.get_event\", \"arguments\": {\"eventId\": \"efJG9\"}}"
+ },
+ {
+  "id": "multiple_95",
+  "kind": "multiple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"currency_exchange.convert\", \"arguments\": {\"amount\": 200, \"from_currency\": \"EUR\", \"to_currency\": \"USD\", \"live_conversion\": true}}"
+ },
+ {
+  "id": "irrelevance_18",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_68",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "live_simple_83-44-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"sitefinity_create_contentitem\", \"arguments\": {\"ContentItem\": \"news\", \"Title\": \"Julian is Testing\", \"Content\": \"a detailed analysis on the impact of sleep patterns on productivity\", \"MetaTitle\": \"Productivity and Sleep Patterns\", \"MetaDescription\": \"Exploring how sleep affects work efficiency\", \"UrlName\": \"julian-testing-productivity\"}}"
+ },
+ {
+  "id": "live_simple_11-3-7",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"get_current_weather\", \"arguments\": {\"location\": \"Naples, FL\", \"unit\": \"fahrenheit\"}}"
+ },
+ {
+  "id": "live_simple_141-94-0",
+  "kind": "simple",
+  "answered": true,
+  "ok": false,
+  "cat": "wrong_value",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"cmd_controller.execute\", \"arguments\": {\"command\": \"docker --version\", \"unit\": \"seconds\"}}"
+ },
+ {
+  "id": "irrelevance_107",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"soil_composition_analyze\", \"arguments\": {\"location\": \"Boston\", \"soil_sample\": true}}"
+ },
+ {
+  "id": "irrelevance_232",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": false,
+  "cat": "none_missed",
+  "lenient_ok": false,
+  "raw": "{\"name\": \"hotel_search.find_hotels\", \"arguments\": {\"location\": \"New York, NY\", \"amenities\": [\"Breakfast\", \"Fitness Centre\"]}}"
+ },
+ {
+  "id": "simple_260",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"paint_requirement.calculate\", \"arguments\": {\"area\": {\"width\": 20, \"height\": 12}, \"paint_coverage\": 350, \"exclusion\": {\"type\": \"window\", \"area\": 15}}}"
+ },
+ {
+  "id": "simple_125",
+  "kind": "simple",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"predict_house_price\", \"arguments\": {\"area\": 2500, \"rooms\": 5, \"year\": 1990, \"location\": \"San Francisco\"}}"
+ },
+ {
+  "id": "irrelevance_139",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_231",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ },
+ {
+  "id": "irrelevance_23",
+  "kind": "irrelevance",
+  "answered": true,
+  "ok": true,
+  "cat": "ok",
+  "lenient_ok": true,
+  "raw": "{\"name\": \"none\", \"arguments\": {}}"
+ }
+]

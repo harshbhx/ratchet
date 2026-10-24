@@ -86,6 +86,32 @@ A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $23 (ab
 
 [Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
 
+### Tool calling (round 3, a second result)
+
+<p align="center">
+  <img src="docs/img/toolcall-results.svg" alt="Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts" width="100%">
+</p>
+
+A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 in all), scored strictly on two exams it never saw. This is a measured result on real models (24 Oct 2026); the text-to-SQL result above stays the headline.
+
+| | Hard exam (150) | BFCL exam (300) |
+|---|---|---|
+| Untrained Nano 4B | 94 of 150 (62.7%, 95% range 54.7 to 70.0%) | 232 of 300 (77.3%, 95% range 72.3 to 81.7%) |
+| Teacher (Nemotron 3 Ultra) | 137 of 150 (91.3%, 95% range 85.7 to 94.9%) | 265 of 300 (88.3%, 95% range 84.2 to 91.5%) |
+| Tool-calling adapter | 136 of 150 (90.7%, 95% range 84.9 to 94.4%) | 241 of 300 (80.3%, 95% range 75.5 to 84.4%) |
+
+On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).
+
+On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is about the same as the teacher: 80.3% against 88.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).
+
+Hard exam: question by question against the untrained model, the adapter fixed 42 and broke 0 (exact sign test p < 0.0001). BFCL exam: question by question against the untrained model, the adapter fixed 15 and broke 6 (exact sign test p = 0.0784).
+
+Strict scoring: an answer counts only if it is one JSON object with the right tool and arguments; a reply with text around the JSON is wrong. Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training. The adapter was trained on a rented Modal T4, not on Nebius GPUs, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0).
+
+Every score recomputes from the saved answers: see [Check it yourself](docs/VERIFY.md#tool-calling-round-3).
+
+[Tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-train) · [Hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard) · [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl)
+
 ## How it works
 
 Change one line (your base URL) and:
@@ -165,7 +191,7 @@ curl -s localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
 | I want to | Run |
 |---|---|
 | See the whole loop, with a bad deploy rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` |
-| Run the tests (1909 tests, no network, no GPU) | `make test` |
+| Run the tests (1918 tests, no network, no GPU) | `make test` |
 | Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` |
 | Use the Docker image (mock mode) | `make docker && docker run -p 8000:8000 ratchet-gateway` |
 | Rebuild the web UI (Node 22) | `make web` |
@@ -204,7 +230,7 @@ The gateway does no inference, so it runs anywhere a container does. The student
 | Open source with a license | [`LICENSE`](LICENSE), Apache-2.0 for the code | Real |
 | A working demo that calls Token Factory | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech): send a request, read the `ratchet` block in the reply | Real |
 | A real run on record | [`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23) (20 real requests, about $0.01) and three recorded Scout runs in [`evidence/scout`](evidence/scout), also [replayable on Hugging Face](https://huggingface.co/spaces/harshbhx/ratchet-scout) | Real |
-| Results that recompute | [Real results](#real-results), [Check it yourself](docs/VERIFY.md), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check` | Measured |
+| Results that recompute | [Real results](#real-results), [Check it yourself](docs/VERIFY.md), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check`, and for tool calling [`evidence/toolcall`](evidence/toolcall) with `python scripts/toolcall_results.py --check` | Measured |
 | The loop, end to end | [Simulation](https://demo.ratchet.dualmindlab.tech) or `make demo` | Simulation |
 | Everything on one page | [ratchet.dualmindlab.tech/judges](https://ratchet.dualmindlab.tech/judges) | |
 

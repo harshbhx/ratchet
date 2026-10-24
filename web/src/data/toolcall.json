@@ -1,0 +1,87 @@
+{
+ "variant": "A",
+ "variant_reason": "adapter not above the untrained model on both exams (hard: above, bfcl: about_same)",
+ "date": "2026-10-24",
+ "exams": {
+  "hard": {
+   "label": "Hard exam",
+   "rows": 150,
+   "scores": {
+    "base": {
+     "agree": 94,
+     "n": 150,
+     "rate": 0.6267,
+     "lo": 0.547,
+     "hi": 0.7
+    },
+    "adapter": {
+     "agree": 136,
+     "n": 150,
+     "rate": 0.9067,
+     "lo": 0.8494,
+     "hi": 0.9436
+    },
+    "ultra": {
+     "agree": 137,
+     "n": 150,
+     "rate": 0.9133,
+     "lo": 0.8574,
+     "hi": 0.9487
+    }
+   },
+   "verdicts": {
+    "adapter_vs_base": "above",
+    "adapter_vs_ultra": "about_same"
+   },
+   "sentence": "On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).",
+   "paired": {
+    "fixed": 42,
+    "broke": 0,
+    "both_right": 94,
+    "both_wrong": 14,
+    "p": 0.0
+   }
+  },
+  "bfcl": {
+   "label": "BFCL exam",
+   "rows": 300,
+   "scores": {
+    "base": {
+     "agree": 232,
+     "n": 300,
+     "rate": 0.7733,
+     "lo": 0.7227,
+     "hi": 0.8171
+    },
+    "adapter": {
+     "agree": 241,
+     "n": 300,
+     "rate": 0.8033,
+     "lo": 0.7546,
+     "hi": 0.8444
+    },
+    "ultra": {
+     "agree": 265,
+     "n": 300,
+     "rate": 0.8833,
+     "lo": 0.8421,
+     "hi": 0.9149
+    }
+   },
+   "verdicts": {
+    "adapter_vs_base": "about_same",
+    "adapter_vs_ultra": "about_same"
+   },
+   "sentence": "On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is about the same as the teacher: 80.3% against 88.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).",
+   "paired": {
+    "fixed": 15,
+    "broke": 6,
+    "both_right": 226,
+    "both_wrong": 53,
+    "p": 0.0784
+   }
+  }
+ },
+ "caveat": "Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training.",
+ "setting": "The adapter was trained on a rented Modal T4, not on Nebius GPUs, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0)."
+}

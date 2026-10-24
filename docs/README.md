@@ -48,6 +48,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), the traceability check, simulation method and assumptions, bugs found and fixed, seed robustness |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
 | [../evidence/text2sql-round1](../evidence/text2sql-round1), [round2](../evidence/text2sql-round2), [exam2](../evidence/text2sql-exam2) | The measured text-to-SQL results: data, exams, every answer, scores and the scripts that recompute them |
+| [../evidence/toolcall](../evidence/toolcall) | The measured tool-calling results (round 3): both exams, every saved answer, the exams' own scorers, `results.json` and the drafts rendered from it; `python scripts/toolcall_results.py --check` recomputes it all |
 | [../evidence/live-smoke-2026-10-23](../evidence/live-smoke-2026-10-23) | A real run through the live gateway: 20 requests to Token Factory, about $0.01, every record published |
 | [../evidence/scout](../evidence/scout) | Three recorded live Scout runs (real Token Factory and Tavily calls), replayed by the gateway |
 
@@ -61,7 +62,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 ## Images
 
-`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/anim/` holds the README's animations.
+`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/toolcall-results.svg` (the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json`; `--check` compares only), `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/anim/` holds the README's animations.
 
 ## Repo-level files
 

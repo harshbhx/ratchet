@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-23",
+  "updated": "2026-10-24",
   "links": {
     "repo": "https://github.com/harshbhx/ratchet",
     "docs": "https://docs.ratchet.dualmindlab.tech/",
@@ -131,6 +131,14 @@
         {
           "label": "Exams and answers",
           "value": "harshbhx/ratchet-text2sql-exams"
+        },
+        {
+          "label": "Tool-calling adapter (round 3)",
+          "value": "harshbhx/ratchet-nemotron-nano-4b-toolcall"
+        },
+        {
+          "label": "Tool-calling data and exams (round 3)",
+          "value": "harshbhx/ratchet-toolcall-train, ratchet-toolcall-exam-hard, ratchet-toolcall-exam-bfcl"
         }
       ],
       "metrics": []
@@ -262,6 +270,54 @@
       "date": "2026-10-23",
       "facts": [],
       "metrics": []
+    },
+    {
+      "id": "toolcall-round3",
+      "claim": "How well a tool-calling adapter does on two held-out exams",
+      "status": "measured",
+      "evidence": "On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is about the same as the teacher: 80.3% against 88.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). Strict scoring. Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training. The adapter was trained on a rented Modal T4, not on Nebius GPUs, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0).",
+      "check": {
+        "label": "Recompute the scores from the saved answers",
+        "command": "python scripts/toolcall_results.py --check"
+      },
+      "paths": [
+        "scripts/toolcall_results.py",
+        "evidence/toolcall/results.json"
+      ],
+      "date": "2026-10-24",
+      "facts": [
+        {
+          "label": "Hard exam, untrained nano 4b",
+          "value": "94 of 150"
+        },
+        {
+          "label": "Hard exam, teacher (nemotron 3 ultra)",
+          "value": "137 of 150"
+        },
+        {
+          "label": "Hard exam, tool-calling adapter",
+          "value": "136 of 150"
+        },
+        {
+          "label": "BFCL exam, untrained nano 4b",
+          "value": "232 of 300"
+        },
+        {
+          "label": "BFCL exam, teacher (nemotron 3 ultra)",
+          "value": "265 of 300"
+        },
+        {
+          "label": "BFCL exam, tool-calling adapter",
+          "value": "241 of 300"
+        }
+      ],
+      "metrics": [
+        {
+          "id": "accuracy",
+          "label": "Accuracy (strict)",
+          "value": "90.7% on the hard exam and 80.3% on BFCL (untrained model 62.7% and 77.3%)"
+        }
+      ]
     }
   ]
 }
