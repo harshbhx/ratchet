@@ -33,19 +33,19 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     tour: "Three clicks show the whole idea: send a request, run a day with a bad deploy, then read what is real.",
   },
   {
+    id: "exams",
+    group: "start",
+    label: "The exams",
+    tourTitle: "Two exams, two authors",
+    tour: "Exam 1 was written by the teacher and exam 2 by a different model, for testing only. Both adapters, the teacher and the untrained model took both; the charts show every score with its range.",
+  },
+  {
     id: "real",
     group: "start",
     label: "What's real",
     pinned: true,
     tourTitle: "What is real, and what is not",
     tour: "Every claim has one status: real, measured, simulation, pending or not run. The exam results are measured and can be recomputed from the saved answers.",
-  },
-  {
-    id: "exams",
-    group: "start",
-    label: "The exams",
-    tourTitle: "Two exams, two authors",
-    tour: "Exam 1 was written by the teacher and exam 2 by a different model, for testing only. Both adapters, the teacher and the untrained model took both; the charts show every score with its range.",
   },
   {
     id: "client",
@@ -167,3 +167,6 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     tour: "What this is not yet, and where to find the code, the docs and the demo.",
   },
 ];
+
+/** Groups whose chapters fold: the page opens with their heads and summaries, and a reader opens what they want. */
+export const FOLDING_GROUPS: ChapterGroup[] = ["outside", "inside"];
