@@ -36,7 +36,7 @@ export const WAKING_HTML = `<!doctype html>
   <p>Waiting <span class="time" id="t">0</span> s</p>
   <p id="slow">This is taking longer than usual. It is still starting; if nothing happens after a few more minutes, reload the page.</p>
   <p class="note">This is the live demo: its answers are real calls to Nemotron 3 Ultra on Nebius Token Factory, with daily spending caps. It keeps no history across a restart.<br />
-    While you wait: <a href="https://ratchet-docs.pages.dev/" target="_blank" rel="noopener noreferrer">read the docs</a>,
+    While you wait: <a href="https://docs.ratchet.dualmindlab.tech/" target="_blank" rel="noopener noreferrer">read the docs</a>,
     <a href="https://github.com/harshbhx/ratchet" target="_blank" rel="noopener noreferrer">see the code</a>.</p>
 </main>
 <script>

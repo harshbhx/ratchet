@@ -1,6 +1,6 @@
 # Check it yourself
 
-Every claim Ratchet makes about a result can be rechecked from files in this repository. This page lists each claim, the command that checks it, what the command should print, and what it does **not** prove. This is the quick sheet: copy a command, run it, compare the output. The longer explanations are in [Proof you can run](https://ratchet-docs.pages.dev/guides/proof/) and [Evidence you can check](https://ratchet-docs.pages.dev/guides/evidence/). You need Python 3.10 or newer and a clone of the repository. Nothing here needs a GPU, a key or a network connection unless a row says so.
+Every claim Ratchet makes about a result can be rechecked from files in this repository. This page lists each claim, the command that checks it, what the command should print, and what it does **not** prove. This is the quick sheet: copy a command, run it, compare the output. The longer explanations are in [Proof you can run](https://docs.ratchet.dualmindlab.tech/guides/proof/) and [Evidence you can check](https://docs.ratchet.dualmindlab.tech/guides/evidence/). You need Python 3.10 or newer and a clone of the repository. Nothing here needs a GPU, a key or a network connection unless a row says so.
 
 ```bash
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet

@@ -10,7 +10,7 @@
   <a href="https://ratchet.dualmindlab.tech"><img alt="Story site" src="https://img.shields.io/badge/site-ratchet.dualmindlab.tech-0b1220"></a>
   <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
   <a href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql"><img alt="Adapter on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-adapter-FFD21E"></a>
-  <a href="https://ratchet-docs.pages.dev"><img alt="Docs" src="https://img.shields.io/badge/docs-read-64748b"></a>
+  <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-read-64748b"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://github.com/harshbhx/ratchet/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/ci.yml?branch=main&label=CI"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
@@ -28,7 +28,7 @@
   <a href="https://demo.ratchet.dualmindlab.tech">Simulation</a> &nbsp;·&nbsp;
   <a href="https://ratchet.dualmindlab.tech">The story</a> &nbsp;·&nbsp;
   <a href="https://ratchet.dualmindlab.tech/judges">For judges</a> &nbsp;·&nbsp;
-  <a href="https://ratchet-docs.pages.dev">Docs</a> &nbsp;·&nbsp;
+  <a href="https://docs.ratchet.dualmindlab.tech">Docs</a> &nbsp;·&nbsp;
   <a href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql">Adapter</a>
 </p>
 

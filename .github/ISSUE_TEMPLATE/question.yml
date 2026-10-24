@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before you ask, the [documentation](https://ratchet-docs.pages.dev), the [README](https://github.com/harshbhx/ratchet#readme) and [Check it yourself](https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md) answer most questions.
+        Before you ask, the [documentation](https://docs.ratchet.dualmindlab.tech), the [README](https://github.com/harshbhx/ratchet#readme) and [Check it yourself](https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md) answer most questions.
   - type: textarea
     id: question
     attributes:

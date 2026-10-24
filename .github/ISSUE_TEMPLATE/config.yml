@@ -4,7 +4,7 @@ contact_links:
     url: https://github.com/harshbhx/ratchet/security/advisories/new
     about: Please report security problems privately (see SECURITY.md).
   - name: Documentation
-    url: https://ratchet-docs.pages.dev
+    url: https://docs.ratchet.dualmindlab.tech
     about: Guides, the HTTP API reference and every setting.
   - name: Check a result yourself
     url: https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md

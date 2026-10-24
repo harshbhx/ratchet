@@ -25,7 +25,7 @@ export function CheckChapter() {
           Everything on this page can be checked from a fresh clone. Each command has a copy button. The full list, with the output to expect and
           what none of it proves, is{" "}
           <a
-            href="https://ratchet-docs.pages.dev/reference/verify/"
+            href="https://docs.ratchet.dualmindlab.tech/reference/verify/"
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink"
