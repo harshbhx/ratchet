@@ -48,19 +48,19 @@ Prices: list prices, unverified.
 
 | Where | Placeholder | Value id | Value |
 |---|---|---|---|
-| docs/HACKATHON_SUBMISSION.md, results table | cost reduction | `live.final.cost_reduction_measured_pct` | not measured |
-| docs/HACKATHON_SUBMISSION.md, results table | audited precision | `live.final.audited_precision_pct` | not measured |
-| docs/HACKATHON_SUBMISSION.md, results table | student latency | `live.final.student_p50_client_ms` | not measured |
-| docs/HACKATHON_SUBMISSION.md, results table | Ultra latency | `live.final.ultra_p50_client_ms` | 892.27 |
-| docs/HACKATHON_SUBMISSION.md, results table | endpoint hours | `live.run.endpoint_hours` | not measured |
-| docs/HACKATHON_SUBMISSION.md, results table | GPU-hour savings | `live.run.gpu_hours_reduction_pct` | not measured |
-| docs/HACKATHON_SUBMISSION.md, Scout row | student calls | `live.scout.student_calls` | not measured |
-| docs/HACKATHON_SUBMISSION.md, Scout row | LLM calls | `live.scout.llm_calls` | not measured |
-| docs/HACKATHON_SUBMISSION.md, Scout row | Scout savings | `live.scout.savings_pct` | not measured |
-| docs/HACKATHON_SUBMISSION.md, checklist | bill next to break-even | `live.bill.nebius_usd` | not measured |
-| docs/DEMO_SCRIPT.md, 2:42 | [cost cut] | `live.final.cost_reduction_measured_pct` | not measured |
-| docs/DEMO_SCRIPT.md, 2:42 | [precision] | `live.final.audited_precision_pct` | not measured |
-| docs/DEMO_SCRIPT.md, 2:42 | [latency] | `live.final.student_p50_client_ms` | not measured |
+| submission text, results table | cost reduction | `live.final.cost_reduction_measured_pct` | not measured |
+| submission text, results table | audited precision | `live.final.audited_precision_pct` | not measured |
+| submission text, results table | student latency | `live.final.student_p50_client_ms` | not measured |
+| submission text, results table | Ultra latency | `live.final.ultra_p50_client_ms` | 892.27 |
+| submission text, results table | endpoint hours | `live.run.endpoint_hours` | not measured |
+| submission text, results table | GPU-hour savings | `live.run.gpu_hours_reduction_pct` | not measured |
+| submission text, Scout row | student calls | `live.scout.student_calls` | not measured |
+| submission text, Scout row | LLM calls | `live.scout.llm_calls` | not measured |
+| submission text, Scout row | Scout savings | `live.scout.savings_pct` | not measured |
+| submission text, checklist | bill next to break-even | `live.bill.nebius_usd` | not measured |
+| demo script, 2:42 | [cost cut] | `live.final.cost_reduction_measured_pct` | not measured |
+| demo script, 2:42 | [precision] | `live.final.audited_precision_pct` | not measured |
+| demo script, 2:42 | [latency] | `live.final.student_p50_client_ms` | not measured |
 
 ## Caveats
 

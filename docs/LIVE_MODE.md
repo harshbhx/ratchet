@@ -28,7 +28,7 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 print(r.usage.total_tokens, r.system_fingerprint)  # the served answer's tokens; the fingerprint changes with the version
 ```
 
-See [docs/DAY1.md](DAY1.md) for the checks to run before relying on live mode.
+Run `python scripts/day1_check.py` before relying on live mode.
 
 ### Measuring a live run
 

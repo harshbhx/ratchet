@@ -145,19 +145,19 @@ RESULT_KEYS = (
 )
 # Where each value goes: the docs' placeholders (docs/LIVE_RESULTS.md's placeholder map) and its claim id.
 PLACEHOLDERS = (
-    ("docs/HACKATHON_SUBMISSION.md, results table", "cost reduction", "live.final.cost_reduction_measured_pct"),
-    ("docs/HACKATHON_SUBMISSION.md, results table", "audited precision", "live.final.audited_precision_pct"),
-    ("docs/HACKATHON_SUBMISSION.md, results table", "student latency", "live.final.student_p50_client_ms"),
-    ("docs/HACKATHON_SUBMISSION.md, results table", "Ultra latency", "live.final.ultra_p50_client_ms"),
-    ("docs/HACKATHON_SUBMISSION.md, results table", "endpoint hours", "live.run.endpoint_hours"),
-    ("docs/HACKATHON_SUBMISSION.md, results table", "GPU-hour savings", "live.run.gpu_hours_reduction_pct"),
-    ("docs/HACKATHON_SUBMISSION.md, Scout row", "student calls", "live.scout.student_calls"),
-    ("docs/HACKATHON_SUBMISSION.md, Scout row", "LLM calls", "live.scout.llm_calls"),
-    ("docs/HACKATHON_SUBMISSION.md, Scout row", "Scout savings", "live.scout.savings_pct"),
-    ("docs/HACKATHON_SUBMISSION.md, checklist", "bill next to break-even", "live.bill.nebius_usd"),
-    ("docs/DEMO_SCRIPT.md, 2:42", "[cost cut]", "live.final.cost_reduction_measured_pct"),
-    ("docs/DEMO_SCRIPT.md, 2:42", "[precision]", "live.final.audited_precision_pct"),
-    ("docs/DEMO_SCRIPT.md, 2:42", "[latency]", "live.final.student_p50_client_ms"),
+    ("submission text, results table", "cost reduction", "live.final.cost_reduction_measured_pct"),
+    ("submission text, results table", "audited precision", "live.final.audited_precision_pct"),
+    ("submission text, results table", "student latency", "live.final.student_p50_client_ms"),
+    ("submission text, results table", "Ultra latency", "live.final.ultra_p50_client_ms"),
+    ("submission text, results table", "endpoint hours", "live.run.endpoint_hours"),
+    ("submission text, results table", "GPU-hour savings", "live.run.gpu_hours_reduction_pct"),
+    ("submission text, Scout row", "student calls", "live.scout.student_calls"),
+    ("submission text, Scout row", "LLM calls", "live.scout.llm_calls"),
+    ("submission text, Scout row", "Scout savings", "live.scout.savings_pct"),
+    ("submission text, checklist", "bill next to break-even", "live.bill.nebius_usd"),
+    ("demo script, 2:42", "[cost cut]", "live.final.cost_reduction_measured_pct"),
+    ("demo script, 2:42", "[precision]", "live.final.audited_precision_pct"),
+    ("demo script, 2:42", "[latency]", "live.final.student_p50_client_ms"),
 )
 # Values `verify` recomputes from requests.ndjson.gz; the others are snapshots of the ledger taken during the run.
 CLIENT_VALUE_IDS = (

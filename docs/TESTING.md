@@ -1615,7 +1615,7 @@ The student's sampling parameters are one read-only constant, `confidence.STUDEN
 
 The live-run harness (`python -m ratchet.liverun`, [ADR 0121](adr/0121-live-measurement-method.md)) is tested the same way: `LiveRunWorld` builds a live `Runtime` on Token Factory and vLLM fakes with its ledger in a file, and the harness gets its seams as default arguments (`client=` an `httpx.Client` on `AppTransport(gateway.app)` that records every path and header, `provider_factory=` over the fakes, `run=` a `RecordingRun`, `http=`, `tavily=`, `clock=` a `FakeClock`, `timer=` and `sleep=`). The module fixture `liverun_world` runs one 3-round run with nights in process once and most of the tests read its run directory. Tests that need the gateway's seeded audit draws in a fixed order pass `--concurrency 1`.
 
-These tests prove the wiring, the order of operations and the failure handling. They do not prove that the real services accept the requests: model ids, `nebius` CLI flags, vLLM's runtime LoRA loading and GPU training stay `untested (live)` in the PRD until the day-1 checks ([DAY1.md](DAY1.md)) and a live run pass.
+These tests prove the wiring, the order of operations and the failure handling. They do not prove that the real services accept the requests: model ids, `nebius` CLI flags, vLLM's runtime LoRA loading and GPU training stay `untested (live)` in the PRD until the day-1 checks (`scripts/day1_check.py`) and a live run pass.
 
 Found while writing them: without `RATCHET_STUDENT_BASE`, `NebiusTrainer` ran the sync and the paid training job before noticing there was no endpoint to load the adapter into. It now checks first, and `python -m ratchet.live reload` gives the same clear error instead of an httpx URL error (`test_live_night_checks_the_student_endpoint_before_paid_work` in `test_hardening.py`).
 
@@ -1912,7 +1912,7 @@ The check fails when:
 | (f) | An `untested (live)` row has no `live` exemption, or no offline test and is not a known gap |
 | (g) | A `Not met` metric has no strict-xfail test (so the test fails loudly once the target is met) |
 | (h) | `docs/REQUIREMENTS.md` differs from a fresh render |
-| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md) or from `config.KNOWN_ENV` (or `KNOWN_ENV` lists one nothing reads, `rule_env_known`); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, `DEPLOYMENT.md` or `HACKATHON_SUBMISSION.md` differs from the parametrize-expanded count |
+| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md) or from `config.KNOWN_ENV` (or `KNOWN_ENV` lists one nothing reads, `rule_env_known`); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, or `DEPLOYMENT.md` differs from the parametrize-expanded count |
 | (j) | An SM row's Target in PRD §8.1 differs from `ratchet.kpis.SM_TARGETS` (operator, number or unit), has no entry there, or does not parse; or `SM_TARGETS` lists a metric the PRD does not have |
 
 To change behaviour:

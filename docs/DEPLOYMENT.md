@@ -1,6 +1,6 @@
 # Deployment
 
-There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They have not been run against a real account yet: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. The checklist is in [DAY1.md](DAY1.md).
+There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They have not been run against a real account yet: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. `python scripts/day1_check.py` runs the checks.
 
 ## 1. Local mock mode
 

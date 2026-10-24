@@ -48,7 +48,6 @@ COUNT_DOCS = (
     "docs/TESTING.md",
     "README.md",
     "docs/DEPLOYMENT.md",
-    "docs/HACKATHON_SUBMISSION.md",
 )
 CLIP = 100  # characters of requirement text in the matrix
 # The gateway builds its Runtime at import time; import it as an offline demo with no warm-up.
@@ -1632,13 +1631,15 @@ EXEMPT: dict[str, Exempt] = {
     "FR-8.1": Exempt("live", "scripts/day1_check.py", "model ids, logprobs and JSON mode on Token Factory"),
     "FR-8.2": Exempt("live", "deploy/student_endpoint.sh", "needs a vLLM Serverless Endpoint with runtime LoRA loading"),
     "FR-8.4": Exempt("live", "docs/RUNBOOK.md", "runs against the live ledger, a Serverless Job and the student endpoint"),
-    "FR-8.5": Exempt("live", "docs/DAY1.md", "the script is the live check; it needs NEBIUS_API_KEY"),
+    "FR-8.5": Exempt("live", "scripts/day1_check.py", "the script is the live check; it needs NEBIUS_API_KEY"),
     "FR-8.20": Exempt(
         "live", "docs/RUNBOOK.md", "make live-smoke, then make live-run, against the gateway on Nebius and Token Factory"
     ),
     "FR-8.21": Exempt("live", "docs/RUNBOOK.md", "the control arm calls Token Factory; a published live run's results.json"),
     "FR-8.42": Exempt(
-        "live", "docs/DAY1.md", "the image builds and a 200-row job trains on a GPU (DAY1 row 4); the template is checked offline"
+        "live",
+        "scripts/day1_check.py",
+        "the image builds and a 200-row job trains on a GPU (DAY1 row 4); the template is checked offline",
     ),
     "FR-10.3": Exempt(
         "live", "docs/DEPLOY_NEBIUS_VM.md", "Tavily needs TAVILY_API_KEY; checked when the demo VM switches to live"

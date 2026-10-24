@@ -5,7 +5,7 @@
 | Owner | Harsh Bhanushali (DualMind Labs) |
 | Status | v0.4.0 built (hackathon MVP, Scout demo, React web app, demo VM kit, privacy and security hardening); live Nebius run pending |
 | Last updated | 2026-10-20 |
-| Related | [Requirements matrix](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Research summary](RESEARCH_SUMMARY.md) · [Roadmap](ROADMAP.md) |
+| Related | [Requirements matrix](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Roadmap](ROADMAP.md) |
 
 ## 1. Overview
 
@@ -510,9 +510,9 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | Q2 | Do Nemotron models on Token Factory return logprobs? | Harsh | `scripts/day1_check.py` |
 | Q3 | Does vLLM serve LoRA on Nemotron-H (Nano 4B) correctly, including runtime loading? | Harsh | Day-1 endpoint test; fallback: merge adapter |
 | Q4 | What does Serverless GPU time actually cost? | Harsh | Nebius console on day 1 |
-| Q5 | Are the exact `nebius ai` CLI flags in `deploy/` correct? | Harsh | Checked against the CLI reference (auto generated 19-Oct-2026) on Oct 21; `DRY_RUN=1` runs of both scripts and `--help` on Oct 22 ([DAY1.md](DAY1.md) check 11) |
+| Q5 | Are the exact `nebius ai` CLI flags in `deploy/` correct? | Harsh | Checked against the CLI reference (auto generated 19-Oct-2026) on Oct 21; `DRY_RUN=1` runs of both scripts and `--help` on Oct 22 (`scripts/day1_check.py`) |
 | Q6 | Which live task and dataset to show in the video? | Harsh | Default: synthetic ticket triage through the real teacher |
-| Q7 | Does Token Factory apply `chat_template_kwargs` (top level or in `extra_body`) for Ultra and the hosted Nano? | Harsh | Day-1 probe: compare `usage.completion_tokens_details.reasoning_tokens` with and without it ([DAY1.md](DAY1.md)) |
+| Q7 | Does Token Factory apply `chat_template_kwargs` (top level or in `extra_body`) for Ultra and the hosted Nano? | Harsh | Day-1 probe: compare `usage.completion_tokens_details.reasoning_tokens` with and without it (`scripts/day1_check.py`) |
 
 ## 13. Glossary
 

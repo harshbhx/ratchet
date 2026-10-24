@@ -24,7 +24,7 @@ The hackathon requires running on Nebius Token Factory or Nebius AI Cloud with a
 - Positive: uses more of the Nebius stack (Token Factory, Serverless Jobs, Serverless Endpoints, Object Storage), which matches the judging panel.
 - Positive: the customer gets real adapter files they can download and run elsewhere.
 - Negative: more moving parts and GPU-hour cost. Runtime-loaded adapters vanish on restart (see [RUNBOOK.md](../RUNBOOK.md)).
-- Risk: Nemotron-H (hybrid Mamba) LoRA training and serving are unverified on this stack. Day-1 tests and fallbacks are in [DAY1.md](../DAY1.md).
+- Risk: Nemotron-H (hybrid Mamba) LoRA training and serving are unverified on this stack. The day-1 checks are in `python scripts/day1_check.py`.
 
 ## Alternatives considered
 
