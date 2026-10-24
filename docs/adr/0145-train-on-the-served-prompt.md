@@ -5,6 +5,8 @@
 
 ## Context
 
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested but have not been run on Nebius. The adapters behind the measured numbers in [evidence/](../../evidence/) were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
+
 The first GPU night trains the student that every later number depends on. Three facts, read on Oct 21, 2026, meant it would have trained on one prompt and been served another, with no error:
 
 - **Nemotron 3 Nano 4B's chat template turns thinking on unless told otherwise** ([chat_template.jinja](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/raw/main/chat_template.jinja), repository commit dfaf35d, sha256 `ab7813c3…7862`, vendored as `tests/fixtures/nano4b_chat_template.jinja`). With `add_generation_prompt` the prompt ends in `<|im_start|>assistant\n<think>\n` (line 200); with `enable_thinking=False` it ends in `<|im_start|>assistant\n<think></think>` (line 202). An assistant turn without think tags is rendered as `<think></think>` followed by its content (lines 113-114).
@@ -25,14 +27,14 @@ Unsloth cannot join a TRL 1.16.0 image: its release of Oct 19, 2026 (2026.10.7) 
 6. **Versions travel with the adapter.** `train.py` writes `versions.json` (Python, torch's CUDA version and every pinned package) beside the adapter before training starts, and the chat-template arguments into `ratchet_manifest.json`. They are not copied into the signed BOM: `bom.EXTRA_KEYS` has no section for them, and a stored BOM is never rewritten (INV-14).
 7. **LoRA targets wait for the day-1 probe.** `--targets` keeps the Mamba projections by default (`TARGETS_WITH_MAMBA`), the set the runtime-LoRA probe must test; `TARGETS_ATTENTION_MLP` is the one-line fallback if vLLM refuses them.
 
-The versions are candidates read from PyPI and download.pytorch.org on Oct 21, 2026. The Oct 22 smoke job (the 200-row smoke job, `bash deploy/train_job.sh test`) confirms them, or its `versions.json` replaces them in both files together.
+The versions are candidates read from PyPI and download.pytorch.org on Oct 21, 2026. They have not been built or run on Nebius: the 200-row smoke job (`bash deploy/train_job.sh test`) is still to do, and its `versions.json` replaces these pins in both files together.
 
 ## Consequences
 
 - The student is trained on exactly the prompt vLLM renders for it, and a template, tokenizer or argument drift stops the job in seconds instead of training a quietly worse adapter. The parity is tested offline with the vendored template (jinja2, now in the `dev` extra).
 - A train row whose answer quotes a think tag is not trained on. Such answers are rare (stored answers are cleaned of reasoning); the count is visible.
 - The image takes longer to change: every version bump touches two files, and the build fails on any conflict. That is the point.
-- The image is not built or run offline. Whether the pins resolve together, whether a prebuilt Mamba wheel exists for torch 2.11 and CUDA 12 (otherwise the kernels compile from source in the devel image), and whether the import check runs on a builder without a GPU driver are checked on Oct 22.
+- The image is not built or run offline. Whether the pins resolve together, whether a prebuilt Mamba wheel exists for torch 2.11 and CUDA 12 (otherwise the kernels compile from source in the devel image), and whether the import check runs on a builder without a GPU driver are still unchecked.
 - `versions.json` is evidence beside the weights, not part of the signed BOM.
 
 ## Alternatives considered

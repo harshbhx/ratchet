@@ -33,3 +33,8 @@ OpenAI's `store` field already means "keep this completion" (for distillation an
 - One primary-key lookup per request that names an end user (up to four hashes in one query), and one more just before a store, so a registration made while a request waits for the teacher still holds; that late opt-out is reported in the row and the response like one found at the start.
 - Every writer of examples must honour these opt-outs. `_store_example` is the only one in this tree; a test asserts that every entry of INV-2's `add_example` allowlist asks `store_opt_out` first, so a later writer (a backfill) cannot skip them.
 - `RATCHET_KEY_LIMITS` is shared with the planned spend and rate limits; whoever builds them extends `auth.KeyLimits` and `KEY_LIMIT_FIELDS` instead of adding a second variable.
+
+## Alternatives considered
+
+- **Pin the whole task to opt out.** Rejected: it also takes the student away from the traffic.
+- **Hash end users without a key scope.** Rejected: it would link one person across clients (see Decision).

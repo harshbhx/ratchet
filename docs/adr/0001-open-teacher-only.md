@@ -7,10 +7,10 @@
 
 Ratchet's student learns from the teacher's answers. The commercial terms of the most popular closed models forbid exactly that:
 
-- OpenAI Business Terms §3.3(e) forbid using Output "to develop artificial intelligence models that compete with OpenAI".
-- Anthropic Commercial Terms §D.4(a) forbid using the Services "to build a competing product or service, including to train competing AI models".
+- OpenAI Business Terms §3.3(e) forbid using Output "to develop artificial intelligence models that compete with OpenAI" (research notes, 2026-10-19; terms page not re-read for this edit).
+- Anthropic Commercial Terms §D.4(a) forbid using the Services "to build a competing product or service, including to train competing AI models" (research notes, 2026-10-19; terms page not re-read for this edit).
 
-A distillation tool that learns from GPT or Claude traffic therefore puts its customers in breach. The two closest competitors (Orchestra/Understudy and Experiential Labs, both YC Summer 2026) relay frontier-model traffic (see [COMPETITIVE_ANALYSIS.md](../COMPETITIVE_ANALYSIS.md)).
+A distillation tool that learns from GPT or Claude traffic therefore puts its customers in breach. [COMPETITIVE_ANALYSIS.md](../COMPETITIVE_ANALYSIS.md) lists Orchestra/Understudy and Experiential Labs (YC Summer 2026) with their sources and dates; they describe routing traffic through frontier models (source and date there).
 
 The licenses of the teacher we want to use are permissive:
 

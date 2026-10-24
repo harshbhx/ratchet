@@ -13,7 +13,7 @@ under task A and train under task B is trained on through B, and A's golden prec
 paired gate then partly measure memorisation. The same prompt seen twice under A and once under B is seen three times, but
 never `FREQUENT` (3) under either.
 
-[specs_next/DATA-SPLIT-KEY.md](https://github.com/harshbhx/ratchet) describes the general fix, a per-task `split_on` key.
+A general fix, a per-task `split_on` key, was proposed (not in this repository) and is left as future work (see Consequences).
 This ADR takes only the part that closes the cross-task hole and changes no hash.
 
 ## Decision
@@ -38,3 +38,8 @@ This ADR takes only the part that closes the cross-task hole and changes no hash
   prompt is `FREQUENT`.
 - Per-task split keys (`split_on`: user message, first user message) remain future work. They address templated system prompts
   and long conversations within one task, which this rule does not.
+
+## Alternatives considered
+
+- **A per-task `split_on` key.** Left as future work (see Consequences).
+- **Change stored hashes.** Rejected: it would move every commitment and simulation number.
